@@ -31,6 +31,7 @@ export component CompiledVisibilityWindow inherits Window {
     in property <bool> previous-destinations;
     in property <bool> next-destinations;
     in property <bool> can-frame;
+    in property <bool> can-show-destinations;
     in property <float> aspect: 1;
     callback inspect-target();
     callback inspect-position();
@@ -42,6 +43,8 @@ export component CompiledVisibilityWindow inherits Window {
     callback inspect-destination(int);
     callback frame-selection();
     callback show-guide();
+    callback show-pvs-bounds();
+    callback show-pas-bounds();
     callback clear-guide();
     callback reset-sort();
     callback close-dialog();
@@ -120,7 +123,9 @@ export component CompiledVisibilityWindow inherits Window {
                 spacing: 8px;
                 Button { text: "Previous destinations"; enabled: root.previous-destinations; clicked => { root.page-destinations(-1); } }
                 Button { text: "Next destinations"; enabled: root.next-destinations; clicked => { root.page-destinations(1); } }
-                Text { text: "Choose a destination to inspect that cluster"; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Show PVS bounds"; enabled: root.can-show-destinations; clicked => { root.show-pvs-bounds(); } }
+                Button { text: "Show PAS bounds"; enabled: root.can-show-destinations; clicked => { root.show-pas-bounds(); } }
             }
             TextEdit { text: root.details; read-only: true; wrap: word-wrap; min-height: 90px; preferred-height: 150px; vertical-stretch: 1; accessible-label: "Exact selected visibility record and portal vertices"; }
             if root.diagnostics != "": TextEdit { text: root.diagnostics; read-only: true; wrap: word-wrap; min-height: 55px; max-height: 85px; accessible-label: "Visibility inspection diagnostics"; }

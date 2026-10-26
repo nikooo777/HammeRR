@@ -25,6 +25,9 @@ pub(in crate::mcp) struct FrameCompiledVisibilityArgs {
 pub(in crate::mcp) struct SetCompiledVisibilityOverlayArgs {
     pub build_token: Option<String>,
     pub target: Option<crate::session::compiled_visibility::Target>,
+    /// Defaults to selected; destinations draws the complete native PVS/PAS world-leaf bounds set, capped at 512 leaves.
+    #[serde(default)]
+    pub mode: crate::session::compiled_visibility::GuideMode,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

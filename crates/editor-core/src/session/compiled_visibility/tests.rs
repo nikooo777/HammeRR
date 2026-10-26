@@ -293,7 +293,12 @@ fn current_framing_and_single_guide_preserve_drafts_and_suppress_changed_output(
         .frame_compiled_visibility(Actor::Agent, token.clone(), target, 1.6)
         .unwrap();
     session
-        .set_compiled_visibility_overlay(Actor::Agent, Some(token.clone()), Some(target))
+        .set_compiled_visibility_overlay(
+            Actor::Agent,
+            Some(token.clone()),
+            Some(target),
+            GuideMode::default(),
+        )
         .unwrap();
     let mesh = session.build_scene();
     assert_eq!(
@@ -317,6 +322,7 @@ fn current_framing_and_single_guide_preserve_drafts_and_suppress_changed_output(
             Actor::Agent,
             Some(token.clone()),
             Some(Target::Portal { ordinal: portal }),
+            GuideMode::default(),
         )
         .unwrap();
     let points = session
@@ -359,7 +365,12 @@ fn current_framing_and_single_guide_preserve_drafts_and_suppress_changed_output(
     );
     assert!(
         session
-            .set_compiled_visibility_overlay(Actor::User, Some(token.clone()), Some(target))
+            .set_compiled_visibility_overlay(
+                Actor::User,
+                Some(token.clone()),
+                Some(target),
+                GuideMode::default()
+            )
             .is_err()
     );
     assert_eq!(session.render_document().vmf(), &preview);
@@ -394,7 +405,7 @@ fn current_framing_and_single_guide_preserve_drafts_and_suppress_changed_output(
     );
     assert_eq!(session.camera(), camera);
     session
-        .set_compiled_visibility_overlay(Actor::User, None, None)
+        .set_compiled_visibility_overlay(Actor::User, None, None, GuideMode::default())
         .unwrap();
     assert_eq!(session.compiled_visibility_overlay()["requested"], false);
 }
@@ -484,4 +495,323 @@ fn historical_inspection_cancellation_and_failed_rebuild_keep_owned_metadata() {
     assert_eq!(report.build["status"], "unavailable");
     assert!(report.summary.is_none() && report.page.total.is_none() && report.page.rows.is_empty());
     assert_eq!(std::fs::read(source.with_extension("bsp")).unwrap(), bytes);
+}
+
+#[test]
+fn destination_guides_join_complete_native_rows_independently_of_pages_and_preserve_ownership() {
+    let (_directory, mut session, source) = test_support::compiled();
+    session
+        .begin_property_edit(super::super::PropertyTarget::World)
+        .unwrap();
+    let before = (
+        session.document().vmf().clone(),
+        session.camera(),
+        session.selected_ids(),
+        session.history_snapshot(),
+        serde_json::to_value(session.property_draft()).unwrap(),
+    );
+    let summary = session
+        .inspect_compiled_visibility(&Query::default())
+        .unwrap();
+    let token = summary.build["token"].as_str().unwrap().to_owned();
+    let target = leaf_target(&session);
+    let Target::Leaf { ordinal } = target else {
+        panic!()
+    };
+    let bsp = Bsp::read(source.with_extension("bsp")).unwrap();
+    let native = bsp.records::<Leaf>().unwrap();
+    let cluster = native[ordinal].cluster as usize;
+    let metadata = Arc::clone(
+        session
+            .compiled
+            .as_ref()
+            .unwrap()
+            .visibility_inspection
+            .as_ref()
+            .unwrap(),
+    );
+    let visibility = bsp.visibility().unwrap().unwrap();
+    for kind in [Kind::Pvs, Kind::Pas] {
+        let row = visibility
+            .row(
+                cluster,
+                if kind == Kind::Pvs {
+                    VisibilityKind::Visible
+                } else {
+                    VisibilityKind::Audible
+                },
+            )
+            .unwrap();
+        let expected = metadata
+            .leaves()
+            .iter()
+            .filter_map(|leaf| {
+                let cluster = native[leaf.ordinal as usize].cluster;
+                (cluster >= 0 && row[cluster as usize / 8] & (1 << (cluster as usize % 8)) != 0)
+                    .then_some(leaf.ordinal as usize)
+            })
+            .collect::<Vec<_>>();
+        let clusters = (0..visibility.clusters())
+            .filter(|&cluster| row[cluster / 8] & (1 << (cluster % 8)) != 0)
+            .count();
+        let (page, prepared) = session
+            .inspect_visibility_prepared(
+                &Query {
+                    build_token: Some(token.clone()),
+                    target,
+                    kind,
+                    limit: 1,
+                    visibility_offset: usize::from(clusters > 1),
+                    ..Query::default()
+                },
+                &Control::default(),
+                true,
+            )
+            .unwrap();
+        assert_eq!(page.visibility.rows.len(), 1);
+        assert!(expected.len() > page.visibility.rows.len());
+        assert_eq!(page.visibility.total, Some(clusters));
+        let prepared = prepared.unwrap();
+        assert_eq!(
+            prepared
+                .boxes
+                .iter()
+                .map(|leaf| leaf.ordinal)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(prepared.clusters, clusters);
+        for leaf in &prepared.boxes {
+            assert_eq!(
+                leaf.bounds,
+                [
+                    native[leaf.ordinal].mins.map(f64::from),
+                    native[leaf.ordinal].maxs.map(f64::from)
+                ]
+            );
+        }
+        for source in [target, Target::Cluster { ordinal: cluster }] {
+            let guide = session
+                .set_compiled_visibility_overlay(
+                    Actor::Agent,
+                    Some(token.clone()),
+                    Some(source),
+                    GuideMode::Destinations { visibility: kind },
+                )
+                .unwrap();
+            assert_eq!(guide["native_leaves"], json!(expected));
+            assert_eq!(guide["destination_clusters"], clusters);
+            assert_eq!(guide["leaf_count"], expected.len());
+            assert_eq!(
+                guide["line_vertices"],
+                expected.len() * LINE_VERTICES_PER_BOX
+            );
+            assert_eq!(
+                guide["mode"],
+                json!(GuideMode::Destinations { visibility: kind })
+            );
+        }
+        assert_eq!(
+            session
+                .build_scene()
+                .lines
+                .iter()
+                .filter(|line| line.color == [70, 220, 255, 255])
+                .count(),
+            expected.len() * LINE_VERTICES_PER_BOX
+        );
+    }
+    assert_eq!(
+        before,
+        (
+            session.document().vmf().clone(),
+            session.camera(),
+            session.selected_ids(),
+            session.history_snapshot(),
+            serde_json::to_value(session.property_draft()).unwrap(),
+        )
+    );
+    let previous = session.compiled_visibility_overlay();
+    for (build_token, source) in [
+        (None, None),
+        (Some(token.clone()), None),
+        (None, Some(target)),
+        (Some("999999".into()), Some(target)),
+        (Some(token.clone()), Some(Target::Summary {})),
+        (
+            Some(token.clone()),
+            Some(Target::Portal {
+                ordinal: metadata.portals()[0].ordinal as usize,
+            }),
+        ),
+    ] {
+        assert!(
+            session
+                .set_compiled_visibility_overlay(
+                    Actor::Agent,
+                    build_token,
+                    source,
+                    GuideMode::Destinations {
+                        visibility: Kind::Pvs
+                    }
+                )
+                .is_err()
+        );
+        assert_eq!(session.compiled_visibility_overlay(), previous);
+    }
+    let cancelled = Control::default();
+    cancelled.cancel().unwrap();
+    assert!(
+        session
+            .set_compiled_visibility_overlay_controlled(
+                Actor::Agent,
+                Some(token.clone()),
+                Some(target),
+                GuideMode::Destinations {
+                    visibility: Kind::Pvs
+                },
+                &cancelled
+            )
+            .is_err()
+    );
+    assert_eq!(session.compiled_visibility_overlay(), previous);
+    let solid = metadata
+        .leaves()
+        .iter()
+        .find(|leaf| leaf.cluster < 0)
+        .unwrap()
+        .ordinal as usize;
+    assert!(
+        session
+            .set_compiled_visibility_overlay(
+                Actor::Agent,
+                Some(token.clone()),
+                Some(Target::Leaf { ordinal: solid }),
+                GuideMode::Destinations {
+                    visibility: Kind::Pvs
+                }
+            )
+            .unwrap_err()
+            .contains("no PVS/PAS source cluster")
+    );
+    assert_eq!(session.compiled_visibility_overlay(), previous);
+    session
+        .create_block(
+            Actor::User,
+            DVec3::splat(-32.0),
+            DVec3::splat(-16.0),
+            "test/checker",
+            false,
+        )
+        .unwrap();
+    session.preflight_compiled_visibility();
+    let stale = session.compiled_visibility_overlay();
+    assert_eq!(stale["displayed"], false);
+    assert_eq!(stale["native_leaves"], previous["native_leaves"]);
+    assert_eq!(
+        session
+            .build_scene()
+            .lines
+            .iter()
+            .filter(|line| line.color == [70, 220, 255, 255])
+            .count(),
+        0
+    );
+    assert!(
+        session
+            .set_compiled_visibility_overlay(
+                Actor::Agent,
+                Some(token.clone()),
+                Some(target),
+                GuideMode::Destinations {
+                    visibility: Kind::Pvs
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(session.compiled_visibility_overlay(), stale);
+    let historical = session
+        .inspect_compiled_visibility(&Query {
+            build_token: Some(token.clone()),
+            target,
+            ..Query::default()
+        })
+        .unwrap();
+    assert!(historical.historical && historical.visibility.total.is_some());
+    std::fs::write(source.with_extension("bsp"), b"changed output").unwrap();
+    let unavailable = session
+        .inspect_compiled_visibility(&Query {
+            build_token: Some(token),
+            target,
+            ..Query::default()
+        })
+        .unwrap();
+    assert!(unavailable.page.total.is_none() && unavailable.visibility.total.is_none());
+    session
+        .set_compiled_visibility_overlay(Actor::Agent, None, None, GuideMode::default())
+        .unwrap();
+    assert_eq!(session.compiled_visibility_overlay()["requested"], false);
+}
+
+#[test]
+fn complete_destination_bounds_refuse_over_cap_without_truncation_and_check_cancellation() {
+    let world = (1..=MAX_GUIDE_LEAVES + 1)
+        .map(|ordinal| compiler::visibility_inspection::WorldLeaf {
+            ordinal: ordinal as u32,
+            prepared_node: ordinal as u32,
+            cluster: 0,
+        })
+        .collect::<Vec<_>>();
+    let mut native = vec![
+        Leaf {
+            cluster: 0,
+            mins: [-1; 3],
+            maxs: [1; 3],
+            ..Leaf::default()
+        };
+        MAX_GUIDE_LEAVES + 2
+    ];
+    native[0].cluster = -1;
+    native[0].contents = source_formats::bsp::contents::SOLID;
+    let error = destination_bounds(&[1], &world, &native, 0, 1, &Control::default()).unwrap_err();
+    assert!(
+        error.contains("513 native world leaves")
+            && error.contains("cap is 512")
+            && error.contains("previous guide is unchanged")
+    );
+    let guide = destination_bounds(
+        &[1],
+        &world[..MAX_GUIDE_LEAVES],
+        &native,
+        0,
+        1,
+        &Control::default(),
+    )
+    .unwrap();
+    assert_eq!(guide.boxes.len(), MAX_GUIDE_LEAVES);
+    assert_eq!(guide.boxes.last().unwrap().ordinal, MAX_GUIDE_LEAVES);
+    assert_eq!(
+        guide.retained_bytes,
+        size_of::<DestinationGuide>() + guide.boxes.capacity() * size_of::<GuideBox>()
+    );
+    assert!(destination_storage(usize::MAX).is_err());
+    assert!(destination_bounds(&[], &world, &native, 0, 1, &Control::default()).is_err());
+    let control = Control::default();
+    control.cancel().unwrap();
+    assert!(
+        destination_bounds(&[1], &world, &native, 0, 1, &control)
+            .unwrap_err()
+            .contains("cancelled")
+    );
+    let solid = [compiler::visibility_inspection::WorldLeaf {
+        ordinal: 0,
+        prepared_node: 0,
+        cluster: -1,
+    }];
+    assert!(
+        destination_bounds(&[1], &solid, &native, 0, 1, &Control::default())
+            .unwrap()
+            .boxes
+            .is_empty()
+    );
 }

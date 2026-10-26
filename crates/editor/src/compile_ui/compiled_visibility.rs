@@ -1,7 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use editor_core::session::compiled_visibility::{
-    Inspection, Kind, PositionSource, Query, Row, Target,
+    GuideMode, Inspection, Kind, PositionSource, Query, Row, Target,
 };
 use serde_json::Value;
 use slint::{ComponentHandle, Model};
@@ -32,6 +32,7 @@ enum Action {
     Destination(i32),
     Frame,
     Show,
+    ShowDestinations(Kind),
     Clear,
 }
 
@@ -163,26 +164,15 @@ fn present(window: &CompiledVisibilityWindow, report: &Inspection) {
     );
     window.set_next_destinations(report.visibility.next_offset.is_some());
     window.set_can_frame(report.current_bounds().is_ok());
-    window.set_details(serde_json::to_string_pretty(&serde_json::json!({"selection":report.selection,"portal_vertices":report.selected_vertices,"position":report.position,"notes":report.notes})).unwrap_or_else(|error| error.to_string()).into());
-    let diagnostics = report.build["diagnostics"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .chain(report.diagnostics.iter().map(String::as_str))
-        .collect::<Vec<_>>()
-        .join("\n");
-    window.set_diagnostics(diagnostics.into());
-    window.set_guide_state(
-        if report.overlay["displayed"] == true {
-            "Selected compiled visibility guide is displayed"
-        } else if report.overlay["requested"] == true {
-            "Selected guide is suppressed because its owned build is stale or unavailable"
-        } else {
-            "No compiled visibility guide. Leaf boxes show native bounds, not exact convex cells."
-        }
-        .into(),
+    window.set_can_show_destinations(
+        report.build["current"] == true
+            && report.build["status"] == "current"
+            && report.visibility.total.is_some()
+            && matches!(report.target, Target::Leaf { .. } | Target::Cluster { .. }),
     );
+    window.set_details(serde_json::to_string_pretty(&serde_json::json!({"selection":report.selection,"portal_vertices":report.selected_vertices,"position":report.position,"notes":report.notes})).unwrap_or_else(|error| error.to_string()).into());
+    present_diagnostics(window, report);
+    present_guide(window, &report.overlay);
     let (name, ordinal) = match report.target {
         Target::Summary {} => ("Summary", None),
         Target::Leaf { ordinal } => ("Leaf", Some(ordinal)),
@@ -200,6 +190,36 @@ fn present(window: &CompiledVisibilityWindow, report: &Inspection) {
             Kind::Pas => "PAS",
         }
         .into(),
+    );
+}
+
+fn present_diagnostics(window: &CompiledVisibilityWindow, report: &Inspection) {
+    let diagnostics = report.build["diagnostics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .chain(report.diagnostics.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    window.set_diagnostics(diagnostics.into());
+}
+
+fn present_guide(window: &CompiledVisibilityWindow, overlay: &Value) {
+    window.set_guide_state(
+        if overlay["displayed"] == true {
+            if overlay["mode"]["kind"] == "destinations" {
+                format!("{} potential destination bounds: {} native world leaves across {} destination clusters from source cluster {} (cap {} leaves). Native bounds are not exact cells or current game occlusion.",
+                    if overlay["mode"]["visibility"] == "pas" { "PAS" } else { "PVS" },
+                    overlay["leaf_count"], overlay["destination_clusters"], overlay["source_cluster"], overlay["guide_leaf_cap"])
+            } else {
+                "Selected compiled visibility guide is displayed".into()
+            }
+        } else if overlay["requested"] == true {
+            "Guide is suppressed because its owned build is stale or unavailable".into()
+        } else {
+            "No compiled visibility guide. Leaf boxes show native bounds, not exact convex cells.".into()
+        }.into(),
     );
 }
 
@@ -260,7 +280,7 @@ fn perform(
         return Ok(());
     }
     if matches!(action, Action::Clear) {
-        session.set_compiled_visibility_overlay(Actor::User, None, None)?;
+        session.set_compiled_visibility_overlay(Actor::User, None, None, GuideMode::default())?;
         if let Some(report) = &mut state.borrow_mut().report {
             report.overlay = session.compiled_visibility_overlay();
             present(window, report);
@@ -349,6 +369,37 @@ fn perform(
                 ..Query::default()
             };
         }
+        Action::ShowDestinations(visibility) => {
+            let stored = state.borrow();
+            let target = stored
+                .report
+                .as_ref()
+                .ok_or("Inspect a compiled leaf or cluster first")?
+                .target;
+            let build_token = token(&stored)?;
+            drop(stored);
+            let result = session.set_compiled_visibility_overlay(
+                Actor::User,
+                Some(build_token),
+                Some(target),
+                GuideMode::Destinations { visibility },
+            );
+            let (overlay, error) = match result {
+                Ok(overlay) => (overlay, None),
+                Err(error) => (session.compiled_visibility_overlay(), Some(error)),
+            };
+            present_guide(window, &overlay);
+            if let Some(report) = &mut state.borrow_mut().report {
+                report.overlay = overlay;
+                present_diagnostics(window, report);
+            }
+            if let Some(error) = error {
+                window.set_diagnostics(error.into());
+            } else {
+                state.borrow_mut().observation = Some(session.compiled_visibility_observation());
+            }
+            return Ok(());
+        }
         Action::Frame | Action::Show => {
             let stored = state.borrow();
             let target = stored
@@ -366,7 +417,12 @@ fn perform(
                     window.get_aspect(),
                 )?;
             } else {
-                session.set_compiled_visibility_overlay(Actor::User, Some(token), Some(target))?;
+                session.set_compiled_visibility_overlay(
+                    Actor::User,
+                    Some(token),
+                    Some(target),
+                    GuideMode::default(),
+                )?;
             }
         }
         Action::Clear => unreachable!(),
@@ -387,6 +443,7 @@ fn failure(window: &CompiledVisibilityWindow, state: &RefCell<State>, error: Str
     window.set_rows(slint::ModelRc::default());
     window.set_visibility_rows(slint::ModelRc::default());
     window.set_can_frame(false);
+    window.set_can_show_destinations(false);
     window.set_previous_rows(false);
     window.set_next_rows(false);
     window.set_previous_destinations(false);
@@ -480,6 +537,14 @@ pub(super) fn bind(
     window.on_frame_selection(move || callback(0));
     let callback = handler(&window, access, &state, |_| Action::Show);
     window.on_show_guide(move || callback(0));
+    let callback = handler(&window, access, &state, |_| {
+        Action::ShowDestinations(Kind::Pvs)
+    });
+    window.on_show_pvs_bounds(move || callback(0));
+    let callback = handler(&window, access, &state, |_| {
+        Action::ShowDestinations(Kind::Pas)
+    });
+    window.on_show_pas_bounds(move || callback(0));
     let callback = handler(&window, access, &state, |_| Action::Clear);
     window.on_clear_guide(move || callback(0));
     window.on_reset_sort({

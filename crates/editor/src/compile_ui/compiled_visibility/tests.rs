@@ -109,12 +109,45 @@ fn visibility_controls_share_owned_navigation_frame_guide_and_invalidation() {
     window.invoke_inspect_target();
     assert_eq!(form.state.borrow().report.as_ref().unwrap().kind, Kind::Pas);
     assert!(window.get_rows().row_count() > 0);
+    assert!(window.get_can_show_destinations());
+    for (kind, name) in [(Kind::Pvs, "PVS"), (Kind::Pas, "PAS")] {
+        if kind == Kind::Pvs {
+            window.invoke_show_pvs_bounds();
+        } else {
+            window.invoke_show_pas_bounds();
+        }
+        let guide = lock(&shared).compiled_visibility_overlay();
+        assert_eq!(
+            guide["mode"],
+            serde_json::json!(GuideMode::Destinations { visibility: kind })
+        );
+        assert_eq!(
+            guide["leaf_count"].as_u64().unwrap() as usize,
+            guide["native_leaves"].as_array().unwrap().len()
+        );
+        assert!(
+            window
+                .get_guide_state()
+                .contains(&format!("{name} potential destination bounds"))
+        );
+        let mut session = lock(&shared);
+        assert_eq!(
+            session
+                .build_scene()
+                .lines
+                .iter()
+                .filter(|line| line.color == [70, 220, 255, 255])
+                .count(),
+            guide["leaf_count"].as_u64().unwrap() as usize * 24
+        );
+    }
     window.invoke_inspect_row(0);
     assert!(matches!(
         form.state.borrow().report.as_ref().unwrap().target,
         Target::Portal { .. }
     ));
     assert!(window.get_details().contains("portal_vertices"));
+    assert!(!window.get_can_show_destinations());
     window.invoke_frame_selection();
     window.invoke_show_guide();
     assert_eq!(
@@ -143,6 +176,7 @@ fn visibility_controls_share_owned_navigation_frame_guide_and_invalidation() {
     assert_eq!(window.get_rows().row_count(), 0);
     assert_eq!(window.get_visibility_rows().row_count(), 0);
     assert!(!window.get_can_frame());
+    assert!(!window.get_can_show_destinations());
     assert!(!controller.window.window().is_visible());
     window.invoke_close_dialog();
     assert!(!window.window().is_visible());

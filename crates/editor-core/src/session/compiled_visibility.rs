@@ -16,13 +16,16 @@ use super::{Actor, Session, baked_build};
 
 pub const MAX_PAGE_ROWS: usize = 64;
 pub const MAX_REPORT_BYTES: usize = 512 * 1024;
+pub const MAX_GUIDE_LEAVES: usize = 512;
+pub const MAX_GUIDE_BYTES: usize = 256 * 1024;
+const LINE_VERTICES_PER_BOX: usize = 24;
 const MAX_SOURCE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CALL_BYTES: usize = 384 * 1024 * 1024;
 const SOURCE_MODE: baked_build::SourceVerification =
     baked_build::SourceVerification::OriginalMetadata {
         maximum_bytes: MAX_SOURCE_BYTES,
     };
-const NOTES: &str = "Compiler-owned world leaves and final clusters. Leaf boxes are native bounds, not exact convex cells. Portal rings retain compiler binary64 coordinates and build-local original slots, including boundaries inside coarsened clusters; they are not authored faces or BSP render surfaces. PVS/PAS decode separate native visibility rows. Historical ordinals belong only to their captured build. Freshness covers the committed map, settings/content epoch and retained source guards, not every world material. Unapplied drafts are not compiled. Framing and the single selected guide require a current owned build.";
+const NOTES: &str = "Compiler-owned world leaves and final clusters. Leaf boxes are native bounds, not exact convex cells. Portal rings retain compiler binary64 coordinates and build-local original slots, including boundaries inside coarsened clusters; they are not authored faces or BSP render surfaces. PVS/PAS decode separate native visibility rows. Historical ordinals belong only to their captured build. Freshness covers the committed map, settings/content epoch and retained source guards, not every world material. Unapplied drafts are not compiled. Framing and guides require a current owned build. Destination guides show the complete potential PVS/PAS set as native world-leaf bounds, not current game occlusion or rendered cells.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
@@ -70,6 +73,20 @@ pub enum Kind {
     #[default]
     Pvs,
     Pas,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GuideMode {
+    Selected {},
+    Destinations { visibility: Kind },
+}
+
+impl Default for GuideMode {
+    fn default() -> Self {
+        Self::Selected {}
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -226,10 +243,15 @@ pub struct Inspection {
 }
 
 impl Inspection {
-    pub fn current_bounds(&self) -> Result<[[f64; 3]; 2], String> {
+    fn require_current(&self) -> Result<(), String> {
         if self.build["current"] != true || self.build["status"] != "current" {
             return Err("Framing and guides require a current successful owned build".into());
         }
+        Ok(())
+    }
+
+    pub fn current_bounds(&self) -> Result<[[f64; 3]; 2], String> {
+        self.require_current()?;
         self.selection
             .as_ref()
             .and_then(Row::bounds)
@@ -246,8 +268,29 @@ pub(super) struct State {
 struct Guide {
     token: u64,
     target: Target,
-    bounds: [[f64; 3]; 2],
+    mode: GuideMode,
+    geometry: GuideGeometry,
     snapshot: Arc<Snapshot>,
+}
+
+enum GuideGeometry {
+    Selected([[f64; 3]; 2]),
+    Destinations(DestinationGuide),
+}
+
+#[derive(Debug)]
+struct GuideBox {
+    ordinal: usize,
+    bounds: [[f64; 3]; 2],
+}
+
+#[derive(Debug)]
+struct DestinationGuide {
+    source_cluster: usize,
+    clusters: usize,
+    boxes: Vec<GuideBox>,
+    retained_bytes: usize,
+    line_vertices: usize,
 }
 
 impl Session {
@@ -260,6 +303,16 @@ impl Session {
         query: &Query,
         control: &Control,
     ) -> Result<Inspection, String> {
+        self.inspect_visibility_prepared(query, control, false)
+            .map(|(report, _)| report)
+    }
+
+    fn inspect_visibility_prepared(
+        &self,
+        query: &Query,
+        control: &Control,
+        prepare_destinations: bool,
+    ) -> Result<(Inspection, Option<DestinationGuide>), String> {
         control.checkpoint()?;
         query.validate()?;
         match (&self.compiled, &query.build_token) {
@@ -299,20 +352,20 @@ impl Session {
             visibility: Page::empty(query.visibility_offset, query.limit),
             diagnostics: Vec::new(),
             overlay: self.compiled_visibility_overlay(),
-            limits: json!({"bsp_bytes":baked_build::MAX_BSP_BYTES,"call_bytes":MAX_CALL_BYTES,"metadata_bytes":compiler::visibility_inspection::MAX_BYTES,"report_bytes":MAX_REPORT_BYTES,"page_rows":MAX_PAGE_ROWS,"portal_vertices":MAX_PORTAL_POINTS,"point_lookup_records":source_formats::bsp::MAX_POINT_LEAF_RECORDS,"point_lookup_steps":source_formats::bsp::MAX_POINT_LEAF_RECORDS + 1}),
+            limits: json!({"bsp_bytes":baked_build::MAX_BSP_BYTES,"call_bytes":MAX_CALL_BYTES,"metadata_bytes":compiler::visibility_inspection::MAX_BYTES,"report_bytes":MAX_REPORT_BYTES,"page_rows":MAX_PAGE_ROWS,"portal_vertices":MAX_PORTAL_POINTS,"point_lookup_records":source_formats::bsp::MAX_POINT_LEAF_RECORDS,"point_lookup_steps":source_formats::bsp::MAX_POINT_LEAF_RECORDS + 1,"guide_leaves":MAX_GUIDE_LEAVES,"guide_bytes":MAX_GUIDE_BYTES,"guide_line_vertices":MAX_GUIDE_LEAVES * LINE_VERTICES_PER_BOX}),
             notes: NOTES,
         };
         let Some(build) = &self.compiled else {
-            return finish(report, control);
+            return finish(report, control).map(|report| (report, None));
         };
         if report.build["status"] == "unavailable" {
-            return finish(report, control);
+            return finish(report, control).map(|report| (report, None));
         }
         let metadata = match &build.visibility_inspection {
             Ok(metadata) => metadata,
             Err(error) => {
                 unavailable(&mut report, error);
-                return finish(report, control);
+                return finish(report, control).map(|report| (report, None));
             }
         };
         let identity = build
@@ -320,13 +373,32 @@ impl Session {
             .output
             .as_ref()
             .map_err(|error| baked_build::bounded_message(error))?;
-        let decoded = read_native(identity, metadata, control);
+        let retained_guide_bytes =
+            self.compiled_visibility
+                .guide
+                .as_ref()
+                .map_or(Ok(0), |guide| {
+                    let snapshot_bytes = if Arc::ptr_eq(&guide.snapshot, metadata) {
+                        0
+                    } else {
+                        guide.snapshot.bytes()
+                    };
+                    let geometry_bytes = match &guide.geometry {
+                        GuideGeometry::Selected(_) => 0,
+                        GuideGeometry::Destinations(destinations) => destinations.retained_bytes,
+                    };
+                    snapshot_bytes
+                        .checked_add(geometry_bytes)
+                        .and_then(|bytes| bytes.checked_add(size_of::<Guide>()))
+                        .ok_or("Retained visibility guide storage overflow")
+                })?;
+        let decoded = read_native(identity, metadata, retained_guide_bytes, control);
         let (bsp, leaves) = match decoded {
             Ok(decoded) => decoded,
             Err(error) => {
                 control.checkpoint()?;
                 unavailable(&mut report, &error);
-                return finish(report, control);
+                return finish(report, control).map(|report| (report, None));
             }
         };
         if let Some(error) = baked_build::source_issue_with_mode(build, SOURCE_MODE, control) {
@@ -344,7 +416,15 @@ impl Session {
             }
             report.position = Some(position);
         }
-        fill(&mut report, &resolved, metadata, &bsp, &leaves, control)?;
+        let destinations = fill(
+            &mut report,
+            &resolved,
+            metadata,
+            &bsp,
+            &leaves,
+            control,
+            prepare_destinations,
+        )?;
         drop(leaves);
         drop(bsp);
         if let Some(error) = baked_build::source_issue_with_mode(build, SOURCE_MODE, control) {
@@ -365,7 +445,7 @@ impl Session {
         if let Some(error) = observed.unavailable {
             unavailable(&mut report, &error);
         }
-        finish(report, control)
+        finish(report, control).map(|report| (report, destinations))
     }
 
     pub fn compiled_visibility_overlay(&self) -> Value {
@@ -379,7 +459,22 @@ impl Session {
             .as_ref()
             .is_some_and(|build| build.lightmap_identity.token == guide.token)
             && state.as_ref().is_ok_and(|state| state["current"] == true);
-        json!({"requested":true,"displayed":current,"build_token":guide.token.to_string(),"target":guide.target,"reason":if current {Value::Null} else {json!("The retained guide is suppressed until its owned build is current")}})
+        let mut state = json!({"requested":true,"displayed":current,"build_token":guide.token.to_string(),"target":guide.target,"mode":guide.mode,"guide_leaf_cap":MAX_GUIDE_LEAVES,"guide_byte_cap":MAX_GUIDE_BYTES,"reason":if current {Value::Null} else {json!("The retained guide is suppressed until its owned build is current")}});
+        if let GuideGeometry::Destinations(destinations) = &guide.geometry {
+            state["source_cluster"] = json!(destinations.source_cluster);
+            state["destination_clusters"] = json!(destinations.clusters);
+            state["leaf_count"] = json!(destinations.boxes.len());
+            state["native_leaves"] = json!(
+                destinations
+                    .boxes
+                    .iter()
+                    .map(|leaf| leaf.ordinal)
+                    .collect::<Vec<_>>()
+            );
+            state["retained_bytes"] = json!(destinations.retained_bytes);
+            state["line_vertices"] = json!(destinations.line_vertices);
+        }
+        state
     }
 
     pub fn set_compiled_visibility_overlay(
@@ -387,9 +482,31 @@ impl Session {
         actor: Actor,
         build_token: Option<String>,
         target: Option<Target>,
+        mode: GuideMode,
     ) -> Result<Value, String> {
+        self.set_compiled_visibility_overlay_controlled(
+            actor,
+            build_token,
+            target,
+            mode,
+            &Control::default(),
+        )
+    }
+
+    pub fn set_compiled_visibility_overlay_controlled(
+        &mut self,
+        actor: Actor,
+        build_token: Option<String>,
+        target: Option<Target>,
+        mode: GuideMode,
+        control: &Control,
+    ) -> Result<Value, String> {
+        control.checkpoint()?;
         self.ensure_not_closing()?;
         let Some(target) = target else {
+            if !matches!(mode, GuideMode::Selected {}) {
+                return Err("Destination bounds require an explicit source leaf or cluster and build token; previous guide is unchanged".into());
+            }
             self.compiled_visibility.guide = None;
             self.compiled_visibility.displayed = false;
             self.scene_serial += 1;
@@ -397,26 +514,51 @@ impl Session {
             return Ok(self.compiled_visibility_overlay());
         };
         self.visibility_view_ready()?;
-        if !matches!(target, Target::Leaf { .. } | Target::Portal { .. }) {
-            return Err("Choose a compiled leaf or portal guide".into());
-        }
+        let (kind, prepare_destinations) = match mode {
+            GuideMode::Selected {} => {
+                if !matches!(target, Target::Leaf { .. } | Target::Portal { .. }) {
+                    return Err("Choose a compiled leaf or portal guide".into());
+                }
+                (Kind::Pvs, false)
+            }
+            GuideMode::Destinations { visibility } => {
+                if !matches!(target, Target::Leaf { .. } | Target::Cluster { .. }) {
+                    return Err("Choose a compiled leaf or cluster with a native PVS/PAS source; resolve camera/position first".into());
+                }
+                (visibility, true)
+            }
+        };
         let build_token =
             build_token.ok_or("A compiled visibility guide requires the returned build token")?;
-        let report = self.inspect_compiled_visibility(&Query {
-            build_token: Some(build_token),
-            target,
-            ..Query::default()
-        })?;
-        let bounds = report.current_bounds()?;
+        let (report, destinations) = self.inspect_visibility_prepared(
+            &Query {
+                build_token: Some(build_token),
+                target,
+                kind,
+                ..Query::default()
+            },
+            control,
+            prepare_destinations,
+        )?;
+        report.require_current()?;
+        let geometry = if prepare_destinations {
+            GuideGeometry::Destinations(destinations.ok_or(
+                "This native leaf has no PVS/PAS source cluster; previous guide is unchanged",
+            )?)
+        } else {
+            GuideGeometry::Selected(report.current_bounds()?)
+        };
         let build = self.compiled.as_ref().ok_or("No owned build remains")?;
         let metadata = build
             .visibility_inspection
             .as_ref()
             .map_err(|error| baked_build::bounded_message(error))?;
+        control.checkpoint()?;
         self.compiled_visibility.guide = Some(Guide {
             token: build.lightmap_identity.token,
             target,
-            bounds,
+            mode,
+            geometry,
             snapshot: Arc::clone(metadata),
         });
         self.compiled_visibility.displayed = true;
@@ -498,10 +640,20 @@ impl Session {
         }
         let guide = self.compiled_visibility.guide.as_ref().unwrap();
         let color = [70, 220, 255, 255];
+        if let GuideGeometry::Destinations(destinations) = &guide.geometry {
+            mesh.lines.reserve_exact(destinations.line_vertices);
+            for leaf in &destinations.boxes {
+                let [mins, maxs] = leaf.bounds.map(DVec3::from_array);
+                mesh.add_bounds_lines(mins, maxs, color);
+            }
+            return;
+        }
         match guide.target {
             Target::Leaf { .. } => {
-                let [mins, maxs] = guide.bounds.map(DVec3::from_array);
-                mesh.add_bounds_lines(mins, maxs, color);
+                if let GuideGeometry::Selected(bounds) = &guide.geometry {
+                    let [mins, maxs] = (*bounds).map(DVec3::from_array);
+                    mesh.add_bounds_lines(mins, maxs, color);
+                }
             }
             Target::Portal { ordinal } => {
                 if let Some(portal) = guide.snapshot.portal(ordinal) {
@@ -526,6 +678,7 @@ impl Session {
 fn read_native(
     identity: &compiler::FileIdentity,
     metadata: &Snapshot,
+    retained_guide_bytes: usize,
     control: &Control,
 ) -> Result<(Bsp, Vec<Leaf>), String> {
     let bytes = baked_build::read_owned_bytes_controlled(identity, control)?;
@@ -534,7 +687,11 @@ fn read_native(
         .checked_add(bytes.len())
         .and_then(|bytes| bytes.checked_add(metadata.bytes()))
         .and_then(|bytes| {
-            bytes.checked_add(MAX_SOURCE_BYTES + MAX_LEAVES * 56 + 4 * MAX_REPORT_BYTES)
+            bytes
+                .checked_add(
+                    MAX_SOURCE_BYTES + MAX_LEAVES * 56 + 4 * MAX_REPORT_BYTES + MAX_GUIDE_BYTES,
+                )
+                .and_then(|bytes| bytes.checked_add(retained_guide_bytes))
         })
         .ok_or("Visibility inspection allocation overflow")?;
     if decoded > baked_build::MAX_BSP_BYTES as usize || live > MAX_CALL_BYTES {
@@ -657,7 +814,8 @@ fn fill(
     bsp: &Bsp,
     leaves: &[Leaf],
     control: &Control,
-) -> Result<(), String> {
+    prepare_destinations: bool,
+) -> Result<Option<DestinationGuide>, String> {
     let visibility = bsp
         .visibility()
         .map_err(|error| error.to_string())?
@@ -682,7 +840,7 @@ fn fill(
                     return Err("Reserved leaf0 has no retained portal or PVS/PAS pages".into());
                 }
                 report.page.total = Some(0);
-                return Ok(());
+                return Ok(None);
             }
             Target::Leaf { ordinal } => {
                 if metadata
@@ -780,6 +938,7 @@ fn fill(
     report.page.total = Some(total);
     report.page.next_offset = (query.offset + report.page.rows.len() < total)
         .then_some(query.offset + report.page.rows.len());
+    let mut destinations = None;
     if let Some(cluster) = cluster {
         let kind = match query.kind {
             Kind::Pvs => VisibilityKind::Visible,
@@ -802,6 +961,16 @@ fn fill(
         if query.visibility_offset > total {
             return Err("PVS/PAS offset exceeds its destination count".into());
         }
+        if prepare_destinations {
+            destinations = Some(destination_bounds(
+                &row,
+                metadata.leaves(),
+                leaves,
+                cluster,
+                total,
+                control,
+            )?);
+        }
         report.visibility.total = Some(total);
         report.visibility.next_offset = (query.visibility_offset + report.visibility.rows.len()
             < total)
@@ -809,7 +978,81 @@ fn fill(
     } else if query.visibility_offset != 0 {
         return Err("This visibility target has no PVS/PAS source cluster".into());
     }
-    Ok(())
+    Ok(destinations)
+}
+
+fn destination_storage(capacity: usize) -> Result<(usize, usize), String> {
+    let retained = capacity
+        .checked_mul(size_of::<GuideBox>())
+        .and_then(|bytes| bytes.checked_add(size_of::<DestinationGuide>()))
+        .ok_or("Destination guide storage overflow")?;
+    let line_vertices = capacity
+        .checked_mul(LINE_VERTICES_PER_BOX)
+        .ok_or("Destination guide line count overflow")?;
+    line_vertices.checked_mul(size_of::<render::scene::LineVertex>())
+        .and_then(|bytes| bytes.checked_add(retained))
+        .filter(|&bytes| bytes <= MAX_GUIDE_BYTES)
+        .ok_or("Destination guide exceeds its 256 KiB bounds/renderer budget; previous guide is unchanged")?;
+    Ok((retained, line_vertices))
+}
+
+fn destination_bounds(
+    row: &[u8],
+    world: &[compiler::visibility_inspection::WorldLeaf],
+    leaves: &[Leaf],
+    source_cluster: usize,
+    clusters: usize,
+    control: &Control,
+) -> Result<DestinationGuide, String> {
+    let included = |leaf: &compiler::visibility_inspection::WorldLeaf| {
+        if leaf.cluster < 0 {
+            return Ok(false);
+        }
+        let byte = row
+            .get(leaf.cluster as usize / 8)
+            .ok_or("Destination cluster exceeds its native row")?;
+        Ok::<_, String>(byte & (1 << (leaf.cluster as usize % 8)) != 0)
+    };
+    let mut count = 0usize;
+    for leaf in world {
+        control.checkpoint()?;
+        if included(leaf)? {
+            count = count
+                .checked_add(1)
+                .ok_or("Destination guide leaf count overflow")?;
+        }
+    }
+    control.checkpoint()?;
+    if count > MAX_GUIDE_LEAVES {
+        return Err(format!(
+            "Complete destination guide has {count} native world leaves across {clusters} destination clusters; cap is {MAX_GUIDE_LEAVES} leaves. Guide unavailable; previous guide is unchanged. Ordinary inspection remains available"
+        ));
+    }
+    destination_storage(count)?;
+    control.checkpoint()?;
+    let mut boxes = Vec::new();
+    boxes
+        .try_reserve_exact(count)
+        .map_err(|_| "Cannot reserve complete destination guide; previous guide is unchanged")?;
+    let (retained_bytes, _) = destination_storage(boxes.capacity())?;
+    for leaf in world {
+        control.checkpoint()?;
+        if included(leaf)? {
+            let row = leaf_row(leaf.ordinal as usize, leaves)?;
+            boxes.push(GuideBox {
+                ordinal: row.ordinal,
+                bounds: row.bounds,
+            });
+        }
+    }
+    control.checkpoint()?;
+    Ok(DestinationGuide {
+        source_cluster,
+        clusters,
+        boxes,
+        retained_bytes,
+        line_vertices: count * LINE_VERTICES_PER_BOX,
+    })
 }
 
 fn stale(report: &mut Inspection, message: &str) {

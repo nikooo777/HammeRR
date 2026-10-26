@@ -46,7 +46,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Show ONE selected compiler-owned world-leaf bounds box or portal ring through the shared viewport guide state. Explicit build_token plus target {kind:leaf|portal,ordinal:N} required. Omit/null target to clear. Current owned output/source/snapshot required; stale/missing/replaced guides are suppressed. Bounds are not convex leaf cells. Preserves map/history/selection/ordinary drafts; active viewport gestures refuse showing. CPU state operation; no game or arbitrary file. UI: Visibility inspection → Show selected guide / Clear guide."
+        description = "Show one owned compiler visibility guide configuration. Default mode {kind:selected} shows target {kind:leaf|portal,ordinal:N}. Mode {kind:destinations,visibility:pvs|pas} requires source target {kind:leaf|cluster,ordinal:N} with a native cluster and shows ALL native world-leaf bounds joined to the complete chosen PVS/PAS destination row, independent of inspection pages. Resolve camera/position through inspect_compiled_visibility first and use its returned Leaf target. Explicit build_token required when showing. Complete sets above 512 leaves or the 256 KiB guide/renderer budget refuse with counts/cap and preserve the previous guide; ordinary inspection stays available. No silent truncation. State reports source cluster, destination cluster count, leaf count, exact bounded native leaf ordinals and resource limits. Omit/null target to clear. Current owned output/source/snapshot required; stale/missing/replaced guides are suppressed. Potential visibility/audibility bounds are not convex cells, render faces or current game occlusion. Preserves map/history/selection/ordinary drafts; active viewport gestures refuse showing. CPU state operation; no game or arbitrary file. UI: Visibility inspection → Show selected guide / Show PVS bounds / Show PAS bounds / Clear guide."
     )]
     pub(in crate::mcp) fn set_compiled_visibility_overlay(
         &self,
@@ -57,6 +57,7 @@ impl EditorServer {
                 Actor::Agent,
                 args.build_token,
                 args.target,
+                args.mode,
             )
         })
     }

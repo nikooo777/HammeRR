@@ -8,21 +8,7 @@ pub(crate) const MAX_CHANNEL_BYTES: usize = (MAX_BYTES
     - crate::instances::MAX_OCCURRENCE_BYTES)
     / 2;
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Origin {
-    Root {
-        entity: u32,
-    },
-    Instance {
-        instance: u32,
-        file: String,
-        entity: u32,
-        expanded_entity: u32,
-        #[serde(serialize_with = "crate::instances::serialize_occurrence")]
-        occurrence: std::sync::Arc<crate::instances::OccurrencePath>,
-    },
-}
+pub use crate::entity_origins::Origin;
 
 #[derive(Debug, Default)]
 pub struct WorldLightOrigins {
@@ -62,33 +48,9 @@ impl ChannelOrigins {
         if self.entries.len() == self.entries.capacity() {
             return Err("Compiled light origin count exceeds the admitted native table".into());
         }
-        let origin = if let Some(entity) = source {
-            if let Some((instance, file, original)) = instances.entity_origin(entity) {
-                let occurrence = instances
-                    .light_occurrence(entity)
-                    .ok_or("Expanded light source has no retained occurrence path")?;
-                self.bytes = self
-                    .bytes
-                    .checked_add(file.len())
-                    .filter(|&bytes| bytes <= MAX_CHANNEL_BYTES)
-                    .ok_or("Compiled light origins exceed their channel storage budget")?;
-                let mut path = String::new();
-                path.try_reserve_exact(file.len())
-                    .map_err(|_| "Compiled light source path cannot be allocated")?;
-                path.push_str(file);
-                Some(Origin::Instance {
-                    instance,
-                    file: path,
-                    entity: original,
-                    expanded_entity: entity,
-                    occurrence: std::sync::Arc::clone(occurrence),
-                })
-            } else {
-                Some(Origin::Root { entity })
-            }
-        } else {
-            None
-        };
+        let origin = source
+            .map(|entity| Origin::capture(entity, instances, &mut self.bytes, MAX_CHANNEL_BYTES))
+            .transpose()?;
         self.entries.push(origin);
         Ok(())
     }

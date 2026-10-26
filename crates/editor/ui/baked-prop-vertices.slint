@@ -1,10 +1,11 @@
-import { Button, ComboBox, ListView, ScrollView, TextEdit } from "std-widgets.slint";
+import { Button, ComboBox, ListView, ScrollView, SpinBox, TextEdit } from "std-widgets.slint";
 
 export component BakedPropVerticesWindow inherits Window {
     title: "Baked prop vertices - HammeRR";
     width: 1020px;
     height: 900px;
     in-out property <string> channel: "LDR";
+    in-out property <int> prop-limit: 32;
     in property <string> build-state;
     in property <string> channels;
     in property <string> selected;
@@ -46,6 +47,8 @@ export component BakedPropVerticesWindow inherits Window {
                         spacing: 8px;
                         Text { text: "Channel"; vertical-alignment: center; }
                         ComboBox { model: ["LDR", "HDR"]; current-value <=> root.channel; selected(value) => { root.change-channel(); } }
+                        Text { text: "Props per page"; vertical-alignment: center; }
+                        SpinBox { minimum: 1; maximum: 32; value <=> root.prop-limit; edited => { root.refresh-inspection(); } }
                         Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
@@ -88,7 +91,7 @@ export component BakedPropVerticesWindow inherits Window {
                         Rectangle { horizontal-stretch: 1; }
                     }
                     Text { text: root.statistics; wrap: word-wrap; }
-                    Text { text: "Stored encoded RGB bytes, range 0–255. HDR is baked independently with the same byte encoding. Values do not measure linear irradiance or game screen brightness. Native ordinals and hardware rows belong to this build; inspecting them leaves editor selection unchanged."; wrap: word-wrap; color: #bac2ce; }
+                    Text { text: "Stored encoded RGB bytes, range 0–255. HDR is baked independently with the same byte encoding. Values do not measure linear irradiance or game screen brightness. Native ordinals and hardware rows belong to this build. Source addresses describe captured authored entities and helper routes; they do not select current objects. Inspection leaves editor selection unchanged."; wrap: word-wrap; color: #bac2ce; }
                     TextEdit { text: root.diagnostics; read-only: true; min-height: 65px; max-height: 100px; }
                 }
             }

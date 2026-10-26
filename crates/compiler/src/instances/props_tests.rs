@@ -548,6 +548,16 @@ fn hidden_and_region_omitted_props_do_not_read_invalid_models_or_check_their_box
     );
     assert_eq!(output.stats.instances.as_ref().unwrap().static_props, 2);
     assert_eq!(output.stats.static_props, 1);
+    let origins = output
+        .static_prop_origins
+        .as_ref()
+        .unwrap()
+        .associations(output.bsp.as_ref().unwrap(), 1)
+        .unwrap();
+    assert!(matches!(
+        origins,
+        [crate::entity_origins::Origin::Instance { entity: 20, .. }]
+    ));
     assert_eq!(
         output
             .bsp
@@ -640,10 +650,10 @@ fn missing_model_diagnostic_selects_the_root_helper_and_retains_leaf_entity_iden
 
 #[test]
 fn four_levels_repeated_props_keep_native_ordinals_and_optional_model_read_linkage() {
-    let (directory, mut parent, game) = prop_fixture(vec![
-        static_prop(20, MODEL, "16 8 32"),
-        static_prop(21, SECOND_MODEL, "-16 8 32"),
-    ]);
+    let mut disabled = static_prop(21, SECOND_MODEL, "-16 8 32");
+    disabled.properties.set("disablevertexlighting", "1");
+    let (directory, mut parent, game) =
+        prop_fixture(vec![static_prop(20, MODEL, "16 8 32"), disabled]);
     let mut file = "child.vmf".to_owned();
     for level in 1..4 {
         let name = format!("level{level}.vmf");
@@ -662,6 +672,7 @@ fn four_levels_repeated_props_keep_native_ordinals_and_optional_model_read_linka
         .set("file", &file);
     let mut second = parent.entities.last().unwrap().clone();
     second.id += 1;
+    let root_helpers = [parent.entities.last().unwrap().id, second.id];
     second.properties.set("origin", "64 0 0");
     parent.entities.push(second);
     let context = source(directory.path());
@@ -734,6 +745,104 @@ fn four_levels_repeated_props_keep_native_ordinals_and_optional_model_read_linka
             [80.0, 8.0, 32.0],
             [48.0, 8.0, 32.0]
         ]
+    );
+    assert_eq!(props.props[1].flags & 0x40, 0x40);
+    assert_eq!(props.props[3].flags & 0x40, 0x40);
+    let native_before = bsp.to_bytes();
+    let origins = crate::static_prop_origins::StaticPropOrigins::prepare(
+        &stats.sources,
+        &prepared,
+        &Control::default(),
+    )
+    .unwrap()
+    .finish(&bsp, &Control::default())
+    .unwrap();
+    let entries = origins.associations(&bsp, 4).unwrap();
+    for (ordinal, entry) in entries.iter().enumerate() {
+        let crate::entity_origins::Origin::Instance {
+            instance,
+            file,
+            entity,
+            expanded_entity,
+            occurrence,
+        } = entry
+        else {
+            panic!("Expected captured instance source");
+        };
+        assert_eq!(*instance, root_helpers[ordinal / 2]);
+        assert_eq!(file, "child.vmf");
+        assert_eq!(*entity, 20 + ordinal as u32 % 2);
+        assert_eq!(*expanded_entity as usize, stats.sources[ordinal]);
+        assert_eq!(
+            occurrence
+                .steps()
+                .map(|step| (step.helper, step.file.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (root_helpers[ordinal / 2], "level3.vmf"),
+                (100, "level2.vmf"),
+                (100, "level1.vmf"),
+                (100, "child.vmf")
+            ]
+        );
+        assert!(std::sync::Arc::ptr_eq(
+            occurrence,
+            prepared.entity_occurrence(*expanded_entity).unwrap()
+        ));
+    }
+    assert_eq!(bsp.to_bytes(), native_before);
+    assert!(origins.associations(&bsp, 3).is_err());
+    let mut replaced = bsp.clone();
+    let table = replaced
+        .game_lumps
+        .iter_mut()
+        .find(|table| table.id == *b"sprp")
+        .unwrap();
+    *table.data.last_mut().unwrap() ^= 1;
+    assert!(origins.associations(&replaced, 4).is_err());
+    replaced.clone_from(&bsp);
+    replaced
+        .game_lumps
+        .iter_mut()
+        .find(|table| table.id == *b"sprp")
+        .unwrap()
+        .version += 1;
+    assert!(origins.associations(&replaced, 4).is_err());
+    replaced.clone_from(&bsp);
+    replaced
+        .game_lumps
+        .iter_mut()
+        .find(|table| table.id == *b"sprp")
+        .unwrap()
+        .flags = 1;
+    assert!(origins.associations(&replaced, 4).is_err());
+    replaced.clone_from(&bsp);
+    replaced.game_lumps.push(
+        replaced
+            .game_lumps
+            .iter()
+            .find(|table| table.id == *b"sprp")
+            .unwrap()
+            .clone(),
+    );
+    assert!(origins.associations(&replaced, 4).is_err());
+    assert!(
+        crate::static_prop_origins::StaticPropOrigins::prepare(
+            &vec![0; source_formats::bsp::MAX_STATIC_PROPS + 1],
+            &prepared,
+            &Control::default(),
+        )
+        .is_err()
+    );
+    let cancelled = Control::default();
+    cancelled.cancel().unwrap();
+    assert!(
+        crate::static_prop_origins::StaticPropOrigins::prepare(
+            &stats.sources,
+            &prepared,
+            &cancelled
+        )
+        .is_err()
     );
     let (sources, missing) = reads.into_parts();
     assert_eq!(sources.len(), 2);

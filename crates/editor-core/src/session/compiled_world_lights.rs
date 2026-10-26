@@ -504,7 +504,6 @@ fn source_association(
     light: &WorldLight,
     bytes: &mut usize,
 ) -> Result<SourceAssociation, String> {
-    use compiler::world_light_origins::Origin;
     let unavailable = |reason| SourceAssociation::Unavailable { reason };
     if !matches!(light.kind, world_light_kind::POINT | world_light_kind::SPOT) {
         return Ok(unavailable(
@@ -520,33 +519,11 @@ fn source_association(
             "No source association was captured for this native record",
         ));
     };
-    let origin = match origin {
-        Origin::Root { entity } => Origin::Root { entity: *entity },
-        Origin::Instance {
-            instance,
-            file,
-            entity,
-            expanded_entity,
-            occurrence,
-        } => {
-            *bytes = bytes
-                .checked_add(file.len())
-                .and_then(|bytes| bytes.checked_add(occurrence.response_bytes()))
-                .filter(|&bytes| bytes <= MAX_REPORT_BYTES)
-                .ok_or("Compiled light source paths exceed the page storage budget")?;
-            let mut path = String::new();
-            path.try_reserve_exact(file.len())
-                .map_err(|_| "Compiled light source path cannot be allocated")?;
-            path.push_str(file);
-            Origin::Instance {
-                instance: *instance,
-                file: path,
-                entity: *entity,
-                expanded_entity: *expanded_entity,
-                occurrence: std::sync::Arc::clone(occurrence),
-            }
-        }
-    };
+    *bytes = bytes
+        .checked_add(origin.source_bytes())
+        .filter(|bytes| *bytes <= MAX_REPORT_BYTES)
+        .ok_or("Compiled light source paths exceed the page storage budget")?;
+    let origin = origin.try_clone()?;
     Ok(SourceAssociation::Available { origin })
 }
 

@@ -309,6 +309,21 @@ Static child `env_fog_controller` entities use ordinary create/property/save ope
 
 Valid editor-only atlas catalogs can stay in child maps. Their metadata is checked and excluded from expanded geometry and BSPs. Unknown top-level metadata and invalid catalogs reject.
 
+`inspect_baked_prop_vertices` returns captured authored source addresses in each
+`props.rows[].source_association` and in `selected_prop.source_association`,
+including disabled props without color files. Available associations contain
+`status:"available"`, `origin`, a compact `label` and a full `description`.
+Root origins are `{kind:"root",entity}`. Instance origins retain
+`{kind:"instance",instance,file,entity,expanded_entity,occurrence}`; `occurrence`
+is the complete ordered `{helper,file}` route, with IDs scoped to each authored
+file. Top-level `source_associations` reports availability and diagnostics;
+unavailable rows contain `status:"unavailable"` and `reason`. Missing or
+unverified metadata leaves valid native/color inspection available. Addresses
+remain captured and historical after source changes; they never select or
+resolve current objects. Source copies cap at 128 KiB per report, within the
+256 KiB report cap. Reduce the existing `prop_limit` (1–32) after a page-budget
+refusal; the desktop uses **Props per page** for the same operation.
+
 `inspect_baked_lightmaps` instance contributors include the complete `occurrence` helper/file route and a readable `occurrence_label`. An instance `source` selector may supply that ordered route to match only the captured occurrence (its first helper must equal `instance` and its last file must equal `file`); omitting it preserves grouped matches across repeated leaf faces with the same legacy instance/file/solid/side identity. Contributor clicks in the human inspector supply the exact captured route. Paths remain historical after source changes. The existing 8 MiB face metadata cap includes actual shared route storage; contributor response copies cap at 512 KiB per page and report unavailable on overflow.
 
 `inspect_compiled_world_lights` rows include `source_association`. Available point/spot origins identify a captured root `entity`, or an instance's outer `instance` helper, leaf `file`, original `entity` and build-local `expanded_entity`. Instance origins also include `occurrence`, an ordered array of `{helper, file}` steps from the root helper through every referenced source to the leaf (up to four levels). Helper IDs are authored in the containing map. Different routes distinguish repeated occurrences of the same leaf entity. Historical IDs and routes remain attached to their captured source snapshot. Missing or inconsistent metadata and other native kinds return `status: "unavailable"` with a reason while intact native rows remain readable. Associations are checked against each channel's exact table count and digest. Inspection does not select or open current source files. Complete occurrence routes are retained once per occurrence and shared across its lights/channels; page copies and serialized routes remain bounded by the returned limits. The existing framing result carries the same enriched record.

@@ -77,7 +77,6 @@ fn clear(window: &CompiledLightsWindow, state: &RefCell<State>) {
 }
 
 fn association_text(row: &WorldLightRow, historical: bool, compact: bool) -> String {
-    use compiler::world_light_origins::Origin;
     use editor_core::session::compiled_world_lights::SourceAssociation;
     let prefix = if historical {
         "Historical source: "
@@ -85,32 +84,11 @@ fn association_text(row: &WorldLightRow, historical: bool, compact: bool) -> Str
         "Captured source: "
     };
     match &row.source_association {
-        SourceAssociation::Available {
-            origin: Origin::Root { entity },
-        } => {
+        SourceAssociation::Available { origin } => {
             if compact {
-                format!("entity:{entity}")
+                origin.label(true)
             } else {
-                format!("{prefix}root entity:{entity}")
-            }
-        }
-        SourceAssociation::Available {
-            origin:
-                Origin::Instance {
-                    instance,
-                    file,
-                    entity,
-                    expanded_entity,
-                    occurrence,
-                },
-        } => {
-            if compact {
-                format!("instance:{instance} / entity:{entity}")
-            } else {
-                let route = occurrence.label();
-                format!(
-                    "{prefix}outer helper entity:{instance}\nOccurrence: {route}\nLeaf file: {file}\nOriginal entity:{entity} · expanded entity:{expanded_entity} (this build)"
-                )
+                format!("{prefix}{}", origin.label(false))
             }
         }
         SourceAssociation::Unavailable { reason } => {

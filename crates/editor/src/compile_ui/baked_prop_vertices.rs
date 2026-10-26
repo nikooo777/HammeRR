@@ -87,6 +87,31 @@ fn clear(window: &BakedPropVerticesWindow, state: &RefCell<State>) {
     window.set_next_vertices(false);
 }
 
+fn source_text(association: &Value, historical: bool, compact: bool) -> String {
+    if association["status"] == "available" {
+        let label = association[if compact { "label" } else { "description" }]
+            .as_str()
+            .unwrap_or("Unavailable");
+        if compact {
+            label.into()
+        } else {
+            format!(
+                "{} source: {label}",
+                if historical { "Historical" } else { "Captured" }
+            )
+        }
+    } else if compact {
+        "Source unavailable".into()
+    } else {
+        format!(
+            "Source association unavailable: {}",
+            association["reason"]
+                .as_str()
+                .unwrap_or("No captured metadata")
+        )
+    }
+}
+
 fn present(window: &BakedPropVerticesWindow, report: &Value) {
     window.set_build_state(build_text(&report["build"]).into());
     window.set_channels(
@@ -112,7 +137,7 @@ fn present(window: &BakedPropVerticesWindow, report: &Value) {
     );
     window.set_prop_rows(strings(rows(&report["props"]).iter().map(|prop| {
         format!(
-            "Prop {} · {} · {} · origin {} · skin {} · flags {} · {} sections · {} vertices",
+            "Prop {} · {} · {} · origin {} · skin {} · flags {} · {} sections · {} vertices · source {}",
             prop["ordinal"],
             prop["model"].as_str().unwrap_or("unknown model"),
             prop["status"].as_str().unwrap_or("unavailable"),
@@ -120,7 +145,7 @@ fn present(window: &BakedPropVerticesWindow, report: &Value) {
             prop["skin"],
             prop["flags"],
             prop["section_count"],
-            prop["vertex_count"]
+            prop["vertex_count"],source_text(&prop["source_association"],report["historical"]==true,true)
         )
     })));
     window.set_section_rows(strings(rows(&report["sections"]).iter().map(|section| {
@@ -146,12 +171,17 @@ fn present(window: &BakedPropVerticesWindow, report: &Value) {
     window.set_previous_vertices(report["vertices"]["offset"].as_u64().is_some_and(|n| n > 0));
     window.set_next_vertices(report["vertices"]["next_offset"].is_u64());
     let selected = &report["selected"];
+    let source = source_text(
+        &report["selected_prop"]["source_association"],
+        report["historical"] == true,
+        false,
+    );
     window.set_selected(if selected.is_object() {
-        format!("Prop {} · {} · checksum {} · {} · section {} · LOD {}\n{} · {} bytes · SHA256 {}\nSource closure: {}",
+        format!("{source}\nProp {} · {} · checksum {} · {} · section {} · LOD {}\n{} · {} bytes · SHA256 {}\nSource closure: {}",
             selected["ordinal"], selected["model"].as_str().unwrap_or("?"), selected["checksum"], report["channel"].as_str().unwrap_or("?"), report["vertices"]["section"],
             report["vertices"]["lod"], selected["path"].as_str().unwrap_or("?"), selected["bytes"],
             selected["sha256"].as_str().unwrap_or("?"), report["bake"]["source_closure"].as_str().unwrap_or("unverifiable"))
-    } else { "No stored color selected".into() }.into());
+    } else if report["selected_prop"].is_object(){format!("{source}\nNo stored color selected")}else { "No stored color selected".into() }.into());
     let statistics = &report["statistics"];
     window.set_statistics(
         if statistics.is_object() {
@@ -172,6 +202,7 @@ fn present(window: &BakedPropVerticesWindow, report: &Value) {
             &report["diagnostics"],
             &report["build"]["diagnostics"],
             &report["bake"]["diagnostics"],
+            &report["source_associations"]["diagnostics"],
             &report["build"]["render_context"]["diagnostics"],
         ]
         .into_iter()
@@ -210,6 +241,7 @@ fn inspect(
         }
         state.borrow().query.clone()
     };
+    query.prop_limit = usize::try_from(window.get_prop_limit()).unwrap_or(0);
     query.channel = if window.get_channel() == "HDR" {
         Channel::Hdr
     } else {

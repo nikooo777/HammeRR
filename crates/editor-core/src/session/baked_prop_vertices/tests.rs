@@ -49,7 +49,7 @@ fn token(report: &Value) -> String {
 
 #[test]
 fn actual_publication_pages_native_holes_all_lods_duplicates_and_exact_bytes() {
-    let (_directory, session, _source) = compiled(true);
+    let (_directory, mut session, _source) = compiled(true);
     let vmf = session.document().vmf().clone();
     let history = session.history_snapshot();
     let camera = session.camera();
@@ -62,6 +62,17 @@ fn actual_publication_pages_native_holes_all_lods_duplicates_and_exact_bytes() {
     assert_eq!(first["props"]["total"], 3);
     assert_eq!(first["props"]["rows"][0]["status"], "disabled_by_prop");
     assert_eq!(first["props"]["rows"][1]["ordinal"], 1);
+    assert_eq!(first["source_associations"]["status"], "available");
+    for (ordinal, entity) in [9100, 9101, 9102].into_iter().enumerate() {
+        assert_eq!(
+            first["props"]["rows"][ordinal]["source_association"]["origin"],
+            json!({"kind":"root","entity":entity})
+        );
+    }
+    assert_eq!(
+        first["selected_prop"]["source_association"]["origin"],
+        json!({"kind":"root","entity":9101})
+    );
     assert_eq!(first["selected"]["ordinal"], 1);
     assert_eq!(first["selected"]["vertex_count"], 306);
     assert_eq!(first["sections"]["rows"][0]["vertex_count"], 300);
@@ -148,6 +159,154 @@ fn actual_publication_pages_native_holes_all_lods_duplicates_and_exact_bytes() {
     assert_eq!(session.document().vmf(), &vmf);
     assert_eq!(session.history_snapshot(), history);
     assert_eq!(session.camera(), camera);
+    session.compiled.as_mut().unwrap().static_prop_origins =
+        Err("Captured source metadata is unavailable".into());
+    let missing = session
+        .inspect_baked_prop_vertices(&Query::default())
+        .unwrap()
+        .report;
+    assert_eq!(missing["source_associations"]["status"], "unavailable");
+    assert_eq!(missing["bake"]["status"], "available");
+    assert_eq!(missing["vertices"]["rows"], first["vertices"]["rows"]);
+}
+
+#[test]
+fn repeated_nested_prop_addresses_survive_child_edits_without_changing_native_bytes() {
+    use source_formats::vmf::Entity;
+
+    let (directory, game, mut vmf) = test_support::fixture();
+    let mut normal = vmf
+        .entities
+        .iter()
+        .find(|entity| entity.id == 9101)
+        .unwrap()
+        .clone();
+    normal.id = 2;
+    let mut disabled = vmf
+        .entities
+        .iter()
+        .find(|entity| entity.id == 9100)
+        .unwrap()
+        .clone();
+    disabled.id = 3;
+    disabled.properties.set("origin", "0 0 96");
+    let mut leaf = map_core::Document::empty().into_vmf();
+    leaf.entities = vec![normal, disabled];
+    let helper = |id, file: &str, origin: &str| {
+        let mut helper = Entity::new(id, "func_instance");
+        helper.properties.set("file", file);
+        helper.properties.set("origin", origin);
+        helper
+    };
+    let mut pair = map_core::Document::empty().into_vmf();
+    pair.entities = vec![
+        helper(2, "leaf.vmf", "-64 0 0"),
+        helper(3, "leaf.vmf", "64 0 0"),
+    ];
+    vmf.entities
+        .retain(|entity| entity.classname() != Some("prop_static") || entity.id == 9101);
+    vmf.entities.extend([
+        helper(9200, "pair.vmf", "0 -64 0"),
+        helper(9201, "pair.vmf", "0 64 0"),
+    ]);
+    let source = directory.path().join("maps/source.vmf");
+    let leaf_path = directory.path().join("maps/leaf.vmf");
+    let pair_path = directory.path().join("maps/pair.vmf");
+    for (path, map) in [(&source, &vmf), (&leaf_path, &leaf), (&pair_path, &pair)] {
+        std::fs::write(path, map.write(&Default::default())).unwrap();
+    }
+    let mut session = Session::new(Ok(game));
+    session.open(Actor::User, &source, false).unwrap();
+    session
+        .update_build_settings(
+            Actor::User,
+            BuildSettingsUpdate {
+                lighting: Some("direct_ldr_hdr"),
+                physics: Some("none"),
+                bake_static_prop_vertices: Some(true),
+                pack_sky_assets: Some(false),
+                generate_reflections: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let result = session.begin_compile(Actor::User, None).unwrap().run();
+    session.finish_compile(Actor::User, &result);
+    assert!(
+        result.as_ref().unwrap().published(),
+        "{:?}",
+        session.compile_status()
+    );
+    let output = session.compiled.as_ref().unwrap().path.clone();
+    let native_before = std::fs::read(&output).unwrap();
+    let before = session
+        .inspect_baked_prop_vertices(&Query::default())
+        .unwrap()
+        .report;
+    assert_eq!(before["props"]["total"], 9);
+    assert_eq!(before["bake"]["baked_receivers"], 5);
+    assert_eq!(
+        before["props"]["rows"][0]["source_association"]["origin"],
+        json!({"kind":"root","entity":9101})
+    );
+    let bsp = Bsp::parse(&native_before).unwrap();
+    let props = bsp.static_props().unwrap().unwrap();
+    for (index, (outer, inner, x, y)) in [
+        (9200, 2, -64., -64.),
+        (9200, 3, 64., -64.),
+        (9201, 2, -64., 64.),
+        (9201, 3, 64., 64.),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for (offset, entity, z) in [(0, 2, 32.), (1, 3, 96.)] {
+            let ordinal = 1 + index * 2 + offset;
+            let row = &before["props"]["rows"][ordinal];
+            let origin = &row["source_association"]["origin"];
+            assert_eq!(origin["kind"], "instance");
+            assert_eq!(origin["instance"], outer);
+            assert_eq!(origin["file"], "leaf.vmf");
+            assert_eq!(origin["entity"], entity);
+            assert_eq!(
+                row["source_association"]["label"],
+                format!("entity:{outer} → pair.vmf / entity:{inner} → leaf.vmf / entity:{entity}")
+            );
+            assert_eq!(
+                origin["occurrence"],
+                json!([{"helper":outer,"file":"pair.vmf"},{"helper":inner,"file":"leaf.vmf"}])
+            );
+            assert_eq!(props.props[ordinal].origin, [x, y, z]);
+            assert_eq!(row["origin"], json!(props.props[ordinal].origin));
+            assert_eq!(
+                row["status"],
+                if entity == 3 {
+                    "disabled_by_prop"
+                } else {
+                    "baked"
+                }
+            );
+        }
+    }
+    let query = Query {
+        build_token: Some(token(&before)),
+        prop: Some(7),
+        channel: Channel::Hdr,
+        ..Query::default()
+    };
+    let selected = session.inspect_baked_prop_vertices(&query).unwrap().report;
+    assert_eq!(
+        selected["selected_prop"]["source_association"],
+        before["props"]["rows"][7]["source_association"]
+    );
+    assert_eq!(selected["selected"]["ordinal"], 7);
+    leaf.entities[0].id = 44;
+    std::fs::write(&leaf_path, leaf.write(&Default::default())).unwrap();
+    let historical = session.inspect_baked_prop_vertices(&query).unwrap().report;
+    assert_eq!(historical["historical"], true);
+    assert_eq!(historical["selected_prop"], selected["selected_prop"]);
+    assert_eq!(historical["props"]["rows"], before["props"]["rows"]);
+    assert_eq!(std::fs::read(&output).unwrap(), native_before);
 }
 
 #[test]
@@ -212,6 +371,11 @@ fn retained_token_ranges_and_missing_hdr_never_select_another_file() {
         .unwrap()
         .report;
     assert!(disabled["selected"].is_null());
+    assert_eq!(disabled["selected_prop"]["ordinal"], 0);
+    assert_eq!(
+        disabled["selected_prop"]["source_association"]["origin"],
+        json!({"kind":"root","entity":9100})
+    );
     assert_eq!(disabled["props"]["rows"][0]["status"], "disabled_by_prop");
 }
 
@@ -224,7 +388,7 @@ fn no_owner_and_a_successful_non_baked_owner_have_explicit_empty_states() {
         .report;
     assert_eq!(unavailable["build"]["status"], "unavailable");
     assert!(unavailable["selected"].is_null());
-    let (_directory, session, _source) = compiled_options(false, 0, false);
+    let (_directory, mut session, _source) = compiled_options(false, 0, false);
     let report = session
         .inspect_baked_prop_vertices(&Query::default())
         .unwrap()
@@ -236,12 +400,31 @@ fn no_owner_and_a_successful_non_baked_owner_have_explicit_empty_states() {
     assert_eq!(report["props"]["rows"][1]["status"], "not_baked");
     assert!(report["selected"].is_null());
     assert_eq!(report["vertices"]["returned"], 0);
+    assert_eq!(report["source_associations"]["status"], "available");
+    assert_eq!(report["selected_prop"]["ordinal"], 0);
     assert!(
         report["channels"]
             .as_array()
             .unwrap()
             .iter()
             .all(|channel| channel["available"] == false)
+    );
+    session.compiled.as_mut().unwrap().static_prop_origins =
+        Err("Captured source metadata exceeds its storage budget".into());
+    let missing = session
+        .inspect_baked_prop_vertices(&Query::default())
+        .unwrap()
+        .report;
+    assert_eq!(missing["build"]["status"], "current");
+    assert_eq!(missing["props"]["total"], 3);
+    assert_eq!(missing["source_associations"]["status"], "unavailable");
+    assert_eq!(
+        missing["selected_prop"]["source_association"]["status"],
+        "unavailable"
+    );
+    assert_eq!(
+        missing["props"]["rows"][1]["origin"],
+        report["props"]["rows"][1]["origin"]
     );
 }
 
@@ -271,6 +454,8 @@ fn changed_sources_remain_historical_raw_while_replaced_output_clears_every_page
     assert_eq!(stale["bake"]["status"], "available");
     assert_eq!(stale["bake"]["source_closure"], "changed");
     assert_eq!(stale["vertices"]["rows"], first["vertices"]["rows"]);
+    assert_eq!(stale["selected_prop"], first["selected_prop"]);
+    assert_eq!(stale["props"]["rows"], first["props"]["rows"]);
     session.compiled.as_mut().unwrap().prop_lighting_guard = None;
     let unguarded = session.inspect_baked_prop_vertices(&query).unwrap().report;
     assert_eq!(unguarded["bake"]["source_closure"], "unverifiable");
@@ -299,6 +484,8 @@ fn changed_sources_remain_historical_raw_while_replaced_output_clears_every_page
     assert_eq!(unavailable["build"]["status"], "unavailable");
     assert_eq!(unavailable["bake"]["status"], "unavailable");
     assert!(unavailable["selected"].is_null());
+    assert!(unavailable["selected_prop"].is_null());
+    assert_eq!(unavailable["source_associations"]["status"], "unavailable");
     assert!(unavailable["statistics"].is_null());
     for key in ["props", "sections", "vertices"] {
         assert!(unavailable[key]["rows"].as_array().unwrap().is_empty());
@@ -359,6 +546,12 @@ fn complete_archive_validation_precedes_any_selected_page() {
 
 #[test]
 fn diagnostics_serialization_and_decoded_allocation_limits_are_explicit() {
+    let origins = [compiler::entity_origins::Origin::Root { entity: 42 }];
+    let associations = Ok(origins.as_slice());
+    let mut source_bytes = MAX_PAGE_SOURCE_BYTES - origins[0].response_copy_bytes();
+    assert!(source_association(&associations, 0, &mut source_bytes).is_ok());
+    assert_eq!(source_bytes, MAX_PAGE_SOURCE_BYTES);
+    assert!(source_association(&associations, 0, &mut source_bytes).is_err());
     let mut report = empty_report(&Query::default(), json!({"diagnostics":[]}));
     report["diagnostics"] = json!(vec!["π".repeat(600); 100]);
     bound_diagnostics(&mut report);

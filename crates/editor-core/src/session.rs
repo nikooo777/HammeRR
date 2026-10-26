@@ -168,6 +168,7 @@ struct Snapshot {
 struct CompiledMap {
     visibility_inspection: Result<Arc<compiler::visibility_inspection::Snapshot>, String>,
     world_light_origins: Option<Arc<compiler::world_light_origins::WorldLightOrigins>>,
+    static_prop_origins: Result<Arc<compiler::static_prop_origins::StaticPropOrigins>, String>,
     claim: Option<crate::path_claims::Claim>,
     output_identity: Result<compiler::FileIdentity, String>,
     face_origins: Result<std::sync::Arc<compiler::face_origins::FaceOrigins>, String>,

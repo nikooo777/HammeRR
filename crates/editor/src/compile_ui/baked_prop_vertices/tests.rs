@@ -74,6 +74,33 @@ fn baked_prop_vertices_controls_inspect_real_pages_channels_disabled_props_and_s
     };
     window.invoke_refresh_inspection();
     assert_eq!(window.get_prop_rows().row_count(), 3);
+    assert!(
+        window
+            .get_prop_rows()
+            .row_data(0)
+            .unwrap()
+            .contains("entity:9100")
+    );
+    assert!(
+        window
+            .get_selected()
+            .contains("Captured source: root entity:9101")
+    );
+    window.set_prop_limit(1);
+    window.invoke_refresh_inspection();
+    assert_eq!(window.get_prop_rows().row_count(), 1);
+    window.invoke_page_props(1);
+    assert_eq!(window.get_prop_rows().row_count(), 1);
+    assert!(
+        window
+            .get_prop_rows()
+            .row_data(0)
+            .unwrap()
+            .contains("entity:9101")
+    );
+    window.set_prop_limit(32);
+    window.invoke_refresh_inspection();
+    assert_eq!(window.get_prop_rows().row_count(), 3);
     assert_eq!(window.get_section_rows().row_count(), 2);
     assert_eq!(window.get_vertex_rows().row_count(), 256);
     assert!(window.get_next_vertices());
@@ -103,6 +130,11 @@ fn baked_prop_vertices_controls_inspect_real_pages_channels_disabled_props_and_s
     assert!(window.get_selected().contains("LOD 1"));
     window.invoke_inspect_prop(0);
     assert_eq!(window.get_vertex_rows().row_count(), 0);
+    assert!(
+        window
+            .get_selected()
+            .contains("Captured source: root entity:9100")
+    );
     assert!(!window.get_diagnostics().is_empty());
     window.invoke_inspect_prop(1);
     assert_eq!(window.get_vertex_rows().row_count(), 256);
@@ -125,6 +157,11 @@ fn baked_prop_vertices_controls_inspect_real_pages_channels_disabled_props_and_s
     assert_eq!(window.get_vertex_rows().row_count(), 0);
     window.invoke_refresh_inspection();
     assert!(window.get_build_state().contains("stale"));
+    assert!(
+        window
+            .get_selected()
+            .contains("Historical source: root entity:9101")
+    );
     assert_eq!(window.get_vertex_rows().row_count(), 256);
     {
         let mut session = lock(&shared);

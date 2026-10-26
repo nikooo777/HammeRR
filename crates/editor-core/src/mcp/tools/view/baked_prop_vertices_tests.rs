@@ -42,6 +42,14 @@ fn baked_prop_vertices_mcp_schema_and_real_publication_match_read_only_session()
         .report;
     assert_eq!(expected["build"]["status"], "current");
     assert_eq!(expected["selected"]["ordinal"], 1);
+    assert_eq!(
+        expected["selected_prop"]["source_association"]["origin"],
+        json!({"kind":"root","entity":9101})
+    );
+    assert_eq!(
+        expected["props"]["rows"][0]["source_association"]["origin"],
+        json!({"kind":"root","entity":9100})
+    );
     let token = expected["build"]["token"].as_str().unwrap().to_owned();
     let before = (
         session.document().vmf().clone(),

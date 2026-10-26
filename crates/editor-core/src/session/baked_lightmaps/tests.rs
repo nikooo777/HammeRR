@@ -370,6 +370,7 @@ fn install_build(session: &mut Session, path: &Path, source: &Path) {
     session.compiled = Some(CompiledMap {
         visibility_inspection: Err("Literal fixture has no compiler visibility mapping".into()),
         world_light_origins: None,
+        static_prop_origins: Err("Prop source metadata not retained in this fixture".into()),
         prop_lighting_guard: None,
         static_prop_sources: None,
         claim: None,

@@ -13,6 +13,7 @@ pub const MAX_PAGE_PROPS: usize = 32;
 pub const MAX_PAGE_SECTIONS: usize = 32;
 pub const MAX_PAGE_VERTICES: usize = 256;
 pub const MAX_REPORT_BYTES: usize = 256 * 1024;
+pub const MAX_PAGE_SOURCE_BYTES: usize = 128 * 1024;
 pub const MAX_CALL_BYTES: usize = 384 * 1024 * 1024;
 const SOURCE_BYTES: usize = 64 * 1024 * 1024;
 const METADATA_BYTES: usize = 32 * 1024 * 1024;
@@ -247,7 +248,17 @@ impl Session {
                 closure = "changed";
             }
         }
-        inspect_bundle(&bundle, query, closure, &mut report)?;
+        let source_associations = build
+            .static_prop_origins
+            .as_ref()
+            .map_err(String::as_str)
+            .and_then(|origins| {
+                origins.associations(
+                    &bsp,
+                    bundle.static_props().map_or(0, |props| props.props.len()),
+                )
+            });
+        inspect_bundle(&bundle, query, closure, &source_associations, &mut report)?;
         if let Some(error) = baked_build::source_issue_controlled(build, control) {
             control.checkpoint()?;
             stale(&mut report, error);
@@ -274,19 +285,45 @@ fn empty_report(query: &Query, build: Value) -> Value {
     json!({
         "build":build,"historical":false,"channel":query.channel.name(),
         "bake":{"status":"unavailable","manifest_version":null,"static_props_version":null,"static_props_sha256":null,"map_flags":null,"emitted_props":0,"baked_receivers":0,"source_closure":"unverifiable","diagnostics":[]},
-        "channels":[],"props":page_value(query.prop_offset,query.prop_limit,0,Vec::new()),
+        "source_associations":{"status":"unavailable","diagnostics":["No successful native prop source mapping was retained"]},
+        "selected_prop":null,"channels":[],"props":page_value(query.prop_offset,query.prop_limit,0,Vec::new()),
         "selected":null,"sections":page_value(query.section_offset,query.section_limit,0,Vec::new()),
         "vertices":page_value(query.vertex_offset,query.vertex_limit,0,Vec::new()),"statistics":null,
         "color_encoding":{"storage":"bgra8","range":[0,255],"alpha":"stored component; current writer emits 255; not an authored opacity measurement","units":"encoded_vertex_color_bytes","explanation":"Raw lossy gamma/overbright encoded vertex-color bytes, not linear RGBExp32 intensity, irradiance, material-modulated screen pixels or exposure-adapted brightness. HDR uses the same byte encoding independently. RGBA is only byte reordering."},
-        "limits":{"bsp_bytes":baked_build::MAX_BSP_BYTES,"pak_bytes":PakLimits::default().max_total_bytes,"source_bytes":SOURCE_BYTES,"live_bytes":MAX_CALL_BYTES,"report_bytes":MAX_REPORT_BYTES,"page_props":MAX_PAGE_PROPS,"page_sections":MAX_PAGE_SECTIONS,"page_vertices":MAX_PAGE_VERTICES,"diagnostics":MAX_DIAGNOSTICS,"diagnostic_bytes":MAX_DIAGNOSTIC_BYTES,"receiver_sections":prop_lighting_assets::MAX_RECEIVER_MESHES},
+        "limits":{"bsp_bytes":baked_build::MAX_BSP_BYTES,"pak_bytes":PakLimits::default().max_total_bytes,"source_bytes":SOURCE_BYTES,"live_bytes":MAX_CALL_BYTES,"report_bytes":MAX_REPORT_BYTES,"page_source_bytes":MAX_PAGE_SOURCE_BYTES,"page_props":MAX_PAGE_PROPS,"page_sections":MAX_PAGE_SECTIONS,"page_vertices":MAX_PAGE_VERTICES,"diagnostics":MAX_DIAGNOSTICS,"diagnostic_bytes":MAX_DIAGNOSTIC_BYTES,"receiver_sections":prop_lighting_assets::MAX_RECEIVER_MESHES},
         "diagnostics":[]
     })
+}
+
+fn source_association(
+    associations: &Result<&[compiler::entity_origins::Origin], &str>,
+    ordinal: usize,
+    bytes: &mut usize,
+) -> Result<Value, String> {
+    let entries = match associations {
+        Ok(entries) => entries,
+        Err(reason) => return Ok(json!({"status":"unavailable","reason":reason})),
+    };
+    let Some(origin) = entries.get(ordinal) else {
+        return Ok(
+            json!({"status":"unavailable","reason":"No source association was captured for this native prop"}),
+        );
+    };
+    *bytes = bytes
+        .checked_add(origin.response_copy_bytes())
+        .filter(|bytes| *bytes <= MAX_PAGE_SOURCE_BYTES)
+        .ok_or("Prop source paths exceed 128 KiB; request fewer props per page")?;
+    let origin = origin.try_clone()?;
+    let label = origin.route_label();
+    let description = origin.label(false);
+    Ok(json!({"status":"available","origin":origin,"label":label,"description":description}))
 }
 
 fn inspect_bundle(
     bundle: &ValidatedPropLighting,
     query: &Query,
     closure: &str,
+    source_associations: &Result<&[compiler::entity_origins::Origin], &str>,
     report: &mut Value,
 ) -> Result<(), String> {
     let manifest = bundle.manifest();
@@ -303,6 +340,11 @@ fn inspect_bundle(
         let bytes = manifest.map_or(0, |manifest| manifest.assets.iter().filter(|asset|asset.channel == channel).map(|asset|asset.bytes).sum::<usize>());
         json!({"channel":channel,"available":manifest.is_some_and(|manifest|manifest.channels.contains(&channel)),"bytes":bytes})
     }));
+    report["source_associations"] = match source_associations {
+        Ok(_) => json!({"status":"available","diagnostics":[]}),
+        Err(reason) => json!({"status":"unavailable","diagnostics":[reason]}),
+    };
+    let mut source_bytes = 0usize;
     let mut rows = Vec::new();
     if let Some(props) = props {
         for (ordinal, prop) in props
@@ -319,7 +361,9 @@ fn inspect_bundle(
                     .ok()
                     .map(|index| &manifest.receivers[index])
             });
-            rows.push(json!({"ordinal":ordinal,"model":props.model_name(prop.model as usize).map_err(|error|error.to_string())?,"origin":prop.origin,"skin":prop.skin,"flags":prop.flags,"status":if prop.flags & 0x40 != 0{"disabled_by_prop"}else if receiver.is_some(){"baked"}else{"not_baked"},"checksum":receiver.map(|receiver|receiver.checksum),"section_count":receiver.map_or(0,|receiver|receiver.meshes.len()),"vertex_count":receiver.map_or(0,|receiver|receiver.meshes.iter().map(|mesh|mesh.vertex_count as usize).sum::<usize>()),"channels":if receiver.is_some(){manifest.map(|manifest|manifest.channels.as_slice()).unwrap_or_default()}else{&[]}}));
+            let source_association =
+                source_association(source_associations, ordinal, &mut source_bytes)?;
+            rows.push(json!({"source_association":source_association,"ordinal":ordinal,"model":props.model_name(prop.model as usize).map_err(|error|error.to_string())?,"origin":prop.origin,"skin":prop.skin,"flags":prop.flags,"status":if prop.flags & 0x40 != 0{"disabled_by_prop"}else if receiver.is_some(){"baked"}else{"not_baked"},"checksum":receiver.map(|receiver|receiver.checksum),"section_count":receiver.map_or(0,|receiver|receiver.meshes.len()),"vertex_count":receiver.map_or(0,|receiver|receiver.meshes.iter().map(|mesh|mesh.vertex_count as usize).sum::<usize>()),"channels":if receiver.is_some(){manifest.map(|manifest|manifest.channels.as_slice()).unwrap_or_default()}else{&[]}}));
         }
     }
     report["props"] = page_value(query.prop_offset, query.prop_limit, total, rows);
@@ -336,6 +380,14 @@ fn inspect_bundle(
                 .map(|asset| asset.ordinal)
         })
     });
+    let native_ordinal = ordinal.or_else(|| (total > 0).then_some(0));
+    if let Some(ordinal) = native_ordinal
+        && let Some(props) = props
+    {
+        let association =
+            source_association(source_associations, ordinal as usize, &mut source_bytes)?;
+        report["selected_prop"] = json!({"ordinal":ordinal,"model":props.model_name(props.props[ordinal as usize].model as usize).map_err(|error|error.to_string())?,"source_association":association});
+    }
     let selected = ordinal.and_then(|ordinal| bundle.asset(ordinal, channel));
     let Some((asset, data)) = selected else {
         page_range(query.section_offset, 0, "Section")?;
@@ -432,6 +484,8 @@ fn unavailable(report: &mut Value, error: String) {
     report["build"]["current"] = json!(false);
     report["build"]["render_context"]["current_for_display"] = json!(false);
     report["bake"]["status"] = json!("unavailable");
+    report["source_associations"] = json!({"status":"unavailable","diagnostics":["The owned native prop table is unavailable"]});
+    report["selected_prop"] = Value::Null;
     report["selected"] = Value::Null;
     report["statistics"] = Value::Null;
     for key in ["props", "sections", "vertices"] {

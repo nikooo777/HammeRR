@@ -1463,6 +1463,7 @@ impl Session {
                 self.compiled = Some(CompiledMap {
                     visibility_inspection: result.output.visibility_inspection.clone(),
                     world_light_origins: result.output.world_light_origins.clone(),
+                    static_prop_origins: result.output.static_prop_origins.clone(),
                     prop_lighting_guard,
                     static_prop_sources: result.static_prop_sources.clone(),
                     claim: result.take_artifact_claim(),

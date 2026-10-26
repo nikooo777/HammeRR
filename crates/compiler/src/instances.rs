@@ -831,13 +831,6 @@ impl PreparedInstances<'_> {
         Some((*owner, file, *original))
     }
 
-    pub(crate) fn light_occurrence(
-        &self,
-        generated: u32,
-    ) -> Option<&std::sync::Arc<OccurrencePath>> {
-        self.entity_occurrence(generated)
-    }
-
     pub fn entity_occurrence(&self, generated: u32) -> Option<&std::sync::Arc<OccurrencePath>> {
         self.provenance
             .get(&format!("entity:{generated}"))

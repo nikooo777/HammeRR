@@ -10,6 +10,7 @@ mod cordons;
 pub mod cubemap_assets;
 mod detail_props;
 mod emit;
+pub mod entity_origins;
 pub mod face_origins;
 pub mod faces;
 mod hints;
@@ -28,6 +29,7 @@ mod publication;
 pub mod sky_assets;
 pub mod sky_region;
 pub mod static_prop_assets;
+pub mod static_prop_origins;
 mod static_props;
 pub mod tree;
 mod visclusters;
@@ -662,6 +664,7 @@ fn serialize_elapsed<S: serde::Serializer>(
 pub struct Output {
     pub visibility_inspection: Result<std::sync::Arc<visibility_inspection::Snapshot>, String>,
     pub world_light_origins: Option<std::sync::Arc<world_light_origins::WorldLightOrigins>>,
+    pub static_prop_origins: Result<std::sync::Arc<static_prop_origins::StaticPropOrigins>, String>,
     pub face_origins: Result<std::sync::Arc<face_origins::FaceOrigins>, String>,
     pub instance_dependencies: Option<instances::DependencyGuard>,
     pub bsp: Option<Bsp>,
@@ -1573,6 +1576,11 @@ fn build(
             .as_ref()
             .filter(|_| options.pack_static_prop_assets),
     )?;
+    let prop_origins = static_prop_origins::StaticPropOrigins::prepare(
+        &prop_stats.sources,
+        prepared_instances,
+        control,
+    );
     output.static_prop_sources = prop_stats.source_guard;
     if output.report.has_errors() {
         return Ok(());
@@ -1821,6 +1829,9 @@ fn build(
     output.stats.leaves = bsp.records::<bsp::Leaf>().map_err(|e| e.to_string())?.len();
     output.stats.faces = bsp.records::<bsp::Face>().map_err(|e| e.to_string())?.len();
     output.stats.models = models.len();
+    output.static_prop_origins = prop_origins
+        .and_then(|origins| origins.finish(&bsp, control))
+        .map(std::sync::Arc::new);
     output.face_origins = emission
         .face_origins
         .and_then(|origins| origins.finish(&bsp))
@@ -1876,6 +1887,7 @@ pub fn compile_with_source_controlled(
     let mut output = Output {
         visibility_inspection: Err("No successful compiler visibility mapping was retained".into()),
         world_light_origins: None,
+        static_prop_origins: Err("No successful native prop source mapping was retained".into()),
         face_origins: Err("No successful face emission mapping was retained".into()),
         instance_dependencies: None,
         bsp: None,

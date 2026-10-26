@@ -93,6 +93,7 @@ impl OwnedFixture {
         self.session.compiled = Some(CompiledMap {
             visibility_inspection: Err("Literal fixture has no compiler visibility mapping".into()),
             world_light_origins: None,
+            static_prop_origins: Err("Prop source metadata not retained in this fixture".into()),
             claim: None,
             output_identity: Ok(output.clone()),
             face_origins: Err("Literal world-light fixture has no authored face mapping".into()),

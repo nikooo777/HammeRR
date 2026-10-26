@@ -8,7 +8,7 @@ use source_formats::vtf::RgbaImage;
 use super::Session;
 
 mod origins;
-pub use origins::SourceReference;
+pub use origins::{OccurrenceReference, SourceReference};
 
 pub const MAX_PAGE_FACES: usize = 32;
 pub const MAX_PREVIEW_SIDE: usize = 128;
@@ -104,6 +104,34 @@ impl Session {
         {
             return Err("Instance source reference exceeds the bounded filename length".into());
         }
+        if let Some(SourceReference::Instance {
+            occurrence: Some(route),
+            ..
+        }) = &query.source
+            && (route.is_empty()
+                || route.len() > compiler::instances::MAX_EXPANSION_DEPTH
+                || route.iter().any(|step| {
+                    step.file.is_empty() || step.file.len() > compiler::instances::MAX_FIELD_BYTES
+                }))
+        {
+            return Err(
+                "Instance occurrence reference requires 1–4 bounded helper/file steps".into(),
+            );
+        }
+        if let Some(SourceReference::Instance {
+            instance,
+            file,
+            occurrence: Some(route),
+            ..
+        }) = &query.source
+            && (route.first().is_none_or(|step| step.helper != *instance)
+                || route.last().is_none_or(|step| step.file != *file))
+        {
+            return Err(
+                "Instance occurrence must start at its outer helper and end at its leaf file"
+                    .into(),
+            );
+        }
         let source = if query.selected_authored_face {
             Some(self.selected_baked_lightmap_source()?)
         } else {
@@ -121,7 +149,7 @@ impl Session {
             "mapping":origins::unavailable("No successful owned emission mapping is available"),
             "intensity_units":"Decoded linear RGBExp32 intensities; independent of the display image and not native screen brightness.",
             "channels":[], "faces":[], "selected":null, "diagnostics":[],
-            "limits":{"bsp_bytes":MAX_BSP_BYTES,"page_faces":MAX_PAGE_FACES,"preview_side":MAX_PREVIEW_SIDE,"mapping_faces":compiler::face_origins::MAX_FACES,"mapping_references":compiler::face_origins::MAX_REFERENCES,"mapping_bytes":compiler::face_origins::MAX_BYTES},
+            "limits":{"bsp_bytes":MAX_BSP_BYTES,"page_faces":MAX_PAGE_FACES,"preview_side":MAX_PREVIEW_SIDE,"mapping_faces":compiler::face_origins::MAX_FACES,"mapping_references":compiler::face_origins::MAX_REFERENCES,"mapping_bytes":compiler::face_origins::MAX_BYTES,"mapping_page_source_bytes":origins::MAX_PAGE_SOURCE_BYTES,"occurrence_depth":compiler::instances::MAX_EXPANSION_DEPTH,"occurrence_bytes":compiler::instances::MAX_OCCURRENCE_BYTES},
         });
         let Some(build) = &self.compiled else {
             return Ok(Inspection {

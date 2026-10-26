@@ -12,6 +12,7 @@ use super::*;
 
 const MAX_PLAN_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ROWS: usize = 64;
+const MAX_PROVENANCE_SOURCE_BYTES: usize = 1024 * 1024;
 
 #[derive(Default)]
 pub(super) struct State {
@@ -70,6 +71,7 @@ struct FaceOrigin {
     file: String,
     original_solid: u32,
     original_side: u32,
+    occurrence: Arc<instances::OccurrencePath>,
 }
 
 #[derive(Clone)]
@@ -80,6 +82,7 @@ struct EntityOrigin {
     file: String,
     original: u32,
     class: String,
+    occurrence: Arc<instances::OccurrencePath>,
 }
 
 #[derive(Clone)]
@@ -196,6 +199,10 @@ fn prepare(
         .ok_or("Instance collapse statistics are missing")?;
     let mut plan_bytes =
         admit_collapse_snapshot(prepared.vmf(), MAX_PLAN_BYTES, &mut || control.checkpoint())?;
+    plan_bytes = plan_bytes
+        .checked_add(prepared.occurrence_bytes())
+        .filter(|&bytes| bytes <= MAX_PLAN_BYTES)
+        .ok_or("Collapsed occurrence metadata exceeds the plan limit")?;
     for brush in prepared.generated_brushes() {
         for side in &brush.solid.sides {
             control.checkpoint()?;
@@ -203,7 +210,10 @@ fn prepare(
                 .face_origin(side.id)
                 .ok_or("Collapsed face provenance is missing")?;
             plan_bytes = plan_bytes
-                .checked_add(std::mem::size_of::<FaceOrigin>())
+                .checked_add(
+                    std::mem::size_of::<FaceOrigin>()
+                        + std::mem::size_of::<Arc<instances::OccurrencePath>>(),
+                )
                 .and_then(|bytes| bytes.checked_add(file.len()))
                 .filter(|bytes| *bytes <= MAX_PLAN_BYTES)
                 .ok_or("Collapsed geometry and provenance exceed the 64 MiB plan limit")?;
@@ -223,7 +233,10 @@ fn prepare(
         };
         let class = entity.classname().unwrap();
         plan_bytes = plan_bytes
-            .checked_add(std::mem::size_of::<EntityOrigin>())
+            .checked_add(
+                std::mem::size_of::<EntityOrigin>()
+                    + std::mem::size_of::<Arc<instances::OccurrencePath>>(),
+            )
             .and_then(|bytes| bytes.checked_add(file.len()))
             .and_then(|bytes| bytes.checked_add(class.len()))
             .filter(|bytes| *bytes <= MAX_PLAN_BYTES)
@@ -235,6 +248,11 @@ fn prepare(
             file: file.to_owned(),
             original,
             class: class.to_owned(),
+            occurrence: Arc::clone(
+                prepared
+                    .entity_occurrence(entity.id)
+                    .ok_or("Collapsed entity occurrence is missing")?,
+            ),
         });
     }
     let mut world = Vec::new();
@@ -253,6 +271,11 @@ fn prepare(
                 file: file.to_owned(),
                 original_solid,
                 original_side,
+                occurrence: Arc::clone(
+                    prepared
+                        .face_occurrence(side.id)
+                        .ok_or("Collapsed face occurrence is missing")?,
+                ),
             });
         }
     }
@@ -741,7 +764,32 @@ impl Session {
             })
         };
         let ready = form.ready.as_ref();
-        json!({"snapshot":self.instance_collapse_stamp(),"token":form.token,"owner":form.owner.label(),"status":form.status,"error":blocked.as_ref().or(form.error.as_ref()),"ready":ready.is_some() && blocked.is_none() && form.status=="ready","worker_active":state.worker.busy(),"scope":"all_visible_references","recursive":true,"source":form.key.path,"stats":ready.map(|ready|&ready.stats),"removed":ready.map(|ready|ready.plan.removed.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"objects":ready.map(|ready|ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"face_provenance":ready.map(|ready|ready.plan.faces.iter().take(MAX_ROWS).map(|face|json!({"side":face.side,"owner":crate::identity::id_string(ObjectId::Entity(face.owner)),"file":face.file,"original_solid":face.original_solid,"original_side":face.original_side})).collect::<Vec<_>>()),"face_provenance_total":ready.map(|ready|ready.plan.faces.len()),"entity_id_map":ready.map(|ready|ready.plan.entity_origins.iter().map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"entity_provenance":ready.map(|ready|ready.plan.entity_origins.iter().take(MAX_ROWS).map(|origin|json!({"entity":crate::identity::id_string(ObjectId::Entity(origin.entity)),"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"owner":crate::identity::id_string(ObjectId::Entity(origin.owner)),"file":origin.file,"original_entity":origin.original,"classname":origin.class})).collect::<Vec<_>>()),"entity_provenance_total":ready.map(|ready|ready.plan.entity_origins.len()),"limits":{"plan_bytes":MAX_PLAN_BYTES,"rows":MAX_ROWS,"helper_levels":instances::MAX_EXPANSION_DEPTH},"writes_child_files":false})
+        let provenance_error = ready.and_then(|ready| {
+            let bytes = ready
+                .plan
+                .faces
+                .iter()
+                .take(MAX_ROWS)
+                .map(|face| (face.file.len(), &face.occurrence))
+                .chain(
+                    ready
+                        .plan
+                        .entity_origins
+                        .iter()
+                        .take(MAX_ROWS)
+                        .map(|origin| (origin.file.len(), &origin.occurrence)),
+                )
+                .try_fold(0usize, |bytes, (file, route)| {
+                    bytes
+                        .checked_add(2 * file)
+                        .and_then(|bytes| bytes.checked_add(route.response_copy_bytes()))
+                        .filter(|&bytes| bytes <= MAX_PROVENANCE_SOURCE_BYTES)
+                });
+            bytes
+                .is_none()
+                .then_some("Captured provenance routes exceed the bounded response-copy budget")
+        });
+        json!({"snapshot":self.instance_collapse_stamp(),"token":form.token,"owner":form.owner.label(),"status":form.status,"error":blocked.as_ref().or(form.error.as_ref()),"ready":ready.is_some() && blocked.is_none() && form.status=="ready","worker_active":state.worker.busy(),"scope":"all_visible_references","recursive":true,"source":form.key.path,"stats":ready.map(|ready|&ready.stats),"removed":ready.map(|ready|ready.plan.removed.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"objects":ready.map(|ready|ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"face_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.faces.iter().take(MAX_ROWS).map(|face|json!({"side":face.side,"owner":crate::identity::id_string(ObjectId::Entity(face.owner)),"file":face.file,"original_solid":face.original_solid,"original_side":face.original_side,"occurrence":face.occurrence.as_ref(),"occurrence_label":face.occurrence.label()})).collect::<Vec<_>>()),"face_provenance_total":ready.map(|ready|ready.plan.faces.len()),"entity_id_map":ready.map(|ready|ready.plan.entity_origins.iter().map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"entity_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.entity_origins.iter().take(MAX_ROWS).map(|origin|json!({"entity":crate::identity::id_string(ObjectId::Entity(origin.entity)),"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"owner":crate::identity::id_string(ObjectId::Entity(origin.owner)),"file":origin.file,"original_entity":origin.original,"classname":origin.class,"occurrence":origin.occurrence.as_ref(),"occurrence_label":origin.occurrence.label()})).collect::<Vec<_>>()),"entity_provenance_total":ready.map(|ready|ready.plan.entity_origins.len()),"provenance_error":provenance_error,"limits":{"plan_bytes":MAX_PLAN_BYTES,"provenance_source_bytes":MAX_PROVENANCE_SOURCE_BYTES,"occurrence_bytes":instances::MAX_OCCURRENCE_BYTES,"rows":MAX_ROWS,"helper_levels":instances::MAX_EXPANSION_DEPTH},"writes_child_files":false})
     }
 }
 

@@ -117,6 +117,27 @@ fn collapsed_light_assemblies_preserve_targeted_hdr_payload_and_fresh_authored_i
     assert_eq!(ready["entity_provenance_total"], 6);
     let shown = session.render_document().vmf().clone();
     let provenance = ready["entity_provenance"].as_array().unwrap();
+    let expected_occurrences = source
+        .entities
+        .iter()
+        .filter(|entity| entity.classname() == Some("func_instance"))
+        .map(|entity| {
+            json!([
+                {"helper":entity.id,"file":"middle.vmf"},
+                {"helper":100,"file":"child.vmf"}
+            ])
+        })
+        .collect::<Vec<_>>();
+    for occurrence in &expected_occurrences {
+        assert_eq!(
+            provenance
+                .iter()
+                .filter(|row| row["occurrence"] == *occurrence)
+                .count(),
+            3
+        );
+    }
+    assert_eq!(expected_occurrences.len(), 2);
     let mapping = ready["entity_id_map"].as_array().unwrap();
     assert_eq!(mapping.len(), provenance.len());
     for row in provenance {
@@ -139,6 +160,7 @@ fn collapsed_light_assemblies_preserve_targeted_hdr_payload_and_fresh_authored_i
             Some("[12 24]")
         );
         assert_eq!(row["file"], "child.vmf");
+        assert!(expected_occurrences.contains(&row["occurrence"]));
         assert!(matches!(row["original_entity"].as_u64(), Some(1000..=1002)));
     }
     let north_target = shown
@@ -242,6 +264,14 @@ fn collapsed_light_assemblies_preserve_targeted_hdr_payload_and_fresh_authored_i
     assert_eq!(
         applied["captured_preview"]["entity_id_map"],
         ready["entity_id_map"]
+    );
+    assert_eq!(
+        applied["captured_preview"]["entity_provenance"],
+        ready["entity_provenance"]
+    );
+    assert_eq!(
+        applied["captured_preview"]["face_provenance"],
+        ready["face_provenance"]
     );
     assert_eq!(session.document.vmf(), &shown);
     session.undo(Actor::User).unwrap();

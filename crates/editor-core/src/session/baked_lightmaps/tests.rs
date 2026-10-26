@@ -27,6 +27,12 @@ fn repeated_grandchild_origins_remain_grouped_and_stale_after_same_byte_replacem
             })
             .unwrap();
         std::fs::write(&middle, document.vmf().write(&Default::default())).unwrap();
+        let leaf_helpers = document
+            .vmf()
+            .entities
+            .iter()
+            .map(|entity| entity.id)
+            .collect::<Vec<_>>();
         let mut session = Session::new(Ok(game));
         session.open(actor, &source, true).unwrap();
         let root_owner = session.document().vmf().entities.last().unwrap().id;
@@ -55,12 +61,14 @@ fn repeated_grandchild_origins_remain_grouped_and_stale_after_same_byte_replacem
                             file,
                             solid,
                             side,
+                            ..
                         } if *instance == root_owner && file == "leaf.vmf" => {
                             Some(SourceReference::Instance {
                                 instance: *instance,
                                 file: file.clone(),
                                 solid: *solid,
                                 side: *side,
+                                occurrence: None,
                             })
                         }
                         _ => None,
@@ -79,6 +87,87 @@ fn repeated_grandchild_origins_remain_grouped_and_stale_after_same_byte_replacem
                 .unwrap()
                 >= 2
         );
+        let mut exact_queries = Vec::new();
+        for helper in leaf_helpers {
+            let occurrence = vec![
+                OccurrenceReference {
+                    helper: root_owner,
+                    file: "child.vmf".into(),
+                },
+                OccurrenceReference {
+                    helper,
+                    file: "leaf.vmf".into(),
+                },
+            ];
+            let mut exact = query.clone();
+            let Some(SourceReference::Instance {
+                occurrence: route, ..
+            }) = &mut exact.source
+            else {
+                unreachable!();
+            };
+            *route = Some(occurrence.clone());
+            let inspected = session.inspect_baked_lightmaps(&exact).unwrap();
+            assert!(
+                inspected.report["mapping"]["match_page"]["total"]
+                    .as_u64()
+                    .unwrap()
+                    > 0
+            );
+            assert_eq!(
+                inspected.report["mapping"]["source"]["occurrence"],
+                json!(occurrence)
+            );
+            assert!(
+                inspected.report["mapping"]["contributors"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|origin| origin["occurrence"] == json!(occurrence))
+            );
+            assert!(
+                inspected.report["mapping"]["source_occurrence_label"]
+                    .as_str()
+                    .unwrap()
+                    .contains(&format!("entity:{helper} → leaf.vmf"))
+            );
+            exact_queries.push((exact, inspected.report["mapping"].clone()));
+        }
+        let mut absent = exact_queries[0].0.clone();
+        let Some(SourceReference::Instance {
+            occurrence: Some(route),
+            ..
+        }) = &mut absent.source
+        else {
+            unreachable!();
+        };
+        route[1].helper = u32::MAX;
+        assert_eq!(
+            session.inspect_baked_lightmaps(&absent).unwrap().report["mapping"]["match_page"]["total"],
+            0
+        );
+        for mismatch in [0, 1] {
+            let mut invalid = exact_queries[0].0.clone();
+            let Some(SourceReference::Instance {
+                occurrence: Some(route),
+                ..
+            }) = &mut invalid.source
+            else {
+                unreachable!();
+            };
+            if mismatch == 0 {
+                route[0].helper = u32::MAX;
+            } else {
+                route[1].file = "foreign.vmf".into();
+            }
+            assert!(
+                session
+                    .inspect_baked_lightmaps(&invalid)
+                    .err()
+                    .unwrap()
+                    .contains("outer helper")
+            );
+        }
         let output = std::fs::read(source.with_extension("bsp")).unwrap();
         let replacement = directory.path().join("same-byte-leaf.vmf");
         std::fs::copy(&leaf, &replacement).unwrap();
@@ -94,6 +183,11 @@ fn repeated_grandchild_origins_remain_grouped_and_stale_after_same_byte_replacem
             after.report["mapping"]["contributors"],
             before.report["mapping"]["contributors"]
         );
+        for (exact, mapping) in exact_queries {
+            let historical = session.inspect_baked_lightmaps(&exact).unwrap();
+            assert_eq!(historical.report["build"]["status"], "stale");
+            assert_eq!(historical.report["mapping"], mapping);
+        }
         assert!(
             after.report["build"]["diagnostics"]
                 .as_array()
@@ -547,11 +641,13 @@ fn instance_origins_remain_scoped_to_retained_child_bytes_after_external_changes
                         file,
                         solid,
                         side,
+                        ..
                     } => Some(SourceReference::Instance {
                         instance: *instance,
                         file: file.clone(),
                         solid: *solid,
                         side: *side,
+                        occurrence: None,
                     }),
                     _ => None,
                 })

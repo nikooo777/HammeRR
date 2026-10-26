@@ -149,7 +149,7 @@ fn static_child_fog_matches_literal_bsp_and_preserves_multiple_root_controller_o
             .unwrap();
         assert_eq!(prepared.stats().unwrap().fog_controllers, 1);
         assert_eq!(
-            prepared.provenance[&format!("entity:{}", generated.id)],
+            prepared.provenance[&format!("entity:{}", generated.id)].legacy,
             (owner, "child.vmf".into(), 20, None)
         );
         assert!(

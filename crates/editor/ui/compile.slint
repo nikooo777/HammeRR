@@ -274,11 +274,13 @@ export component BakedLightmapsWindow inherits Window {
     in-out property <int> style-index;
     in-out property <int> map-index;
     in-out property <int> page-offset;
+    in-out property <int> page-size: 32;
     in property <string> build-state;
     in property <string> channels;
     in property <string> faces;
     in property <string> mapping-status;
     in property <[string]> origin-rows;
+    in property <string> origin-details;
     in property <[bool]> origin-selectable;
     in property <[string]> match-rows;
     in property <bool> has-source;
@@ -341,7 +343,8 @@ export component BakedLightmapsWindow inherits Window {
               spacing: 8px;
               Text { text: "Face page starts at"; vertical-alignment: center; }
               SpinBox { minimum: 0; maximum: 65535; value <=> root.page-offset; edited => { root.query-changed(); } }
-              Text { text: "32 compiled faces per inspection"; vertical-alignment: center; }
+              Text { text: "Rows per page"; vertical-alignment: center; }
+              SpinBox { minimum: 1; maximum: 32; value <=> root.page-size; edited => { root.query-changed(); } }
           }
           TextEdit { text: root.faces; read-only: true; min-height: 70px; max-height: 80px; }
           Text { text: root.mapping-status; wrap: word-wrap; color: #ffcb80; }
@@ -355,6 +358,7 @@ export component BakedLightmapsWindow inherits Window {
               height: 78px;
               for row[i] in root.origin-rows: Button { text: row; enabled: root.origin-selectable[i]; clicked => { root.inspect-origin(i); } }
           }
+          if root.origin-details != "": TextEdit { text: root.origin-details; read-only: true; wrap: word-wrap; min-height: 45px; max-height: 70px; }
           HorizontalLayout {
               spacing: 8px;
               Text { text: "Match page starts at"; vertical-alignment: center; }

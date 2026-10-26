@@ -74,6 +74,19 @@ fn instance_collapse_matches_literal_nested_geometry_and_compiler_bsp() {
     let camera = session.camera();
     let disk = [&parent, &child_path, &middle_path].map(|path| std::fs::read(path).unwrap());
     let token = preview(&mut session, Actor::Agent);
+    let report = session.get_instance_collapse();
+    let expected_occurrence = json!([
+        {"helper":owner,"file":"middle.vmf"},
+        {"helper":middle.vmf().entities[0].id,"file":"child.vmf"}
+    ]);
+    let face_origins = report["face_provenance"].as_array().unwrap();
+    assert!(!face_origins.is_empty());
+    assert!(
+        face_origins
+            .iter()
+            .all(|face| face["occurrence"] == expected_occurrence)
+    );
+    assert_eq!(report["provenance_error"], Value::Null);
     assert_eq!(session.document.vmf(), &source);
     assert_eq!(session.document.undo_labels().count(), history);
     let shown = session.render_document().vmf().clone();

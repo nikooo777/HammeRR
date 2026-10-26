@@ -3,6 +3,15 @@ use serde::{Deserialize, Serialize};
 
 use super::*;
 
+pub const MAX_PAGE_SOURCE_BYTES: usize = 512 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OccurrenceReference {
+    pub helper: u32,
+    pub file: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SourceReference {
@@ -15,6 +24,8 @@ pub enum SourceReference {
         file: String,
         solid: u32,
         side: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        occurrence: Option<Vec<OccurrenceReference>>,
     },
 }
 
@@ -35,18 +46,28 @@ impl SourceReference {
                     file,
                     solid,
                     side,
+                    occurrence,
                 },
                 Origin::Instance {
                     instance: other_instance,
                     file: other_file,
                     solid: other_solid,
                     side: other_side,
+                    occurrence: other_occurrence,
                 },
             ) => {
                 instance == other_instance
                     && file == other_file
                     && solid == other_solid
                     && side == other_side
+                    && occurrence.as_ref().is_none_or(|route| {
+                        route
+                            .iter()
+                            .map(|step| (step.helper, step.file.as_str()))
+                            .eq(other_occurrence
+                                .steps()
+                                .map(|step| (step.helper, step.file.as_str())))
+                    })
             }
             _ => false,
         }
@@ -80,8 +101,25 @@ pub(super) fn matches(
         .first()
         .and_then(|row| row["face"].as_u64())
         .map(|face| face as usize);
+    let source_occurrence_label = if matches!(
+        source,
+        SourceReference::Instance {
+            occurrence: Some(_),
+            ..
+        }
+    ) {
+        selected
+            .and_then(|face| origins.contributors(face))
+            .and_then(|mut values| values.find(|origin| source.matches(origin)))
+            .and_then(|origin| match origin {
+                Origin::Instance { occurrence, .. } => Some(occurrence.label()),
+                _ => None,
+            })
+    } else {
+        None
+    };
     (
-        json!({"source":source,"matches":rows,"match_page":{"offset":offset,"limit":limit,"total":total,"next_offset":offset.checked_add(limit).filter(|&next| next < total)},
+        json!({"source":source,"source_occurrence_label":source_occurrence_label,"matches":rows,"match_page":{"offset":offset,"limit":limit,"total":total,"next_offset":offset.checked_add(limit).filter(|&next| next < total)},
         "diagnostics":if total == 0 {vec!["No retained emitted face matches this authored source; no omission reason was retained"]} else if offset >= total {vec!["Match page offset exceeds the retained match count"]} else {Vec::<&str>::new()}}),
         selected,
     )
@@ -99,7 +137,33 @@ pub(super) fn selected(
         return unavailable("No retained record for this compiled face");
     };
     let count = contributors.len();
-    let contributors: Vec<_> = contributors.skip(offset).take(limit).collect();
+    let mut rows = Vec::new();
+    let mut bytes = 0usize;
+    for origin in contributors.skip(offset).take(limit) {
+        let additional = match origin {
+            Origin::Instance {
+                file, occurrence, ..
+            } => occurrence.response_copy_bytes() + 2 * file.len(),
+            _ => std::mem::size_of::<Origin>(),
+        };
+        bytes = match bytes
+            .checked_add(additional)
+            .filter(|&bytes| bytes <= MAX_PAGE_SOURCE_BYTES)
+        {
+            Some(bytes) => bytes,
+            None => {
+                return unavailable(
+                    "Authored contributor routes exceed the page source-copy budget; request fewer contributors",
+                );
+            }
+        };
+        let mut value = json!(origin);
+        if let Origin::Instance { occurrence, .. } = origin {
+            value["occurrence_label"] = json!(occurrence.label());
+        }
+        rows.push(value);
+    }
+    let contributors = rows;
     let displacement = bsp
         .lighting_faces(channel.kind())
         .ok()

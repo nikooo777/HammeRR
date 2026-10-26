@@ -199,6 +199,11 @@ Inspect counts and fresh object IDs. The complete `entity_id_map` pairs
 `entity_provenance` reports up to 64 original root/file/entity rows with
 `entity_provenance_total` for the full count. Face provenance remains bounded.
 These mappings are retained in Apply's `captured_preview`.
+Face and entity provenance also include `occurrence`, ordered `{helper,file}`
+steps from the root reference through the leaf source, and `occurrence_label`.
+IDs belong to each containing authored file. Repeated same-file/ID occurrences
+remain distinct. Counts and ID maps remain available if the bounded provenance
+copy reports `provenance_error`.
 Use `action:"apply"` with the owned `token`, or `action:"cancel"` to discard it.
 `action:"review"` transfers an idle draft to a fresh token.
 Prepare and Apply accept optional `background:true`; poll the getter for completion.
@@ -299,6 +304,8 @@ Cutout vertex-lighting receivers accept the same bounded nested basetexture edit
 Static child `env_fog_controller` entities use ordinary create/property/save operations. Set literal primary RGB, start/end, density and enable values; keep blend, radial, `use_angles` and transition time at `0`, HDR/zoom gains at `1` and far-Z nonpositive. Names, I/O and Master/DX flags are unavailable. Refresh reports `fog_controllers` and unavailable parent fog preview. Multiple controllers keep ordinary order; compile regions select their transformed origins.
 
 Valid editor-only atlas catalogs can stay in child maps. Their metadata is checked and excluded from expanded geometry and BSPs. Unknown top-level metadata and invalid catalogs reject.
+
+`inspect_baked_lightmaps` instance contributors include the complete `occurrence` helper/file route and a readable `occurrence_label`. An instance `source` selector may supply that ordered route to match only the captured occurrence (its first helper must equal `instance` and its last file must equal `file`); omitting it preserves grouped matches across repeated leaf faces with the same legacy instance/file/solid/side identity. Contributor clicks in the human inspector supply the exact captured route. Paths remain historical after source changes. The existing 8 MiB face metadata cap includes actual shared route storage; contributor response copies cap at 512 KiB per page and report unavailable on overflow.
 
 `inspect_compiled_world_lights` rows include `source_association`. Available point/spot origins identify a captured root `entity`, or an instance's outer `instance` helper, leaf `file`, original `entity` and build-local `expanded_entity`. Instance origins also include `occurrence`, an ordered array of `{helper, file}` steps from the root helper through every referenced source to the leaf (up to four levels). Helper IDs are authored in the containing map. Different routes distinguish repeated occurrences of the same leaf entity. Historical IDs and routes remain attached to their captured source snapshot. Missing or inconsistent metadata and other native kinds return `status: "unavailable"` with a reason while intact native rows remain readable. Associations are checked against each channel's exact table count and digest. Inspection does not select or open current source files. Complete occurrence routes are retained once per occurrence and shared across its lights/channels; page copies and serialized routes remain bounded by the returned limits. The existing framing result carries the same enriched record.
 

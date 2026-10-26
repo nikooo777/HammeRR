@@ -95,6 +95,7 @@ fn split_and_merged_contributors_use_retained_ids_and_validate_channel_geometry(
 
 #[test]
 fn mapping_limits_reject_before_reserving_face_or_reference_arrays() {
+    assert!(prepared(&test_common::room()).bytes() < instances::MAX_OCCURRENCE_BYTES);
     for (faces, references) in [
         (MAX_FACES + 1, 0),
         (0, MAX_REFERENCES + 1),
@@ -255,6 +256,8 @@ fn nested_same_id_leaves_keep_file_scopes_and_repeated_authored_sources() {
         .map(|side| side.id)
         .collect::<BTreeSet<_>>();
     let mut references = BTreeMap::<(String, u32), usize>::new();
+    let mut occurrences = BTreeMap::<Vec<(u32, String)>, BTreeSet<u32>>::new();
+    let mut paths = BTreeMap::new();
     for face in 0..origins.len() {
         for origin in origins.contributors(face).unwrap() {
             if let Origin::Instance {
@@ -262,6 +265,7 @@ fn nested_same_id_leaves_keep_file_scopes_and_repeated_authored_sources() {
                 file,
                 solid,
                 side,
+                occurrence,
             } = origin
             {
                 assert_eq!(*instance, owner);
@@ -271,9 +275,28 @@ fn nested_same_id_leaves_keep_file_scopes_and_repeated_authored_sources() {
                 );
                 assert_eq!(*solid, original_solid);
                 assert!(original_sides.contains(side), "{origin:?}");
+                let route = occurrence
+                    .steps()
+                    .map(|step| (step.helper, step.file.clone()))
+                    .collect::<Vec<_>>();
+                assert_eq!(route.len(), 2);
+                assert!(matches!(route[1].0, 100..=102));
+                assert_eq!(route[0], (owner, "middle.vmf".into()));
+                assert_eq!(route[1].1, *file);
+                occurrences.entry(route.clone()).or_default().insert(*side);
+                if let Some(path) = paths.insert(route, occurrence) {
+                    assert!(std::sync::Arc::ptr_eq(path, occurrence));
+                }
                 *references.entry((file.clone(), *side)).or_default() += 1;
             }
         }
+    }
+    assert_eq!(occurrences.len(), 3);
+    for (helper, file) in [(100, "first.vmf"), (101, "second.vmf"), (102, "first.vmf")] {
+        assert_eq!(
+            occurrences[&vec![(owner, "middle.vmf".into()), (helper, file.into())]],
+            original_sides
+        );
     }
     for side in original_sides {
         assert!(

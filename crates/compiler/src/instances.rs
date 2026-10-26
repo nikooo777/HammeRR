@@ -27,7 +27,7 @@ mod targets;
 mod terrain;
 mod visclusters;
 
-pub use occurrences::{MAX_OCCURRENCE_BYTES, OccurrencePath, OccurrenceStep};
+pub use occurrences::{MAX_OCCURRENCE_BYTES, OccurrencePath, OccurrenceStep, serialize_occurrence};
 
 pub const MAX_INSTANCES: usize = 256;
 pub const MAX_EXPANSION_DEPTH: usize = 4;
@@ -717,7 +717,15 @@ fn child_admission(
     Ok(())
 }
 
-type Provenance = BTreeMap<String, (u32, String, u32, Option<u32>)>;
+type LegacyOrigin = (u32, String, u32, Option<u32>);
+
+#[derive(Debug)]
+struct SourceOrigin {
+    legacy: LegacyOrigin,
+    occurrence: std::sync::Arc<OccurrencePath>,
+}
+
+type Provenance = BTreeMap<String, SourceOrigin>;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct StaticPropPose {
@@ -758,7 +766,7 @@ pub struct PreparedInstances<'a> {
     pub(crate) static_prop_poses: StaticPropPoses,
     static_prop_bindings: StaticPropBindings,
     provenance: Provenance,
-    light_occurrences: occurrences::LightOccurrences,
+    occurrence_budget: occurrences::OccurrenceBudget,
     pub(crate) material_sources: Option<crate::asset_sources::BuildMaterialSources>,
 }
 
@@ -813,11 +821,12 @@ impl PreparedInstances<'_> {
     pub fn root_entity(&self, generated: u32) -> Option<u32> {
         self.provenance
             .get(&format!("entity:{generated}"))
-            .map(|(owner, _, _, _)| *owner)
+            .map(|source| source.legacy.0)
     }
 
     pub fn entity_origin(&self, generated: u32) -> Option<(u32, &str, u32)> {
-        let (owner, file, original, _) = self.provenance.get(&format!("entity:{generated}"))?;
+        let (owner, file, original, _) =
+            &self.provenance.get(&format!("entity:{generated}"))?.legacy;
         Some((*owner, file, *original))
     }
 
@@ -825,7 +834,23 @@ impl PreparedInstances<'_> {
         &self,
         generated: u32,
     ) -> Option<&std::sync::Arc<OccurrencePath>> {
-        self.light_occurrences.get(generated)
+        self.entity_occurrence(generated)
+    }
+
+    pub fn entity_occurrence(&self, generated: u32) -> Option<&std::sync::Arc<OccurrencePath>> {
+        self.provenance
+            .get(&format!("entity:{generated}"))
+            .map(|source| &source.occurrence)
+    }
+
+    pub fn face_occurrence(&self, side: u32) -> Option<&std::sync::Arc<OccurrencePath>> {
+        self.provenance
+            .get(&format!("side:{side}"))
+            .map(|source| &source.occurrence)
+    }
+
+    pub fn occurrence_bytes(&self) -> usize {
+        self.occurrence_budget.paths_bytes()
     }
 
     pub(crate) fn has_brush_models(&self) -> bool {
@@ -866,7 +891,7 @@ impl PreparedInstances<'_> {
             )
             .filter_map(move |(solid, detail)| {
                 let (owner, file, original, _) =
-                    self.provenance.get(&format!("solid:{}", solid.id))?;
+                    &self.provenance.get(&format!("solid:{}", solid.id))?.legacy;
                 Some(InstanceBrush {
                     owner: *owner,
                     file,
@@ -878,7 +903,7 @@ impl PreparedInstances<'_> {
     }
 
     pub fn face_origin(&self, side: u32) -> Option<(u32, &str, u32, u32)> {
-        let (owner, file, original, solid) = self.provenance.get(&format!("side:{side}"))?;
+        let (owner, file, original, solid) = &self.provenance.get(&format!("side:{side}"))?.legacy;
         Some((*owner, file, (*solid)?, *original))
     }
 
@@ -888,6 +913,7 @@ impl PreparedInstances<'_> {
                 .object
                 .as_ref()
                 .and_then(|object| self.provenance.get(object))
+                .map(|source| &source.legacy)
             {
                 diagnostic.message = format!(
                     "{} (instance {path}, child object {original})",
@@ -1019,7 +1045,7 @@ fn prepare_purpose<'a>(
         static_prop_poses: BTreeMap::new(),
         static_prop_bindings: BTreeMap::new(),
         provenance: BTreeMap::new(),
-        light_occurrences: occurrences::LightOccurrences::default(),
+        occurrence_budget: occurrences::OccurrenceBudget::default(),
         material_sources: None,
     };
     if !requires_source(vmf) {
@@ -1100,7 +1126,7 @@ fn prepare_purpose<'a>(
     let expanded_sources = expansion.finish();
     let stats = expanded_sources.stats;
     prepared.provenance = expanded_sources.provenance;
-    prepared.light_occurrences = expanded_sources.light_occurrences;
+    prepared.occurrence_budget = expanded_sources.occurrence_budget;
     prepared.static_prop_poses = expanded_sources.static_prop_poses;
     prepared.static_prop_bindings = expanded_sources.static_prop_bindings;
     prepared.material_sources = expanded_sources.material_sources;

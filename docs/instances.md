@@ -67,10 +67,16 @@ separate preservation rules and refuse the whole batch. Reference group/layer
 membership, attached notes and incoming bindings also refuse. The preview
 reports fresh object IDs, the complete expanded-to-authored light/target ID map,
 and bounded original leaf-face/entity provenance.
+The preview details include each face/entity's captured root-to-leaf helper
+route, with IDs authored in each containing file. Repeated occurrences of the
+same original face or entity remain distinct. Apply retains these routes in
+its captured preview report; they describe the reviewed sources.
 
 Use a UTF-8 path for the saved parent. Snapshot and plan storage each cap at
 64 MiB. Input text and metadata cap at 8 MiB and 131,072 items; work limits can
-refuse smaller maps.
+refuse smaller maps. Captured occurrence paths and their shared provenance slots
+cap at 2 MiB. Provenance response copies cap at 1 MiB; exceeded copies show an
+explicit diagnostic while the complete reviewed plan and counts remain available.
 
 ## Keep saved atlas regions in a child
 

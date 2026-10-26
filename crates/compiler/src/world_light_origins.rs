@@ -19,16 +19,9 @@ pub enum Origin {
         file: String,
         entity: u32,
         expanded_entity: u32,
-        #[serde(serialize_with = "serialize_occurrence")]
+        #[serde(serialize_with = "crate::instances::serialize_occurrence")]
         occurrence: std::sync::Arc<crate::instances::OccurrencePath>,
     },
-}
-
-fn serialize_occurrence<S: serde::Serializer>(
-    path: &std::sync::Arc<crate::instances::OccurrencePath>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    serde::Serialize::serialize(path.as_ref(), serializer)
 }
 
 #[derive(Debug, Default)]

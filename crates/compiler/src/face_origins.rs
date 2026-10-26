@@ -22,6 +22,8 @@ pub enum Origin {
         file: String,
         solid: u32,
         side: u32,
+        #[serde(serialize_with = "crate::instances::serialize_occurrence")]
+        occurrence: std::sync::Arc<crate::instances::OccurrencePath>,
     },
     GeneratedRegion {
         solid: u32,
@@ -121,14 +123,18 @@ impl FaceOrigins {
             }
         }
         let bytes = budget(
-            size_of::<Self>(),
+            size_of::<Self>() + instances.occurrence_bytes(),
             count
                 .checked_mul(size_of::<Source>())
                 .ok_or("Source metadata size overflow")?,
         )?;
         let bytes = budget(bytes, strings)?;
+        let mut sources = Vec::new();
+        sources
+            .try_reserve_exact(count)
+            .map_err(|_| "Authored face sources cannot be allocated")?;
         let mut result = Self {
-            sources: Vec::with_capacity(count),
+            sources,
             faces: Vec::new(),
             references: Vec::new(),
             bytes,
@@ -149,11 +155,19 @@ impl FaceOrigins {
                 let origin = if let Some((instance, file, original_solid, original_side)) =
                     instances.face_origin(side.id)
                 {
+                    let occurrence = instances
+                        .face_occurrence(side.id)
+                        .ok_or("Expanded face has no captured occurrence path")?;
+                    let mut path = String::new();
+                    path.try_reserve_exact(file.len())
+                        .map_err(|_| "Authored face source filename cannot be allocated")?;
+                    path.push_str(file);
                     Origin::Instance {
                         instance,
-                        file: file.into(),
+                        file: path,
                         solid: original_solid,
                         side: original_side,
+                        occurrence: std::sync::Arc::clone(occurrence),
                     }
                 } else {
                     Origin::Root {

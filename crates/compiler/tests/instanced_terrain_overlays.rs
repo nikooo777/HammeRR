@@ -630,6 +630,30 @@ fn assert_bindings(output: &compiler::Output, child: &Leaf, owner: u32, power: u
     let faces = bsp.records::<Face>().unwrap();
     let overlays = bsp.overlay_data().unwrap().unwrap();
     let origins = output.face_origins.as_ref().unwrap();
+    let assert_origin = |face: usize, solid, side, occurrence: usize| {
+        let values = origins.contributors(face).unwrap().collect::<Vec<_>>();
+        assert_eq!(values.len(), 1);
+        let compiler::face_origins::Origin::Instance {
+            instance,
+            file,
+            solid: original_solid,
+            side: original_side,
+            occurrence: path,
+        } = values[0]
+        else {
+            panic!("expected captured instance face");
+        };
+        assert_eq!(
+            (*instance, file.as_str(), *original_solid, *original_side),
+            (owner, "leaf.vmf", solid, side)
+        );
+        assert_eq!(
+            path.steps()
+                .map(|step| (step.helper, step.file.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(owner, "middle.vmf"), ([2, 3][occurrence], "leaf.vmf")]
+        );
+    };
     let size = (1_usize << power) + 1;
     assert_eq!(
         (
@@ -656,18 +680,11 @@ fn assert_bindings(output: &compiler::Output, child: &Leaf, owner: u32, power: u
         assert_eq!(info.smoothing_angle, 32.0);
         assert_eq!(info.allowed_vertices, [u32::MAX; 10]);
         assert_eq!(faces[info.face as usize].dispinfo, ordinal as i16);
-        assert_eq!(
-            origins
-                .contributors(info.face as usize)
-                .unwrap()
-                .cloned()
-                .collect::<Vec<_>>(),
-            [compiler::face_origins::Origin::Instance {
-                instance: owner,
-                file: "leaf.vmf".into(),
-                solid: child.solids[index],
-                side: child.targets[index]
-            }]
+        assert_origin(
+            info.face as usize,
+            child.solids[index],
+            child.targets[index],
+            occurrence,
         );
         targets[occurrence][index] = i32::from(info.face);
         let vertices =
@@ -723,18 +740,11 @@ fn assert_bindings(output: &compiler::Output, child: &Leaf, owner: u32, power: u
             .collect::<Vec<_>>();
         assert!(!ordinary.is_empty());
         for face in &ordinary {
-            assert_eq!(
-                origins
-                    .contributors(*face as usize)
-                    .unwrap()
-                    .cloned()
-                    .collect::<Vec<_>>(),
-                [compiler::face_origins::Origin::Instance {
-                    instance: owner,
-                    file: "leaf.vmf".into(),
-                    solid: child.solids[2],
-                    side: child.targets[2]
-                }]
+            assert_origin(
+                *face as usize,
+                child.solids[2],
+                child.targets[2],
+                occurrence,
             );
         }
         for (variant, &bounds) in LITERAL[occurrence][..2].iter().enumerate() {

@@ -20,6 +20,25 @@ fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
             side.material = "test/checker".into();
         }
     }
+    let mut child = map_core::Document::empty();
+    child
+        .edit("external contributor", |tx| {
+            map_core::edit::create_block(
+                tx,
+                glam::DVec3::new(0.0, 0.0, 16.0),
+                glam::DVec3::new(16.0, 16.0, 32.0),
+                "test/checker",
+            )
+        })
+        .unwrap();
+    std::fs::write(
+        directory.path().join("child.vmf"),
+        child.vmf().write(&Default::default()),
+    )
+    .unwrap();
+    let mut helper = source_formats::vmf::Entity::new(9100, "func_instance");
+    helper.properties.set("file", "child.vmf");
+    vmf.entities.push(helper);
     let mut light = source_formats::vmf::Entity::new(9000, "light");
     light.properties.set("origin", "-160 -100 96");
     light.properties.set("_light", "255 160 60 600");
@@ -62,12 +81,74 @@ fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
     assert!(window.get_selected().contains("HDR"));
     assert!(window.get_mapping_status().contains("available"));
     assert!(!controller.baked_lightmaps.lists.borrow().origins.is_empty());
+    assert_eq!(window.get_page_size(), 32);
+    window.set_page_size(1);
+    window.invoke_query_changed();
+    let single_query = query(window, false);
+    assert_eq!(single_query.limit, 1);
+    let single = lock(&shared)
+        .inspect_baked_lightmaps(&single_query)
+        .unwrap();
+    assert_eq!(single.report["mapping"]["contributor_page"]["limit"], 1);
+    window.invoke_inspect_face();
+    let expected_origins = single.report["mapping"]["contributors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(source_reference)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        controller.baked_lightmaps.lists.borrow().origins,
+        expected_origins
+    );
+    assert_eq!(expected_origins.len(), 1);
+    window.set_page_size(32);
+    window.invoke_query_changed();
+    window.invoke_inspect_face();
     let original_selection = lock(&shared).selected_faces();
     window.invoke_inspect_origin(0);
     assert!(window.get_has_source());
     assert!(!controller.baked_lightmaps.lists.borrow().matches.is_empty());
     window.invoke_inspect_match(0);
     assert!(window.get_has_preview());
+    assert_eq!(lock(&shared).selected_faces(), original_selection);
+    let original = &child.vmf().world.solids[0];
+    let external = lock(&shared)
+        .inspect_baked_lightmaps(&Query {
+            channel: Channel::Hdr,
+            source: Some(SourceReference::Instance {
+                instance: 9100,
+                file: "child.vmf".into(),
+                solid: original.id,
+                side: original.sides[0].id,
+                occurrence: None,
+            }),
+            ..Query::default()
+        })
+        .unwrap();
+    window.set_compiled_face(external.report["mapping"]["face"].as_i64().unwrap() as i32);
+    window.invoke_inspect_face();
+    let index = controller
+        .baked_lightmaps
+        .lists
+        .borrow()
+        .origins
+        .iter()
+        .position(|origin| matches!(origin, Some(SourceReference::Instance { .. })))
+        .unwrap();
+    window.invoke_inspect_origin(index as i32);
+    assert!(matches!(
+        controller.baked_lightmaps.lists.borrow().source,
+        Some(SourceReference::Instance {
+            occurrence: Some(_),
+            ..
+        })
+    ));
+    assert!(
+        window
+            .get_origin_details()
+            .contains("entity:9100 → child.vmf")
+    );
     assert_eq!(lock(&shared).selected_faces(), original_selection);
     crate::ui::tests::save_ui_snapshot(window.window(), "baked-lightmaps");
     window.set_style_index(3);

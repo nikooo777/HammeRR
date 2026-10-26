@@ -1196,6 +1196,7 @@ fn source_matrix_uvs_detail_and_repeated_ids_match_manual_flattening() {
                     file,
                     solid,
                     side,
+                    ..
                 } if *instance == helper.id => Some((file, *solid, *side)),
                 _ => None,
             })

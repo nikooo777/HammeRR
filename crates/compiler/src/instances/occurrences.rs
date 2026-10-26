@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::ser::SerializeSeq;
@@ -9,8 +8,8 @@ use crate::Control;
 use super::MAX_EXPANSION_DEPTH;
 
 pub const MAX_OCCURRENCE_BYTES: usize = 2 * 1024 * 1024;
-const LOOKUP_ENTRY_BYTES: usize = 128;
-const LOOKUP_ROOT_BYTES: usize = 512;
+const PROVENANCE_SLOT_BYTES: usize = 3 * size_of::<Arc<OccurrencePath>>();
+const PROVENANCE_ROOT_BYTES: usize = 128;
 const ARC_HEADER_BYTES: usize = 2 * size_of::<usize>();
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -39,10 +38,21 @@ impl OccurrencePath {
         steps.into_iter().flatten()
     }
 
+    pub fn label(&self) -> String {
+        self.steps()
+            .map(|step| format!("entity:{} → {}", step.helper, step.file))
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
+
     pub fn response_bytes(&self) -> usize {
         self.steps()
             .map(|step| size_of::<OccurrenceStep>() + step.file.len())
             .sum()
+    }
+
+    pub fn response_copy_bytes(&self) -> usize {
+        self.response_bytes().saturating_mul(8).saturating_add(1024)
     }
 }
 
@@ -57,19 +67,20 @@ impl Serialize for OccurrencePath {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct LightOccurrences {
-    entities: BTreeMap<u32, Arc<OccurrencePath>>,
+pub(crate) struct OccurrenceBudget {
     bytes: usize,
+    paths_bytes: usize,
+    slots: usize,
 }
 
-impl LightOccurrences {
+impl OccurrenceBudget {
     fn charge(&mut self, additional: usize, control: &Control) -> Result<(), String> {
         control.checkpoint()?;
         self.bytes = self
             .bytes
             .checked_add(additional)
             .filter(|&bytes| bytes <= MAX_OCCURRENCE_BYTES)
-            .ok_or("Instance light occurrence metadata exceeds its shared storage budget")?;
+            .ok_or("Instance occurrence metadata exceeds its shared storage budget")?;
         Ok(())
     }
 
@@ -82,13 +93,14 @@ impl LightOccurrences {
     ) -> Result<Arc<OccurrencePath>, String> {
         let depth = parent.as_ref().map_or(1, |path| path.depth + 1);
         if depth > MAX_EXPANSION_DEPTH {
-            return Err("Instance light occurrence path exceeds the helper-depth limit".into());
+            return Err("Instance occurrence path exceeds the helper-depth limit".into());
         }
         let bytes = size_of::<OccurrencePath>()
             .checked_add(ARC_HEADER_BYTES)
             .and_then(|bytes| bytes.checked_add(file.len()))
-            .ok_or("Instance light occurrence allocation overflow")?;
+            .ok_or("Instance occurrence allocation overflow")?;
         self.charge(bytes, control)?;
+        self.paths_bytes += bytes;
         let mut path = String::new();
         path.try_reserve_exact(file.len())
             .map_err(|_| "Instance occurrence filename cannot be allocated")?;
@@ -100,26 +112,26 @@ impl LightOccurrences {
         }))
     }
 
-    pub(super) fn attach(
-        &mut self,
-        entity: u32,
-        path: &Arc<OccurrencePath>,
-        control: &Control,
-    ) -> Result<(), String> {
-        let bytes = LOOKUP_ENTRY_BYTES
-            + if self.entities.is_empty() {
-                LOOKUP_ROOT_BYTES
+    pub(super) fn slot(&mut self, control: &Control) -> Result<(), String> {
+        let bytes = PROVENANCE_SLOT_BYTES
+            + if self.slots == 0 {
+                PROVENANCE_ROOT_BYTES
             } else {
                 0
             };
         self.charge(bytes, control)?;
-        if self.entities.insert(entity, Arc::clone(path)).is_some() {
-            return Err("Expanded light already has an occurrence identity".into());
-        }
+        self.slots += 1;
         Ok(())
     }
 
-    pub(crate) fn get(&self, entity: u32) -> Option<&Arc<OccurrencePath>> {
-        self.entities.get(&entity)
+    pub(super) fn paths_bytes(&self) -> usize {
+        self.paths_bytes
     }
+}
+
+pub fn serialize_occurrence<S: Serializer>(
+    path: &Arc<OccurrencePath>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    path.as_ref().serialize(serializer)
 }

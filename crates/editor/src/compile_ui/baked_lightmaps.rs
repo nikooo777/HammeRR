@@ -44,6 +44,7 @@ fn admitted(
 fn clear_lists(window: &BakedLightmapsWindow, lists: &RefCell<Lists>) {
     *lists.borrow_mut() = Lists::default();
     window.set_origin_rows(slint::ModelRc::default());
+    window.set_origin_details("".into());
     window.set_origin_selectable(slint::ModelRc::default());
     window.set_match_rows(slint::ModelRc::default());
     window.set_has_source(false);
@@ -59,6 +60,10 @@ fn source_reference(value: &Value) -> Option<SourceReference> {
             side,
             instance: u32::try_from(value["instance"].as_u64()?).ok()?,
             file: value["file"].as_str()?.into(),
+            occurrence: match value.get("occurrence") {
+                Some(route) => Some(serde_json::from_value(route.clone()).ok()?),
+                None => None,
+            },
         }),
         _ => None,
     }
@@ -89,7 +94,7 @@ fn present_mapping(window: &BakedLightmapsWindow, mapping: &Value, lists: &RefCe
                     origin["entity"], origin["solid"], origin["side"]
                 ),
                 Some("instance") => format!(
-                    "External instance {} · {} · solid {} / side {} — find compiled matches",
+                    "External instance {} · {} · solid {} / side {} — find exact occurrence matches",
                     origin["instance"],
                     origin["file"].as_str().unwrap_or_default(),
                     origin["solid"],
@@ -135,7 +140,15 @@ fn present_mapping(window: &BakedLightmapsWindow, mapping: &Value, lists: &RefCe
                 file,
                 solid,
                 side,
-            }) => format!("external {instance} · {file} · {solid}/{side}"),
+                occurrence,
+            }) => format!(
+                "external {instance} · {file} · {solid}/{side}{}",
+                if occurrence.is_some() {
+                    " · exact captured occurrence"
+                } else {
+                    " · all matching occurrences"
+                }
+            ),
             None => "source".into(),
         };
         state.match_summary = format!(
@@ -143,6 +156,18 @@ fn present_mapping(window: &BakedLightmapsWindow, mapping: &Value, lists: &RefCe
             mapping["match_page"]["total"], mapping["match_page"]["offset"]
         );
     }
+    let route = mapping["source_occurrence_label"].as_str().or_else(|| {
+        let [origin] = contributors.as_slice() else {
+            return None;
+        };
+        origin["occurrence_label"].as_str()
+    });
+    window.set_origin_details(
+        route
+            .map(|route| format!("Captured occurrence: {route}"))
+            .unwrap_or_default()
+            .into(),
+    );
     let model = mapping["model"]
         .as_u64()
         .map_or_else(|| "none".into(), |model| model.to_string());
@@ -317,6 +342,7 @@ fn query(window: &BakedLightmapsWindow, automatic_face: bool) -> Query {
         },
         face: (!automatic_face).then_some(window.get_compiled_face().max(0) as usize),
         offset: window.get_page_offset().max(0) as usize,
+        limit: window.get_page_size() as usize,
         contributor_offset: window.get_contributor_offset().max(0) as usize,
         style_index: window.get_style_index().max(0) as usize,
         map_index: window.get_map_index().max(0) as usize,

@@ -23,7 +23,7 @@ struct EntitySpec {
 pub(super) struct ExpandedSources {
     pub stats: InstanceStats,
     pub provenance: Provenance,
-    pub light_occurrences: occurrences::LightOccurrences,
+    pub occurrence_budget: occurrences::OccurrenceBudget,
     pub static_prop_poses: StaticPropPoses,
     pub static_prop_bindings: StaticPropBindings,
     pub files: Vec<(String, FileIdentity)>,
@@ -43,7 +43,7 @@ pub(super) struct Expansion<'a> {
     terrain: terrain::Budget,
     stats: InstanceStats,
     provenance: Provenance,
-    light_occurrences: occurrences::LightOccurrences,
+    occurrence_budget: occurrences::OccurrenceBudget,
     current_occurrence: Option<Arc<OccurrencePath>>,
     static_prop_poses: StaticPropPoses,
     static_prop_bindings: StaticPropBindings,
@@ -76,7 +76,7 @@ impl<'a> Expansion<'a> {
             terrain: terrain::Budget::default(),
             stats: InstanceStats::default(),
             provenance: BTreeMap::new(),
-            light_occurrences: occurrences::LightOccurrences::default(),
+            occurrence_budget: occurrences::OccurrenceBudget::default(),
             current_occurrence: None,
             static_prop_poses: BTreeMap::new(),
             static_prop_bindings: BTreeMap::new(),
@@ -87,6 +87,25 @@ impl<'a> Expansion<'a> {
             material_sources: None,
             checked_cutouts: std::collections::BTreeSet::new(),
         }
+    }
+
+    fn record_origin(&mut self, key: String, legacy: LegacyOrigin) -> Result<(), EditError> {
+        let occurrence = self.current_occurrence.as_ref().ok_or_else(|| {
+            EditError::Invalid("Expanded source has no captured helper occurrence".into())
+        })?;
+        self.occurrence_budget
+            .slot(self.control)
+            .map_err(EditError::Invalid)?;
+        let source = SourceOrigin {
+            legacy,
+            occurrence: Arc::clone(occurrence),
+        };
+        if self.provenance.insert(key, source).is_some() {
+            return Err(EditError::Invalid(
+                "Expanded source provenance is duplicated".into(),
+            ));
+        }
+        Ok(())
     }
 
     fn child(
@@ -252,7 +271,7 @@ impl<'a> Expansion<'a> {
         self.stats.max_expansion_depth = self.stats.max_expansion_depth.max(depth);
         let previous_occurrence = self.current_occurrence.clone();
         self.current_occurrence = Some(
-            self.light_occurrences
+            self.occurrence_budget
                 .enter(
                     previous_occurrence.clone(),
                     helper.id,
@@ -563,10 +582,10 @@ impl<'a> Expansion<'a> {
             self.control.checkpoint().map_err(EditError::Invalid)?;
             overlays::transform(&mut entity, *transform)?;
         }
-        self.provenance.insert(
+        self.record_origin(
             format!("entity:{}", entity.id),
             (owner, relative.to_owned(), original.id, None),
-        );
+        )?;
         let generated = entity.id;
         tx.add_entity(entity)?;
         self.stats.overlays += 1;
@@ -614,10 +633,10 @@ impl<'a> Expansion<'a> {
                 .set("origin", source_formats::vmf::format_vec3(point));
             cubemaps::point(&entity).map_err(EditError::Invalid)?;
         }
-        self.provenance.insert(
+        self.record_origin(
             format!("entity:{}", entity.id),
             (owner, relative.to_owned(), original.id, None),
-        );
+        )?;
         let generated = entity.id;
         tx.add_entity(entity)?;
         self.stats.cubemaps += 1;
@@ -677,24 +696,24 @@ impl<'a> Expansion<'a> {
         entity.id = tx.new_object_id()?;
         entity.editor = None;
         entity.solids.clear();
-        self.provenance.insert(
+        self.record_origin(
             format!("entity:{}", entity.id),
             (owner, relative.to_owned(), original.id, None),
-        );
+        )?;
         for original_solid in original.solids.iter().filter(|solid| !solid.hidden) {
             self.control.checkpoint().map_err(EditError::Invalid)?;
             let mut solid = original_solid.clone();
             solid.id = tx.new_object_id()?;
             solid.editor = None;
-            self.provenance.insert(
+            self.record_origin(
                 format!("solid:{}", solid.id),
                 (owner, relative.to_owned(), original_solid.id, None),
-            );
+            )?;
             for side in &mut solid.sides {
                 self.control.checkpoint().map_err(EditError::Invalid)?;
                 let original_side = side.id;
                 side.id = tx.new_side_id()?;
-                self.provenance.insert(
+                self.record_origin(
                     format!("side:{}", side.id),
                     (
                         owner,
@@ -702,7 +721,7 @@ impl<'a> Expansion<'a> {
                         original_side,
                         Some(original_solid.id),
                     ),
-                );
+                )?;
             }
             entity.solids.push(solid);
         }
@@ -823,24 +842,24 @@ impl<'a> Expansion<'a> {
             .solids
             .try_reserve_exact(shape.brushes)
             .map_err(|_| EditError::Invalid("Cannot reserve child brush-model solids".into()))?;
-        self.provenance.insert(
+        self.record_origin(
             format!("entity:{}", entity.id),
             (owner, relative.to_owned(), original.id, None),
-        );
+        )?;
         for original_solid in original.solids.iter().filter(|solid| !solid.hidden) {
             self.control.checkpoint().map_err(EditError::Invalid)?;
             let mut solid = original_solid.clone();
             solid.id = tx.new_object_id()?;
             solid.editor = None;
-            self.provenance.insert(
+            self.record_origin(
                 format!("solid:{}", solid.id),
                 (owner, relative.to_owned(), original_solid.id, None),
-            );
+            )?;
             for side in &mut solid.sides {
                 self.control.checkpoint().map_err(EditError::Invalid)?;
                 let original_side = side.id;
                 side.id = tx.new_side_id()?;
-                self.provenance.insert(
+                self.record_origin(
                     format!("side:{}", side.id),
                     (
                         owner,
@@ -848,7 +867,7 @@ impl<'a> Expansion<'a> {
                         original_side,
                         Some(original_solid.id),
                     ),
-                );
+                )?;
             }
             if origins
                 .as_ref()
@@ -957,21 +976,21 @@ impl<'a> Expansion<'a> {
         let mut entity = original.clone();
         entity.id = tx.new_object_id()?;
         entity.editor = None;
-        self.provenance.insert(
+        self.record_origin(
             format!("entity:{}", entity.id),
             (owner, relative.to_owned(), original.id, None),
-        );
+        )?;
         let mut solid = original_solid.clone();
         solid.id = tx.new_object_id()?;
         solid.editor = None;
-        self.provenance.insert(
+        self.record_origin(
             format!("solid:{}", solid.id),
             (owner, relative.to_owned(), original_solid.id, None),
-        );
+        )?;
         for side in &mut solid.sides {
             let original_side = side.id;
             side.id = tx.new_side_id()?;
-            self.provenance.insert(
+            self.record_origin(
                 format!("side:{}", side.id),
                 (
                     owner,
@@ -979,7 +998,7 @@ impl<'a> Expansion<'a> {
                     original_side,
                     Some(original_solid.id),
                 ),
-            );
+            )?;
         }
         entity.solids = vec![solid];
         let generated = entity.id;
@@ -1068,18 +1087,10 @@ impl<'a> Expansion<'a> {
             entity.properties.remove("angle");
         }
         let generated = entity.id;
-        if matches!(kind, entities::Kind::Point | entities::Kind::Spot) {
-            let occurrence = self.current_occurrence.as_ref().ok_or_else(|| {
-                EditError::Invalid("Expanded light has no captured helper occurrence".into())
-            })?;
-            self.light_occurrences
-                .attach(generated, occurrence, self.control)
-                .map_err(EditError::Invalid)?;
-        }
-        self.provenance.insert(
+        self.record_origin(
             format!("entity:{}", entity.id),
             (owner, relative.to_owned(), original.id, None),
-        );
+        )?;
         let id = tx.add_entity(entity)?;
         for transform in transforms.iter().rev() {
             self.control.checkpoint().map_err(EditError::Invalid)?;
@@ -1176,17 +1187,17 @@ impl<'a> Expansion<'a> {
         if !matches!(self.purpose, PreparationPurpose::Collapse) {
             solid.editor = None;
         }
-        self.provenance.insert(
+        self.record_origin(
             format!("solid:{}", solid.id),
             (owner, relative.to_owned(), original.id, None),
-        );
+        )?;
         for side in &mut solid.sides {
             let original_side = side.id;
             side.id = tx.new_side_id()?;
-            self.provenance.insert(
+            self.record_origin(
                 format!("side:{}", side.id),
                 (owner, relative.to_owned(), original_side, Some(original.id)),
-            );
+            )?;
             if let Some(local_sides) = &mut local_sides {
                 local_sides.insert(original_side, side.id);
             }
@@ -1200,10 +1211,10 @@ impl<'a> Expansion<'a> {
             let id = tx.new_object_id()?;
             let mut entity = Entity::new(id, "func_detail");
             entity.solids.push(solid);
-            self.provenance.insert(
+            self.record_origin(
                 format!("entity:{id}"),
                 (owner, relative.to_owned(), original.id, None),
-            );
+            )?;
             self.stats.detail_brushes += 1;
             tx.add_entity(entity)?
         } else {
@@ -1240,7 +1251,7 @@ impl<'a> Expansion<'a> {
         ExpandedSources {
             stats: self.stats,
             provenance: self.provenance,
-            light_occurrences: self.light_occurrences,
+            occurrence_budget: self.occurrence_budget,
             static_prop_poses: self.static_prop_poses,
             static_prop_bindings: self.static_prop_bindings,
             material_sources: self.material_sources,
@@ -1272,6 +1283,17 @@ fn check_cycle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn capture_test_occurrence(expansion: &mut Expansion<'_>) {
+        if !expansion.control.cancelled() {
+            expansion.current_occurrence = Some(
+                expansion
+                    .occurrence_budget
+                    .enter(None, 2000, "child.vmf", expansion.control)
+                    .unwrap(),
+            );
+        }
+    }
 
     fn fixture() -> (tempfile::TempDir, Vmf, Entity, SourceContext) {
         let directory = tempfile::tempdir().unwrap();
@@ -1310,6 +1332,7 @@ mod tests {
             &mut report,
             PreparationPurpose::Compile(&game, false),
         );
+        capture_test_occurrence(&mut expansion);
         expansion.work = MAX_GEOMETRY_WORK - cost + 1;
         helper.solids[0].sides[0].plane.0 = [DVec3::ZERO; 3];
         let mut document = Document::new(vmf.clone());
@@ -1358,6 +1381,7 @@ mod tests {
                 &mut report,
                 PreparationPurpose::Reference,
             );
+            capture_test_occurrence(&mut expansion);
             expansion.objects = MAX_OBJECTS - (1 + shape.brushes) + usize::from(exceeded == 0);
             expansion.sides = MAX_SIDES - shape.sides + usize::from(exceeded == 1);
             expansion.work = MAX_GEOMETRY_WORK - cost + usize::from(exceeded == 2);
@@ -1387,6 +1411,7 @@ mod tests {
             &mut report,
             PreparationPurpose::Reference,
         );
+        capture_test_occurrence(&mut expansion);
         expansion.objects = MAX_OBJECTS - (1 + shape.brushes);
         expansion.sides = MAX_SIDES - shape.sides;
         expansion.work = MAX_GEOMETRY_WORK - cost;
@@ -1471,6 +1496,7 @@ mod tests {
                 &mut report,
                 PreparationPurpose::Compile(&game, false),
             );
+            capture_test_occurrence(&mut expansion);
             expansion.objects = MAX_OBJECTS - (1 + shape.brushes) + usize::from(exceeded == 0);
             expansion.sides = MAX_SIDES - shape.sides + usize::from(exceeded == 1);
             expansion.work = MAX_GEOMETRY_WORK - cost + usize::from(exceeded == 2);
@@ -1501,6 +1527,7 @@ mod tests {
             &mut report,
             PreparationPurpose::Compile(&game, false),
         );
+        capture_test_occurrence(&mut expansion);
         expansion.objects = MAX_OBJECTS - (1 + shape.brushes);
         expansion.sides = MAX_SIDES - shape.sides;
         expansion.work = MAX_GEOMETRY_WORK - cost;
@@ -1520,6 +1547,7 @@ mod tests {
             expansion
                 .provenance
                 .values()
+                .map(|source| &source.legacy)
                 .any(|(_, file, original, _)| file == "child.vmf" && *original == origin_id)
         );
         let generated = document
@@ -1551,6 +1579,7 @@ mod tests {
             &mut report,
             PreparationPurpose::Reference,
         );
+        capture_test_occurrence(&mut expansion);
         expansion.work =
             MAX_GEOMETRY_WORK - crate::visclusters::hull_work(helper.solids[0].sides.len());
         let mut document = Document::new(vmf.clone());
@@ -1586,6 +1615,7 @@ mod tests {
             &mut report,
             PreparationPurpose::Reference,
         );
+        capture_test_occurrence(&mut expansion);
         let sides = helper.solids[0].sides.len();
         let reserve = crate::visclusters::hull_work(sides) * 2 + sides.pow(3);
         expansion.work = MAX_GEOMETRY_WORK - reserve - 200_000;
@@ -1644,6 +1674,7 @@ mod tests {
                 &mut report,
                 PreparationPurpose::Reference,
             );
+            capture_test_occurrence(&mut expansion);
             match exhausted {
                 "objects" => expansion.objects = MAX_OBJECTS - shape.brushes,
                 "sides" => expansion.sides = MAX_SIDES - shape.sides + 1,
@@ -1685,6 +1716,7 @@ mod tests {
                 &mut report,
                 PreparationPurpose::Reference,
             );
+            capture_test_occurrence(&mut expansion);
             match exhausted {
                 "objects" => expansion.objects = MAX_OBJECTS,
                 "work" => expansion.work = MAX_GEOMETRY_WORK - overlays::POSE_WORK * 3,
@@ -1743,6 +1775,7 @@ mod tests {
                 &mut report,
                 PreparationPurpose::Reference,
             );
+            capture_test_occurrence(&mut expansion);
             if exhausted {
                 expansion.work = MAX_GEOMETRY_WORK - baseline_work - 1;
             }
@@ -1777,7 +1810,7 @@ mod tests {
                 assert_eq!(displacement.len(), 1);
                 let generated = displacement[&target.side];
                 assert_eq!(
-                    expansion.provenance[&format!("side:{generated}")],
+                    expansion.provenance[&format!("side:{generated}")].legacy,
                     (2000, "child.vmf".into(), target.side, Some(target.solid))
                 );
             }

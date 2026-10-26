@@ -1,4 +1,4 @@
-import { Button, LineEdit } from "std-widgets.slint";
+import { Button, LineEdit, ScrollView } from "std-widgets.slint";
 
 component ReferenceVector inherits HorizontalLayout {
     in property <string> label;
@@ -102,8 +102,14 @@ export component InstanceReferenceWindow inherits Window {
             Text { text: root.status; color: #e4c19d; wrap: word-wrap; }
             if !root.collapse-active: Button { text: "Refresh instance contents"; clicked => { root.refresh-contents(); } }
             if root.edit-mode && !root.collapse-active: Button { text: "Preview collapse all references…"; enabled: root.can-collapse; clicked => { root.preview-collapse(); } }
-            Text { text: root.contents; color: #a9bed5; wrap: word-wrap; }
-            Rectangle { vertical-stretch: 1; }
+            contents-scroll := ScrollView {
+                min-height: 45px;
+                preferred-height: root.collapse-active ? 280px : 60px;
+                max-height: root.collapse-active ? 360px : 100px;
+                vertical-stretch: 1;
+                content-width: self.visible-width;
+                Text { width: contents-scroll.visible-width; text: root.contents; color: #a9bed5; wrap: word-wrap; }
+            }
             Text { text: root.collapse-active ? "Converts every visible reference recursively to editable brushes, terrain and checked point/spot light assemblies. Reference markers and their color/layout are removed; child object settings remain. Hidden root references and child files stay intact. Unsupported child content stops the whole batch. Apply is one Undo step." : "File checks confirm path and presence only. Refresh or Compile validates committed child contents.\nFour helper levels · root-relative paths · world and func_detail brushes\nNo child editing, replacements or search fallback."; color: #9eafc5; wrap: word-wrap; font-size: 12px; }
             if root.message != "": Text { text: root.message; color: #f0b377; wrap: word-wrap; }
             HorizontalLayout {

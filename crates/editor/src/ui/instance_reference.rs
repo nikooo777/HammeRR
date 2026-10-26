@@ -188,6 +188,25 @@ impl Controller {
                     .into(),
             );
             self.window.set_contents(format!("All visible references · {} helper occurrences · {} world brushes · {} detail brushes · {} terrain patches\n{} point lights · {} spot lights · {} local targets\nCollapse does not write child files.", collapse["stats"]["instances"].as_u64().unwrap_or_default(), collapse["stats"]["world_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["detail_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["terrain_patches"].as_u64().unwrap_or_default(), collapse["stats"]["point_lights"].as_u64().unwrap_or_default(), collapse["stats"]["spot_lights"].as_u64().unwrap_or_default(), collapse["stats"]["spotlight_targets"].as_u64().unwrap_or_default()).into());
+            let mut details = self.window.get_contents().to_string();
+            for (field, label) in [("face_provenance", "Face"), ("entity_provenance", "Entity")] {
+                if let Some(rows) = collapse[field].as_array() {
+                    for row in rows {
+                        let id = if field == "face_provenance" {
+                            row["side"].to_string()
+                        } else {
+                            row["entity"].as_str().unwrap_or_default().to_owned()
+                        };
+                        if let Some(route) = row["occurrence_label"].as_str() {
+                            details.push_str(&format!("\n{label} {id}: {route}"));
+                        }
+                    }
+                }
+            }
+            if let Some(error) = collapse["provenance_error"].as_str() {
+                details.push_str(&format!("\n{error}"));
+            }
+            self.window.set_contents(details.into());
             return;
         }
         if self.window.get_collapse_active() {

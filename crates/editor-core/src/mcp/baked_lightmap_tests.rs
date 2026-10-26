@@ -15,13 +15,7 @@ fn baked_lightmap_mcp_matches_session_and_encodes_cpu_image_without_initializing
     }
     let schema = serde_json::to_value(schemars::schema_for!(InspectBakedLightmapsArgs)).unwrap();
     assert_eq!(schema["additionalProperties"], false);
-    let (directory, game) = crate::test_assets::game();
-    let source = directory.path().join("room.vmf");
-    std::fs::write(
-        &source,
-        crate::test_assets::room().write(&Default::default()),
-    )
-    .unwrap();
+    let (_directory, game, source, child_path) = crate::test_assets::instance_map(false);
     let mut session = Session::new(Ok(game));
     session.open(Actor::Agent, &source, false).unwrap();
     session
@@ -51,7 +45,11 @@ fn baked_lightmap_mcp_matches_session_and_encodes_cpu_image_without_initializing
     assert_eq!(image.mime_type, "image/png");
     assert_eq!(server.rendering_status()["initialized"], false);
     let origin = &expected.report["mapping"]["contributors"][0];
-    let source = json!({"kind":"root","solid":origin["solid"],"side":origin["side"]});
+    let source = if origin["kind"] == "instance" {
+        json!({"kind":"instance","instance":origin["instance"],"file":origin["file"],"solid":origin["solid"],"side":origin["side"],"occurrence":origin["occurrence"]})
+    } else {
+        json!({"kind":"root","solid":origin["solid"],"side":origin["side"]})
+    };
     let args = serde_json::from_value(json!({"source":source,"limit":1})).unwrap();
     let result = server.inspect_baked_lightmaps(Parameters(args)).unwrap();
     assert!(!result.is_error.unwrap_or(false));
@@ -65,6 +63,32 @@ fn baked_lightmap_mcp_matches_session_and_encodes_cpu_image_without_initializing
         .unwrap();
     assert_eq!(report, expected_source.report);
     assert!(report["mapping"]["match_page"]["total"].as_u64().unwrap() > 0);
+    let child =
+        source_formats::vmf::Vmf::parse(&std::fs::read_to_string(child_path).unwrap()).unwrap();
+    let original = &child.world.solids[0];
+    let owner = lock(&shared).document().vmf().entities.last().unwrap().id;
+    let external = json!({"kind":"instance","instance":owner,"file":"child.vmf","solid":original.id,"side":original.sides[0].id,"occurrence":[{"helper":owner,"file":"child.vmf"}]});
+    let expected = lock(&shared)
+        .inspect_baked_lightmaps(&Query {
+            source: Some(serde_json::from_value(external.clone()).unwrap()),
+            ..Query::default()
+        })
+        .unwrap();
+    let result = server
+        .inspect_baked_lightmaps(Parameters(
+            serde_json::from_value(json!({"source":external})).unwrap(),
+        ))
+        .unwrap();
+    assert!(!result.is_error.unwrap_or(false));
+    let report: Value = serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
+    assert_eq!(report, expected.report);
+    assert!(report["mapping"]["match_page"]["total"].as_u64().unwrap() > 0);
+    assert!(
+        report["mapping"]["source_occurrence_label"]
+            .as_str()
+            .unwrap()
+            .contains("child.vmf")
+    );
     assert!(
         server
             .inspect_baked_lightmaps(Parameters(

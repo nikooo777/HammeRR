@@ -301,7 +301,7 @@ fn repeated_team_spawns_retain_occurrence_ids_and_true_leaf_owners() {
                 assert_eq!(entity.classname(), Some(class));
                 assert_eq!(entity.origin(), Some(position));
                 assert_eq!(
-                    prepared.provenance[&format!("entity:{}", entity.id)],
+                    prepared.provenance[&format!("entity:{}", entity.id)].legacy,
                     (owner, "child.vmf".into(), original, None)
                 );
                 index += 1;

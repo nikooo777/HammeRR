@@ -9,6 +9,7 @@ use crate::camera::Camera;
 use crate::materials::{MaterialId, MaterialInfo, MaterialLibrary};
 use crate::scene::{Batch, LineVertex, SceneMesh, Vertex};
 
+mod color_correction;
 mod miniature;
 
 /// The view format the pipelines render into; see [`RenderTarget`].
@@ -408,6 +409,9 @@ pub struct GpuScene {
 }
 
 pub struct Renderer {
+    color_correction: color_correction::State,
+    color_correction_preview: Option<crate::color_correction::Preview>,
+    last_color_correction_error: Option<String>,
     last_sky3d_error: Option<String>,
     sky3d: miniature::State,
     sky3d_pipeline: wgpu::RenderPipeline,
@@ -439,6 +443,13 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    pub fn set_color_correction(&mut self, preview: Option<crate::color_correction::Preview>) {
+        self.color_correction_preview = preview;
+    }
+
+    pub fn last_color_correction_error(&self) -> Option<&str> {
+        self.last_color_correction_error.as_deref()
+    }
     pub fn last_sky3d_error(&self) -> Option<&str> {
         self.last_sky3d_error.as_deref()
     }
@@ -764,6 +775,9 @@ impl Renderer {
         });
 
         Self {
+            color_correction: color_correction::State::default(),
+            color_correction_preview: None,
+            last_color_correction_error: None,
             last_sky3d_error: None,
             sky3d,
             sky3d_pipeline,
@@ -1212,6 +1226,40 @@ impl Renderer {
         target: &wgpu::TextureView,
         size: (u32, u32),
     ) {
+        let mut correction = std::mem::take(&mut self.color_correction);
+        self.last_color_correction_error = None;
+        if let Some(preview) = &self.color_correction_preview {
+            match correction.prepare(ctx, preview, size) {
+                Ok(()) => {
+                    self.render_scene(ctx, scene, camera, options, correction.target(), size);
+                    if let Err(error) = correction.draw(ctx, target) {
+                        self.render_scene(ctx, scene, camera, options, target, size);
+                        self.last_color_correction_error = Some(error);
+                    }
+                }
+                Err(error) => {
+                    self.render_scene(ctx, scene, camera, options, target, size);
+                    self.last_color_correction_error = Some(error);
+                }
+            }
+        } else {
+            if let Err(error) = correction.disable(ctx) {
+                self.last_color_correction_error = Some(error);
+            }
+            self.render_scene(ctx, scene, camera, options, target, size);
+        }
+        self.color_correction = correction;
+    }
+
+    fn render_scene(
+        &mut self,
+        ctx: &GpuContext,
+        scene: &GpuScene,
+        camera: &Camera,
+        options: &ViewOptions,
+        target: &wgpu::TextureView,
+        size: (u32, u32),
+    ) {
         let depth = self.depth_view(ctx, size);
         let aspect = size.0 as f32 / size.1.max(1) as f32;
         let light = glam::Vec3::new(0.35, 0.55, 0.75).normalize();
@@ -1484,6 +1532,9 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, String> {
+        if self.color_correction_preview.is_some() {
+            crate::color_correction::target_bytes((width, height))?;
+        }
         self.last_sky3d_error = None;
         if let Some(error) = scene.sky3d_render_error(camera, options) {
             self.last_sky3d_error = Some(error.clone());
@@ -1506,6 +1557,9 @@ impl Renderer {
             }
         }
         let pixels = self.render_to_rgba(ctx, scene, camera, options, width, height);
+        if let Some(error) = &self.last_color_correction_error {
+            return Err(error.clone());
+        }
         match &self.last_sky3d_error {
             Some(error) => Err(error.clone()),
             None => Ok(pixels),
@@ -1840,6 +1894,7 @@ mod tests {
             include_str!("sky3d_surface.wgsl"),
             include_str!("sky3d_error.wgsl"),
             include_str!("icons.wgsl"),
+            include_str!("color_correction.wgsl"),
         ] {
             let module = wgsl::parse_str(source)
                 .unwrap_or_else(|error| panic!("{}", error.emit_to_string(source)));

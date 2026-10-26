@@ -3,6 +3,7 @@ mod atlas;
 mod build;
 mod checks;
 mod clipboard;
+mod color_correction;
 mod color_palette;
 mod components;
 mod context;

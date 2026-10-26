@@ -270,6 +270,7 @@ impl Session {
             self.cancel_transform_preview();
         }
         self.models.get_mut().clear();
+        self.invalidate_instance_model_preview();
         self.model_browser.catalog = None;
         self.scene_serial += 1;
         self.view_serial += 1;

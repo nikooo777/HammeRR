@@ -238,6 +238,7 @@ impl Ui {
             layers,
             compile_region,
             fog,
+            color_correction,
             sky3d,
             working_region,
             overlay,

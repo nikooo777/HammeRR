@@ -46,6 +46,7 @@ pub mod clip_drag;
 pub mod clip_points;
 pub mod clipboard;
 mod clipping;
+pub mod color_correction;
 mod color_palette;
 mod colors;
 pub mod compilation;
@@ -258,6 +259,7 @@ pub enum SelectMode {
 }
 
 pub struct Session {
+    color_correction: color_correction::State,
     file_claims: crate::path_claims::Binding,
     instance_contents: instance_contents::State,
     compile_region: compile_region::State,
@@ -581,6 +583,7 @@ impl Session {
 
     pub(crate) fn with_shared_content(content: SessionContent) -> Self {
         Self {
+            color_correction: color_correction::State::default(),
             file_claims: crate::path_claims::Binding::default(),
             instance_contents: instance_contents::State::default(),
             geometry: previews::State::default(),
@@ -2807,6 +2810,7 @@ impl Session {
             selected_faces
         };
         let overlays = self.partition_face_overlays();
+        let references = self.instance_contents_preview(view.instance_contents);
         let document = self.geometry.document(&self.document);
         let selected = if self.geometry.components.selection.is_empty()
             && self.component_picking().is_none()
@@ -2824,7 +2828,7 @@ impl Session {
         );
         let model_guides = self.fgd_model_guides(document, &evaluation, view.entity_model_guides);
         let mut lighting = lighting_preview::prepare(document.vmf(), &evaluation.objects, view);
-        let mut mesh = SceneMesh::build_with_previews_filtered(
+        let mut mesh = SceneMesh::build_with_reference_models_filtered(
             document.vmf(),
             &self.game,
             &mut self.materials,
@@ -2836,6 +2840,7 @@ impl Session {
             view.tool_textures,
             view.normal_maps && view.surface == render::SurfaceView::Textured,
             view.lighting_preview && view.surface == render::SurfaceView::Textured,
+            &references.models,
             |id| evaluation.objects.contains(&id),
         );
         mesh.normal_maps.requested = view.normal_maps;
@@ -2870,7 +2875,6 @@ impl Session {
             material_generation: self.materials.generation(),
         });
         mesh.lighting = lighting;
-        let references = self.instance_contents_preview(view.instance_contents);
         let mut report = references.report;
         if let Some(reference_mesh) = references.mesh
             && let Err(error) = mesh.append_references(
@@ -2886,6 +2890,13 @@ impl Session {
                 "Instance contents unavailable: {error}; ordinary scene retained"
             ));
             report["error"] = serde_json::json!(error);
+            drop(mesh);
+            let ordinary = self.build_scene_for_view(ViewOptions {
+                instance_contents: false,
+                ..view
+            });
+            self.retain_instance_contents_render_report(report);
+            return ordinary;
         }
         self.retain_instance_contents_render_report(report);
         if let Some(points) = self.pointfile_points() {

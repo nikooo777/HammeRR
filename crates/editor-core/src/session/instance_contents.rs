@@ -18,10 +18,11 @@ use source_formats::vmf::{Vmf, parse_vec3};
 use super::worker::{Slot, Ticket};
 use super::{Actor, Session};
 
+mod models;
 mod terrain;
 
 pub const BRUSH_MODEL_PREVIEW_REASON: &str = "Child brush models have no reference geometry or icons; model bounds, picking and framing are unavailable. Refresh checks source geometry and properties, not material or native compilation validity. Refresh leaves effective pivots, model-local bounds and consumed origin-volume counts unknown until material-aware Compile.";
-pub const STATIC_PROP_PREVIEW_REASON: &str = "Child static-prop models are compiled but not shown in the reference preview; model bounds, picking and framing are unavailable.";
+pub const STATIC_PROP_PREVIEW_REASON: &str = "Refresh checks static-prop sources without reading models. Enable Instance contents to load supported models for display, root-reference picking and framing. Models use the shared model cache; Reload models refreshes assets.";
 pub const ENVIRONMENT_LIGHT_PREVIEW_REASON: &str = "Child lights, sun/sky illumination and icons are not shown in the reference or authored-lighting preview; child light bounds, picking and framing are unavailable.";
 pub const FOG_PREVIEW_REASON: &str = "Child fog controllers are compiled but are not selectable in the parent's Fog preview. Child fog, controller icons, bounds, picking and framing are unavailable in the reference preview.";
 pub const LIGHTING_ORIGIN_PREVIEW_REASON: &str = "Child lighting-origin helpers have no reference geometry or icons; helper bounds, picking and framing are unavailable.";
@@ -82,6 +83,7 @@ pub(super) struct State {
     error: Option<String>,
     rendered_report: Value,
     presentation_key: Option<(Option<&'static str>, Vec<u32>)>,
+    models: std::cell::RefCell<Option<Arc<models::Cached>>>,
 }
 
 pub struct Request {
@@ -162,12 +164,15 @@ struct Ready {
     diagnostics_truncated: bool,
     cpu_bytes: usize,
     gpu_bytes: usize,
+    props: Vec<models::Prop>,
+    control: compiler::Control,
 }
 
 pub struct Presentation {
     pub mesh: Option<Arc<Mesh>>,
     pub owners: BTreeSet<u32>,
     pub report: Value,
+    pub models: Vec<render::models::Instance>,
 }
 
 fn bounded(value: &str) -> String {
@@ -175,7 +180,7 @@ fn bounded(value: &str) -> String {
 }
 
 fn limits() -> Value {
-    json!({"instances":instances::MAX_INSTANCES,"files":instances::MAX_FILES,"file_bytes":instances::MAX_FILE_BYTES,"total_bytes":instances::MAX_TOTAL_BYTES,"file_nodes":instances::MAX_FILE_NODES,"total_nodes":instances::MAX_TOTAL_NODES,"depth":instances::MAX_DEPTH,"expansion_depth":instances::MAX_EXPANSION_DEPTH,"objects":instances::MAX_OBJECTS,"sides":instances::MAX_SIDES,"sides_per_brush":instances::MAX_BRUSH_SIDES,"geometry_work":instances::MAX_GEOMETRY_WORK,"terrain_source_vertices":instances::MAX_TERRAIN_SOURCE_VERTICES,"terrain_expanded_vertices":instances::MAX_TERRAIN_EXPANDED_VERTICES,"terrain_grid_work":instances::MAX_TERRAIN_GRID_WORK,"terrain_context_vertices":references::MAX_VERTICES,"terrain_parent_lod":"must_match_ordinary_context","lighting_origin_name_bytes":instances::MAX_LIGHTING_ORIGIN_NAME_BYTES,"spotlight_target_name_bytes":instances::MAX_LIGHTING_ORIGIN_NAME_BYTES,"field_bytes":instances::MAX_FIELD_BYTES,"parent_bytes":instances::MAX_PARENT_BYTES,"vertices":references::MAX_VERTICES,"indices":references::MAX_INDICES,"line_vertices":references::MAX_LINES,"pick_triangles":references::MAX_TRIANGLES,"cpu_bytes":references::MAX_CPU_BYTES,"gpu_bytes":references::MAX_GPU_BYTES,"rows":MAX_ROWS,"diagnostics":MAX_DIAGNOSTICS,"active_workers":1,"cached_snapshots":1})
+    json!({"instances":instances::MAX_INSTANCES,"files":instances::MAX_FILES,"file_bytes":instances::MAX_FILE_BYTES,"total_bytes":instances::MAX_TOTAL_BYTES,"file_nodes":instances::MAX_FILE_NODES,"total_nodes":instances::MAX_TOTAL_NODES,"depth":instances::MAX_DEPTH,"expansion_depth":instances::MAX_EXPANSION_DEPTH,"objects":instances::MAX_OBJECTS,"sides":instances::MAX_SIDES,"sides_per_brush":instances::MAX_BRUSH_SIDES,"geometry_work":instances::MAX_GEOMETRY_WORK,"terrain_source_vertices":instances::MAX_TERRAIN_SOURCE_VERTICES,"terrain_expanded_vertices":instances::MAX_TERRAIN_EXPANDED_VERTICES,"terrain_grid_work":instances::MAX_TERRAIN_GRID_WORK,"terrain_context_vertices":references::MAX_VERTICES,"terrain_parent_lod":"must_match_ordinary_context","lighting_origin_name_bytes":instances::MAX_LIGHTING_ORIGIN_NAME_BYTES,"spotlight_target_name_bytes":instances::MAX_LIGHTING_ORIGIN_NAME_BYTES,"field_bytes":instances::MAX_FIELD_BYTES,"parent_bytes":instances::MAX_PARENT_BYTES,"vertices":references::MAX_VERTICES,"indices":references::MAX_INDICES,"line_vertices":references::MAX_LINES,"pick_triangles":references::MAX_TRIANGLES,"cpu_bytes":references::MAX_CPU_BYTES,"gpu_bytes":references::MAX_GPU_BYTES,"model_scene_vertices":render::models::MAX_SCENE_VERTICES,"model_scene_indices":render::models::MAX_SCENE_INDICES,"rows":MAX_ROWS,"diagnostics":MAX_DIAGNOSTICS,"active_workers":1,"cached_snapshots":1})
 }
 
 fn intersects(a: [DVec3; 2], b: [DVec3; 2]) -> bool {
@@ -283,6 +288,8 @@ impl Request {
                 diagnostics_truncated: false,
                 cpu_bytes: 0,
                 gpu_bytes: 0,
+                props: Vec::new(),
+                control: self.control.clone(),
             });
         };
         let source = self
@@ -294,6 +301,7 @@ impl Request {
         let mut report = compiler::Report::default();
         let prepared = instances::resolve(vmf, source.as_ref(), &self.control, &mut report)
             .map_err(|error| bounded(&error.message))?;
+        let (props, prop_bytes) = models::sources(&prepared, &self.control)?;
         let mut owners = vmf
             .entities
             .iter()
@@ -327,6 +335,7 @@ impl Request {
                     bytes.checked_add(owner.file.capacity())
                 })
             })
+            .and_then(|bytes| bytes.checked_add(prop_bytes))
             .ok_or("Instance owner CPU size overflow")?;
         let mut terrain = terrain::prepare(&prepared, vmf, &self.control, &mut report)?;
         let mut mesh = Mesh::default();
@@ -605,6 +614,7 @@ impl Request {
                 &owners,
                 owners.capacity(),
             )
+            .and_then(|bytes| bytes.checked_add(prop_bytes))
             .and_then(|bytes| {
                 bytes.checked_add(terrain.values().map(terrain::Surface::bytes).sum::<usize>())
             })
@@ -632,7 +642,11 @@ impl Request {
             &owners,
             owners.capacity(),
         )
+        .and_then(|bytes| bytes.checked_add(prop_bytes))
         .ok_or("Instance CPU size overflow")?;
+        if cpu_bytes > references::MAX_CPU_BYTES {
+            return Err("Instance contents exceed the 64 MiB retained CPU capacity budget".into());
+        }
         let gpu_bytes = count_bytes(mesh.vertices.len(), mesh.indices.len(), mesh.edges.len())
             .ok_or("Instance GPU size overflow")?;
         let diagnostics=report.diagnostics.iter().take(MAX_DIAGNOSTICS).map(|diagnostic|json!({"level":format!("{:?}",diagnostic.level).to_ascii_lowercase(),"object":diagnostic.object,"message":bounded(&diagnostic.message),"message_truncated":diagnostic.message.len()>instances::MAX_FIELD_BYTES})).collect();
@@ -648,6 +662,8 @@ impl Request {
             diagnostics_truncated: report.diagnostics.len() > MAX_DIAGNOSTICS,
             cpu_bytes,
             gpu_bytes,
+            props,
+            control: self.control.clone(),
         })
     }
 }
@@ -671,6 +687,7 @@ impl Session {
         self.instance_contents.pending = None;
         self.instance_contents.serial = self.instance_contents.serial.wrapping_add(1);
         self.instance_contents.ready = None;
+        self.invalidate_instance_model_preview();
         self.instance_contents.error = None;
         self.invalidate_instance_contents_render();
         let has_instances = instances::requires_source(self.document.vmf());
@@ -850,11 +867,26 @@ impl Session {
         });
         if let Some(error) = error {
             self.instance_contents.ready = None;
+            self.invalidate_instance_model_preview();
             self.instance_contents.status = "stale";
             self.instance_contents.error = Some(error);
             self.invalidate_instance_contents_render();
             self.instance_contents.presentation_key = None;
             return true;
+        }
+        let model_owners = self.current_instance_contents().map(|ready| {
+            ready
+                .owners
+                .iter()
+                .filter(|owner| self.instance_owner_enabled(owner))
+                .map(|owner| owner.id)
+                .collect::<BTreeSet<_>>()
+        });
+        if self
+            .cached_instance_models()
+            .is_some_and(|cached| Some(&cached.owners) != model_owners.as_ref())
+        {
+            self.invalidate_instance_model_preview();
         }
         let key = self.current_instance_contents().map(|ready| {
             (
@@ -932,6 +964,7 @@ impl Session {
         self.instance_contents.pending = None;
         self.instance_contents.serial = self.instance_contents.serial.wrapping_add(1);
         self.instance_contents.ready = None;
+        self.invalidate_instance_model_preview();
         self.instance_contents.status = "not_loaded";
         self.instance_contents.error = None;
         self.invalidate_instance_contents_render();
@@ -940,6 +973,7 @@ impl Session {
     }
 
     pub(super) fn reset_instance_contents(&mut self) {
+        self.invalidate_instance_model_preview();
         self.invalidate_instance_contents_render();
         if let Some(pending) = &self.instance_contents.pending {
             let _ = pending.control.cancel();
@@ -980,7 +1014,7 @@ impl Session {
         })
     }
 
-    fn instance_owner_visible(&self, owner: &Owner) -> bool {
+    fn instance_owner_enabled(&self, owner: &Owner) -> bool {
         if self
             .document
             .entity(owner.id)
@@ -991,12 +1025,18 @@ impl Session {
         if self.editor_object_hidden(map_core::ObjectId::Entity(owner.id)) {
             return false;
         }
+        true
+    }
+
+    fn instance_owner_visible(&self, owner: &Owner) -> bool {
+        if !self.instance_owner_enabled(owner) {
+            return false;
+        }
         if !self.working_region.enabled {
             return true;
         }
         self.working_region.bounds.is_some_and(|region| {
-            owner
-                .bounds
+            self.instance_owner_bounds(owner)
                 .is_some_and(|bounds| intersects(bounds, region))
                 || intersects(
                     [
@@ -1011,7 +1051,21 @@ impl Session {
     fn instance_report(&self, enabled: bool, offset: usize, limit: usize) -> Value {
         let ready = self.current_instance_contents();
         let suppression = self.instance_contents_suppression();
-        let available = ready.is_some_and(|ready| !ready.mesh.indices.is_empty());
+        let models = self.cached_instance_models();
+        let model_geometry = models
+            .as_ref()
+            .and_then(|cached| cached.result.as_ref().ok());
+        let model_error = models
+            .as_ref()
+            .and_then(|cached| cached.result.as_ref().err());
+        let complete = ready.is_some_and(|ready| {
+            ready.props.is_empty() || models.is_none() || model_geometry.is_some()
+        });
+        let available = complete
+            && ready.is_some_and(|ready| {
+                !ready.mesh.indices.is_empty()
+                    || model_geometry.is_some_and(|geometry| !geometry.instances.is_empty())
+            });
         let visible = ready
             .map(|ready| {
                 ready
@@ -1029,6 +1083,8 @@ impl Session {
         };
         let status = if !enabled {
             "disabled"
+        } else if model_error.is_some() {
+            "model_unavailable"
         } else if suppression.is_some() && available {
             "context_suppressed"
         } else {
@@ -1043,6 +1099,10 @@ impl Session {
                     .take(limit)
                     .map(|owner| {
                         let mut row = owner.json();
+                        row["bounds"] = json!(
+                            self.instance_owner_bounds(owner)
+                                .map(|bounds| bounds.map(|point| point.to_array()))
+                        );
                         row["editor_hidden"] =
                             json!(self.editor_object_hidden(ObjectId::Entity(owner.id)));
                         row["display_eligible"] = json!(self.instance_owner_visible(owner));
@@ -1068,8 +1128,12 @@ impl Session {
                     "displayed"
                 } else if !enabled {
                     "display is off"
+                } else if model_error.is_some() {
+                    "model display unavailable"
+                } else if !complete {
+                    "model display has not loaded"
                 } else if !available {
-                    "no displayable brushes"
+                    "no displayable geometry"
                 } else if suppression.is_some() {
                     "temporarily hidden"
                 } else {
@@ -1125,7 +1189,7 @@ impl Session {
             "loading":self.instance_contents.pending.is_some(),
             "worker_active":self.instance_contents.worker.busy(),
             "cancellable":self.instance_contents.pending.as_ref().is_some_and(|pending|!pending.control.cancelled()),
-            "suppression_reason":suppression,"error":self.instance_contents.error,
+            "suppression_reason":suppression,"error":model_error.or(self.instance_contents.error.as_ref()),
             "source":ready.map(|ready|ready.key.json()),"stats":ready.map(|ready|&ready.stats),
             "owners":rows,"total":ready.map_or(0,|ready|ready.owners.len()),"offset":offset,"limit":limit,
             "has_more":ready.is_some_and(|ready|ready.owners.len()>offset.saturating_add(limit)),
@@ -1134,7 +1198,7 @@ impl Session {
             "face_provenance":faces,"face_provenance_total":face_count,"face_provenance_truncated":face_count>MAX_ROWS,
             "diagnostics":ready.map(|ready|&ready.diagnostics),"diagnostics_truncated":ready.is_some_and(|ready|ready.diagnostics_truncated),
             "geometry":ready.map(|ready|json!({"vertices":ready.mesh.vertices.len(),"indices":ready.mesh.indices.len(),"line_vertices":ready.mesh.edges.len(),"triangles":ready.mesh.indices.len()/3,"cpu_bytes":ready.cpu_bytes,"gpu_bytes":ready.gpu_bytes})),
-            "policy":if has_terrain {"read_only_world_detail_terrain_root_owner_picking_no_material_loading"} else {"flat_read_only_world_detail_root_owner_picking_no_material_loading"},
+            "policy":if ready.is_some_and(|ready|!ready.props.is_empty()) {"read_only_brush_terrain_static_prop_root_owner_picking"} else if has_terrain {"read_only_world_detail_terrain_root_owner_picking_no_material_loading"} else {"flat_read_only_world_detail_root_owner_picking_no_material_loading"},
             "authoring_bounds":"ordinary_root_objects_unchanged","limits":limits(),
             "light_value_bindings":super::instance_reference::light_value_binding_scope()
         });
@@ -1166,11 +1230,8 @@ impl Session {
                 } else { Vec::new() }
             });
         }
-        if ready.is_some_and(|ready| ready.stats.static_props > 0) {
-            report["static_prop_preview"] = json!({
-                "available":false,
-                "reason":STATIC_PROP_PREVIEW_REASON
-            });
+        if let Some(ready) = ready.filter(|ready| ready.stats.static_props > 0) {
+            report["static_prop_preview"] = self.instance_models_json(ready);
         }
         if ready.is_some_and(|ready| ready.stats.lighting_origins > 0) {
             report["lighting_origin_preview"] = json!({
@@ -1231,11 +1292,22 @@ impl Session {
 
     pub fn instance_contents_preview(&mut self, enabled: bool) -> Presentation {
         self.preflight_instance_contents();
+        if enabled
+            && self.instance_contents_suppression().is_none()
+            && let Some(ready) = self.current_instance_contents()
+            && !ready.props.is_empty()
+        {
+            self.prepare_instance_models(ready);
+        }
         let report = self.instance_report(enabled, 0, MAX_ROWS);
-        let ready = (enabled && self.instance_contents_suppression().is_none())
-            .then(|| self.current_instance_contents())
-            .flatten();
-        let owners = ready
+        let ready = (enabled
+            && self
+                .cached_instance_models()
+                .is_none_or(|cached| cached.result.is_ok())
+            && self.instance_contents_suppression().is_none())
+        .then(|| self.current_instance_contents())
+        .flatten();
+        let owners: BTreeSet<u32> = ready
             .map(|ready| {
                 ready
                     .owners
@@ -1247,6 +1319,23 @@ impl Session {
             .unwrap_or_default();
         Presentation {
             mesh: ready.map(|ready| ready.mesh.clone()),
+            models: self
+                .cached_instance_models()
+                .as_ref()
+                .and_then(|cached| cached.result.as_ref().ok())
+                .filter(|_| ready.is_some())
+                .map(|geometry| {
+                    geometry
+                        .instances
+                        .iter()
+                        .filter(|instance| match instance.id {
+                            ObjectId::Entity(id) => owners.contains(&id),
+                            _ => false,
+                        })
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default(),
             owners,
             report,
         }
@@ -1270,19 +1359,34 @@ impl Session {
         let Some(ready) = self.current_instance_contents() else {
             return Vec::new();
         };
+        let models = (!ready.props.is_empty()).then(|| self.prepare_instance_models(ready));
+        let geometry = models
+            .as_ref()
+            .and_then(|cached| cached.result.as_ref().ok());
+        if models.as_ref().is_some_and(|cached| cached.result.is_err()) {
+            return Vec::new();
+        }
         let mut hits = Vec::new();
         for owner in ready
             .owners
             .iter()
             .filter(|owner| self.instance_owner_visible(owner))
         {
-            let Some(bounds) = owner.bounds else {
+            let Some(bounds) = self.instance_owner_bounds(owner) else {
                 continue;
             };
             if !map_core::query::ray_intersects_bounds(&ray, bounds[0], bounds[1]) {
                 continue;
             }
             let mut nearest: Option<f64> = None;
+            if let Some(geometry) = geometry {
+                nearest = geometry
+                    .instances
+                    .iter()
+                    .filter(|instance| instance.id == ObjectId::Entity(owner.id))
+                    .filter_map(|instance| instance.pick(&ray).map(|hit| hit.distance))
+                    .min_by(f64::total_cmp);
+            }
             for (brush, record) in ready
                 .mesh
                 .brushes
@@ -1350,6 +1454,12 @@ impl Session {
         {
             return ordinary;
         }
+        if let Some(ready) = self.current_instance_contents()
+            && !ready.props.is_empty()
+            && self.prepare_instance_models(ready).result.is_err()
+        {
+            return ordinary;
+        }
         let contents = self
             .current_instance_contents()
             .into_iter()
@@ -1357,7 +1467,10 @@ impl Session {
             .filter(|owner| {
                 ids.contains(&ObjectId::Entity(owner.id)) && self.instance_owner_visible(owner)
             })
-            .filter_map(|owner| owner.bounds.map(|bounds| (bounds[0], bounds[1])));
+            .filter_map(|owner| {
+                self.instance_owner_bounds(owner)
+                    .map(|bounds| (bounds[0], bounds[1]))
+            });
         map_core::query::union(ordinary.into_iter().chain(contents))
     }
 
@@ -1389,6 +1502,14 @@ impl Session {
         }) {
             return Err("Frame instance contents accepts current root instance owners only".into());
         }
+        if !ready.props.is_empty() {
+            let models = self.prepare_instance_models(ready);
+            if let Err(error) = &models.result {
+                return Err(format!(
+                    "Instance contents have no visible geometry to frame: {error}"
+                ));
+            }
+        }
         let bounds = map_core::query::union(
             ready
                 .owners
@@ -1397,7 +1518,10 @@ impl Session {
                     (ids.is_empty() || ids.contains(&ObjectId::Entity(owner.id)))
                         && self.instance_owner_visible(owner)
                 })
-                .filter_map(|owner| owner.bounds.map(|bounds| (bounds[0], bounds[1]))),
+                .filter_map(|owner| {
+                    self.instance_owner_bounds(owner)
+                        .map(|bounds| (bounds[0], bounds[1]))
+                }),
         )
         .ok_or("Instance contents have no visible geometry to frame")?;
         self.set_camera(

@@ -9,6 +9,7 @@ mod fog_controllers;
 mod light_appearances;
 mod light_value_bindings;
 mod lighting_origins;
+mod model_geometry;
 mod occluders;
 mod overlays;
 mod player_spawns;

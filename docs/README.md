@@ -38,6 +38,7 @@ See [Status](status.md) for supported features and limits.
 - [Normal-map preview](normal-maps.md)
 - [Authored lighting preview](lighting-preview.md)
 - [Fog preview](fog.md)
+- [Color correction](color-correction.md)
 - [Sky previews and assets](sky.md)
 - [Rope preview](ropes.md)
 - [Models](models.md)

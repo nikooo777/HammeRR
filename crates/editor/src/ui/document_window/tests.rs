@@ -943,7 +943,10 @@ fn owned_document_retirement_hides_nested_windows_stops_timers_and_preserves_pee
         let mut session = lock(&target.shared);
         let mesh = session.build_scene();
         ui.viewport.set_scene(&ctx, &mesh, session.materials());
-        let image = ui.viewport.render(&ctx, (320, 240), 1.0).unwrap();
+        let image = ui
+            .viewport
+            .render(&ctx, (320, 240), 1.0, &mut session)
+            .unwrap();
         assert_eq!(image.size().width, 320);
         assert_eq!(image.size().height, 240);
         windows.app.set_frame(image);

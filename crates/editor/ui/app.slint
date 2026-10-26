@@ -15,6 +15,7 @@ export { ShortcutsWindow, ShortcutRow } from "shortcuts.slint";
 export { WorkingRegionWindow } from "working-region.slint";
 export { CompileRegionWindow } from "compile-region.slint";
 export { FogWindow } from "fog.slint";
+export { ColorCorrectionWindow } from "color-correction.slint";
 export { Sky3dWindow } from "sky3d.slint";
 export { OverlayWindow, OverlayTargetRow } from "overlay.slint";
 export { CubemapFacesWindow, CubemapFaceRow } from "cubemap-faces.slint";
@@ -2063,6 +2064,9 @@ export component AppWindow inherits Window {
     in property <string> rope-preview-status: "Rope preview is off";
     in property <string> fog-preview-status: "Fog preview is off";
     callback fog-preview();
+    callback color-correction-preview();
+    in property <string> color-correction-status: "Color correction is off";
+    in property <string> color-correction-error;
     callback sky3d-preview();
     in property <string> sky3d-preview-status: "3D sky preview is off";
     in property <string> sky3d-render-error;
@@ -2869,6 +2873,9 @@ export component AppWindow inherits Window {
                     if root.sky3d-render-error != "": Text { text: root.sky3d-render-error; color: #efb56b; wrap: word-wrap; }
                     Button { text: "Fog preview…"; clicked => { root.fog-preview(); } }
                     Text { text: root.fog-preview-status; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                    Button { text: "Color correction…"; clicked => { root.color-correction-preview(); } }
+                    Text { text: root.color-correction-status; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                    if root.color-correction-error != "": Text { text: root.color-correction-error; color: #efb56b; wrap: word-wrap; }
                     CheckBox {
                         text: "Instance contents";
                         checked <=> root.instance-contents;

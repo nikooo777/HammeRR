@@ -729,9 +729,20 @@ struct SourceOrigin {
 type Provenance = BTreeMap<String, SourceOrigin>;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct StaticPropPose {
+pub struct StaticPropPose {
     pub origin: DVec3,
     pub angles: DVec3,
+}
+
+impl StaticPropPose {
+    pub fn validate_model_bounds(
+        self,
+        header: source_formats::mdl::ModelHeader,
+    ) -> Result<(), String> {
+        let angles = self.angles.map(f64::to_radians);
+        let rotation = glam::DQuat::from_euler(glam::EulerRot::ZYX, angles.y, angles.x, angles.z);
+        crate::static_props::bounds(header, self.origin, rotation).map(|_| ())
+    }
 }
 
 pub(crate) type StaticPropPoses = BTreeMap<u32, Vec<StaticPropPose>>;
@@ -835,6 +846,10 @@ impl PreparedInstances<'_> {
         self.provenance
             .get(&format!("entity:{generated}"))
             .map(|source| &source.occurrence)
+    }
+
+    pub fn static_prop_poses(&self, generated: u32) -> Option<&[StaticPropPose]> {
+        self.static_prop_poses.get(&generated).map(Vec::as_slice)
     }
 
     pub fn face_occurrence(&self, side: u32) -> Option<&std::sync::Arc<OccurrencePath>> {

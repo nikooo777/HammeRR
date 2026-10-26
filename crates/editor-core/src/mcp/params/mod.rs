@@ -6,6 +6,8 @@ mod atlas;
 pub(super) use atlas::*;
 mod common;
 pub(super) use common::*;
+mod color_correction;
+pub(super) use color_correction::*;
 mod components;
 pub(super) use components::*;
 mod cubemap_bindings;

@@ -38,6 +38,7 @@ pub struct Viewport {
     last_mouse: Option<(f32, f32)>,
     left_press: Option<(f32, f32)>,
     dirty: bool,
+    color_correction_error: Option<String>,
 }
 
 impl Viewport {
@@ -55,6 +56,7 @@ impl Viewport {
             last_mouse: None,
             left_press: None,
             dirty: true,
+            color_correction_error: None,
         }
     }
 
@@ -72,6 +74,10 @@ impl Viewport {
 
     pub fn sky3d_error(&self) -> Option<&str> {
         self.renderer.last_sky3d_error()
+    }
+
+    pub fn color_correction_error(&self) -> Option<&str> {
+        self.color_correction_error.as_deref()
     }
 
     pub fn looking(&self) -> bool {
@@ -207,6 +213,7 @@ impl Viewport {
         ctx: &GpuContext,
         size: (u32, u32),
         pixel_ratio: f32,
+        session: &mut editor_core::session::Session,
     ) -> Option<slint::Image> {
         let size = (size.0.max(1), size.1.max(1));
         let resized = self.targets[0].as_ref().is_none_or(|t| t.size() != size);
@@ -214,6 +221,15 @@ impl Viewport {
             return None;
         }
         let scene = self.scene.as_ref()?;
+        self.color_correction_error = None;
+        let preview = match session.color_correction_for_render() {
+            Ok(preview) => preview,
+            Err(error) => {
+                self.color_correction_error = Some(error);
+                None
+            }
+        };
+        self.renderer.set_color_correction(preview.clone());
         if resized {
             self.targets = [
                 Some(RenderTarget::new(ctx, size.0, size.1)),
@@ -227,6 +243,15 @@ impl Viewport {
         };
         self.renderer
             .render(ctx, scene, &self.camera, &options, &target.view, size);
+        if let Some(error) = self.renderer.last_color_correction_error() {
+            self.color_correction_error = Some(error.to_owned());
+        }
+        if let Err(error) = session.verify_color_correction_render(preview.as_ref()) {
+            self.renderer.set_color_correction(None);
+            self.renderer
+                .render(ctx, scene, &self.camera, &options, &target.view, size);
+            self.color_correction_error = Some(error);
+        }
         self.next_target ^= 1;
         self.pixel_ratio = pixel_ratio;
         self.dirty = false;

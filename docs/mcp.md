@@ -189,6 +189,19 @@ The same tools accept multiple isolated planar displacements and mixed flat targ
 Every prepared and native sample must lie on the common projection plane, with straight quad borders. Each terrain base must be separate from every other terrain base. Touching or overlapping bounds and visible instance references reject.
 The fit follows actual displaced coordinates. Refit after moving the plane; rebind can switch between eligible flat and terrain sources.
 
+## Preview instance props
+
+1. Call `set_instance_contents` with `action: "refresh"` to check saved child VMFs.
+2. Call `set_view` or `render_view` with `instance_contents: true` to display supported child static props.
+3. Read `static_prop_preview` in `inspect_instance_contents` or the render's `instance_contents` report.
+4. Use `set_instance_contents` with `action: "frame"` and the current token to frame content bounds.
+
+Refresh does not read models. Display, picking and framing use the shared model cache.
+Repeated and nested props retain their selected skins and outer-reference selection.
+`model_unavailable` reports model read, pose or budget failures and hides the reference layer.
+Use `reload_model_assets` or `reload_material_assets` after changing those files.
+See [instance contents](instance-contents.md) for limits.
+
 ## Collapse all visible references
 
 Call `get_instance_collapse`, then `set_instance_collapse` with
@@ -253,6 +266,24 @@ Bounds are conservative axis-aligned boxes. **Contained** requires the entire sp
 Incoming spans do not enlarge their target. Changing the toggle expires area/volume reviews.
 Temporary `render_view` and `pick_at_pixel` rope overrides also affect camera `focus`.
 Authored pivots, transforms, placement, paint and raw map summaries keep source bounds.
+
+## Color correction
+
+1. Call `load_color_correction_lut` with an explicit physical `path` to a Source `.raw` LUT. A successful load turns preview off.
+2. Inspect `get_color_correction_preview`. It reports the source, admitted `identity`, SHA256, requested enable/weight, source readiness and errors without initializing graphics.
+3. Call `set_color_correction_preview` with `enabled:true`, a finite `weight` from `0` to `1`, and optional `expected_identity` from inspection. A different loaded identity refuses that reviewed enable request.
+4. Call `render_view`. Its `color_correction.applied` is true only after the requested frame succeeds. Source or GPU failure returns an error instead of a successful ungraded image.
+
+Use `enabled:false` to disable the preview. `clear_color_correction_lut` disables it
+and clears its admitted source and error. Changed or missing input invalidates
+the LUT until an explicit successful load; no previous or identity table is substituted.
+
+The file must contain exactly 98,304 packed RGB8 bytes: 32 cubed entries, red
+index fastest, then green, then blue. Trilinear lookup applies once to the
+complete viewport's sRGB display colors, including helpers and background.
+The preview does not evaluate entities, volumes, multiple LUTs or native HDR
+composition. It does not change the map or saved preferences.
+See [Color correction](color-correction.md) for target and resource limits.
 
 ## Compile and play
 
@@ -405,6 +436,7 @@ These groups locate the available operations.
 | [Selection](selection.md) | `begin_paint_selection`, `begin_transform_drag`, `cancel_area_selection`, `cancel_paint_selection`, `cancel_transform_preview`, `cancel_volume_selection`, `commit_area_selection`, `commit_paint_selection`, `commit_transform_preview`, `commit_volume_selection`, `delete_objects`, `duplicate_objects`, `frame_selection`, `frame_volume_selection`, `get_area_selection`, `get_paint_selection`, `get_selection`, `get_selection_defaults`, `get_selection_filters`, `get_selection_profiles`, `get_transform_handles`, `get_volume_selection`, `move_objects`, `preview_snap_to_grid`, `select`, `select_area`, `select_volume`, `set_area_selection_options`, `set_paint_tool`, `set_selection_defaults`, `set_selection_filters`, `set_selection_profile`, `set_selection_mode`, `set_transform_tool`, `transform_objects`, `update_paint_selection`, `update_transform_drag` |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | `execute_editor_command`, `find_editor_commands`, `get_keyboard_shortcuts`, `set_keyboard_shortcuts` |
 | [3D sky preview](sky.md) | `get_3d_sky_preview`, `set_3d_sky_preview` |
+| [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_pick`, `transform_pivot_grid` |
 | [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `inspect_baked_lightmaps`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_camera`, `set_fog_preview`, `set_view` |

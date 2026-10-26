@@ -1,0 +1,52 @@
+import { Button, CheckBox, LineEdit } from "std-widgets.slint";
+
+export component ColorCorrectionWindow inherits Window {
+    title: "Color correction - HammeRR";
+    preferred-width: 720px;
+    preferred-height: 460px;
+    in-out property <string> source;
+    in-out property <bool> preview-enabled;
+    in-out property <string> weight: "1";
+    in property <string> status;
+    in property <string> message;
+    callback load();
+    callback apply();
+    callback clear();
+    callback dismiss();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.dismiss(); accept } else { reject } }
+        VerticalLayout {
+            padding: 24px; spacing: 16px;
+            Text { text: "Color correction"; font-size: 24px; font-weight: 600; }
+            Text { text: root.status; wrap: word-wrap; color: #aeb9c8; }
+            Text { text: "Source .raw LUT path"; font-weight: 600; }
+            HorizontalLayout {
+                spacing: 10px;
+                LineEdit { text <=> root.source; accessible-label: "Source .raw LUT path"; }
+                Button { text: "Load LUT"; clicked => { root.load(); } }
+            }
+            CheckBox { text: "Enable color correction"; checked <=> root.preview-enabled; }
+            HorizontalLayout {
+                spacing: 10px;
+                Text { text: "Weight"; vertical-alignment: center; }
+                LineEdit { text <=> root.weight; accessible-label: "Color-correction weight"; }
+                Text { text: "0 to 1"; color: #aeb9c8; vertical-alignment: center; }
+            }
+            Text {
+                text: "Load a Source .raw LUT, then set the weight and apply the preview. Loading turns the preview off.\n\nThe whole viewport is affected. HDR, volumes and multiple LUTs are unavailable.";
+                wrap: word-wrap; color: #aeb9c8; font-size: 12px;
+            }
+            if root.message != "": Text { text: root.message; color: #f5b477; wrap: word-wrap; }
+            Rectangle { vertical-stretch: 1; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Clear LUT"; clicked => { root.clear(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply preview"; clicked => { root.apply(); } }
+                Button { text: "Close"; clicked => { root.dismiss(); } }
+            }
+        }
+    }
+}

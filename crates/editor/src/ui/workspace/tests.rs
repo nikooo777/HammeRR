@@ -343,7 +343,7 @@ fn two_actual_hosts_keep_peer_edits_and_release_closed_claims_before_reopen_and_
                 ui.viewport.set_scene(&ctx, &mesh, session.materials());
                 let frame = ui
                     .viewport
-                    .render(&ctx, (160, 120), 1.0)
+                    .render(&ctx, (160, 120), 1.0, &mut session)
                     .ok_or("The remaining real viewport did not render")?;
                 app_b.set_frame(frame);
             }

@@ -46,6 +46,7 @@ pub(in crate::mcp) struct RenderedView {
 }
 
 struct FrameMetadata {
+    color_correction: Value,
     skybox: Value,
     working_region: Value,
     rope_preview: Value,
@@ -55,6 +56,7 @@ struct FrameMetadata {
 impl FrameMetadata {
     fn capture(session: &mut Session, view: ViewOptions, camera: Camera) -> Self {
         Self {
+            color_correction: session.color_correction_report(),
             skybox: session.sky_preview_state(view, camera),
             working_region: session.working_region_summary(),
             rope_preview: session.rope_preview_report(view.rope_preview),
@@ -73,11 +75,14 @@ impl RenderedView {
     ) -> ToolResult {
         let data = base64::engine::general_purpose::STANDARD.encode(self.png);
         let FrameMetadata {
+            mut color_correction,
             skybox,
             working_region,
             rope_preview,
             material_reload,
         } = self.metadata;
+        color_correction["applied"] =
+            json!(color_correction["enabled"] == true && color_correction["ready"] == true);
         fog_preview["applied"] = json!(
             view.fog
                 .is_some_and(|fog| fog.enabled() && fog.max_density() > 0.0)
@@ -96,7 +101,7 @@ impl RenderedView {
             .as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        let info = json!({ "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":self.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
+        let info = json!({ "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":self.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
         Ok(CallToolResult::success(vec![
             ContentBlock::image(data, "image/png"),
             ContentBlock::text(info.to_string()),
@@ -151,6 +156,7 @@ impl EditorServer {
         size: (u32, u32),
         view: ViewOptions,
     ) -> Result<RenderedView, String> {
+        self.session().color_correction_for_render()?;
         let mut offscreen = self
             .offscreen
             .lock()
@@ -183,8 +189,10 @@ impl EditorServer {
             .renderer
             .as_mut()
             .expect("renderer was initialized");
-        let metadata = {
+        let (metadata, color_correction) = {
             let mut session = self.session();
+            let color_correction = session.color_correction_for_render()?;
+            renderer.set_color_correction(color_correction.clone());
             session.preflight_instance_contents();
             *sky3d_preview = session.sky3d_preview_state_for(view, *camera);
             let key = session.render_scene_key(view);
@@ -201,11 +209,16 @@ impl EditorServer {
                     renderer.upload_replacing(ctx, previous, &mesh, session.materials()),
                 ));
             }
-            FrameMetadata::capture(&mut session, view, *camera)
+            (
+                FrameMetadata::capture(&mut session, view, *camera),
+                color_correction,
+            )
         };
         let gpu_scene = &scene.as_ref().expect("scene was just built").1;
         let pixels =
             renderer.render_to_rgba_checked(ctx, gpu_scene, camera, &view, size.0, size.1)?;
+        self.session()
+            .verify_color_correction_render(color_correction.as_ref())?;
         let mut png = Vec::new();
         let mut encoder = png::Encoder::new(Cursor::new(&mut png), size.0, size.1);
         encoder.set_color(png::ColorType::Rgba);
@@ -230,3 +243,7 @@ impl EditorServer {
 #[cfg(test)]
 #[path = "rendering/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "rendering/color_correction_tests.rs"]
+mod color_correction_tests;

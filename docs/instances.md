@@ -29,6 +29,8 @@ Compile supported contents of saved child VMFs into a parent map.
 
 Compiler support does not imply a full parent viewport preview of each child entity.
 Read [instance contents](instance-contents.md) for display limits.
+Supported static props can show their posed meshes and selected skins in that preview.
+Picking a child prop selects its outer containing reference.
 
 ## Collapse references into editable geometry
 

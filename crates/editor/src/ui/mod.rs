@@ -109,6 +109,7 @@ struct Ui {
     layers: Option<layers_ui::Controller>,
     compile_region: Option<compile_region_ui::Controller>,
     fog: Option<fog_ui::Controller>,
+    color_correction: Option<color_correction_ui::Controller>,
     sky3d: Option<sky3d_ui::Controller>,
     working_region: Option<working_region_ui::Controller>,
     overlay: Option<overlay_ui::Controller>,
@@ -241,6 +242,7 @@ impl Ui {
             layers: None,
             compile_region: None,
             fog: None,
+            color_correction: None,
             sky3d: None,
             working_region: None,
             overlay: None,
@@ -306,6 +308,12 @@ fn session_of(ui: &SharedUi) -> SharedSession {
 }
 
 fn refresh_view_controls(app: &AppWindow, session: &Session) {
+    app.set_color_correction_status(
+        session.color_correction_report()["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
+    );
     editor_visibility::refresh(app, session);
     app.set_normal_maps(session.view().normal_maps);
     app.set_surface_shading(session.view().surface_shading);
@@ -384,6 +392,7 @@ fn prepare_scene_refresh(
     options: &mut render::ViewOptions,
 ) -> Option<render::SceneKey> {
     session.preflight_instance_contents();
+    session.poll_color_correction();
     session.preflight_compiled_visibility();
     let view = session.view();
     let next = session.render_scene_key(view);
@@ -832,6 +841,26 @@ fn create_document_window(
             }
         }
         if let Err(error) = ui.sky3d.as_ref().unwrap().show(&mut lock(&ui.session)) {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_color_correction_preview, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.color_correction.is_none() {
+            match color_correction_ui::Controller::new_with_access(&ui.document_access()) {
+                Ok(controller) => ui.color_correction = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        if let Err(error) = ui
+            .color_correction
+            .as_ref()
+            .unwrap()
+            .show(&mut lock(&ui.session))
+        {
             app.unwrap().set_message(error.to_string().into());
         }
     });
@@ -3437,10 +3466,19 @@ fn create_document_window(
                     (app.get_viewport_width() * scale).round() as u32,
                     (app.get_viewport_height() * scale).round() as u32,
                 );
-                if let Some(frame) = ui.viewport.render(&ui.ctx, size, scale) {
+                if let Some(frame) =
+                    ui.viewport
+                        .render(&ui.ctx, size, scale, &mut lock(&ui.session))
+                {
                     app.set_frame(frame);
                 }
                 app.set_sky3d_render_error(ui.viewport.sky3d_error().unwrap_or_default().into());
+                app.set_color_correction_error(
+                    ui.viewport
+                        .color_correction_error()
+                        .unwrap_or_default()
+                        .into(),
+                );
                 let c = &ui.viewport.camera;
                 let status = if c.projection == Projection::Perspective {
                     format!(

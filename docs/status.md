@@ -22,6 +22,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Materials](textures.md) | Grouped browsing, favorites, mapping, painting, wrapping, replacement, saved named atlas regions, padded image fitting with coplanar continuity and face lighting. | Full native shader preview. |
 | [Normal maps](normal-maps.md) | Supported flat-brush normal textures. | Terrain/model normal maps and special encodings. |
 | [Lighting preview](lighting-preview.md) | Unshadowed point, spot and sun lighting with checked receivers. | Shadows, sky visibility, bounce and native brightness match. |
+| [Color correction](color-correction.md) | One explicit Source RGB8 `.raw` LUT, shared enable/weight controls and complete viewport display-color preview. | Native HDR, tone mapping, entities/volumes and multiple-LUT composition. |
 | [Terrain](terrain.md) | Creation, sculpting, blending, masks, handles, resizing, sewing and full/half-edge subdivision. | Holes, triangle removal and general fractional joins. |
 | [Entities](entities.md) | Typed properties, colors, FGD helpers, connections, bounded I/O graph queries/connected selection/framing, batch edits and safe rename. | General graph canvas layouts and runtime simulation. |
 | [Models](models.md) | Meshes, reference poses, skins, bodygroups, dynamic scale, tint, opacity and attachments. | Animation, procedural poses, attachment parenting and physics preview. |
@@ -30,7 +31,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Sounds](sounds.md) | File/script browsing, short audition and assignment. | Game mixing, soundscapes and sentence synthesis. |
 | [Organization](layers.md) | Groups, layers, clipboard, prefabs, notes and saved views. | Automatic category rules and embedded prefab assets. |
 | [Measurements](measurements.md) | Saved rulers, surface picks and origin/local entity attachments. | Surface attachments, parenting and animated bones. |
-| [Instances](instance-authoring.md) | Saved references, checked contents, nested light bindings, static child fog, saved child atlas regions and bounded extraction. | In-place child editing and general replacement parameters. |
+| [Instances](instance-authoring.md) | Saved references, checked brush/terrain and static-prop mesh previews, nested light bindings, static child fog, saved child atlas regions and bounded extraction. | In-place child editing, child illumination and general replacement parameters. |
 
 ## Compiler
 
@@ -44,7 +45,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Brush entities](compile-and-play.md#brush-entities-and-pivots) | Checked pivots, initial rotation, moving models and attached lightmaps. | General parenting, arbitrary model classes and initial poses. |
 | [Terrain](terrain.md) | Mixed-grid full/half neighbors, LOD snapping, lighting and collision. | Holes and runtime brush-model terrain. |
 | [Water](water.md) | Flat world pools, inward surfaces, depth, fluid physics, current and damping. | Sloped inward surfaces, slime, per-pool current and moving rendered water. |
-| [Static props](static-props.md) | Models, checked collision choices, shadows, ambient/vertex lighting and nested material edits for packing and cutout receivers. | Exact hull leaf membership and general materials/bodygroups. |
+| [Static props](static-props.md) | Models, checked collision choices, shadows, ambient/vertex lighting and nested material edits for packing and cutout receivers. Builds track consumed shadow assets even when packing and vertex lighting are off. | Exact hull leaf membership and general materials/bodygroups. |
 | [Detail props](material-detail-scattering.md) | Explicit and generated decorative models, cards, cross/tri shapes and supported lighting. | Editor display of final generated details. |
 | [Reflections](reflections.md) | Private LDR or paired LDR/HDR captures and verified packing. | Recursive reflection bounces and unsupported capture scenes. |
 | [Overlays](overlays.md) | Coplanar flat, isolated planar-terrain and mixed-group fitting, refit, rebind and corner editing; native projections, face splitting and water transitions. | Joined or nonplanar terrain authoring; projected-material viewport preview. |

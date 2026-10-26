@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 const READ_BYTES: usize = 64 * 1024;
 
+#[derive(Clone)]
 pub(crate) struct Source {
     requested: PathBuf,
     target: PathBuf,
@@ -49,6 +50,15 @@ fn open_target(_path: &Path) -> io::Result<File> {
 }
 
 impl Source {
+    pub(crate) fn verify(&self) -> io::Result<()> {
+        if self.requested.canonicalize()? != self.target
+            || !same_metadata(&self.metadata, &fs::symlink_metadata(&self.target)?)
+        {
+            return Err(io::Error::other("File changed since it was loaded"));
+        }
+        Ok(())
+    }
+
     pub(crate) fn capture(path: &Path, limit: u64) -> io::Result<Self> {
         let requested = std::path::absolute(path)?;
         let target = requested.canonicalize()?;

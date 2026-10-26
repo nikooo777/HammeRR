@@ -1,7 +1,9 @@
 use super::*;
 use crate::test_assets::instance_static_props::{self, MODEL, PHYSICS};
 
-fn prop_session(actor: Actor) -> (tempfile::TempDir, Session, PathBuf, PathBuf, ObjectId) {
+pub(super) fn prop_session(
+    actor: Actor,
+) -> (tempfile::TempDir, Session, PathBuf, PathBuf, ObjectId) {
     let (directory, game, source, child) = instance_static_props::fixture();
     let mut session = Session::new(Ok(game));
     session.open(actor, &source, true).unwrap();
@@ -182,8 +184,12 @@ fn assert_model_preview_unavailable(
     assert_eq!(report["geometry"]["line_vertices"], 0);
     assert_eq!(report["face_provenance_total"], 0);
     let preview = session.instance_contents_preview(true);
-    let mesh = preview.mesh.unwrap();
-    assert!(mesh.vertices.is_empty() && mesh.indices.is_empty() && mesh.edges.is_empty());
+    assert!(preview.mesh.is_none() && preview.models.is_empty());
+    assert_eq!(
+        preview.report["static_prop_preview"]["state"],
+        "unavailable"
+    );
+    assert!(preview.report["static_prop_preview"]["error"].is_string());
     assert!(
         session
             .instance_contents_hits(
@@ -418,7 +424,7 @@ fn repeated_nested_prop_counts_precede_region_selection_and_keep_empty_preview_b
 }
 
 #[test]
-fn static_props_preserve_real_terrain_preview_and_invalid_or_cancelled_refreshes_drop_it() {
+fn failed_prop_models_hide_mixed_terrain_and_invalid_or_cancelled_refreshes_drop_sources() {
     for actor in [Actor::User, Actor::Agent] {
         let (_directory, mut session, source, child, owner) = prop_session(actor);
         let mut document =
@@ -487,7 +493,19 @@ fn static_props_preserve_real_terrain_preview_and_invalid_or_cancelled_refreshes
         assert_eq!(report["static_prop_preview"]["available"], false);
         assert_eq!(report["geometry"]["vertices"], 49);
         assert_eq!(report["geometry"]["triangles"], 44);
-        assert_eq!(report["geometry"], baseline["geometry"]);
+        for field in [
+            "vertices",
+            "indices",
+            "line_vertices",
+            "triangles",
+            "gpu_bytes",
+        ] {
+            assert_eq!(report["geometry"][field], baseline["geometry"][field]);
+        }
+        assert!(
+            report["geometry"]["cpu_bytes"].as_u64().unwrap()
+                > baseline["geometry"]["cpu_bytes"].as_u64().unwrap()
+        );
         assert_eq!(report["face_provenance"], baseline["face_provenance"]);
         assert_eq!(
             report["owners"][0]["bounds"],
@@ -500,9 +518,15 @@ fn static_props_preserve_real_terrain_preview_and_invalid_or_cancelled_refreshes
             },
             Some(true),
         );
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].object, owner);
-        assert!((hits[0].point.z - 60.0).abs() < 1e-6);
+        assert!(hits.is_empty());
+        let unavailable = session.inspect_instance_contents(0, 64).unwrap();
+        assert_eq!(unavailable["state"], "ready");
+        assert_eq!(unavailable["status"], "model_unavailable");
+        let error = unavailable["error"].as_str().unwrap();
+        assert!(error.contains(MODEL), "{unavailable}");
+        assert!(error.contains("models/props/instance.vvd"), "{unavailable}");
+        assert!(error.contains("was not found"), "{unavailable}");
+        assert!(session.instance_contents_preview(true).mesh.is_none());
         for (key, value) in [
             ("solid", "1"),
             ("skin", "-1"),
@@ -527,6 +551,16 @@ fn static_props_preserve_real_terrain_preview_and_invalid_or_cancelled_refreshes
         assert_eq!(report["geometry"], baseline["geometry"]);
         assert!(report["stats"].get("static_props").is_none());
         assert!(report.get("static_prop_preview").is_none());
+        let hits = session.instance_contents_hits(
+            &Ray {
+                origin: DVec3::new(8., 8., 100.),
+                direction: DVec3::NEG_Z,
+            },
+            Some(true),
+        );
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].object, owner);
+        assert!((hits[0].point.z - 60.).abs() < 1e-6);
         std::fs::write(&child, complete.write(&Default::default())).unwrap();
         assert_eq!(refresh(&mut session, actor)["stats"]["static_props"], 1);
         let request = session.begin_instance_contents_refresh(actor).unwrap();

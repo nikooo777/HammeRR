@@ -85,6 +85,11 @@ See the [tool index and setup](docs/mcp.md).
 | ![Distance fog in the courtyard](docs/images/fog-on.png) | ![A height guide at a doorway](docs/images/doorway-measurement.png) |
 | Inspect an authored static fog controller. | Save rulers and attach endpoints to entity frames. |
 
+| [Color correction](docs/color-correction.md) |
+| --- |
+| ![A map viewport with color correction](docs/images/color-correction-preview.png) |
+| Preview one Source color LUT with an adjustable weight. |
+
 | [Overlays](docs/overlays.md) | [Assemblies](docs/instances.md) |
 | --- | --- |
 | ![One projection spans two panels with a clear gap](docs/images/overlay-native.png) | ![Two references to one arch use different baked light colors](docs/images/instance-light-colors.png) |

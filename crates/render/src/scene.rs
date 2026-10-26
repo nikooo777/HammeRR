@@ -1247,6 +1247,45 @@ impl SceneMesh {
         lighting: bool,
         include: impl Fn(ObjectId) -> bool,
     ) -> Self {
+        Self::build_with_reference_models_filtered(
+            vmf,
+            fs,
+            library,
+            selection,
+            overlays,
+            entities,
+            guides,
+            skybox,
+            tool_textures,
+            normal_maps,
+            lighting,
+            &[],
+            include,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_with_reference_models_filtered(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selection: (&HashSet<ObjectId>, &HashSet<FaceId>),
+        overlays: &[FaceOverlay],
+        entities: (
+            &[crate::models::Instance],
+            &BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
+        ),
+        guides: (
+            &BTreeMap<u32, crate::icons::Instance>,
+            &[crate::models::Instance],
+        ),
+        skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
+        tool_textures: bool,
+        normal_maps: bool,
+        lighting: bool,
+        reference_models: &[crate::models::Instance],
+        include: impl Fn(ObjectId) -> bool,
+    ) -> Self {
         let (icons, model_guides) = guides;
         let (models, helpers) = entities;
         let (selected, selected_faces) = selection;
@@ -1331,6 +1370,12 @@ impl SceneMesh {
             }
         }
 
+        let lighting_active = builder.lighting.report.active;
+        builder.lighting.report.active = false;
+        for instance in reference_models {
+            builder.add_model(instance, selected.contains(&instance.id));
+        }
+        builder.lighting.report.active = lighting_active;
         let (mins, maxs) = builder
             .vertices
             .iter()

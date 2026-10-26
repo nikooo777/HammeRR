@@ -1,6 +1,7 @@
 //! wgpu renderer for Source maps, independent of the editor UI.
 
 pub mod camera;
+pub mod color_correction;
 pub mod fog;
 pub mod gpu;
 mod grid;

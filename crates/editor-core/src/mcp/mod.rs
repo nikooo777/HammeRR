@@ -743,6 +743,7 @@ impl EditorServer {
             + Self::terrain_tools()
             + Self::transform_pivot_tools()
             + Self::sky3d_preview_tools()
+            + Self::color_correction_tools()
             + Self::entity_graph_tools()
             + Self::view_tools()
             + Self::working_region_tools()

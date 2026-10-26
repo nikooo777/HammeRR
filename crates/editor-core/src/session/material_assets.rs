@@ -29,6 +29,7 @@ impl Session {
         self.cancel_selection_previews();
         self.advance_content_epoch();
         let models = self.models.borrow_mut().reload_materials(&self.game);
+        self.invalidate_instance_model_preview();
         let mut result = self
             .materials
             .reload_with_names(&self.game, models.materials);

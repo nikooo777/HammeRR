@@ -615,6 +615,7 @@ mod tests {
         let output = directory.path().join("capture");
         let game_content = directory.path().join("actual-game-content");
         let mod_only = directory.path().join("excluded-mod-content");
+        let archive = directory.path().join("game-content_dir.vpk");
         for path in [
             engine.join("bin"),
             engine.join("cstrike/bin"),
@@ -627,6 +628,11 @@ mod tests {
         fs::write(output.join("staged.bsp"), b"staged fixture").unwrap();
         fs::write(mod_only.join("shared.txt"), b"mod only").unwrap();
         fs::write(game_content.join("shared.txt"), b"game content").unwrap();
+        let mut index = 0x55aa_1234u32.to_le_bytes().to_vec();
+        index.extend(1u32.to_le_bytes());
+        index.extend(1u32.to_le_bytes());
+        index.push(0);
+        fs::write(&archive, index).unwrap();
         let request = WorkerRequest {
             version: crate::process::WORKER_VERSION,
             nonce: "fixture".into(),
@@ -648,6 +654,10 @@ mod tests {
                         ids: vec!["game".into(), "mod".into(), "game_write".into()],
                         path: game_content.clone(),
                     },
+                    crate::ContentMount {
+                        ids: vec!["game".into(), "platform".into(), "game_write".into()],
+                        path: archive.clone(),
+                    },
                 ],
             },
             profile: WorkerProfile::Reflection(crate::process::ReflectionProfile {
@@ -665,6 +675,11 @@ mod tests {
         assert!(profile.contains("toggle mat_hdr_level 0\n"));
         assert!(!profile.contains("stuffcmds"));
         assert!(!profile.contains("exec "));
+        let gameinfo = fs::read_to_string(game.join("gameinfo.txt")).unwrap();
+        assert!(gameinfo.contains(&format!(
+            "\"game+platform\" \"{}\"",
+            archive.canonicalize().unwrap().display()
+        )));
         let mounted =
             source_formats::gamefs::GameFs::from_gameinfo(game.join("gameinfo.txt")).unwrap();
         let source_ids = |path: &Path| {
@@ -677,6 +692,7 @@ mod tests {
         };
         assert_eq!(source_ids(&game_content), &["game", "mod"]);
         assert_eq!(source_ids(&mod_only), &["mod"]);
+        assert_eq!(source_ids(&archive), &["game", "platform"]);
         let first_mod = mounted
             .mounts
             .iter()

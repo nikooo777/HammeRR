@@ -8,6 +8,7 @@ use std::time::Duration;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use source_formats::vpk::Vpk;
 
 use crate::util::{self, invalid};
 use crate::{CaptureEnvironment, ContentMount};
@@ -25,6 +26,7 @@ pub(super) const PREMAP: &str = "HAMMERR_PRIVATE_PREMAP_READY";
 pub(super) const COMPLETE: &str = "HAMMERR_DIAGNOSTIC_CAPTURE_COMPLETE";
 pub(super) const DISCONNECTED: &str = "HAMMERR_DIAGNOSTIC_DISCONNECTED";
 pub(super) const TIMEOUT: Duration = Duration::from_secs(65);
+const OPTIONAL_LOCALIZATION_VPK: &str = "cstrike/cstrike_english.vpk";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -213,8 +215,27 @@ pub(super) fn pinned_bytes(path: &Path, expected: &str, limit: usize) -> io::Res
 pub(crate) fn environment(environment: &CaptureEnvironment) -> io::Result<CaptureEnvironment> {
     let mut environment = crate::guard::resolve_environment(environment)?;
     let root = &environment.engine_root;
-    environment.mounts = [
-        ("game+mod", "cstrike/cstrike_english.vpk"),
+    environment.mounts = content_mounts(root)?;
+    crate::guard::validate_environment(&environment)?;
+    verify_installed(root)?;
+    Ok(environment)
+}
+
+fn content_mount_error(ids: &str, declared: &Path, physical: &Path, error: io::Error) -> io::Error {
+    io::Error::new(
+        error.kind(),
+        format!(
+            "Frozen857 content mount [{ids}] {} (physical {}): {error}",
+            declared.display(),
+            physical.display()
+        ),
+    )
+}
+
+fn content_mounts(root: &Path) -> io::Result<Vec<ContentMount>> {
+    let mut mounts = Vec::new();
+    for (ids, relative) in [
+        ("game+mod", OPTIONAL_LOCALIZATION_VPK),
         ("game+mod", "cstrike/cstrike_pak.vpk"),
         ("game", "hl2/hl2_textures.vpk"),
         ("game", "hl2/hl2_sound_vo_english.vpk"),
@@ -224,16 +245,25 @@ pub(crate) fn environment(environment: &CaptureEnvironment) -> io::Result<Captur
         ("game", "hl2"),
         ("platform", "platform/platform_misc.vpk"),
         ("platform", "platform"),
-    ]
-    .into_iter()
-    .map(|(ids, path)| ContentMount {
-        ids: ids.split('+').map(str::to_owned).collect(),
-        path: root.join(path),
-    })
-    .collect();
-    crate::guard::validate_environment(&environment)?;
-    verify_installed(root)?;
-    Ok(environment)
+    ] {
+        let declared = root.join(relative);
+        let physical = Vpk::dir_file_for(&declared);
+        if relative == OPTIONAL_LOCALIZATION_VPK {
+            match fs::symlink_metadata(&physical) {
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(content_mount_error(ids, &declared, &physical, error)),
+            }
+        }
+        let path = physical
+            .canonicalize()
+            .map_err(|error| content_mount_error(ids, &declared, &physical, error))?;
+        mounts.push(ContentMount {
+            ids: ids.split('+').map(str::to_owned).collect(),
+            path,
+        });
+    }
+    Ok(mounts)
 }
 
 pub(super) fn verify_installed(root: &Path) -> io::Result<()> {
@@ -482,4 +512,97 @@ pub(super) fn verify_loads(text: &str) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const REQUIRED_MOUNTS: &[(&str, &str)] = &[
+        ("game+mod", "cstrike/cstrike_pak_dir.vpk"),
+        ("game", "hl2/hl2_textures_dir.vpk"),
+        ("game", "hl2/hl2_sound_vo_english_dir.vpk"),
+        ("game", "hl2/hl2_sound_misc_dir.vpk"),
+        ("game", "hl2/hl2_misc_dir.vpk"),
+        ("game", "cstrike"),
+        ("game", "hl2"),
+        ("platform", "platform/platform_misc_dir.vpk"),
+        ("platform", "platform"),
+    ];
+
+    fn installed_content() -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        for name in ["cstrike", "hl2", "platform"] {
+            fs::create_dir(directory.path().join(name)).unwrap();
+        }
+        let mut index = 0x55aa_1234u32.to_le_bytes().to_vec();
+        index.extend(1u32.to_le_bytes());
+        index.extend(1u32.to_le_bytes());
+        index.push(0);
+        for &(_, name) in REQUIRED_MOUNTS {
+            if name.ends_with(".vpk") {
+                fs::write(directory.path().join(name), &index).unwrap();
+            }
+        }
+        directory
+    }
+
+    #[test]
+    fn fixed_mounts_resolve_physical_indexes_in_approved_order() {
+        let directory = installed_content();
+        let root = directory.path();
+        let mounts = content_mounts(root).unwrap();
+        assert_eq!(mounts.len(), REQUIRED_MOUNTS.len());
+        for (mount, &(ids, name)) in mounts.iter().zip(REQUIRED_MOUNTS) {
+            assert_eq!(mount.ids.join("+"), ids);
+            assert_eq!(mount.path, root.join(name).canonicalize().unwrap());
+            if name.ends_with(".vpk") {
+                let declared = root.join(name.replace("_dir.vpk", ".vpk"));
+                assert!(!declared.exists());
+                assert_eq!(Vpk::open(&mount.path).unwrap().path(), mount.path.as_path());
+            }
+        }
+        let optional = root.join("cstrike/cstrike_english_dir.vpk");
+        fs::copy(root.join("cstrike/cstrike_pak_dir.vpk"), &optional).unwrap();
+        let localized = content_mounts(root).unwrap();
+        assert_eq!(localized.len(), mounts.len() + 1);
+        assert_eq!(localized[0].ids, ["game", "mod"]);
+        assert_eq!(localized[0].path, optional.canonicalize().unwrap());
+        for (before, after) in mounts.iter().zip(&localized[1..]) {
+            assert_eq!(before.ids, after.ids);
+            assert_eq!(before.path, after.path);
+        }
+    }
+
+    #[test]
+    fn absent_optional_localization_does_not_skip_required_indexes() {
+        for (ids, name) in [
+            ("game+mod", "cstrike/cstrike_pak_dir.vpk"),
+            ("game", "hl2/hl2_sound_vo_english_dir.vpk"),
+        ] {
+            let directory = installed_content();
+            let root = directory.path();
+            assert_eq!(content_mounts(root).unwrap().len(), REQUIRED_MOUNTS.len());
+            let missing = root.join(name);
+            fs::remove_file(&missing).unwrap();
+            let error = content_mounts(root).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::NotFound);
+            let message = error.to_string();
+            assert!(message.contains(&format!("[{ids}]")));
+            assert!(message.contains(missing.to_str().unwrap()));
+            assert!(message.contains(&name.replace("_dir.vpk", ".vpk")));
+        }
+    }
+
+    #[test]
+    fn optional_localization_broken_link_is_refused_with_context() {
+        let directory = installed_content();
+        let optional = directory.path().join("cstrike/cstrike_english_dir.vpk");
+        std::os::unix::fs::symlink("missing_dir.vpk", &optional).unwrap();
+        let error = content_mounts(directory.path()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        let message = error.to_string();
+        assert!(message.contains("[game+mod]"));
+        assert!(message.contains(optional.to_str().unwrap()));
+    }
 }

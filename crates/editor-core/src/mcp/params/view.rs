@@ -4,6 +4,7 @@ use super::*;
 #[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct InspectCompiledVisibilityArgs {
     pub build_token: Option<String>,
+    /// Includes position {source:{kind:position,position:[x,y,z]}} or position {source:{kind:camera}}; both require a retained build token.
     pub target: Option<crate::session::compiled_visibility::Target>,
     pub kind: Option<crate::session::compiled_visibility::Kind>,
     pub offset: Option<usize>,

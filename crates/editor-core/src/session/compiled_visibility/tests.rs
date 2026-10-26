@@ -19,6 +19,126 @@ fn leaf_target(session: &Session) -> Target {
 }
 
 #[test]
+fn owned_positions_and_camera_resolve_native_world_leaves_without_changing_drafts() {
+    let (_directory, mut session, source) = test_support::compiled();
+    let mut camera = session.camera();
+    camera.projection = render::Projection::Perspective;
+    camera.position = glam::Vec3::new(0.0, 0.0, 16.0);
+    session.set_camera(camera);
+    session
+        .begin_property_edit(super::super::PropertyTarget::World)
+        .unwrap();
+    let before = (
+        session.document().vmf().clone(),
+        session.camera(),
+        session.selected_ids(),
+        session.history_snapshot(),
+        serde_json::to_value(session.property_draft()).unwrap(),
+    );
+    let token = session
+        .inspect_compiled_visibility(&Query::default())
+        .unwrap()
+        .build["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let query = Query {
+        build_token: Some(token.clone()),
+        target: Target::Position {
+            source: PositionSource::Position {
+                position: [0.0, 0.0, 16.0],
+            },
+        },
+        ..Query::default()
+    };
+    let position = session.inspect_compiled_visibility(&query).unwrap();
+    let point = position.position.as_ref().unwrap();
+    assert_eq!(point.requested_position, [0.0, 0.0, 16.0]);
+    assert_eq!(point.effective_position, [0.0, 0.0, 16.0]);
+    assert!(point.retained_world_leaf && point.cluster >= 0);
+    assert_eq!(
+        position.target,
+        Target::Leaf {
+            ordinal: point.native_leaf
+        }
+    );
+    let by_camera = Query {
+        target: Target::Position {
+            source: PositionSource::Camera {},
+        },
+        ..query.clone()
+    };
+    let sampled = session.inspect_compiled_visibility(&by_camera).unwrap();
+    assert_eq!(sampled.target, position.target);
+    assert_eq!(sampled.visibility.rows, position.visibility.rows);
+    assert_eq!(
+        serde_json::to_value(sampled.selection).unwrap(),
+        serde_json::to_value(position.selection).unwrap()
+    );
+    assert_eq!(
+        before,
+        (
+            session.document().vmf().clone(),
+            session.camera(),
+            session.selected_ids(),
+            session.history_snapshot(),
+            serde_json::to_value(session.property_draft()).unwrap()
+        )
+    );
+    for position in [[128.0, 0.0, 16.0], [2048.0; 3]] {
+        let report = session
+            .inspect_compiled_visibility(&Query {
+                target: Target::Position {
+                    source: PositionSource::Position { position },
+                },
+                ..query.clone()
+            })
+            .unwrap();
+        assert_eq!(
+            report.position.as_ref().unwrap().classification,
+            "solid_or_exterior"
+        );
+        assert_eq!(report.position.as_ref().unwrap().cluster, -1);
+        assert!(report.visibility.total.is_none() && report.visibility.rows.is_empty());
+    }
+    let mut planar = camera;
+    planar.projection = render::Projection::Top;
+    session.set_camera(planar);
+    let error = session.inspect_compiled_visibility(&by_camera).unwrap_err();
+    assert!(error.contains("Perspective"));
+    assert!(session.inspect_compiled_visibility(&query).is_ok());
+    session.set_camera(camera);
+    assert!(
+        session
+            .inspect_compiled_visibility(&Query {
+                target: Target::Position {
+                    source: PositionSource::Position {
+                        position: [f64::MAX; 3]
+                    }
+                },
+                ..query.clone()
+            })
+            .is_err()
+    );
+    session
+        .create_block(
+            Actor::User,
+            DVec3::splat(-32.0),
+            DVec3::splat(-16.0),
+            "test/checker",
+            false,
+        )
+        .unwrap();
+    let historical = session.inspect_compiled_visibility(&query).unwrap();
+    assert!(historical.historical && historical.position.is_some());
+    assert!(historical.current_bounds().is_err());
+    std::fs::write(source.with_extension("bsp"), b"changed output").unwrap();
+    let unavailable = session.inspect_compiled_visibility(&query).unwrap();
+    assert_eq!(unavailable.build["status"], "unavailable");
+    assert!(unavailable.position.is_none() && unavailable.selection.is_none());
+}
+
+#[test]
 fn exact_world_leaf_portal_pages_and_separate_native_visibility_rows() {
     let (_directory, session, source) = test_support::compiled();
     let report = session

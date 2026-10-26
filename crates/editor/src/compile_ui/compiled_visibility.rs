@@ -1,6 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
-use editor_core::session::compiled_visibility::{Inspection, Kind, Query, Row, Target};
+use editor_core::session::compiled_visibility::{
+    Inspection, Kind, PositionSource, Query, Row, Target,
+};
 use serde_json::Value;
 use slint::{ComponentHandle, Model};
 
@@ -22,6 +24,8 @@ struct State {
 enum Action {
     Refresh,
     Inspect,
+    Position,
+    Camera,
     Rows(i32),
     Destinations(i32),
     Select(i32),
@@ -85,6 +89,36 @@ fn present(window: &CompiledVisibilityWindow, report: &Inspection) {
         .into(),
     );
     window.set_summary(report.summary.as_ref().map_or_else(|| "Compiler visibility metadata unavailable".into(), |summary| format!("{} world leaves · {} final clusters · {} retained portals · {} excluded exterior/solid portals", summary.world_leaves, summary.clusters, summary.portals, summary.excluded_portals)).into());
+    window.set_position_result(
+        report
+            .position
+            .as_ref()
+            .map_or_else(String::new, |position| {
+                format!(
+                    "{} {:?} → native f32 {:?}: {} · leaf {} · cluster {}{}",
+                    if matches!(position.source, PositionSource::Camera {}) {
+                        "Current camera position at inspection"
+                    } else {
+                        "World position"
+                    },
+                    position.requested_position,
+                    position.effective_position,
+                    if position.cluster < 0 {
+                        "Solid/exterior; no PVS/PAS source row"
+                    } else {
+                        "Open clustered space"
+                    },
+                    position.native_leaf,
+                    position.cluster,
+                    if position.retained_world_leaf {
+                        ""
+                    } else {
+                        " · reserved native leaf; no retained bounds or guide"
+                    }
+                )
+            })
+            .into(),
+    );
     window.set_rows(rows(report.page.rows.iter().map(row_text)));
     window.set_visibility_rows(rows(
         report
@@ -129,7 +163,7 @@ fn present(window: &CompiledVisibilityWindow, report: &Inspection) {
     );
     window.set_next_destinations(report.visibility.next_offset.is_some());
     window.set_can_frame(report.current_bounds().is_ok());
-    window.set_details(serde_json::to_string_pretty(&serde_json::json!({"selection":report.selection,"portal_vertices":report.selected_vertices,"notes":report.notes})).unwrap_or_else(|error| error.to_string()).into());
+    window.set_details(serde_json::to_string_pretty(&serde_json::json!({"selection":report.selection,"portal_vertices":report.selected_vertices,"position":report.position,"notes":report.notes})).unwrap_or_else(|error| error.to_string()).into());
     let diagnostics = report.build["diagnostics"]
         .as_array()
         .into_iter()
@@ -154,6 +188,7 @@ fn present(window: &CompiledVisibilityWindow, report: &Inspection) {
         Target::Leaf { ordinal } => ("Leaf", Some(ordinal)),
         Target::Cluster { ordinal } => ("Cluster", Some(ordinal)),
         Target::Portal { ordinal } => ("Portal", Some(ordinal)),
+        Target::Position { .. } => ("Position", None),
     };
     window.set_target_kind(name.into());
     if let Some(ordinal) = ordinal {
@@ -181,6 +216,11 @@ fn from_controls(window: &CompiledVisibilityWindow) -> Result<Target, String> {
     if window.get_target_kind() == "Summary" {
         return Ok(Target::Summary {});
     }
+    if window.get_target_kind() == "Position" {
+        return Ok(Target::Position {
+            source: input_position(window)?,
+        });
+    }
     let ordinal = window
         .get_ordinal()
         .trim()
@@ -190,8 +230,24 @@ fn from_controls(window: &CompiledVisibilityWindow) -> Result<Target, String> {
         "Leaf" => Ok(Target::Leaf { ordinal }),
         "Cluster" => Ok(Target::Cluster { ordinal }),
         "Portal" => Ok(Target::Portal { ordinal }),
-        _ => Err("Choose Summary, Leaf, Cluster or Portal".into()),
+        _ => Err("Choose Summary, Leaf, Cluster, Portal or Position".into()),
     }
+}
+
+fn input_position(window: &CompiledVisibilityWindow) -> Result<PositionSource, String> {
+    let fields = [
+        window.get_position_x(),
+        window.get_position_y(),
+        window.get_position_z(),
+    ];
+    let mut position = [0.0; 3];
+    for (axis, text) in fields.iter().enumerate() {
+        position[axis] = text
+            .trim()
+            .parse()
+            .map_err(|_| format!("World position {} must be numeric", ["X", "Y", "Z"][axis]))?;
+    }
+    Ok(PositionSource::Position { position })
 }
 
 fn perform(
@@ -215,6 +271,23 @@ fn perform(
     let mut query = state.borrow().query.clone();
     match action {
         Action::Refresh => query = Query::default(),
+        Action::Position | Action::Camera => {
+            let source = if matches!(action, Action::Camera) {
+                PositionSource::Camera {}
+            } else {
+                input_position(window)?
+            };
+            query = Query {
+                build_token: Some(token(&state.borrow())?),
+                target: Target::Position { source },
+                kind: if window.get_visibility_kind() == "PAS" {
+                    Kind::Pas
+                } else {
+                    Kind::Pvs
+                },
+                ..Query::default()
+            };
+        }
         Action::Inspect => {
             query.target = from_controls(window)?;
             query.build_token = Some(token(&state.borrow())?);
@@ -299,6 +372,7 @@ fn perform(
         Action::Clear => unreachable!(),
     }
     let report = session.inspect_compiled_visibility(&query)?;
+    query.target = report.target;
     present(window, &report);
     *state.borrow_mut() = State {
         query,
@@ -320,6 +394,7 @@ fn failure(window: &CompiledVisibilityWindow, state: &RefCell<State>, error: Str
     window.set_build_state("Visibility inspection unavailable; refresh inspection".into());
     window.set_summary("".into());
     window.set_details("".into());
+    window.set_position_result("".into());
     window.set_page_label("".into());
     window.set_visibility_label("".into());
     window.set_diagnostics(error.into());
@@ -393,6 +468,10 @@ pub(super) fn bind(
     window.on_refresh_inspection(move || callback(0));
     let callback = handler(&window, access, &state, |_| Action::Inspect);
     window.on_inspect_target(move || callback(0));
+    let callback = handler(&window, access, &state, |_| Action::Position);
+    window.on_inspect_position(move || callback(0));
+    let callback = handler(&window, access, &state, |_| Action::Camera);
+    window.on_inspect_camera_position(move || callback(0));
     window.on_page_rows(handler(&window, access, &state, Action::Rows));
     window.on_page_destinations(handler(&window, access, &state, Action::Destinations));
     window.on_inspect_row(handler(&window, access, &state, Action::Select));

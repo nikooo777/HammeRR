@@ -36,7 +36,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | Area | Works | Not yet / limits |
 | --- | --- | --- |
 | [World and visibility](compile-and-play.md) | Structural/detail geometry, Fast and Detailed visibility, hints, portals and fading windows. | General unsupported portal/model combinations. |
-| [Visibility inspection](visibility.md) | Owned world-leaf/cluster joins, original portal rings, native PVS/PAS pages, framing and one selected viewport guide. | Native bounds are not exact cells; no compiled-cell picking or PRT import; freshness excludes a complete world-material closure. |
+| [Visibility inspection](visibility.md) | Owned world-leaf/cluster joins, original portal rings, native PVS/PAS pages, world-position/Perspective-camera lookup, framing and one selected viewport guide. | Declared f32 classification has no engine boundary bit-parity claim; native bounds are not exact cells; no compiled-cell picking or PRT import; freshness excludes a complete world-material closure. |
 | [Lighting](compile-and-play.md#lighting) | LDR/HDR, styles, point/spot/sun/sky, soft sun, ambient probes and up to four diffuse bounces. | Material emission, per-texel prop lightmaps and general shader transport. |
 | [Material lighting](compile-and-play.md#normal-map-lighting) | Checked normal maps, albedo, reflectivity and [binary texture shadows](brush-texture-shadows.md), including explicitly requested stationary root and child brush models. | Self shadows need a lit receiver in the same model; general translucent effects remain unsupported. |
 | [Physics](physics.md) | Engine world, terrain and supported brush-model collision, contact materials and derived mass. | Custom density and broader moving-body behavior. |

@@ -1,5 +1,5 @@
 use super::*;
-use crate::session::compiled_visibility::{Query, Target, test_support};
+use crate::session::compiled_visibility::{PositionSource, Query, Target, test_support};
 
 #[test]
 fn compiled_visibility_mcp_matches_shared_inspection_frame_and_single_guide() {
@@ -7,6 +7,9 @@ fn compiled_visibility_mcp_matches_shared_inspection_frame_and_single_guide() {
         json!({"path":"other.bsp"}),
         json!({"target":{"kind":"leaf","ordinal":-1}}),
         json!({"target":{"kind":"summary","ordinal":1}}),
+        json!({"target":{"kind":"position","source":{"kind":"camera","position":[0,0,16]}}}),
+        json!({"target":{"kind":"position","source":{"kind":"position","position":[0,0]}}}),
+        json!({"target":{"kind":"position","source":{"kind":"position","position":[0,0,16],"ordinal":1}}}),
     ] {
         assert!(serde_json::from_value::<InspectCompiledVisibilityArgs>(invalid).is_err());
     }
@@ -31,6 +34,30 @@ fn compiled_visibility_mcp_matches_shared_inspection_frame_and_single_guide() {
     assert!(!actual.is_error.unwrap_or(false));
     let actual: Value = serde_json::from_str(&actual.content[0].as_text().unwrap().text).unwrap();
     assert_eq!(actual, serde_json::to_value(expected).unwrap());
+    for source in [
+        PositionSource::Position {
+            position: [0.0, 0.0, 16.0],
+        },
+        PositionSource::Camera {},
+    ] {
+        let target = Target::Position { source };
+        let expected = lock(&shared)
+            .inspect_compiled_visibility(&Query {
+                build_token: Some(token.clone()),
+                target,
+                ..Query::default()
+            })
+            .unwrap();
+        let actual = server
+            .inspect_compiled_visibility(Parameters(
+                serde_json::from_value(json!({"build_token":token,"target":target})).unwrap(),
+            ))
+            .unwrap();
+        assert!(!actual.is_error.unwrap_or(false));
+        let actual: Value =
+            serde_json::from_str(&actual.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(actual, serde_json::to_value(expected).unwrap());
+    }
     let result = server
         .frame_compiled_visibility(Parameters(
             serde_json::from_value(json!({"build_token":token,"target":target,"aspect":1.6}))

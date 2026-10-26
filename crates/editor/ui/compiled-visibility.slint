@@ -9,6 +9,10 @@ export component CompiledVisibilityWindow inherits Window {
     in-out property <string> target-kind: "Summary";
     in-out property <string> ordinal: "0";
     in-out property <string> visibility-kind: "PVS";
+    in-out property <string> position-x: "0";
+    in-out property <string> position-y: "0";
+    in-out property <string> position-z: "0";
+    in property <string> position-result;
     in property <string> build-state;
     in property <string> summary;
     in property <string> page-label;
@@ -29,6 +33,8 @@ export component CompiledVisibilityWindow inherits Window {
     in property <bool> can-frame;
     in property <float> aspect: 1;
     callback inspect-target();
+    callback inspect-position();
+    callback inspect-camera-position();
     callback refresh-inspection();
     callback page-rows(int);
     callback page-destinations(int);
@@ -54,13 +60,26 @@ export component CompiledVisibilityWindow inherits Window {
             HorizontalLayout {
                 spacing: 8px;
                 Text { text: "Target"; vertical-alignment: center; }
-                ComboBox { model: ["Summary", "Leaf", "Cluster", "Portal"]; current-value <=> root.target-kind; }
+                ComboBox { model: ["Summary", "Leaf", "Cluster", "Portal", "Position"]; current-value <=> root.target-kind; }
                 Text { text: "Ordinal"; vertical-alignment: center; }
                 LineEdit { text <=> root.ordinal; preferred-width: 110px; accessible-label: "Native leaf or cluster ordinal, or retained portal slot"; }
                 ComboBox { model: ["PVS", "PAS"]; current-value <=> root.visibility-kind; }
                 Button { text: "Inspect target"; clicked => { root.inspect-target(); } }
                 Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }
             }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "World position"; vertical-alignment: center; }
+                Text { text: "X"; vertical-alignment: center; }
+                LineEdit { text <=> root.position-x; preferred-width: 76px; min-width: 55px; horizontal-stretch: 1; accessible-label: "World position X"; }
+                Text { text: "Y"; vertical-alignment: center; }
+                LineEdit { text <=> root.position-y; preferred-width: 76px; min-width: 55px; horizontal-stretch: 1; accessible-label: "World position Y"; }
+                Text { text: "Z"; vertical-alignment: center; }
+                LineEdit { text <=> root.position-z; preferred-width: 76px; min-width: 55px; horizontal-stretch: 1; accessible-label: "World position Z"; }
+                Button { text: "Inspect position"; clicked => { root.inspect-position(); } }
+                Button { text: "Inspect camera position"; clicked => { root.inspect-camera-position(); } }
+            }
+            if root.position-result != "": Text { text: root.position-result; wrap: word-wrap; color: #ffcb80; }
             Text { text: root.page-label; }
             StandardTableView {
                 rows: root.rows;

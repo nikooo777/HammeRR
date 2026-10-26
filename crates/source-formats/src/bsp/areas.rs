@@ -110,16 +110,19 @@ impl AreaData {
     }
 }
 
-fn bounded_data<T: Pod>(bsp: &Bsp, slot: usize, limit: usize, version: i32) -> io::Result<&[u8]> {
+pub(super) fn bounded_data<T: Pod>(
+    bsp: &Bsp,
+    slot: usize,
+    limit: usize,
+    version: i32,
+) -> io::Result<&[u8]> {
     let metadata = &bsp.lumps[slot];
     if metadata.version != version || metadata.fourcc != [0; 4] || bsp.is_compressed(slot) {
-        return Err(invalid(format!(
-            "unsupported area-related lump {slot} metadata"
-        )));
+        return Err(invalid(format!("unsupported BSP lump {slot} metadata")));
     }
     if metadata.data.len() / size_of::<T>() > limit {
         return Err(invalid(format!(
-            "area-related lump {slot} exceeds its native count limit"
+            "BSP lump {slot} exceeds its native count limit"
         )));
     }
     bsp.checked(slot, size_of::<T>())

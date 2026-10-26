@@ -20,6 +20,10 @@ fn visibility_controls_share_owned_navigation_frame_guide_and_invalidation() {
     .unwrap();
     let (_directory, mut session, source) =
         editor_core::session::compiled_visibility::test_support::compiled();
+    let mut camera = session.camera();
+    camera.projection = render::Projection::Perspective;
+    camera.position = glam::Vec3::new(0.0, 0.0, 16.0);
+    session.set_camera(camera);
     session.begin_property_edit(PropertyTarget::World).unwrap();
     let draft = session.property_draft().unwrap().token;
     session
@@ -45,6 +49,35 @@ fn visibility_controls_share_owned_navigation_frame_guide_and_invalidation() {
     let window = &form.window;
     assert!(window.window().is_visible());
     assert!(window.get_build_state().contains("current"));
+    window.set_position_x("0".into());
+    window.set_position_y("0".into());
+    window.set_position_z("16".into());
+    window.invoke_inspect_position();
+    assert!(
+        window
+            .get_position_result()
+            .contains("Open clustered space")
+    );
+    let explicit = form.state.borrow().report.as_ref().unwrap().target;
+    window.invoke_inspect_camera_position();
+    assert!(
+        window
+            .get_position_result()
+            .contains("Current camera position")
+    );
+    assert_eq!(
+        form.state.borrow().report.as_ref().unwrap().target,
+        explicit
+    );
+    window.set_position_x("128".into());
+    window.invoke_inspect_position();
+    assert!(
+        window
+            .get_position_result()
+            .contains("Solid/exterior; no PVS/PAS source row")
+    );
+    window.invoke_refresh_inspection();
+    assert!(window.get_position_result().is_empty());
     let target = form
         .state
         .borrow()

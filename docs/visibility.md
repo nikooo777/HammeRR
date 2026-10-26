@@ -2,27 +2,46 @@
 
 # Visibility inspection
 
-Inspect the world leaves, portals and visibility sets from your last successful build.
+Inspect leaves, portals and visibility sets from the last successful build.
 
-1. Compile the map, then open **Build details… → Inspect visibility…**.
-2. Use **Target → Summary** to list compiled world leaves. Choose a row to inspect that leaf's native bounds, final cluster and incident portals.
-3. Choose **PVS** for visible destination clusters or **PAS** for audible destination clusters, then click **Inspect target**. Choose a destination row to inspect that cluster's member leaves.
-4. Use **Previous rows**, **Next rows**, **Previous destinations** and **Next destinations** to change pages. You can also choose **Leaf**, **Cluster** or **Portal**, enter its **Ordinal**, and click **Inspect target**.
-5. Select a leaf or portal and click **Frame selection**. **Show selected guide** displays its cyan bounds box or portal ring in the viewport. **Clear guide** removes it.
-6. Use **Refresh inspection** after another build or source change.
+1. Compile the map. Open **Build details… → Inspect visibility…**.
+2. Choose **Target → Summary**. Select a leaf row to inspect its native bounds,
+   cluster and incident portals.
+3. Choose **PVS** for visible clusters or **PAS** for audible clusters. Click
+   **Inspect target**. Select a destination row to inspect its member leaves.
+4. Use **Previous rows**, **Next rows**, **Previous destinations** and
+   **Next destinations** to change pages. For a known target, choose **Leaf**,
+   **Cluster** or **Portal**, enter its **Ordinal**, then click **Inspect target**.
+5. Select a leaf or portal. Click **Frame selection** or **Show selected guide**.
+   **Clear guide** removes the cyan bounds box or portal ring.
+6. Enter **World position X**, **Y** and **Z**, then click **Inspect position**.
+   **Inspect camera position** uses the Perspective camera eye. The result shows
+   the native leaf, cluster, solid/exterior state and effective coordinates.
+7. Use **Refresh inspection** after another build or source change.
 
 ![Compiler-owned portal ring in the viewport](images/visibility-portals.png)
 
-Framing preserves your camera projection. Inspection, framing and guides preserve selection, history and unapplied drafts. Finish or cancel active viewport gestures and block previews before framing or showing a guide.
-
 ## Limits
 
-- Leaf boxes are the native bounds, not the exact convex cells. Portal rings show compiler geometry rather than rendered faces. Only one selected guide is shown at a time.
-- Leaf and cluster ordinals and retained portal slots belong to one build. These are not authored object IDs. Portal slots can have gaps because exterior, solid and unreachable endpoints are excluded.
-- Visibility-cluster helpers can place several leaves in one final cluster. Their internal portal boundaries remain inspectable.
-- PVS and PAS are separate native rows. They describe compiled visibility and audibility, not current game occlusion or sound mixing. The captured Fast or Detailed build mode remains authoritative.
-- Fullbright builds still have visibility. Lighting channels do not change this inspector.
-- Intact older output remains readable as historical data. Stale, missing or replaced output cannot be framed or shown as a guide. Source/output guards are checked when inspecting or changing the guide and during scene updates; unavailable output clears rows and totals.
-- Freshness covers the committed map, settings, mounted-content epoch and retained source guards. It does not capture every world material. Displayed drafts were not compiled.
-- Retention is limited to 64 MiB, 65,536 native leaves, 262,144 portals, 1,048,576 points and 4,096 points per portal. Exceeding a metadata limit makes inspection unavailable while ordinary compilation can still succeed. Queries return at most 64 rows per page.
-- This inspector has no external BSP/PRT file input, authored selection mapping or viewport picking of compiled cells.
+- Bounds boxes are not exact convex cells. Portal rings retain compiler geometry
+  and original slots, including boundaries within a coarsened visibility cluster.
+- PVS and PAS are separate native rows. They describe the captured **Fast** or
+  **Detailed** build, including Fullbright builds; they do not simulate game
+  occlusion or sound mixing.
+- Position lookup walks Model 0's planes and nodes. Coordinates narrow to f32;
+  negative plane distance selects child 1, zero selects child 0. The response
+  gives the full arithmetic policy. Invalid routes, nonfinite values and overflow
+  fail. Boundary bit parity with the game is unverified.
+- Camera lookup requires **Perspective**. Explicit world positions work in every
+  view. Lookup does not move the point or camera. Cluster -1 has no PVS/PAS row;
+  reserved leaf 0 reports classification without invented bounds or guides.
+- Inspection preserves selection, history and drafts. Framing preserves the
+  projection. Finish active viewport gestures or block previews before framing
+  or showing a guide. Only one selected guide is shown.
+- Ordinals and slots belong to one build. Intact older output is read-only;
+  stale or replaced output cannot frame or display guides. Freshness covers the
+  committed map, settings, content epoch and retained source guards, but not
+  every world material. Unavailable output clears rows and totals.
+- Pages contain at most 64 rows. Retention caps at 64 MiB, 65,536 leaves,
+  262,144 portals, 1,048,576 points and 4,096 points per portal. Exceeded metadata
+  limits make inspection unavailable; ordinary compilation can still succeed.

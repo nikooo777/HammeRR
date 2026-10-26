@@ -37,6 +37,8 @@ pub use occlusion::{
     Occluder, OccluderPolygon, Occlusion,
 };
 mod physics;
+mod point_leaf;
+pub use point_leaf::{MAX_POINT_LEAF_RECORDS, POINT_LEAF_CLASSIFICATION, PointLeaf};
 mod static_props;
 mod visibility;
 pub use displacements::{

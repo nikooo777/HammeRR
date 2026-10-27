@@ -53,7 +53,9 @@ pub(super) fn cube(bytes: &[u8], edge: u16) -> io::Result<Vtf> {
         || !edge.is_power_of_two()
         || edge > MAX_CUBE_EDGE
     {
-        return Err(invalid("Reflection VTF exceeds 4 MiB"));
+        return Err(invalid(
+            "Reflection VTF requires supported dimensions and at most 5 MiB",
+        ));
     }
     let vtf = Vtf::parse(bytes.to_vec()).map_err(|error| invalid(error.to_string()))?;
     let integer = |offset: usize| u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());

@@ -565,14 +565,13 @@ fn ordinary_global_sample_capacity_is_independent_of_the_capture_limit() {
 }
 
 #[test]
-fn ordinary_large_child_samples_keep_the_existing_capture_viewport_refusal() {
+fn ordinary_large_child_samples_share_the_generated_capture_size() {
     let directory = tempfile::tempdir().unwrap();
     let game = game(directory.path());
     let child = child_sample("-12.875 34.5 64.125", Some("9"));
-    let original = child.entities[0].id;
     write_source(directory.path(), "leaf.vmf", &child);
     let mut parent = room();
-    let owner = instance(&mut parent, "leaf.vmf", "80 16 16", "0 0 0");
+    instance(&mut parent, "leaf.vmf", "80 16 16", "0 0 0");
     let source_context = saved_parent(directory.path(), &parent);
     let ordinary = compile_saved(&parent, &game, Options::default(), &source_context);
     assert!(!ordinary.report.has_errors(), "{:?}", ordinary.report);
@@ -590,7 +589,11 @@ fn ordinary_large_child_samples_keep_the_existing_capture_viewport_refusal() {
         capture_options(LightingMode::DirectLdrHdr),
         &source_context,
     );
-    child_error(&output, owner, "leaf.vmf", original, "cube edges up to 128");
+    pending(&output);
+    let generated = output.cubemap_assets.as_ref().unwrap();
+    assert_eq!(generated.samples[0].edge, 256);
+    assert_eq!(generated.hdr_samples[0].edge, 256);
+    assert_eq!(output.stats.instances.as_ref().unwrap().cubemaps, 1);
 }
 
 #[test]
@@ -751,6 +754,10 @@ fn transitive_sample_dependencies_and_cancellation_stop_capture_and_publication(
         .undo_labels()
         .map(str::to_owned)
         .collect::<Vec<_>>();
+    let output_directory = tempfile::tempdir().unwrap();
+    let path = output_directory.path().join("instanced_cubemaps.bsp");
+    std::fs::write(&path, b"previous BSP").unwrap();
+    std::fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
     let source_context = saved_parent(directory.path(), document.vmf());
     let parent_bytes = std::fs::read(directory.path().join("parent.vmf")).unwrap();
     let ordinary = compile_saved(document.vmf(), &game, Options::default(), &source_context);
@@ -774,9 +781,6 @@ fn transitive_sample_dependencies_and_cancellation_stop_capture_and_publication(
             .collect::<Vec<_>>(),
         ["leaf.vmf", "middle.vmf"]
     );
-    let path = directory.path().join("instanced_cubemaps.bsp");
-    std::fs::write(&path, b"previous BSP").unwrap();
-    std::fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
     assert!(
         output
             .write(&path)

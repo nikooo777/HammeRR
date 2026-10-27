@@ -86,7 +86,7 @@ impl Session {
             "reason":environment.as_ref().err(),
             "editable":!self.compiling()&&!self.closing,
             "channel":if self.compile_options().lighting == compiler::LightingMode::DirectLdrHdr {"ldr_hdr"}else{"ldr"},
-            "supported_channels":["ldr","hdr"], "default_sample_size":128, "maximum_sample_size":128,
+            "supported_channels":["ldr","hdr"], "default_sample_size":128, "maximum_sample_size":native_runtime::MAX_CUBE_EDGE,
         })
     }
 
@@ -187,6 +187,8 @@ mod tests {
         let source = session.document().vmf().clone();
         let initial = session.native_capture_runtime();
         assert_eq!(initial["supported_channels"], json!(["ldr", "hdr"]));
+        assert_eq!(initial["default_sample_size"], 128);
+        assert_eq!(initial["maximum_sample_size"], 256);
         assert_eq!(initial["channel"], "ldr");
         session
             .set_compile_settings(Actor::Agent, "direct_ldr_hdr")

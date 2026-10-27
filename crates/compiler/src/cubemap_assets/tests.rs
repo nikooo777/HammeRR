@@ -137,7 +137,7 @@ pub(super) fn native_black_cube(edge: u16) -> Vec<u8> {
 
 #[test]
 fn neutral_bootstraps_add_no_energy_and_keep_opaque_black_capture_freshness() {
-    for edge in [1, 32, 128] {
+    for edge in [1, 32, 128, 256] {
         let bootstrap = manifest::bootstrap_cube(edge).unwrap();
         let initial = source_formats::vtf::Vtf::parse(bootstrap.clone()).unwrap();
         assert_eq!(initial.reflectivity, [0.0; 3]);
@@ -794,11 +794,11 @@ fn script_and_size_preflight_fail_before_native_launch() {
         .find(|entity| entity.id == helpers[0])
         .unwrap()
         .properties
-        .set("cubemapsize", "9");
+        .set("cubemapsize", "10");
     assert!(
         inspect_cubemap_bindings(&vmf, &game, &Default::default(), &Control::default())
             .unwrap_err()
-            .contains("larger verified viewport")
+            .contains("Cubemap Size")
     );
     vmf.entities[0].properties.set("vscripts", "unsafe.nut");
     let output = compile_with_context_controlled(
@@ -834,7 +834,7 @@ fn capture_admission_errors_link_size_collisions_and_excess_sample_owners() {
                     .find(|entity| entity.id == helpers[0])
                     .unwrap()
                     .properties
-                    .set("cubemapsize", "9");
+                    .set("cubemapsize", "10");
                 vec![helpers[0]]
             }
             "collision" => {
@@ -867,6 +867,18 @@ fn capture_admission_errors_link_size_collisions_and_excess_sample_owners() {
         let control = Control::default();
         let mut report = crate::Report::default();
         let mut map = crate::map::Map::load_controlled(&vmf, &game, &mut report, &control).unwrap();
+        if failure == "size" {
+            assert!(report.has_errors());
+            let errors = report
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.level == crate::Level::Error)
+                .collect::<Vec<_>>();
+            assert_eq!(errors.len(), 1);
+            assert_eq!(errors[0].object, Some(format!("entity:{}", expected[0])));
+            assert!(errors[0].message.contains("Cubemap Size"));
+            continue;
+        }
         assert!(!report.has_errors(), "{failure}: {report:?}");
         let error = binding::prepare(
             &vmf,

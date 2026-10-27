@@ -691,12 +691,13 @@ fn capture_inner(
     for sample in &request.samples {
         if sample.dimension == 0
             || !sample.dimension.is_power_of_two()
-            || sample.dimension > 128
+            || sample.dimension > crate::MAX_CUBE_EDGE
             || !positions.insert(sample.origin)
         {
-            return Err(invalid(
-                "Capture requires distinct sample positions and cube edges 1–128; 256 is unavailable",
-            ));
+            return Err(invalid(format!(
+                "Capture requires distinct sample positions and power-of-two cube edges 1–{}",
+                crate::MAX_CUBE_EDGE
+            )));
         }
         let expected = format!(
             "materials/maps/{}/c{}_{}_{}{}",

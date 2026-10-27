@@ -154,7 +154,7 @@ pub(crate) fn prepare(
         };
         if edge > MAX_CUBE_EDGE {
             let message = format!(
-                "entity:{}: native reflection capture currently supports cube edges up to {MAX_CUBE_EDGE}; size 256 requires a larger verified viewport",
+                "entity:{}: native reflection capture supports cube edges up to {MAX_CUBE_EDGE}",
                 entity.id
             );
             helper_error(report, entity, &message);

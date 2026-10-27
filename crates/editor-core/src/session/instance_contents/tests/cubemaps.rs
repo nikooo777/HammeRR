@@ -338,14 +338,28 @@ fn cubemap_counts_precede_regions_and_failed_or_cancelled_refresh_clears_preview
         let bindings = session
             .get_cubemap_bindings(crate::session::cubemap_bindings::Query::default())
             .unwrap();
+        assert_eq!(bindings["available"], true);
+        assert_eq!(bindings["total"], 0);
+        assert_eq!(bindings["assignments"], json!([]));
+        child
+            .entities
+            .iter_mut()
+            .find(|entity| entity.id == fixture.samples[0])
+            .unwrap()
+            .properties
+            .set("cubemapsize", "10");
+        std::fs::write(&fixture.child, child.write(&Default::default())).unwrap();
+        let failed = refresh(session, actor);
+        assert_eq!(failed["state"], "failed", "{failed}");
+        assert!(failed.get("cubemap_preview").is_none());
+        assert!(session.instance_contents_preview(true).mesh.is_none());
+        let bindings = session
+            .get_cubemap_bindings(crate::session::cubemap_bindings::Query::default())
+            .unwrap();
         assert_eq!(bindings["available"], false);
         assert_eq!(bindings["total"], 0);
         assert_eq!(bindings["assignments"], json!([]));
-        assert!(
-            bindings["diagnostics"]
-                .to_string()
-                .contains("size 256 requires a larger verified viewport")
-        );
+        assert!(bindings["diagnostics"].to_string().contains("Cubemap Size"));
 
         let mut child = Vmf::parse(&String::from_utf8(original.clone()).unwrap()).unwrap();
         let hidden = child

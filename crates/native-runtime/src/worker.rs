@@ -238,48 +238,230 @@ pub(crate) fn verify_native_diagnostics(text: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn viewport(directory: &Path, largest: u16) -> io::Result<()> {
-    let image = directory.join("viewport.png");
-    let mut child = Command::new("grim")
-        .arg(&image)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CaptureViewport {
+    width: u32,
+    height: u32,
+}
+
+const DEFAULT_VIEWPORT: CaptureViewport = CaptureViewport {
+    width: 1280,
+    height: 720,
+};
+const LARGE_VIEWPORT: CaptureViewport = CaptureViewport {
+    height: 1024,
+    ..DEFAULT_VIEWPORT
+};
+const VIEWPORT_TOOL_BYTES: usize = 64 * 1024;
+const DEFAULT_SAMPLE_EDGE: u16 = 128;
+
+impl CaptureViewport {
+    fn for_largest(largest: u16) -> io::Result<Self> {
+        if !largest.is_power_of_two() || largest > crate::MAX_CUBE_EDGE {
+            return Err(invalid(
+                "Unsupported private reflection viewport sample size",
+            ));
+        }
+        Ok(if largest > DEFAULT_SAMPLE_EDGE {
+            LARGE_VIEWPORT
+        } else {
+            DEFAULT_VIEWPORT
+        })
+    }
+
+    fn verify_png(self, image: &[u8], largest: u16) -> io::Result<()> {
+        if image.len() < 24 || image[..8] != *b"\x89PNG\r\n\x1a\n" || image[12..16] != *b"IHDR" {
+            return Err(invalid("Private viewport observation is not a PNG"));
+        }
+        let width = u32::from_be_bytes(image[16..20].try_into().map_err(io::Error::other)?);
+        let height = u32::from_be_bytes(image[20..24].try_into().map_err(io::Error::other)?);
+        if width != self.width
+            || height != self.height
+            || width.min(height) < u32::from(largest) * 4
+        {
+            return Err(invalid(format!(
+                "Actual private viewport {width}×{height} does not match the verified {}×{} capture setup and native sample-size gate",
+                self.width, self.height
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn viewport_tool(
+    directory: &Path,
+    request: &WorkerRequest,
+    command: &mut Command,
+    label: &str,
+) -> io::Result<Vec<u8>> {
+    if cancelled(directory, request) {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "Private viewport command cancelled before launch",
+        ));
+    }
+    let stdout_path = directory.join(format!("{label}.stdout"));
+    let stderr_path = directory.join(format!("{label}.stderr"));
+    let stdout = File::create(&stdout_path)?;
+    let stderr = File::create(&stderr_path)?;
+    command
+        .current_dir(directory)
+        .env_remove("DISPLAY")
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .process_group(0)
-        .spawn()?;
+        .stdout(stdout)
+        .stderr(stderr)
+        .process_group(0);
+    util::json_write(
+        &directory.join(format!("{label}.json")),
+        &json!({"program":command.get_program().to_string_lossy(),"args":command.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect::<Vec<_>>(),"private_runtime":directory.join("wayland"),"wayland_display":std::env::var_os("WAYLAND_DISPLAY").map(|value| value.to_string_lossy().into_owned())}),
+    )?;
+    let mut child = command.spawn()?;
     let started = Instant::now();
-    let observation = (|| {
+    let result = (|| {
         loop {
+            if cancelled(directory, request) {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Private viewport command cancelled",
+                ));
+            }
+            if fs::metadata(&stdout_path)?.len() > VIEWPORT_TOOL_BYTES as u64
+                || fs::metadata(&stderr_path)?.len() > VIEWPORT_TOOL_BYTES as u64
+            {
+                return Err(invalid(
+                    "Private viewport command exceeds its output budget",
+                ));
+            }
             if let Some(status) = child.try_wait()? {
                 if !status.success() {
-                    return Err(invalid("Could not inspect private capture viewport"));
+                    return Err(invalid(format!(
+                        "Private viewport command {label} failed with {status}"
+                    )));
                 }
                 return Ok(());
             }
             if started.elapsed() > Duration::from_secs(5) {
-                return Err(invalid("Private viewport observation timed out"));
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Private viewport command timed out",
+                ));
             }
             thread::sleep(Duration::from_millis(50));
         }
     })();
     let cleanup = crate::process::stop_group(&mut child);
-    match (observation, cleanup) {
+    match (result, cleanup) {
         (Ok(()), Ok(())) => {}
-        (Err(a), Err(b)) => return Err(invalid(format!("{a}; viewport cleanup: {b}"))),
+        (Err(a), Err(b)) => return Err(invalid(format!("{a}; viewport command cleanup: {b}"))),
         (Err(error), _) | (_, Err(error)) => return Err(error),
     }
-    let image = util::read(&image, 16 * 1024 * 1024)?;
-    if image.len() < 24 || image[..8] != *b"\x89PNG\r\n\x1a\n" || image[12..16] != *b"IHDR" {
-        return Err(invalid("Private viewport observation is not a PNG"));
+    util::read(&stderr_path, VIEWPORT_TOOL_BYTES)?;
+    util::read(&stdout_path, VIEWPORT_TOOL_BYTES)
+}
+
+#[derive(serde::Deserialize)]
+struct PrivateOutput {
+    name: String,
+    enabled: bool,
+    scale: f64,
+    transform: String,
+    modes: Vec<PrivateMode>,
+}
+
+#[derive(serde::Deserialize)]
+struct PrivateMode {
+    width: u32,
+    height: u32,
+    current: bool,
+}
+
+fn private_output(bytes: &[u8]) -> io::Result<PrivateOutput> {
+    let outputs: Vec<PrivateOutput> = serde_json::from_slice(bytes).map_err(io::Error::other)?;
+    let [output]: [PrivateOutput; 1] = outputs.try_into().map_err(|_: Vec<PrivateOutput>| {
+        invalid("Private capture requires exactly one headless output")
+    })?;
+    if !output.enabled
+        || output.scale != 1.0
+        || output.transform != "normal"
+        || !output.name.strip_prefix("HEADLESS-").is_some_and(|suffix| {
+            !suffix.is_empty()
+                && suffix.len() <= 8
+                && suffix.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    {
+        return Err(invalid(
+            "Private capture output identity or transform is unsupported",
+        ));
     }
-    let width = u32::from_be_bytes(image[16..20].try_into().map_err(io::Error::other)?);
-    let height = u32::from_be_bytes(image[20..24].try_into().map_err(io::Error::other)?);
-    if width != 1280 || height != 720 || width.min(height) < u32::from(largest) * 4 {
-        return Err(invalid(format!(
-            "Actual private viewport {width}×{height} does not match the verified 1280×720 capture setup"
-        )));
+    Ok(output)
+}
+
+fn configure_viewport(
+    directory: &Path,
+    request: &WorkerRequest,
+    selected: CaptureViewport,
+) -> io::Result<()> {
+    if selected == DEFAULT_VIEWPORT {
+        return Ok(());
+    }
+    if std::env::var_os("WAYLAND_DISPLAY").as_deref() != Some(std::ffi::OsStr::new("wayland-0")) {
+        return Err(invalid(
+            "Private output management requires the owned Wayland socket",
+        ));
+    }
+    let before = viewport_tool(
+        directory,
+        request,
+        Command::new("wlr-randr").arg("--json"),
+        "output-before",
+    )?;
+    let output = private_output(&before)?;
+    let mode = format!("{}x{}@60Hz", selected.width, selected.height);
+    viewport_tool(
+        directory,
+        request,
+        Command::new("wlr-randr").args(["--output", &output.name, "--custom-mode", &mode]),
+        "output-mode",
+    )?;
+    let after = viewport_tool(
+        directory,
+        request,
+        Command::new("wlr-randr").arg("--json"),
+        "output-after",
+    )?;
+    let resized = private_output(&after)?;
+    let current = resized
+        .modes
+        .iter()
+        .filter(|mode| mode.current)
+        .collect::<Vec<_>>();
+    if resized.name != output.name
+        || current.len() != 1
+        || current[0].width != selected.width
+        || current[0].height != selected.height
+    {
+        return Err(invalid(
+            "Private headless output did not accept the selected capture mode",
+        ));
     }
     Ok(())
+}
+
+fn viewport(
+    directory: &Path,
+    request: &WorkerRequest,
+    selected: CaptureViewport,
+    largest: u16,
+) -> io::Result<()> {
+    let image = directory.join("viewport.png");
+    viewport_tool(
+        directory,
+        request,
+        Command::new("grim").arg(&image),
+        "viewport-command",
+    )?;
+    let image = util::read(&image, 16 * 1024 * 1024)?;
+    selected.verify_png(&image, largest)
 }
 
 pub(crate) fn loader_budget(directory: &Path) -> io::Result<()> {
@@ -410,6 +592,14 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
     let WorkerProfile::Reflection(profile) = &request.profile else {
         return Err(invalid("Expected reflection profile"));
     };
+    let largest = profile
+        .samples
+        .iter()
+        .map(|sample| sample.dimension)
+        .max()
+        .unwrap_or(DEFAULT_SAMPLE_EDGE);
+    let selected_viewport = CaptureViewport::for_largest(largest)?;
+    configure_viewport(directory, request, selected_viewport)?;
     let game = game_directory(directory, request)?;
     for name in ["config", "cache", "data"] {
         fs::create_dir_all(directory.join("settings").join(name))?;
@@ -422,14 +612,15 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
     let executable = root.join("cstrike_linux64").canonicalize()?;
     let mut isolated = crate::isolation::Launch::new(directory, &executable)?;
     let command = &mut isolated.command;
-    command.current_dir(&root).args(["-game"]).arg(&game).args([
-        "-windowed",
-        "-w",
-        "1280",
-        "-h",
-        "720",
-        "-novid",
-    ]);
+    command
+        .current_dir(&root)
+        .args(["-game"])
+        .arg(&game)
+        .args(["-windowed", "-w"])
+        .arg(selected_viewport.width.to_string())
+        .arg("-h")
+        .arg(selected_viewport.height.to_string())
+        .arg("-novid");
     command
         .args(["-nomaster", "-nojoy", "-console", "-port"])
         .arg(port.to_string());
@@ -451,7 +642,7 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
         .stderr(log);
     util::json_write(
         &directory.join("command.json"),
-        &json!({"program":command.get_program().to_string_lossy(),"args":command.get_args().map(|arg|arg.to_string_lossy().into_owned()).collect::<Vec<_>>(),"native_program":executable,"cwd":root,"native_default_sample_size":128,"desktop_input":false,"filesystem_isolation":{"external_paths":"read_only","writable_capture_directory":directory}}),
+        &json!({"program":command.get_program().to_string_lossy(),"args":command.get_args().map(|arg|arg.to_string_lossy().into_owned()).collect::<Vec<_>>(),"native_program":executable,"cwd":root,"native_default_sample_size":DEFAULT_SAMPLE_EDGE,"largest_sample":largest,"viewport":{"width":selected_viewport.width,"height":selected_viewport.height},"desktop_input":false,"filesystem_isolation":{"external_paths":"read_only","writable_capture_directory":directory}}),
     )?;
     guard::ensure_no_client(&root)?;
     if cancelled(directory, request) {
@@ -494,12 +685,6 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
 
             loader_budget(directory)?;
             util::private_budget(directory, &root)?;
-            let largest = profile
-                .samples
-                .iter()
-                .map(|s| s.dimension)
-                .max()
-                .unwrap_or(128);
             if !armed && text.contains(READY) {
                 if native.is_none() {
                     return Err(invalid(
@@ -514,7 +699,7 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
                     return Err(invalid("Private controls were not applied before map load"));
                 }
                 verify_controls(&text, profile.channel)?;
-                viewport(directory, largest)?;
+                viewport(directory, request, selected_viewport, largest)?;
                 for sample in &profile.samples {
                     let name = sample
                         .texture
@@ -768,6 +953,44 @@ mod tests {
 
     #[test]
     fn actual_controls_and_order_are_required() {
+        for (edge, expected) in [
+            (1, DEFAULT_VIEWPORT),
+            (128, DEFAULT_VIEWPORT),
+            (256, LARGE_VIEWPORT),
+        ] {
+            let selected = CaptureViewport::for_largest(edge).unwrap();
+            assert_eq!(selected, expected);
+            let mut png = vec![0; 24];
+            png[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+            png[12..16].copy_from_slice(b"IHDR");
+            png[16..20].copy_from_slice(&expected.width.to_be_bytes());
+            png[20..24].copy_from_slice(&expected.height.to_be_bytes());
+            selected.verify_png(&png, edge).unwrap();
+            if edge == 128 {
+                assert!(selected.verify_png(&png, 256).is_err());
+            }
+            png[20..24].copy_from_slice(&719u32.to_be_bytes());
+            assert!(selected.verify_png(&png, edge).is_err());
+        }
+        for edge in [0, 129, 512] {
+            assert!(CaptureViewport::for_largest(edge).is_err());
+        }
+        let output = json!({"name":"HEADLESS-1","enabled":true,"scale":1.0,"transform":"normal","modes":[{"width":1280,"height":1024,"current":true}]});
+        let bytes = serde_json::to_vec(&vec![output.clone()]).unwrap();
+        assert_eq!(private_output(&bytes).unwrap().name, "HEADLESS-1");
+        let bytes = serde_json::to_vec(&vec![output.clone(), output.clone()]).unwrap();
+        assert!(private_output(&bytes).is_err());
+        for (key, value) in [
+            ("name", json!("DP-1")),
+            ("enabled", json!(false)),
+            ("scale", json!(2.0)),
+            ("transform", json!("90")),
+        ] {
+            let mut changed = output.clone();
+            changed[key] = value;
+            assert!(private_output(&serde_json::to_vec(&vec![changed]).unwrap()).is_err());
+        }
+
         let controls = "\"sv_lan\" = \"1\"\n\"mat_hdr_level\" = \"0\"\n\"mat_fullbright\" = \"0\"\n\"mat_envmapsize\" = \"128\"\n";
         let ordered = format!(
             "{PREMAP}\nHAMMERR_MAPSPAWN\n{READY}\n{BEGIN}\n{RETURNED}\n{DISCONNECTED}\n{controls}"

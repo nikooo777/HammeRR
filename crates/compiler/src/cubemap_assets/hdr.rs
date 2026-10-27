@@ -98,7 +98,7 @@ pub(super) fn canonicalize(bytes: &[u8], edge: u16) -> io::Result<Vec<u8>> {
         }
     }
     if result.len() > MAX_VTF_BYTES {
-        return Err(invalid("Canonical HDR reflection VTF exceeds 4 MiB"));
+        return Err(invalid("Canonical HDR reflection VTF exceeds 5 MiB"));
     }
     Ok(result)
 }

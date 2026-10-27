@@ -18,6 +18,8 @@ Capture scene cubemaps and pack them into the published BSP.
 
 LDR builds capture LDR. Dual-channel builds capture LDR, then HDR.
 The BSP is published only after all required captures and verification succeed.
+**Cubemap Size** supports **Default** (128×128) and authored sizes through **256x256**.
+256×256 capture also requires `wlr-randr`.
 
 ## Configure the capture runtime
 

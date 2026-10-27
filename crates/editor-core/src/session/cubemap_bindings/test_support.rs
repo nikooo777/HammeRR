@@ -157,7 +157,8 @@ pub fn cutout_instance_fixture() -> InstanceFixture {
     .unwrap();
     let mut texture =
         std::fs::read(fixture.assets.path().join("materials/test/checker.vtf")).unwrap();
-    texture[20..24].copy_from_slice(&0x1000_u32.to_le_bytes());
+    let flags = u32::from_le_bytes(texture[20..24].try_into().unwrap()) | 0x1000;
+    texture[20..24].copy_from_slice(&flags.to_le_bytes());
     for (index, pixel) in texture[80..].as_chunks_mut::<4>().0.iter_mut().enumerate() {
         pixel[3] = if index % 2 == 0 { 0 } else { 255 };
     }

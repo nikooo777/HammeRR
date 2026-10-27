@@ -334,6 +334,7 @@ Set `brush_texture_shadows:true` for [brush cutout shadows](brush-texture-shadow
 For an eligible stationary root or child `func_brush`, set `vrad_brush_cast_shadows:"1"` through `set_entity_properties` to cast supported binary cutouts globally. This uses the same **Shadows → Yes** property and lit build option as the UI. Child origins and initial poses lower before containing transforms. Without this request, supported root and child cutouts stay within their own lit receivers. Absent or zero requests do not affect world or other-model lighting.
 Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
+For `env_cubemap`, set `cubemapsize` to `"9"` for **Cubemap Size → 256x256**; `"0"` keeps the 128×128 default. Generated LDR and paired LDR/HDR captures support all authored sizes from 1×1 through 256×256.
 See [Compile and play](compile-and-play.md).
 
 `get_cubemap_bindings` lists root-authored faces with sample choices from the complete assembled map. Child choices use `helper:null` and a source-qualified `helper_source` occurrence.

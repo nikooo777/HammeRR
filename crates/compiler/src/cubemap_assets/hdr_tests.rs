@@ -130,9 +130,14 @@ fn captures(output: &Output) -> (CubemapAssetManifest, Vec<finalize::CapturedCha
 
 #[test]
 fn hdr_canonicalization_preserves_all_six_face_rgb_bits_and_removes_unused_bytes() {
-    for edge in [1, 32, 128] {
+    for edge in [1, 32, 128, 256] {
         let raw = native_hdr_cube(edge);
         let canonical = hdr::canonicalize(&raw, edge).unwrap();
+        if edge == 256 {
+            assert_eq!(raw.len(), 4_893_432);
+            assert_eq!(canonical.len(), 4_893_424);
+            assert!(raw.len() <= MAX_VTF_BYTES);
+        }
         let before = Vtf::parse(raw).unwrap();
         let after = Vtf::parse(canonical.clone()).unwrap();
         assert_eq!(
@@ -189,7 +194,7 @@ fn hdr_validation_rejects_invalid_rgb_in_every_mip_and_malformed_resources() {
         }
         offset += bytes * 7;
     }
-    for case in 0..9 {
+    for case in 0..10 {
         let mut invalid = raw.clone();
         match case {
             0 => {
@@ -203,6 +208,7 @@ fn hdr_validation_rejects_invalid_rgb_in_every_mip_and_malformed_resources() {
             6 => invalid[32..36].copy_from_slice(&f32::NAN.to_le_bytes()),
             7 => invalid[20..24].copy_from_slice(&0xe00cu32.to_le_bytes()),
             8 => invalid[32..36].copy_from_slice(&(-0.25f32).to_le_bytes()),
+            9 => invalid.resize(MAX_VTF_BYTES + 1, 0),
             _ => unreachable!(),
         }
         assert!(hdr::canonicalize(&invalid, 32).is_err(), "case {case}");
@@ -212,13 +218,21 @@ fn hdr_validation_rejects_invalid_rgb_in_every_mip_and_malformed_resources() {
 #[test]
 fn dual_manifests_merge_complete_receipts_and_rebase_both_channels_for_run() {
     let (_directory, game) = tests::game();
-    let (vmf, _) = tests::source();
+    let (mut vmf, helpers) = tests::source();
+    vmf.entities
+        .iter_mut()
+        .find(|entity| entity.id == helpers[0])
+        .unwrap()
+        .properties
+        .set("cubemapsize", "9");
     let output = pending(&vmf, &game);
     let original = output.bsp.as_ref().unwrap().clone();
     let manifest = output.cubemap_assets.clone().unwrap();
     assert_eq!(manifest.version, 2);
     assert_eq!(manifest.channel, "ldr_hdr");
     assert_eq!(manifest.samples.len(), manifest.hdr_samples.len());
+    assert!(manifest.samples.iter().any(|sample| sample.edge == 256));
+    assert!(manifest.samples.iter().any(|sample| sample.edge == 32));
     let previous = tempfile::tempdir().unwrap();
     let destination = previous.path().join("previous.bsp");
     std::fs::write(&destination, b"previous published BSP").unwrap();

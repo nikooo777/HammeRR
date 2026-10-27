@@ -49,11 +49,11 @@ fn finite_decimal(word: &str) -> Option<f64> {
     Some(value)
 }
 
-fn admit_authored_water(map: &Map, control: &Control, key: &str) -> Result<(), String> {
+fn admit_authored_liquid(map: &Map, control: &Control, key: &str) -> Result<(), String> {
     let property = if key == current::WATER_CURRENT_VELOCITY_KEY {
-        "Water current"
+        "Liquid current"
     } else {
-        "Water damping"
+        "Liquid damping"
     };
     let world = map
         .entities
@@ -66,9 +66,9 @@ fn admit_authored_water(map: &Map, control: &Control, key: &str) -> Result<(), S
         if brush.contents & (contents::WATER | contents::SLIME) == 0 {
             continue;
         }
-        if !crate::water::has_horizontal_surface(map, brush) {
+        if crate::water::horizontal_surface(map, brush).is_none() {
             return Err(format!(
-                "World {world} {key} requires only structural world WATER with visible horizontal tops; solid {} is unsupported",
+                "World {world} {key} requires only structural world WATER or SLIME with visible horizontal tops; solid {} is unsupported",
                 brush.id
             ));
         }
@@ -76,7 +76,7 @@ fn admit_authored_water(map: &Map, control: &Control, key: &str) -> Result<(), S
     }
     if !eligible {
         return Err(format!(
-            "World {world} {key} requires retained structural world WATER"
+            "World {world} {key} requires retained structural world WATER or SLIME"
         ));
     }
     Ok(())
@@ -550,7 +550,7 @@ fn plan(
             .any(|body| body.current_hu.is_some())
     {
         return Err(format!(
-            "World {} {} requires emitted structural world WATER fluid bodies",
+            "World {} {} requires emitted structural world WATER or SLIME fluid bodies",
             map.entities[0].id,
             current::WATER_CURRENT_VELOCITY_KEY
         ));
@@ -563,7 +563,7 @@ fn plan(
             .any(|body| body.damping.is_some())
     {
         return Err(format!(
-            "World {} {} requires emitted structural world WATER fluid bodies",
+            "World {} {} requires emitted structural world WATER or SLIME fluid bodies",
             map.entities[0].id,
             damping::WATER_DAMPING_KEY
         ));
@@ -676,17 +676,17 @@ fn validate(request: &Request) -> Result<(), String> {
                 if model.index != 0
                     || body.surface.is_none()
                     || body.mesh.is_some()
-                    || body.contents != contents::WATER
+                    || !matches!(body.contents, contents::WATER | contents::SLIME)
                 {
                     return Err(
-                        "Authored water current requires a structural world WATER fluid body"
+                        "Authored liquid current requires a structural world WATER or SLIME fluid body"
                             .into(),
                     );
                 }
                 current::validate(value)?;
                 if uniform_current.is_some_and(|previous| previous != value) {
                     return Err(
-                        "Authored water current must be uniform across all world WATER fluids"
+                        "Authored liquid current must be uniform across all world WATER or SLIME fluids"
                             .into(),
                     );
                 }
@@ -697,17 +697,17 @@ fn validate(request: &Request) -> Result<(), String> {
                 if model.index != 0
                     || body.surface.is_none()
                     || body.mesh.is_some()
-                    || body.contents != contents::WATER
+                    || !matches!(body.contents, contents::WATER | contents::SLIME)
                 {
                     return Err(
-                        "Authored water damping requires a structural world WATER fluid body"
+                        "Authored liquid damping requires a structural world WATER or SLIME fluid body"
                             .into(),
                     );
                 }
                 damping::validate(value)?;
                 if uniform_damping.is_some_and(|previous| previous != value) {
                     return Err(
-                        "Authored water damping must be uniform across all world WATER fluids"
+                        "Authored liquid damping must be uniform across all world WATER or SLIME fluids"
                             .into(),
                     );
                 }
@@ -837,12 +837,14 @@ fn validate(request: &Request) -> Result<(), String> {
     }
     if uniform_current.is_some() && controlled_fluids != fluids {
         return Err(
-            "Authored water current must cover every fluid body without unsupported liquids".into(),
+            "Authored liquid current must cover every fluid body without unsupported liquids"
+                .into(),
         );
     }
     if uniform_damping.is_some() && damped_fluids != fluids {
         return Err(
-            "Authored water damping must cover every fluid body without unsupported liquids".into(),
+            "Authored liquid damping must cover every fluid body without unsupported liquids"
+                .into(),
         );
     }
     Ok(())

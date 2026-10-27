@@ -1117,7 +1117,7 @@ fn build(
                 {
                     asset_sources::BuildMaterialSources::default()
                 } else {
-                    asset_sources::BuildMaterialSources::without_retained_payloads()
+                    asset_sources::BuildMaterialSources::with_retained_material_text()
                 }
             }),
     );
@@ -1188,6 +1188,16 @@ fn build(
     };
     map.water_current = water_current;
     map.water_damping = water_damping;
+    if !output.report.has_errors() {
+        water::validate_static_slime_materials(
+            &map,
+            material_sources
+                .as_ref()
+                .ok_or("Static slime requires original build material sources")?,
+            &mut output.report,
+            control,
+        )?;
+    }
     water_analog::admit_mode(&map, options.physics, &mut output.report);
     if output.report.has_errors() {
         return Ok(());
@@ -1400,7 +1410,7 @@ fn build(
             }
         }
     } else if !water.records.is_empty() {
-        output.report.diagnostics.push(Diagnostic::warning("Water material assets must remain mounted; enable Pack water assets to embed supported static Water files", None, None));
+        output.report.diagnostics.push(Diagnostic::warning("Liquid material assets must remain mounted; Pack water assets embeds only supported static Water-shader files", None, None));
     }
     if !water.records.is_empty()
         && !map

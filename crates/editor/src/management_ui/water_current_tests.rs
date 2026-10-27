@@ -24,11 +24,11 @@ fn water_current_numeric_world_callbacks_stage_cancel_apply_and_remove_without_n
     let access = DocumentAccess::unmanaged(shared.clone());
     let window = PropertiesWindow::new().unwrap();
     bind_properties_with_access(&window, &access).unwrap();
-    window.set_filter("Water current".into());
+    window.set_filter("Liquid current".into());
     refresh_properties(&window, &lock(&shared));
     assert_eq!(window.get_fields().row_count(), 1);
     let field = window.get_fields().row_data(0).unwrap();
-    assert_eq!(field.field.label, "Water current · world units/s");
+    assert_eq!(field.field.label, "Liquid current · world units/s");
     assert_eq!(field.field.control, "vector");
     assert_eq!(field.field.components.row_data(0).unwrap(), "0");
     assert_eq!(field.field.component_labels.row_data(2).unwrap(), "Z");

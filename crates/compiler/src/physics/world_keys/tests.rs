@@ -54,15 +54,12 @@ fn authored_damping_requires_the_exact_requested_scalar_independently_of_current
     for current in [None, Some([64.0, -32.0, 16.0])] {
         for (requested, text) in [(0.0, "-0"), (0.005, "5e-3"), (0.01, "1e-2")] {
             let mut expected = model();
-            expected.bodies[4].contents = source_formats::bsp::contents::WATER;
             for body in &mut expected.bodies[3..] {
                 body.damping = Some(requested);
                 body.current_hu = current;
             }
-            let original = keys()
-                .replace("\"slime\"", "\"water\"")
-                .replace("\"contents\" \"16\"", "\"contents\" \"32\"")
-                .replace("\"damping\" \"0.01\"", &format!("\"damping\" \"{text}\""));
+            let original =
+                keys().replace("\"damping\" \"0.01\"", &format!("\"damping\" \"{text}\""));
             let original = if current.is_some() {
                 original.replace("\"0 0 0\"", "\"1.6256 -0.8128 0.4064\"")
             } else {

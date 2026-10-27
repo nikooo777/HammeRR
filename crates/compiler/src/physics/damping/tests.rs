@@ -161,7 +161,7 @@ fn parent_and_worker_reject_invalid_native_scalars_and_wrong_body_roles() {
     for case in 0..5 {
         let mut invalid = request();
         match case {
-            0 => invalid.models[0].bodies[0].contents = contents::SLIME,
+            0 => invalid.models[0].bodies[0].contents = contents::WATER | contents::SLIME,
             1 => invalid.models[0].bodies[0].contents = contents::PLAYERCLIP,
             2 => invalid.models[0].bodies[0].surface = None,
             3 => {
@@ -184,7 +184,7 @@ fn parent_and_worker_reject_invalid_native_scalars_and_wrong_body_roles() {
         assert!(
             crate::physics::validate(&invalid)
                 .unwrap_err()
-                .contains("Authored water damping")
+                .contains("Authored liquid damping")
         );
     }
 }
@@ -200,6 +200,7 @@ fn scalar_and_current_require_their_own_uniform_values_and_all_fluid_coverage() 
     ] {
         let mut valid = request();
         valid.models[0].bodies = vec![fluid(damping, current), fluid(damping, current)];
+        valid.models[0].bodies[1].contents = contents::SLIME;
         crate::physics::validate(&valid).unwrap();
         if damping.is_some() {
             let mut missing = valid.clone();

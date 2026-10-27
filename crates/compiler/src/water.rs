@@ -1,34 +1,77 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use glam::DVec3;
 use source_formats::bsp::{self, contents, surf};
 use source_formats::vmt;
 
 use crate::faces::Face;
-use crate::map::{Map, MapBrush};
+use crate::map::{Map, MapBrush, MapSide};
 use crate::portals::Portal;
 use crate::tree::Tree;
 use crate::{Control, Diagnostic, Report};
 
-const LIQUID_CONTENTS: i32 = contents::WATER | contents::SLIME;
+pub(crate) const LIQUID_CONTENTS: i32 = contents::WATER | contents::SLIME;
 const SURFACE_EPSILON: f64 = 0.01;
 const NORMAL_EPSILON: f64 = 1e-8;
 
 pub(crate) fn has_horizontal_surface(map: &Map, brush: &MapBrush) -> bool {
-    brush.entity == 0
-        && brush.structural()
-        && brush.contents & LIQUID_CONTENTS == contents::WATER
-        && brush.sides.iter().any(|side| {
-            !side.bevel
-                && side.visible
-                && side.winding.is_some()
-                && map.materials.get(side.material).contents & LIQUID_CONTENTS == contents::WATER
-                && map
-                    .planes
-                    .get(side.plane)
-                    .normal
-                    .abs_diff_eq(DVec3::Z, NORMAL_EPSILON)
-        })
+    brush.contents & LIQUID_CONTENTS == contents::WATER && horizontal_surface(map, brush).is_some()
+}
+
+pub(crate) fn horizontal_surface<'a>(map: &Map, brush: &'a MapBrush) -> Option<&'a MapSide> {
+    if brush.entity != 0
+        || !brush.structural()
+        || !matches!(
+            brush.contents & LIQUID_CONTENTS,
+            contents::WATER | contents::SLIME
+        )
+    {
+        return None;
+    }
+    brush.sides.iter().find(|side| {
+        !side.bevel
+            && side.visible
+            && side.winding.is_some()
+            && map.materials.get(side.material).contents & LIQUID_CONTENTS
+                == brush.contents & LIQUID_CONTENTS
+            && map
+                .planes
+                .get(side.plane)
+                .normal
+                .abs_diff_eq(DVec3::Z, NORMAL_EPSILON)
+    })
+}
+
+pub(crate) struct InwardSurface {
+    pub texinfo: usize,
+    pub paired: bool,
+}
+
+pub(crate) fn inward_material(
+    map: &Map,
+    brush: &MapBrush,
+    side: &MapSide,
+) -> Option<InwardSurface> {
+    if brush.entity != 0 || !brush.structural() || !side.visible || side.bevel {
+        return None;
+    }
+    if brush.contents & LIQUID_CONTENTS == contents::SLIME {
+        return (horizontal_surface(map, brush).is_some()
+            && map.materials.get(side.material).contents & LIQUID_CONTENTS == contents::SLIME)
+            .then_some(InwardSurface {
+                texinfo: side.texinfo,
+                paired: true,
+            });
+    }
+    let normal = map.planes.get(side.plane).normal;
+    (brush.contents & LIQUID_CONTENTS == contents::WATER
+        && inward_surface(normal, has_horizontal_surface(map, brush)))
+    .then(|| map.water_bottom_texinfos.get(&side.texinfo).copied())
+    .flatten()
+    .map(|texinfo| InwardSurface {
+        texinfo,
+        paired: paired_surface(normal),
+    })
 }
 
 pub(crate) fn paired_surface(normal: DVec3) -> bool {
@@ -37,6 +80,51 @@ pub(crate) fn paired_surface(normal: DVec3) -> bool {
 
 pub(crate) fn inward_surface(normal: DVec3, horizontal_pool: bool) -> bool {
     normal.abs_diff_eq(DVec3::Z, NORMAL_EPSILON) || (horizontal_pool && paired_surface(normal))
+}
+
+pub(crate) fn validate_static_slime_materials(
+    map: &Map,
+    sources: &crate::asset_sources::BuildMaterialSources,
+    report: &mut Report,
+    control: &Control,
+) -> Result<(), String> {
+    let mut checked = BTreeSet::new();
+    for brush in &map.brushes {
+        control.checkpoint()?;
+        if brush.entity != 0 || !brush.structural() || brush.contents & contents::SLIME == 0 {
+            continue;
+        }
+        if !map.materials.uses_build_sources(sources) {
+            return Err("Static slime requires the original compiler material source owner".into());
+        }
+        for side in brush.sides.iter().filter(|side| !side.bevel) {
+            let material = map.materials.get(side.material);
+            if material.contents & contents::SLIME == 0 || !checked.insert(side.material) {
+                continue;
+            }
+            let result = crate::brush_shadow_casters::validate_material(
+                &material.name.to_ascii_lowercase(),
+                sources,
+                control,
+                false,
+            )
+            .and_then(|resolved| {
+                resolved
+                    .get("$bottommaterial")
+                    .filter(|bottom| bottom.eq_ignore_ascii_case(&material.name))
+                    .map(|_| ())
+                    .ok_or_else(|| format!("{} requires an explicit $bottommaterial equal to its own native material name; missing, different and compiler-normalized target spellings are unsupported", material.name))
+            });
+            if let Err(error) = result {
+                report.diagnostics.push(Diagnostic::error(
+                    format!("Static slime requires opaque static LightmappedGeneric, UnlitGeneric or scalar Patch materials; {}: {error}", material.name),
+                    Some(format!("solid:{}", brush.id)),
+                    Some((brush.mins + brush.maxs) * 0.5),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn prepare_materials(
@@ -160,22 +248,33 @@ pub(crate) fn build(
             report.diagnostics.push(Diagnostic::warning("Liquid leaf metadata currently requires structural world brushes; this detail or brush-model fluid has no native water region", Some(format!("solid:{}", brush.id)), Some((brush.mins + brush.maxs) * 0.5)));
             continue;
         }
-        let top = brush
-            .sides
-            .iter()
-            .filter(|side| {
-                !side.bevel
-                    && side.visible
-                    && map.materials.get(side.material).contents & LIQUID_CONTENTS != 0
+        if brush.contents & LIQUID_CONTENTS == LIQUID_CONTENTS {
+            report.diagnostics.push(Diagnostic::error(
+                "A liquid brush cannot combine WATER and SLIME contents; use separate non-overlapping volumes",
+                Some(format!("solid:{}", brush.id)),
+                Some((brush.mins + brush.maxs) * 0.5),
+            ));
+            continue;
+        }
+        if brush.contents & contents::SLIME != 0
+            && brush.sides.iter().filter(|side| !side.bevel).any(|side| {
+                let material = map.materials.get(side.material);
+                material.contents & contents::SLIME != 0
+                    && (material.water
+                        || material.surface & (surf::WARP | surf::TRANS) != 0
+                        || material.contents & contents::TRANSLUCENT != 0)
             })
-            .find(|side| {
-                map.planes
-                    .get(side.plane)
-                    .normal
-                    .abs_diff_eq(DVec3::Z, 1e-8)
-            });
+        {
+            report.diagnostics.push(Diagnostic::error(
+                "Static slime requires opaque non-Water materials; Water shaders and translucent slime are unsupported",
+                Some(format!("solid:{}", brush.id)),
+                Some((brush.mins + brush.maxs) * 0.5),
+            ));
+            continue;
+        }
+        let top = horizontal_surface(map, brush);
         let Some(top) = top else {
-            report.diagnostics.push(Diagnostic::error("Native liquid leaf metadata requires a visible horizontal top face; sloped or enclosed water volumes are not supported yet", Some(format!("solid:{}", brush.id)), Some((brush.mins + brush.maxs) * 0.5)));
+            report.diagnostics.push(Diagnostic::error("Native liquid leaf metadata requires a visible horizontal top face; sloped or enclosed liquid volumes are not supported yet", Some(format!("solid:{}", brush.id)), Some((brush.mins + brush.maxs) * 0.5)));
             continue;
         };
         let plane = map.planes.get(top.plane);
@@ -309,7 +408,7 @@ pub(crate) fn build(
         }
     }
     if !water.records.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Native liquid leaf and surface metadata compiled; sloped below-water faces remain unsupported", None, None));
+        report.diagnostics.push(Diagnostic::warning("Native liquid leaf and surface metadata compiled; sloped inward Water faces remain unsupported", None, None));
     }
     Ok(water)
 }
@@ -345,5 +444,60 @@ impl Water {
             })
             .min()
             .unwrap_or(u16::MAX)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::asset_sources::BuildMaterialSources;
+    use map_core::{Document, edit};
+    use source_formats::gamefs::{GameFs, Mount, MountedPath};
+
+    #[test]
+    fn static_slime_validation_requires_the_original_material_capture() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir(directory.path().join("materials")).unwrap();
+        let text = "UnlitGeneric { %compileslime 1 $additive 0 $bottommaterial slime }";
+        std::fs::write(directory.path().join("materials/slime.vmt"), text).unwrap();
+        let game = GameFs {
+            game_dir: directory.path().into(),
+            base_dir: directory.path().into(),
+            mounts: vec![MountedPath {
+                ids: vec!["game".into()],
+                mount: Mount::Directory(directory.path().into()),
+            }],
+        };
+        let mut document = Document::empty();
+        document
+            .edit("slime source owner", |tx| {
+                edit::create_block(tx, DVec3::ZERO, DVec3::splat(16.0), "slime")
+            })
+            .unwrap();
+        let original = BuildMaterialSources::with_retained_material_text();
+        let control = Control::default();
+        let mut report = Report::default();
+        let map = Map::load_with_material_sources_controlled(
+            document.vmf(),
+            &game,
+            &mut report,
+            &control,
+            None,
+            &original,
+        )
+        .unwrap();
+        validate_static_slime_materials(&map, &original, &mut report, &control).unwrap();
+        assert!(!report.has_errors(), "{report:?}");
+        let replacement = BuildMaterialSources::default();
+        let replacement_asset = replacement
+            .read_asset(&game, "materials/slime.vmt", text.len())
+            .unwrap()
+            .unwrap();
+        assert_eq!(replacement_asset.bytes(), text.as_bytes());
+        assert!(
+            validate_static_slime_materials(&map, &replacement, &mut Report::default(), &control)
+                .unwrap_err()
+                .contains("original compiler material source owner")
+        );
     }
 }

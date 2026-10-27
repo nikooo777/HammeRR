@@ -80,7 +80,7 @@ mod tests {
         )
         .unwrap();
         let visibility = Visibility {
-            clusters: vec![Some(0), Some(1), Some(2), Some(0), None, Some(1)],
+            clusters: vec![Some(0), Some(1), Some(2), Some(0), None, Some(2)],
             count: 3,
             portals: 0,
             data,
@@ -100,7 +100,7 @@ mod tests {
                 })
                 .collect(),
         };
-        (visibility, tree, vec![0, -1, -1, -1, -1, -1])
+        (visibility, tree, vec![0, -1, -1, -1, -1, 1])
     }
 
     #[test]

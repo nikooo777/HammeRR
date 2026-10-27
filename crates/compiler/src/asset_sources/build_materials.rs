@@ -114,6 +114,7 @@ impl AssetIdentity {
 enum PayloadRetention {
     #[default]
     Retained,
+    MaterialText,
     IdentityOnly,
 }
 
@@ -222,6 +223,15 @@ impl BuildMaterialSources {
         }
     }
 
+    pub(crate) fn with_retained_material_text() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(State {
+                retention: PayloadRetention::MaterialText,
+                ..State::default()
+            })),
+        }
+    }
+
     pub fn read_asset(
         &self,
         game: &GameFs,
@@ -289,7 +299,8 @@ impl State {
         let first_read = original.is_none();
         let payload_limit = self.limits.payload_bytes;
         let remaining = payload_limit - self.payload_bytes;
-        let retained = self.retention == PayloadRetention::Retained;
+        let retained = self.retention == PayloadRetention::Retained
+            || self.retention == PayloadRetention::MaterialText && path.ends_with(".vmt");
         let limit = if first_read && retained {
             maximum.min(remaining)
         } else {

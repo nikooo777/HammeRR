@@ -35,7 +35,7 @@ fn water_current_world_field_is_discoverable_without_source_mutation_and_respect
             .iter()
             .find(|property| property.field.key == key)
             .unwrap();
-        assert_eq!(property.field.label, "Water current · world units/s");
+        assert_eq!(property.field.label, "Liquid current · world units/s");
         assert_eq!(property.field.kind, "vector");
         assert_eq!(property.field.control, inspector::Control::Vector);
         assert_eq!(property.field.components, ["0", "0", "0"]);
@@ -50,7 +50,7 @@ fn water_current_world_field_is_discoverable_without_source_mutation_and_respect
             property
                 .field
                 .description
-                .contains("Water pressure damping is a separate World setting")
+                .contains("Liquid pressure damping is a separate World setting")
         );
         if property.field.read_only {
             let token = begin(&mut session);

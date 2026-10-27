@@ -61,17 +61,17 @@ impl Budget {
             .work
             .checked_add(work)
             .filter(|&count| count <= self.limits.work)
-            .ok_or("Water undersides exceed HammeRR's traversal work budget")?;
+            .ok_or("Liquid inward faces exceed HammeRR's traversal work budget")?;
         let fragments = self
             .fragments
             .checked_add(fragments)
             .filter(|&count| count <= self.limits.fragments)
-            .ok_or("Water undersides exceed HammeRR's generated fragment budget")?;
+            .ok_or("Liquid inward faces exceed HammeRR's generated fragment budget")?;
         let points = self
             .points
             .checked_add(points)
             .filter(|&count| count <= self.limits.points)
-            .ok_or("Water undersides exceed HammeRR's winding point allocation budget")?;
+            .ok_or("Liquid inward faces exceed HammeRR's winding point allocation budget")?;
         self.work = work;
         self.fragments = fragments;
         self.points = points;

@@ -27,7 +27,10 @@ fn game() -> (tempfile::TempDir, GameFs) {
     for (name, text) in [
         ("nodraw", "UnlitGeneric { %compilenodraw 1 }"),
         ("water", "Water { $abovewater 1 }"),
-        ("slime", "LightmappedGeneric { %compileslime 1 }"),
+        (
+            "slime",
+            "LightmappedGeneric { %compileslime 1 $bottommaterial slime }",
+        ),
         ("dev/dev_measuregeneric01", "LightmappedGeneric {}"),
         ("tools/toolsblack", "UnlitGeneric { $color \"[0 0 0]\" }"),
     ] {

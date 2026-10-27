@@ -209,13 +209,9 @@ pub fn build_with_smoothing(
     let needs_regions = entity == 0
         && map.entities[entity].brushes.iter().any(|&index| {
             let brush = &map.brushes[index];
-            water::has_horizontal_surface(map, brush)
-                && brush.sides.iter().any(|side| {
-                    side.visible
-                        && !side.bevel
-                        && water::paired_surface(map.planes.get(side.plane).normal)
-                        && map.water_bottom_texinfos.contains_key(&side.texinfo)
-                })
+            brush.sides.iter().any(|side| {
+                water::inward_material(map, brush, side).is_some_and(|surface| surface.paired)
+            })
         });
     if needs_regions {
         let portals = crate::portals::build_controlled(tree, &map.planes, control)?;
@@ -223,7 +219,7 @@ pub fn build_with_smoothing(
         let water = water::build(map, tree, &portals, &mut report, control)?;
         if report.has_errors() {
             return Err(
-                "Water face generation requires valid horizontal world-water regions".into(),
+                "Liquid face generation requires valid horizontal world-liquid regions".into(),
             );
         }
         return build_with_water_regions(
@@ -329,7 +325,6 @@ fn build_impl(
     for &brush_index in &map.entities[entity].brushes {
         control.checkpoint()?;
         let brush = &map.brushes[brush_index];
-        let horizontal_pool = water::has_horizontal_surface(map, brush);
         for side in brush.sides.iter().filter(|s| s.visible && !s.bevel) {
             if include.is_some_and(|include| !side.source_id.is_some_and(include)) {
                 continue;
@@ -340,17 +335,9 @@ fn build_impl(
             budget.charge(winding.0.len() + 1, winding.0.len() + 1)?;
             budget.pending(1)?;
             let source_sides: Arc<[u32]> = side.source_id.into_iter().collect::<Vec<_>>().into();
-            let bottom = if entity == 0
-                && brush.structural()
-                && brush.contents & contents::WATER != 0
-                && water::inward_surface(map.planes.get(side.plane).normal, horizontal_pool)
-            {
-                map.water_bottom_texinfos.get(&side.texinfo).copied()
-            } else {
-                None
-            };
-            let paired_surface =
-                bottom.is_some() && water::paired_surface(map.planes.get(side.plane).normal);
+            let inward = water::inward_material(map, brush, side);
+            let paired_surface = inward.as_ref().is_some_and(|surface| surface.paired);
+            let bottom = inward.map(|surface| surface.texinfo);
             let mut pending = vec![(
                 0,
                 winding.clone(),
@@ -411,7 +398,10 @@ fn build_impl(
                         }
                     }
                     None if !node.solid() && winding.area() > ON_EPSILON * ON_EPSILON => {
-                        if below_water && node.contents & contents::WATER == 0 {
+                        if below_water
+                            && node.contents & water::LIQUID_CONTENTS
+                                != brush.contents & water::LIQUID_CONTENTS
+                        {
                             continue;
                         }
                         if paired_surface
@@ -422,7 +412,7 @@ fn build_impl(
                         }
                         let water_region = if below_water && paired_surface {
                             let Some(&region) = water_regions.get(index) else {
-                                return Err("Paired water faces require checked world-water region ownership".into());
+                                return Err("Paired liquid faces require checked world-liquid region ownership".into());
                             };
                             if region < 0 {
                                 continue;

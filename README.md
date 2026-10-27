@@ -75,10 +75,10 @@ See the [tool index and setup](docs/mcp.md).
 | ![A model at three scales](docs/images/model-scales.png) | ![A barrel aligned with a sloping surface](docs/images/slope-placement.png) |
 | Choose skins, bodygroups, scale, tint and opacity. | Place objects on floors, ceilings or picked surfaces. |
 
-| [Water](docs/water.md) | [Ropes](docs/ropes.md) |
+| [Water and slime](docs/water.md) | [Ropes](docs/ropes.md) |
 | --- | --- |
 | ![A compiled reflecting pool](docs/images/water-native.png) | ![A rope between masonry posts](docs/images/rope-span.png) |
-| Build pools with native surfaces and optional fluid physics. | Preview and frame linked spans with authored slack and width. |
+| Build water and opaque slime pools with native surfaces and fluid physics. | Preview and frame linked spans with authored slack and width. |
 
 | [Fog](docs/fog.md) | [Measurement guides](docs/measurements.md) |
 | --- | --- |

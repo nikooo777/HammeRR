@@ -14,6 +14,10 @@ fn crossed_partitions() -> (tempfile::TempDir, GameFs, Vmf) {
         ("water", "Water { $abovewater 1 $bottommaterial below }"),
         ("below", "Water { $abovewater 0 }"),
         ("side", "Water { $abovewater 1 $bottommaterial below }"),
+        (
+            "slime",
+            "LightmappedGeneric { %compileslime 1 $bottommaterial slime }",
+        ),
         ("nodraw", "UnlitGeneric { %compilenodraw 1 }"),
     ] {
         std::fs::write(materials.join(format!("{name}.vmt")), text).unwrap();
@@ -70,6 +74,38 @@ fn successful(vmf: &Vmf, game: &GameFs) -> Output {
     assert!(output.leak.is_none());
     assert!(output.bsp.is_some());
     output
+}
+
+#[test]
+fn slime_inward_faces_share_generated_geometry_limits_and_cancellation() {
+    let (_directory, game, mut source) = crossed_partitions();
+    for solid in &mut source.world.solids {
+        for side in &mut solid.sides {
+            if side.material == "water" {
+                side.material = "slime".into();
+            }
+        }
+    }
+    let original = source.clone();
+    assert!(successful(&source, &game).stats.water_regions > 0);
+    for config in [
+        TestConfig {
+            limits: Limits {
+                fragments: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        TestConfig {
+            cancel_after_visits: Some(1),
+            ..Default::default()
+        },
+    ] {
+        let output = with_config(config, || crate::compile(&source, &game));
+        assert!(output.bsp.is_none());
+        assert!(output.report.has_errors());
+        assert_eq!(source, original);
+    }
 }
 
 #[test]
@@ -145,7 +181,7 @@ fn crossed_water_partitions_reject_each_injected_budget_and_preserve_publication
         assert!(output.bsp.is_none());
         assert!(
             output.report.diagnostics.iter().any(|diagnostic| {
-                diagnostic.message.contains("Water undersides")
+                diagnostic.message.contains("Liquid inward faces")
                     && diagnostic.message.contains(expected)
             }),
             "{:?}",
@@ -433,7 +469,7 @@ fn authored_bottom_only_generation_obeys_all_budgets_and_cancellation_before_pub
         assert!(
             output.report.diagnostics.iter().any(|diagnostic| {
                 expected.map_or(diagnostic.message == "Compilation cancelled", |expected| {
-                    diagnostic.message.contains("Water undersides")
+                    diagnostic.message.contains("Liquid inward faces")
                         && diagnostic.message.contains(expected)
                 })
             }),

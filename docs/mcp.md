@@ -346,6 +346,14 @@ The layer does not edit or select authored objects.
 
 `get_compile_status` marks a completed job stale when consumed material, detail or physics-definition inputs change. `job.material_source_issue` gives the cause; unused runtime assets remain outside this check.
 
+Use `begin_property_edit` with `world:true`, then `update_property_edit` and
+`commit_property_edit` for map-wide liquid physics. The stored keys are
+`_hammerr_water_current_velocity` and `_hammerr_water_damping`. These controls
+apply to supported water and slime. The shared property fields are
+**Liquid current · world units/s** and **Liquid pressure damping**. Compile with
+engine physics. Complete structural-world liquid volumes can remain inside a
+compile region. See [Water and slime](water.md) for material and volume limits.
+
 For [stationary child brush rotation](instances.md#rotate-a-stationary-child-brush), set canonical `angles` through `set_entity_properties` or property-edit tools.
 Save the child, then compile its parent. Compilation lowers the initial pose into body geometry and emits zero angles.
 `brush_model_preview.deferred_checks` includes `initial_pose`; reference inspection still provides no child model mesh.

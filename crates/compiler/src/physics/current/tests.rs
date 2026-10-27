@@ -157,13 +157,18 @@ fn parent_and_worker_request_validation_enforce_roles_uniformity_and_units() {
         Some([64.0, -32.0, 16.0])
     );
     crate::physics::validate(&roundtrip).unwrap();
+    let mut mixed = good.clone();
+    let mut slime = fluid(Some([64.0, -32.0, 16.0]));
+    slime.contents = contents::SLIME;
+    mixed.models[0].bodies.push(slime);
+    crate::physics::validate(&mixed).unwrap();
     for case in 0..10 {
         let mut bad = request();
         match case {
             0 => bad.models[0].bodies[0].current_hu = Some([128.0, 1.0, 0.0]),
             1 => bad.models[0].bodies[0].current_hu = Some([f32::NAN, 0.0, 0.0]),
             2 => bad.models[0].bodies[0].current_hu = Some([f32::from_bits(1), 0.0, 0.0]),
-            3 => bad.models[0].bodies[0].contents = contents::SLIME,
+            3 => bad.models[0].bodies[0].contents = contents::WATER | contents::SLIME,
             4 => bad.models[0].bodies[0].surface = None,
             5 => {
                 bad.model_count = 2;

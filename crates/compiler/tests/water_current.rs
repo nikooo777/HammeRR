@@ -34,7 +34,10 @@ fn fixture_at(batch: &str, prefix: &str) -> Fixture {
         ("dev/dev_measuregeneric01", "LightmappedGeneric {}"),
         ("nodraw", "UnlitGeneric { %compilenodraw 1 }"),
         ("water", "Water { $abovewater 1 }"),
-        ("slime", "LightmappedGeneric { %compileslime 1 }"),
+        (
+            "slime",
+            "LightmappedGeneric { %compileslime 1 $bottommaterial slime }",
+        ),
     ] {
         std::fs::write(game_dir.join(format!("materials/{name}.vmt")), text).unwrap();
     }
@@ -152,14 +155,13 @@ fn public_compiler_rejects_malformed_duplicate_and_inactive_controls_without_pub
 }
 
 #[test]
-fn retained_slime_detail_and_model_liquids_cannot_receive_partial_uniform_current() {
+fn retained_detail_and_model_liquids_cannot_receive_partial_uniform_current() {
     let fixture = fixture();
     for (material, role, hidden, keep_water, fragment) in [
         ("water", None, true, false, "retained structural"),
-        ("slime", None, false, false, "unsupported"),
         ("water", Some("func_detail"), false, false, "unsupported"),
         ("water", Some("func_brush"), false, false, "unsupported"),
-        ("slime", None, false, true, "unsupported"),
+        ("slime", Some("func_detail"), false, true, "unsupported"),
         ("water", Some("func_detail"), false, true, "unsupported"),
         ("water", Some("func_brush"), false, true, "unsupported"),
     ] {
@@ -278,11 +280,11 @@ fn authored_damping_rejects_invalid_duplicate_and_disabled_controls_before_cordo
 }
 
 #[test]
-fn authored_damping_requires_retained_supported_world_water_without_current() {
+fn authored_damping_requires_retained_supported_world_liquid_without_current() {
     let fixture = fixture_at("674", "damping-");
     for (material, role, hidden, keep_water, fragment) in [
         ("water", None, true, false, "retained structural"),
-        ("slime", None, false, true, "unsupported"),
+        ("slime", Some("func_detail"), false, true, "unsupported"),
         ("water", Some("func_detail"), false, true, "unsupported"),
         ("water", Some("func_brush"), false, true, "unsupported"),
     ] {

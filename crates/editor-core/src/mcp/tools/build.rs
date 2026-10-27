@@ -303,7 +303,7 @@ impl EditorServer {
 #[tool_router(router = compile_region_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect committed native compile-region bounds/enabled state, metadata errors, suggested selection/map bounds including terrain cages, owned draft token and limits. Region builds use one sealed axis-aligned box and preserve source/history. World/detail terrain needs its full base and displaced grid contained. Water must be fully contained structural world geometry. Crossing terrain/water, detail/model water, slime, overlays, areaportals and occluders require a full-map build; runtime-model terrain remains unsupported. Disable regions for full-map leak checks."
+        description = "Inspect committed native compile-region bounds/enabled state, metadata errors, suggested selection/map bounds including terrain cages, owned draft token and limits. Region builds use one sealed axis-aligned box and preserve source/history. World/detail terrain needs its full base and displaced grid contained. Water and supported opaque slime must be fully contained structural world geometry. Crossing terrain/liquids, detail/model liquids, overlays, areaportals and occluders require a full-map build; runtime-model terrain remains unsupported. Disable regions for full-map leak checks."
     )]
     pub(in crate::mcp) fn get_compile_region(&self) -> ToolResult {
         ok(self.session().compile_region_state())

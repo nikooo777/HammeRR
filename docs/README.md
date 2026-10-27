@@ -70,7 +70,7 @@ See [Status](status.md) for supported features and limits.
 - [Build recipes](build-recipes.md)
 - [Compile regions](compile-regions.md)
 - [Physics](physics.md)
-- [Water](water.md)
+- [Water and slime](water.md)
 - [Static props](static-props.md)
 - [Static-prop shadows](prop-shadows.md)
 - [Brush texture shadows](brush-texture-shadows.md)

@@ -1,7 +1,7 @@
 mod common;
 
 use glam::DVec3;
-use map_core::{Document, ObjectId, Plane, edit};
+use map_core::{Document, ObjectId, Plane, compile_region, edit};
 use source_formats::bsp::{self, Bsp, Leaf, LeafWaterData};
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
 use source_formats::vmf::Vmf;
@@ -12,6 +12,10 @@ fn game() -> (tempfile::TempDir, GameFs) {
     for (name, text) in [
         ("water", "Water { $abovewater 1 }"),
         ("water2", "Water { $abovewater 1 }"),
+        (
+            "slime",
+            "LightmappedGeneric { %compileslime 1 $bottommaterial slime }",
+        ),
         ("nodraw", "UnlitGeneric { %compilenodraw 1 }"),
     ] {
         std::fs::write(directory.path().join(format!("materials/{name}.vmt")), text).unwrap();
@@ -139,6 +143,265 @@ fn pool_emits_native_leaf_surface_and_distance_records_without_changing_source()
 }
 
 #[test]
+fn opaque_slime_pairs_every_exposed_boundary_with_the_same_material_and_native_contents() {
+    let (_directory, game) = game();
+    let (mut source, _) = add_pool(
+        common::room(),
+        [-128.0, -128.0, 32.0],
+        [128.0, 128.0, 96.0],
+        "slime",
+    );
+    let pool = source.world.solids.last_mut().unwrap();
+    for side in &mut pool.sides {
+        side.material = "slime".into();
+    }
+    let original = source.clone();
+    let output = compiled(&source, &game);
+    let bsp = output.bsp.as_ref().unwrap();
+    let regions = bsp.records::<LeafWaterData>().unwrap();
+    assert_eq!(regions.len(), 1);
+    assert_eq!((regions[0].surface_z, regions[0].min_z), (96.0, 32.0));
+    let infos = bsp.records::<bsp::TexInfo>().unwrap();
+    let data = bsp.records::<bsp::TexData>().unwrap();
+    let names = bsp.texdata_strings().unwrap();
+    let planes = bsp.records::<bsp::Plane>().unwrap();
+    let leaves = bsp.records::<Leaf>().unwrap();
+    let references = bsp.values::<u16>(bsp::lump::LEAFFACES).unwrap();
+    let faces = bsp.records::<bsp::Face>().unwrap();
+    let mut areas = [0.0_f32; 2];
+    let mut counts = [0; 2];
+    for (index, face) in faces.iter().enumerate() {
+        let info = infos[face.texinfo as usize];
+        if names[data[info.texdata as usize].name_index as usize] != "SLIME" {
+            continue;
+        }
+        assert_ne!(info.flags & bsp::surf::NODECALS, 0);
+        assert_eq!(info.flags & (bsp::surf::WARP | bsp::surf::NOLIGHT), 0);
+        assert_eq!(face.fog_volume, -1);
+        let membership = leaves
+            .iter()
+            .filter(|leaf| {
+                references[leaf.first_leaf_face as usize
+                    ..leaf.first_leaf_face as usize + leaf.leaf_face_count as usize]
+                    .contains(&(index as u16))
+            })
+            .collect::<Vec<_>>();
+        assert!(!membership.is_empty());
+        let wet = membership[0].contents & bsp::contents::SLIME != 0;
+        assert!(
+            membership
+                .iter()
+                .all(|leaf| (leaf.contents & bsp::contents::SLIME != 0) == wet)
+        );
+        let normal = DVec3::from_array(planes[face.plane as usize].normal.map(f64::from));
+        let center = DVec3::new(0.0, 0.0, 64.0);
+        assert_eq!(
+            normal.dot(center) > f64::from(planes[face.plane as usize].dist),
+            wet
+        );
+        assert_eq!(
+            output
+                .face_origins
+                .as_ref()
+                .unwrap()
+                .contributors(index)
+                .unwrap()
+                .next()
+                .is_none(),
+            wet
+        );
+        areas[usize::from(wet)] += face.area;
+        counts[usize::from(wet)] += 1;
+    }
+    assert_eq!(areas, [196_608.0; 2]);
+    assert_eq!(counts, [6, 6]);
+    assert!(leaves.iter().any(|leaf| leaf.water_data == 0));
+    for leaf in &leaves {
+        assert_eq!(leaf.contents & bsp::contents::TESTFOGVOLUME, 0);
+        if leaf.water_data >= 0 {
+            assert_eq!(
+                leaf.contents & (bsp::contents::WATER | bsp::contents::SLIME),
+                bsp::contents::SLIME
+            );
+            assert_eq!(leaf.water_data, 0);
+        }
+    }
+    assert_eq!(source, original);
+}
+
+#[test]
+fn slime_inward_faces_intersect_both_dry_and_wet_boundary_cuts() {
+    let (_directory, game) = game();
+    let (source, _) = add_pool(
+        common::room(),
+        [-128.0, -128.0, 32.0],
+        [128.0, 128.0, 96.0],
+        "slime",
+    );
+    let mut document = Document::new(source);
+    document
+        .edit("crossed slime boundaries", |tx| {
+            for (mins, maxs) in [
+                ([-64.0, -128.0, 96.0], [0.0, 128.0, 128.0]),
+                ([-128.0, -16.0, 32.0], [128.0, 16.0, 96.0]),
+            ] {
+                edit::create_block(
+                    tx,
+                    DVec3::from_array(mins),
+                    DVec3::from_array(maxs),
+                    "dev/dev_measuregeneric01",
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+    let output = compiled(document.vmf(), &game);
+    let bsp = output.bsp.unwrap();
+    let infos = bsp.records::<bsp::TexInfo>().unwrap();
+    let data = bsp.records::<bsp::TexData>().unwrap();
+    let names = bsp.texdata_strings().unwrap();
+    let planes = bsp.records::<bsp::Plane>().unwrap();
+    let mut areas = [0.0_f32; 2];
+    for face in bsp.records::<bsp::Face>().unwrap() {
+        if names[data[infos[face.texinfo as usize].texdata as usize].name_index as usize] == "SLIME"
+        {
+            let plane = planes[face.plane as usize];
+            assert_eq!(plane.normal[..2], [0.0; 2]);
+            areas[usize::from(plane.normal[2] < 0.0)] += face.area;
+        }
+    }
+    assert_eq!(areas, [43_008.0; 2]);
+}
+
+#[test]
+fn unsupported_slime_combinations_fail_without_replacing_previous_output() {
+    let (directory, game) = game();
+    let (source, _) = add_pool(
+        common::room(),
+        [-128.0, -128.0, 0.0],
+        [128.0, 128.0, 64.0],
+        "slime",
+    );
+    let previous = tempfile::tempdir().unwrap();
+    let path = previous.path().join("previous.bsp");
+    std::fs::write(&path, b"previous").unwrap();
+    std::fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
+    std::fs::write(
+        directory.path().join("materials/slime_base.vmt"),
+        "LightmappedGeneric { %compileslime 1 $additive 0 $bottommaterial slime }",
+    )
+    .unwrap();
+    let original = source.clone();
+    for text in [
+        "LightmappedGeneric { %compileslime 1 }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial \"\" }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial missing }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial slime_base }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial materials/slime.vmt }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial slime.vmt }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial \" slime \" }",
+        "Water { %compileslime 1 $bottommaterial slime }",
+        "Water_DX90 { %compileslime 1 $bottommaterial slime }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial slime $translucent 1 }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial slime $alphatest 1 }",
+        "UnlitGeneric { %compileslime 1 $bottommaterial slime $additive 1 }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial slime $vertexalpha 1 }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial slime Proxies { Sine { resultVar $alpha } } }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial slime >=DX90 { $alpha 0.5 } }",
+        "Patch { include materials/slime_base.vmt replace { $bottommaterial slime_base } }",
+        "Patch { include materials/slime_base.vmt replace { $additive 1 } }",
+        "Patch { include materials/slime_base.vmt insert { Proxies { Sine { resultVar $alpha } } } }",
+        "Refract { %compileslime 1 $bottommaterial slime }",
+    ] {
+        std::fs::write(directory.path().join("materials/slime.vmt"), text).unwrap();
+        let output = compiler::compile(&source, &game);
+        assert!(
+            output.bsp.is_none() && output.report.has_errors(),
+            "{text}: {:?}",
+            output.report
+        );
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|item| item.message.contains("Static slime requires opaque"))
+        );
+        assert!(!output.write(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous");
+        assert_eq!(
+            std::fs::read(path.with_extension("lin")).unwrap(),
+            b"previous LIN"
+        );
+        assert_eq!(source, original);
+    }
+}
+
+#[test]
+fn slime_material_semantics_remain_owned_until_checked_publication() {
+    for (name, material, changed) in [
+        (
+            "slime",
+            "LightmappedGeneric { %compileslime 1 $bottommaterial slime }",
+            "LightmappedGeneric { %compileslime 0 $bottommaterial slime }",
+        ),
+        (
+            "slime",
+            "UnlitGeneric { %compileslime 1 $bottommaterial SLIME }",
+            "UnlitGeneric { %compileslime 1 $bottommaterial another_material }",
+        ),
+        (
+            "slime_base",
+            "LightmappedGeneric { %compileslime 1 $bottommaterial slime $alpha 1 $additive 0 $envmap env_cubemap }",
+            "LightmappedGeneric { %compileslime 1 $bottommaterial slime $alpha 1 $additive 1 $envmap env_cubemap }",
+        ),
+    ] {
+        let (directory, game) = game();
+        let material_path = directory.path().join(format!("materials/{name}.vmt"));
+        std::fs::write(&material_path, material).unwrap();
+        if name == "slime_base" {
+            std::fs::write(directory.path().join("materials/slime.vmt"), "Patch { include materials/slime_base.vmt insert { $vertexalpha 0 } replace { $alpha 1.0 } }").unwrap();
+        }
+        let (source, _) = add_pool(
+            common::room(),
+            [-128.0, -128.0, 0.0],
+            [128.0, 128.0, 64.0],
+            "slime",
+        );
+        let previous = tempfile::tempdir().unwrap();
+        let path = previous.path().join("previous.bsp");
+        std::fs::write(&path, b"previous BSP").unwrap();
+        std::fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
+        let control = compiler::Control::default();
+        let lease = compiler::OutputLease::acquire(&path, &control).unwrap();
+        let reservation = compiler::WriteReservation::new(&path, &control).unwrap();
+        let output = compiled(&source, &game);
+        assert_eq!(output.stats.water_regions, 1);
+        assert!(
+            output
+                .bsp
+                .as_ref()
+                .unwrap()
+                .records::<Leaf>()
+                .unwrap()
+                .iter()
+                .any(|leaf| leaf.water_data >= 0 && leaf.contents & bsp::contents::SLIME != 0)
+        );
+        let prepared = output
+            .prepare_write_reserved(reservation, &control)
+            .unwrap()
+            .unwrap();
+        std::fs::write(&material_path, changed).unwrap();
+        assert!(prepared.commit_checked(&lease, &control).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+        assert_eq!(
+            std::fs::read(path.with_extension("lin")).unwrap(),
+            b"previous LIN"
+        );
+    }
+}
+
+#[test]
 fn connected_pools_share_depth_while_material_and_height_boundaries_keep_separate_regions() {
     let (_directory, game) = game();
     for mode in 0..3 {
@@ -175,68 +438,70 @@ fn connected_pools_share_depth_while_material_and_height_boundaries_keep_separat
 #[test]
 fn unsupported_water_surfaces_and_overlaps_fail_without_overwriting_previous_output() {
     let (_directory, game) = game();
-    for mode in 0..3 {
-        let (mut vmf, id) = add_pool(
-            common::room(),
-            [-128.0, -128.0, 16.0],
-            [128.0, 128.0, 64.0],
-            "water",
-        );
-        if mode == 0 {
-            let mut document = Document::new(vmf);
-            document
-                .edit("sloped water", |tx| {
-                    edit::transform(
-                        tx,
-                        &[ObjectId::Solid(id)],
-                        map_core::transform::Transform {
-                            rotation: DVec3::new(0.0, 15.0, 0.0),
-                            pivot: DVec3::new(0.0, 0.0, 40.0),
-                            ..Default::default()
-                        },
-                    )
-                })
-                .unwrap();
-            vmf = document.vmf().clone();
-        } else if mode == 1 {
-            let top = vmf
-                .world
-                .solids
-                .iter_mut()
-                .find(|solid| solid.id == id)
-                .unwrap()
-                .sides
-                .iter_mut()
-                .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
-                .unwrap();
-            top.material = "nodraw".into();
-            for side in &mut vmf
-                .world
-                .solids
-                .iter_mut()
-                .find(|solid| solid.id == id)
-                .unwrap()
-                .sides
-            {
-                if Plane::from_points(side.plane.0).unwrap().normal.x > 0.99 {
-                    side.material = "water".into();
+    for material in ["water", "slime"] {
+        for mode in 0..3 {
+            let (mut vmf, id) = add_pool(
+                common::room(),
+                [-128.0, -128.0, 16.0],
+                [128.0, 128.0, 64.0],
+                material,
+            );
+            if mode == 0 {
+                let mut document = Document::new(vmf);
+                document
+                    .edit("sloped water", |tx| {
+                        edit::transform(
+                            tx,
+                            &[ObjectId::Solid(id)],
+                            map_core::transform::Transform {
+                                rotation: DVec3::new(0.0, 15.0, 0.0),
+                                pivot: DVec3::new(0.0, 0.0, 40.0),
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .unwrap();
+                vmf = document.vmf().clone();
+            } else if mode == 1 {
+                let top = vmf
+                    .world
+                    .solids
+                    .iter_mut()
+                    .find(|solid| solid.id == id)
+                    .unwrap()
+                    .sides
+                    .iter_mut()
+                    .find(|side| Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                    .unwrap();
+                top.material = "nodraw".into();
+                for side in &mut vmf
+                    .world
+                    .solids
+                    .iter_mut()
+                    .find(|solid| solid.id == id)
+                    .unwrap()
+                    .sides
+                {
+                    if Plane::from_points(side.plane.0).unwrap().normal.x > 0.99 {
+                        side.material = material.into();
+                    }
                 }
+            } else {
+                vmf = add_pool(vmf, [-64.0, -64.0, 16.0], [192.0, 192.0, 96.0], "water2").0;
             }
-        } else {
-            vmf = add_pool(vmf, [-64.0, -64.0, 16.0], [192.0, 192.0, 96.0], "water2").0;
+            let output = compiler::compile(&vmf, &game);
+            assert!(
+                output.report.has_errors(),
+                "mode={mode}: {:?}",
+                output.report
+            );
+            assert!(output.bsp.is_none());
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("previous.bsp");
+            std::fs::write(&path, b"previous").unwrap();
+            assert!(!output.write(&path).unwrap());
+            assert_eq!(std::fs::read(path).unwrap(), b"previous");
         }
-        let output = compiler::compile(&vmf, &game);
-        assert!(
-            output.report.has_errors(),
-            "mode={mode}: {:?}",
-            output.report
-        );
-        assert!(output.bsp.is_none());
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("previous.bsp");
-        std::fs::write(&path, b"previous").unwrap();
-        assert!(!output.write(&path).unwrap());
-        assert_eq!(std::fs::read(path).unwrap(), b"previous");
     }
 }
 
@@ -485,66 +750,132 @@ fn engine_fluids_use_connected_regions_and_clipped_wet_leaf_hulls() {
         eprintln!("CS:S not installed; skipping native fluid fixture");
         return;
     };
-    let (_directory, mut fs) = game();
+    let (directory, mut fs) = game();
     fs.base_dir = root;
-    let (vmf, _) = add_pool(
-        common::room(),
-        [-128.0, -128.0, 0.0],
-        [0.0, 128.0, 64.0],
-        "water",
-    );
-    let (vmf, _) = add_pool(vmf, [0.0, -128.0, 0.0], [128.0, 128.0, 64.0], "water");
-    let mut document = Document::new(vmf);
-    document
-        .edit("column in fluid", |tx| {
-            edit::create_block(
-                tx,
-                DVec3::new(-16.0, -16.0, 0.0),
-                DVec3::new(16.0, 16.0, 32.0),
-                "dev/dev_measuregeneric01",
-            )
-        })
-        .unwrap();
-    let before = document.vmf().write(&Default::default());
-    let output = compiler::compile_with_options(
-        document.vmf(),
-        &fs,
-        compiler::Options {
-            physics: compiler::PhysicsMode::Engine,
-            ..compiler::Options::default()
-        },
-    );
-    assert!(!output.report.has_errors(), "{:?}", output.report);
-    assert_eq!(output.stats.water_regions, 1);
-    assert_eq!(output.stats.physics_fluids, 1);
-    assert_eq!(output.stats.physics_solids, 2);
-    let bsp = output.bsp.unwrap();
-    let physics = bsp.physics().unwrap().unwrap();
-    let keys = std::str::from_utf8(physics.models[0].key_data).unwrap();
-    let nodes = source_formats::keyvalues::parse(&keys[..keys.len() - 1]).unwrap();
-    let fluid = nodes
-        .iter()
-        .find(|node| node.key == "fluid")
-        .unwrap()
-        .children()
-        .unwrap();
-    for (key, value) in [
-        ("index", "1"),
-        ("surfaceprop", "water"),
-        ("damping", "0.01"),
-        ("contents", "32"),
-        ("surfaceplane", "0 0 1 64"),
-        ("currentvelocity", "0 0 0"),
+    std::fs::create_dir(directory.path().join("materials/tools")).unwrap();
+    std::fs::write(
+        directory.path().join("materials/tools/toolsblack.vmt"),
+        "UnlitGeneric {}",
+    )
+    .unwrap();
+    for (first, second, controlled, regions, regional) in [
+        ("water", "water", false, 1, false),
+        ("slime", "slime", false, 1, false),
+        ("water", "slime", true, 2, false),
+        ("slime", "slime", true, 1, true),
     ] {
-        assert_eq!(
-            fluid.iter().find(|node| node.key == key).unwrap().as_str(),
-            Some(value)
+        let (vmf, _) = add_pool(
+            common::room(),
+            [-128.0, -128.0, 0.0],
+            [0.0, 128.0, 64.0],
+            first,
         );
+        let (vmf, _) = add_pool(vmf, [0.0, -128.0, 0.0], [128.0, 128.0, 64.0], second);
+        let mut vmf = vmf;
+        if controlled {
+            vmf.world
+                .properties
+                .set(compiler::WATER_CURRENT_VELOCITY_KEY, "64 -32 16");
+            vmf.world
+                .properties
+                .set(compiler::WATER_DAMPING_KEY, "0.005");
+        }
+        let mut document = Document::new(vmf);
+        document
+            .edit("column in fluid", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::new(-16.0, -16.0, 0.0),
+                    DVec3::new(16.0, 16.0, 32.0),
+                    "dev/dev_measuregeneric01",
+                )?;
+                if regional {
+                    compile_region::apply(
+                        tx,
+                        Some(compile_region::Definition {
+                            enabled: true,
+                            bounds: compile_region::Bounds {
+                                mins: DVec3::new(-192.0, -192.0, 0.0),
+                                maxs: DVec3::new(192.0, 192.0, 192.0),
+                            },
+                        }),
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let before = document.vmf().write(&Default::default());
+        let output = compiler::compile_with_options(
+            document.vmf(),
+            &fs,
+            compiler::Options {
+                physics: compiler::PhysicsMode::Engine,
+                ..compiler::Options::default()
+            },
+        );
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.water_regions, regions);
+        assert_eq!(output.stats.physics_fluids, regions);
+        assert_eq!(output.stats.physics_solids, regions + 1);
+        assert_eq!(output.stats.compile_region.is_some(), regional);
+        let bsp = output.bsp.unwrap();
+        let physics = bsp.physics().unwrap().unwrap();
+        let keys = std::str::from_utf8(physics.models[0].key_data).unwrap();
+        let nodes = source_formats::keyvalues::parse(&keys[..keys.len() - 1]).unwrap();
+        let fluids = nodes
+            .iter()
+            .filter(|node| node.key == "fluid")
+            .collect::<Vec<_>>();
+        assert_eq!(fluids.len(), regions);
+        let mut properties = Vec::new();
+        for node in fluids {
+            let fluid = node.children().unwrap();
+            let field = |key| {
+                fluid
+                    .iter()
+                    .find(|node| node.key == key)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+            };
+            let property = field("surfaceprop");
+            assert_eq!(
+                field("contents"),
+                match property {
+                    "water" => "32",
+                    "slime" => "16",
+                    other => panic!("Unexpected fluid property {other}"),
+                }
+            );
+            properties.push(property);
+            assert_eq!(field("damping"), if controlled { "0.005" } else { "0.01" });
+            assert_eq!(field("surfaceplane"), "0 0 1 64");
+            assert_eq!(
+                field("currentvelocity"),
+                if controlled {
+                    "1.6256 -0.8128 0.4064"
+                } else {
+                    "0 0 0"
+                }
+            );
+        }
+        properties.sort_unstable();
+        assert_eq!(
+            properties,
+            if first != second {
+                vec!["slime", "water"]
+            } else {
+                vec![first]
+            }
+        );
+        assert_eq!(physics.models[0].solids.len(), regions + 1);
+        let leaves = bsp.records::<Leaf>().unwrap();
+        let wet = leaves.iter().filter(|leaf| leaf.water_data >= 0).count();
+        assert!(wet > 2);
+        assert_eq!(
+            output.stats.physics_convexes,
+            if regional { 8 + wet } else { 7 + wet }
+        );
+        assert_eq!(document.vmf().write(&Default::default()), before);
     }
-    assert_eq!(physics.models[0].solids.len(), 2);
-    let leaves = bsp.records::<Leaf>().unwrap();
-    let wet = leaves.iter().filter(|leaf| leaf.water_data >= 0).count();
-    assert!(wet > 2);
-    assert_eq!(output.stats.physics_convexes, 7 + wet);
-    assert_eq!(document.vmf().write(&Default::default()), before);
 }

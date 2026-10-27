@@ -25,7 +25,7 @@ fn water_current_mcp_exposes_numeric_world_field_and_forwards_staged_atomic_edit
         .find(|field| field["field"]["key"] == key)
         .unwrap();
     assert_eq!(field["field"]["control"], "vector");
-    assert_eq!(field["field"]["label"], "Water current · world units/s");
+    assert_eq!(field["field"]["label"], "Liquid current · world units/s");
     assert_eq!(field["field"]["components"], json!(["0", "0", "0"]));
     assert_eq!(field["field"]["component_labels"], json!(["X", "Y", "Z"]));
     assert_eq!(field["stored_count"], 0);

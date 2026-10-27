@@ -100,17 +100,15 @@ fn check_liquid_volume(
     if flags & (contents::WATER | contents::SLIME) == 0 {
         return Ok(());
     }
-    let Some((bounds, geometry)) =
-        world.filter(|_| flags & (contents::DETAIL | contents::SLIME) == 0)
-    else {
+    let Some((bounds, geometry)) = world.filter(|_| flags & contents::DETAIL == 0) else {
         return Err(format!(
-            "Compile regions support water only in structural world brushes; detail/model water and slime require a full-map build (solid:{})",
+            "Compile regions support liquids only in structural world brushes; detail/model liquids require a full-map build (solid:{})",
             solid.id
         ));
     };
     if !bounds.contains(geometry.mins) || !bounds.contains(geometry.maxs) {
         return Err(format!(
-            "Water brush crosses a compile-region boundary; include the whole volume or disable the region (solid:{})",
+            "Liquid brush crosses a compile-region boundary; include the whole volume or disable the region (solid:{})",
             solid.id
         ));
     }

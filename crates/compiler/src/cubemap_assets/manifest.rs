@@ -8,7 +8,8 @@ use source_formats::vmt::{self, Material};
 use source_formats::vtf::{ImageFormat, Vtf};
 
 use super::material::{
-    alias_name, bound_text, ensure_writable, material_name, material_nodes, sample_texture, strings,
+    alias_name, bound_text, ensure_writable, material_name, material_nodes, sample_texture,
+    self_bottom, strings,
 };
 use super::*;
 use crate::Control;
@@ -665,6 +666,11 @@ pub fn verify_generated_cubemaps(
                 && !value.trim().is_empty()
             {
                 let name = material_name(value).map_err(invalid)?;
+                if name == alias.alias && !self_bottom(&alias.alias, key, value) {
+                    return Err(invalid(
+                        "Only an exact below-view self reference may name its own reflection alias",
+                    ));
+                }
                 if let Some(dependency) = aliases.get(name.as_str()) {
                     if dependency.sample != alias.sample {
                         return Err(invalid("Reflection dependency uses a different sample"));

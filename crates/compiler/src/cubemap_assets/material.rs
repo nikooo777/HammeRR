@@ -10,6 +10,10 @@ use crate::Control;
 
 const DEPENDENCIES: [&str; 3] = ["$bottommaterial", "$crackmaterial", "$fallbackmaterial"];
 
+pub(super) fn self_bottom(name: &str, key: &str, value: &str) -> bool {
+    key.eq_ignore_ascii_case("$bottommaterial") && value.eq_ignore_ascii_case(name)
+}
+
 pub(super) fn material_name(name: &str) -> Result<String, String> {
     let name = asset_relative(name.trim()).map_err(|error| error.to_string())?;
     let name = name.strip_prefix("materials/").unwrap_or(&name);
@@ -377,6 +381,7 @@ impl<'a> Graph<'a> {
                 .iter()
                 .any(|dependency| key.eq_ignore_ascii_case(dependency))
                 && !value.trim().is_empty()
+                && !self_bottom(name, key, value)
             {
                 reflective |= self.needs_alias_inner(&material_name(value)?, active, depth + 1)?;
             }
@@ -439,8 +444,11 @@ impl<'a> Graph<'a> {
                 && !value.trim().is_empty()
             {
                 let dependency = material_name(value)?;
-                let replacement =
-                    self.generate_inner(&dependency, sample, samples, namespace, depth + 1)?;
+                let replacement = if self_bottom(name, key, value) {
+                    alias.clone()
+                } else {
+                    self.generate_inner(&dependency, sample, samples, namespace, depth + 1)?
+                };
                 dependencies.insert(replacement.clone());
                 replacements.insert(dependency, replacement);
             }

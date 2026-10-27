@@ -336,102 +336,122 @@ fn preprocessing_seals_retains_crossing_brushes_and_never_mutates_the_source() {
 }
 
 #[test]
-fn contained_world_water_compiles_but_crossing_and_entity_liquids_preserve_prior_output() {
-    let (_directory, game, source) = fixture();
-    std::fs::write(
-        game.game_dir.join("materials/water.vmt"),
-        "Water { $abovewater 1 }",
-    )
-    .unwrap();
-    let mut document = Document::new(source);
-    let id = document
-        .edit("pool", |tx| {
-            let map_core::ObjectId::Solid(id) = edit::create_block(
-                tx,
-                DVec3::new(-128.0, 16.0, 0.0),
-                DVec3::new(128.0, 128.0, 64.0),
-                "tools/toolsnodraw",
-            )?
-            else {
-                unreachable!()
-            };
-            for side in &mut tx.solid_mut(id)?.sides {
-                if map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99 {
-                    side.material = "water".into();
-                }
-            }
-            Ok(id)
-        })
-        .unwrap();
-    let source = document.into_vmf();
-    let path = game.game_dir.join("previous.bsp");
-    let publish_control = Control::default();
-    let lease = crate::OutputLease::acquire(&path, &publish_control).unwrap();
-    let reservation = crate::WriteReservation::new(&path, &publish_control).unwrap();
-    let output = crate::compile(&source, &game);
-    assert!(output.bsp.is_some(), "{:?}", output.report);
-    assert_eq!(output.stats.water_regions, 1);
-    assert!(output.stats.water_leaves > 0);
-    assert!(
-        output
-            .prepare_write_reserved(reservation, &publish_control)
-            .unwrap()
-            .unwrap()
-            .commit_checked(&lease, &publish_control)
-            .unwrap()
-    );
-    let previous = std::fs::read(&path).unwrap();
-    for (classname, offset, message) in [
-        (None, DVec3::X, "crosses a compile-region boundary"),
-        (Some("func_detail"), DVec3::ZERO, "structural world"),
-        (Some("func_brush"), DVec3::ZERO, "structural world"),
+fn contained_world_liquids_compile_but_crossing_and_entity_liquids_preserve_prior_output() {
+    for (material, declaration) in [
+        ("water", "Water { $abovewater 1 }"),
+        (
+            "slime",
+            "LightmappedGeneric { %compileslime 1 $bottommaterial slime }",
+        ),
     ] {
-        let mut document = Document::new(source.clone());
-        document
-            .edit("unsupported water", |tx| {
-                edit::translate(tx, &[map_core::ObjectId::Solid(id)], offset, true)?;
-                if let Some(classname) = classname {
-                    edit::tie_to_entity(tx, &[id], classname, &[])?;
+        let (_directory, game, source) = fixture();
+        std::fs::write(
+            game.game_dir.join(format!("materials/{material}.vmt")),
+            declaration,
+        )
+        .unwrap();
+        let mut document = Document::new(source);
+        let id = document
+            .edit("pool", |tx| {
+                let map_core::ObjectId::Solid(id) = edit::create_block(
+                    tx,
+                    DVec3::new(-128.0, 16.0, 0.0),
+                    DVec3::new(128.0, 128.0, 64.0),
+                    "tools/toolsnodraw",
+                )?
+                else {
+                    unreachable!()
+                };
+                for side in &mut tx.solid_mut(id)?.sides {
+                    if map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99 {
+                        side.material = material.into();
+                    }
                 }
-                Ok(())
+                Ok(id)
             })
             .unwrap();
-        let output = crate::compile(document.vmf(), &game);
-        assert!(output.bsp.is_none());
+        let source = document.into_vmf();
+        let prepared =
+            prepare(&source, &game, &mut Report::default(), &Control::default()).unwrap();
+        assert_eq!(
+            prepared
+                .vmf
+                .world
+                .solids
+                .iter()
+                .find(|solid| solid.id == id),
+            source.world.solids.iter().find(|solid| solid.id == id)
+        );
+        drop(prepared);
+        let path = game.game_dir.join("previous.bsp");
+        let publish_control = Control::default();
+        let lease = crate::OutputLease::acquire(&path, &publish_control).unwrap();
+        let reservation = crate::WriteReservation::new(&path, &publish_control).unwrap();
+        let output = crate::compile(&source, &game);
+        assert!(output.bsp.is_some(), "{:?}", output.report);
+        assert_eq!(output.stats.water_regions, 1);
+        assert!(output.stats.water_leaves > 0);
         assert!(
             output
-                .report
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.message.contains(message)),
-            "{:?}",
-            output.report
+                .prepare_write_reserved(reservation, &publish_control)
+                .unwrap()
+                .unwrap()
+                .commit_checked(&lease, &publish_control)
+                .unwrap()
         );
-        assert!(!output.write(&path).unwrap());
-        assert_eq!(std::fs::read(&path).unwrap(), previous);
+        let previous = std::fs::read(&path).unwrap();
+        for (classname, offset, message) in [
+            (None, DVec3::X, "crosses a compile-region boundary"),
+            (Some("func_detail"), DVec3::ZERO, "structural world"),
+            (Some("func_brush"), DVec3::ZERO, "structural world"),
+        ] {
+            let mut document = Document::new(source.clone());
+            document
+                .edit("unsupported liquid", |tx| {
+                    edit::translate(tx, &[map_core::ObjectId::Solid(id)], offset, true)?;
+                    if let Some(classname) = classname {
+                        edit::tie_to_entity(tx, &[id], classname, &[])?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            let output = crate::compile(document.vmf(), &game);
+            assert!(output.bsp.is_none());
+            assert!(
+                output
+                    .report
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(message)),
+                "{:?}",
+                output.report
+            );
+            assert!(!output.write(&path).unwrap());
+            assert_eq!(std::fs::read(&path).unwrap(), previous);
+        }
+        let mut outside = Document::new(source);
+        outside
+            .edit("outside pool", |tx| {
+                edit::translate(
+                    tx,
+                    &[map_core::ObjectId::Solid(id)],
+                    DVec3::X * 1024.0,
+                    true,
+                )
+            })
+            .unwrap();
+        let output = crate::compile(outside.vmf(), &game);
+        assert!(output.bsp.is_some(), "{:?}", output.report);
+        assert_eq!(output.stats.water_regions, 0);
+        assert!(
+            output
+                .stats
+                .compile_region
+                .unwrap()
+                .omitted
+                .contains(&format!("solid:{id}"))
+        );
     }
-    let mut outside = Document::new(source);
-    outside
-        .edit("outside pool", |tx| {
-            edit::translate(
-                tx,
-                &[map_core::ObjectId::Solid(id)],
-                DVec3::X * 1024.0,
-                true,
-            )
-        })
-        .unwrap();
-    let output = crate::compile(outside.vmf(), &game);
-    assert!(output.bsp.is_some(), "{:?}", output.report);
-    assert_eq!(output.stats.water_regions, 0);
-    assert!(
-        output
-            .stats
-            .compile_region
-            .unwrap()
-            .omitted
-            .contains(&format!("solid:{id}"))
-    );
 }
 
 #[test]

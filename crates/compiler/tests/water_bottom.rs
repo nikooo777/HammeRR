@@ -1264,7 +1264,7 @@ fn ineligible_liquid_sources_never_acquire_a_downward_target_or_read_its_invalid
     .unwrap();
     std::fs::write(
         directory.path().join("materials/slime.vmt"),
-        "LightmappedGeneric { %compileslime 1 }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial slime }",
     )
     .unwrap();
     for case in [
@@ -1341,7 +1341,14 @@ fn ineligible_liquid_sources_never_acquire_a_downward_target_or_read_its_invalid
             "{case}: {:?}",
             output.report
         );
-        if matches!(case, "no top" | "sloped pool") {
+        if case == "slime" {
+            assert!(output.bsp.is_none() && output.report.has_errors());
+            assert!(output.report.diagnostics.iter().any(|diagnostic| {
+                diagnostic
+                    .message
+                    .contains("cannot combine WATER and SLIME")
+            }));
+        } else if matches!(case, "no top" | "sloped pool") {
             assert!(output.bsp.is_none() && output.report.has_errors());
             assert!(
                 output

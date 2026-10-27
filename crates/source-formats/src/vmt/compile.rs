@@ -125,6 +125,7 @@ impl CompileSemantics {
         }
         if flag("%compileslime") {
             semantics.contents = contents::SLIME;
+            semantics.surface |= surf::NODECALS;
         }
         if flag("%compileblocklos") {
             semantics.contents = contents::BLOCKLOS;
@@ -192,6 +193,22 @@ impl CompileSemantics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slime_keeps_opaque_surface_lighting_and_disables_decals_without_water_flags() {
+        for (shader, no_light) in [("LightmappedGeneric", false), ("UnlitGeneric", true)] {
+            let material = Material::parse(&format!("{shader} {{ %compileslime 1 }}")).unwrap();
+            let semantics = CompileSemantics::checked_from_material(&material).unwrap();
+            assert_eq!(semantics.contents, contents::SLIME);
+            assert_ne!(semantics.surface & surf::NODECALS, 0);
+            assert_eq!(
+                semantics.surface & (surf::WARP | surf::NOSHADOWS | surf::TRANS),
+                0
+            );
+            assert_eq!(semantics.surface & surf::NOLIGHT != 0, no_light);
+            assert!(semantics.draws);
+        }
+    }
 
     #[test]
     fn checked_primary_normal_admission_refuses_unproven_values_without_changing_preview() {

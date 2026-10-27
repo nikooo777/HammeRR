@@ -247,6 +247,42 @@ fn identity_only_reads_release_payloads_without_applying_the_retention_limit() {
 }
 
 #[test]
+fn material_text_retention_preserves_original_vmt_and_releases_texture_payloads() {
+    let (directory, game) = fixture();
+    let texture_path = "materials/metrics.vtf";
+    std::fs::write(directory.path().join(texture_path), b"original texture").unwrap();
+    let sources = BuildMaterialSources::with_retained_material_text();
+    sources.lock().unwrap().limits.payload_bytes = MATERIAL.len();
+    let material = sources
+        .read_asset(&game, "materials/source.vmt", 1024)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        sources.retained(material.path()).unwrap().unwrap().bytes(),
+        MATERIAL
+    );
+    let repeated = sources
+        .read_asset(&game, material.path(), 1024)
+        .unwrap()
+        .unwrap();
+    assert!(Arc::ptr_eq(&material.source, &repeated.source));
+    let texture = sources
+        .read_asset(&game, texture_path, 1024)
+        .unwrap()
+        .unwrap();
+    let payload = Arc::downgrade(&texture.source);
+    assert!(sources.retained(texture_path).unwrap().is_none());
+    assert_eq!(sources.lock().unwrap().payload_bytes, MATERIAL.len());
+    drop(texture);
+    assert!(payload.upgrade().is_none());
+    let guard = sources.source_guard(&game, &Control::default()).unwrap();
+    std::fs::write(directory.path().join(texture_path), b"changed texture").unwrap();
+    assert!(guard.verify_sources(&game, &Control::default()).is_err());
+    assert!(sources.read_asset(&game, texture_path, 1024).is_err());
+    assert_eq!(material.bytes(), MATERIAL);
+}
+
+#[test]
 fn identity_only_reads_keep_original_sources_and_missing_observations() {
     for missing in [false, true] {
         let (directory, game) = fixture();

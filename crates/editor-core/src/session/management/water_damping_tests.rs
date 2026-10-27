@@ -42,7 +42,7 @@ fn water_damping_world_discovery_preserves_absence_fgd_defaults_and_readonly() {
         let before = (session.document().vmf().clone(), session.history_snapshot());
         let preview = session.inspect_properties(PropertyTarget::World).unwrap();
         let property = damping(&preview);
-        assert_eq!(property.field.label, "Water pressure damping");
+        assert_eq!(property.field.label, "Liquid pressure damping");
         assert_eq!(property.field.kind, "float");
         assert_eq!(property.field.control, inspector::Control::Number);
         assert_eq!(property.field.range, Some([0.0, 0.01]));

@@ -568,8 +568,34 @@ fn rotated_models_keep_manual_and_nonreflective_binding_semantics() {
 
 #[test]
 fn verified_black_captures_merge_only_pak_and_rebase_only_registered_paths() {
-    let (_directory, game) = game();
-    let (vmf, _) = source();
+    for slime in [None, Some(false), Some(true)] {
+        verified_registered_paths(slime);
+    }
+}
+
+fn verified_registered_paths(slime: Option<bool>) {
+    let (directory, game) = game();
+    let (mut vmf, _) = source();
+    if let Some(reflective) = slime {
+        let text = if reflective {
+            "LightmappedGeneric { %compileslime 1 $bottommaterial DEV/SLIME $envmap env_cubemap }"
+        } else {
+            "UnlitGeneric { %compileslime 1 $bottommaterial dev/slime }"
+        };
+        std::fs::write(directory.path().join("materials/dev/slime.vmt"), text).unwrap();
+        let mut document = Document::new(vmf);
+        document
+            .edit("self-bottom slime", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::new(-128.0, -128.0, 32.0),
+                    DVec3::new(128.0, 128.0, 96.0),
+                    "dev/slime",
+                )
+            })
+            .unwrap();
+        vmf = document.into_vmf();
+    }
     let output = pending(&vmf, &game);
     let original = output.bsp.as_ref().unwrap().clone();
     let mut verified = merge(output, &game);
@@ -608,6 +634,70 @@ fn verified_black_captures_merge_only_pak_and_rebase_only_registered_paths() {
         .unwrap();
     assert_eq!(manifest.namespace, "hammerr_random_run");
     assert_eq!(manifest.logical_namespace, "reflections");
+    if let Some(reflective) = slime {
+        assert_eq!(manifest.phase, CubemapAssetPhase::Verified);
+        assert_eq!(manifest.samples.len(), 2);
+        assert_eq!(
+            manifest
+                .sources
+                .iter()
+                .filter(|source| source.path == "materials/dev/slime.vmt")
+                .count(),
+            1
+        );
+        let slime_aliases = manifest
+            .aliases
+            .iter()
+            .filter(|alias| alias.material == "dev/slime")
+            .collect::<Vec<_>>();
+        assert_eq!(!slime_aliases.is_empty(), reflective);
+        let archive = rebased.pak_data(PakLimits::default()).unwrap();
+        for alias in slime_aliases {
+            assert_eq!(
+                alias.dependencies.as_slice(),
+                std::slice::from_ref(&alias.alias)
+            );
+            let entry = archive
+                .entries
+                .iter()
+                .find(|entry| entry.name == source_formats::vmt::material_path(&alias.alias))
+                .unwrap();
+            let material =
+                source_formats::vmt::Material::parse(std::str::from_utf8(&entry.data).unwrap())
+                    .unwrap();
+            assert_eq!(material.get("$bottommaterial"), Some(alias.alias.as_str()));
+        }
+        if reflective {
+            let mut changed = manifest.clone();
+            let alias = changed
+                .aliases
+                .iter_mut()
+                .find(|alias| alias.material == "dev/slime")
+                .unwrap();
+            let mut archive = rebased.pak_data(PakLimits::default()).unwrap();
+            let entry = archive
+                .entries
+                .iter_mut()
+                .find(|entry| entry.name == source_formats::vmt::material_path(&alias.alias))
+                .unwrap();
+            entry.data = std::str::from_utf8(&entry.data)
+                .unwrap()
+                .replace("\"$bottommaterial\"", "\"$fallbackmaterial\"")
+                .into_bytes();
+            alias.sha256 = hash(&entry.data);
+            manifest::persist_manifest(&mut archive, &changed).unwrap();
+            let mut corrupted = rebased.clone();
+            corrupted
+                .set_pak_data(&archive, PakLimits::default())
+                .unwrap();
+            assert!(
+                read_generated_cubemaps(&corrupted, &Control::default())
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Only an exact below-view self reference")
+            );
+        }
+    }
     assert!(
         rebased
             .texdata_strings()
@@ -640,7 +730,11 @@ fn verified_black_captures_merge_only_pak_and_rebase_only_registered_paths() {
             );
         }
     }
-    let first_alias = &manifest.aliases[0];
+    let first_alias = manifest
+        .aliases
+        .iter()
+        .find(|alias| alias.material == "dev/dev_measuregeneric01")
+        .unwrap();
     let alias = pak
         .entries
         .iter()

@@ -218,9 +218,9 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
         result.description = "Three integer linear RGB channels from 0 to 255 attenuate baked lighting on all generated detail models, cards and shapes. White preserves their lighting; 128 approximately halves a linear channel. Explicit detail entities keep their own tint. Compiler Fullbright starts from tinted white; dynamic lights and the client's mat_fullbright override keep their engine behavior. This map-wide control does not edit dictionary entries.".into();
     }
     if water_current {
-        result.label = "Water current · world units/s".into();
+        result.label = "Liquid current · world units/s".into();
         result.description = format!(
-            "Map-wide steady physical water velocity in world X/Y/Z units per second. Absent means 0 0 0 without a stored override. Exactly three finite components, at most {} input bytes and vector length at most {} units/s; no clamping or normalization. A stored value, including zero, requires CS:S engine physics and emitted structural-world WATER with a visible horizontal top; retained slime/detail/model liquids reject. Water pressure damping is a separate World setting, defaulting to {}. This does not drive player/NPC movement or edit water materials.",
+            "Map-wide steady physical liquid velocity in world X/Y/Z units per second. Absent means 0 0 0 without a stored override. Exactly three finite components, at most {} input bytes and vector length at most {} units/s; no clamping or normalization. A stored value, including zero, requires CS:S engine physics and emitted structural-world WATER or opaque SLIME with visible horizontal tops; retained detail/model liquids reject. Liquid pressure damping is a separate World setting, defaulting to {}. This does not drive player/NPC movement or edit liquid materials.",
             compiler::MAX_WATER_CURRENT_VALUE_BYTES,
             compiler::MAX_WATER_CURRENT_SPEED,
             compiler::DEFAULT_WATER_DAMPING
@@ -228,9 +228,9 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
         result.advanced = false;
     }
     if water_damping {
-        result.label = "Water pressure damping".into();
+        result.label = "Liquid pressure damping".into();
         result.description = format!(
-            "Map-wide dimensionless coefficient for native water's projected-pressure term. Absent means {} without a stored override. Zero removes only the projected-pressure term; the native fixed pressure term remains. Enter one finite decimal from 0 to {}, at most {} input bytes; no clamping. A stored value, including zero or the default, requires CS:S engine physics and emitted structural-world WATER with a visible horizontal top; retained slime/detail/model liquids reject. This does not drive player/NPC movement or edit water materials.",
+            "Map-wide dimensionless coefficient for native liquid's projected-pressure term. Absent means {} without a stored override. Zero removes only the projected-pressure term; the native fixed pressure term remains. Enter one finite decimal from 0 to {}, at most {} input bytes; no clamping. A stored value, including zero or the default, requires CS:S engine physics and emitted structural-world WATER or opaque SLIME with visible horizontal tops; retained detail/model liquids reject. This does not drive player/NPC movement or edit liquid materials.",
             compiler::DEFAULT_WATER_DAMPING,
             compiler::MAX_WATER_DAMPING,
             compiler::MAX_WATER_DAMPING_VALUE_BYTES

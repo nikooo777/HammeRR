@@ -20,9 +20,9 @@ Build a sealed part of a map without deleting other source objects.
 Clear **Enable region for builds**, preview and apply the change.
 Use **Preview clear** to remove stored bounds entirely.
 
-## Include terrain and water
+## Include terrain and liquids
 
-Keep complete terrain parents and water volumes inside the region.
+Keep complete terrain parents and structural-world water or slime volumes inside the region.
 Include ordinary geometry that seals the resulting playable area.
 Clipped or incomplete required surfaces fail explicitly.
 

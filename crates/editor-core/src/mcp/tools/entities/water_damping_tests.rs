@@ -29,7 +29,7 @@ fn water_damping_mcp_reports_intrinsic_absence_and_preserves_atomic_raw_scalar_d
         serde_json::from_value(json!({"world":true})).unwrap(),
     )));
     let field = damping(&inspected);
-    assert_eq!(field["field"]["label"], "Water pressure damping");
+    assert_eq!(field["field"]["label"], "Liquid pressure damping");
     assert_eq!(field["field"]["kind"], "float");
     assert_eq!(field["field"]["control"], "number");
     assert_eq!(field["field"]["range"], json!([0.0, 0.01]));

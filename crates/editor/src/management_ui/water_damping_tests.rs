@@ -25,11 +25,11 @@ fn water_damping_number_callbacks_preserve_raw_text_and_stage_cancel_apply_remov
     let access = DocumentAccess::unmanaged(shared.clone());
     let window = PropertiesWindow::new().unwrap();
     bind_properties_with_access(&window, &access).unwrap();
-    window.set_filter("Water pressure damping".into());
+    window.set_filter("Liquid pressure damping".into());
     refresh_properties(&window, &lock(&shared));
     assert_eq!(window.get_fields().row_count(), 1);
     let field = window.get_fields().row_data(0).unwrap();
-    assert_eq!(field.field.label, "Water pressure damping");
+    assert_eq!(field.field.label, "Liquid pressure damping");
     assert_eq!(field.field.control, "number");
     assert_eq!(field.field.type_name, "float");
     assert_eq!(field.field.value, "0.01");
@@ -62,7 +62,7 @@ fn water_damping_number_callbacks_preserve_raw_text_and_stage_cancel_apply_remov
     refresh_properties(&window, &lock(&shared));
     window.show().unwrap();
     crate::ui::tests::save_ui_snapshot(window.window(), "water-pressure-world-settings");
-    window.set_filter("Water pressure damping".into());
+    window.set_filter("Liquid pressure damping".into());
     window.invoke_edit(key.into(), raw.into());
     window.invoke_apply();
     assert_eq!(

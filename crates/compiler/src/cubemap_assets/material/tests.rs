@@ -16,8 +16,8 @@ fn game(directory: &std::path::Path) -> GameFs {
 fn material_and_patch_parsing_use_recorded_bytes_after_source_replacement() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::create_dir(directory.path().join("materials")).unwrap();
-    let base = "LightmappedGeneric { $envmap env_cubemap $unknown recorded Proxies { TextureScroll { textureScrollRate 0.2 } } }";
-    let patch = "Patch { include materials/base.vmt replace { $unknown patched } insert { $surfaceprop ice } }";
+    let base = "LightmappedGeneric { $envmap env_cubemap $bottommaterial base $unknown recorded Proxies { TextureScroll { textureScrollRate 0.2 } } }";
+    let patch = "Patch { include materials/base.vmt replace { $bottommaterial PATCH $unknown patched } insert { $surfaceprop ice } }";
     for patched in [false, true] {
         std::fs::write(directory.path().join("materials/base.vmt"), base).unwrap();
         std::fs::write(directory.path().join("materials/patch.vmt"), patch).unwrap();
@@ -48,10 +48,39 @@ fn material_and_patch_parsing_use_recorded_bytes_after_source_replacement() {
         assert_eq!(material.get("$surfaceprop"), patched.then_some("ice"));
         assert_eq!(material.blocks.len(), 1);
         assert_eq!(material.blocks[0].key, "Proxies");
+        assert!(graph.needs_alias(name).unwrap());
         assert_eq!(graph.sources["materials/base.vmt"], hash(base.as_bytes()));
         if patched {
             assert_eq!(graph.sources["materials/patch.vmt"], hash(patch.as_bytes()));
         }
+    }
+    for (first, second) in [
+        (
+            "LightmappedGeneric { $fallbackmaterial cycle_a }",
+            "UnlitGeneric {}",
+        ),
+        (
+            "LightmappedGeneric { $crackmaterial cycle_a }",
+            "UnlitGeneric {}",
+        ),
+        (
+            "LightmappedGeneric { $bottommaterial cycle_b }",
+            "LightmappedGeneric { $bottommaterial cycle_a }",
+        ),
+        (
+            "LightmappedGeneric { $bottommaterial materials/cycle_a.vmt }",
+            "UnlitGeneric {}",
+        ),
+        ("Patch { include materials/cycle_a.vmt }", "UnlitGeneric {}"),
+    ] {
+        std::fs::write(directory.path().join("materials/cycle_a.vmt"), first).unwrap();
+        std::fs::write(directory.path().join("materials/cycle_b.vmt"), second).unwrap();
+        assert!(
+            Graph::new(&game(directory.path()), &Control::default())
+                .needs_alias("cycle_a")
+                .unwrap_err()
+                .contains("cycle/depth")
+        );
     }
 }
 

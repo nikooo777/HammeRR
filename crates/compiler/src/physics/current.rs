@@ -94,7 +94,7 @@ pub(crate) fn admit_map(map: &Map, control: &Control) -> Result<(), String> {
     if map.water_current.is_none() {
         return Ok(());
     }
-    super::admit_authored_water(map, control, WATER_CURRENT_VELOCITY_KEY)
+    super::admit_authored_liquid(map, control, WATER_CURRENT_VELOCITY_KEY)
 }
 
 #[cfg(test)]

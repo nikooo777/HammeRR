@@ -195,7 +195,7 @@ pub(crate) fn validate_material(
     sources: &BuildMaterialSources,
     control: &Control,
     cutout: bool,
-) -> Result<(), String> {
+) -> Result<vmt::Material, String> {
     let material = vmt::Material::load_with_reader(&vmt::material_path(name), &mut |path| {
         control.checkpoint().map_err(io::Error::other)?;
         let asset = sources
@@ -210,7 +210,8 @@ pub(crate) fn validate_material(
         crate::lighting::validate_brush_cutout_material(&material)
     } else {
         opaque_parameters(name, &material)
-    }
+    }?;
+    Ok(material)
 }
 
 pub(crate) fn binary_cutout(info: &MaterialInfo) -> bool {

@@ -91,20 +91,25 @@ fn complete_build_uses_shader_roots_and_changes_only_the_pak() {
 #[test]
 fn non_water_shader_liquid_surfaces_are_explicitly_outside_the_packing_subset() {
     let fixture = fixture();
-    fixture.write(
-        ROOT,
-        "LightmappedGeneric { %compilewater 1 $basetexture test/color }",
-    );
-    let source = room();
-    assert!(crate::compile(&source, &fixture.game).bsp.is_some());
-    let output = crate::compile_with_options(&source, &fixture.game, options());
-    assert!(output.bsp.is_none() && output.report.has_errors());
-    assert!(output.report.diagnostics.iter().any(|item| {
-        item.message
-            .contains("supported Water-shader liquid surfaces")
-            && item.message.contains("TEST/ROOT")
-    }));
-    assert!(output.stats.water_assets.is_none());
+    for (declaration, bottom) in [
+        ("%compilewater", ""),
+        ("%compileslime", "$bottommaterial test/root"),
+    ] {
+        fixture.write(
+            ROOT,
+            format!("LightmappedGeneric {{ {declaration} 1 $basetexture test/color {bottom} }}"),
+        );
+        let source = room();
+        assert!(crate::compile(&source, &fixture.game).bsp.is_some());
+        let output = crate::compile_with_options(&source, &fixture.game, options());
+        assert!(output.bsp.is_none() && output.report.has_errors());
+        assert!(output.report.diagnostics.iter().any(|item| {
+            item.message
+                .contains("supported Water-shader liquid surfaces")
+                && item.message.contains("TEST/ROOT")
+        }));
+        assert!(output.stats.water_assets.is_none());
+    }
 }
 
 #[test]

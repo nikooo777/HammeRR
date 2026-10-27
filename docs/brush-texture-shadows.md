@@ -56,6 +56,7 @@ The cutout affects only lit receivers in the same model when the global Shadows 
 - Without an explicit eligible **Shadows → Yes** request, root and child brush-model texture shadows stay within that model's own lit receivers. A model without an applicable baked receiver scope fails.
 - Requested root and child cutout models require **Brush texture shadows** in a lit mode. Fullbright and unsupported materials fail explicitly, including source-material errors outside the compile region.
 - Cutouts require the supported plain `LightmappedGeneric` material, `$alphatest 1`, a base texture and checked cutoff/transform values. Fractional translucency, additive/window effects and special compile contents are unsupported.
+- The original material and its scalar Patch include/edit chain must be unambiguous. Duplicate fields or Patch sections, unquoted conditional selectors and animated blocks stop the build before alpha decoding.
 - Terrain alpha casters are unsupported.
 - Unsupported materials, transforms or required assets stop the build.
 

@@ -211,6 +211,12 @@ pub(super) fn prepare(
                 let alpha = if requested(&material).map_err(|error| {
                     format!("solid:{} material {}: {error}", brush.id, info.name)
                 })? {
+                    drop(material);
+                    let _raw_material =
+                        budget.reserve_bytes(crate::MAX_BRUSH_SHADOW_MATERIAL_BYTES * 128)?;
+                    let material = assets
+                        .brush_cutout_material(&info.name, budget)
+                        .map_err(|error| format!("solid:{}: {error}", brush.id))?;
                     Some(
                         alpha::prepare_brush(&material, &mut assets, budget).map_err(|error| {
                             format!(

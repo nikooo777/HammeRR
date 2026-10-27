@@ -124,6 +124,7 @@ fn opaque_raw(path: &str, bytes: &[u8]) -> io::Result<()> {
     let invalid =
         |message: &str| io::Error::new(io::ErrorKind::InvalidData, format!("{path}: {message}"));
     let text = std::str::from_utf8(bytes).map_err(|_| invalid("material must be UTF-8"))?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let nodes =
         keyvalues::parse_static_material_bounded(text, 3, 4096).map_err(io::Error::other)?;
     let [root] = nodes.as_slice() else {
@@ -196,13 +197,30 @@ pub(crate) fn validate_material(
     control: &Control,
     cutout: bool,
 ) -> Result<vmt::Material, String> {
+    validate_material_with_reader(
+        name,
+        &mut |path| {
+            control.checkpoint().map_err(io::Error::other)?;
+            let asset = sources
+                .retained(path)?
+                .ok_or_else(|| io::Error::other("original material dependency was not retained"))?;
+            Ok(Some(asset.bytes().to_vec()))
+        },
+        cutout,
+    )
+}
+
+pub(crate) fn validate_material_with_reader(
+    name: &str,
+    read: &mut dyn FnMut(&str) -> io::Result<Option<Vec<u8>>>,
+    cutout: bool,
+) -> Result<vmt::Material, String> {
     let material = vmt::Material::load_with_reader(&vmt::material_path(name), &mut |path| {
-        control.checkpoint().map_err(io::Error::other)?;
-        let asset = sources
-            .retained(path)?
-            .ok_or_else(|| io::Error::other("original material dependency was not retained"))?;
-        opaque_raw(path, asset.bytes())?;
-        Ok(Some(asset.bytes().to_vec()))
+        let Some(bytes) = read(path)? else {
+            return Ok(None);
+        };
+        opaque_raw(path, &bytes)?;
+        Ok(Some(bytes))
     })
     .map_err(|error| error.to_string())?
     .ok_or("material is unavailable")?;
@@ -420,6 +438,8 @@ mod tests {
             r#"LightmappedGeneric { "$basetexture" "x" }"#,
             r#"UnlitGeneric { "%compilenodraw" "1" }"#,
             r#"Patch { include "materials/x.vmt" replace { "$basetexture" "y" } }"#,
+            "\u{feff}LightmappedGeneric { $basetexture x $alphatest 1 }",
+            "\u{feff}Patch { include materials/x.vmt replace { $alphatest 1 } }",
         ] {
             opaque_raw("materials/x.vmt", raw.as_bytes()).unwrap();
         }

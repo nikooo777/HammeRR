@@ -291,45 +291,66 @@ impl<'fs, 'tracking> Assets<'fs, 'tracking> {
         name: &str,
         budget: &mut Budget<'_>,
     ) -> Result<Material, String> {
-        let sources = self
-            .material_sources
-            .ok_or("Brush texture shadows is missing original material sources")?;
         Material::load_with_reader(&source_formats::vmt::material_path(name), &mut |path| {
-            budget.consume(1).map_err(std::io::Error::other)?;
-            self.lookups += 1;
-            if self.lookups > MAX_MATERIAL_LOOKUPS {
-                return Err(std::io::Error::other(
-                    "Brush texture shadows exceeds 65,536 material lookups",
-                ));
-            }
-            let remaining = MAX_ASSET_BYTES.checked_sub(self.bytes).ok_or_else(|| {
-                std::io::Error::other("Brush texture shadows byte accounting overflow")
-            })?;
-            let maximum = MAX_MATERIAL_BYTES.min(remaining);
-            let asset = sources.retained(path)?.ok_or_else(|| {
-                std::io::Error::other(format!(
-                    "{path}: original material dependency was not retained"
-                ))
-            })?;
-            let bytes = asset.bytes();
-            if bytes.len() > maximum {
-                return Err(std::io::Error::other(format!(
-                    "{path}: retained material exceeds its {maximum} byte limit"
-                )));
-            }
-            budget
-                .consume(bytes.len().div_ceil(64))
-                .map_err(std::io::Error::other)?;
-            self.allocations.push(
-                budget
-                    .reserve_bytes(bytes.len())
-                    .map_err(std::io::Error::other)?,
-            );
-            self.bytes += bytes.len();
-            Ok(Some(bytes.to_vec()))
+            self.read_brush_material(path, budget)
         })
         .map_err(|error| format!("Brush texture shadows material {name}: {error}"))?
         .ok_or_else(|| format!("Brush texture shadows material {name} was not found"))
+    }
+
+    pub(super) fn brush_cutout_material(
+        &mut self,
+        name: &str,
+        budget: &mut Budget<'_>,
+    ) -> Result<Material, String> {
+        crate::brush_shadow_casters::validate_material_with_reader(
+            name,
+            &mut |path| self.read_brush_material(path, budget),
+            true,
+        )
+        .map_err(|error| format!("Brush texture shadows material {name}: {error}"))
+    }
+
+    fn read_brush_material(
+        &mut self,
+        path: &str,
+        budget: &mut Budget<'_>,
+    ) -> std::io::Result<Option<Vec<u8>>> {
+        let sources = self.material_sources.ok_or_else(|| {
+            std::io::Error::other("Brush texture shadows is missing original material sources")
+        })?;
+        budget.consume(1).map_err(std::io::Error::other)?;
+        self.lookups += 1;
+        if self.lookups > MAX_MATERIAL_LOOKUPS {
+            return Err(std::io::Error::other(
+                "Brush texture shadows exceeds 65,536 material lookups",
+            ));
+        }
+        let remaining = MAX_ASSET_BYTES.checked_sub(self.bytes).ok_or_else(|| {
+            std::io::Error::other("Brush texture shadows byte accounting overflow")
+        })?;
+        let maximum = MAX_MATERIAL_BYTES.min(remaining);
+        let asset = sources.retained(path)?.ok_or_else(|| {
+            std::io::Error::other(format!(
+                "{path}: original material dependency was not retained"
+            ))
+        })?;
+        let bytes = asset.bytes();
+        if bytes.len() > maximum {
+            return Err(std::io::Error::other(format!(
+                "{path}: retained material exceeds its {maximum} byte limit"
+            )));
+        }
+        budget
+            .consume(bytes.len().div_ceil(64))
+            .map_err(std::io::Error::other)?;
+        self.allocations.push(
+            budget
+                .reserve_bytes(bytes.len())
+                .map_err(std::io::Error::other)?,
+        );
+        self.bytes += bytes.len();
+        Ok(Some(bytes.to_vec()))
     }
 
     fn read(&mut self, path: &str, budget: &mut Budget<'_>) -> Result<Vec<u8>, String> {
@@ -724,7 +745,16 @@ mod tests {
         let base_path = "materials/base.vmt";
         let patch = "Patch { include materials/base.vmt replace { $alpha 1 } }";
         let base = "VertexLitGeneric { $alpha 0 $alpha 0.5 }";
-        for (path, text) in [(patch_path, patch), (base_path, base)] {
+        let cutout_path = "materials/cutout.vmt";
+        let cutout_base_path = "materials/cutout-base.vmt";
+        let cutout = "Patch { include materials/cutout-base.vmt replace { $alphatest 1 } }";
+        let cutout_base = "LightmappedGeneric { $basetexture mask $alphatest 0 }";
+        for (path, text) in [
+            (patch_path, patch),
+            (base_path, base),
+            (cutout_path, cutout),
+            (cutout_base_path, cutout_base),
+        ] {
             std::fs::write(directory.path().join(path), text).unwrap();
         }
         let oversized_path = "materials/oversized.vmt";
@@ -736,7 +766,7 @@ mod tests {
             mount: Mount::Directory(directory.path().to_owned()),
         });
         let sources = BuildMaterialSources::default();
-        for path in [patch_path, base_path] {
+        for path in [patch_path, base_path, cutout_path, cutout_base_path] {
             sources
                 .read_asset(&game, path, MAX_MATERIAL_BYTES)
                 .unwrap()
@@ -761,6 +791,24 @@ mod tests {
         );
         drop(assets);
         assert_eq!(budget.live_bytes(), 0);
+
+        let mut cutout_budget = Budget::new(&control);
+        let mut assets = Assets::for_brushes(&game, &sources);
+        let resolved = assets.brush_material("cutout", &mut cutout_budget).unwrap();
+        let strict = assets
+            .brush_cutout_material("cutout", &mut cutout_budget)
+            .unwrap();
+        assert_eq!(strict, resolved);
+        assert_eq!(strict.get("$alphatest"), Some("1"));
+        assert_eq!(assets.lookups, 4);
+        assert_eq!(assets.bytes, 2 * (cutout.len() + cutout_base.len()));
+        assert_eq!(cutout_budget.live_bytes(), assets.bytes);
+        assert_eq!(
+            cutout_budget.work(),
+            4 + 2 * (cutout.len().div_ceil(64) + cutout_base.len().div_ceil(64))
+        );
+        drop(assets);
+        assert_eq!(cutout_budget.live_bytes(), 0);
 
         let missing = BuildMaterialSources::default();
         missing

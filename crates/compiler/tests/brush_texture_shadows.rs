@@ -352,6 +352,91 @@ fn detail_cutouts_keep_point_spot_styles_hdr_and_bump_maps_separate() {
     assert_eq!(std::fs::read(destination).unwrap(), published);
 }
 
+#[test]
+fn requested_world_and_detail_cutouts_require_unambiguous_original_materials() {
+    let (directory, game) = game();
+    let materials = directory.path().join("game/materials/test");
+    for name in ["strict-mask", "strict-mask[$WIN32]"] {
+        std::fs::write(materials.join(format!("{name}.vtf")), b"VTF\0").unwrap();
+    }
+    let patch = materials.join("admission.vmt");
+    let base = materials.join("admission-base.vmt");
+    let scalar_patch =
+        "Patch { include materials/test/admission-base.vmt replace { $alphatest 1 } }";
+    let metrics = r#"%notooltexture 1 $reflectivity "[0.25 0.25 0.25]""#;
+    let mut document = room(false);
+    light(&mut document, false, 192.0);
+    let destination = directory.path().join("preserved.bsp");
+    for detail in [false, true] {
+        std::fs::write(&patch, format!("\u{feff}{scalar_patch}")).unwrap();
+        std::fs::write(
+            &base,
+            "\u{feff}LightmappedGeneric { $basetexture test/split $alphatest 0 }",
+        )
+        .unwrap();
+        let source = pane(document.vmf(), "test/admission", detail, 88.0, false);
+        let accepted = compiled(&source, &game, LightingMode::DirectLdr, 0);
+        let bsp = accepted.bsp.as_ref().unwrap();
+        assert!(floor(bsp, LightingKind::Ldr, DVec3::new(64.0, 0.0, 0.0), 0, 0, 1).rgb[0] > 0);
+        assert_eq!(
+            floor(bsp, LightingKind::Ldr, DVec3::new(-64.0, 0.0, 0.0), 0, 0, 1),
+            RgbExp32::default()
+        );
+        assert!(accepted.write(&destination).unwrap());
+        let published = std::fs::read(&destination).unwrap();
+        std::fs::write(
+            &base,
+            format!(
+                "LightmappedGeneric {{ $basetexture test/strict-mask $alphatest 0 {metrics} }}"
+            ),
+        )
+        .unwrap();
+        for (material, expected) in [
+            (
+                format!(
+                    "LightmappedGeneric {{ $basetexture test/strict-mask $alphatest 0 $ALPHATEST 1 {metrics} }}"
+                ),
+                "duplicate material fields",
+            ),
+            (
+                format!(
+                    "LightmappedGeneric {{ $basetexture test/strict-mask[$WIN32] $alphatest 1 {metrics} }}"
+                ),
+                "unquoted conditional selectors",
+            ),
+            (
+                "Patch { include materials/test/admission-base.vmt replace { $alphatest 1 } replace { $alphatest 0 } }".to_owned(),
+                "unambiguous scalar Patch include/edit chain",
+            ),
+        ] {
+            std::fs::write(&patch, &material).unwrap();
+            let original = source.clone();
+            let failed = compiler::compile_with_options(
+                &source,
+                &game,
+                Options {
+                    lighting: LightingMode::DirectLdr,
+                    brush_texture_shadows: true,
+                    sky_quality: SkyQuality::Fast,
+                    ..Default::default()
+                },
+            );
+            assert!(failed.report.has_errors() && failed.bsp.is_none());
+            assert!(
+                failed.report.diagnostics.iter().any(|diagnostic| {
+                    diagnostic.message.contains("material TEST/ADMISSION")
+                        && diagnostic.message.contains(expected)
+                }),
+                "detail={detail}, {material}: {:?}",
+                failed.report
+            );
+            assert!(!failed.write(&destination).unwrap());
+            assert_eq!(std::fs::read(&destination).unwrap(), published);
+            assert_eq!(source, original);
+        }
+    }
+}
+
 fn terrain(document: &mut Document) {
     document
         .edit("flat terrain receiver", |tx| {

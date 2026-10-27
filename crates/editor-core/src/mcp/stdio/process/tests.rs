@@ -68,6 +68,17 @@ fn closing_a_full_os_output_pipe_drops_pending_codec_bytes_and_exits_the_runtime
             ServerResult::CallToolResult(result),
             id,
         )));
+        tokio::time::timeout(TIMEOUT, async {
+            while rustix::io::ioctl_fionread(&output).unwrap() == 0 {
+                assert!(
+                    !send.is_finished(),
+                    "transport ended before writing pipe data"
+                );
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("transport did not write pipe data before the deadline");
         assert!(
             tokio::time::timeout(Duration::from_millis(10), &mut send)
                 .await

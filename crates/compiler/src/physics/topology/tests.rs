@@ -127,7 +127,7 @@ fn redundant_source_planes_are_absent_and_generated_fluid_splits_keep_closed_fac
     };
     let volume = crate::tree::Polyhedron::from_brush(&brush);
     let split = planes.find(DVec3::new(0.6, 0.8, 0.0), 7.0);
-    let halves = volume.split(split, &planes);
+    let halves = volume.split(split, &planes).unwrap();
     for half in halves.into_iter().flatten() {
         let sides = half.sides.iter().map(|side| {
             let plane = planes.get(side.plane);

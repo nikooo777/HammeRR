@@ -105,6 +105,17 @@ fn report(result: ToolResult) -> Value {
 #[test]
 fn render_response_assembly_preserves_captured_metadata_across_later_edits() {
     let (_directory, mut session, source) = fixture();
+    let broken = session
+        .edit(Actor::User, "import invalid brush", |tx| {
+            let id =
+                map_core::edit::create_block(tx, DVec3::ZERO, DVec3::splat(64.0), "test/checker")?;
+            let ObjectId::Solid(solid) = id else {
+                unreachable!()
+            };
+            tx.solid_mut(solid)?.sides[0].plane.0 = [DVec3::ZERO, DVec3::X, DVec3::X * 2.0];
+            Ok(id)
+        })
+        .unwrap();
     let view = view(&session);
     let mesh = session.build_scene_for_view(view);
     assert!(mesh.batches.iter().any(|batch| batch.rope));
@@ -126,9 +137,10 @@ fn render_response_assembly_preserves_captured_metadata_across_later_edits() {
         lighting: Default::default(),
         sprite_guides: json!({"retained":"sprite"}),
         png: b"captured frame".to_vec(),
-        issues: Vec::new(),
+        issues: mesh.issues.clone(),
     };
     replace_context(&mut session, source);
+    session.delete_objects(Actor::User, &[broken]).unwrap();
     let current = FrameMetadata::capture(&mut session, view, camera());
     assert_eq!(current.skybox["name"], "frame_after");
     assert_eq!(current.skybox["ready"], false);
@@ -136,6 +148,14 @@ fn render_response_assembly_preserves_captured_metadata_across_later_edits() {
     assert_eq!(current.rope_preview["applied"], false);
     assert_ne!(current.material_reload["generation"], generation);
     let result = report(rendered.into_tool_result(camera(), (65, 65), view, json!({}), true));
+    let ObjectId::Solid(broken) = broken else {
+        unreachable!()
+    };
+    assert_eq!(
+        result["preview_issues"],
+        json!([{"brush":broken,"face":null,"message":"side 0 has collinear plane points"}])
+    );
+    assert_eq!(result["preview_issues_omitted"], 0);
     assert_eq!(result["skybox"]["name"], "frame_before");
     assert_eq!(result["skybox"]["ready"], true);
     assert_eq!(result["skybox"]["exposure_ev"], 2.0);

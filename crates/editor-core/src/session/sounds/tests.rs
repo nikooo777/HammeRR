@@ -75,6 +75,29 @@ fn sound_choices_share_catalog_guards_cached_reads_and_atomic_undo() {
 }
 
 #[test]
+fn malformed_wave_fields_warn_and_preserve_raw_sound_browsing() {
+    let (directory, mut session, _) = fixture();
+    let text = "Test.Rain { wave ambient/one.wav rndwave ambient/two.wav }";
+    let path = directory.path().join("scripts/audio.txt");
+    std::fs::write(&path, text).unwrap();
+    let source = session.document().vmf().clone();
+    let report = session.browse_sounds("", "all", 0, 100).unwrap();
+    assert_eq!(report["total"], 2);
+    let warnings = report["warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1);
+    let warning = warnings[0].as_str().unwrap();
+    assert!(warning.contains("scripts/audio.txt"));
+    assert!(warning.contains("Test.Rain: rndwave must be a block"));
+    assert!(session.inspect_sound("Test.Rain", 0).is_err());
+    assert_eq!(
+        session.inspect_sound("ambient/one.wav", 0).unwrap()["path"],
+        "ambient/one.wav"
+    );
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), text);
+}
+
+#[test]
 fn invalid_manifests_and_ambiguous_names_preserve_raw_file_exploration() {
     let (directory, mut session, _) = fixture();
     std::fs::write(

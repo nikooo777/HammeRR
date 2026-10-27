@@ -4,7 +4,7 @@ pub(in crate::mcp) struct Offscreen {
     pub(in crate::mcp) ctx: GpuContext,
     pub(in crate::mcp) renderer: Renderer,
     pub(in crate::mcp) scene: Option<(render::SceneKey, GpuScene)>,
-    pub(in crate::mcp) issues: Vec<render::scene::SceneIssue>,
+    pub(in crate::mcp) issues: render::scene::SceneIssues,
     pub(in crate::mcp) normal_maps: render::normal_maps::Report,
     pub(in crate::mcp) lighting: render::lighting::Report,
     pub(in crate::mcp) sprite_guides: Value,
@@ -18,7 +18,7 @@ impl Offscreen {
             renderer: Renderer::new(&ctx),
             ctx,
             scene: None,
-            issues: Vec::new(),
+            issues: Default::default(),
             normal_maps: Default::default(),
             lighting: Default::default(),
             sprite_guides: Value::Null,
@@ -42,7 +42,7 @@ pub(in crate::mcp) struct RenderedView {
     pub(in crate::mcp) lighting: render::lighting::Report,
     pub(in crate::mcp) sprite_guides: Value,
     pub(in crate::mcp) png: Vec<u8>,
-    pub(in crate::mcp) issues: Vec<render::scene::SceneIssue>,
+    pub(in crate::mcp) issues: render::scene::SceneIssues,
 }
 
 struct FrameMetadata {
@@ -90,7 +90,7 @@ impl RenderedView {
                 && view.surface == render::SurfaceView::Textured
                 && camera.projection == Projection::Perspective
         );
-        let preview_issues = self.issues.iter().map(|issue| json!({"face":{"solid":issue.face.solid,"side":issue.face.side},"message":issue.message})).collect::<Vec<_>>();
+        let preview_issues = self.issues.entries.iter().map(|issue| json!({"brush":issue.solid(),"face":issue.face().map(|face|json!({"solid":face.solid,"side":face.side})),"message":issue.message()})).collect::<Vec<_>>();
         let mut rendered_view = view_state(view);
         let extra = json!({"grid_visible": view.grid_visible, "grid_size": view.grid_size,
                 "grid_elevation": view.grid_elevation,
@@ -102,7 +102,7 @@ impl RenderedView {
             .as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        let mut info = json!({ "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":self.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
+        let mut info = json!({ "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "preview_issues_omitted": self.issues.omitted, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":self.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
         if !include_details {
             omit_render_catalogues(&mut info);
         }

@@ -210,8 +210,11 @@ fn parse_ids(ids: &[String]) -> Result<Vec<ObjectId>, String> {
 /// Explicit ids, or the selection when none are given.
 fn ids_or_selection(session: &Session, ids: Option<&[String]>) -> Result<Vec<ObjectId>, String> {
     let ids = match ids {
-        Some(ids) if !ids.is_empty() => parse_ids(ids)?,
-        _ => session.selected_ids(),
+        Some([]) => {
+            return Err("explicit ids must not be empty; omit ids to use the selection".into());
+        }
+        Some(ids) => parse_ids(ids)?,
+        None => session.selected_ids(),
     };
     if ids.is_empty() {
         return Err("no ids given and nothing is selected".into());

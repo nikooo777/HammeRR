@@ -153,3 +153,5 @@ Click **Shear selection** to apply.
 - The default sphere uses 12 sides and 5 latitude bands.
 - Hollow, Carve and component editing accept at most 64 faces per brush.
 - Invalid geometry rejects before Apply. Reloading model bounds invalidates pending snap previews.
+- A malformed entity origin stops the whole move or copy operation.
+- Invalid imported brushes stay in the map. Preview errors identify omitted geometry.

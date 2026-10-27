@@ -66,6 +66,34 @@ fn select_protocol_reports_cleared_handles_and_preserves_noop_previews() {
     );
     assert_eq!(hollow["handle"]["kind"], "hollow");
     assert_eq!(hollow["handle"]["token"], hollow["preview"]["token"]);
+    let memory = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).history_snapshot();
+    for result in [
+        server.delete_objects(Parameters(IdsArgs {
+            ids: Some(Vec::new()),
+        })),
+        server.transform_objects(Parameters(
+            serde_json::from_value(json!({"ids":[],"translation":[32,0,0],"preview":true}))
+                .unwrap(),
+        )),
+    ] {
+        let result = result.unwrap();
+        assert_eq!(result.is_error, Some(true));
+        assert!(
+            result.content[0]
+                .as_text()
+                .unwrap()
+                .text
+                .contains("explicit ids must not be empty")
+        );
+    }
+    assert_eq!(lock(&shared).document().vmf(), &memory);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert_eq!(lock(&shared).selected_ids(), [source]);
+    assert_eq!(
+        value(server.get_hollow_preview())["handle"],
+        hollow["handle"]
+    );
     let unchanged = value(server.select(Parameters(
         serde_json::from_value(json!({"ids":[id_string(source)]})).unwrap(),
     )));

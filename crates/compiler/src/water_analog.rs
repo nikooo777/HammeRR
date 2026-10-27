@@ -463,7 +463,7 @@ fn check_model(map: &Map, carrier: Carrier, models: &[Model]) -> Result<(), Stri
     }
     if model
         .tree
-        .brush_leaves(&map.brushes[carrier.brush], &map.planes)
+        .brush_leaves(&map.brushes[carrier.brush], &map.planes)?
         != occupied
     {
         return Err(

@@ -8,14 +8,14 @@ use super::*;
 #[derive(Default)]
 pub(super) struct Prepared {
     pub meshes: HashMap<FaceId, Displacement>,
-    pub issues: Vec<SceneIssue>,
+    pub issues: Vec<TerrainIssue>,
     pub geometries: HashMap<u32, Result<BrushGeometry, String>>,
     pub unshaded: HashMap<FaceId, DisplacementMesh>,
 }
 
 impl Prepared {
     fn issue(&mut self, face: FaceId, message: String) {
-        self.issues.push(SceneIssue { face, message });
+        self.issues.push(TerrainIssue { face, message });
     }
 }
 
@@ -270,7 +270,7 @@ mod tests {
             mounts: Vec::new(),
         };
         let scene = SceneMesh::build(&vmf, &fs, &mut MaterialLibrary::default(), &HashSet::new());
-        assert!(scene.issues.is_empty());
+        assert!(scene.issues.entries.is_empty());
         assert!(
             scene
                 .vertices
@@ -322,8 +322,8 @@ mod tests {
             }
             let mesh =
                 SceneMesh::build(&vmf, &fs, &mut MaterialLibrary::default(), &HashSet::new());
-            assert_eq!(mesh.issues.len(), 1, "{case}");
-            assert_eq!(mesh.issues[0].face, face);
+            assert_eq!(mesh.issues.entries.len(), 1, "{case}");
+            assert_eq!(mesh.issues.entries[0].face(), Some(face));
             assert!(mesh.selection_outline_ranges.is_empty());
             assert_eq!(mesh.guide_line_ranges().len(), 1);
             assert_eq!(mesh.guide_line_ranges()[0], 0..mesh.lines.len() as u32);
@@ -435,20 +435,22 @@ mod tests {
         };
         let mesh = SceneMesh::build(&vmf, &fs, &mut MaterialLibrary::default(), &HashSet::new());
         assert_eq!(
-            mesh.issues.len(),
+            mesh.issues.entries.len() + mesh.issues.omitted,
             source_formats::bsp::MAX_DISPLACEMENTS + 1
         );
+        assert_eq!(mesh.issues.entries.len(), MAX_PREVIEW_ISSUES);
         assert!(
             mesh.issues
+                .entries
                 .iter()
-                .all(|issue| issue.message.contains("native displacement limit"))
+                .all(|issue| issue.message().contains("native displacement limit"))
         );
         assert_eq!(mesh.stats.displacements, 0);
         assert!(mesh.vertices.is_empty());
-        assert!(mesh.lines.len() > mesh.issues.len() * 8);
+        assert!(mesh.lines.len() > (mesh.issues.entries.len() + mesh.issues.omitted) * 8);
         vmf.world.solids.pop();
         let mesh = SceneMesh::build(&vmf, &fs, &mut MaterialLibrary::default(), &HashSet::new());
-        assert!(mesh.issues.is_empty());
+        assert!(mesh.issues.entries.is_empty());
         assert_eq!(
             mesh.stats.displacements,
             source_formats::bsp::MAX_DISPLACEMENTS

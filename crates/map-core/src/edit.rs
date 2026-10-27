@@ -274,6 +274,18 @@ pub fn translate_solid(
     Ok(())
 }
 
+pub(crate) fn checked_entity_origin(entity: &Entity) -> Result<Option<DVec3>, EditError> {
+    entity
+        .properties
+        .get("origin")
+        .map(|value| {
+            parse_vec3(value)
+                .filter(|point| point.is_finite())
+                .ok_or_else(|| invalid(format!("Entity {} has an invalid origin", entity.id)))
+        })
+        .transpose()
+}
+
 pub fn translate_entity(
     entity: &mut Entity,
     delta: DVec3,
@@ -282,7 +294,7 @@ pub fn translate_entity(
     if !delta.is_finite() {
         return Err(EditError::Invalid("Translation must be finite".into()));
     }
-    if let Some(origin) = entity.origin() {
+    if let Some(origin) = checked_entity_origin(entity)? {
         let origin = origin + delta;
         if !origin.is_finite() {
             return Err(EditError::Invalid(
@@ -633,6 +645,48 @@ mod tests {
         assert_eq!(doc.vmf(), &before);
         assert_eq!(doc.undo().unwrap().label, "source");
         assert!(doc.undo().is_none());
+    }
+
+    #[test]
+    fn malformed_entity_origins_refuse_move_and_copy_atomically() {
+        for value in ["not_a_vector", "NaN 0 0", "inf 0 0"] {
+            for ids in [
+                [ObjectId::Entity(2), ObjectId::Entity(3)],
+                [ObjectId::Entity(3), ObjectId::Entity(2)],
+            ] {
+                let mut vmf = Document::empty().into_vmf();
+                for (id, origin) in [(2, "0 0 0"), (3, value)] {
+                    let mut entity = Entity::new(id, "info_target");
+                    entity.properties.set("origin", origin);
+                    vmf.entities.push(entity);
+                }
+                let mut doc = Document::try_new(vmf.clone()).unwrap();
+                for texture_lock in [false, true] {
+                    let error = doc
+                        .edit("move", |tx| {
+                            translate(tx, &ids, DVec3::X * 32.0, texture_lock)
+                        })
+                        .unwrap_err();
+                    assert!(error.to_string().contains("Entity 3 has an invalid origin"));
+                    assert_eq!(doc.vmf(), &vmf);
+                    assert_eq!(doc.revision(), 0);
+                }
+                assert!(
+                    doc.edit("copy", |tx| duplicate(tx, &ids, DVec3::X * 32.0))
+                        .is_err()
+                );
+                assert_eq!(doc.vmf(), &vmf);
+                assert_eq!(doc.revision(), 0);
+                assert!(doc.undo().is_none());
+                let copied = doc
+                    .edit("valid copy", |tx| {
+                        duplicate(tx, &[ObjectId::Entity(2)], DVec3::X * 32.0)
+                    })
+                    .unwrap();
+                assert_eq!(copied, [ObjectId::Entity(4)]);
+                assert_eq!(doc.entity(4).unwrap().origin(), Some(DVec3::X * 32.0));
+            }
+        }
     }
 
     #[test]

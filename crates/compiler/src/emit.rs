@@ -412,7 +412,7 @@ pub fn build(
         for &brush in &map.entities[model.entity].brushes {
             control.checkpoint()?;
             let id = index(brush, "leaf brush")?;
-            for leaf in model.tree.brush_leaves(&map.brushes[brush], &map.planes) {
+            for leaf in model.tree.brush_leaves(&map.brushes[brush], &map.planes)? {
                 leaf_brushes[(-1 - mapping[leaf]) as usize].push(id);
             }
         }

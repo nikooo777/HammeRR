@@ -1,6 +1,6 @@
 use std::{
-    io::{Read, Write},
-    process::{Child, Command, Stdio},
+    io::{self, Read, Write},
+    process::{Child, Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -11,6 +11,42 @@ use tempfile::NamedTempFile;
 const MAX_DECODE_BYTES: usize = 2 * 1024 * 1024;
 const DECODE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) const MAX_SECONDS: u32 = 10;
+
+#[derive(Default)]
+struct PlaybackObservation {
+    finished: Option<bool>,
+    error: Option<String>,
+}
+
+impl PlaybackObservation {
+    fn pending(&self) -> bool {
+        self.finished.is_none() && self.error.is_none()
+    }
+
+    fn observe(&mut self, result: io::Result<Option<ExitStatus>>) {
+        if !self.pending() {
+            return;
+        }
+        match result {
+            Ok(status) => self.finished = status.map(|status| status.success()),
+            Err(error) => {
+                self.error = Some(format!("Cannot observe sound preview process: {error}"));
+            }
+        }
+    }
+
+    fn state(&self) -> &'static str {
+        if self.error.is_some() {
+            "failed"
+        } else {
+            match self.finished {
+                None => "playing",
+                Some(true) => "finished",
+                Some(false) => "failed",
+            }
+        }
+    }
+}
 
 pub(super) fn decode(path: &str, source: &[u8], volume: f32) -> Result<Vec<u8>, String> {
     let mut input = NamedTempFile::new().map_err(|error| error.to_string())?;
@@ -68,12 +104,12 @@ pub(super) struct Playback {
     _file: NamedTempFile,
     child: Child,
     started: Instant,
-    finished: Option<bool>,
+    observation: PlaybackObservation,
 }
 
 impl Playback {
     pub(super) fn close_identity(&self) -> Value {
-        json!({"token": self.token, "finished": self.finished})
+        json!({"token": self.token, "finished": self.observation.finished, "error": self.observation.error})
     }
 
     pub fn start(token: u64, report: Value, bytes: &[u8]) -> Result<Self, String> {
@@ -90,19 +126,15 @@ impl Playback {
             _file: file,
             child,
             started: Instant::now(),
-            finished: None,
+            observation: PlaybackObservation::default(),
         })
     }
     pub fn status(&mut self) -> Value {
-        if self.finished.is_none() {
-            self.finished = self
-                .child
-                .try_wait()
-                .ok()
-                .flatten()
-                .map(|status| status.success());
+        if self.observation.pending() {
+            let result = self.child.try_wait();
+            self.observation.observe(result);
         }
-        json!({"token":self.token,"state":match self.finished {None=>"playing",Some(true)=>"finished",Some(false)=>"failed"},"elapsed":self.started.elapsed().as_secs_f64(),"sound":self.report})
+        json!({"token":self.token,"state":self.observation.state(),"error":self.observation.error,"elapsed":self.started.elapsed().as_secs_f64(),"sound":self.report})
     }
 }
 
@@ -115,3 +147,6 @@ impl Drop for Playback {
 
 #[cfg(test)]
 mod close_tests;
+
+#[cfg(all(test, unix))]
+mod status_tests;

@@ -74,6 +74,7 @@ Missing or ambiguous targets report errors rather than invented endpoints.
 4. Search for the updated class.
 
 Reload the root after changing definitions.
+Invalid numeric flag values stop FGD loading.
 **Loaded FGD catalog** reports the effective **FGD map size**; that metadata does not override compiler bounds.
 
 ## Brush entities

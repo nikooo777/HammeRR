@@ -362,7 +362,7 @@ impl Session {
         if mesh.stats.invalid_brushes != 0 {
             return Err("Prefab thumbnail contains invalid brush geometry".into());
         }
-        if let Some(issue) = mesh.issues.first() {
+        if let Some(issue) = mesh.issues.entries.first() {
             return Err(format!("Prefab thumbnail: {}", issue.description()));
         }
         if mesh.vertices.len() > MAX_VERTICES || mesh.indices.len() > MAX_INDICES {

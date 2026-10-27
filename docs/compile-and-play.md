@@ -195,6 +195,7 @@ Keep compiled positions within **±16,384 units**.
 The editor can retain larger coordinates, but that does not make them compilable.
 Geometry, split, lightmap, visibility and lighting work budgets also apply.
 Over-budget builds fail and preserve previous output.
+If the compiler cannot reconstruct a crossed brush split, the build stops with an error.
 
 ## Leaks and pointfiles
 

@@ -10,7 +10,7 @@ fn playback(token: u64, child: Child) -> Playback {
         _file: NamedTempFile::new().unwrap(),
         child,
         started: Instant::now(),
-        finished: None,
+        observation: PlaybackObservation::default(),
     }
 }
 
@@ -31,7 +31,15 @@ fn close_observation_does_not_poll_playback_and_accepted_close_stops_owned_audio
         review.inspection()["work"]["audio"]["playback"]["finished"],
         Value::Null
     );
-    assert_eq!(session.sounds.playback.as_ref().unwrap().finished, None);
+    assert!(
+        session
+            .sounds
+            .playback
+            .as_ref()
+            .unwrap()
+            .observation
+            .pending()
+    );
     let child = Command::new("/bin/sleep").arg("60").spawn().unwrap();
     let pid = child.id();
     session.sounds.playback_serial = 2;

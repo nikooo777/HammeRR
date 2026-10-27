@@ -821,6 +821,12 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 self.expect("[")?;
                 while !self.take("]") {
                     let value = self.text()?;
+                    if kind == "flags" && value.parse::<u64>().is_err() {
+                        return Err(self.error(&format!(
+                            "{}.{} flag choice must be an unsigned integer, got {value:?}",
+                            class.name, name
+                        )));
+                    }
                     self.expect(":")?;
                     let label = self.text()?;
                     let selected = if self.take(":") {
@@ -918,6 +924,28 @@ mod tests {
         ] {
             assert!(Catalog::parse(source).is_err(), "{source}");
         }
+    }
+
+    #[test]
+    fn flag_definitions_reject_invalid_masks_instead_of_defaulting_to_zero() {
+        for value in ["bogus", "-1", "18446744073709551616"] {
+            for selected in [0, 1] {
+                let source = format!(
+                    "@PointClass = test [ spawnflags(flags) = [ {value} : \"Flag\" : {selected} ] ]"
+                );
+                let error = Catalog::parse(&source).unwrap_err();
+                assert!(
+                    error.contains("test.spawnflags flag choice must be an unsigned integer"),
+                    "{error}"
+                );
+            }
+        }
+        let catalog = Catalog::parse("@PointClass = zero [ spawnflags(flags) = [ 0 : \"None\" : 1 ] ] @PointClass = empty [ spawnflags(flags) = [] ]").unwrap();
+        assert_eq!(catalog.class("zero").unwrap().defaults()["spawnflags"], "0");
+        assert_eq!(
+            catalog.class("empty").unwrap().defaults()["spawnflags"],
+            "0"
+        );
     }
 
     #[test]

@@ -107,9 +107,8 @@ impl Polyhedron {
         }
     }
 
-    pub fn split(&self, index: usize, planes: &PlaneSet) -> [Option<Self>; 2] {
+    pub fn split(&self, index: usize, planes: &PlaneSet) -> Result<[Option<Self>; 2], String> {
         self.split_budgeted(index, planes, &mut Budget::unlimited())
-            .expect("unlimited polyhedron split")
     }
 
     fn split_budgeted(
@@ -143,7 +142,7 @@ impl Polyhedron {
             cap = cap.and_then(|w| w.clip_back(clip.normal, clip.dist));
         }
         let Some(cap) = cap else {
-            return Ok([None, None]);
+            return Err("cannot reconstruct a crossed BSP volume's split cap".into());
         };
         let mut halves = [Vec::new(), Vec::new()];
         for side in &shape.sides {
@@ -170,7 +169,10 @@ impl Polyhedron {
             winding: cap,
             tested: true,
         });
-        Ok(halves.map(|sides| (sides.len() >= 4).then_some(Self { sides })))
+        if halves.iter().any(|sides| sides.len() < 4) {
+            return Err("crossed BSP volume split produced an unsupported half".into());
+        }
+        Ok(halves.map(|sides| Some(Self { sides })))
     }
 }
 
@@ -429,11 +431,11 @@ impl Tree {
             };
             let mut halves = [Vec::new(), Vec::new()];
             for fragment in fragments {
-                for (half, shape) in halves.iter_mut().zip(fragment.shape.split_budgeted(
-                    plane,
-                    planes,
-                    &mut budget,
-                )?) {
+                let shapes = fragment
+                    .shape
+                    .split_budgeted(plane, planes, &mut budget)
+                    .map_err(|error| format!("solid:{}: {error}", brushes[fragment.brush].id))?;
+                for (half, shape) in halves.iter_mut().zip(shapes) {
                     if let Some(shape) = shape {
                         budget.charge(1, 4)?;
                         half.push(Fragment {
@@ -479,7 +481,7 @@ impl Tree {
             return Err("BSP hint partitioning exceeds the node allocation budget".into());
         }
         let node = &self.nodes[index];
-        let [Some(front), Some(back)] = node.volume.split(plane, planes) else {
+        let [Some(front), Some(back)] = node.volume.split(plane, planes)? else {
             return Err("Hint plane produced a degenerate BSP leaf volume".into());
         };
         let children = [self.nodes.len(), self.nodes.len() + 1];
@@ -533,12 +535,15 @@ impl Tree {
         }
     }
 
-    pub fn brush_leaves(&self, brush: &MapBrush, planes: &PlaneSet) -> Vec<usize> {
+    pub fn brush_leaves(&self, brush: &MapBrush, planes: &PlaneSet) -> Result<Vec<usize>, String> {
         let mut leaves = Vec::new();
         let mut pending = vec![(0, Polyhedron::from_brush(brush))];
         while let Some((index, shape)) = pending.pop() {
             if let Some((plane, children)) = self.nodes[index].split {
-                for (child, half) in children.into_iter().zip(shape.split(plane, planes)) {
+                let halves = shape
+                    .split(plane, planes)
+                    .map_err(|error| format!("solid:{}: {error}", brush.id))?;
+                for (child, half) in children.into_iter().zip(halves) {
                     if let Some(half) = half {
                         pending.push((child, half));
                     }
@@ -547,7 +552,7 @@ impl Tree {
                 leaves.push(index);
             }
         }
-        leaves
+        Ok(leaves)
     }
 }
 

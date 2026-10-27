@@ -60,6 +60,13 @@ A render request starts graphics when needed.
 7. Call `render_view` to check the result.
 8. Call `save_map` when the source is ready.
 
+Object tools use the selection when `ids` is omitted. An explicit `ids: []`
+rejects. Use `select` with `ids: []` to clear the selection.
+
+`render_view.preview_issues` identifies omitted brushes and invalid terrain.
+Each issue includes `brush`, optional `face`, and `message`.
+At most 64 details are returned; `preview_issues_omitted` counts the rest.
+
 ## Compare an external VMF
 
 Call `external_map_comparison` with `action: "compare"` and an explicit `.vmf`

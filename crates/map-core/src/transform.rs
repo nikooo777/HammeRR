@@ -342,10 +342,7 @@ impl Mapping {
                 "Brush deformation currently supports brushes and brush entities only",
             ));
         }
-        if let Some(value) = entity.properties.get("origin") {
-            let origin = parse_vec3(value)
-                .filter(|point| point.is_finite())
-                .ok_or_else(|| invalid(format!("Entity {} has an invalid origin", entity.id)))?;
+        if let Some(origin) = crate::edit::checked_entity_origin(entity)? {
             entity
                 .properties
                 .set("origin", format_vec3(self.point(origin)?));

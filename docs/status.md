@@ -9,7 +9,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 
 | Area | Works | Not yet / limits |
 | --- | --- | --- |
-| [MCP](mcp.md) | Live desktop and private headless sessions; shared editing, rendering and builds. | Select a document explicitly when two maps are open. |
+| [MCP](mcp.md) | Live desktop and private headless sessions; shared editing, rendering and builds. Explicit empty edit targets reject. | Select a document explicitly when two maps are open. |
 | [Documents](open-documents.md) | Two map windows, silent display, named Close blockers and per-map Save results. | Tabs, bulk Quit and workspace restoration. |
 | [VMF and recovery](map-tools.md) | Preserved imported fields, checked Save, recovery snapshots and map checks. | Other-editor round trips; general automatic repairs. |
 | [History](history.md) | Shared Undo/Redo and change summaries. | Persistent history and full property diffs. |
@@ -28,7 +28,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Models](models.md) | Meshes, reference poses, skins, bodygroups, dynamic scale, tint, opacity and attachments. | Animation, procedural poses, attachment parenting and physics preview. |
 | [Resource previews](sprite-guides.md) | Supported sprites, [static ropes with sag-aware framing and selection bounds](ropes.md), fog and LDR/HDR/3D skies. | Complete native effects and runtime behavior. |
 | [Particles](particles.md) | Active manifest metadata and effect assignment. | Particle rendering and animation. |
-| [Sounds](sounds.md) | File/script browsing, short audition and assignment. | Game mixing, soundscapes and sentence synthesis. |
+| [Sounds](sounds.md) | File/script browsing, short audition and assignment, with malformed-script warnings and playback errors. | Game mixing, soundscapes and sentence synthesis. |
 | [Organization](layers.md) | Groups, layers, clipboard, prefabs, notes and saved views. | Automatic category rules and embedded prefab assets. |
 | [Measurements](measurements.md) | Saved rulers, surface picks and origin/local entity attachments. | Surface attachments, parenting and animated bones. |
 | [Instances](instance-authoring.md) | Saved references, checked brush/terrain and static-prop mesh previews, nested light bindings, static child fog, saved child atlas regions and bounded extraction with chosen local pivots. | In-place child editing, child illumination and general replacement parameters. |
@@ -52,7 +52,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Assemblies](instances.md) | Checked transforms, stationary child brush poses, opaque zero-source-angle `func_wall` models, local spotlight targets, static fog and nested light-value bindings; collapse all visible references or a selected leading set into checked editable world/detail/terrain, props, lights and cubemaps with captured source routes. | Prop collapse needs empty lightingorigin. Arbitrary-subset collapse, other runtime-entity collapse, scripting and broader name fixups. |
 | [Visibility helpers](occluders.md) | Occluders and eligible visibility-cluster volumes. | Unsupported memberships and dynamic child control. |
 | [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes, native light records and captured point/spot, static-prop and baked face source identities with complete nested helper routes; [frame current point/spot origins](compiled-lights.md) and [native static-prop origins](baked-prop-vertices.md) in the viewport; select the root entity or containing reference for a current prop or light; frame flat compiled faces and show complete native prop leaf bounds. | Unreportable physical paths show stale provenance; occurrence routes describe captured sources only; no full baked-output viewport rendering. |
-| [Publication](compile-regions.md) | Captured build scope, consumed material-source guards, cancellation, checked output writes and private game launch. | General cross-platform file/runtime support. |
+| [Publication](compile-regions.md) | Captured build scope, consumed material-source guards, explicit split errors, cancellation, checked output writes and private game launch. | General cross-platform file/runtime support. |
 
 Unsupported input and exceeded resource budgets fail explicitly.
 A failed build preserves the previous published output.

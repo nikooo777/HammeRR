@@ -16,6 +16,7 @@ mod selection_outline_tests;
 mod terrain;
 
 const HELPER_SEGMENTS: usize = 16;
+const MAX_PREVIEW_ISSUES: usize = 64;
 
 /// Hammer's color for entities whose editor block has none.
 const DEFAULT_ENTITY_COLOR: [u8; 3] = [220, 30, 220];
@@ -102,7 +103,7 @@ pub struct SceneMesh {
     pub reference_selection_ranges: Vec<std::ops::Range<u32>>,
     pub lighting: crate::lighting::Preview,
     pub normal_maps: crate::normal_maps::Report,
-    pub issues: Vec<SceneIssue>,
+    pub issues: SceneIssues,
     pub skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
     pub sky3d: Option<std::sync::Arc<crate::sky3d::Scene>>,
     pub icons: Vec<crate::icons::Instance>,
@@ -122,21 +123,78 @@ pub struct SceneMesh {
 }
 
 #[derive(Debug, Clone)]
-pub struct SceneIssue {
+pub struct TerrainIssue {
     pub face: FaceId,
     pub message: String,
 }
 
+#[derive(Debug, Clone)]
+pub enum SceneIssue {
+    Brush { solid: u32, message: String },
+    Terrain(TerrainIssue),
+}
+
 impl SceneIssue {
+    pub fn solid(&self) -> u32 {
+        match self {
+            Self::Brush { solid, .. } => *solid,
+            Self::Terrain(issue) => issue.face.solid,
+        }
+    }
+
+    pub fn face(&self) -> Option<FaceId> {
+        match self {
+            Self::Brush { .. } => None,
+            Self::Terrain(issue) => Some(issue.face),
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Brush { message, .. } => message,
+            Self::Terrain(issue) => &issue.message,
+        }
+    }
+
     pub fn description(&self) -> String {
-        format!(
-            "Terrain face {} on brush {}: {}",
-            self.face.side, self.face.solid, self.message
-        )
+        match self {
+            Self::Brush { solid, message } => format!("Brush {solid}: {message}"),
+            Self::Terrain(issue) => format!(
+                "Terrain face {} on brush {}: {}",
+                issue.face.side, issue.face.solid, issue.message
+            ),
+        }
     }
 }
 
-pub fn terrain_issues(vmf: &Vmf) -> Vec<SceneIssue> {
+#[derive(Debug, Clone, Default)]
+pub struct SceneIssues {
+    pub entries: Vec<SceneIssue>,
+    pub omitted: usize,
+}
+
+impl SceneIssues {
+    fn push(&mut self, issue: SceneIssue) {
+        if self.entries.len() < MAX_PREVIEW_ISSUES {
+            self.entries.push(issue);
+        } else {
+            self.omitted += 1;
+        }
+    }
+
+    pub fn summary(&self) -> String {
+        self.entries.first().map_or_else(String::new, |issue| {
+            let mut summary = issue.description();
+            let remaining = self.entries.len() - 1 + self.omitted;
+            if remaining > 0 {
+                summary.push_str(&format!(" ({remaining} more preview issues)"));
+            }
+            summary
+        })
+    }
+}
+
+pub fn terrain_issues(vmf: &Vmf) -> Vec<TerrainIssue> {
     terrain::prepare(vmf).issues
 }
 
@@ -149,6 +207,7 @@ pub struct FaceOverlay {
 }
 
 struct Builder<'a> {
+    issues: SceneIssues,
     tool_textures: bool,
     selection_tint: bool,
     lighting: crate::lighting::Preview,
@@ -241,24 +300,33 @@ impl Builder<'_> {
             Some(geometry) => geometry,
             None => BrushGeometry::from_solid(solid).map_err(|error| error.to_string()),
         };
-        let Ok(brush) = geometry else {
-            self.stats.invalid_brushes += 1;
-            for side in solid
-                .sides
-                .iter()
-                .filter(|side| side.displacement.is_some())
-            {
-                self.exclude_terrain(
-                    FaceId {
+        let brush = match geometry {
+            Ok(brush) => brush,
+            Err(message) => {
+                if !solid.sides.iter().any(|side| side.displacement.is_some()) {
+                    self.issues.push(SceneIssue::Brush {
                         solid: solid.id,
-                        side: side.id,
-                    },
-                    &side.material,
-                    0,
-                    "No prepared terrain geometry; authored lighting excluded",
-                );
+                        message,
+                    });
+                }
+                self.stats.invalid_brushes += 1;
+                for side in solid
+                    .sides
+                    .iter()
+                    .filter(|side| side.displacement.is_some())
+                {
+                    self.exclude_terrain(
+                        FaceId {
+                            solid: solid.id,
+                            side: side.id,
+                        },
+                        &side.material,
+                        0,
+                        "No prepared terrain geometry; authored lighting excluded",
+                    );
+                }
+                return;
             }
-            return;
         };
         // Hammer draws only the displaced faces of a brush with displacements.
         let has_displacement = solid.sides.iter().any(|s| s.displacement.is_some());
@@ -1299,7 +1367,12 @@ impl SceneMesh {
         let (models, helpers) = entities;
         let (selected, selected_faces) = selection;
         let terrain = terrain::prepare(vmf);
+        let mut issues = SceneIssues::default();
+        for issue in terrain.issues {
+            issues.push(SceneIssue::Terrain(issue));
+        }
         let mut builder = Builder {
+            issues,
             tool_textures,
             selection_tint,
             lighting: crate::lighting::Preview {
@@ -1442,7 +1515,7 @@ impl SceneMesh {
             lighting: builder.lighting,
             normal_maps: builder.normal_maps,
             icons: builder.displayed_icons,
-            issues: terrain.issues,
+            issues: builder.issues,
             skybox,
             sky3d: None,
             vertices: builder.vertices,
@@ -1522,13 +1595,7 @@ impl SceneMesh {
     }
 
     pub fn issue_summary(&self) -> String {
-        self.issues.first().map_or_else(String::new, |issue| {
-            let mut summary = issue.description();
-            if self.issues.len() > 1 {
-                summary.push_str(&format!(" ({} more preview issues)", self.issues.len() - 1));
-            }
-            summary
-        })
+        self.issues.summary()
     }
 
     pub fn guide_line_ranges(&self) -> Vec<std::ops::Range<u32>> {
@@ -1585,6 +1652,70 @@ impl SceneMesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordinary_brush_failures_report_partial_preview_without_changing_source() {
+        let mut document = map_core::Document::empty();
+        for x in [0.0, 128.0] {
+            document
+                .edit("block", |tx| {
+                    map_core::edit::create_block(
+                        tx,
+                        DVec3::new(x, 0.0, 0.0),
+                        DVec3::new(x + 64.0, 64.0, 64.0),
+                        "test",
+                    )
+                })
+                .unwrap();
+        }
+        let fs = GameFs {
+            game_dir: Default::default(),
+            base_dir: Default::default(),
+            mounts: Vec::new(),
+        };
+        for no_volume in [false, true] {
+            let mut vmf = document.vmf().clone();
+            let solid = &mut vmf.world.solids[1];
+            let id = solid.id;
+            if no_volume {
+                solid.sides.truncate(1);
+            } else {
+                solid.sides[0].plane.0 = [DVec3::ZERO, DVec3::X, DVec3::X * 2.0];
+            }
+            let before = vmf.clone();
+            let mesh =
+                SceneMesh::build(&vmf, &fs, &mut MaterialLibrary::default(), &HashSet::new());
+            assert_eq!(mesh.indices.len(), 36);
+            assert_eq!(mesh.stats.invalid_brushes, 1);
+            assert_eq!(mesh.issues.entries.len(), 1);
+            assert_eq!(mesh.issues.omitted, 0);
+            assert_eq!(mesh.issues.entries[0].solid(), id);
+            assert_eq!(mesh.issues.entries[0].face(), None);
+            assert!(mesh.issue_summary().contains(&format!("Brush {id}:")));
+            assert!(mesh.issue_summary().contains(if no_volume {
+                "enclose no volume"
+            } else {
+                "collinear plane points"
+            }));
+            assert_eq!(vmf, before);
+            let filtered = SceneMesh::build_with_models_filtered(
+                &vmf,
+                &fs,
+                &mut MaterialLibrary::default(),
+                (&HashSet::new(), &HashSet::new()),
+                &[],
+                &[],
+                |object| object != ObjectId::Solid(id),
+            );
+            assert!(filtered.issues.entries.is_empty());
+            assert_eq!(filtered.stats.invalid_brushes, 0);
+            vmf.world.solids[1].hidden = true;
+            let hidden =
+                SceneMesh::build(&vmf, &fs, &mut MaterialLibrary::default(), &HashSet::new());
+            assert!(hidden.issues.entries.is_empty());
+            assert_eq!(hidden.indices.len(), 36);
+        }
+    }
 
     #[test]
     fn filtering_point_emission_preserves_external_light_targets_and_duplicate_resolution() {

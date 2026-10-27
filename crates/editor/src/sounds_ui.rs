@@ -516,6 +516,9 @@ impl Controller {
         self.window
             .set_playback(match report["state"].as_str().unwrap() {
                 "idle" => "Not playing".into(),
+                "failed" if report["error"].is_string() => {
+                    format!("Preview failed: {}", report["error"].as_str().unwrap()).into()
+                }
                 state => format!(
                     "{} · {}",
                     state,

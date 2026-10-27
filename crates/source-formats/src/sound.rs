@@ -100,19 +100,28 @@ pub fn parse_script(text: &str) -> io::Result<Vec<Cue>> {
         let mut waves = Vec::new();
         for field in fields {
             if field.key.eq_ignore_ascii_case("wave") {
-                if let Some(value) = field.as_str() {
-                    waves.push(value.to_owned());
-                }
+                let value = field.as_str().ok_or_else(|| {
+                    invalid(&format!("Sound entry {}: wave must be a string", node.key))
+                })?;
+                waves.push(value.to_owned());
             } else if field.key.eq_ignore_ascii_case("rndwave") {
-                waves.extend(
-                    field
-                        .children()
-                        .unwrap_or_default()
-                        .iter()
-                        .filter(|node| node.key.eq_ignore_ascii_case("wave"))
-                        .filter_map(Node::as_str)
-                        .map(str::to_owned),
-                );
+                let variants = field.children().ok_or_else(|| {
+                    invalid(&format!(
+                        "Sound entry {}: rndwave must be a block",
+                        node.key
+                    ))
+                })?;
+                for variant in variants {
+                    if variant.key.eq_ignore_ascii_case("wave") {
+                        let value = variant.as_str().ok_or_else(|| {
+                            invalid(&format!(
+                                "Sound entry {}: rndwave wave must be a string",
+                                node.key
+                            ))
+                        })?;
+                        waves.push(value.to_owned());
+                    }
+                }
             }
             if waves.len() > MAX_VARIANTS {
                 return Err(invalid("Sound entry has too many wave variants"));
@@ -261,6 +270,42 @@ mod tests {
             assert!(audio_path(path).is_err(), "{path}");
         }
         assert!(parse_script(&format!("{}{}", "a {".repeat(33), "}".repeat(33))).is_err());
+    }
+
+    #[test]
+    fn known_wave_fields_reject_wrong_shapes_beside_valid_variants() {
+        for (text, field) in [
+            (
+                "Rain { wave ambient/one.wav wave { wave ambient/two.wav } }",
+                "wave must be a string",
+            ),
+            (
+                "Rain { wave ambient/one.wav rndwave ambient/two.wav }",
+                "rndwave must be a block",
+            ),
+            (
+                "Rain { wave ambient/one.wav rndwave { wave { file ambient/two.wav } } }",
+                "rndwave wave must be a string",
+            ),
+        ] {
+            let error = parse_script(text).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+            let message = error.to_string();
+            assert!(message.contains("Rain"), "{message}");
+            assert!(message.contains(field), "{message}");
+        }
+    }
+
+    #[test]
+    fn wave_shape_checks_preserve_lenient_syntax_and_unknown_fields() {
+        let cues = parse_script(
+            "/* header */ Rain { unknown value extra { key value } WAVE *#ambient/one.wav RNDWAVE { ignored value WAVE ambient/two.wav",
+        )
+        .unwrap();
+        assert_eq!(cues[0].waves, ["*#ambient/one.wav", "ambient/two.wav"]);
+        let cues = parse_script("Empty { rndwave {} } Absent { volume 1 }").unwrap();
+        assert_eq!(cues.len(), 2);
+        assert!(cues.iter().all(|cue| cue.waves.is_empty()));
     }
 
     #[test]

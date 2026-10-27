@@ -23,3 +23,5 @@ Use **Reload sounds** after changing files or scripts, then reopen the browser.
 - The game chooses its own sound-script variant.
 - Soundscapes, sentences, gender placeholders and map-specific script overrides are unsupported.
 - Ambiguous scripts reject. Malformed scripts show warnings; catalog read failures show an unavailable state.
+- A `wave` value must be text. A `rndwave` value must be a block of wave entries.
+- Playback observation errors show a failed state with the error. **Stop** remains available.

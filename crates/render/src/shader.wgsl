@@ -9,6 +9,7 @@ struct AuthoredLight {
 const SUN_KIND: f32 = 2.0;
 const FULL_BILLBOARD_TAG: f32 = -2.5;
 const VERTICAL_BILLBOARD_TAG: f32 = -3.5;
+const BAKED_DETAIL_RECEIVER: u32 = 2u;
 
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -151,7 +152,7 @@ fn vs_main(v: VertexIn) -> VertexOut {
     out.tangent = v.tangent;
     out.lighting_receiver = v.lighting_receiver;
     out.authored_irradiance = vec3<f32>(0.0);
-    if globals.lighting_settings.z > 0.5 && globals.lighting_settings.y < 0.5 && v.lighting_receiver != 0u {
+    if globals.lighting_settings.z > 0.5 && globals.lighting_settings.y < 0.5 && v.lighting_receiver == 1u {
         out.authored_irradiance = authored_irradiance(v.position, normalize(v.normal));
     }
     return out;
@@ -165,7 +166,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let uv_dy = dpdy(in.uv);
     let grid_width = max(fwidth(in.lightmap.xy), vec2<f32>(0.00001));
     if globals.surface_view.x == 3u && in.lightmap.z != 0.0 {
-        let shade = 0.55 + 0.45 * clamp(dot(normalize(in.normal), globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);
+        let shade = select(0.55 + 0.45 * clamp(dot(normalize(in.normal), globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0), 1.0, in.lighting_receiver == BAKED_DETAIL_RECEIVER);
         return vec4<f32>(vec3<f32>(0.65) * in.color.rgb * shade, 1.0);
     }
     if (globals.surface_view.x == 1u || globals.surface_view.x == 2u) && in.lightmap.z != 0.0 {
@@ -213,8 +214,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if globals.surface_view.w != 0u && material.helper.w > 0.5 {
         shade = 0.3 + 0.7 * max(dot(shading_normal, globals.light_dir.xyz), 0.0);
     }
+    if in.lighting_receiver == BAKED_DETAIL_RECEIVER { shade = 1.0; }
     var color = texel.rgb * in.color.rgb * shade;
-    if globals.lighting_settings.z > 0.5 && in.lighting_receiver != 0u {
+    if globals.lighting_settings.z > 0.5 && in.lighting_receiver == 1u {
         var irradiance = in.authored_irradiance;
         if globals.lighting_settings.y > 0.5 { irradiance = authored_irradiance(in.world_position, shading_normal); }
         let radiance = texel.rgb * in.color.rgb * irradiance * globals.lighting_settings.w;

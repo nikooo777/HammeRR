@@ -11,7 +11,7 @@ use super::tests::{
 use super::*;
 use crate::{Control, Options, OutputLease, WriteReservation, test_common};
 
-fn room() -> Vmf {
+pub(super) fn room() -> Vmf {
     let mut document = Document::new(test_common::room());
     document
         .edit("Water pool", |transaction| {
@@ -35,7 +35,7 @@ fn room() -> Vmf {
     document.vmf().clone()
 }
 
-fn fixture() -> Fixture {
+pub(super) fn fixture() -> Fixture {
     let fixture = Fixture::new();
     fs::create_dir_all(fixture.directory.path().join("materials/tools")).unwrap();
     fixture.write("materials/tools/toolsblack.vmt", "LightmappedGeneric {}");

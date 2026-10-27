@@ -265,6 +265,100 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cutout_preparation_replays_original_patch_sources_and_keeps_publication_guard() {
+        use crate::{Control, Report};
+        use source_formats::gamefs::{Mount, MountedPath};
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/validation/931-brush-material-replay");
+        std::fs::create_dir_all(&root).unwrap();
+        let directory = tempfile::tempdir_in(root).unwrap();
+        let materials = directory.path().join("materials/dev");
+        std::fs::create_dir_all(&materials).unwrap();
+        let patch = "Patch { include materials/dev/base.vmt replace { $alphatest 1 } }";
+        let base = "LightmappedGeneric { $basetexture dev/mask $alphatest 0 }";
+        let patch_path = materials.join("dev_measuregeneric01.vmt");
+        let base_path = materials.join("base.vmt");
+        std::fs::write(&patch_path, patch).unwrap();
+        std::fs::write(&base_path, base).unwrap();
+        let mut texture = vec![0; 80];
+        texture[..4].copy_from_slice(b"VTF\0");
+        for (offset, value) in [(4, 7_u32), (8, 2), (12, 80)] {
+            texture[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        for offset in [16, 18] {
+            texture[offset..offset + 2].copy_from_slice(&2_u16.to_le_bytes());
+        }
+        for offset in [24, 63] {
+            texture[offset..offset + 2].copy_from_slice(&1_u16.to_le_bytes());
+        }
+        texture[20..24].copy_from_slice(&source_formats::vtf::FLAG_NOMIP.to_le_bytes());
+        texture[56] = 1;
+        texture[57..61].copy_from_slice(&(-1_i32).to_le_bytes());
+        for alpha in [0, 0, 255, 255] {
+            texture.extend_from_slice(&[255, 255, 255, alpha]);
+        }
+        std::fs::write(materials.join("mask.vtf"), texture).unwrap();
+        let mut game = crate::test_common::empty_game();
+        game.mounts.push(MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(directory.path().to_owned()),
+        });
+        let vmf = crate::test_common::room();
+        let control = Control::default();
+        let sources = BuildMaterialSources::default();
+        let map = Map::load_with_material_sources_controlled(
+            &vmf,
+            &game,
+            &mut Report::default(),
+            &control,
+            None,
+            &sources,
+        )
+        .unwrap();
+        let missing = BuildMaterialSources::without_retained_payloads();
+        let unretained = Map::load_with_material_sources_controlled(
+            &vmf,
+            &game,
+            &mut Report::default(),
+            &control,
+            None,
+            &missing,
+        )
+        .unwrap();
+        let mut budget = Budget::new(&control);
+        let error = prepare(&unretained, &game, &missing, &mut budget)
+            .err()
+            .unwrap();
+        assert!(error.contains("original material dependency was not retained"));
+        assert_eq!(budget.live_bytes(), 0);
+        std::fs::write(&patch_path, "Patch { include materials/dev/missing.vmt }").unwrap();
+        std::fs::write(&base_path, "LightmappedGeneric { $alphatest 0 }").unwrap();
+        let prepared = prepare(&map, &game, &sources, &mut budget).unwrap();
+        assert_eq!(prepared.materials.len(), 1);
+        let material = prepared
+            .materials
+            .values()
+            .next()
+            .unwrap()
+            .as_ref()
+            .unwrap();
+        assert!(!material.blocks(DVec2::new(0.25, 0.25)).unwrap());
+        assert!(material.blocks(DVec2::new(0.25, 0.75)).unwrap());
+        assert!(sources.source_guard(&game, &control).is_err());
+        assert_eq!(
+            sources
+                .retained("materials/dev/dev_measuregeneric01.vmt")
+                .unwrap()
+                .unwrap()
+                .bytes(),
+            patch.as_bytes()
+        );
+        drop(prepared);
+        assert_eq!(budget.live_bytes(), 0);
+    }
+
+    #[test]
     fn preparation_requires_the_original_material_capture_before_reading_or_allocating() {
         use crate::{Control, Report};
         use source_formats::gamefs::{Mount, MountedPath};

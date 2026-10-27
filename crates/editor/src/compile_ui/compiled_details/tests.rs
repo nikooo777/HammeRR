@@ -47,11 +47,26 @@ fn compiled_detail_controls_share_background_prepare_show_clear_and_output_inval
     assert!(form.window.get_has_token());
     form.window.invoke_refresh_inspection();
     assert!(form.window.get_state().contains("prepared"));
+    assert_eq!(form.window.get_lighting_index(), 0);
+    form.window.invoke_change_lighting(1);
+    assert_eq!(form.window.get_lighting_index(), 1);
+    assert_eq!(
+        lock(&shared).inspect_compiled_details(None, 0, 1).unwrap()["lighting"]["mode"],
+        "baked_ldr"
+    );
+    form.window.invoke_change_lighting(2);
+    assert_eq!(form.window.get_lighting_index(), 1);
+    assert!(
+        form.window
+            .get_message()
+            .contains("Unknown compiled detail lighting mode")
+    );
     form.window.invoke_show_details();
     assert!(form.window.get_state().contains("displayed true"));
     assert!(form.window.get_state().contains("complete geometry true"));
     form.window.invoke_hide_details();
     assert!(form.window.get_state().contains("displayed false"));
+    assert_eq!(form.window.get_lighting_index(), 1);
     form.window.invoke_show_details();
     std::fs::write(source.with_extension("bsp"), b"replaced output").unwrap();
     form.window.invoke_refresh_inspection();
@@ -60,6 +75,7 @@ fn compiled_detail_controls_share_background_prepare_show_clear_and_output_inval
     form.window.invoke_clear_details();
     assert!(!form.window.get_has_token());
     assert!(form.window.get_state().contains("not_loaded"));
+    assert_eq!(form.window.get_lighting_index(), 0);
     let session = lock(&shared);
     assert_eq!(
         (

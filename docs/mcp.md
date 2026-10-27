@@ -346,6 +346,7 @@ Pass the returned `token` to `show`, `hide`, `clear` or `cancel` actions, and to
 inspection pages after offset zero. Show loads the complete supported asset set;
 compiler freshness and additional preview-asset observations remain separate.
 The layer does not edit or select authored objects.
+Set `action:"lighting"`, the current `token` and `lighting:"baked_ldr"` to show static base LDR colors. Use `lighting:"editor_shading"` for the default preview. Runtime style records refuse Baked LDR without changing the previous mode. `inspect_compiled_details.lighting` reports the mode, availability and reason. Prepare and Clear reset the mode.
 
 `get_compile_status` marks a completed job stale when consumed material, detail or physics-definition inputs change. `job.material_source_issue` gives the cause; unused runtime assets remain outside this check.
 
@@ -357,6 +358,7 @@ apply to supported water and slime. The shared property fields are
 engine physics. Complete structural-world liquid volumes can remain inside a
 compile region. See [Water and slime](water.md) for material and volume limits.
 Set `pack_water_assets:true` for **Pack liquid assets**, including supported static slime materials, including named envmaps with matching LDR/HDR cubemap files. Settings, recipes and build results retain the `pack_water_assets` and `water_assets` field names. Unsupported closures stop the build.
+For supported opaque slime with `$envmap env_cubemap`, combine `pack_water_assets:true`, `generate_reflections:true` and `lighting:"direct_ldr_hdr"`. The existing sample bindings select generated LDR/HDR pairs; incomplete captures or changed original inputs stop publication. This does not enable runtime Water envmap packing.
 Liquid dependency reports use `incomplete_mip_chain` when a sampled texture lacks required mip levels. Correct the VTF before packing; see [native texture files](textures.md#native-texture-files).
 
 For [stationary child brush rotation](instances.md#rotate-a-stationary-child-brush), set canonical `angles` through `set_entity_properties` or property-edit tools.

@@ -3,7 +3,7 @@ mod raw;
 mod report;
 
 pub(crate) use closure::{
-    canonical_material_path, collect_static_water_closure, logical_material_path,
+    GeneratedLiquidAssets, canonical_material_path, collect_water_closure, logical_material_path,
 };
 pub use report::*;
 

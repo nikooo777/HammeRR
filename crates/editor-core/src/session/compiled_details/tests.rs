@@ -136,6 +136,230 @@ fn prepare(session: &mut Session) -> u64 {
     token
 }
 
+fn retain_native_fixture(session: &mut Session, bsp: &Bsp) {
+    let path = session.compiled.as_ref().unwrap().path.clone();
+    bsp.write(&path).unwrap();
+    let identity = FileIdentity::capture(&path, &Control::default()).unwrap();
+    let build = session.compiled.as_mut().unwrap();
+    build.output_identity = Ok(identity.clone());
+    build.lightmap_identity.output = Ok(identity);
+}
+
+#[test]
+fn baked_ldr_modes_use_owned_literal_model_and_card_colors_and_preserve_state_on_refusal() {
+    let (_directory, mut session, source) = fixture();
+    let before = (
+        session.document.vmf().clone(),
+        session.camera(),
+        session.history_snapshot(),
+        std::fs::read(&source).unwrap(),
+    );
+    let mut bsp = Bsp::read(&session.compiled.as_ref().unwrap().path).unwrap();
+    let mut native = bsp.detail_props().unwrap().unwrap();
+    assert!(native.props.iter().any(|prop| prop.kind == 0));
+    assert!(native.props.iter().any(|prop| prop.kind != 0));
+    for prop in &mut native.props {
+        prop.lighting = source_formats::bsp::RgbExp32 {
+            rgb: if prop.kind == 0 {
+                [64, 0, 128]
+            } else {
+                [128, 64, 0]
+            },
+            exponent: 0,
+        };
+    }
+    bsp.set_detail_props(&native).unwrap();
+    retain_native_fixture(&mut session, &bsp);
+    let token = prepare(&mut session);
+    let report = session
+        .inspect_compiled_details(Some(token), 0, 64)
+        .unwrap();
+    assert_eq!(report["lighting"]["mode"], "editor_shading");
+    assert_eq!(report["lighting"]["baked_ldr_available"], true);
+    let untouched = session.compiled_details_observation();
+    for (requested, mode) in [(token + 1, "baked_ldr"), (token, "hdr")] {
+        assert!(
+            session
+                .set_compiled_details_lighting(Actor::User, requested, mode)
+                .is_err()
+        );
+        assert_eq!(session.compiled_details_observation(), untouched);
+    }
+    let changed = session
+        .set_compiled_details_lighting(Actor::User, token, "baked_ldr")
+        .unwrap();
+    assert_eq!(changed["lighting"]["mode"], "baked_ldr");
+    assert_eq!(changed["displayed"], false);
+    assert_eq!(changed["complete"], false);
+    session
+        .set_compiled_details_visible(Actor::Agent, token, true)
+        .unwrap();
+    let geometry = session
+        .compiled_details
+        .ready
+        .as_ref()
+        .unwrap()
+        .geometry
+        .as_ref()
+        .unwrap();
+    let baked = geometry.vertices.clone();
+    let bounds = geometry
+        .detail_parts
+        .iter()
+        .map(|part| part.bounds)
+        .collect::<Vec<_>>();
+    for part in &geometry.detail_parts {
+        let expected = if native.props[part.ordinal].kind == 0 {
+            [64, 0, 128]
+        } else {
+            [128, 64, 0]
+        };
+        assert!(!part.vertices.is_empty());
+        for vertex in &geometry.vertices[part.vertices.clone()] {
+            assert_eq!(vertex.color[..3], expected);
+            assert_eq!(
+                vertex.lighting_receiver,
+                render::compiled_details::BAKED_LIGHTING_RECEIVER
+            );
+        }
+    }
+    session
+        .set_compiled_details_lighting(Actor::User, token, "editor_shading")
+        .unwrap();
+    let geometry = session
+        .compiled_details
+        .ready
+        .as_ref()
+        .unwrap()
+        .geometry
+        .as_ref()
+        .unwrap();
+    assert!(
+        geometry
+            .vertices
+            .iter()
+            .all(|vertex| vertex.color[..3] == [255; 3] && vertex.lighting_receiver == 0)
+    );
+    assert_eq!(
+        geometry
+            .detail_parts
+            .iter()
+            .map(|part| part.bounds)
+            .collect::<Vec<_>>(),
+        bounds
+    );
+    session
+        .set_compiled_details_lighting(Actor::Agent, token, "baked_ldr")
+        .unwrap();
+    assert_eq!(
+        session
+            .compiled_details
+            .ready
+            .as_ref()
+            .unwrap()
+            .geometry
+            .as_ref()
+            .unwrap()
+            .vertices,
+        baked
+    );
+    session
+        .set_compiled_details_visible(Actor::User, token, false)
+        .unwrap();
+    assert_eq!(
+        session.inspect_compiled_details(Some(token), 0, 1).unwrap()["lighting"]["mode"],
+        "baked_ldr"
+    );
+
+    native.props.last_mut().unwrap().light_style_count = 1;
+    bsp.set_detail_props_with_lighting(
+        &native,
+        &[source_formats::bsp::DetailPropLighting {
+            lighting: source_formats::bsp::RgbExp32 {
+                rgb: [240, 80, 20],
+                exponent: -1,
+            },
+            style: 32,
+        }],
+        None,
+    )
+    .unwrap();
+    retain_native_fixture(&mut session, &bsp);
+    let token = prepare(&mut session);
+    let report = session.inspect_compiled_details(Some(token), 0, 1).unwrap();
+    assert_eq!(report["lighting"]["mode"], "editor_shading");
+    assert_eq!(report["lighting"]["baked_ldr_available"], false);
+    assert_eq!(report["lighting"]["ldr_style_records"], 1);
+    assert!(
+        report["lighting"]["unavailable_reason"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("Detail record {}", native.props.len() - 1))
+    );
+    session
+        .set_compiled_details_visible(Actor::User, token, true)
+        .unwrap();
+    let untouched = session.compiled_details_observation();
+    assert!(
+        session
+            .set_compiled_details_lighting(Actor::Agent, token, "baked_ldr")
+            .unwrap_err()
+            .contains("runtime light styles")
+    );
+    assert_eq!(session.compiled_details_observation(), untouched);
+    assert!(
+        session
+            .compiled_details
+            .ready
+            .as_ref()
+            .unwrap()
+            .geometry
+            .as_ref()
+            .unwrap()
+            .vertices
+            .iter()
+            .all(|vertex| vertex.color[..3] == [255; 3] && vertex.lighting_receiver == 0)
+    );
+    assert_eq!(
+        (
+            session.document.vmf().clone(),
+            session.camera(),
+            session.history_snapshot(),
+            std::fs::read(source).unwrap()
+        ),
+        before
+    );
+}
+
+#[test]
+fn malformed_unused_ldr_style_table_is_not_silently_replaced_with_white() {
+    let (_directory, mut session, _source) = fixture();
+    let mut bsp = Bsp::read(&session.compiled.as_ref().unwrap().path).unwrap();
+    let native = bsp.detail_props().unwrap().unwrap();
+    assert!(native.props.iter().all(|prop| prop.light_style_count == 0));
+    bsp.set_detail_props_with_lighting(&native, &[], None)
+        .unwrap();
+    bsp.game_lumps
+        .iter_mut()
+        .find(|lump| lump.id == *b"dplt")
+        .unwrap()
+        .data = vec![1, 0, 0, 0];
+    retain_native_fixture(&mut session, &bsp);
+    let request = session.begin_compiled_details(Actor::Agent).unwrap();
+    let report = session
+        .finish_compiled_details(Actor::Agent, request.run())
+        .unwrap();
+    assert_eq!(report["status"], "unavailable");
+    assert_eq!(report["complete"], false);
+    assert!(report["page"]["total"].is_null());
+    assert!(
+        report["error"]
+            .as_str()
+            .unwrap()
+            .contains("truncated detail-prop records")
+    );
+}
+
 #[test]
 fn final_record_layer_preserves_authored_selection_picking_and_outline_controls() {
     let (_directory, mut session, _source) = fixture();
@@ -350,6 +574,11 @@ fn cancelled_expired_and_stale_requests_cannot_restore_a_complete_layer() {
             .is_err()
     );
     assert!(session.begin_compiled_details(Actor::Agent).is_err());
+    assert!(
+        session
+            .set_compiled_details_lighting(Actor::Agent, token, "baked_ldr")
+            .is_err()
+    );
 }
 
 #[test]

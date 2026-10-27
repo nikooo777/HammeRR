@@ -65,9 +65,23 @@ Packing supports a checked static subset, not every animated stock Water shader.
 Static envmaps require matching supported LDR and HDR cubemap files. Unsupported dependencies fail explicitly.
 
 Slime packing supports static opaque `LightmappedGeneric`, `UnlitGeneric` and unambiguous scalar `Patch` chains with `%compileslime 1`, an explicit `$basetexture` and the exact native self-bottom declaration. It includes every original material and declared `$basetexture`, `$bumpmap` and `%tooltexture` VTF, including textures overridden by a Patch. These textures must be supported static one-frame 2D VTFs, version 7.0–7.4, with depth one and `first_frame 0`.
-Neutral opacity settings, `$surfaceprop`, `%keywords`, static fog/color controls, UV transforms and authored `$reflectivity` are admitted. Fog switches and `%notooltexture` use literal `0` or `1`; fog distances must be finite. Colors and reflectivity use normalized square-bracket RGB triples. UV transforms use the supported center/scale/rotate/translate syntax with finite components within ±1024 and no repeated operations. A named static `$envmap` also packs its original LDR and HDR cube files, including declarations overridden by a Patch. Both cubes require the existing VTF 7.4 layout with seven stored square faces, `first_frame 0` and matching width, height and mip count; the HDR sibling must use the supported HDR format. Effective `$envmapframe` must be absent or zero. Dynamic `env_cubemap`, missing cube siblings, other parameters, detail textures, additional material references and effects stop packing. A Patch chain cannot edit the same key in multiple materials. Missing dependencies and unsupported texture layouts stop publication without replacing the previous BSP.
+Neutral opacity settings, `$surfaceprop`, `%keywords`, static fog/color controls, UV transforms and authored `$reflectivity` are admitted. Fog switches and `%notooltexture` use literal `0` or `1`; fog distances must be finite. Colors and reflectivity use normalized square-bracket RGB triples. UV transforms use the supported center/scale/rotate/translate syntax with finite components within ±1024 and no repeated operations. A named static `$envmap` also packs its original LDR and HDR cube files, including declarations overridden by a Patch. Both cubes require the existing VTF 7.4 layout with seven stored square faces, `first_frame 0` and matching width, height and mip count; the HDR sibling must use the supported HDR format. Effective `$envmapframe` must be absent or zero. Missing cube siblings, other parameters, detail textures, additional material references and effects stop packing. A Patch chain cannot edit the same key in multiple materials. Missing dependencies and unsupported texture layouts stop publication without replacing the previous BSP.
 
 Assets outside the packed closure must remain mounted in the game.
+
+## Generate slime reflections
+
+1. Use a supported opaque slime material with `$envmap env_cubemap`.
+2. Add `env_cubemap` samples. Use [reflection bindings](reflections.md) for manual face choices; other faces use automatic choices.
+3. Open **Build settings…**.
+4. Choose **Build lighting → Direct LDR + HDR**.
+5. Enable **Generate reflections** and **Pack liquid assets**.
+6. Click **Compile**, then inspect the reflection and liquid results in **Build details…**.
+
+The build packs both captured cube channels and the original material dependencies.
+Steam must be running. Original inputs must remain unchanged until the build finishes.
+Without paired capture, runtime `env_cubemap` slime packing fails explicitly.
+This workflow does not enable runtime envmaps in Water-shader asset packing.
 
 ## Steady physical current
 

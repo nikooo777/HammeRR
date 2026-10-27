@@ -16,6 +16,7 @@ pub enum Action {
     Clear,
     Show,
     Hide,
+    Lighting,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -24,12 +25,13 @@ pub struct SetCompiledDetailsArgs {
     action: Action,
     token: Option<String>,
     background: Option<bool>,
+    lighting: Option<String>,
 }
 
 #[tool_router(router=compiled_details_tools,vis="pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect the explicitly prepared final native detail-prop records from the retained successful BSP without loading assets or initializing graphics. Returns preparation token, native leaf-ordered ordinal/kind/dictionary/model/origin/angles/scale/orientation/sway/shape and base lighting fields, complete layer coverage, separate build freshness and preview observations, explicit loading/prepared/ready/stale/cancelled/unavailable/context_suppressed states and 1–64-row pages. No authored source identity is inferred. Nonzero pages require the returned preparation token. Output replacement invalidates retained records. Does not select, pick, edit or frame authored objects."
+        description = "Inspect the explicitly prepared final native detail-prop records from the retained successful BSP without loading assets or initializing graphics. Returns preparation token, native leaf-ordered ordinal/kind/dictionary/model/origin/angles/scale/orientation/sway/shape, exact base RGBExp32 and normalized linear lighting, native style ranges, preview lighting mode and Baked LDR availability/refusal reason, complete layer coverage, separate build freshness and preview observations, explicit loading/prepared/ready/stale/cancelled/unavailable/context_suppressed states and 1–64-row pages. Baked LDR requires zero runtime styles; its linear colors clamp to 8-bit with editor sRGB output, without native gamma/HDR/dynamic-light parity. No authored source identity is inferred. Nonzero pages require the returned preparation token. Output replacement invalidates retained records. Does not select, pick, edit or frame authored objects."
     )]
     pub(in crate::mcp) fn inspect_compiled_details(
         &self,
@@ -46,59 +48,74 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Manage the read-only Compiled details… editor layer through the same Session operations. prepare requires a current successful owned build, retires the previous layer and reads exact owned BSP bytes on one cancellable worker; background defaults false. cancel/clear/show/hide require the returned preparation token and reject background. clear cancels pending work and releases retained geometry; hide preserves preparation. show validates original compiler/output identities and separately observes verified shared model/material assets before atomically enabling the complete set. Missing assets, unsupported material effects and resource limits refuse the whole layer. Preview supports final models and atlas cards/cross/tri shapes as white static geometry, with full/vertical cards facing the actual render camera. Pole/coincident views use the Source VectorAngles singular basis. It does not simulate sway, avoidance, runtime random card mirroring, baked lighting/styles/HDR, runtime fading or native appearance parity. Layer display is suppressed during editing tools/drafts and outside Objects mode. Working region intersects whole compiled-prop geometry bounds, with conservative rotation envelopes for camera-facing cards. Temporary authored-ID hiding is independent of this compiler-owned layer; no authored owner is guessed. No authored geometry, selection, picking, camera or Undo changes."
+        description = "Manage the read-only Compiled details… editor layer through the same Session operations. prepare requires a current successful owned build, retires the previous layer, resets preview lighting to editor_shading and reads exact owned BSP bytes on one cancellable worker; background defaults false. cancel/clear/show/hide/lighting require the returned preparation token and reject background. Only action lighting accepts lighting: editor_shading or baked_ldr. Baked LDR requires every final record to have zero runtime styles and atomically refuses unsupported data, preserving the previous mode. It modulates models and all card forms with native base RGBExp32 / 255, clamped to 0–1 and rounded to 8-bit linear color with editor sRGB output, style 0 fixed at unity and no additional editor directional/authored lights. clear cancels pending work and releases retained geometry; hide preserves preparation and lighting mode. show validates original compiler/output identities and separately observes verified shared model/material assets before atomically enabling the complete set. Missing assets, unsupported material effects and resource limits refuse the whole layer. Full/vertical cards face the actual render camera. Pole/coincident views use the Source VectorAngles singular basis. Dynamic lights, runtime styles, sway, avoidance, runtime random card mirroring, fades, HDR, native gamma and native appearance parity are not simulated. Layer display is suppressed during editing tools/drafts and outside Objects mode. Working region intersects whole compiled-prop geometry bounds, with conservative rotation envelopes for camera-facing cards. Temporary authored-ID hiding is independent of this compiler-owned layer; no authored owner is guessed. No authored geometry, selection, picking, camera or Undo changes."
     )]
     pub(in crate::mcp) fn set_compiled_details(
         &self,
         Parameters(args): Parameters<SetCompiledDetailsArgs>,
     ) -> ToolResult {
-        run(|| match args.action {
-            Action::Prepare => {
-                if args.token.is_some() {
-                    return Err("Prepare accepts only action and optional background".into());
+        run(|| {
+            if !matches!(args.action, Action::Lighting) && args.lighting.is_some() {
+                return Err("Only the lighting action accepts lighting".into());
+            }
+            match args.action {
+                Action::Prepare => {
+                    if args.token.is_some() {
+                        return Err("Prepare accepts only action and optional background".into());
+                    }
+                    let request = self.session().begin_compiled_details(Actor::Agent)?;
+                    let token = request.token();
+                    if args.background.unwrap_or(false) {
+                        let shared = self.session.clone();
+                        let spawned = std::thread::Builder::new()
+                            .name("compiled-details".into())
+                            .spawn(self.worker(move || {
+                                let prepared = request.run();
+                                let _ =
+                                    lock(&shared).finish_compiled_details(Actor::Agent, prepared);
+                            }));
+                        if let Err(error) = spawned {
+                            return self.session().fail_compiled_details(
+                                Actor::Agent,
+                                token,
+                                format!("Could not start compiled detail preparation: {error}"),
+                            );
+                        }
+                        Ok(json!({"status":"loading","token":token.to_string()}))
+                    } else {
+                        let prepared = request.run();
+                        self.session()
+                            .finish_compiled_details(Actor::Agent, prepared)
+                    }
                 }
-                let request = self.session().begin_compiled_details(Actor::Agent)?;
-                let token = request.token();
-                if args.background.unwrap_or(false) {
-                    let shared = self.session.clone();
-                    let spawned = std::thread::Builder::new()
-                        .name("compiled-details".into())
-                        .spawn(self.worker(move || {
-                            let prepared = request.run();
-                            let _ = lock(&shared).finish_compiled_details(Actor::Agent, prepared);
-                        }));
-                    if let Err(error) = spawned {
-                        return self.session().fail_compiled_details(
+                action => {
+                    if args.background.is_some() {
+                        return Err("Only Prepare accepts background".into());
+                    }
+                    let token = parse_detail_token(
+                        args.token
+                            .as_deref()
+                            .ok_or("Use the returned compiled detail token")?,
+                    )?;
+                    let mut session = self.session();
+                    match action {
+                        Action::Cancel => session.cancel_compiled_details(Actor::Agent, token),
+                        Action::Clear => session.clear_compiled_details(Actor::Agent, token),
+                        Action::Show => {
+                            session.set_compiled_details_visible(Actor::Agent, token, true)
+                        }
+                        Action::Hide => {
+                            session.set_compiled_details_visible(Actor::Agent, token, false)
+                        }
+                        Action::Lighting => session.set_compiled_details_lighting(
                             Actor::Agent,
                             token,
-                            format!("Could not start compiled detail preparation: {error}"),
-                        );
+                            args.lighting
+                                .as_deref()
+                                .ok_or("Lighting requires editor_shading or baked_ldr")?,
+                        ),
+                        Action::Prepare => unreachable!(),
                     }
-                    Ok(json!({"status":"loading","token":token.to_string()}))
-                } else {
-                    let prepared = request.run();
-                    self.session()
-                        .finish_compiled_details(Actor::Agent, prepared)
-                }
-            }
-            action => {
-                if args.background.is_some() {
-                    return Err("Only Prepare accepts background".into());
-                }
-                let token = parse_detail_token(
-                    args.token
-                        .as_deref()
-                        .ok_or("Use the returned compiled detail token")?,
-                )?;
-                let mut session = self.session();
-                match action {
-                    Action::Cancel => session.cancel_compiled_details(Actor::Agent, token),
-                    Action::Clear => session.clear_compiled_details(Actor::Agent, token),
-                    Action::Show => session.set_compiled_details_visible(Actor::Agent, token, true),
-                    Action::Hide => {
-                        session.set_compiled_details_visible(Actor::Agent, token, false)
-                    }
-                    Action::Prepare => unreachable!(),
                 }
             }
         })
@@ -146,12 +163,24 @@ mod tests {
         )));
         assert_eq!(prepared["status"], "prepared");
         assert_eq!(prepared["page"]["total"], 0);
+        assert_eq!(prepared["lighting"]["mode"], "editor_shading");
         let token = prepared["token"].as_str().unwrap();
+        let lit = value(
+            server.set_compiled_details(Parameters(
+                serde_json::from_value(
+                    json!({"action":"lighting","token":token,"lighting":"baked_ldr"}),
+                )
+                .unwrap(),
+            )),
+        );
+        assert_eq!(lit["lighting"]["mode"], "baked_ldr");
+        assert_eq!(lit["displayed"], false);
         let shown = value(server.set_compiled_details(Parameters(
             serde_json::from_value(json!({"action":"show","token":token})).unwrap(),
         )));
         assert_eq!(shown["complete"], true);
         assert_eq!(shown["displayed"], true);
+        assert_eq!(shown["lighting"]["mode"], "baked_ldr");
         assert_eq!(
             value(server.get_map_info())["rendering"]["initialized"],
             false
@@ -160,6 +189,11 @@ mod tests {
             json!({"action":"show","token":"0"}),
             json!({"action":"prepare","token":token}),
             json!({"action":"hide","token":token,"background":false}),
+            json!({"action":"lighting","token":token}),
+            json!({"action":"lighting","token":token,"lighting":"hdr"}),
+            json!({"action":"lighting","token":token,"lighting":"editor_shading","background":false}),
+            json!({"action":"show","token":token,"lighting":"editor_shading"}),
+            json!({"action":"prepare","lighting":"baked_ldr"}),
         ] {
             assert!(
                 server
@@ -173,6 +207,7 @@ mod tests {
             serde_json::from_value(json!({"action":"clear","token":token})).unwrap(),
         )));
         assert_eq!(cleared["status"], "not_loaded");
+        assert_eq!(cleared["lighting"]["mode"], "editor_shading");
         assert!(cleared["token"].is_null());
         assert!(
             server

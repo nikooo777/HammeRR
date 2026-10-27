@@ -1,4 +1,4 @@
-import { Button, TextEdit } from "std-widgets.slint";
+import { Button, ComboBox, TextEdit } from "std-widgets.slint";
 
 export component CompiledDetailsWindow inherits Window {
     title: "Compiled details - HammeRR";
@@ -15,11 +15,14 @@ export component CompiledDetailsWindow inherits Window {
     in property <bool> has-token;
     in property <bool> previous;
     in property <bool> next;
+    in-out property <int> lighting-index;
+    in property <string> lighting-state;
     callback prepare-details();
     callback cancel-preparation();
     callback clear-details();
     callback show-details();
     callback hide-details();
+    callback change-lighting(int);
     callback refresh-inspection();
     callback page-records(int);
     callback close-dialog();
@@ -47,7 +50,18 @@ export component CompiledDetailsWindow inherits Window {
                 Button { text: "Hide details"; enabled: root.has-token; clicked => { root.hide-details(); } }
                 Rectangle { horizontal-stretch: 1; }
             }
-            Text { text: "White static geometry from the final BSP, with live full/vertical camera-facing cards. Sway, avoidance, runtime mirroring/fades and baked lighting/styles/HDR are not simulated. Details do not participate in authored picking or selection."; wrap: word-wrap; color: #bac2ce; }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Preview lighting"; vertical-alignment: center; }
+                lighting := ComboBox {
+                    model: ["Editor shading", "Baked LDR"];
+                    current-index <=> root.lighting-index;
+                    enabled: root.has-token && !root.worker-active;
+                    selected(value) => { root.change-lighting(lighting.current-index); }
+                }
+                Text { text: root.lighting-state; wrap: word-wrap; horizontal-stretch: 1; }
+            }
+            Text { text: "Shows final BSP placements. Baked LDR adds static base colors; runtime light styles are unsupported. Cards face the camera. Motion and HDR are not previewed. Details cannot be selected."; wrap: word-wrap; color: #bac2ce; }
             HorizontalLayout {
                 spacing: 8px;
                 Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }

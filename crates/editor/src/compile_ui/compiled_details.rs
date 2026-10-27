@@ -27,6 +27,7 @@ enum Action {
     Hide,
     Inspect,
     Page(i32),
+    Lighting(i32),
 }
 
 fn present(window: &CompiledDetailsWindow, state: &mut State, report: Value, observation: Value) {
@@ -36,6 +37,13 @@ fn present(window: &CompiledDetailsWindow, state: &mut State, report: Value, obs
     state.observation = Some(observation);
     window.set_has_token(state.token.is_some());
     window.set_worker_active(report["worker_active"].as_bool().unwrap_or(false));
+    window.set_lighting_index(i32::from(report["lighting"]["mode"] == "baked_ldr"));
+    window.set_lighting_state(
+        report["lighting"]["unavailable_reason"]
+            .as_str()
+            .unwrap_or("Baked LDR: native base lighting, zero runtime styles")
+            .into(),
+    );
     window.set_state(
         format!(
             "{} · requested {} · displayed {} · complete geometry {}",
@@ -169,6 +177,17 @@ fn perform(
                 offset.saturating_add(64)
             };
         }
+        Action::Lighting(index) => {
+            session.set_compiled_details_lighting(
+                Actor::User,
+                token.ok_or("Prepare compiled details first")?,
+                match index {
+                    0 => "editor_shading",
+                    1 => "baked_ldr",
+                    _ => return Err("Unknown compiled detail lighting mode".into()),
+                },
+            )?;
+        }
         Action::Prepare | Action::Inspect => {}
     }
     let offset = state.borrow().offset;
@@ -203,6 +222,11 @@ fn handler(
             target.with_shared(|shared| perform(&window, shared, &state, action(value)))
         });
         if let Err(error) = result {
+            if matches!(action(value), Action::Lighting(_)) {
+                let _ = target.upgrade().and_then(|target| {
+                    target.with_shared(|shared| perform(&window, shared, &state, Action::Inspect))
+                });
+            }
             window.set_message(error.into());
         }
     }
@@ -244,6 +268,7 @@ pub(super) fn bind(
     window.on_show_details(move || callback(0));
     let callback = handler(&window, access, &state, |_| Action::Hide);
     window.on_hide_details(move || callback(0));
+    window.on_change_lighting(handler(&window, access, &state, Action::Lighting));
     let callback = handler(&window, access, &state, |_| Action::Inspect);
     window.on_refresh_inspection(move || callback(0));
     window.on_page_records(handler(&window, access, &state, Action::Page));
@@ -273,6 +298,10 @@ impl Form {
         self.window.set_page("".into());
         self.window
             .set_worker_active(observation["worker_active"].as_bool().unwrap_or(false));
+        self.window
+            .set_lighting_index(i32::from(observation["lighting"] == "baked_ldr"));
+        self.window
+            .set_lighting_state("Refresh inspection to check Baked LDR availability".into());
         self.state.borrow_mut().token = observation["token"]
             .as_str()
             .and_then(|token| token.parse::<u64>().ok())

@@ -18,6 +18,13 @@ const HDR_CHECK_BYTES: usize = 32 * 1024;
 
 pub(crate) struct StaticWaterClosure {
     pub paths: BTreeSet<String>,
+    pub runtime_materials: BTreeSet<String>,
+}
+
+#[derive(Default)]
+pub(crate) struct GeneratedLiquidAssets {
+    pub materials: BTreeSet<String>,
+    pub cubemaps: BTreeSet<String>,
 }
 
 #[derive(Clone)]
@@ -72,6 +79,8 @@ struct Graph<'a, F> {
     material_bytes: usize,
     source_bytes: usize,
     edges: usize,
+    generated: &'a GeneratedLiquidAssets,
+    runtime_materials: BTreeSet<String>,
 }
 
 pub(crate) fn canonical_material_path(path: &str) -> io::Result<()> {
@@ -131,9 +140,10 @@ fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
-pub(crate) fn collect_static_water_closure<F>(
+pub(crate) fn collect_water_closure<F>(
     root: &str,
     control: &Control,
+    generated: &GeneratedLiquidAssets,
     read: &mut F,
 ) -> io::Result<StaticWaterClosure>
 where
@@ -153,9 +163,14 @@ where
         material_bytes: 0,
         source_bytes: 0,
         edges: 0,
+        generated,
+        runtime_materials: BTreeSet::new(),
     };
     graph.walk(root, 0)?;
-    Ok(StaticWaterClosure { paths: graph.paths })
+    Ok(StaticWaterClosure {
+        paths: graph.paths,
+        runtime_materials: graph.runtime_materials,
+    })
 }
 
 impl<F> Graph<'_, F>
@@ -432,7 +447,16 @@ where
         for (key, parameter) in &resolved.declarations {
             if key == "$envmap" {
                 self.edge()?;
-                self.cubemap_pair(&parameter.value)?;
+                if parameter.value.eq_ignore_ascii_case("env_cubemap") {
+                    if !self.generated.materials.contains(path) {
+                        return Err(invalid(format!(
+                            "Static slime runtime env_cubemap requires Generate reflections with Direct LDR + HDR and a bound generated material: {path}"
+                        )));
+                    }
+                    self.runtime_materials.insert(path.into());
+                } else {
+                    self.cubemap_pair(&parameter.value)?;
+                }
             }
             if matches!(key.as_str(), "$basetexture" | "$bumpmap" | "%tooltexture") {
                 self.edge()?;
@@ -539,7 +563,8 @@ where
         }
         if let TextureRole::Cubemap { hdr } = role {
             // CS:S reads seven stored faces for every VTF 7.4 cubemap.
-            if layout.version != (7, 4)
+            let generated = self.generated.cubemaps.contains(path);
+            if !(layout.version == (7, 4) || generated && layout.version == (7, 2))
                 || !layout.cube
                 || layout.width != layout.height
                 || layout.faces != 7
@@ -562,7 +587,13 @@ where
                         | ImageFormat::Dxt1
                         | ImageFormat::Dxt3
                         | ImageFormat::Dxt5
-                )
+                ) || generated
+                    && matches!(
+                        layout.format,
+                        ImageFormat::Abgr8888
+                            | ImageFormat::Argb8888
+                            | ImageFormat::Dxt1OneBitAlpha
+                    )
             };
             if !supported {
                 return Err(invalid(format!(

@@ -302,20 +302,31 @@ impl<'fs, 'tracking> Assets<'fs, 'tracking> {
                     "Brush texture shadows exceeds 65,536 material lookups",
                 ));
             }
-            let remaining = MAX_ASSET_BYTES - self.bytes;
-            let asset = sources.read_asset(self.fs, path, MAX_MATERIAL_BYTES.min(remaining))?;
-            if let Some(asset) = &asset {
-                budget
-                    .consume(asset.bytes().len().div_ceil(64))
-                    .map_err(std::io::Error::other)?;
-                self.allocations.push(
-                    budget
-                        .reserve_bytes(asset.bytes().len())
-                        .map_err(std::io::Error::other)?,
-                );
-                self.bytes += asset.bytes().len();
+            let remaining = MAX_ASSET_BYTES.checked_sub(self.bytes).ok_or_else(|| {
+                std::io::Error::other("Brush texture shadows byte accounting overflow")
+            })?;
+            let maximum = MAX_MATERIAL_BYTES.min(remaining);
+            let asset = sources.retained(path)?.ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "{path}: original material dependency was not retained"
+                ))
+            })?;
+            let bytes = asset.bytes();
+            if bytes.len() > maximum {
+                return Err(std::io::Error::other(format!(
+                    "{path}: retained material exceeds its {maximum} byte limit"
+                )));
             }
-            Ok(asset.map(|asset| asset.bytes().to_vec()))
+            budget
+                .consume(bytes.len().div_ceil(64))
+                .map_err(std::io::Error::other)?;
+            self.allocations.push(
+                budget
+                    .reserve_bytes(bytes.len())
+                    .map_err(std::io::Error::other)?,
+            );
+            self.bytes += bytes.len();
+            Ok(Some(bytes.to_vec()))
         })
         .map_err(|error| format!("Brush texture shadows material {name}: {error}"))?
         .ok_or_else(|| format!("Brush texture shadows material {name} was not found"))
@@ -698,6 +709,111 @@ mod tests {
     use super::*;
     use crate::Control;
     use source_formats::model::{Part, Vertex};
+
+    #[test]
+    fn brush_material_replays_retained_patch_bytes_with_existing_limits() {
+        use crate::asset_sources::BuildMaterialSources;
+        use source_formats::gamefs::{Mount, MountedPath};
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/validation/931-brush-material-replay");
+        std::fs::create_dir_all(&root).unwrap();
+        let directory = tempfile::tempdir_in(root).unwrap();
+        std::fs::create_dir(directory.path().join("materials")).unwrap();
+        let patch_path = "materials/panel.vmt";
+        let base_path = "materials/base.vmt";
+        let patch = "Patch { include materials/base.vmt replace { $alpha 1 } }";
+        let base = "VertexLitGeneric { $alpha 0 $alpha 0.5 }";
+        for (path, text) in [(patch_path, patch), (base_path, base)] {
+            std::fs::write(directory.path().join(path), text).unwrap();
+        }
+        let oversized_path = "materials/oversized.vmt";
+        let oversized = vec![b' '; MAX_MATERIAL_BYTES + 1];
+        std::fs::write(directory.path().join(oversized_path), oversized).unwrap();
+        let mut game = crate::test_common::empty_game();
+        game.mounts.push(MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(directory.path().to_owned()),
+        });
+        let sources = BuildMaterialSources::default();
+        for path in [patch_path, base_path] {
+            sources
+                .read_asset(&game, path, MAX_MATERIAL_BYTES)
+                .unwrap()
+                .unwrap();
+        }
+        sources
+            .read_asset(&game, oversized_path, MAX_MATERIAL_BYTES + 1)
+            .unwrap()
+            .unwrap();
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        let mut assets = Assets::for_brushes(&game, &sources);
+        let material = assets.brush_material("panel", &mut budget).unwrap();
+        assert_eq!(material.shader, "vertexlitgeneric");
+        assert_eq!(material.get("$alpha"), Some("1"));
+        assert_eq!(assets.lookups, 2);
+        assert_eq!(assets.bytes, patch.len() + base.len());
+        assert_eq!(budget.live_bytes(), assets.bytes);
+        assert_eq!(
+            budget.work(),
+            2 + patch.len().div_ceil(64) + base.len().div_ceil(64)
+        );
+        drop(assets);
+        assert_eq!(budget.live_bytes(), 0);
+
+        let missing = BuildMaterialSources::default();
+        missing
+            .read_asset(&game, patch_path, MAX_MATERIAL_BYTES)
+            .unwrap()
+            .unwrap();
+        let mut assets = Assets::for_brushes(&game, &missing);
+        let error = assets.brush_material("panel", &mut budget).unwrap_err();
+        assert!(error.contains(base_path) && error.contains("was not retained"));
+        assert!(!missing.is_observed(base_path).unwrap());
+        drop(assets);
+        assert_eq!(budget.live_bytes(), 0);
+
+        let mut assets = Assets::for_brushes(&game, &sources);
+        assets.bytes = MAX_ASSET_BYTES - patch.len() + 1;
+        let error = assets.brush_material("panel", &mut budget).unwrap_err();
+        assert!(error.contains("retained material exceeds"));
+        assert_eq!(budget.live_bytes(), 0);
+        drop(assets);
+
+        let mut assets = Assets::for_brushes(&game, &sources);
+        let error = assets.brush_material("oversized", &mut budget).unwrap_err();
+        assert!(error.contains("retained material exceeds"));
+        assert_eq!(assets.bytes, 0);
+        assert_eq!(budget.live_bytes(), 0);
+        assets.lookups = MAX_MATERIAL_LOOKUPS;
+        let error = assets.brush_material("panel", &mut budget).unwrap_err();
+        assert!(error.contains("material lookups"));
+        assert_eq!(assets.bytes, 0);
+        drop(assets);
+
+        let mut exhausted = Budget::with_limit(&control, 0);
+        let mut assets = Assets::for_brushes(&game, &sources);
+        assert!(assets.brush_material("panel", &mut exhausted).is_err());
+        assert_eq!(assets.lookups, 0);
+        assert_eq!(assets.bytes, 0);
+        assert_eq!(exhausted.live_bytes(), 0);
+        let held = budget
+            .reserve_bytes(super::super::bake::MAX_LIGHTING_LIVE_BYTES)
+            .unwrap();
+        assert!(assets.brush_material("panel", &mut budget).is_err());
+        assert_eq!(assets.bytes, 0);
+        assert!(assets.allocations.is_empty());
+        drop(held);
+        assert_eq!(budget.live_bytes(), 0);
+        control.cancel().unwrap();
+        let mut assets = Assets::for_brushes(&game, &sources);
+        let error = assets.brush_material("panel", &mut budget).unwrap_err();
+        assert!(error.contains("Compilation cancelled"));
+        assert_eq!(assets.lookups, 0);
+        assert_eq!(assets.bytes, 0);
+        assert_eq!(budget.live_bytes(), 0);
+    }
 
     #[test]
     fn guarded_shadow_reads_cannot_replace_original_assets_or_bypass_budgets() {

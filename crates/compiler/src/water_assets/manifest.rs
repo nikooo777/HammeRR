@@ -5,10 +5,11 @@ use serde::{Deserialize, Serialize};
 use source_formats::bsp::{self, Bsp, PakArchive, PakEntry, PakLimits};
 use source_formats::gamefs::asset_relative;
 
+use super::reflections::LiquidReflections;
 use super::{MAX_MANIFEST_BYTES, MAX_ROOTS, WaterAssetPlan, checkpoint, invalid};
 use crate::Control;
 use crate::asset_sources::hash;
-use crate::water_dependencies::{canonical_material_path, collect_static_water_closure};
+use crate::water_dependencies::canonical_material_path;
 
 pub const PACKED_WATER_MANIFEST_PATH: &str = "hammerr/packed-water.json";
 
@@ -198,6 +199,8 @@ fn verify_archive(
         .iter()
         .map(|entry| (entry.name.as_str(), entry.data.as_slice()))
         .collect::<BTreeMap<_, _>>();
+    let generated = crate::cubemap_assets::read_generated_cubemaps(bsp, control)?;
+    let reflections = LiquidReflections::new(generated.as_ref());
     let mut registered = BTreeSet::new();
     for asset in &manifest.assets {
         checkpoint(control)?;
@@ -213,28 +216,52 @@ fn verify_archive(
         registered.insert(asset.path.clone());
     }
     let mut roots = manifest.roots.iter().cloned().collect::<BTreeSet<_>>();
-    roots.extend(water_surface_materials(bsp, control)?);
+    let surfaces = water_surface_materials(bsp, control)?;
+    if surfaces
+        .iter()
+        .any(|path| reflections.is_runtime_source(path))
+    {
+        return Err(invalid(
+            "Runtime slime surface has no generated reflection material binding",
+        ));
+    }
+    if surfaces.iter().any(|path| {
+        reflections
+            .original(path)
+            .is_some_and(|original| !roots.contains(original))
+    }) {
+        return Err(invalid(
+            "Generated slime surface has no registered original liquid root",
+        ));
+    }
+    roots.extend(surfaces);
     let mut closure_paths = BTreeSet::new();
     for root in roots {
-        let closure =
-            collect_static_water_closure(&root, control, &mut |path, _material, maximum| {
-                checkpoint(control)?;
-                if !registered.contains(path) {
-                    return Err(invalid(format!(
-                        "Water dependency is absent from its manifest: {path}"
-                    )));
-                }
-                let bytes = entries.get(path).ok_or_else(|| {
-                    invalid(format!("Packed Water dependency is missing: {path}"))
-                })?;
-                if bytes.len() > maximum {
-                    return Err(invalid(format!(
-                        "Packed Water dependency exceeds its byte budget: {path}"
-                    )));
-                }
-                Ok(bytes.to_vec())
-            })?;
-        closure_paths.extend(closure.paths);
+        let closure = reflections.collect(&root, control, &mut |path, _material, maximum| {
+            checkpoint(control)?;
+            if !registered.contains(path) && !reflections.contains(path) {
+                return Err(invalid(format!(
+                    "Water dependency is absent from its manifest: {path}"
+                )));
+            }
+            let bytes = entries
+                .get(path)
+                .ok_or_else(|| invalid(format!("Packed Water dependency is missing: {path}")))?;
+            if bytes.len() > maximum {
+                return Err(invalid(format!(
+                    "Packed Water dependency exceeds its byte budget: {path}"
+                )));
+            }
+            if !reflections.contains(path) {
+                reflections.verify_source(path, bytes)?;
+            }
+            Ok(bytes.to_vec())
+        })?;
+        closure_paths.extend(
+            closure
+                .into_iter()
+                .filter(|path| !reflections.contains(path)),
+        );
     }
     if closure_paths != registered {
         return Err(invalid(

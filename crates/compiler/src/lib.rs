@@ -1216,7 +1216,11 @@ fn build(
             })
             .collect::<Result<Vec<_>, _>>()?;
         Some(
-            water_assets::collect_water_asset_plan(
+            (if options.generate_reflections && options.lighting == LightingMode::DirectLdrHdr {
+                water_assets::collect_reflective_water_asset_plan
+            } else {
+                water_assets::collect_water_asset_plan
+            })(
                 roots.iter().map(String::as_str),
                 fs,
                 sources,

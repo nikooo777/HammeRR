@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use glam::{DQuat, DVec3, EulerRot, Vec3};
 use source_formats::{
-    bsp::{DetailProp, DetailSprite},
+    bsp::{DetailProp, DetailProps, DetailSprite, RgbExp32},
     gamefs::GameFs,
 };
 
@@ -17,6 +17,44 @@ pub const MAX_INDICES: usize = 786_432;
 pub const MAX_BYTES: usize = 32 * 1024 * 1024;
 const FULL_BILLBOARD_TAG: f32 = -2.5;
 const VERTICAL_BILLBOARD_TAG: f32 = -3.5;
+pub const BAKED_LIGHTING_RECEIVER: u32 = 2;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Lighting {
+    #[default]
+    EditorShading,
+    BakedLdr,
+}
+
+impl Lighting {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::EditorShading => "editor_shading",
+            Self::BakedLdr => "baked_ldr",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "editor_shading" => Ok(Self::EditorShading),
+            "baked_ldr" => Ok(Self::BakedLdr),
+            _ => Err("Compiled detail lighting must be editor_shading or baked_ldr".into()),
+        }
+    }
+}
+
+pub fn baked_ldr_linear(color: RgbExp32) -> [f64; 3] {
+    color.linear().map(|channel| channel / 255.0)
+}
+
+pub fn baked_ldr_issue(records: &DetailProps) -> Option<String> {
+    records.props.iter().enumerate().find_map(|(ordinal, prop)| {
+        (prop.light_style_count != 0).then(|| format!(
+            "Detail record {ordinal} uses {} runtime light styles; Baked LDR requires zero-style final records",
+            prop.light_style_count
+        ))
+    })
+}
 
 #[derive(Debug, Clone)]
 pub struct Part {
@@ -232,6 +270,55 @@ pub fn model_scene(fs: &GameFs, materials: &mut MaterialLibrary, models: &[Insta
 }
 
 impl SceneMesh {
+    pub fn set_compiled_detail_lighting(
+        &mut self,
+        records: &DetailProps,
+        lighting: Lighting,
+    ) -> Result<(), String> {
+        if lighting == Lighting::BakedLdr
+            && let Some(issue) = baked_ldr_issue(records)
+        {
+            return Err(issue);
+        }
+        if records.props.len() > source_formats::bsp::MAX_DETAIL_PROPS
+            || self.detail_parts.len() != records.props.len()
+        {
+            return Err("Compiled detail lighting requires complete native record ranges".into());
+        }
+        let mut seen = vec![false; records.props.len()];
+        let mut cursor = 0;
+        for part in &self.detail_parts {
+            if part.ordinal >= seen.len()
+                || seen[part.ordinal]
+                || part.vertices.start != cursor
+                || part.vertices.start > part.vertices.end
+                || part.vertices.end > self.vertices.len()
+            {
+                return Err("Compiled detail lighting ranges are inconsistent".into());
+            }
+            seen[part.ordinal] = true;
+            cursor = part.vertices.end;
+        }
+        if cursor != self.vertices.len() {
+            return Err("Compiled detail lighting ranges are incomplete".into());
+        }
+        for part in &self.detail_parts {
+            let color = match lighting {
+                Lighting::EditorShading => [255; 3],
+                Lighting::BakedLdr => baked_ldr_linear(records.props[part.ordinal].lighting)
+                    .map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8),
+            };
+            for vertex in &mut self.vertices[part.vertices.clone()] {
+                vertex.color[..3].copy_from_slice(&color);
+                vertex.lighting_receiver = match lighting {
+                    Lighting::EditorShading => 0,
+                    Lighting::BakedLdr => BAKED_LIGHTING_RECEIVER,
+                };
+            }
+        }
+        Ok(())
+    }
+
     pub fn add_compiled_detail_card(
         &mut self,
         material: usize,
@@ -544,6 +631,89 @@ impl SceneMesh {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn baked_ldr_uses_native_colors_once_for_every_card_form_and_refuses_bad_ranges_atomically() {
+        let fs = GameFs {
+            game_dir: Default::default(),
+            base_dir: Default::default(),
+            mounts: Vec::new(),
+        };
+        let mut materials = MaterialLibrary::flat(["detail".into()]);
+        let mut mesh = model_scene(&fs, &mut materials, &[]);
+        let sprite = DetailSprite {
+            upper_left: [-4.0, 8.0],
+            lower_right: [4.0, -8.0],
+            texture_upper_left: [0.0; 2],
+            texture_lower_right: [1.0; 2],
+        };
+        let cases = [
+            (1, 0, [64, 128, 255], -1, [32, 64, 128]),
+            (2, 0, [255, 64, 0], 1, [255, 128, 0]),
+            (3, 0, [0, 0, 0], 127, [0, 0, 0]),
+            (1, 1, [1, 2, 3], 127, [255, 255, 255]),
+            (1, 2, [255, 128, 64], -128, [0, 0, 0]),
+        ];
+        let mut records = DetailProps {
+            sprites: vec![sprite],
+            props: cases
+                .iter()
+                .map(|&(kind, orientation, rgb, exponent, _)| DetailProp {
+                    kind,
+                    orientation,
+                    lighting: RgbExp32 { rgb, exponent },
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        for ordinal in [4, 0, 3, 1, 2] {
+            let first = mesh.vertices.len();
+            mesh.add_compiled_detail_card(0, &records.props[ordinal], sprite)
+                .unwrap();
+            mesh.detail_parts.push(Part {
+                ordinal,
+                vertices: first..mesh.vertices.len(),
+                wires: 0..0,
+                billboards: 0..0,
+                bounds: [DVec3::splat(-8.0), DVec3::splat(8.0)],
+            });
+        }
+        let original = mesh.vertices.clone();
+        let bounds = (mesh.mins, mesh.maxs);
+        let wires = mesh.wire_lines.clone();
+        mesh.set_compiled_detail_lighting(&records, Lighting::BakedLdr)
+            .unwrap();
+        for part in &mesh.detail_parts {
+            for index in part.vertices.clone() {
+                let mut expected = original[index];
+                expected.color[..3].copy_from_slice(&cases[part.ordinal].4);
+                expected.lighting_receiver = BAKED_LIGHTING_RECEIVER;
+                assert_eq!(mesh.vertices[index], expected);
+            }
+        }
+        assert_eq!((mesh.mins, mesh.maxs), bounds);
+        assert_eq!(mesh.wire_lines, wires);
+        let colored = mesh.vertices.clone();
+        records.props[2].light_style_count = 1;
+        assert!(
+            mesh.set_compiled_detail_lighting(&records, Lighting::BakedLdr)
+                .unwrap_err()
+                .contains("runtime light styles")
+        );
+        assert_eq!(mesh.vertices, colored);
+        records.props[2].light_style_count = 0;
+        mesh.detail_parts[1].ordinal = mesh.detail_parts[0].ordinal;
+        assert!(
+            mesh.set_compiled_detail_lighting(&records, Lighting::EditorShading)
+                .is_err()
+        );
+        assert_eq!(mesh.vertices, colored);
+        mesh.detail_parts[1].ordinal = 0;
+        mesh.set_compiled_detail_lighting(&records, Lighting::EditorShading)
+            .unwrap();
+        assert_eq!(mesh.vertices, original);
+    }
 
     #[test]
     fn literal_card_cross_and_tri_rest_coordinates_follow_native_records() {

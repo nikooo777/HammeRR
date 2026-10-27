@@ -8,7 +8,7 @@ use super::{MAX_ROOTS, PACKED_WATER_MANIFEST_PATH, checkpoint, invalid};
 use crate::Control;
 use crate::asset_sources::{AssetSourceGuard, BuildMaterialSources, CapturedBuildAsset, hash};
 use crate::water_dependencies::{
-    MAX_MATERIAL_BYTES, canonical_material_path, collect_static_water_closure,
+    GeneratedLiquidAssets, MAX_MATERIAL_BYTES, canonical_material_path, collect_water_closure,
 };
 
 #[derive(Debug, Clone)]
@@ -109,6 +109,29 @@ pub fn collect_water_asset_plan<'a>(
     limits: PakLimits,
     control: &Control,
 ) -> io::Result<WaterAssetPlan> {
+    collect_plan(roots, game, sources, existing, limits, control, false)
+}
+
+pub(crate) fn collect_reflective_water_asset_plan<'a>(
+    roots: impl IntoIterator<Item = &'a str>,
+    game: &GameFs,
+    sources: &BuildMaterialSources,
+    existing: &PakArchive,
+    limits: PakLimits,
+    control: &Control,
+) -> io::Result<WaterAssetPlan> {
+    collect_plan(roots, game, sources, existing, limits, control, true)
+}
+
+fn collect_plan<'a>(
+    roots: impl IntoIterator<Item = &'a str>,
+    game: &GameFs,
+    sources: &BuildMaterialSources,
+    existing: &PakArchive,
+    limits: PakLimits,
+    control: &Control,
+    reflections: bool,
+) -> io::Result<WaterAssetPlan> {
     checkpoint(control)?;
     let limits = crate::pak_limits::bounded(limits);
     let mut check = || checkpoint(control);
@@ -128,6 +151,14 @@ pub fn collect_water_asset_plan<'a>(
         selected.insert(root.to_owned());
     }
     let roots = selected.into_iter().collect::<Vec<_>>();
+    let generated = GeneratedLiquidAssets {
+        materials: if reflections {
+            roots.iter().cloned().collect()
+        } else {
+            BTreeSet::new()
+        },
+        cubemaps: BTreeSet::new(),
+    };
     let existing_names = existing
         .entries
         .iter()
@@ -146,8 +177,11 @@ pub fn collect_water_asset_plan<'a>(
     let mut assets = BTreeMap::<String, CapturedBuildAsset>::new();
     let mut retained_bytes = 0usize;
     for root in &roots {
-        let closure =
-            collect_static_water_closure(root, control, &mut |path, _material, maximum| {
+        let closure = collect_water_closure(
+            root,
+            control,
+            &generated,
+            &mut |path, _material, maximum| {
                 checkpoint(control)?;
                 if path.len() > limits.max_name_bytes {
                     return Err(invalid(format!(
@@ -192,7 +226,8 @@ pub fn collect_water_asset_plan<'a>(
                     assets.insert(path.into(), asset.clone());
                 }
                 Ok(asset.bytes().to_vec())
-            })?;
+            },
+        )?;
         if closure.paths.iter().any(|path| !assets.contains_key(path)) {
             return Err(invalid(
                 "Water closure contains an unretained original asset",

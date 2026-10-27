@@ -1,6 +1,8 @@
 mod collection;
 mod manifest;
+mod reflections;
 
+pub(crate) use collection::collect_reflective_water_asset_plan;
 pub use collection::{WaterAssetPlan, WaterAssetSourceSnapshot, collect_water_asset_plan};
 pub use manifest::{
     PACKED_WATER_MANIFEST_PATH, WaterAssetManifest, WaterPackedAsset, read_packed_water,
@@ -20,5 +22,7 @@ fn checkpoint(control: &crate::Control) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod build_tests;
+#[cfg(test)]
+mod reflection_tests;
 #[cfg(test)]
 mod tests;

@@ -164,6 +164,50 @@ fn bytemuck_bits(info: &bsp::TexInfo) -> [u32; 18] {
     bits
 }
 
+/// Native texture rows followed by lightmap rows, using the map loader's brush-model origin.
+pub fn native_side_projections(side: &Side, origin: DVec3) -> Result<[[[f32; 4]; 2]; 2], String> {
+    let lightmap_scale = if side.lightmap_scale == 0 {
+        DEFAULT_LIGHTMAP_SCALE
+    } else {
+        side.lightmap_scale as f64
+    };
+    let vec = |axis: &source_formats::vmf::UvAxis| {
+        let scale = if axis.scale == 0.0 { 1.0 } else { axis.scale };
+        let a = axis.axis / scale;
+        [
+            a.x as f32,
+            a.y as f32,
+            a.z as f32,
+            (axis.offset + origin.dot(a)) as f32,
+        ]
+    };
+    let lightmap_vec = |axis: &source_formats::vmf::UvAxis| {
+        let a = axis.axis / lightmap_scale;
+        [
+            a.x as f32,
+            a.y as f32,
+            a.z as f32,
+            (axis.offset * axis.scale / lightmap_scale + origin.dot(a)) as f32,
+        ]
+    };
+    let projections = [
+        [vec(&side.u_axis), vec(&side.v_axis)],
+        [lightmap_vec(&side.u_axis), lightmap_vec(&side.v_axis)],
+    ];
+    if projections
+        .iter()
+        .flatten()
+        .flatten()
+        .any(|value| !value.is_finite())
+    {
+        return Err(format!(
+            "side:{}: texture/lightmap projections must fit finite native floats",
+            side.id
+        ));
+    }
+    Ok(projections)
+}
+
 pub struct Map<'a> {
     pub planes: PlaneSet,
     pub materials: Materials<'a>,
@@ -795,48 +839,13 @@ impl<'a> Map<'a> {
     fn texinfo(&mut self, side: &Side, material: usize, origin: DVec3) -> Result<usize, String> {
         let flags = self.materials.get(material).surface;
         let texdata = self.texture_data(material);
-        let lightmap_scale = if side.lightmap_scale == 0 {
-            DEFAULT_LIGHTMAP_SCALE
-        } else {
-            side.lightmap_scale as f64
-        };
-        let vec = |axis: &source_formats::vmf::UvAxis| {
-            let scale = if axis.scale == 0.0 { 1.0 } else { axis.scale };
-            let a = axis.axis / scale;
-            [
-                a.x as f32,
-                a.y as f32,
-                a.z as f32,
-                (axis.offset + origin.dot(a)) as f32,
-            ]
-        };
-        let lightmap_vec = |axis: &source_formats::vmf::UvAxis| {
-            let a = axis.axis / lightmap_scale;
-            [
-                a.x as f32,
-                a.y as f32,
-                a.z as f32,
-                (axis.offset * axis.scale / lightmap_scale + origin.dot(a)) as f32,
-            ]
-        };
+        let [texture_vecs, lightmap_vecs] = native_side_projections(side, origin)?;
         let info = bsp::TexInfo {
-            texture_vecs: [vec(&side.u_axis), vec(&side.v_axis)],
-            lightmap_vecs: [lightmap_vec(&side.u_axis), lightmap_vec(&side.v_axis)],
+            texture_vecs,
+            lightmap_vecs,
             flags,
             texdata: texdata as i32,
         };
-        if info
-            .texture_vecs
-            .iter()
-            .chain(&info.lightmap_vecs)
-            .flatten()
-            .any(|value| !value.is_finite())
-        {
-            return Err(format!(
-                "side:{}: texture/lightmap projections must fit finite native floats",
-                side.id
-            ));
-        }
         Ok(self.texinfos.add(info))
     }
 

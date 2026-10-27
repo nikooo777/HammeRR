@@ -215,6 +215,17 @@ Repeated and nested props retain their selected skins and outer-reference select
 Use `reload_model_assets` or `reload_material_assets` after changing those files.
 See [instance contents](instance-contents.md) for limits.
 
+## Extract an assembly
+
+Call `set_instance_extraction` with `action:"prepare"`, a new relative VMF
+`file`, and optional `pivot`. Omit it for World origin, use
+`{"kind":"selection_centre"}`, or supply
+`{"kind":"custom","position":[12.375,-6.625,2.125]}`.
+Read the frozen point with `get_instance_extraction`. Use the owned `token`
+with `action:"extract"`, or cancel and prepare again to change it.
+Geometry and native texture/lightmap projections must remain unchanged.
+See [Extract an assembly](instance-extraction.md) for bounds and file rules.
+
 ## Collapse all visible references
 
 Call `get_instance_collapse`, then `set_instance_collapse` with

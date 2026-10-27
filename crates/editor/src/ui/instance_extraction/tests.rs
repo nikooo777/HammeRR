@@ -31,6 +31,10 @@ fn software_instance_extraction_callbacks_prepare_review_extract_cancel_and_undo
     let shared = Arc::new(Mutex::new(session));
     let controller = Controller::new(shared.clone()).unwrap();
     controller.window.set_file("software.vmf".into());
+    controller.window.set_pivot_mode(2);
+    controller.window.set_pivot_x("12.375".into());
+    controller.window.set_pivot_y("-6.625".into());
+    controller.window.set_pivot_z("2.125".into());
     controller.window.invoke_prepare();
     wait(&controller);
     assert!(
@@ -43,12 +47,33 @@ fn software_instance_extraction_callbacks_prepare_review_extract_cancel_and_undo
     controller
         .window
         .window()
-        .set_size(slint::PhysicalSize::new(760, 530));
+        .set_size(slint::PhysicalSize::new(760, 650));
     crate::ui::tests::save_ui_snapshot(controller.window.window(), "instance-extraction");
+    assert!(
+        controller
+            .window
+            .get_summary()
+            .contains("Custom · 12.375 -6.625 2.125")
+    );
+    controller.window.set_pivot_x("13.375".into());
+    controller.window.invoke_extract();
+    assert!(controller.window.get_message().contains("Pivot changed"));
+    assert_eq!(lock(&shared).document().vmf(), &original);
+    assert!(!directory.path().join("software.vmf").exists());
+    assert_eq!(controller.window.get_pivot_x(), "12.375");
     controller.window.invoke_extract();
     wait(&controller);
     assert!(directory.path().join("software.vmf").exists());
     assert_eq!(lock(&shared).document().undo_labels().count(), 1);
+    let helper = lock(&shared)
+        .document()
+        .vmf()
+        .entities
+        .iter()
+        .find(|entity| entity.classname() == Some("func_instance"))
+        .cloned()
+        .unwrap();
+    assert_eq!(helper.origin(), Some(DVec3::new(12.375, -6.625, 2.125)));
     lock(&shared).undo(Actor::User).unwrap();
     assert_eq!(lock(&shared).document().vmf(), &original);
     lock(&shared).select(&ids, SelectMode::Replace).unwrap();
@@ -69,6 +94,36 @@ fn software_instance_extraction_callbacks_prepare_review_extract_cancel_and_undo
     controller.window.invoke_cancel();
     assert!(lock(&shared).get_instance_extraction()["token"].is_null());
     assert!(!directory.path().join("agent.vmf").exists());
+    controller.window.set_file("centre.vmf".into());
+    controller.window.set_pivot_mode(1);
+    controller.window.invoke_prepare();
+    wait(&controller);
+    assert!(
+        controller.window.get_ready(),
+        "{}",
+        controller.window.get_message()
+    );
+    assert!(
+        controller
+            .window
+            .get_summary()
+            .contains("Selection centre · 60 48 16")
+    );
+    controller.window.invoke_cancel();
+    assert!(!directory.path().join("centre.vmf").exists());
+    controller.window.set_file("invalid-pivot.vmf".into());
+    controller.window.set_pivot_mode(2);
+    controller.window.set_pivot_x("NaN".into());
+    controller.window.invoke_prepare();
+    assert!(
+        controller
+            .window
+            .get_message()
+            .contains("finite X, Y and Z")
+    );
+    assert!(lock(&shared).get_instance_extraction()["token"].is_null());
+    assert_eq!(lock(&shared).document().vmf(), &original);
+    assert!(!directory.path().join("invalid-pivot.vmf").exists());
 }
 
 #[test]

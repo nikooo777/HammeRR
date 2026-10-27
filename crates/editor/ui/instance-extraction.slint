@@ -1,11 +1,15 @@
-import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+import { Button, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
 
 export component InstanceExtractionWindow inherits Window {
     title: "Extract selection to instance - HammeRR";
     preferred-width: 760px;
-    preferred-height: 530px;
+    preferred-height: 650px;
     background: #20242b;
     in-out property <string> file;
+    in-out property <int> pivot-mode;
+    in-out property <string> pivot-x: "0";
+    in-out property <string> pivot-y: "0";
+    in-out property <string> pivot-z: "0";
     in property <string> summary;
     in property <string> message;
     in property <bool> active;
@@ -25,7 +29,29 @@ export component InstanceExtractionWindow inherits Window {
         Text { text: "Extract selection to instance"; color: #e2e8f0; font-size: 20px; }
         Text { text: "New child VMF · explicit relative path under the saved parent"; color: #cbd6e4; }
         LineEdit { text <=> root.file; enabled: !root.active; placeholder-text: "assemblies/platform.vmf"; }
-        Text { text: "Pivot: World origin (0, 0, 0) · planes and texture axes stay unchanged"; color: #a7b5c8; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: 8px;
+            Text { text: "Pivot"; color: #cbd6e4; vertical-alignment: center; }
+            ComboBox { model: ["World origin (0, 0, 0)", "Selection centre", "Custom"]; current-index <=> root.pivot-mode; enabled: !root.active; accessible-label: "Extraction pivot"; horizontal-stretch: 1; }
+        }
+        if root.pivot-mode == 2 || root.active: HorizontalLayout {
+            spacing: 8px;
+            for label[index] in ["X", "Y", "Z"]: VerticalLayout {
+                spacing: 4px;
+                Text { text: label; color: #a7b5c8; }
+                LineEdit {
+                    enabled: !root.active && root.pivot-mode == 2;
+                    input-type: decimal;
+                    text: index == 0 ? root.pivot-x : index == 1 ? root.pivot-y : root.pivot-z;
+                    edited(value) => {
+                        if index == 0 { root.pivot-x = value; }
+                        else if index == 1 { root.pivot-y = value; }
+                        else { root.pivot-z = value; }
+                    }
+                }
+            }
+        }
+        Text { text: "Custom uses finite X, Y and Z. Selection centre is computed when preparing. The child uses local coordinates; original placement and compiled texture mapping must stay unchanged. Cancel to change a prepared pivot."; color: #a7b5c8; wrap: word-wrap; }
         ScrollView {
             content-width: self.width;
             vertical-stretch: 1;

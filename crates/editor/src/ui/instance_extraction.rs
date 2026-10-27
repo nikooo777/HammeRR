@@ -1,6 +1,8 @@
 use super::*;
 use crate::InstanceExtractionWindow;
 use crate::runtime::{DocumentAccess, DocumentContinuation};
+use session::instance_extraction::Pivot;
+use source_formats::vmf::{format_number, format_vec3, parse_vec3};
 use std::cell::Cell;
 
 pub(super) struct Controller {
@@ -75,8 +77,31 @@ impl Controller {
         if active {
             self.window
                 .set_file(report["file"].as_str().unwrap_or_default().into());
-            self.window.set_summary(format!("Parent: {}\nOwner: {} · {}\nSelection: {}\nWorld brushes: {} · Detail brushes: {} · Faces: {}\nChild bytes: {} · SHA-256: {}\n{}",
-                report["source"].as_str().unwrap_or("Unavailable"),report["owner"].as_str().unwrap_or("Unknown"),report["status"].as_str().unwrap_or("Unknown"),report["selected"].as_array().map(|ids|ids.iter().filter_map(|id|id.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
+            let mode = match report["pivot_mode"].as_str() {
+                Some("world_origin") => Some(0),
+                Some("selection_centre") => Some(1),
+                Some("custom") => Some(2),
+                _ => None,
+            };
+            if let Some(mode) = mode {
+                self.window.set_pivot_mode(mode);
+            }
+            let pivot = serde_json::from_value::<[f64; 3]>(report["pivot"].clone())
+                .ok()
+                .map(DVec3::from_array);
+            if let Some(pivot) = pivot {
+                self.window.set_pivot_x(format_number(pivot.x).into());
+                self.window.set_pivot_y(format_number(pivot.y).into());
+                self.window.set_pivot_z(format_number(pivot.z).into());
+            }
+            let pivot_label = match mode {
+                Some(0) => "World origin",
+                Some(1) => "Selection centre",
+                Some(2) => "Custom",
+                _ => "Unavailable",
+            };
+            self.window.set_summary(format!("Parent: {}\nOwner: {} · {}\nPivot: {} · {}\nSelection: {}\nWorld brushes: {} · Detail brushes: {} · Faces: {}\nChild bytes: {} · SHA-256: {}\n{}",
+                report["source"].as_str().unwrap_or("Unavailable"),report["owner"].as_str().unwrap_or("Unknown"),report["status"].as_str().unwrap_or("Unknown"),pivot_label,pivot.map(format_vec3).unwrap_or_else(||"Unavailable".into()),report["selected"].as_array().map(|ids|ids.iter().filter_map(|id|id.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
                 report["world_brushes"],report["detail_brushes"],report["sides"],report["bytes"],report["sha256"].as_str().unwrap_or("Not prepared"),
                 report["error"].as_str().or_else(||report["cleanup_error"].as_str()).unwrap_or(if report["ready"]==true {"Serialized child and compiler-expanded geometry match. Extract publishes the new file and replaces this selection."}else{"Preparing uses a private file; the final child does not exist yet."})).into());
         } else if let Some(error) = report["cleanup_error"].as_str() {
@@ -89,20 +114,59 @@ impl Controller {
         }
     }
 
+    fn pivot(&self) -> Result<Pivot, String> {
+        match self.window.get_pivot_mode() {
+            0 => Ok(Pivot::WorldOrigin),
+            1 => Ok(Pivot::SelectionCentre),
+            2 => parse_vec3(&format!(
+                "{} {} {}",
+                self.window.get_pivot_x(),
+                self.window.get_pivot_y(),
+                self.window.get_pivot_z()
+            ))
+            .filter(|point| point.is_finite())
+            .map(Pivot::Custom)
+            .ok_or_else(|| "Custom pivot requires finite X, Y and Z coordinates".into()),
+            _ => Err("Choose World origin, Selection centre or Custom pivot".into()),
+        }
+    }
+
+    fn request(
+        &self,
+        session: &mut Session,
+        publishing: bool,
+    ) -> Result<session::instance_extraction::Request, String> {
+        let pivot = self.pivot()?;
+        if !publishing {
+            return session.begin_instance_extraction_with_pivot(
+                Actor::User,
+                self.window.get_file().as_str(),
+                pivot,
+            );
+        }
+        let review = session.get_instance_extraction();
+        let matches = match pivot {
+            Pivot::WorldOrigin => review["pivot_mode"] == "world_origin",
+            Pivot::SelectionCentre => review["pivot_mode"] == "selection_centre",
+            Pivot::Custom(position) => {
+                review["pivot_mode"] == "custom"
+                    && serde_json::from_value::<[f64; 3]>(review["pivot"].clone())
+                        .is_ok_and(|reviewed| DVec3::from_array(reviewed) == position)
+            }
+        };
+        if !matches {
+            return Err("Pivot changed; cancel and prepare the extraction again".into());
+        }
+        session.publish_instance_extraction(
+            Actor::User,
+            self.token.get().ok_or("Prepare the extraction first")?,
+        )
+    }
+
     fn start(&self, publishing: bool) {
         self.with_shared(true, |shared| {
             self.window.set_message("".into());
-            let request = {
-                let mut session = lock(shared);
-                if publishing {
-                    self.token
-                        .get()
-                        .ok_or_else(|| "Prepare the extraction first".to_owned())
-                        .and_then(|token| session.publish_instance_extraction(Actor::User, token))
-                } else {
-                    session.begin_instance_extraction(Actor::User, self.window.get_file().as_str())
-                }
-            };
+            let request = self.request(&mut lock(shared), publishing);
             match request {
                 Ok(request) => {
                     let token = request.token();

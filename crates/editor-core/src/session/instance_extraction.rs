@@ -4,7 +4,7 @@ use compiler::instances::{self, NewReferencePath, SourceContext, SourceLocation}
 use compiler::{Control, FileIdentity};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use source_formats::vmf::{Entity, Vmf};
+use source_formats::vmf::{Entity, Solid, Vmf};
 
 use super::worker::{Slot, Ticket};
 use super::*;
@@ -18,6 +18,24 @@ const MAX_BRUSHES: usize = 256;
 const MAX_SIDES: usize = 2048;
 const STAGING_NAME_BYTES: usize = 64;
 const MAX_PLAN_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Pivot {
+    #[default]
+    WorldOrigin,
+    SelectionCentre,
+    Custom(DVec3),
+}
+
+impl Pivot {
+    fn mode(self) -> &'static str {
+        match self {
+            Self::WorldOrigin => "world_origin",
+            Self::SelectionCentre => "selection_centre",
+            Self::Custom(_) => "custom",
+        }
+    }
+}
 
 #[derive(Default)]
 pub(super) struct State {
@@ -59,11 +77,16 @@ struct Form {
     status: &'static str,
     error: Option<String>,
     destination: NewReferencePath,
+    pivot: DVec3,
+    pivot_mode: &'static str,
     ready: Option<Ready>,
 }
 
 struct Plan {
     child: Vmf,
+    originals: Vec<(Solid, bool)>,
+    pivot: DVec3,
+    pivot_mode: &'static str,
     helper: Entity,
     selected: Vec<ObjectId>,
     world_brushes: usize,
@@ -169,12 +192,24 @@ fn run_work(
 }
 
 fn prepare(
-    plan: Plan,
+    mut plan: Plan,
     location: SourceLocation,
     destination: &NewReferencePath,
     control: &Control,
     cleanup: staging::Cleanup,
 ) -> Result<Ready, String> {
+    if plan.pivot != DVec3::ZERO {
+        for solid in plan.child.world.solids.iter_mut().chain(
+            plan.child
+                .entities
+                .iter_mut()
+                .flat_map(|entity| entity.solids.iter_mut()),
+        ) {
+            control.checkpoint()?;
+            map_core::edit::translate_solid(solid, -plan.pivot, true)
+                .map_err(|error| error.to_string())?;
+        }
+    }
     let input = plan
         .child
         .try_write(&Default::default())
@@ -222,23 +257,14 @@ fn prepare(
     let resolved = instances::resolve(&isolated, Some(&source), control, &mut report)
         .map_err(|error| error.message)?;
     let expected = plan
-        .child
-        .world
-        .solids
+        .originals
         .iter()
-        .map(|solid| (solid, false))
-        .chain(
-            plan.child
-                .entities
-                .iter()
-                .flat_map(|entity| entity.solids.iter().map(|solid| (solid, true))),
-        )
-        .collect::<Vec<_>>();
+        .map(|(solid, detail)| (solid, *detail));
     let generated = resolved.generated_brushes().collect::<Vec<_>>();
-    if generated.len() != expected.len() {
+    if generated.len() != plan.originals.len() {
         return Err("Serialized child changed the extracted brush count".into());
     }
-    for ((original, detail), generated) in expected.into_iter().zip(generated) {
+    for ((original, detail), generated) in expected.zip(generated) {
         control.checkpoint()?;
         if generated.original != original.id || generated.detail != detail {
             return Err("Serialized child changed brush order or ownership".into());
@@ -255,11 +281,27 @@ fn prepare(
             }
             side.id = original_side;
         }
+        for (side, source) in actual.sides.iter_mut().zip(&original.sides) {
+            let restored = compiler::map::native_side_projections(side, DVec3::ZERO)?;
+            let expected = compiler::map::native_side_projections(source, DVec3::ZERO)?;
+            if !restored
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(f32::to_bits)
+                .eq(expected.into_iter().flatten().flatten().map(f32::to_bits))
+            {
+                return Err("Serialized child changed native texture or lightmap projections; extraction rejected".into());
+            }
+            side.u_axis.offset = source.u_axis.offset;
+            side.v_axis.offset = source.v_axis.offset;
+        }
         if actual != *original {
             return Err("Serialized child changed planes, UVs, materials or face metadata; extraction rejected".into());
         }
     }
     drop(resolved);
+    plan.originals = Vec::new();
     reference
         .verify_metadata()
         .map_err(|error| error.to_string())?;
@@ -334,6 +376,15 @@ impl Session {
         actor: Actor,
         file: &str,
     ) -> Result<Request, String> {
+        self.begin_instance_extraction_with_pivot(actor, file, Pivot::WorldOrigin)
+    }
+
+    pub fn begin_instance_extraction_with_pivot(
+        &mut self,
+        actor: Actor,
+        file: &str,
+        pivot: Pivot,
+    ) -> Result<Request, String> {
         self.instance_extraction_context()?;
         if self.instance_extraction.worker.busy() {
             return Err("Wait for the cancelled extraction worker to finish".into());
@@ -357,7 +408,7 @@ impl Session {
         if prefix + STAGING_NAME_BYTES > instances::MAX_FIELD_BYTES {
             return Err("Child directory leaves insufficient space for the bounded private staging filename".into());
         }
-        let plan = admission::plan(self, destination.relative())?;
+        let plan = admission::plan(self, destination.relative(), pivot)?;
         let key = Key {
             generation: self.document_generation,
             revision: self.document.revision(),
@@ -379,6 +430,8 @@ impl Session {
             status: "preparing",
             error: None,
             destination: destination.clone(),
+            pivot: plan.pivot,
+            pivot_mode: plan.pivot_mode,
             ready: None,
         });
         let worker = self
@@ -427,13 +480,13 @@ impl Session {
             });
         let ready = form.ready.as_ref();
         json!({"cleanup_error":cleanup,"worker_active":self.instance_extraction.worker.busy(),"token":form.token,"owner":form.owner.label(),"status":if error.is_some(){"blocked"}else{form.status},"error":error,
-            "selected":form.key.selection.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>(),"file":form.destination.relative(),"source":form.key.path.as_ref().map(|path|path.display().to_string()),"pivot":[0,0,0],
+            "selected":form.key.selection.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>(),"file":form.destination.relative(),"source":form.key.path.as_ref().map(|path|path.display().to_string()),"pivot":form.pivot.to_array(),"pivot_mode":form.pivot_mode,
             "ready":form.status=="ready"&&error.is_none(),"world_brushes":ready.map(|ready|ready.plan.world_brushes),"detail_brushes":ready.map(|ready|ready.plan.detail_brushes),
             "objects":ready.map(|ready|ready.plan.selected.len()),"sides":ready.map(|ready|ready.plan.sides),"bytes":ready.map(|ready|ready.bytes),"sha256":ready.map(|ready|ready.sha256.as_str()),
             "contents_validation":if ready.is_some(){"passed"}else if form.status=="preparing"{"pending"}else{"unavailable"},
-            "validation":"Preparation checks serialized child parsing and compiler expansion with exact identity-pivot brush/face/UV agreement. Unrelated parent content is not certified.",
+            "validation":"Preparation checks serialized child parsing and compiler expansion with exact original world-space geometry/axes/scales/metadata and bit-identical native texture/lightmap projections. Unrelated parent content is not certified.",
             "undo_policy":"Undo restores parent objects; the exported child remains on disk. Redo changes only the parent.",
-            "limits":{"objects":MAX_OBJECTS,"brushes":MAX_BRUSHES,"sides":MAX_SIDES,"file_bytes":instances::MAX_FILE_BYTES,"retained_plan_bytes":MAX_PLAN_BYTES,"platform":"linux_dirfd","pivot":"world_origin_only"}})
+            "limits":{"objects":MAX_OBJECTS,"brushes":MAX_BRUSHES,"sides":MAX_SIDES,"file_bytes":instances::MAX_FILE_BYTES,"retained_plan_bytes":MAX_PLAN_BYTES,"platform":"linux_dirfd","pivot":"world_origin_selection_centre_or_custom","pivot_changes":"cancel_and_prepare_again","roundtrip":"exact_geometry_and_native_uv_or_rejected"}})
     }
 
     pub fn review_instance_extraction(
@@ -657,7 +710,7 @@ impl Session {
         }
         self.instance_extraction.form = None;
         self.instance_extraction.completed = Some((completed.token, actor));
-        self.instance_extraction.last = json!({"id":crate::identity::id_string(id),"file":path,"bytes":bytes,"sha256":sha256,"removed":removed.into_iter().map(crate::identity::id_string).collect::<Vec<_>>(),"world_brushes":plan.world_brushes,"detail_brushes":plan.detail_brushes,"sides":plan.sides,"published":true,"undo_retains_child":true});
+        self.instance_extraction.last = json!({"id":crate::identity::id_string(id),"file":path,"bytes":bytes,"sha256":sha256,"removed":removed.into_iter().map(crate::identity::id_string).collect::<Vec<_>>(),"world_brushes":plan.world_brushes,"detail_brushes":plan.detail_brushes,"sides":plan.sides,"pivot":plan.pivot.to_array(),"pivot_mode":plan.pivot_mode,"published":true,"undo_retains_child":true});
         Ok(self.get_instance_extraction())
     }
 }

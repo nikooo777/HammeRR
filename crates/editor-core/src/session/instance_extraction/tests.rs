@@ -420,7 +420,17 @@ fn instance_extraction_opaque_metadata_and_face_bindings_reject_before_staging()
 #[test]
 fn instance_extraction_compiled_geometry_and_texinfo_match_unchanged_manual_control() {
     use source_formats::bsp::lump;
-    let (_directory, mut session, parent, _ids) = opened();
+    let (_directory, mut session, parent, ids) = opened();
+    let ObjectId::Solid(world) = ids[0] else {
+        panic!()
+    };
+    session
+        .document
+        .edit("decimal source UV offset", |tx| {
+            tx.solid_mut(world)?.sides[0].u_axis.offset = 0.1;
+            Ok(())
+        })
+        .unwrap();
     let options = compiler::Options {
         lighting: compiler::LightingMode::Fullbright,
         physics: compiler::PhysicsMode::None,
@@ -437,7 +447,12 @@ fn instance_extraction_compiled_geometry_and_texinfo_match_unchanged_manual_cont
     assert!(!control.report.has_errors(), "{:?}", control.report);
     assert!(control.stats.instances.is_none());
     let before = control.bsp.unwrap();
-    let token = prepared(&mut session, Actor::Agent, "compiled.vmf");
+    let token = prepared_at(
+        &mut session,
+        Actor::Agent,
+        "compiled.vmf",
+        Pivot::Custom(DVec3::new(12.375, -6.625, 2.125)),
+    );
     let request = session
         .publish_instance_extraction(Actor::Agent, token)
         .unwrap();
@@ -856,4 +871,245 @@ fn instance_extraction_generated_side_id_exhaustion_preserves_source_and_absence
     assert_eq!(session.document.vmf(), &vmf);
     assert_eq!(session.history_snapshot(), history);
     assert!(!directory.path().join("side-exhaustion.vmf").exists());
+}
+
+fn prepared_at(session: &mut Session, actor: Actor, file: &str, pivot: Pivot) -> u64 {
+    let request = session
+        .begin_instance_extraction_with_pivot(actor, file, pivot)
+        .unwrap();
+    let token = request.token();
+    let report = session
+        .finish_instance_extraction(actor, request.run())
+        .unwrap();
+    assert_eq!(report["ready"], true, "{report}");
+    token
+}
+
+#[test]
+fn instance_extraction_local_pivots_restore_captured_world_planes_vertices_uvs_and_undo() {
+    for actor in [Actor::User, Actor::Agent] {
+        for choice in [
+            Pivot::Custom(DVec3::new(12.375, -6.625, 2.125)),
+            Pivot::SelectionCentre,
+        ] {
+            let (directory, mut session, parent, _selected) = opened();
+            let original = session.document.vmf().clone();
+            let history = session.history_snapshot();
+            let disk = std::fs::read(&parent).unwrap();
+            let world = original.world.solids.last().unwrap();
+            let detail = original
+                .entities
+                .iter()
+                .find(|entity| entity.classname() == Some("func_detail"))
+                .unwrap();
+            let source = std::iter::once((world, false))
+                .chain(detail.solids.iter().map(|solid| (solid, true)))
+                .map(|(solid, detail)| {
+                    let geometry = map_core::BrushGeometry::from_solid(solid).unwrap();
+                    let uvs = geometry
+                        .faces
+                        .iter()
+                        .map(|face| {
+                            let side = &solid.sides[face.side];
+                            face.vertices
+                                .iter()
+                                .map(|point| {
+                                    DVec2::new(
+                                        point.dot(side.u_axis.axis) / side.u_axis.scale
+                                            + side.u_axis.offset,
+                                        point.dot(side.v_axis.axis) / side.v_axis.scale
+                                            + side.v_axis.offset,
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .collect::<Vec<_>>();
+                    (solid.clone(), detail, geometry, uvs)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(source.len(), 3);
+            let pivot = match choice {
+                Pivot::Custom(position) => position,
+                Pivot::SelectionCentre => DVec3::new(60.0, 48.0, 16.0),
+                Pivot::WorldOrigin => unreachable!(),
+            };
+            let token = prepared_at(&mut session, actor, "local.vmf", choice);
+            let review = session.get_instance_extraction();
+            assert_eq!(review["pivot_mode"], choice.mode());
+            assert_eq!(
+                serde_json::from_value::<[f64; 3]>(review["pivot"].clone()).unwrap(),
+                pivot.to_array()
+            );
+            assert_eq!(session.document.vmf(), &original);
+            assert_eq!(session.history_snapshot(), history);
+            assert!(!directory.path().join("local.vmf").exists());
+            let request = session.publish_instance_extraction(actor, token).unwrap();
+            let result = session
+                .finish_instance_extraction(actor, request.run())
+                .unwrap();
+            assert_eq!(result["last"]["pivot_mode"], choice.mode());
+            let exported =
+                Vmf::parse(&std::fs::read_to_string(directory.path().join("local.vmf")).unwrap())
+                    .unwrap();
+            assert_eq!(exported.entities[0].id, detail.id);
+            assert_eq!(exported.entities[0].properties, detail.properties);
+            for (local, (source, _, geometry, uvs)) in exported.solids().zip(&source) {
+                assert_eq!(local.id, source.id);
+                for (local, source) in local.sides.iter().zip(&source.sides) {
+                    assert_eq!(local.id, source.id);
+                    assert_eq!(local.plane.0, source.plane.0.map(|point| point - pivot));
+                }
+                for (face, uv) in geometry.faces.iter().zip(uvs) {
+                    let side = &local.sides[face.side];
+                    for (point, expected_uv) in face.vertices.iter().zip(uv) {
+                        let point = *point - pivot;
+                        assert_eq!(
+                            DVec2::new(
+                                point.dot(side.u_axis.axis) / side.u_axis.scale
+                                    + side.u_axis.offset,
+                                point.dot(side.v_axis.axis) / side.v_axis.scale
+                                    + side.v_axis.offset,
+                            ),
+                            *expected_uv
+                        );
+                    }
+                }
+            }
+            let helper = session
+                .document
+                .vmf()
+                .entities
+                .iter()
+                .find(|entity| entity.classname() == Some("func_instance"))
+                .unwrap();
+            assert_eq!(helper.origin(), Some(pivot));
+            assert_eq!(helper.properties.get("angles"), Some("0 0 0"));
+            let context = SourceContext::capture(&parent, &Control::default()).unwrap();
+            let mut report = compiler::Report::default();
+            let expanded = instances::resolve(
+                session.document.vmf(),
+                Some(&context),
+                &Control::default(),
+                &mut report,
+            )
+            .unwrap();
+            let generated = expanded.generated_brushes().collect::<Vec<_>>();
+            assert_eq!(generated.len(), source.len());
+            for (actual, (original, detail, geometry, uvs)) in generated.iter().zip(&source) {
+                assert_eq!((actual.original, actual.detail), (original.id, *detail));
+                let actual_geometry = map_core::BrushGeometry::from_solid(actual.solid).unwrap();
+                assert_eq!(&actual_geometry, geometry);
+                for (actual, original) in actual.solid.sides.iter().zip(&original.sides) {
+                    assert_eq!(actual.plane, original.plane);
+                    assert_eq!(actual.material, original.material);
+                    assert_eq!(actual.rotation, original.rotation);
+                    assert_eq!(actual.lightmap_scale, original.lightmap_scale);
+                    assert_eq!(actual.smoothing_groups, original.smoothing_groups);
+                }
+                for (face, uv) in geometry.faces.iter().zip(uvs) {
+                    let side = &actual.solid.sides[face.side];
+                    for (point, expected_uv) in face.vertices.iter().zip(uv) {
+                        let actual_uv = DVec2::new(
+                            point.dot(side.u_axis.axis) / side.u_axis.scale + side.u_axis.offset,
+                            point.dot(side.v_axis.axis) / side.v_axis.scale + side.v_axis.offset,
+                        );
+                        assert_eq!(actual_uv, *expected_uv);
+                    }
+                }
+            }
+            drop(expanded);
+            assert_eq!(std::fs::read(&parent).unwrap(), disk);
+            assert_eq!(session.document.undo_labels().count(), 1);
+            session.undo(actor).unwrap();
+            assert_eq!(session.document.vmf(), &original);
+            let bytes = std::fs::read(directory.path().join("local.vmf")).unwrap();
+            session.redo(actor).unwrap();
+            assert_eq!(
+                std::fs::read(directory.path().join("local.vmf")).unwrap(),
+                bytes
+            );
+        }
+    }
+}
+
+#[test]
+fn instance_extraction_local_pivot_failures_preserve_original_and_leave_no_child() {
+    let (directory, mut session, parent, ids) = opened();
+    let original = session.document.vmf().clone();
+    let history = session.history_snapshot();
+    let disk = std::fs::read(&parent).unwrap();
+    for pivot in [
+        DVec3::splat(f64::NAN),
+        DVec3::splat(f64::INFINITY),
+        DVec3::new(16385.0, 0.0, 0.0),
+    ] {
+        assert!(
+            session
+                .begin_instance_extraction_with_pivot(
+                    Actor::User,
+                    "invalid.vmf",
+                    Pivot::Custom(pivot)
+                )
+                .is_err()
+        );
+        assert_eq!(session.document.vmf(), &original);
+        assert_eq!(session.history_snapshot(), history);
+        assert!(!directory.path().join("invalid.vmf").exists());
+    }
+    let request = session
+        .begin_instance_extraction_with_pivot(
+            Actor::User,
+            "outside.vmf",
+            Pivot::Custom(DVec3::new(-16384.0, 0.0, 0.0)),
+        )
+        .unwrap();
+    let token = request.token();
+    assert!(
+        session
+            .finish_instance_extraction(Actor::User, request.run())
+            .is_err()
+    );
+    assert!(!directory.path().join("outside.vmf").exists());
+    assert_eq!(session.document.vmf(), &original);
+    assert_eq!(session.history_snapshot(), history);
+    session
+        .cancel_instance_extraction(Actor::User, token)
+        .unwrap();
+    let ObjectId::Solid(world) = ids[0] else {
+        panic!()
+    };
+    let halfway = 1.0 + f64::from(f32::EPSILON) * 0.5;
+    let offset = f64::from_bits(halfway.to_bits() + 1);
+    assert_eq!((offset as f32).to_bits(), 1.0f32.to_bits() + 1);
+    session
+        .document
+        .edit("native UV rounding boundary", |tx| {
+            tx.solid_mut(world)?.sides[0].u_axis.offset = offset;
+            Ok(())
+        })
+        .unwrap();
+    let changed = session.document.vmf().clone();
+    let history = session.history_snapshot();
+    let request = session
+        .begin_instance_extraction_with_pivot(
+            Actor::User,
+            "rounding.vmf",
+            Pivot::Custom(DVec3::new(12.375, -6.625, 2.125)),
+        )
+        .unwrap();
+    let token = request.token();
+    let error = session
+        .finish_instance_extraction(Actor::User, request.run())
+        .unwrap_err();
+    assert!(
+        error.contains("native texture or lightmap projections"),
+        "{error}"
+    );
+    assert_eq!(session.document.vmf(), &changed);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(std::fs::read(&parent).unwrap(), disk);
+    assert!(!directory.path().join("rounding.vmf").exists());
+    session
+        .cancel_instance_extraction(Actor::User, token)
+        .unwrap();
 }

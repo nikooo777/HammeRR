@@ -92,7 +92,7 @@ fn side_bindings(session: &Session, sides: &BTreeSet<u32>) -> Result<(), String>
     Ok(())
 }
 
-pub(super) fn plan(session: &Session, file: &str) -> Result<Plan, String> {
+pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result<Plan, String> {
     let vmf = session.document.vmf();
     vmf.validate_ids().map_err(|error| error.to_string())?;
     if vmf.object_ids().take(instances::MAX_OBJECTS + 1).count() > instances::MAX_OBJECTS
@@ -366,12 +366,20 @@ pub(super) fn plan(session: &Session, file: &str) -> Result<Plan, String> {
     {
         return Err("Instance definition defaults exceed the extraction helper budget".into());
     }
+    let pivot = match pivot_choice {
+        Pivot::WorldOrigin => DVec3::ZERO,
+        Pivot::SelectionCentre => session.selection_pivot(&selected)?,
+        Pivot::Custom(point) => point,
+    };
+    if !pivot.is_finite() {
+        return Err("Extraction pivot requires finite X, Y and Z coordinates".into());
+    }
     let (classname, properties) = session.entity_properties(
         "func_instance",
         ClassKind::Point,
         BTreeMap::from([
             ("file".into(), file.into()),
-            ("origin".into(), "0 0 0".into()),
+            ("origin".into(), source_formats::vmf::format_vec3(pivot)),
             ("angles".into(), "0 0 0".into()),
         ]),
     )?;
@@ -394,11 +402,33 @@ pub(super) fn plan(session: &Session, file: &str) -> Result<Plan, String> {
     let allocator_bytes = allocator_metadata.capacity()
         * std::mem::size_of::<source_formats::keyvalues::Node>()
         + allocator_metadata.iter().map(node_bytes).sum::<usize>();
-    if plan_bytes(&child, &helper, selected.capacity()) + allocator_bytes > MAX_PLAN_BYTES {
+    let source_bytes = (world_brushes + detail_brushes) * std::mem::size_of::<(Solid, bool)>()
+        + child.solids().map(solid_bytes).sum::<usize>();
+    if plan_bytes(&child, &helper, selected.capacity()) + allocator_bytes + source_bytes
+        > MAX_PLAN_BYTES
+    {
         return Err("Extraction retained plan exceeds16 MiB".into());
     }
+    let mut originals = Vec::with_capacity(world_brushes + detail_brushes);
+    originals.extend(
+        child
+            .world
+            .solids
+            .iter()
+            .cloned()
+            .map(|solid| (solid, false)),
+    );
+    originals.extend(
+        child
+            .entities
+            .iter()
+            .flat_map(|entity| entity.solids.iter().cloned().map(|solid| (solid, true))),
+    );
     Ok(Plan {
         child,
+        originals,
+        pivot,
+        pivot_mode: pivot_choice.mode(),
         helper,
         selected,
         world_brushes,

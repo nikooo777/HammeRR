@@ -93,7 +93,7 @@ See the [tool index and setup](docs/mcp.md).
 | [Overlays](docs/overlays.md) | [Assemblies](docs/instances.md) |
 | --- | --- |
 | ![One projection spans two panels with a clear gap](docs/images/overlay-native.png) | ![Two references to one arch use different baked light colors](docs/images/instance-light-colors.png) |
-| Fit projections across flat faces and separate planar terrain patches. | Reuse transformed assemblies with light settings, scoped spotlight targets and static fog. |
+| Fit projections across flat faces and separate planar terrain patches. | Reuse assemblies with local extraction pivots, scoped lights and static fog. |
 
 | [Compiler visibility](docs/visibility.md) | [Editable instances](docs/instances.md#collapse-references-into-editable-geometry) |
 | --- | --- |

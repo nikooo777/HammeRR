@@ -42,7 +42,7 @@ Static scalar `LightmappedGeneric`, `UnlitGeneric` and scalar `Patch` chains are
 Every slime material must explicitly name itself in `$bottommaterial` for native below-view lookup. Use the material name without `materials/`, `.vmt`, extra whitespace or alternate path spelling; letter case may differ. A Patch must name the applied top material, not its include parent.
 Keep alpha at one and additive, translucent and vertex-alpha effects off. Conditional, proxy and animated blocks are unsupported.
 The material keeps its lighting and opaque envmap effects; Water-shader reflection and refraction are unavailable.
-Its material assets must remain mounted; **Pack water assets** does not support automatic slime packing.
+Enable **Pack liquid assets** for the supported non-reflective static subset described below. Other slime material assets must remain mounted.
 
 ## Inspect water material dependencies
 
@@ -55,14 +55,18 @@ Its material assets must remain mounted; **Pack water assets** does not support 
 **Supported static inventory** describes supported dependencies. Other states explain incomplete or unsupported inventories.
 Inspection does not pack assets.
 
-## Pack static Water assets
+## Pack static liquid assets
 
-1. Use a supported static Water declaration and dependencies.
-2. Enable **Pack water assets** in **Build settings…**.
-3. Compile and inspect **Water assets** in **Build details…**.
+1. Use a supported static Water declaration or opaque slime material and dependencies.
+2. Enable **Pack liquid assets** in **Build settings…**.
+3. Compile and inspect **Liquid assets** in **Build details…**.
 
 Packing supports a checked static subset, not every animated stock Water shader.
 Static envmaps require matching supported LDR and HDR cubemap files. Unsupported dependencies fail explicitly.
+
+Slime packing supports non-reflective `LightmappedGeneric`, `UnlitGeneric` and unambiguous scalar `Patch` chains with `%compileslime 1`, an explicit `$basetexture` and the exact native self-bottom declaration. It includes every original material and declared `$basetexture`, `$bumpmap` and `%tooltexture` VTF, including textures overridden by a Patch. These textures must be supported static one-frame 2D VTFs, version 7.0–7.4, with depth one and `first_frame 0`.
+Neutral opacity settings, `$surfaceprop`, `%keywords`, static fog/color controls, UV transforms and authored `$reflectivity` are admitted. Fog switches and `%notooltexture` use literal `0` or `1`; fog distances must be finite. Colors and reflectivity use normalized square-bracket RGB triples. UV transforms use the supported center/scale/rotate/translate syntax with finite components within ±1024 and no repeated operations. Other parameters, envmaps, detail textures, additional material references and effects stop packing. A Patch chain cannot edit the same key in multiple materials. Missing dependencies and unsupported texture layouts stop publication without replacing the previous BSP.
+
 Assets outside the packed closure must remain mounted in the game.
 
 ## Steady physical current

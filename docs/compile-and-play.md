@@ -61,7 +61,7 @@ Unused runtime assets are outside this guard.
 | **Brush texture shadows** | Use supported alpha-tested brush textures for light blocking. |
 | **Bake static-prop vertex lighting** | Write supported per-vertex prop lighting. |
 | **Generate reflections** | Capture and pack scene cubemaps with private CS:S clients. |
-| **Pack sky assets**, **Pack water assets**, **Pack static prop assets** | Pack supported material and model dependencies. |
+| **Pack sky assets**, **Pack liquid assets**, **Pack static prop assets** | Pack supported material and model dependencies. |
 
 **Lighting work limit (millions)** bounds lighting work. Click **Apply work limit** after editing it.
 Exceeding the allowance fails explicitly. Increase it only when the intended map and settings justify more work.

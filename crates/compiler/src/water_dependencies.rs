@@ -697,6 +697,10 @@ pub fn is_water_shader(shader: &str) -> bool {
         .any(|known| shader.eq_ignore_ascii_case(known))
 }
 
+pub(crate) fn native_self_bottom(name: &str, key: &str, value: &str) -> bool {
+    key.eq_ignore_ascii_case("$bottommaterial") && value.eq_ignore_ascii_case(name)
+}
+
 pub fn inspect_water_dependencies(
     root_vmt: &str,
     sources: &mut MaterialInspectionCapture<'_>,

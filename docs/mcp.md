@@ -336,6 +336,9 @@ Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
 See [Compile and play](compile-and-play.md).
 
+`get_cubemap_bindings` lists root-authored faces with sample choices from the complete assembled map. Child choices use `helper:null` and a source-qualified `helper_source` occurrence.
+Use `set_cubemap_bindings` to preview and apply root-face bindings to root helpers. Save maps with visible references first. Changed referenced files or consumed materials invalidate drafts.
+
 For [final detail placements](compiled-details.md), call `set_compiled_details`
 with `action:"prepare"`. Set `background:true` to read the owned BSP in a worker.
 Use `inspect_compiled_details` to check readiness and page native records.
@@ -353,6 +356,7 @@ apply to supported water and slime. The shared property fields are
 **Liquid current · world units/s** and **Liquid pressure damping**. Compile with
 engine physics. Complete structural-world liquid volumes can remain inside a
 compile region. See [Water and slime](water.md) for material and volume limits.
+Set `pack_water_assets:true` for **Pack liquid assets**, including supported non-reflective static slime materials. Settings, recipes and build results retain the `pack_water_assets` and `water_assets` field names. Unsupported closures stop the build.
 
 For [stationary child brush rotation](instances.md#rotate-a-stationary-child-brush), set canonical `angles` through `set_entity_properties` or property-edit tools.
 Save the child, then compile its parent. Compilation lowers the initial pose into body geometry and emits zero angles.

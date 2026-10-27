@@ -78,7 +78,7 @@ pub(crate) fn validate_instance_root_bindings(vmf: &Vmf, control: &Control) -> R
 pub(crate) struct Plan {
     pub manifest: CubemapAssetManifest,
     pub entries: Vec<PakEntry>,
-    eligible_faces: BTreeSet<u32>,
+    pub(super) eligible_faces: BTreeSet<u32>,
 }
 
 #[derive(Default)]
@@ -93,121 +93,6 @@ struct Side {
     texinfo: usize,
     local_center: DVec3,
     normal: DVec3,
-}
-
-pub fn inspect_cubemap_bindings(
-    vmf: &Vmf,
-    fs: &GameFs,
-    query: &CubemapBindingQuery,
-    control: &Control,
-) -> Result<CubemapBindingReport, String> {
-    if query.limit > 1024 || query.query.as_ref().is_some_and(|text| text.len() > 256) {
-        return Err("Cubemap binding query exceeds its limit".into());
-    }
-    let requested: BTreeSet<_> = query.face_ids.iter().copied().collect();
-    if requested.len() > 1024 || requested.len() != query.face_ids.len() || requested.contains(&0) {
-        return Err(
-            "Cubemap inspection face IDs must be distinct positive IDs, at most 1024".into(),
-        );
-    }
-    let mut report = Report::default();
-    let context = CompileContext::new(query.namespace.as_deref().unwrap_or("untitled"))?;
-    let prepared = crate::cordons::prepare(vmf, fs, &mut report, control)?;
-    let included: BTreeSet<_> = prepared
-        .vmf
-        .entities
-        .iter()
-        .map(|entity| entity.id)
-        .collect();
-    let helpers: Vec<_> = vmf
-        .entities
-        .iter()
-        .filter(|entity| {
-            entity
-                .classname()
-                .is_some_and(|name| name.eq_ignore_ascii_case("env_cubemap"))
-        })
-        .take(4097)
-        .map(|entity| CubemapHelperStatus {
-            helper_id: entity.id,
-            hidden: entity.hidden,
-            excluded: !included.contains(&entity.id),
-            origin: entity.origin().map(|origin| origin.to_array()),
-        })
-        .collect();
-    if helpers.len() > 4096 {
-        return Err("Cubemap helper inspection limit exceeded".into());
-    }
-    if query
-        .helper_id
-        .is_some_and(|id| !helpers.iter().any(|helper| helper.helper_id == id))
-    {
-        return Err("Requested cubemap helper is missing".into());
-    }
-    let mut map = Map::load_controlled(prepared.vmf.as_ref(), fs, &mut report, control)?;
-    if report.has_errors() {
-        return Err(report
-            .diagnostics
-            .iter()
-            .filter(|item| item.level == crate::Level::Error)
-            .map(|item| item.message.as_str())
-            .collect::<Vec<_>>()
-            .join("; "));
-    }
-    if map.cubemaps.is_empty() {
-        if !requested.is_empty() {
-            return Err(
-                "Explicit cubemap face inspection requires a visible included helper".into(),
-            );
-        }
-        return Ok(CubemapBindingReport {
-            namespace: context.namespace().into(),
-            helpers,
-            samples: Vec::new(),
-            total: 0,
-            assignments: Vec::new(),
-        });
-    }
-    let plan = prepare(
-        prepared.vmf.as_ref(),
-        fs,
-        &mut map,
-        &context,
-        PrepareOptions::default(),
-        &mut report,
-        control,
-    )?;
-    if !requested.is_subset(&plan.eligible_faces) {
-        return Err("Requested cubemap face is missing, hidden, outside the compile region or does not produce a visible compiled side".into());
-    }
-    let needle = query.query.as_deref().unwrap_or("").to_ascii_lowercase();
-    let filtered: Vec<_> = plan
-        .manifest
-        .assignments
-        .into_iter()
-        .filter(|assignment| {
-            (requested.is_empty() || requested.contains(&assignment.face_id))
-                && query
-                    .helper_id
-                    .is_none_or(|helper| helper == assignment.helper_id)
-                && (needle.is_empty()
-                    || assignment.material.contains(&needle)
-                    || assignment.face_id.to_string().contains(&needle))
-        })
-        .collect();
-    let total = filtered.len();
-    let limit = if query.limit == 0 { 256 } else { query.limit };
-    Ok(CubemapBindingReport {
-        namespace: context.namespace().into(),
-        helpers,
-        samples: plan.manifest.samples,
-        total,
-        assignments: filtered
-            .into_iter()
-            .skip(query.offset)
-            .take(limit)
-            .collect(),
-    })
 }
 
 pub(crate) fn capture_preflight(vmf: &Vmf) -> Result<(), String> {

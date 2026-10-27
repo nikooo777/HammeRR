@@ -178,6 +178,7 @@ fn origin(entity: &Entity) -> Result<Option<DVec3>, String> {
     Ok(point)
 }
 
+#[cfg(test)]
 pub(super) fn prepare<'a>(
     source: &'a Vmf,
     fs: &GameFs,

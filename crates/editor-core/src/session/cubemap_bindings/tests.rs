@@ -23,8 +23,9 @@ fn preview(
 }
 
 #[test]
-fn instance_context_refuses_authored_only_reports_and_preserves_owned_drafts() {
-    let reason = "Cubemap binding inspection and drafts are unavailable while the map contains instances; authored faces do not describe the assembled geometry";
+fn unsaved_instance_context_requires_a_source_and_preserves_owned_drafts() {
+    let reason =
+        "Save the parent VMF before inspecting or editing cubemap bindings with visible instances";
     for actor in [Actor::User, Actor::Agent] {
         for hidden in [false, true] {
             let (_assets, mut session, _, far, face) = test_support::fixture();
@@ -106,6 +107,226 @@ fn instance_context_refuses_authored_only_reports_and_preserves_owned_drafts() {
             assert_eq!(session.document.vmf(), &source);
         }
     }
+}
+
+#[test]
+fn root_faces_use_assembled_samples_and_root_binding_edits_keep_one_undo() {
+    for actor in [Actor::User, Actor::Agent] {
+        let mut fixture = test_support::instance_fixture();
+        let session = &mut fixture.session;
+        let before = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let selection = session.selected_faces();
+        let report = session.get_cubemap_bindings(Query::default()).unwrap();
+        assert_eq!(fixture.child_helper, fixture.near);
+        assert_eq!(report["available"], true, "{report}");
+        assert_eq!(report["face_scope"], "root_authored_faces");
+        assert_eq!(report["sample_scope"], "assembled_map");
+        assert_eq!(report["child_faces_editable"], false);
+        assert_eq!(report["helpers"].as_array().unwrap().len(), 2);
+        let row = report["assignments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["side"] == fixture.face.side)
+            .unwrap();
+        assert_eq!(row["helper"], Value::Null);
+        assert_eq!(row["position"], json!([0, 0, 48]));
+        assert_eq!(row["helper_source"]["scope"], "instance");
+        assert_eq!(row["helper_source"]["owner"], fixture.owner);
+        assert_eq!(row["helper_source"]["helper"], fixture.child_helper);
+        assert_eq!(row["helper_source"]["file"], "leaf.vmf");
+        assert_eq!(
+            row["helper_source"]["occurrence"],
+            json!([
+                {"helper":fixture.owner,"file":"middle.vmf"},
+                {"helper":2,"file":"leaf.vmf"}
+            ])
+        );
+        let root_sides: BTreeSet<_> = before.side_ids().collect();
+        assert!(report["assignments"].as_array().unwrap().iter().all(|row| {
+            root_sides.contains(&(row["side"].as_u64().unwrap() as u32)) && row["face"].is_object()
+        }));
+        let draft = preview(session, actor, fixture.far, fixture.face, Operation::Bind);
+        let row = &draft["draft"]["report"]["assignments"][0];
+        assert_eq!(row["helper"], fixture.far);
+        assert_eq!(
+            row["helper_source"],
+            json!({"scope":"root","helper":fixture.far})
+        );
+        assert_eq!(session.document.vmf(), &before);
+        assert_eq!(session.document.undo_labels().count(), history);
+        assert_eq!(session.selected_faces(), selection);
+        session
+            .apply_cubemap_bindings(actor, draft["draft"]["token"].as_u64().unwrap())
+            .unwrap();
+        assert_eq!(session.document.undo_labels().count(), history + 1);
+        let mut expected = before.clone();
+        expected
+            .entities
+            .iter_mut()
+            .find(|entity| entity.id == fixture.far)
+            .unwrap()
+            .properties
+            .set("sides", fixture.face.side.to_string());
+        assert_eq!(session.document.vmf(), &expected);
+        let removed = preview(session, actor, fixture.far, fixture.face, Operation::Remove);
+        assert_eq!(
+            removed["draft"]["report"]["assignments"][0]["helper_source"],
+            row_for_face(&report, fixture.face)["helper_source"]
+        );
+        session
+            .apply_cubemap_bindings(actor, removed["draft"]["token"].as_u64().unwrap())
+            .unwrap();
+        assert_eq!(session.document.vmf(), &before);
+        session.undo(actor).unwrap();
+        assert_eq!(session.document.vmf(), &expected);
+        session.undo(actor).unwrap();
+        assert_eq!(session.document.vmf(), &before);
+        assert_eq!(session.selected_faces(), selection);
+    }
+}
+
+fn row_for_face(report: &Value, face: FaceId) -> &Value {
+    report["assignments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["side"] == face.side)
+        .unwrap()
+}
+
+#[test]
+fn original_instance_and_material_sources_stay_frozen_across_refresh_review_and_apply() {
+    for actor in [Actor::User, Actor::Agent] {
+        for name in [
+            "parent.vmf",
+            "middle.vmf",
+            "leaf.vmf",
+            "checker.vmt",
+            "child.vmt",
+        ] {
+            let mut fixture = test_support::instance_fixture();
+            let path = if name.ends_with(".vmt") {
+                fixture.assets.path().join("materials/test").join(name)
+            } else {
+                fixture.directory.path().join(name)
+            };
+            let session = &mut fixture.session;
+            let source = session.document.vmf().clone();
+            let history = session.history_snapshot();
+            let selection = session.selected_faces();
+            let report = session.get_cubemap_bindings(Query::default()).unwrap();
+            let stamp = report["report_snapshot"].as_str().unwrap();
+            let draft = preview(session, actor, fixture.far, fixture.face, Operation::Bind);
+            let token = draft["draft"]["token"].as_u64().unwrap();
+            let mut bytes = std::fs::read(&path).unwrap();
+            bytes.push(b'\n');
+            std::fs::write(&path, bytes).unwrap();
+            assert_ne!(stamp, session.cubemap_binding_report_stamp());
+            assert_eq!(session.cubemap_binding_state()["draft"]["valid"], false);
+            let refreshed = session.get_cubemap_bindings(Query::default()).unwrap();
+            if name == "parent.vmf" {
+                assert_eq!(refreshed["available"], false, "{refreshed}");
+                assert_eq!(refreshed["total"], 0);
+                assert_eq!(refreshed["assignments"], json!([]));
+                assert!(
+                    refreshed["diagnostics"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|value| {
+                            value.as_str().is_some_and(|message| {
+                                message.contains("Map source binding changed")
+                                    && message.contains("reopen or Save As")
+                            })
+                        }),
+                    "{refreshed}"
+                );
+            } else {
+                assert_eq!(refreshed["available"], true, "{name}: {refreshed}");
+                assert_eq!(refreshed["assignments"], report["assignments"]);
+            }
+            assert_eq!(refreshed["state"]["draft"]["valid"], false);
+            assert!(session.review_cubemap_bindings(actor, token).is_err());
+            assert!(session.apply_cubemap_bindings(actor, token).is_err());
+            assert_eq!(session.cubemap_binding_state()["draft"]["token"], token);
+            assert_eq!(session.document.vmf(), &source);
+            assert_eq!(session.history_snapshot(), history);
+            assert_eq!(session.selected_faces(), selection);
+            session.cancel_cubemap_bindings(actor, token).unwrap();
+        }
+    }
+}
+
+#[test]
+fn child_plan_failures_and_generated_face_requests_never_publish_root_only_success() {
+    let mut fixture = test_support::instance_fixture();
+    let session = &mut fixture.session;
+    let control = compiler::Control::default();
+    let context =
+        compiler::instances::SourceContext::capture(session.path().unwrap(), &control).unwrap();
+    let prepared = compiler::instances::resolve_for_compile(
+        session.document.vmf(),
+        Some(&context),
+        &session.game,
+        &control,
+        &mut compiler::Report::default(),
+    )
+    .unwrap();
+    let generated = prepared.generated_brushes().next().unwrap().solid;
+    let face = FaceId {
+        solid: generated.id,
+        side: generated.sides[0].id,
+    };
+    drop(prepared);
+    let before = session.document.vmf().clone();
+    let history = session.history_snapshot();
+    let draft = preview(
+        session,
+        Actor::User,
+        fixture.far,
+        fixture.face,
+        Operation::Bind,
+    );
+    let token = draft["draft"]["token"].as_u64().unwrap();
+    assert!(
+        session
+            .preview_cubemap_bindings(
+                Actor::User,
+                Request {
+                    helper: fixture.far,
+                    faces: vec![face],
+                    operation: Operation::Bind
+                },
+                &session.cubemap_bindings_stamp()
+            )
+            .is_err()
+    );
+    assert_eq!(session.cubemap_binding_state()["draft"]["token"], token);
+    let path = fixture.directory.path().join("middle.vmf");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut middle = Vmf::parse(&text).unwrap();
+    middle.entities[1].properties.set("origin", "0 0 0");
+    std::fs::write(&path, middle.write(&Default::default())).unwrap();
+    let report = session
+        .get_cubemap_bindings(Query {
+            helper: Some(fixture.far),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(report["available"], false);
+    assert_eq!(report["assignments"], json!([]));
+    assert!(
+        report["diagnostics"][0]
+            .as_str()
+            .unwrap()
+            .contains("collide"),
+        "{report}"
+    );
+    assert!(session.apply_cubemap_bindings(Actor::User, token).is_err());
+    assert_eq!(session.document.vmf(), &before);
+    assert_eq!(session.history_snapshot(), history);
 }
 
 #[test]

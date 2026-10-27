@@ -58,13 +58,13 @@ fn rows(values: &[Value], selected: &[FaceId]) -> ModelRc<CubemapFaceRow> {
                         .unwrap_or_else(|| format!("Side {}", value["side"]))
                         .into(),
                     choice: format!(
-                        "{} · helper {} at {}",
+                        "{} · {} at {}",
                         if value["manual"] == true {
                             "Manual"
                         } else {
                             "Automatic"
                         },
-                        value["helper"],
+                        helper_label(value),
                         value["position"]
                     )
                     .into(),
@@ -76,6 +76,28 @@ fn rows(values: &[Value], selected: &[FaceId]) -> ModelRc<CubemapFaceRow> {
             })
             .collect::<Vec<_>>(),
     ))
+}
+
+fn helper_label(value: &Value) -> String {
+    let source = &value["helper_source"];
+    if source["scope"] == "instance" {
+        let occurrence = source["occurrence"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|step| {
+                format!(
+                    "entity:{} → {}",
+                    step["helper"],
+                    step["file"].as_str().unwrap_or("")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" / ");
+        format!("child helper {} in {occurrence}", source["helper"])
+    } else {
+        format!("root helper {}", value["helper"])
+    }
 }
 
 fn manual_faces(form: &Form) -> Vec<FaceId> {
@@ -95,7 +117,9 @@ fn manual_faces(form: &Form) -> Vec<FaceId> {
 }
 
 fn inspection_current(session: &Session, form: &Form) -> bool {
-    form.report.is_some()
+    form.report
+        .as_ref()
+        .is_some_and(|report| report["available"] == true)
         && form.generation == session.document_generation()
         && form.report_snapshot == session.cubemap_binding_report_stamp()
 }
@@ -178,7 +202,7 @@ fn refresh(window: &CubemapFacesWindow, session: &Session, form: &RefCell<Form>)
             Some(report) => format!(
                 "{} · namespace {}{}",
                 if current {
-                    "Current assignments"
+                    "Root faces · assembled sample choices"
                 } else {
                     "Map, content or output name changed · Refresh assignments"
                 },

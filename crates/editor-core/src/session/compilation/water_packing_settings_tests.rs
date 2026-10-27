@@ -47,6 +47,12 @@ fn water_packing_settings_support_all_lighting_modes_and_reject_updates_atomical
                 .unwrap()
                 .contains("runtime/default env_cubemap")
         );
+        assert!(
+            session.compile_settings()["water_packing_description"]
+                .as_str()
+                .unwrap()
+                .contains("opaque SLIME")
+        );
         for lighting in ["fullbright", "direct_ldr", "direct_ldr_hdr"] {
             let settings = session
                 .update_build_settings(

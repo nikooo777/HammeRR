@@ -150,7 +150,7 @@ export component CompileWindow inherits Window {
                 Text { text: root.prop-vertex-lighting-description; wrap: word-wrap; color: #bac2ce; }
                 CheckBox { text: "Pack sky assets"; checked: root.pack-sky-assets; enabled: root.lighting-enabled; toggled => { root.change-pack-sky-assets(self.checked); } }
                 Text { text: "Packs the selected sky family’s supported materials and textures into the BSP. Missing or unsupported assets stop the build."; wrap: word-wrap; color: #bac2ce; }
-                CheckBox { text: "Pack water assets"; checked: root.pack-water-assets; enabled: root.lighting-enabled; toggled => { root.change-pack-water-assets(self.checked); } }
+                CheckBox { text: "Pack liquid assets"; checked: root.pack-water-assets; enabled: root.lighting-enabled; toggled => { root.change-pack-water-assets(self.checked); } }
                 Text { text: root.water-packing-description; wrap: word-wrap; color: #bac2ce; }
                 CheckBox { text: "Pack static prop assets"; checked: root.pack-static-prop-assets; enabled: root.lighting-enabled; toggled => { root.change-pack-static-prop-assets(self.checked); } }
                 Text { text: root.static-prop-packing-description; wrap: word-wrap; color: #bac2ce; }

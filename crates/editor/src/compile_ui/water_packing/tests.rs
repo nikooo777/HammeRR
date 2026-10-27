@@ -4,7 +4,9 @@ use source_formats::keyvalues::WriteOptions;
 
 use super::*;
 use crate::compile_ui::Controller;
-use crate::ui::tests::{assert_dialog_button_visible, save_ui_snapshot};
+use crate::ui::tests::{
+    assert_dialog_button_visible, save_ui_snapshot, scroll_inspector_to_control,
+};
 
 #[test]
 fn water_packing_checkbox_uses_shared_settings_recipes_recent_maps_and_active_job_guards() {
@@ -41,14 +43,9 @@ fn water_packing_checkbox_uses_shared_settings_recipes_recent_maps_and_active_jo
             .get_water_packing_description()
             .contains("runtime/default env_cubemap")
     );
-    assert_dialog_button_visible(&controller.window, "Pack water assets");
-    i_slint_backend_testing::ElementHandle::find_by_accessible_label(
-        &controller.window,
-        "Pack water assets",
-    )
-    .next()
-    .unwrap()
-    .invoke_accessible_default_action();
+    let packing = scroll_inspector_to_control(&controller.window, "Pack liquid assets");
+    assert_dialog_button_visible(&controller.window, "Pack liquid assets");
+    packing.invoke_accessible_default_action();
     assert!(lock(&shared).compile_options().pack_water_assets);
     assert!(!lock(&shared).compile_options().pack_sky_assets);
     assert!(controller.window.get_pack_water_assets());
@@ -101,7 +98,7 @@ fn water_packing_checkbox_uses_shared_settings_recipes_recent_maps_and_active_jo
     crate::recent_maps_ui::bind(&recent, &shared);
     crate::recent_maps_ui::refresh(&recent, &lock(&shared));
     recent.invoke_select_map(first.to_string_lossy().to_string().into());
-    assert!(recent.get_selected_detail().contains("water packing on"));
+    assert!(recent.get_selected_detail().contains("liquid packing on"));
     recent.invoke_open_selected();
     controller.refresh(&lock(&shared));
     assert_eq!(lock(&shared).path(), Some(first.as_path()));
@@ -121,7 +118,7 @@ fn water_packing_details_require_current_published_complete_stats_and_keep_zero_
     });
     assert_eq!(
         details(&job),
-        "\nWater assets: 2 materials · LDR + HDR · 8 files · 1024 bytes"
+        "\nLiquid assets: 2 materials · LDR + HDR · 8 files · 1024 bytes"
     );
     for status in ["pending", "running", "failed", "cancelled"] {
         job["status"] = status.into();
@@ -141,7 +138,7 @@ fn water_packing_details_require_current_published_complete_stats_and_keep_zero_
     });
     assert_eq!(
         details(&job),
-        "\nWater assets: 0 materials · LDR + HDR · 0 files · 0 bytes"
+        "\nLiquid assets: 0 materials · LDR + HDR · 0 files · 0 bytes"
     );
     job["result"]["stats"]["water_assets"]["files"] = serde_json::Value::Null;
     assert!(details(&job).is_empty());

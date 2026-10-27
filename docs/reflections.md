@@ -55,4 +55,4 @@ Supported samples and ordinary world/detail bindings can also come from [referen
 - Incomplete records and replaced or rewritten Cloud logs stop capture. Audit limits are 64 MiB total and 8 MiB added during capture.
 - **Cancel build** waits for owned capture cleanup.
 - Generation captures one reflection bounce, not repeated recursive reflection builds.
-- Root binding inspection is unavailable with visible instance references; generation can still use supported assembled samples.
+- Root-face binding inspection and drafts include assembled sample choices. Edit child faces and helpers in their source map.

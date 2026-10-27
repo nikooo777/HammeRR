@@ -521,7 +521,7 @@ impl CompileRequest {
             return Err("Sky packing did not return its retained asset plan".into());
         }
         if self.options.pack_water_assets && output.bsp.is_some() && output.water_assets.is_none() {
-            return Err("Water packing did not return its retained asset plan".into());
+            return Err("Liquid packing did not return its retained asset plan".into());
         }
         if self.options.pack_static_prop_assets
             && output.bsp.is_some()
@@ -903,7 +903,7 @@ impl Session {
         settings["pack_static_prop_assets"] =
             self.compilation.options.pack_static_prop_assets.into();
         settings["static_prop_packing_description"] = "Pack original model, companion, all declared skin/LOD materials and basetexture files for emitted static props during Compile or Run Map. Default off; independent of vertex lighting and available in every lighting mode. Requires bounded static MDL 44/48, body 0/root LOD 0, trivial local animation and VertexLitGeneric terminals. Terminals allow only one canonical $basetexture, optionally plus literal $alphatest 1 at the default 0.5 cutoff; authored $alphatestreference is unsupported. Patch chains allow at most eight include edges, with one basetexture insert or replace block per Patch. Deeper edits win within each type; replacements apply after all inserts. All original VMT bytes and every declared VTF remain packed, including overridden textures. Extra keys, combined edit sections, proxies and $envmap reject. Matching PHY is included only for VPhysics props. Missing or unsupported dependencies stop publication. Packing preserves model flags. Compiler texture shadows require the original MDL CAST_TEXTURE_SHADOWS request; without it, enabled prop shadows remain opaque mesh shadows with the existing warning. Selected default-alpha-test vertex-lighting receivers accept the same bounded nested Patch basetexture edits and terminal contract. Every hardware vertex is retained with VHV alpha 255; receiver-only textures are read only if casting or packing needs them. Runtime requires standard CS:S shaders and surface/prop-data definitions with DX90 or newer.".into();
-        settings["water_packing_description"] = "Pack original files for the complete supported static Water material/Patch/texture closure during Compile or Run Map. Default off. Every reachable Water material requires an explicit static cubemap and its original VTF 7.4 LDR/HDR siblings. Missing or unsupported assets, including runtime/default env_cubemap, stop publication. Available in every lighting mode; no native capture is required.".into();
+        settings["water_packing_description"] = "Pack original files for complete supported static Water or opaque SLIME material/Patch/texture closures during Compile or Run Map. Default off. SLIME supports non-reflective static LightmappedGeneric, UnlitGeneric and unambiguous scalar Patch chains with an explicit basetexture and exact native self-bottom; only declared basetexture, bumpmap and tool 2D textures are packed, including overridden textures. Static fog/color/UV and reflectivity metadata are supported. Envmap, additional resources and effects reject. Every reachable Water material requires an explicit static cubemap and its original VTF 7.4 LDR/HDR siblings. Missing or unsupported assets, including runtime/default env_cubemap, stop publication. Available in every lighting mode; no native capture is required.".into();
         settings["prop_vertex_lighting"] = json!({
             "available":unavailable_reason.is_none(),
             "unavailable_reason":unavailable_reason,
@@ -1050,7 +1050,7 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}",
+                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
                     options.lighting.label(),
                     options.physics.label(),
                     options.visibility.label(),

@@ -47,7 +47,7 @@ impl Recipe {
             .options()
             .expect("recipe settings are validated");
         let description = format!(
-            "{} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · water packing {} · static-prop packing {}",
+            "{} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
             options.lighting.label(),
             options.physics.label(),
             options.visibility.label(),

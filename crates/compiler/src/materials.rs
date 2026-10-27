@@ -461,7 +461,7 @@ impl<'a> Materials<'a> {
     }
 }
 
-fn parse_reflectivity(raw: &str) -> Result<[f32; 3], String> {
+pub(crate) fn parse_reflectivity(raw: &str) -> Result<[f32; 3], String> {
     let invalid = || {
         format!(
             "$reflectivity requires an ASCII square-bracket triple of finite linear components from 0 to 1, at most {MAX_REFLECTIVITY_VALUE_BYTES} bytes"

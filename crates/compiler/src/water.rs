@@ -111,7 +111,7 @@ pub(crate) fn validate_static_slime_materials(
             .and_then(|resolved| {
                 resolved
                     .get("$bottommaterial")
-                    .filter(|bottom| bottom.eq_ignore_ascii_case(&material.name))
+                    .filter(|bottom| crate::water_dependencies::native_self_bottom(&material.name, "$bottommaterial", bottom))
                     .map(|_| ())
                     .ok_or_else(|| format!("{} requires an explicit $bottommaterial equal to its own native material name; missing, different and compiler-normalized target spellings are unsupported", material.name))
             });

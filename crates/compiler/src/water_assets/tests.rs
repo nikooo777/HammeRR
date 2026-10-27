@@ -17,6 +17,12 @@ pub(super) const HDR_CUBE: &str = "materials/test/cube.hdr.vtf";
 pub(super) const WATER: &str = "Water { $normalmap test/normal $basetexture test/color $envmap test/cube $bottommaterial test/bottom $underwateroverlay 0 }";
 pub(super) const BOTTOM_WATER: &str =
     "Water { $normalmap test/normal $envmap test/cube $underwateroverlay 0 }";
+pub(super) const SLIME: &str = "LightmappedGeneric { %compileslime 1 $bottommaterial TEST/ROOT $basetexture test/color $bumpmap test/normal %tooltexture test/color $alpha 1 $additive 0 $nofog 0 $fogenable 1 $fogcolor \"[0.1 0.2 0.3]\" $fogstart 0 $fogend 512 $color \"[0.5 1 0.5]\" $color2 \"[1 1 1]\" $basetexturetransform \"center 0.5 0.5 scale 2 3 rotate 15 translate 0.25 0\" $bumptransform \"scale 2 3\" $reflectivity \"[0.2 0.3 0.1]\" }";
+pub(super) const UNLIT_SLIME: &str = "UnlitGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $nofog 1 $fogenable 0 }";
+pub(super) const SLIME_BASE: &str = "LightmappedGeneric { %compileslime 1 $bottommaterial test/bottom $basetexture test/overridden $nofog 0 $fogenable 0 $fogcolor \"[0.1 0.2 0.3]\" $basetexturetransform \"scale 1 1\" $reflectivity \"[0.2 0.3 0.1]\" }";
+pub(super) const SLIME_PATCH: &str = "Patch { include materials/test/bottom.vmt replace { $bottommaterial test/root $basetexture test/color $fogenable 1 $basetexturetransform \"scale 2 2\" } insert { $bumpmap test/normal %tooltexture test/color } }";
+pub(super) const STATIC_LIQUIDS: [(&str, usize); 4] =
+    [(WATER, 6), (SLIME, 3), (UNLIT_SLIME, 2), (SLIME_PATCH, 5)];
 
 pub(super) struct Fixture {
     pub(super) directory: tempfile::TempDir,
@@ -59,6 +65,14 @@ impl Fixture {
             .read_asset(&self.game, path, MAX_MATERIAL_BYTES)
             .unwrap()
             .unwrap();
+    }
+
+    pub(super) fn liquid(&self, material: &str) {
+        self.write(ROOT, material);
+        if material == SLIME_PATCH {
+            self.write(BOTTOM, SLIME_BASE);
+            self.write("materials/test/overridden.vtf", texture(false, false));
+        }
     }
 
     pub(super) fn plan(&self, roots: &[&str]) -> io::Result<WaterAssetPlan> {
@@ -142,38 +156,41 @@ fn persist(bsp: &mut Bsp, archive: &mut PakArchive, manifest: &WaterAssetManifes
 
 #[test]
 fn complete_static_plan_preserves_original_bytes_and_verifies_without_mounts() {
-    let fixture = Fixture::new();
-    fixture.seed(ROOT);
-    let plan = fixture.plan(&[ROOT]).unwrap();
-    assert_eq!(plan.roots(), &[ROOT]);
-    assert_eq!(plan.entries().len(), 6);
-    assert!(plan.combined_pak_bytes() > plan.asset_bytes());
-    for entry in plan.entries() {
+    for (material, files) in STATIC_LIQUIDS {
+        let fixture = Fixture::new();
+        fixture.liquid(material);
+        fixture.seed(ROOT);
+        let plan = fixture.plan(&[ROOT]).unwrap();
+        assert_eq!(plan.roots(), &[ROOT]);
+        assert_eq!(plan.entries().len(), files);
+        assert!(plan.combined_pak_bytes() > plan.asset_bytes());
+        for entry in plan.entries() {
+            assert_eq!(
+                entry.data,
+                fs::read(fixture.directory.path().join(&entry.name)).unwrap()
+            );
+            let source = plan
+                .sources()
+                .iter()
+                .find(|source| source.path() == entry.name)
+                .unwrap();
+            assert_eq!(source.sha256(), hash(&entry.data));
+        }
+        let mut bsp = water_bsp("TEST/ROOT");
+        let before = bsp.clone();
+        let manifest = plan.attach(&mut bsp, &Control::default()).unwrap();
+        assert_eq!(manifest.channels, "ldr_hdr");
+        let mut restored = bsp.clone();
+        restored.lumps[bsp::lump::PAKFILE] = before.lumps[bsp::lump::PAKFILE].clone();
+        assert_eq!(restored, before);
+        fs::remove_dir_all(fixture.directory.path().join("materials")).unwrap();
         assert_eq!(
-            entry.data,
-            fs::read(fixture.directory.path().join(&entry.name)).unwrap()
+            read_packed_water(&bsp, &Control::default()).unwrap(),
+            Some(manifest.clone())
         );
-        let source = plan
-            .sources()
-            .iter()
-            .find(|source| source.path() == entry.name)
-            .unwrap();
-        assert_eq!(source.sha256(), hash(&entry.data));
+        verify_packed_water(&bsp, &manifest, &Control::default()).unwrap();
+        assert!(plan.verify_source_metadata().is_err());
     }
-    let mut bsp = water_bsp("TEST/ROOT");
-    let before = bsp.clone();
-    let manifest = plan.attach(&mut bsp, &Control::default()).unwrap();
-    assert_eq!(manifest.channels, "ldr_hdr");
-    let mut restored = bsp.clone();
-    restored.lumps[bsp::lump::PAKFILE] = before.lumps[bsp::lump::PAKFILE].clone();
-    assert_eq!(restored, before);
-    fs::remove_dir_all(fixture.directory.path().join("materials")).unwrap();
-    assert_eq!(
-        read_packed_water(&bsp, &Control::default()).unwrap(),
-        Some(manifest.clone())
-    );
-    verify_packed_water(&bsp, &manifest, &Control::default()).unwrap();
-    assert!(plan.verify_source_metadata().is_err());
 }
 
 #[test]
@@ -356,12 +373,52 @@ fn dynamic_unknown_cyclic_and_non_water_graphs_are_refused() {
         "Patch { include materials/test/root.vmt }",
         "LightmappedGeneric { $basetexture test/color }",
         "Water { $normalmap test/normal $envmap test/cube $envmap test/cube }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $envmap env_cubemap }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $envmap test/cube }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $detail test/color }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $additive 1 }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/cube }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial materials/test/root.vmt }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/bottom }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root Proxies {} }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $fallbackmaterial test/bottom }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $fogend nan }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $reflectivity \"[1 2 3]\" }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $bumptransform \"scale 1 1 scale 2 2\" }",
     ] {
         let fixture = Fixture::new();
         fixture.write(ROOT, source);
         fixture.seed(ROOT);
         assert!(fixture.plan(&[ROOT]).is_err(), "accepted {source}");
     }
+
+    let fixture = Fixture::new();
+    fixture.write(BOTTOM, SLIME.replace("TEST/ROOT", "test/bottom"));
+    fixture.seed(ROOT);
+    assert!(
+        fixture
+            .plan(&[ROOT])
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported shader")
+    );
+
+    let fixture = Fixture::new();
+    fixture.liquid(SLIME_PATCH);
+    fixture.write(
+        BOTTOM,
+        "Patch { include materials/test/parent.vmt replace { $basetexture test/normal } }",
+    );
+    fixture.write("materials/test/parent.vmt", SLIME_BASE);
+    fixture.seed(ROOT);
+    assert!(
+        fixture
+            .plan(&[ROOT])
+            .unwrap_err()
+            .to_string()
+            .contains("same key")
+    );
 }
 
 #[test]
@@ -441,18 +498,40 @@ fn empty_selection_has_an_explicit_empty_manifest() {
 
 #[test]
 fn offline_verification_requires_every_dependency_and_water_surface_coverage() {
-    let fixture = Fixture::new();
-    fixture.seed(ROOT);
-    let plan = fixture.plan(&[ROOT]).unwrap();
-    let mut original = water_bsp("TEST/ROOT");
-    let manifest = plan.attach(&mut original, &Control::default()).unwrap();
-    for path in [BOTTOM, HDR_CUBE] {
-        let mut bsp = original.clone();
-        let mut archive = archive(&bsp);
-        let mut changed = manifest.clone();
-        changed.assets.retain(|asset| asset.path != path);
-        archive.entries.retain(|entry| entry.name != path);
-        persist(&mut bsp, &mut archive, &changed);
+    for (material, omitted) in [
+        (WATER, vec![BOTTOM, HDR_CUBE]),
+        (SLIME_PATCH, vec![BOTTOM, "materials/test/overridden.vtf"]),
+    ] {
+        let fixture = Fixture::new();
+        fixture.liquid(material);
+        fixture.seed(ROOT);
+        let plan = fixture.plan(&[ROOT]).unwrap();
+        let mut original = water_bsp("TEST/ROOT");
+        let manifest = plan.attach(&mut original, &Control::default()).unwrap();
+        for path in omitted {
+            let mut bsp = original.clone();
+            let mut archive = archive(&bsp);
+            let mut changed = manifest.clone();
+            changed.assets.retain(|asset| asset.path != path);
+            archive.entries.retain(|entry| entry.name != path);
+            persist(&mut bsp, &mut archive, &changed);
+            assert!(
+                read_packed_water(&bsp, &Control::default())
+                    .unwrap_err()
+                    .to_string()
+                    .contains("absent from its manifest")
+            );
+        }
+        for name in ["materials/test/root", "test/root.vmt", "test\\root"] {
+            let mut bsp = original.clone();
+            bsp.set_texdata_strings(&[name]);
+            assert!(
+                read_packed_water(&bsp, &Control::default()).is_err(),
+                "{name}"
+            );
+        }
+        let mut bsp = original;
+        bsp.set_texdata_strings(&["TEST/UNREGISTERED"]);
         assert!(
             read_packed_water(&bsp, &Control::default())
                 .unwrap_err()
@@ -460,51 +539,45 @@ fn offline_verification_requires_every_dependency_and_water_surface_coverage() {
                 .contains("absent from its manifest")
         );
     }
-    for name in ["materials/test/root", "test/root.vmt", "test\\root"] {
-        let mut bsp = original.clone();
-        bsp.set_texdata_strings(&[name]);
-        assert!(
-            read_packed_water(&bsp, &Control::default()).is_err(),
-            "{name}"
-        );
-    }
-    let mut bsp = original;
-    bsp.set_texdata_strings(&["TEST/UNREGISTERED"]);
-    assert!(
-        read_packed_water(&bsp, &Control::default())
-            .unwrap_err()
-            .to_string()
-            .contains("absent from its manifest")
-    );
 }
 
 #[test]
-fn offline_verification_rechecks_hdr_semantics_after_hashes_are_updated() {
-    let fixture = Fixture::new();
-    fixture.seed(ROOT);
-    let plan = fixture.plan(&[ROOT]).unwrap();
-    let mut bsp = water_bsp("TEST/ROOT");
-    let mut manifest = plan.attach(&mut bsp, &Control::default()).unwrap();
-    let mut archive = archive(&bsp);
-    let entry = archive
-        .entries
-        .iter_mut()
-        .find(|entry| entry.name == HDR_CUBE)
-        .unwrap();
-    entry.data[88..90].copy_from_slice(&0x7c00u16.to_le_bytes());
-    manifest
-        .assets
-        .iter_mut()
-        .find(|asset| asset.path == HDR_CUBE)
-        .unwrap()
-        .sha256 = hash(&entry.data);
-    persist(&mut bsp, &mut archive, &manifest);
-    assert!(
-        read_packed_water(&bsp, &Control::default())
-            .unwrap_err()
-            .to_string()
-            .contains("finite and nonnegative")
-    );
+fn offline_verification_rechecks_texture_semantics_after_hashes_are_updated() {
+    for (material, path, reason) in [
+        (WATER, HDR_CUBE, "finite and nonnegative"),
+        (SLIME, NORMAL, "first_frame 0"),
+    ] {
+        let fixture = Fixture::new();
+        fixture.liquid(material);
+        fixture.seed(ROOT);
+        let plan = fixture.plan(&[ROOT]).unwrap();
+        let mut bsp = water_bsp("TEST/ROOT");
+        let mut manifest = plan.attach(&mut bsp, &Control::default()).unwrap();
+        let mut archive = archive(&bsp);
+        let entry = archive
+            .entries
+            .iter_mut()
+            .find(|entry| entry.name == path)
+            .unwrap();
+        if material == WATER {
+            entry.data[88..90].copy_from_slice(&0x7c00u16.to_le_bytes());
+        } else {
+            entry.data[26..28].copy_from_slice(&1u16.to_le_bytes());
+        }
+        manifest
+            .assets
+            .iter_mut()
+            .find(|asset| asset.path == path)
+            .unwrap()
+            .sha256 = hash(&entry.data);
+        persist(&mut bsp, &mut archive, &manifest);
+        assert!(
+            read_packed_water(&bsp, &Control::default())
+                .unwrap_err()
+                .to_string()
+                .contains(reason)
+        );
+    }
 }
 
 #[test]

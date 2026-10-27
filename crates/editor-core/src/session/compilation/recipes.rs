@@ -745,7 +745,7 @@ mod tests {
                 recipe.json(true)["description"]
                     .as_str()
                     .unwrap()
-                    .contains("water packing off")
+                    .contains("liquid packing off")
             );
             assert!(
                 recipe.json(true)["description"]
@@ -1030,7 +1030,7 @@ mod tests {
                 saved["recipes"][2]["description"]
                     .as_str()
                     .unwrap()
-                    .contains("water packing on")
+                    .contains("liquid packing on")
             );
             assert!(
                 saved["recipes"][2]["description"]

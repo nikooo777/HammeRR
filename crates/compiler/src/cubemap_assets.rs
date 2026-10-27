@@ -7,15 +7,19 @@ mod finalize;
 mod hdr;
 #[cfg(test)]
 mod hdr_tests;
+mod inspection;
 mod manifest;
 mod material;
 mod sources;
 #[cfg(test)]
 pub(crate) mod tests;
 
-pub use binding::inspect_cubemap_bindings;
 pub use finalize::verify_sources as verify_reflection_sources;
 pub use finalize::{finalize_reflections, finalize_reflections_with_capture};
+pub use inspection::{
+    CubemapBindingInspection, CubemapBindingSources, CubemapHelperSource, inspect_cubemap_bindings,
+    inspect_root_cubemap_bindings,
+};
 pub use manifest::{read_generated_cubemaps, rebase_generated_cubemaps, verify_generated_cubemaps};
 pub use sources::{ReflectionSourceGuard, capture_reflection_source_guard};
 

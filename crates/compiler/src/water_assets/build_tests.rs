@@ -4,7 +4,7 @@ use glam::DVec3;
 use map_core::{Document, ObjectId, Plane, compile_region, edit};
 use source_formats::{bsp, vmf::Vmf};
 
-use super::tests::{BOTTOM, Fixture, NORMAL, ROOT};
+use super::tests::{BOTTOM, Fixture, NORMAL, ROOT, SLIME, SLIME_PATCH, STATIC_LIQUIDS, WATER};
 use super::*;
 use crate::{Control, Options, OutputLease, WriteReservation, test_common};
 
@@ -52,93 +52,108 @@ fn options() -> Options {
 
 #[test]
 fn complete_build_uses_shader_roots_and_changes_only_the_pak() {
-    let fixture = fixture();
-    let source = room();
-    let original = source.clone();
-    let baseline = crate::compile(&source, &fixture.game);
-    let output = crate::compile_with_options(&source, &fixture.game, options());
-    assert!(!output.report.has_errors(), "{:?}", output.report);
-    assert_eq!(output.stats.water_regions, 1);
-    let plan = output.water_assets.as_ref().unwrap();
-    assert_eq!(plan.roots(), &[BOTTOM, ROOT]);
-    assert!(output.material_sources.is_some());
-    let stats = output.stats.water_assets.as_ref().unwrap();
-    assert_eq!(
-        (stats.roots, stats.channels, stats.files, stats.asset_bytes),
-        (2, "ldr_hdr", 6, plan.asset_bytes())
-    );
-    let bsp = output.bsp.as_ref().unwrap();
-    for index in 0..bsp::LUMP_COUNT {
-        if index != bsp::lump::PAKFILE {
-            assert_eq!(
-                bsp.lumps[index],
-                baseline.bsp.as_ref().unwrap().lumps[index]
-            );
-        }
-    }
-    verify_packed_water(bsp, &plan.manifest(), &Control::default()).unwrap();
-    assert_eq!(source, original);
-    assert!(
-        !output
-            .report
-            .diagnostics
-            .iter()
-            .any(|item| item.message.contains("remain mounted")
-                || item.message.contains("packing is unavailable"))
-    );
-}
-
-#[test]
-fn non_water_shader_liquid_surfaces_are_explicitly_outside_the_packing_subset() {
-    let fixture = fixture();
-    for (declaration, bottom) in [
-        ("%compilewater", ""),
-        ("%compileslime", "$bottommaterial test/root"),
-    ] {
-        fixture.write(
-            ROOT,
-            format!("LightmappedGeneric {{ {declaration} 1 $basetexture test/color {bottom} }}"),
-        );
-        let source = room();
-        assert!(crate::compile(&source, &fixture.game).bsp.is_some());
-        let output = crate::compile_with_options(&source, &fixture.game, options());
-        assert!(output.bsp.is_none() && output.report.has_errors());
-        assert!(output.report.diagnostics.iter().any(|item| {
-            item.message
-                .contains("supported Water-shader liquid surfaces")
-                && item.message.contains("TEST/ROOT")
-        }));
-        assert!(output.stats.water_assets.is_none());
-    }
-}
-
-#[test]
-fn water_publication_keeps_original_sources_through_preparation_and_commit() {
-    for after_preparation in [false, true] {
+    for (material, files) in STATIC_LIQUIDS {
         let fixture = fixture();
+        fixture.liquid(material);
+        let source = room();
+        let original = source.clone();
+        let baseline = crate::compile(&source, &fixture.game);
+        let output = crate::compile_with_options(&source, &fixture.game, options());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        assert_eq!(output.stats.water_regions, 1);
+        let plan = output.water_assets.as_ref().unwrap();
+        let roots: &[&str] = if material == WATER {
+            &[BOTTOM, ROOT]
+        } else {
+            &[ROOT]
+        };
+        assert_eq!(plan.roots(), roots);
+        assert!(output.material_sources.is_some());
+        let stats = output.stats.water_assets.as_ref().unwrap();
+        assert_eq!(
+            (stats.roots, stats.channels, stats.files, stats.asset_bytes),
+            (roots.len(), "ldr_hdr", files, plan.asset_bytes())
+        );
+        let bsp = output.bsp.as_ref().unwrap();
+        for index in 0..bsp::LUMP_COUNT {
+            if index != bsp::lump::PAKFILE {
+                assert_eq!(
+                    bsp.lumps[index],
+                    baseline.bsp.as_ref().unwrap().lumps[index]
+                );
+            }
+        }
+        verify_packed_water(bsp, &plan.manifest(), &Control::default()).unwrap();
+        assert_eq!(source, original);
+        assert!(
+            !output
+                .report
+                .diagnostics
+                .iter()
+                .any(|item| item.message.contains("remain mounted")
+                    || item.message.contains("packing is unavailable"))
+        );
+    }
+}
+
+#[test]
+fn unsupported_liquid_packing_preserves_prior_outputs_and_source() {
+    for (material, reason) in [
+        (
+            "LightmappedGeneric { %compilewater 1 $basetexture test/color }",
+            "supported Water-shader or static opaque SLIME",
+        ),
+        (
+            "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $envmap test/cube }",
+            "$envmap",
+        ),
+        (
+            "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $detail test/color }",
+            "$detail",
+        ),
+        (
+            "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $bumpmap test/cube }",
+            "cubemap layout",
+        ),
+        (
+            "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $bumpmap test/missing }",
+            "Missing Water source",
+        ),
+    ] {
+        let fixture = fixture();
+        fixture.write(ROOT, material);
         let path = fixture.directory.path().join("previous.bsp");
         fs::write(&path, b"previous BSP").unwrap();
         fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
         let control = Control::default();
-        let lease = OutputLease::acquire(&path, &control).unwrap();
+        let _lease = OutputLease::acquire(&path, &control).unwrap();
         let reservation = WriteReservation::new(&path, &control).unwrap();
-        let output = crate::compile_with_options(&room(), &fixture.game, options());
-        assert!(!output.report.has_errors(), "{:?}", output.report);
-        if after_preparation {
-            let prepared = output
-                .prepare_write_reserved(reservation, &control)
-                .unwrap()
-                .unwrap();
-            fixture.write(NORMAL, b"changed original bytes");
-            assert!(prepared.commit_checked(&lease, &control).is_err());
-        } else {
-            fixture.write(NORMAL, b"changed original bytes");
-            assert!(
-                output
-                    .prepare_write_reserved(reservation, &control)
-                    .is_err()
-            );
+        let source = room();
+        let original = source.clone();
+        assert!(
+            crate::compile(&source, &fixture.game).bsp.is_some(),
+            "{material}"
+        );
+        let output = crate::compile_with_options(&source, &fixture.game, options());
+        assert!(
+            output.bsp.is_none() && output.report.has_errors(),
+            "{material}"
+        );
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|item| item.message.contains(reason)),
+            "{:?}",
+            output.report
+        );
+        assert!(output.stats.water_assets.is_none());
+        match output.prepare_write_reserved(reservation, &control) {
+            Err(_) | Ok(None) => {}
+            Ok(Some(_)) => panic!("Unsupported liquid packing was prepared for publication"),
         }
+        assert_eq!(source, original);
         assert_eq!(fs::read(&path).unwrap(), b"previous BSP");
         assert_eq!(
             fs::read(path.with_extension("lin")).unwrap(),
@@ -148,26 +163,80 @@ fn water_publication_keeps_original_sources_through_preparation_and_commit() {
 }
 
 #[test]
+fn water_publication_keeps_original_sources_through_preparation_and_commit() {
+    for material in [WATER, SLIME_PATCH] {
+        for after_preparation in [false, true] {
+            let fixture = fixture();
+            fixture.liquid(material);
+            let path = fixture.directory.path().join("previous.bsp");
+            fs::write(&path, b"previous BSP").unwrap();
+            fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
+            let control = Control::default();
+            let lease = OutputLease::acquire(&path, &control).unwrap();
+            let reservation = WriteReservation::new(&path, &control).unwrap();
+            let output = crate::compile_with_options(&room(), &fixture.game, options());
+            assert!(!output.report.has_errors(), "{:?}", output.report);
+            if after_preparation {
+                let prepared = output
+                    .prepare_write_reserved(reservation, &control)
+                    .unwrap()
+                    .unwrap();
+                fixture.write(
+                    if material == WATER { NORMAL } else { BOTTOM },
+                    b"changed original bytes",
+                );
+                assert!(prepared.commit_checked(&lease, &control).is_err());
+            } else {
+                fixture.write(
+                    if material == WATER {
+                        NORMAL
+                    } else {
+                        "materials/test/overridden.vtf"
+                    },
+                    b"changed original bytes",
+                );
+                assert!(
+                    output
+                        .prepare_write_reserved(reservation, &control)
+                        .is_err()
+                );
+            }
+            assert_eq!(fs::read(&path).unwrap(), b"previous BSP");
+            assert_eq!(
+                fs::read(path.with_extension("lin")).unwrap(),
+                b"previous LIN"
+            );
+        }
+    }
+}
+
+#[test]
 fn reserved_publication_succeeds_without_rebaselining_mount_directories() {
-    let fixture = fixture();
-    let path = fixture.directory.path().join("portable.bsp");
-    let control = Control::default();
-    let lease = OutputLease::acquire(&path, &control).unwrap();
-    let reservation = WriteReservation::new(&path, &control).unwrap();
-    let output = crate::compile_with_options(&room(), &fixture.game, options());
-    assert!(!output.report.has_errors(), "{:?}", output.report);
-    let prepared = output
-        .prepare_write_reserved(reservation, &control)
-        .unwrap()
-        .unwrap();
-    let sources =
-        crate::asset_sources::capture_output_asset_source_guard(&output, &fixture.game, &control)
+    for material in [WATER, SLIME] {
+        let fixture = fixture();
+        fixture.liquid(material);
+        let path = fixture.directory.path().join("portable.bsp");
+        let control = Control::default();
+        let lease = OutputLease::acquire(&path, &control).unwrap();
+        let reservation = WriteReservation::new(&path, &control).unwrap();
+        let output = crate::compile_with_options(&room(), &fixture.game, options());
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        let prepared = output
+            .prepare_write_reserved(reservation, &control)
+            .unwrap()
             .unwrap();
-    prepared
-        .commit_checked_with(&lease, &control, || sources.verify_metadata())
+        let sources = crate::asset_sources::capture_output_asset_source_guard(
+            &output,
+            &fixture.game,
+            &control,
+        )
         .unwrap();
-    let bsp = bsp::Bsp::parse(&fs::read(path).unwrap()).unwrap();
-    assert!(read_packed_water(&bsp, &control).unwrap().is_some());
+        prepared
+            .commit_checked_with(&lease, &control, || sources.verify_metadata())
+            .unwrap();
+        let bsp = bsp::Bsp::parse(&fs::read(path).unwrap()).unwrap();
+        assert!(read_packed_water(&bsp, &control).unwrap().is_some());
+    }
 }
 
 #[test]
@@ -239,7 +308,7 @@ fn packing_rejects_wider_authored_surface_names_without_repairing_them() {
                 .report
                 .diagnostics
                 .iter()
-                .any(|item| item.message.contains("Pack water assets")
+                .any(|item| item.message.contains("Pack liquid assets")
                     && item.message.contains("paths")),
             "{name}: {:?}",
             output.report
@@ -263,12 +332,19 @@ fn dry_build_reports_zero_applicability_without_inventing_assets() {
 }
 
 #[test]
-fn generated_reflection_rebasing_preserves_original_water_bundle_without_sources() {
+fn generated_reflection_rebasing_preserves_original_liquid_bundles_without_sources() {
+    for material in [WATER, SLIME_PATCH] {
+        generated_reflection_rebasing(material);
+    }
+}
+
+fn generated_reflection_rebasing(material: &str) {
     use crate::asset_sources::hash;
     use crate::cubemap_assets::{self, CompileContext, CubemapAssetPhase};
     use crate::{LightingMode, compile_with_context_controlled};
 
     let mut fixture = fixture();
+    fixture.liquid(material);
     for directory in ["materials/dev", "materials/skybox"] {
         fs::create_dir_all(fixture.directory.path().join(directory)).unwrap();
     }

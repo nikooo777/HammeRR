@@ -8,7 +8,7 @@ use super::raw::{self, Parameter};
 use super::{
     MAX_ASSETS, MAX_DEPTH, MAX_EDGES, MAX_MATERIAL_BYTES, MAX_MATERIAL_READS,
     MAX_MATERIAL_TOTAL_BYTES, MAX_SOURCE_BYTES, MAX_TEXTURE_AXIS, MAX_TEXTURE_BYTES,
-    is_water_shader,
+    is_water_shader, native_self_bottom,
 };
 use crate::Control;
 
@@ -24,6 +24,9 @@ pub(crate) struct StaticWaterClosure {
 struct Resolved {
     shader: String,
     parameters: BTreeMap<String, Parameter>,
+    declarations: Vec<(String, Parameter)>,
+    edited: BTreeSet<String>,
+    repeated_edit: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -201,7 +204,7 @@ where
         }
         self.resolving.insert(path.into());
         let bytes = self.read(path, true)?;
-        let raw = raw::parse(&bytes).map_err(|failure| {
+        let raw = raw::parse_for_packing(&bytes).map_err(|failure| {
             invalid(format!(
                 "Unsupported Water material {path}: {} ({})",
                 failure.message, failure.code
@@ -222,6 +225,8 @@ where
                             value.key
                         )));
                     }
+                    resolved.declarations.push((key.clone(), value.clone()));
+                    resolved.repeated_edit |= !resolved.edited.insert(key.clone());
                     resolved.parameters.insert(key, value);
                 }
             }
@@ -229,7 +234,10 @@ where
         } else {
             Resolved {
                 shader: raw.shader,
+                declarations: raw.parameters.clone().into_iter().collect(),
                 parameters: raw.parameters,
+                edited: BTreeSet::new(),
+                repeated_edit: false,
             }
         };
         self.resolving.remove(path);
@@ -250,9 +258,21 @@ where
         }
         let resolved = self.resolve(path, depth)?;
         if !is_water_shader(&resolved.shader) {
+            if depth != 0 {
+                return Err(invalid(format!(
+                    "Water dependency uses unsupported shader {}: {path}",
+                    resolved.shader
+                )));
+            }
+            return self.slime(path, &resolved);
+        }
+        if let Some((key, _)) = resolved
+            .declarations
+            .iter()
+            .find(|(key, _)| !raw::supported_water_key(key))
+        {
             return Err(invalid(format!(
-                "Water dependency uses unsupported shader {}: {path}",
-                resolved.shader
+                "Unsupported Water declaration {key}: {path}"
             )));
         }
         self.walking.insert(path.into());
@@ -304,6 +324,104 @@ where
             }
         }
         self.walking.remove(path);
+        self.completed.insert(path.into());
+        Ok(())
+    }
+
+    fn slime(&mut self, path: &str, resolved: &Resolved) -> io::Result<()> {
+        if !matches!(
+            resolved.shader.as_str(),
+            "lightmappedgeneric" | "unlitgeneric"
+        ) {
+            return Err(invalid(format!(
+                "Liquid packing uses unsupported shader {}: {path}",
+                resolved.shader
+            )));
+        }
+        if resolved.repeated_edit {
+            return Err(invalid(format!(
+                "Static slime Patch chains cannot edit the same key in multiple materials: {path}"
+            )));
+        }
+        for (key, _) in &resolved.declarations {
+            if !raw::supported_slime_key(key) {
+                return Err(invalid(format!(
+                    "Unsupported static slime declaration {key}; envmaps, effects and other resources are outside the packing subset: {path}"
+                )));
+            }
+        }
+        let get = |key: &str| {
+            resolved
+                .parameters
+                .get(key)
+                .map(|parameter| parameter.value.as_str())
+        };
+        if get("%compileslime").map(str::trim) != Some("1") {
+            return Err(invalid(format!(
+                "Non-Water liquid packing requires %compileslime 1: {path}"
+            )));
+        }
+        if get("$basetexture").is_none() {
+            return Err(invalid(format!(
+                "Static slime packing requires an explicit $basetexture: {path}"
+            )));
+        }
+        crate::brush_shadow_casters::opaque_parameters(path, get).map_err(invalid)?;
+        for key in ["%notooltexture", "$nofog", "$fogenable"] {
+            if get(key).is_some_and(|value| !matches!(value.trim(), "0" | "1")) {
+                return Err(invalid(format!(
+                    "Static slime requires {key} 0 or 1: {path}"
+                )));
+            }
+        }
+        for key in ["$fogstart", "$fogend"] {
+            if get(key).is_some_and(|value| !value.trim().parse::<f32>().is_ok_and(f32::is_finite))
+            {
+                return Err(invalid(format!(
+                    "Static slime requires finite {key}: {path}"
+                )));
+            }
+        }
+        for key in ["$reflectivity", "$fogcolor", "$color", "$color2"] {
+            if let Some(value) = get(key) {
+                crate::materials::parse_reflectivity(value)
+                    .map_err(|error| invalid(format!("Static slime {key}: {path}: {error}")))?;
+            }
+        }
+        for key in ["$basetexturetransform", "$bumptransform"] {
+            source_formats::vmt::texture_transform_matrix(
+                get(key),
+                source_formats::vmt::DuplicateOperations::Reject,
+            )
+            .map_err(|error| {
+                invalid(format!("Unsupported static slime {key}: {path}: {error:?}"))
+            })?;
+        }
+        let name = path
+            .strip_prefix("materials/")
+            .unwrap()
+            .strip_suffix(".vmt")
+            .unwrap();
+        if !get("$bottommaterial")
+            .is_some_and(|value| native_self_bottom(name, "$bottommaterial", value))
+        {
+            return Err(invalid(format!(
+                "Static slime requires an explicit $bottommaterial equal to its own native material name: {path}"
+            )));
+        }
+        self.edge()?;
+        for (key, parameter) in &resolved.declarations {
+            if matches!(key.as_str(), "$basetexture" | "$bumpmap" | "%tooltexture") {
+                self.edge()?;
+                let target = logical_path(&parameter.value, false, false)?;
+                let layout = self.texture(&target, false, false)?;
+                if layout.first_frame != 0 {
+                    return Err(invalid(format!(
+                        "Static slime textures require first_frame 0: {target}"
+                    )));
+                }
+            }
+        }
         self.completed.insert(path.into());
         Ok(())
     }

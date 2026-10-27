@@ -21,7 +21,7 @@ fn unsupported(code: &'static str, message: impl Into<String>) -> Failure {
     Failure::new(WaterDependencyState::Unsupported, code, message)
 }
 
-fn parameters(nodes: &[Node]) -> Result<BTreeMap<String, Parameter>, Failure> {
+fn parameters(nodes: &[Node], packing: bool) -> Result<BTreeMap<String, Parameter>, Failure> {
     let mut values = BTreeMap::new();
     for node in nodes {
         let key = node.key.to_ascii_lowercase();
@@ -47,7 +47,7 @@ fn parameters(nodes: &[Node]) -> Result<BTreeMap<String, Parameter>, Failure> {
             )
             .key(&node.key));
         }
-        if !supported_key(&key) {
+        if !(supported_water_key(&key) || packing && supported_slime_key(&key)) {
             return Err(unsupported(
                 "unknown_property",
                 format!("Unsupported Water declaration {}", node.key),
@@ -75,6 +75,14 @@ fn parameters(nodes: &[Node]) -> Result<BTreeMap<String, Parameter>, Failure> {
 }
 
 pub(super) fn parse(bytes: &[u8]) -> Result<RawMaterial, Failure> {
+    parse_scoped(bytes, false)
+}
+
+pub(super) fn parse_for_packing(bytes: &[u8]) -> Result<RawMaterial, Failure> {
+    parse_scoped(bytes, true)
+}
+
+fn parse_scoped(bytes: &[u8], packing: bool) -> Result<RawMaterial, Failure> {
     let text = std::str::from_utf8(bytes).map_err(|error| {
         Failure::new(
             WaterDependencyState::UnavailableSource,
@@ -152,9 +160,12 @@ pub(super) fn parse(bytes: &[u8]) -> Result<RawMaterial, Failure> {
                     });
                 }
                 "insert" | "replace" => {
-                    let values = parameters(node.children().ok_or_else(|| {
-                        unsupported("patch_edit", "Patch edits must be scalar blocks")
-                    })?)?;
+                    let values = parameters(
+                        node.children().ok_or_else(|| {
+                            unsupported("patch_edit", "Patch edits must be scalar blocks")
+                        })?,
+                        packing,
+                    )?;
                     for name in values.keys() {
                         if !edited.insert(name.clone()) {
                             return Err(unsupported(
@@ -179,13 +190,19 @@ pub(super) fn parse(bytes: &[u8]) -> Result<RawMaterial, Failure> {
                 "Patch requires exactly one include",
             ));
         }
-    } else if is_water_shader(&result.shader) {
-        result.parameters = parameters(children)?;
+    } else if is_water_shader(&result.shader)
+        || packing
+            && matches!(
+                result.shader.as_str(),
+                "lightmappedgeneric" | "unlitgeneric"
+            )
+    {
+        result.parameters = parameters(children, packing)?;
     }
     Ok(result)
 }
 
-fn supported_key(key: &str) -> bool {
+pub(super) fn supported_water_key(key: &str) -> bool {
     matches!(
         key,
         "$normalmap"
@@ -227,5 +244,47 @@ fn supported_key(key: &str) -> bool {
             | "%compilewater"
             | "%compilenolight"
             | "%keywords"
+    )
+}
+
+pub(super) fn supported_slime_key(key: &str) -> bool {
+    matches!(
+        key,
+        "%compileslime"
+            | "$bottommaterial"
+            | "$basetexture"
+            | "$bumpmap"
+            | "%tooltexture"
+            | "$surfaceprop"
+            | "%keywords"
+            | "%notooltexture"
+            | "$nofog"
+            | "$fogenable"
+            | "$fogcolor"
+            | "$fogstart"
+            | "$fogend"
+            | "$color"
+            | "$color2"
+            | "$basetexturetransform"
+            | "$bumptransform"
+            | "$reflectivity"
+            | "$alphatest"
+            | "$translucent"
+            | "$additive"
+            | "$vertexalpha"
+            | "$vertexalphatest"
+            | "$allowalphatocoverage"
+            | "$distancealpha"
+            | "$distancealphafromdetail"
+            | "$glow"
+            | "$wireframe"
+            | "$decal"
+            | "$nodraw"
+            | "$depthblend"
+            | "$softedges"
+            | "$outline"
+            | "$ignorez"
+            | "$znearer"
+            | "$alpha"
     )
 }

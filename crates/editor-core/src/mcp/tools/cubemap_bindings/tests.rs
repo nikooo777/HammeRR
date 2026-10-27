@@ -50,3 +50,80 @@ fn mcp_and_human_actions_share_the_same_owned_binding_draft_and_undo() {
     assert_eq!(lock(&shared).document().vmf(), &before);
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
 }
+
+#[test]
+fn mcp_root_bindings_use_child_sample_provenance_and_reject_refreshed_transitive_drift() {
+    let fixture = crate::session::cubemap_bindings::test_support::instance_fixture();
+    let before = fixture.session.document().vmf().clone();
+    let shared = Arc::new(Mutex::new(fixture.session));
+    let server = EditorServer::new(shared.clone(), None);
+    let report = value(server.get_cubemap_bindings(Parameters(CubemapBindingsArgs {
+        helper: None,
+        query: Some(fixture.face.side.to_string()),
+        offset: None,
+        limit: None,
+    })));
+    assert_eq!(report["available"], true, "{report}");
+    assert_eq!(report["face_scope"], "root_authored_faces");
+    let row = report["assignments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["side"] == fixture.face.side)
+        .unwrap();
+    assert_eq!(row["helper"], Value::Null);
+    assert_eq!(row["helper_source"]["helper"], fixture.child_helper);
+    assert_eq!(
+        row["helper_source"]["occurrence"].as_array().unwrap().len(),
+        2
+    );
+    let draft = value(server.set_cubemap_bindings(Parameters(serde_json::from_value(json!({
+        "action":"preview","helper":fixture.far,"faces":[{"solid":fixture.face.solid,"side":fixture.face.side}],
+        "operation":"bind","snapshot":report["state"]["snapshot"],
+    })).unwrap())));
+    let token = draft["draft"]["token"].as_u64().unwrap();
+    assert_eq!(
+        draft["draft"]["report"]["assignments"][0]["helper_source"],
+        json!({"scope":"root","helper":fixture.far})
+    );
+    value(server.set_cubemap_bindings(Parameters(SetCubemapBindingsArgs::Apply { token })));
+    lock(&shared).undo(Actor::User).unwrap();
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    let stamp = lock(&shared).cubemap_bindings_stamp();
+    let draft = value(server.set_cubemap_bindings(Parameters(serde_json::from_value(json!({
+        "action":"preview","helper":fixture.far,"faces":[{"solid":fixture.face.solid,"side":fixture.face.side}],
+        "operation":"bind","snapshot":stamp,
+    })).unwrap())));
+    let token = draft["draft"]["token"].as_u64().unwrap();
+    let path = fixture.directory.path().join("leaf.vmf");
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(path, bytes).unwrap();
+    let refreshed = value(server.get_cubemap_bindings(Parameters(CubemapBindingsArgs {
+        helper: None,
+        query: None,
+        offset: None,
+        limit: None,
+    })));
+    assert_eq!(refreshed["available"], true);
+    assert_eq!(refreshed["state"]["draft"]["valid"], false);
+    for args in [
+        SetCubemapBindingsArgs::Review { token },
+        SetCubemapBindingsArgs::Apply { token },
+    ] {
+        assert!(
+            server
+                .set_cubemap_bindings(Parameters(args))
+                .unwrap()
+                .is_error
+                .unwrap_or(false)
+        );
+    }
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(
+        lock(&shared).cubemap_binding_state()["draft"]["token"],
+        token
+    );
+    value(server.set_cubemap_bindings(Parameters(SetCubemapBindingsArgs::Cancel { token })));
+    assert!(server.offscreen.lock().unwrap().renderer.is_none());
+}

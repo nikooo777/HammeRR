@@ -17,6 +17,12 @@ fn water_packing_mcp_schema_forwarding_and_atomic_settings_need_no_asset_or_rend
     );
     let schema = serde_json::to_value(schemars::schema_for!(CompileSettingsArgs)).unwrap();
     assert!(schema["properties"]["pack_water_assets"].is_object());
+    assert!(
+        schema["properties"]["pack_water_assets"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("opaque SLIME")
+    );
     assert_eq!(schema["additionalProperties"], false);
     for invalid in [
         json!({"pack_water_assets":"true"}),

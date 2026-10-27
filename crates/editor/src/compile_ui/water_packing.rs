@@ -25,8 +25,8 @@ fn change(window: &CompileWindow, session: &mut Session, enabled: bool) {
     );
     refresh(window, session);
     window.set_message(match result {
-        Ok(_) if enabled => "Water asset packing enabled. The next Compile or Run Map packs original supported static Water assets; missing or unsupported dependencies stop the build.".into(),
-        Ok(_) => "Water asset packing disabled.".into(),
+        Ok(_) if enabled => "Liquid asset packing enabled. The next Compile or Run Map packs original supported static Water or opaque SLIME assets; missing or unsupported dependencies stop the build.".into(),
+        Ok(_) => "Liquid asset packing disabled.".into(),
         Err(error) => error.into(),
     });
 }
@@ -63,7 +63,7 @@ pub(super) fn details(job: &Value) -> String {
     if stats["channels"] != "ldr_hdr" {
         return String::new();
     }
-    format!("\nWater assets: {roots} materials · LDR + HDR · {files} files · {bytes} bytes")
+    format!("\nLiquid assets: {roots} materials · LDR + HDR · {files} files · {bytes} bytes")
 }
 
 #[cfg(test)]

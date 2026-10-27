@@ -3,7 +3,10 @@ mod common;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use compiler::cubemap_assets::{MANIFEST_PATH, finalize_reflections_with_capture};
+use compiler::cubemap_assets::{
+    CubemapBindingQuery, CubemapBindingReport, CubemapHelperSource, MANIFEST_PATH,
+    finalize_reflections_with_capture, inspect_cubemap_bindings, inspect_root_cubemap_bindings,
+};
 use compiler::instances::{self, PreparedInstances, SourceContext};
 use compiler::{
     CompileContext, Control, CubemapAssetManifest, CubemapAssetPhase, LightingMode, Options,
@@ -542,6 +545,120 @@ fn pending_matches_literal(actual: &compiler::Output, literal: &compiler::Output
         } else {
             assert_eq!(data, expected_entries[name], "packed asset {name}");
         }
+    }
+}
+
+fn root_choices(
+    report: &CubemapBindingReport,
+    root_sides: &BTreeSet<u32>,
+) -> Vec<serde_json::Value> {
+    report
+        .assignments
+        .iter()
+        .filter(|assignment| root_sides.contains(&assignment.face_id))
+        .map(|assignment| {
+            let sample = report
+                .samples
+                .iter()
+                .find(|sample| sample.helper_id == assignment.helper_id)
+                .unwrap();
+            serde_json::json!({
+                "side":assignment.face_id,"position":sample.origin,"manual":assignment.manual,
+                "material":assignment.material,"alias":assignment.alias,
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn root_binding_inspection_matches_independent_literal_assembly_and_keeps_original_sources() {
+    for helpers_first in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let game = game(directory.path());
+        let child = leaf(helpers_first);
+        let (parent, owner) = nested_parent(directory.path(), &child.vmf);
+        let source = saved_parent(directory.path(), &parent);
+        let (flat, _) = literal_flat();
+        let root_sides: BTreeSet<_> = parent.side_ids().collect();
+        let query = CubemapBindingQuery {
+            namespace: Some(context().namespace().into()),
+            limit: 1024,
+            ..Default::default()
+        };
+        let inspection = inspect_root_cubemap_bindings(
+            &parent,
+            &game,
+            Some(&source),
+            &query,
+            &Control::default(),
+        )
+        .unwrap();
+        let literal = inspect_cubemap_bindings(&flat, &game, &query, &Control::default()).unwrap();
+        assert!(!inspection.report.assignments.is_empty());
+        assert!(
+            inspection
+                .report
+                .assignments
+                .iter()
+                .all(|assignment| root_sides.contains(&assignment.face_id))
+        );
+        assert_eq!(inspection.report.total, inspection.report.assignments.len());
+        assert!(literal.total > inspection.report.total);
+        assert_eq!(
+            root_choices(&inspection.report, &root_sides),
+            root_choices(&literal, &root_sides)
+        );
+        assert!(inspection.report.helpers.is_empty());
+        let mut occurrences = BTreeSet::new();
+        for origin in inspection.helper_sources.values() {
+            let CubemapHelperSource::Instance {
+                owner: actual_owner,
+                file,
+                helper,
+                occurrence,
+            } = origin
+            else {
+                panic!("The root fixture has no authored cubemap helpers");
+            };
+            assert_eq!(*actual_owner, owner);
+            assert_eq!(file, "leaf.vmf");
+            assert!([child.near, child.far].contains(helper));
+            assert_eq!(occurrence.steps().count(), 2);
+            occurrences.insert(occurrence.label());
+        }
+        assert_eq!(occurrences.len(), 2);
+        inspection
+            .sources
+            .verify(&game, &Control::default())
+            .unwrap();
+        let path = directory.path().join("leaf.vmf");
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.push(b'\n');
+        std::fs::write(path, bytes).unwrap();
+        assert!(
+            inspection
+                .sources
+                .verify(&game, &Control::default())
+                .is_err()
+        );
+        let fresh = inspect_root_cubemap_bindings(
+            &parent,
+            &game,
+            Some(&source),
+            &query,
+            &Control::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            root_choices(&fresh.report, &root_sides),
+            root_choices(&inspection.report, &root_sides)
+        );
+        assert!(
+            inspection
+                .sources
+                .verify(&game, &Control::default())
+                .is_err()
+        );
     }
 }
 
@@ -1188,6 +1305,8 @@ fn manual_binding_dependencies_cancellation_and_failed_publication_preserve_auth
         mounts: Vec::new(),
     };
     for (index, name) in ["middle.vmf", "leaf.vmf"].into_iter().enumerate() {
+        let reservation = compiler::WriteReservation::new(&path, &Control::default()).unwrap();
+        let source = SourceContext::capture(source.path(), &Control::default()).unwrap();
         let ordinary = compile_saved(document.vmf(), &game, &source, Options::default());
         assert!(!ordinary.report.has_errors(), "{:?}", ordinary.report);
         let stale_output = compile_saved(
@@ -1198,7 +1317,7 @@ fn manual_binding_dependencies_cancellation_and_failed_publication_preserve_auth
         );
         pending(&stale_output);
         let staged = ordinary
-            .prepare_write_controlled(&path, &Control::default())
+            .prepare_write_reserved(reservation, &Control::default())
             .unwrap()
             .unwrap();
         let mut changed = originals[if index == 0 { 1 } else { 2 }].clone();

@@ -1,5 +1,6 @@
 use super::*;
 use map_core::ObjectId;
+use slint::Model;
 use std::sync::{Arc, Mutex};
 
 #[test]
@@ -130,4 +131,85 @@ fn cubemap_window_keeps_cached_inspection_and_requires_current_owned_review() {
     controller.window.invoke_cancel();
     assert!(lock(&shared).cubemap_binding_state()["draft"].is_null());
     assert_eq!(lock(&shared).document().vmf(), &before);
+}
+
+#[test]
+fn cubemap_window_labels_child_choices_and_invalidates_drafts_after_source_drift() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let mut fixture = editor_core::session::cubemap_bindings::test_support::instance_fixture();
+    fixture
+        .session
+        .select(&[ObjectId::Entity(fixture.far)], SelectMode::Replace)
+        .unwrap();
+    let shared = Arc::new(Mutex::new(fixture.session));
+    let controller = Controller::new(&shared).unwrap();
+    controller.show(&lock(&shared)).unwrap();
+    assert!(
+        controller
+            .window
+            .get_inspection_label()
+            .contains("Root faces · assembled sample choices")
+    );
+    lock(&shared)
+        .select_faces(&[fixture.face], SelectMode::Replace)
+        .unwrap();
+    controller.refresh(&lock(&shared));
+    controller.window.invoke_bind();
+    assert!(
+        controller.window.get_ready(),
+        "{}",
+        controller.window.get_message()
+    );
+    controller.window.invoke_apply();
+    controller.window.invoke_refresh();
+    let before = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).history_snapshot();
+    controller.window.invoke_clear_bindings();
+    assert!(
+        controller.window.get_ready(),
+        "{}",
+        controller.window.get_message()
+    );
+    let rows = controller.window.get_preview_assignments();
+    let row = rows.row_data(0).unwrap();
+    assert!(row.choice.contains("Automatic"));
+    assert!(
+        row.choice
+            .contains(&format!("child helper {}", fixture.child_helper))
+    );
+    assert!(row.choice.contains("middle.vmf") && row.choice.contains("leaf.vmf"));
+    let token = lock(&shared).cubemap_binding_state()["draft"]["token"]
+        .as_u64()
+        .unwrap();
+    let path = fixture.directory.path().join("leaf.vmf");
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(path, bytes).unwrap();
+    controller.refresh(&lock(&shared));
+    assert!(!controller.window.get_ready());
+    assert!(!controller.window.get_can_review());
+    assert!(
+        controller
+            .window
+            .get_inspection_label()
+            .contains("Refresh assignments")
+    );
+    controller.window.invoke_refresh();
+    assert!(!controller.window.get_ready());
+    controller.window.invoke_apply();
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert_eq!(
+        lock(&shared).cubemap_binding_state()["draft"]["token"],
+        token
+    );
+    controller.window.invoke_cancel();
+    assert!(lock(&shared).cubemap_binding_state()["draft"].is_null());
 }

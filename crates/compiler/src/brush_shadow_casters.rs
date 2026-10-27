@@ -209,7 +209,7 @@ pub(crate) fn validate_material(
     if cutout {
         crate::lighting::validate_brush_cutout_material(&material)
     } else {
-        opaque_parameters(name, &material)
+        opaque_parameters(name, |key| material.get(key))
     }?;
     Ok(material)
 }
@@ -224,7 +224,10 @@ pub(crate) fn binary_cutout(info: &MaterialInfo) -> bool {
         && info.unsupported_flags.is_empty()
 }
 
-fn opaque_parameters(name: &str, material: &vmt::Material) -> Result<(), String> {
+pub(crate) fn opaque_parameters<'a>(
+    name: &str,
+    get: impl Fn(&str) -> Option<&'a str>,
+) -> Result<(), String> {
     for (key, neutral) in [
         ("$alphatest", 0.0),
         ("$translucent", 0.0),
@@ -245,7 +248,7 @@ fn opaque_parameters(name: &str, material: &vmt::Material) -> Result<(), String>
         ("$znearer", 0.0),
         ("$alpha", 1.0),
     ] {
-        if let Some(value) = material.get(key) {
+        if let Some(value) = get(key) {
             let value = value
                 .trim()
                 .parse::<f64>()
@@ -375,14 +378,14 @@ mod tests {
             ))
             .unwrap();
             assert!(
-                opaque_parameters("test/hidden", &material).is_err(),
+                opaque_parameters("test/hidden", |key| material.get(key)).is_err(),
                 "{key}"
             );
         }
         let material =
             vmt::Material::parse("UnlitGeneric { %compilenodraw 1 $alpha 1.0 $alphatest 0.0 }")
                 .unwrap();
-        opaque_parameters("test/hidden", &material).unwrap();
+        opaque_parameters("test/hidden", |key| material.get(key)).unwrap();
     }
 
     #[test]

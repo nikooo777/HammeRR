@@ -1209,10 +1209,10 @@ fn build(
         let roots = map
             .materials
             .iter()
-            .filter(|info| info.water)
+            .filter(|info| info.water || info.contents & bsp::contents::SLIME != 0)
             .map(|info| {
                 water_dependencies::logical_material_path(&info.name.to_ascii_lowercase())
-                    .map_err(|error| format!("Pack water assets: material {}: {error}", info.name))
+                    .map_err(|error| format!("Pack liquid assets: material {}: {error}", info.name))
             })
             .collect::<Result<Vec<_>, _>>()?;
         Some(
@@ -1402,15 +1402,15 @@ fn build(
         for record in &water.records {
             let texinfo = &map.texinfos.infos[record.surface_texinfo as usize];
             let material = map.materials.get(map.texdata[texinfo.texdata as usize]);
-            if !material.water {
+            if !material.water && material.contents & bsp::contents::SLIME == 0 {
                 return Err(format!(
-                    "Pack water assets requires supported Water-shader liquid surfaces; material {} is outside that subset",
+                    "Pack liquid assets requires supported Water-shader or static opaque SLIME liquid surfaces; material {} is outside that subset",
                     material.name
                 ));
             }
         }
     } else if !water.records.is_empty() {
-        output.report.diagnostics.push(Diagnostic::warning("Liquid material assets must remain mounted; Pack water assets embeds only supported static Water-shader files", None, None));
+        output.report.diagnostics.push(Diagnostic::warning("Liquid material assets must remain mounted; Pack liquid assets embeds only supported static Water or opaque SLIME closures", None, None));
     }
     if !water.records.is_empty()
         && !map

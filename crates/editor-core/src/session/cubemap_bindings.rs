@@ -1,6 +1,11 @@
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
-use compiler::cubemap_assets::{CubemapBindingQuery, CubemapBindingReport};
+use compiler::cubemap_assets::{
+    CubemapBindingInspection, CubemapBindingQuery, CubemapBindingReport, CubemapBindingSources,
+    CubemapHelperSource,
+};
 use map_core::{ObjectId, surface::FaceId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -48,6 +53,8 @@ pub(super) struct State {
     serial: u64,
     context_serial: u64,
     draft: Option<Draft>,
+    inspection_sources: RefCell<Option<Arc<CubemapBindingSources>>>,
+    inspection_serial: Cell<u64>,
 }
 
 impl State {
@@ -63,6 +70,7 @@ struct Draft {
     request: Request,
     sides: Option<String>,
     report: Value,
+    sources: Arc<CubemapBindingSources>,
 }
 
 fn is_helper(entity: &Entity) -> bool {
@@ -185,7 +193,8 @@ fn helpers_json(vmf: &Vmf, report: Option<&CubemapBindingReport>) -> Vec<Value> 
         .collect()
 }
 
-fn report_json(vmf: &Vmf, report: &CubemapBindingReport) -> Value {
+fn report_json(vmf: &Vmf, inspection: &CubemapBindingInspection) -> Value {
+    let report = &inspection.report;
     let faces = source_faces(vmf);
     let assignments = report
         .assignments
@@ -201,8 +210,13 @@ fn report_json(vmf: &Vmf, report: &CubemapBindingReport) -> Value {
                 .samples
                 .iter()
                 .find(|sample| sample.helper_id == assignment.helper_id);
+            let source = inspection.helper_sources.get(&assignment.helper_id);
+            let helper = match source {
+                Some(CubemapHelperSource::Root { helper }) => Some(*helper),
+                _ => None,
+            };
             json!({
-                "face":face,"side":assignment.face_id,"helper":assignment.helper_id,
+                "face":face,"side":assignment.face_id,"helper":helper,"helper_source":source,
                 "position":sample.map(|sample|sample.origin),"manual":assignment.manual,
                 "material":assignment.material,"alias":assignment.alias,
             })
@@ -216,6 +230,8 @@ fn report_json(vmf: &Vmf, report: &CubemapBindingReport) -> Value {
     json!({
         "available":true,"namespace":report.namespace,"total":report.total,"assignments":assignments,
         "helpers":helpers,"diagnostics":diagnostics,
+        "face_scope":"root_authored_faces","sample_scope":"assembled_map",
+        "child_faces_editable":false,
     })
 }
 
@@ -237,21 +253,32 @@ impl Session {
 
     pub fn cubemap_bindings_stamp(&self) -> String {
         format!(
-            "{}:{}:{}",
+            "{}:{}:{}:{}:{}",
             self.cubemap_binding_source(),
             self.cubemap_bindings.serial,
             self.cubemap_binding_context().is_ok(),
+            self.cubemap_binding_report_stamp(),
+            self.cubemap_bindings
+                .draft
+                .as_ref()
+                .is_none_or(|draft| draft.sources.verify_metadata().is_ok()),
         )
     }
 
     pub fn cubemap_binding_report_stamp(&self) -> String {
         format!(
-            "{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}",
             self.document_generation,
             self.document.revision(),
             self.build_content_epoch(),
             self.cubemap_binding_namespace()
                 .unwrap_or_else(|error| error),
+            self.cubemap_bindings
+                .inspection_sources
+                .borrow()
+                .as_ref()
+                .is_none_or(|sources| sources.verify_metadata().is_ok()),
+            self.cubemap_bindings.inspection_serial.get(),
         )
     }
 
@@ -264,8 +291,8 @@ impl Session {
         if self.closing {
             return Err("The editor is closing".into());
         }
-        if compiler::instances::requires_source(self.document.vmf()) {
-            return Err("Cubemap binding inspection and drafts are unavailable while the map contains instances; authored faces do not describe the assembled geometry".into());
+        if compiler::instances::requires_source(self.document.vmf()) && self.path.is_none() {
+            return Err("Save the parent VMF before inspecting or editing cubemap bindings with visible instances".into());
         }
         if !std::ptr::eq(self.render_document(), &self.document) {
             return Err(
@@ -299,6 +326,7 @@ impl Session {
                 "Map, selection, output name or content changed; preview bindings again".into(),
             );
         }
+        draft.sources.verify_metadata()?;
         Ok(draft)
     }
 
@@ -324,17 +352,39 @@ impl Session {
         &self,
         vmf: &Vmf,
         query: &CubemapBindingQuery,
-    ) -> Result<CubemapBindingReport, String> {
+    ) -> Result<CubemapBindingInspection, String> {
         if let Some(error) = &self.game_error {
             return Err(format!(
                 "Cubemap binding inspection needs mounted game content: {error}"
             ));
         }
-        compiler::cubemap_assets::inspect_cubemap_bindings(
+        let control = compiler::Control::default();
+        let source = if compiler::instances::requires_source(vmf) {
+            if let Some(claim) = &self.file_claims.source {
+                claim.destination().verify().map_err(|error| {
+                    format!(
+                        "Map source binding changed; reopen or Save As before inspecting: {error}"
+                    )
+                })?;
+            }
+            Some(
+                compiler::instances::SourceContext::capture(
+                    self.path
+                        .as_deref()
+                        .ok_or("Save the parent VMF before inspecting instances")?,
+                    &control,
+                )
+                .map_err(|error| error.to_string())?,
+            )
+        } else {
+            None
+        };
+        compiler::cubemap_assets::inspect_root_cubemap_bindings(
             vmf,
             &self.game,
+            source.as_ref(),
             query,
-            &compiler::Control::default(),
+            &control,
         )
     }
 
@@ -348,6 +398,9 @@ impl Session {
         if let Some(id) = query.helper {
             helper(self.document.vmf(), id)?;
         }
+        self.cubemap_bindings
+            .inspection_serial
+            .set(self.cubemap_bindings.inspection_serial.get() + 1);
         let namespace = self
             .cubemap_binding_context()
             .and_then(|()| self.cubemap_binding_namespace());
@@ -364,7 +417,11 @@ impl Session {
                 },
             )
         }) {
-            Ok(report) => report_json(self.document.vmf(), &report),
+            Ok(inspection) => {
+                *self.cubemap_bindings.inspection_sources.borrow_mut() =
+                    Some(inspection.sources.clone());
+                report_json(self.document.vmf(), &inspection)
+            }
             Err(error) => json!({
                 "available":false,"namespace":self.cubemap_binding_namespace().ok(),"total":0,"assignments":[],
                 "helpers":helpers_json(self.document.vmf(),None),"diagnostics":[error],
@@ -376,7 +433,7 @@ impl Session {
         value["limit"] = json!(limit);
         value["provisional_namespace"] = json!(self.path.is_none());
         value["policy"] = json!(
-            "Manual sides override automatic assignment. Remove bindings to use the compiler's nearest active sample, which may be another helper. Aliases are provisional for an unnamed map. Inspection does not capture reflections or change source properties."
+            "Assignments list root-authored faces only; sample choices use the complete assembled map. Child samples carry source file and occurrence; child faces and helpers cannot be edited here. Manual sides override automatic assignment. Remove bindings to use the compiler's nearest active sample, which may belong to a child. Aliases are provisional for an unnamed map. Inspection does not capture reflections or change source properties."
         );
         Ok(value)
     }
@@ -384,7 +441,7 @@ impl Session {
     fn prepare_cubemap_binding(
         &self,
         request: &Request,
-    ) -> Result<(Option<String>, Value), String> {
+    ) -> Result<(Option<String>, Value, Arc<CubemapBindingSources>), String> {
         self.cubemap_binding_context()?;
         let vmf = self.document.vmf();
         let entity = helper(vmf, request.helper)?;
@@ -499,6 +556,7 @@ impl Session {
             },
         )?;
         let status = report
+            .report
             .helpers
             .iter()
             .find(|helper| helper.helper_id == request.helper)
@@ -509,7 +567,7 @@ impl Session {
                 request.helper
             ));
         }
-        Ok((sides, report_json(&candidate, &report)))
+        Ok((sides, report_json(&candidate, &report), report.sources))
     }
 
     pub fn preview_cubemap_bindings(
@@ -523,7 +581,7 @@ impl Session {
                 "Map, selection or binding draft changed; inspect cubemap bindings again".into(),
             );
         }
-        let (sides, report) = self.prepare_cubemap_binding(&request)?;
+        let (sides, report, sources) = self.prepare_cubemap_binding(&request)?;
         self.cubemap_bindings.serial += 1;
         self.cubemap_bindings.draft = Some(Draft {
             token: self.cubemap_bindings.serial,
@@ -532,6 +590,7 @@ impl Session {
             request,
             sides,
             report,
+            sources,
         });
         self.view_serial += 1;
         self.log(actor, "Preview cubemap face bindings");
@@ -554,12 +613,15 @@ impl Session {
         if draft.owner != actor {
             return Err("Review the current cubemap binding draft before applying it".into());
         }
-        let (sides, report) = self.prepare_cubemap_binding(&draft.request)?;
+        let control = compiler::Control::default();
+        draft.sources.verify(&self.game, &control)?;
+        let (sides, report, _) = self.prepare_cubemap_binding(&draft.request)?;
         if sides != draft.sides || report != draft.report {
             return Err(
                 "Cubemap assignments or material assets changed; preview bindings again".into(),
             );
         }
+        draft.sources.verify(&self.game, &control)?;
         let helper = draft.request.helper;
         let operation = draft.request.operation;
         self.edit(actor, "Edit cubemap face bindings", |tx| {

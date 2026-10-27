@@ -11,7 +11,7 @@ use crate::Control;
 const DEPENDENCIES: [&str; 3] = ["$bottommaterial", "$crackmaterial", "$fallbackmaterial"];
 
 pub(super) fn self_bottom(name: &str, key: &str, value: &str) -> bool {
-    key.eq_ignore_ascii_case("$bottommaterial") && value.eq_ignore_ascii_case(name)
+    crate::water_dependencies::native_self_bottom(name, key, value)
 }
 
 pub(super) fn material_name(name: &str) -> Result<String, String> {

@@ -22,6 +22,14 @@ pub enum PplMips931Case {
     FilterReference064,
     #[serde(rename = "filter-reference-096")]
     FilterReference096,
+    #[serde(rename = "address-a")]
+    AddressA,
+    #[serde(rename = "address-b")]
+    AddressB,
+    #[serde(rename = "address-reference-064")]
+    AddressReference064,
+    #[serde(rename = "address-reference-096")]
+    AddressReference096,
 }
 
 impl PplMips931Case {
@@ -41,6 +49,14 @@ impl PplMips931Case {
                 "7f0b49548e11bc529d7fdbcdf62a84496c3389693fd4b73df5b3789d099265e5"
             }
             Self::FilterReference096 => {
+                "7d90a2bfb370e166a68ebcca937d4b1791486874792ab41524f7596bab655d19"
+            }
+            Self::AddressA => "637a0fadf3e02f2d5686dc5daa0d3af6583ac263041c3477df4622c900b072be",
+            Self::AddressB => "36fefd2839ac8c596118565510622d358efdc1f6e51d8fcc62cd370afbcec064",
+            Self::AddressReference064 => {
+                "7f0b49548e11bc529d7fdbcdf62a84496c3389693fd4b73df5b3789d099265e5"
+            }
+            Self::AddressReference096 => {
                 "7d90a2bfb370e166a68ebcca937d4b1791486874792ab41524f7596bab655d19"
             }
         }

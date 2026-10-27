@@ -872,6 +872,26 @@ mod tests {
                 PplMips931Case::FilterReference096,
                 "7d90a2bfb370e166a68ebcca937d4b1791486874792ab41524f7596bab655d19",
             ),
+            (
+                "address-a",
+                PplMips931Case::AddressA,
+                "637a0fadf3e02f2d5686dc5daa0d3af6583ac263041c3477df4622c900b072be",
+            ),
+            (
+                "address-b",
+                PplMips931Case::AddressB,
+                "36fefd2839ac8c596118565510622d358efdc1f6e51d8fcc62cd370afbcec064",
+            ),
+            (
+                "address-reference-064",
+                PplMips931Case::AddressReference064,
+                "7f0b49548e11bc529d7fdbcdf62a84496c3389693fd4b73df5b3789d099265e5",
+            ),
+            (
+                "address-reference-096",
+                PplMips931Case::AddressReference096,
+                "7d90a2bfb370e166a68ebcca937d4b1791486874792ab41524f7596bab655d19",
+            ),
         ] {
             assert_eq!(case.bsp_sha(), expected);
             assert!(pinned_bytes(&bsp, expected, MAX_INPUT).is_err());
@@ -899,6 +919,8 @@ mod tests {
             "tail-064",
             "filter-c",
             "filter-reference-032",
+            "address-c",
+            "address-reference-032",
         ] {
             assert!(serde_json::from_value::<PplMips931Case>(json!(case)).is_err());
             let value = json!({"kind":"ppl_mips931", "parameters":case});

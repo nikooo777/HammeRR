@@ -365,6 +365,8 @@ fn prepare_texture(
             }
             let bytes = assets.read(&path, budget)?;
             let vtf = Vtf::parse(bytes).map_err(|error| format!("{path}: {error}"))?;
+            vtf.validate_native_mips()
+                .map_err(|error| format!("{path}: {error}"))?;
             if vtf.frames != 1 || vtf.faces != 1 || vtf.depth != 1 {
                 return Err(format!(
                     "{path}: animated, cubemap and volume texture shadows are unsupported"

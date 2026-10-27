@@ -393,6 +393,9 @@ impl<'a> Reader<'a> {
 
 fn texture_issues(texture: &Vtf, parameter: &str, hdr: bool) -> Vec<String> {
     let mut issues = Vec::new();
+    if let Err(error) = texture.validate_native_mips() {
+        issues.push(error.to_string());
+    }
     if texture.width > MAX_TEXTURE_SIZE || texture.height > MAX_TEXTURE_SIZE {
         issues.push(format!(
             "Texture exceeds {MAX_TEXTURE_SIZE} pixels per axis"

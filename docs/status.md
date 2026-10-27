@@ -19,7 +19,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Brushes](brushes.md) | Shapes, handles, exact transforms, selection or per-object grid snapping, pivots with grid snapping and saved defaults, mirror and shear. | Magnetic snapping and surface-attached pivots. |
 | [Brush tools](brush-tools.md) | Hollow, carve, clip, convex merge and polygon extrusion. | Concave merge and holes. |
 | [Components](components.md) | Move, rotate, scale, weld, split, ridges and partitions. | General topology editing and arbitrary dividing lines. |
-| [Materials](textures.md) | Grouped browsing, favorites, mapping, painting, wrapping, replacement, saved named atlas regions, padded image fitting with coplanar continuity and face lighting. | Full native shader preview. |
+| [Materials](textures.md) | Grouped browsing, favorites, mapping, painting, wrapping, replacement, saved named atlas regions, padded image fitting with coplanar continuity, face lighting and checked native texture mip chains. | Full native shader preview. |
 | [Normal maps](normal-maps.md) | Supported flat-brush normal textures. | Terrain/model normal maps and special encodings. |
 | [Lighting preview](lighting-preview.md) | Unshadowed point, spot and sun lighting with checked receivers. | Shadows, sky visibility, bounce and native brightness match. |
 | [Color correction](color-correction.md) | One explicit Source RGB8 `.raw` LUT, shared enable/weight controls and complete viewport display-color preview. | Native HDR, tone mapping, entities/volumes and multiple-LUT composition. |

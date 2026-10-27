@@ -31,6 +31,8 @@ Use **Baked lighting tint · linear RGB** for supported lighting attenuation.
 
 ## Limits
 
+Atlas textures must meet the [native texture limits](textures.md#native-texture-files).
+
 - All detail sprites share the world's atlas material.
 - No collision or ordinary runtime entity remains after compilation.
 - The editor helper does not display the final native card or sway.

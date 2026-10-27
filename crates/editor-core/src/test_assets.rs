@@ -63,6 +63,7 @@ pub fn game() -> (tempfile::TempDir, GameFs) {
     image[12..16].copy_from_slice(&80u32.to_le_bytes());
     image[16..18].copy_from_slice(&64u16.to_le_bytes());
     image[18..20].copy_from_slice(&32u16.to_le_bytes());
+    image[20..24].copy_from_slice(&source_formats::vtf::FLAG_NOMIP.to_le_bytes());
     image[24..26].copy_from_slice(&1u16.to_le_bytes());
     image[56] = 1;
     image[57..61].copy_from_slice(&(-1i32).to_le_bytes());

@@ -23,6 +23,7 @@ fn texture(width: u16, height: u16, reflectivity: [f32; 3]) -> Vec<u8> {
     for (axis, value) in reflectivity.into_iter().enumerate() {
         bytes[32 + axis * 4..36 + axis * 4].copy_from_slice(&value.to_le_bytes());
     }
+    bytes[20..24].copy_from_slice(&source_formats::vtf::FLAG_NOMIP.to_le_bytes());
     bytes[56] = 1;
     bytes[57..61].copy_from_slice(&(-1_i32).to_le_bytes());
     for _ in 0..usize::from(width) * usize::from(height) {

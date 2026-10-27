@@ -29,12 +29,30 @@ struct Resolved {
     repeated_edit: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TextureRole {
+    Image,
+    EditorImage,
+    Cubemap { hdr: bool },
+}
+
+impl TextureRole {
+    fn image(key: &str) -> Self {
+        if key == "%tooltexture" {
+            Self::EditorImage
+        } else {
+            Self::Image
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct TextureLayout {
     version: (u32, u32),
     width: u32,
     height: u32,
     mips: u8,
+    flags: u32,
     cube: bool,
     faces: u8,
     first_frame: u16,
@@ -314,7 +332,7 @@ where
                 self.cubemap_pair(reference)?;
             } else {
                 let target = logical_path(reference, false, false)?;
-                self.texture(&target, false, false)?;
+                self.texture(&target, TextureRole::image(key))?;
             }
         }
         self.walking.remove(path);
@@ -419,7 +437,7 @@ where
             if matches!(key.as_str(), "$basetexture" | "$bumpmap" | "%tooltexture") {
                 self.edge()?;
                 let target = logical_path(&parameter.value, false, false)?;
-                let layout = self.texture(&target, false, false)?;
+                let layout = self.texture(&target, TextureRole::image(key))?;
                 if layout.first_frame != 0 {
                     return Err(invalid(format!(
                         "Static slime textures require first_frame 0: {target}"
@@ -433,9 +451,9 @@ where
 
     fn cubemap_pair(&mut self, reference: &str) -> io::Result<()> {
         let target = logical_path(reference, false, false)?;
-        let ldr = self.texture(&target, true, false)?;
+        let ldr = self.texture(&target, TextureRole::Cubemap { hdr: false })?;
         let hdr_path = logical_path(reference, false, true)?;
-        let hdr = self.texture(&hdr_path, true, true)?;
+        let hdr = self.texture(&hdr_path, TextureRole::Cubemap { hdr: true })?;
         if (ldr.width, ldr.height, ldr.mips) != (hdr.width, hdr.height, hdr.mips) {
             return Err(invalid(format!(
                 "Water LDR/HDR cubemap layouts differ: {target} and {hdr_path}"
@@ -444,7 +462,7 @@ where
         Ok(())
     }
 
-    fn texture(&mut self, path: &str, cube: bool, hdr: bool) -> io::Result<TextureLayout> {
+    fn texture(&mut self, path: &str, role: TextureRole) -> io::Result<TextureLayout> {
         let layout = if let Some(layout) = self.textures.get(path) {
             *layout
         } else {
@@ -502,6 +520,7 @@ where
                 width: texture.width,
                 height: texture.height,
                 mips: texture.mip_count,
+                flags: texture.flags,
                 cube: texture.flags & ENVMAP_FLAG != 0,
                 faces: texture.faces,
                 first_frame: texture.first_frame,
@@ -510,7 +529,15 @@ where
             self.textures.insert(path.into(), layout);
             layout
         };
-        if cube {
+        if role != TextureRole::EditorImage {
+            source_formats::vtf::validate_native_mips(
+                [layout.width, layout.height, 1],
+                layout.flags,
+                layout.mips,
+            )
+            .map_err(|error| invalid(format!("Unsupported Water VTF {path}: {error}")))?;
+        }
+        if let TextureRole::Cubemap { hdr } = role {
             // CS:S reads seven stored faces for every VTF 7.4 cubemap.
             if layout.version != (7, 4)
                 || !layout.cube

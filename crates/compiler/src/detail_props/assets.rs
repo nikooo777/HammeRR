@@ -219,6 +219,9 @@ impl<'a> ModelValidator<'a> {
             .ok_or_else(|| format!("Detail sprite atlas texture {texture} was not found"))?;
         let atlas =
             Vtf::parse(data).map_err(|error| format!("Detail sprite atlas {texture}: {error}"))?;
+        atlas
+            .validate_native_mips()
+            .map_err(|error| format!("Detail sprite atlas {texture}: {error}"))?;
         if atlas.width != atlas.height
             || atlas.width > MAX_ATLAS_DIMENSION
             || atlas.frames != 1

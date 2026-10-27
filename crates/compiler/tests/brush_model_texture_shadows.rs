@@ -25,7 +25,12 @@ const MIXED: [f64; 9] = [
 fn texture(pixels: [[u8; 4]; 4]) -> Vec<u8> {
     let mut bytes = vec![0_u8; 80];
     bytes[..4].copy_from_slice(b"VTF\0");
-    for (offset, value) in [(4, 7_u32), (8, 2), (12, 80), (20, 0x1000)] {
+    for (offset, value) in [
+        (4, 7_u32),
+        (8, 2),
+        (12, 80),
+        (20, 0x1000 | source_formats::vtf::FLAG_NOMIP),
+    ] {
         bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
     for (offset, value) in [(16, 2_u16), (18, 2), (24, 1), (63, 1)] {
@@ -34,6 +39,7 @@ fn texture(pixels: [[u8; 4]; 4]) -> Vec<u8> {
     for offset in [32, 36, 40] {
         bytes[offset..offset + 4].copy_from_slice(&0.25_f32.to_le_bytes());
     }
+
     bytes[56] = 1;
     bytes[57..61].copy_from_slice(&(-1_i32).to_le_bytes());
     for pixel in pixels {

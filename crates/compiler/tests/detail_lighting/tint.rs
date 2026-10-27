@@ -22,6 +22,7 @@ pub(super) fn atlas(fixture: &mut Fixture) {
     for offset in [24, 63] {
         texture[offset..offset + 2].copy_from_slice(&1_u16.to_le_bytes());
     }
+    texture[20..24].copy_from_slice(&source_formats::vtf::FLAG_NOMIP.to_le_bytes());
     texture[56] = 1;
     texture[57..61].copy_from_slice(&(-1_i32).to_le_bytes());
     std::fs::write(

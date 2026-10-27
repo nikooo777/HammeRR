@@ -22,6 +22,7 @@ fn texture(pixels: &[[u8; 4]]) -> Vec<u8> {
     for offset in [32, 36, 40] {
         bytes[offset..offset + 4].copy_from_slice(&0.25_f32.to_le_bytes());
     }
+    bytes[20..24].copy_from_slice(&source_formats::vtf::FLAG_NOMIP.to_le_bytes());
     bytes[56] = 1;
     bytes[57..61].copy_from_slice(&(-1_i32).to_le_bytes());
     for pixel in pixels {

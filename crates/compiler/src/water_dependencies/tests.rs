@@ -403,6 +403,9 @@ fn texture_types_raw_header_fields_and_codec_failures_are_observations_only() {
         (3, WaterDependencyState::Unsupported),
         (4, WaterDependencyState::UnavailableSource),
         (5, WaterDependencyState::Unsupported),
+        (6, WaterDependencyState::Unsupported),
+        (7, WaterDependencyState::SupportedStaticInventory),
+        (8, WaterDependencyState::SupportedStaticInventory),
     ] {
         let (directory, game) = fixture();
         let mut bytes = texture(false);
@@ -419,17 +422,43 @@ fn texture_types_raw_header_fields_and_codec_failures_are_observations_only() {
                 bytes.pop();
             }
             5 => bytes = texture(true),
+            6 | 7 => {
+                bytes[16..18].copy_from_slice(&2u16.to_le_bytes());
+                bytes[18..20].copy_from_slice(&2u16.to_le_bytes());
+                bytes.resize(80 + 16, 0);
+                if case == 7 {
+                    bytes[20..24].copy_from_slice(&source_formats::vtf::FLAG_NOMIP.to_le_bytes());
+                }
+            }
+            8 => {}
             _ => unreachable!(),
         }
         fs::write(directory.path().join("materials/test/value.vtf"), bytes).unwrap();
         fs::write(
             directory.path().join("materials/test/root.vmt"),
-            "Water { $normalmap test/value $basetexture test/value }",
+            if case == 8 {
+                let mut preview = texture(false);
+                preview[16..18].copy_from_slice(&2u16.to_le_bytes());
+                preview[18..20].copy_from_slice(&2u16.to_le_bytes());
+                preview.resize(80 + 16, 0);
+                fs::write(directory.path().join("materials/test/preview.vtf"), preview).unwrap();
+                "Water { $normalmap test/value $basetexture test/value %tooltexture test/preview }"
+            } else {
+                "Water { $normalmap test/value $basetexture test/value }"
+            },
         )
         .unwrap();
         let report = inspect(&game, "materials/test/root.vmt");
         assert_eq!(report.state, state, "case {case}: {:?}", report.issues);
-        assert_eq!(report.counters.texture_reads, 1);
+        assert_eq!(report.counters.texture_reads, if case == 8 { 2 } else { 1 });
+        if case == 6 {
+            assert!(
+                report
+                    .issues
+                    .iter()
+                    .any(|issue| issue.code == "incomplete_mip_chain")
+            );
+        }
         if case == 0 {
             let value = report
                 .assets

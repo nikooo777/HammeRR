@@ -30,6 +30,7 @@ fn texture(width: u16, height: u16, frames: u16) -> Vec<u8> {
     data[16..18].copy_from_slice(&width.to_le_bytes());
     data[18..20].copy_from_slice(&height.to_le_bytes());
     data[24..26].copy_from_slice(&frames.to_le_bytes());
+    data[20..24].copy_from_slice(&source_formats::vtf::FLAG_NOMIP.to_le_bytes());
     data[56] = 1;
     data[57..61].copy_from_slice(&(-1_i32).to_le_bytes());
     data[63..65].copy_from_slice(&1_u16.to_le_bytes());
@@ -1105,6 +1106,10 @@ fn atlas_assets_require_real_static_supported_material_and_complete_texture_data
         rejected(&fixture, "static UnlitGeneric");
     }
     std::fs::write(&material, ATLAS).unwrap();
+    let mut missing_mips = texture(16, 16, 1);
+    missing_mips[20..24].copy_from_slice(&0u32.to_le_bytes());
+    std::fs::write(&atlas, missing_mips).unwrap();
+    rejected(&fixture, "native sampling requires");
     for bytes in [
         texture(16, 8, 1),
         texture(16, 16, 2),

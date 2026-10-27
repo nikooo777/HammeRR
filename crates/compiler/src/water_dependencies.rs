@@ -666,6 +666,20 @@ impl<'a, 'b> Collector<'a, 'b> {
                 "A prior texture observation was unavailable",
             ));
         };
+        if role != DependencyRole::EditorPreviewTexture
+            && let Err(error) = vtf::validate_native_mips(
+                [texture.width, texture.height, texture.depth],
+                texture.flags,
+                texture.mip_count,
+            )
+        {
+            self.report.assets[index].state = AssetState::UnsupportedTexture;
+            return Err(Failure::new(
+                WaterDependencyState::Unsupported,
+                "incomplete_mip_chain",
+                error.to_string(),
+            ));
+        }
         let cube = texture.flags & 0x4000 != 0;
         let valid = if role == DependencyRole::CubemapTexture {
             cube && texture.width == texture.height && matches!(texture.faces, 6 | 7)

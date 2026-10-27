@@ -261,16 +261,21 @@ fn mutation_after_original_material_or_metric_texture_read_is_refused() {
 #[test]
 fn incomplete_or_mismatched_hdr_siblings_are_never_fallback_complete() {
     for material in [WATER, SLIME_STATIC_ENVMAP] {
-        for failure in ["missing", "ldr_format", "layout"] {
+        for failure in ["missing", "ldr_format", "layout", "mips"] {
             let fixture = Fixture::new();
             fixture.liquid(material);
             match failure {
                 "ldr_format" => fixture.write(HDR_CUBE, texture(true, false)),
-                "layout" => {
+                "layout" | "mips" => {
                     let mut bytes = texture(true, true);
                     bytes[16..18].copy_from_slice(&2u16.to_le_bytes());
                     bytes[18..20].copy_from_slice(&2u16.to_le_bytes());
                     bytes.resize(88 + 7 * 4 * 8, 0);
+                    if failure == "layout" {
+                        bytes[20..24].copy_from_slice(
+                            &(0x4000 | source_formats::vtf::FLAG_NOMIP).to_le_bytes(),
+                        );
+                    }
                     fixture.write(HDR_CUBE, bytes);
                 }
                 _ => fs::remove_file(fixture.directory.path().join(HDR_CUBE)).unwrap(),
@@ -281,6 +286,7 @@ fn incomplete_or_mismatched_hdr_siblings_are_never_fallback_complete() {
                 error.contains(match failure {
                     "ldr_format" => "HDR color format",
                     "layout" => "layouts differ",
+                    "mips" => "mip levels",
                     _ => "Missing Water source",
                 }),
                 "{error}"

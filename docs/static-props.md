@@ -78,3 +78,4 @@ Inspect **Instance contents…** before building. Child source files must remain
 - Cutout vertex-lighting receivers require one canonical basetexture and literal `$alphatest 1` at the default cutoff, with the same bounded Patch grammar as packing.
 - Cutout vertex lighting is experimental.
 - Missing or unsupported required data fails rather than substituting another asset.
+- Sampled textures must meet the [native texture limits](textures.md#native-texture-files).

@@ -54,6 +54,9 @@ pub(super) fn vtf(format: u32, width: u16, height: u16, mips: u8) -> Vec<u8> {
     bytes[18..20].copy_from_slice(&height.to_le_bytes());
     bytes[24..26].copy_from_slice(&1u16.to_le_bytes());
     bytes[52..56].copy_from_slice(&format.to_le_bytes());
+    if mips == 1 {
+        bytes[20..24].copy_from_slice(&source_formats::vtf::FLAG_NOMIP.to_le_bytes());
+    }
     bytes[56] = mips;
     bytes[57..61].copy_from_slice(&(-1i32).to_le_bytes());
     bytes[63..65].copy_from_slice(&1u16.to_le_bytes());
@@ -151,6 +154,21 @@ fn channels_keep_missing_truncated_and_unsupported_assets_separate() {
         Some("Rgba16161616")
     );
     assert!(fresh.faces[3].hdr.ready);
+    let mut missing_mips = vtf(25, 2, 2, 1);
+    missing_mips[20..24].copy_from_slice(&0u32.to_le_bytes());
+    fixture.write("materials/skybox/shared_hdr.vtf", missing_mips);
+    let incomplete = inspect(&fixture.game, Some("test"));
+    assert!(!incomplete.hdr_ready);
+    assert!(
+        incomplete.faces[3].hdr.textures[0]
+            .issues
+            .iter()
+            .any(|issue| issue.contains("native sampling requires"))
+    );
+    let mut unfiltered = vtf(25, 2, 2, 1);
+    unfiltered[20..24].copy_from_slice(&source_formats::vtf::FLAG_NOMIP.to_le_bytes());
+    fixture.write("materials/skybox/shared_hdr.vtf", unfiltered);
+    assert!(inspect(&fixture.game, Some("test")).faces[3].hdr.ready);
 }
 
 #[test]

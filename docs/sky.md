@@ -64,6 +64,7 @@ The game must enable full HDR to display its HDR channel.
 ## Limits
 
 - Supported static six-face families only. Missing or malformed required faces report errors.
+- Required sky textures must meet the [native texture limits](textures.md#native-texture-files).
 - 3D sky preparation is explicit; enabling the switch does not silently load or repair sources.
 - 3D sky uses opaque materials with one base texture. Cutouts, transparency, normal maps and detail layers are unsupported.
 - Miniature scale is an integer from 1 to 128. Camera angles do not rotate the miniature preview.

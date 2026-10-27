@@ -269,7 +269,11 @@ pub(super) fn caster_texture(alpha: u8) -> Vec<u8> {
     int(&mut data, 12, 80);
     data[16..18].copy_from_slice(&4_u16.to_le_bytes());
     data[18..20].copy_from_slice(&4_u16.to_le_bytes());
-    int(&mut data, 20, 0x1000);
+    int(
+        &mut data,
+        20,
+        0x1000 | source_formats::vtf::FLAG_NOMIP as i32,
+    );
     data[24..26].copy_from_slice(&1_u16.to_le_bytes());
     data[56] = 1;
     int(&mut data, 57, -1);

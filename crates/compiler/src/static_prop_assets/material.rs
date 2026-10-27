@@ -174,6 +174,9 @@ pub(super) fn texture(path: &str, bytes: Vec<u8>, control: &Control) -> io::Resu
     checkpoint(control)?;
     let parsed = Vtf::parse(bytes.clone())
         .map_err(|error| invalid(format!("Unsupported static-prop VTF {path}: {error}")))?;
+    parsed
+        .validate_native_mips()
+        .map_err(|error| invalid(format!("Unsupported static-prop VTF {path}: {error}")))?;
     if parsed.version.1 > 4
         || parsed.width > MAX_TEXTURE_AXIS
         || parsed.height > MAX_TEXTURE_AXIS

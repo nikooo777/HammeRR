@@ -109,3 +109,4 @@ Movement, parenting, rendered surfaces and authored world current/damping are un
 - Current and damping are map-wide; per-pool controls remain unavailable.
 - The editor shows the water material's editor image, not native reflection or refraction.
 - Invalid controls, missing required assets and exceeded geometry budgets fail without replacing the previous BSP.
+- Sampled textures must meet the [native texture limits](textures.md#native-texture-files).

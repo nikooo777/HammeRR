@@ -2,6 +2,7 @@
 
 const SIGNATURE: &[u8; 4] = b"VTF\0";
 const FLAG_ENVMAP: u32 = 0x4000;
+pub const FLAG_NOMIP: u32 = 0x100;
 const RESOURCE_HIGH_RES: [u8; 3] = [0x30, 0, 0];
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -16,6 +17,10 @@ pub enum Error {
     Truncated,
     #[error("invalid VTF header: {0}")]
     InvalidHeader(&'static str),
+    #[error(
+        "texture stores {stored} mip levels but native sampling requires {required}; provide a complete chain or set NOMIP"
+    )]
+    IncompleteMipChain { stored: u8, required: u8 },
     #[error("mip {mip}, frame {frame}, face {face} doesn't exist")]
     NoSuchImage { mip: u8, frame: u16, face: u8 },
 }
@@ -163,7 +168,27 @@ fn f32_at(d: &[u8], at: usize) -> Result<f32, Error> {
     u32_at(d, at).map(f32::from_bits)
 }
 
+fn full_mip_count(width: u32, height: u32, depth: u32) -> u8 {
+    (u32::BITS - width.max(height).max(depth).leading_zeros()) as u8
+}
+
+pub fn validate_native_mips(dimensions: [u32; 3], flags: u32, stored: u8) -> Result<(), Error> {
+    let required = full_mip_count(dimensions[0], dimensions[1], dimensions[2]);
+    if flags & FLAG_NOMIP == 0 && stored < required {
+        return Err(Error::IncompleteMipChain { stored, required });
+    }
+    Ok(())
+}
+
 impl Vtf {
+    pub fn validate_native_mips(&self) -> Result<(), Error> {
+        validate_native_mips(
+            [self.width, self.height, self.depth],
+            self.flags,
+            self.mip_count,
+        )
+    }
+
     pub fn parse(data: Vec<u8>) -> Result<Self, Error> {
         if data.get(..4) != Some(SIGNATURE) {
             return Err(Error::NotVtf);
@@ -202,8 +227,8 @@ impl Vtf {
         if header_size < minimum_header || header_size > data.len() {
             return Err(Error::InvalidHeader("header size lies outside the file"));
         }
-        let max_mips = u32::BITS - width.max(height).max(depth).leading_zeros();
-        if width == 0 || height == 0 || mip_count == 0 || u32::from(mip_count) > max_mips {
+        let max_mips = full_mip_count(width, height, depth);
+        if width == 0 || height == 0 || mip_count == 0 || mip_count > max_mips {
             return Err(Error::InvalidHeader("invalid dimensions or mip count"));
         }
 
@@ -583,5 +608,41 @@ mod tests {
         let mut data = header(4, 4, 13);
         data.extend_from_slice(&[0; 4]);
         assert_eq!(Vtf::parse(data).unwrap_err(), Error::Truncated);
+    }
+
+    #[test]
+    fn native_sampling_requires_stored_mips_unless_disabled() {
+        for (width, height, depth, mips, required) in [
+            (1, 1, 1_u16, 1, 1),
+            (2, 1, 1, 1, 2),
+            (64, 32, 1, 1, 7),
+            (64, 32, 1, 6, 7),
+            (64, 32, 1, 7, 7),
+            (1, 1, 8, 1, 4),
+        ] {
+            let mut data = header(width, height, 0);
+            data[56] = mips;
+            data[63..65].copy_from_slice(&depth.to_le_bytes());
+            for mip in (0..mips).rev() {
+                let pixels = usize::from((width >> mip).max(1))
+                    * usize::from((height >> mip).max(1))
+                    * usize::from((depth >> mip).max(1));
+                data.extend(std::iter::repeat_n(127, pixels * 4));
+            }
+            let texture = Vtf::parse(data.clone()).unwrap();
+            let expected = if mips == required {
+                Ok(())
+            } else {
+                Err(Error::IncompleteMipChain {
+                    stored: mips,
+                    required,
+                })
+            };
+            assert_eq!(texture.validate_native_mips(), expected);
+            data[20..24].copy_from_slice(&FLAG_NOMIP.to_le_bytes());
+            let unfiltered = Vtf::parse(data).unwrap();
+            assert_eq!(unfiltered.validate_native_mips(), Ok(()));
+            assert_eq!(texture.image_data(0, 0, 0), unfiltered.image_data(0, 0, 0));
+        }
     }
 }

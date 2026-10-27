@@ -104,6 +104,12 @@ Use **Add favorite** and **Remove favorite** to save choices.
 Use **Reload favorites** after another editor changes the saved list.
 A stale or unreadable favorites file rejects writes until it is reloaded or repaired.
 
+## Native texture files
+
+A sampled VTF needs a complete mip chain or the `NOMIP` flag for native compilation and packing.
+Errors name the material or texture. Correct the source VTF, then compile again.
+Editor-only `%tooltexture` images can use only their stored levels.
+
 ## Limits
 
 - A missing or broken chosen texture shows an explicit error and missing-texture display.

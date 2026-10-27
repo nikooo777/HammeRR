@@ -56,15 +56,15 @@ pub enum PplUv857Case {
 impl PplUv857Case {
     pub(super) fn bsp_sha(self) -> &'static str {
         match self {
-            Self::MissingUv => "48a34c8fae7f244ebf3faa38c9c87de36ba1c9bb4235131762c908678446d1ef",
-            Self::UniformR => "a855ab6862ef08ee5292dcb82bc86c1e9dd28072f41b7aadb68e808d7450c6a9",
-            Self::UniformB => "ba50ce4d2f564d9b7190babcadf4d7498e19e610551f330f38574e57e198dc08",
-            Self::UniformG => "f0e0d87d038f24382a792bfc3a8a5dfc7feb8b120ffc0897c8b9708fd287f8f5",
-            Self::UniformW => "30205d7b5cd624dddddbcc662c72e6f65dfb6ec9a12c06e65a07defa1534d667",
-            Self::QuadrantR => "2013a4edeed9b65501f1a9fd8cbc5cf151c097c128988a7b9864cf22ff93e465",
-            Self::QuadrantB => "b58196386b107d5835d6e1e9ddfe295551f2f205761583a85dec5549cf3e6441",
-            Self::QuadrantG => "921a62e51ec0a9d134d021f0bfb78c2342bd6c9f8eb26d242007b7f60f4d4422",
-            Self::QuadrantW => "f632066522b338725a76d5d1193e98554ab32298eab4788b873e65da15fa12a5",
+            Self::MissingUv => "2ddc89234cf8a20d70e701c07ff6ce2fab84bd6ff15db32a111638ebfc2cb49c",
+            Self::UniformR => "894ac4a37fe4e7d76fb15a1aed38e5114b43a6d56af6aef4d82a6a374a301846",
+            Self::UniformB => "56dedf936f9be7cfe86f12fc58bff3199af2c8c479af44f4ddae7d041d9e897e",
+            Self::UniformG => "5235717bd76f255ed90eeb642b574f50409a0a29e9f9d5565b171d6f76fd7a87",
+            Self::UniformW => "2ca8061e7d135c47e9acef73805a54913d8e944060f554172faa1071793d8416",
+            Self::QuadrantR => "59695be36e13d27d3e8d3f46d024f0f7f92a9236e8e3220d6712e368acd222d7",
+            Self::QuadrantB => "bc6f0815033c3ab021cef13de2876856d3488fe92b7c355fb56f2f376888bfa6",
+            Self::QuadrantG => "81667afeca44d119dc250b56ed2ccfd9a82581b1b7b8b3d25b9d47335c7b829a",
+            Self::QuadrantW => "d0a419ab7555cb7918867aa648264b232e65bdd9ec4dc5d1f0f7870a60a330a8",
         }
     }
 }
@@ -219,7 +219,7 @@ pub(super) const FIXTURE_FILES: &[(&str, &str)] = &[
     ),
     (
         "materials/hammerr/white.vtf",
-        "ec4f387079c6885de9481a68f40b0b605bdcde17c4a766796977cef59efc1d53",
+        "e41cb744ab238c5d2298214ddb8c7632a1512978483f057949c90e6f44b5bdd1",
     ),
     (
         "materials/hammerr_prop_vertex/wall.vmt",
@@ -350,6 +350,18 @@ pub(super) fn verify_installed(root: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn fixture_bytes(root: &Path, name: &str, expected: &str) -> io::Result<Vec<u8>> {
+    let bytes = pinned_bytes(&root.join(name), expected, MAX_INPUT)?;
+    if name.ends_with(".vtf") {
+        let texture = source_formats::vtf::Vtf::parse(bytes.clone())
+            .map_err(|error| invalid(format!("Fixture texture {name}: {error}")))?;
+        texture
+            .validate_native_mips()
+            .map_err(|error| invalid(format!("Fixture texture {name}: {error}")))?;
+    }
+    Ok(bytes)
+}
+
 pub(crate) fn stage(directory: &Path, request: &DiagnosticRequest<'_>) -> io::Result<()> {
     validate_request_paths(request)?;
     path_text(directory, "artifact directory")?;
@@ -358,7 +370,7 @@ pub(crate) fn stage(directory: &Path, request: &DiagnosticRequest<'_>) -> io::Re
     let probe = pinned_bytes(request.observer_library, PROBE_SHA, MAX_INPUT)?;
     util::atomic_write(&directory.join(PROBE), &probe)?;
     for &(name, expected) in FIXTURE_FILES {
-        let bytes = pinned_bytes(&request.fixture_game.join(name), expected, MAX_INPUT)?;
+        let bytes = fixture_bytes(request.fixture_game, name, expected)?;
         let path = directory.join("fixture").join(name);
         fs::create_dir_all(
             path.parent()
@@ -381,7 +393,7 @@ pub(crate) fn verify_sources(request: &DiagnosticRequest<'_>) -> io::Result<()> 
     pinned_bytes(request.bsp, request.case.bsp_sha(), MAX_INPUT)?;
     pinned_bytes(request.observer_library, PROBE_SHA, MAX_INPUT)?;
     for &(name, expected) in FIXTURE_FILES {
-        pinned_bytes(&request.fixture_game.join(name), expected, MAX_INPUT)?;
+        fixture_bytes(request.fixture_game, name, expected)?;
     }
     Ok(())
 }
@@ -390,14 +402,14 @@ pub(super) fn verify_staging(directory: &Path, case: DiagnosticCase) -> io::Resu
     pinned_bytes(&directory.join("staged.bsp"), case.bsp_sha(), MAX_INPUT)?;
     pinned_bytes(&directory.join(PROBE), PROBE_SHA, MAX_INPUT)?;
     for &(name, expected) in FIXTURE_FILES {
-        pinned_bytes(&directory.join("fixture").join(name), expected, MAX_INPUT)?;
+        fixture_bytes(&directory.join("fixture"), name, expected)?;
     }
     Ok(())
 }
 
 pub(super) fn verify_private_fixture(game: &Path) -> io::Result<()> {
     for &(name, expected) in FIXTURE_FILES {
-        pinned_bytes(&game.join(name), expected, MAX_INPUT)?;
+        fixture_bytes(game, name, expected)?;
     }
     Ok(())
 }
@@ -483,7 +495,7 @@ pub(crate) fn configure_game(
     case: DiagnosticCase,
 ) -> io::Result<()> {
     for &(name, expected) in FIXTURE_FILES {
-        let bytes = pinned_bytes(&directory.join("fixture").join(name), expected, MAX_INPUT)?;
+        let bytes = fixture_bytes(&directory.join("fixture"), name, expected)?;
         let destination = game.join(name);
         fs::create_dir_all(
             destination

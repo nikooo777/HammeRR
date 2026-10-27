@@ -18,8 +18,8 @@ pub enum PplSpatial919Case {
 impl PplSpatial919Case {
     pub(super) fn bsp_sha(self) -> &'static str {
         match self {
-            Self::ChartA => "1238dc003cb4a814c2c136bb401a74acebb73136dd481c181e23b498d7301748",
-            Self::ChartB => "9038832643f35b7ee87246cda5ce8b9a6d3032e7f7f5d7a607127f41f9150879",
+            Self::ChartA => "3d2d7a21581dfe4ae8b989b4c65d2ad1ca97bead82392b21f99efb1dd0158c76",
+            Self::ChartB => "f9dff566c480057c016afa510a5ccc34048ca86ecd1bdfddf2c18a7cd9852610",
         }
     }
 }

@@ -27,6 +27,7 @@ fn texture(width: u16, height: u16, rho: [f32; 3]) -> Vec<u8> {
     for (axis, value) in rho.into_iter().enumerate() {
         bytes[32 + axis * 4..36 + axis * 4].copy_from_slice(&value.to_le_bytes());
     }
+    bytes[20..24].copy_from_slice(&source_formats::vtf::FLAG_NOMIP.to_le_bytes());
     bytes[56] = 1;
     bytes[57..61].copy_from_slice(&(-1_i32).to_le_bytes());
     for _ in 0..usize::from(width) * usize::from(height) {
@@ -165,6 +166,54 @@ fn compiled(source: &Vmf, fs: &GameFs, lighting: LightingMode, bounces: u8) -> c
     assert!(!output.report.has_errors(), "{:?}", output.report);
     assert!(output.bsp.is_some());
     output
+}
+
+#[test]
+fn native_mips_distinguish_sampled_and_editor_only_headers() {
+    for (fields, rejected) in [
+        ("$basetexture dev/base %tooltexture dev/tool", false),
+        ("$basetexture dev/tool %tooltexture dev/tool", true),
+        ("$basetexture dev/tool", true),
+        (
+            "$basetexture dev/base %tooltexture dev/tool $reflectivity \"[0.1 0.2 0.3]\"",
+            false,
+        ),
+        (
+            "$basetexture dev/tool %tooltexture dev/tool $reflectivity \"[0.1 0.2 0.3]\"",
+            true,
+        ),
+    ] {
+        let (directory, game) = game(fields);
+        let path = directory.path().join("materials/dev/tool.vtf");
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[20..24].copy_from_slice(&0u32.to_le_bytes());
+        std::fs::write(path, bytes).unwrap();
+        let output = compiler::compile_with_options(
+            &scene(),
+            &game,
+            Options {
+                lighting: LightingMode::Fullbright,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            output.report.has_errors(),
+            rejected,
+            "{fields}: {:?}",
+            output.report
+        );
+        if rejected {
+            assert!(
+                output
+                    .report
+                    .diagnostics
+                    .iter()
+                    .any(|item| item.message.contains("materials/dev/tool.vtf")
+                        && item.message.contains("native sampling requires"))
+            );
+            assert!(output.bsp.is_none());
+        }
+    }
 }
 
 #[test]

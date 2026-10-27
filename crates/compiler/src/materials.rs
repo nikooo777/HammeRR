@@ -356,6 +356,9 @@ impl<'a> Materials<'a> {
             info.metrics = MetricState::Unavailable(format!("Material {material_path}: {reason}"));
             return Ok(());
         }
+        let primary_path = key
+            .and_then(|key| material.get(key))
+            .map(|reference| vmt::texture_path(reference.trim()));
         let mut headers: Vec<(String, TextureHeader)> = Vec::with_capacity(2);
         for provider in plan.headers().into_iter().flatten() {
             if headers.iter().any(|(path, _)| *path == provider.path) {
@@ -404,6 +407,16 @@ impl<'a> Materials<'a> {
                     provider.key, provider.path,
                 )
             })?;
+            if provider.key != "%tooltexture"
+                || primary_path.as_deref() == Some(provider.path.as_str())
+            {
+                vtf.validate_native_mips().map_err(|error| {
+                    format!(
+                        "Material {material_path}: selected {} texture {}: {error}",
+                        provider.key, provider.path
+                    )
+                })?;
+            }
             headers.push((
                 provider.path.clone(),
                 TextureHeader {

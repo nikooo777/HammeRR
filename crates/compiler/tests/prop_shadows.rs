@@ -275,8 +275,13 @@ fn alpha_texture() -> Vec<u8> {
     put_int(&mut bytes, 12, 80);
     bytes[16..18].copy_from_slice(&4_u16.to_le_bytes());
     bytes[18..20].copy_from_slice(&4_u16.to_le_bytes());
-    put_int(&mut bytes, 20, 0x1000);
+    put_int(
+        &mut bytes,
+        20,
+        0x1000 | source_formats::vtf::FLAG_NOMIP as i32,
+    );
     bytes[24..26].copy_from_slice(&1_u16.to_le_bytes());
+
     bytes[56] = 1;
     put_int(&mut bytes, 57, -1);
     for _ in 0..4 {
@@ -984,7 +989,11 @@ fn requested_rotated_alpha_textures_follow_literal_matrix_texels_in_both_channel
         ("rotate -30", 0, 208),
     ] {
         let mut texture = alpha_texture();
-        put_int(&mut texture, 20, 0x1000 | flags);
+        put_int(
+            &mut texture,
+            20,
+            0x1000 | flags | source_formats::vtf::FLAG_NOMIP as i32,
+        );
         for (index, pixel) in texture[80..].as_chunks_mut::<4>().0.iter_mut().enumerate() {
             pixel[3] = index as u8 * 16;
         }

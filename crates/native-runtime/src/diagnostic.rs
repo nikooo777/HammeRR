@@ -649,32 +649,32 @@ mod tests {
             (
                 "target-032",
                 PplMidrange909Case::Target032,
-                "07c753fed495d190e2c1503d5542e39dd108e5bf5a4e00bd9ceb642ff7f3de64",
+                "adf714015cbc1c0bfc4c001474f60d73045a412b5f64221908f16fd11953a379",
             ),
             (
                 "reference-032",
                 PplMidrange909Case::Reference032,
-                "0c874539fa958dceb88a26ad672e1d9f45381086c8ebf58472ac0cfa112483fd",
+                "76ea7591eddd1262cf0c8f409078430c49ab01219695084bbea0554839e6c8c0",
             ),
             (
                 "target-064",
                 PplMidrange909Case::Target064,
-                "587d5aeb6303eafbf19e9c645eb9f6f87f6c0a6207ef94b03b6d095701b203e3",
+                "e829bc5d419cea49f035bba9079c50f33b112c25155ce640ab745fe0c0ce171e",
             ),
             (
                 "reference-064",
                 PplMidrange909Case::Reference064,
-                "106a54090ed0a7a43f7a99356400f6a8de74df49cf17c541bbd43ac1078d4f35",
+                "7f0b49548e11bc529d7fdbcdf62a84496c3389693fd4b73df5b3789d099265e5",
             ),
             (
                 "target-096",
                 PplMidrange909Case::Target096,
-                "8777f70084f9b66e52bb7288eb506a20dda64f0315f5508edae0b13a4a609fb7",
+                "985e2766595ebdc477442d541e31971d0d0b4caa543e589373a81b03ad2b56a2",
             ),
             (
                 "reference-096",
                 PplMidrange909Case::Reference096,
-                "69ec5d8d64f39c00f1e416cdccfb1fd832a0dc772cd248b5904f94ee898faf7c",
+                "7d90a2bfb370e166a68ebcca937d4b1791486874792ab41524f7596bab655d19",
             ),
         ];
         let uv_cases = [
@@ -760,12 +760,12 @@ mod tests {
             (
                 "chart-a",
                 PplSpatial919Case::ChartA,
-                "1238dc003cb4a814c2c136bb401a74acebb73136dd481c181e23b498d7301748",
+                "3d2d7a21581dfe4ae8b989b4c65d2ad1ca97bead82392b21f99efb1dd0158c76",
             ),
             (
                 "chart-b",
                 PplSpatial919Case::ChartB,
-                "9038832643f35b7ee87246cda5ce8b9a6d3032e7f7f5d7a607127f41f9150879",
+                "f9dff566c480057c016afa510a5ccc34048ca86ecd1bdfddf2c18a7cd9852610",
             ),
         ] {
             assert_eq!(case.bsp_sha(), expected);

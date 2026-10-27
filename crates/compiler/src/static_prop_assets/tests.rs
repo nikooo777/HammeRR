@@ -388,6 +388,18 @@ fn resource_bearing_or_lenient_material_forms_are_refused() {
 #[test]
 fn incomplete_animated_cubemap_depth_and_extension_textures_are_refused() {
     let mut cases = Vec::new();
+    let mut missing_mips = texture();
+    missing_mips[56] = 1;
+    missing_mips.drain(80..84);
+    let error = material::texture(FIRST_TEXTURE, missing_mips.clone(), &Control::default())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(FIRST_TEXTURE) && error.contains("mip levels"),
+        "{error}"
+    );
+    missing_mips[20..24].copy_from_slice(&source_formats::vtf::FLAG_NOMIP.to_le_bytes());
+    material::texture(FIRST_TEXTURE, missing_mips, &Control::default()).unwrap();
     let mut bytes = texture();
     bytes.pop();
     cases.push(bytes);

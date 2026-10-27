@@ -81,6 +81,7 @@ struct Graph<'a, F> {
     edges: usize,
     generated: &'a GeneratedLiquidAssets,
     runtime_materials: BTreeSet<String>,
+    retain_declarations: bool,
 }
 
 pub(crate) fn canonical_material_path(path: &str) -> io::Result<()> {
@@ -165,6 +166,7 @@ where
         edges: 0,
         generated,
         runtime_materials: BTreeSet::new(),
+        retain_declarations: false,
     };
     graph.walk(root, 0)?;
     Ok(StaticWaterClosure {
@@ -308,6 +310,43 @@ where
                 "Unsupported Water declaration {key}: {path}"
             )));
         }
+        let runtime = resolved
+            .parameters
+            .get("$envmap")
+            .is_some_and(|parameter| parameter.value.eq_ignore_ascii_case("env_cubemap"));
+        if runtime {
+            if depth != 0 {
+                return Err(invalid(format!(
+                    "Runtime Water dependency has no supported bound surface; use explicit named static LDR/HDR envmaps below the root: {path}"
+                )));
+            }
+            if !self.generated.materials.contains(path) {
+                return Err(invalid(format!(
+                    "Water runtime env_cubemap requires Generate reflections with Direct LDR + HDR and a bound generated material; otherwise use an explicit static $envmap: {path}"
+                )));
+            }
+            if resolved.repeated_edit {
+                return Err(invalid(format!(
+                    "Runtime Water Patch chains cannot edit the same key in multiple materials: {path}"
+                )));
+            }
+            if resolved
+                .parameters
+                .get("$envmapframe")
+                .is_some_and(|parameter| {
+                    !parameter
+                        .value
+                        .trim()
+                        .parse::<i32>()
+                        .is_ok_and(|frame| frame == 0)
+                })
+            {
+                return Err(invalid(format!(
+                    "Runtime Water requires integer $envmapframe 0 or absent: {path}"
+                )));
+            }
+        }
+        self.retain_declarations |= runtime;
         self.walking.insert(path.into());
         for (key, default) in [
             ("$normalmap", Some("dev/water_normal")),
@@ -327,31 +366,56 @@ where
             else {
                 continue;
             };
-            self.edge()?;
-            if key == "$reflecttexture" && reference.eq_ignore_ascii_case("_rt_WaterReflection")
-                || key == "$refracttexture" && reference.eq_ignore_ascii_case("_rt_WaterRefraction")
-                || key == "$underwateroverlay" && reference == "0"
-            {
-                continue;
-            }
-            if key == "$envmap" && reference.eq_ignore_ascii_case("env_cubemap") {
-                return Err(invalid(format!(
-                    "Portable Water requires an explicit static $envmap in every reachable Water material: {path}"
-                )));
-            }
-            let material = matches!(key, "$bottommaterial" | "$underwateroverlay");
-            if material {
-                let target = logical_path(reference, true, false)?;
-                self.walk(&target, depth + 1)?;
-            } else if key == "$envmap" {
-                self.cubemap_pair(reference)?;
-            } else {
-                let target = logical_path(reference, false, false)?;
-                self.texture(&target, TextureRole::image(key))?;
+            self.water_dependency(path, key, reference, depth, runtime)?;
+            if self.retain_declarations {
+                let mut seen = BTreeSet::from([reference]);
+                for (_, parameter) in resolved
+                    .declarations
+                    .iter()
+                    .filter(|(name, _)| name.as_str() == key)
+                {
+                    if seen.insert(parameter.value.as_str()) {
+                        self.water_dependency(path, key, &parameter.value, depth, runtime)?;
+                    }
+                }
             }
         }
         self.walking.remove(path);
         self.completed.insert(path.into());
+        Ok(())
+    }
+
+    fn water_dependency(
+        &mut self,
+        path: &str,
+        key: &str,
+        reference: &str,
+        depth: usize,
+        runtime: bool,
+    ) -> io::Result<()> {
+        self.edge()?;
+        if key == "$reflecttexture" && reference.eq_ignore_ascii_case("_rt_WaterReflection")
+            || key == "$refracttexture" && reference.eq_ignore_ascii_case("_rt_WaterRefraction")
+            || key == "$underwateroverlay" && reference == "0"
+        {
+            return Ok(());
+        }
+        if key == "$envmap" && reference.eq_ignore_ascii_case("env_cubemap") {
+            if !runtime {
+                return Err(invalid(format!(
+                    "Portable Water requires an explicit static $envmap in every reachable Water material: {path}"
+                )));
+            }
+            self.runtime_materials.insert(path.into());
+        } else if matches!(key, "$bottommaterial" | "$underwateroverlay") {
+            let target = logical_path(reference, true, false)?;
+            self.walk(&target, depth + 1)?;
+        } else if key == "$envmap" {
+            self.cubemap_pair(reference)?;
+        } else {
+            let target = logical_path(reference, false, false)?;
+            self.texture(&target, TextureRole::image(key))?;
+        }
         Ok(())
     }
 

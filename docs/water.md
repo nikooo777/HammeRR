@@ -69,9 +69,9 @@ Neutral opacity settings, `$surfaceprop`, `%keywords`, static fog/color controls
 
 Assets outside the packed closure must remain mounted in the game.
 
-## Generate slime reflections
+## Generate liquid reflections
 
-1. Use a supported opaque slime material with `$envmap env_cubemap`.
+1. Use a supported static Water surface or opaque slime material with an explicit `$envmap env_cubemap`.
 2. Add `env_cubemap` samples. Use [reflection bindings](reflections.md) for manual face choices; other faces use automatic choices.
 3. Open **Build settings…**.
 4. Choose **Build lighting → Direct LDR + HDR**.
@@ -80,8 +80,8 @@ Assets outside the packed closure must remain mounted in the game.
 
 The build packs both captured cube channels and the original material dependencies.
 Steam must be running. Original inputs must remain unchanged until the build finishes.
-Without paired capture, runtime `env_cubemap` slime packing fails explicitly.
-This workflow does not enable runtime envmaps in Water-shader asset packing.
+Without paired capture, runtime `env_cubemap` liquid packing fails explicitly.
+Water bottom and underwater-overlay dependencies must use explicit named static LDR/HDR envmaps throughout their graphs. Runtime dependencies below the applied surface material, omitted Water envmaps and material cycles remain unsupported. Water materials with runtime envmaps require an absent or zero `$envmapframe`; their scalar Patch chains cannot edit a key in multiple materials. The build retains every original declared resource, including textures and named cube pairs overridden by a Patch.
 
 ## Steady physical current
 

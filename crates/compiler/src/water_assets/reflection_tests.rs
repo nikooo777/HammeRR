@@ -9,12 +9,14 @@ use native_runtime::{
 use source_formats::{bsp, vmf::Vmf};
 
 use super::build_tests::{fixture, room};
-use super::tests::{Fixture, ROOT, SLIME_PATCH, texture};
+use super::tests::{BOTTOM, BOTTOM_WATER, Fixture, ROOT, SLIME_PATCH, WATER, texture};
 use super::*;
 use crate::cubemap_assets::{self, CompileContext, CubemapAssetPhase};
 use crate::{Control, LightingMode, Options, Output, OutputLease, WriteReservation};
 
 const RUNTIME_SLIME: &str = "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $bumpmap test/normal $envmap env_cubemap }";
+const WATER_PARENT: &str = "materials/test/parent.vmt";
+const WATER_PATCH: &str = "Patch { include materials/test/parent.vmt replace { $normalmap test/normal $envmap env_cubemap } }";
 
 fn scene(patched: bool) -> (Fixture, Vmf) {
     let fixture = fixture();
@@ -101,6 +103,59 @@ fn pending(fixture: &Fixture, source: &Vmf, lighting: LightingMode, reflections:
         Some(&CompileContext::new("runtime_slime").unwrap()),
         &Control::default(),
     )
+}
+
+fn water_scene(patched: bool) -> (Fixture, Vmf) {
+    let (fixture, mut source) = scene(false);
+    for solid in &mut source.world.solids {
+        if solid.sides.iter().any(|side| side.material == "test/root") {
+            for side in &mut solid.sides {
+                if Plane::from_points(side.plane.0).unwrap().normal.z <= 0.99 {
+                    side.material = "test/nodraw".into();
+                }
+            }
+        }
+    }
+    if patched {
+        fixture.write(ROOT, WATER_PATCH);
+        fixture.write(
+            WATER_PARENT,
+            WATER
+                .replace("$normalmap test/normal", "$normalmap test/overridden")
+                .replace("$envmap test/cube", "$envmap test/overridden_cube"),
+        );
+        fixture.write("materials/test/overridden.vtf", texture(false, false));
+        fixture.write("materials/test/overridden_cube.vtf", texture(true, false));
+        fixture.write(
+            "materials/test/overridden_cube.hdr.vtf",
+            texture(true, true),
+        );
+        fixture.write(BOTTOM, "Patch { include materials/test/bottom_parent.vmt replace { $normalmap test/normal $envmap test/cube } }");
+        fixture.write(
+            "materials/test/bottom_parent.vmt",
+            BOTTOM_WATER
+                .replace(
+                    "$normalmap test/normal",
+                    "$normalmap test/underwater_overridden",
+                )
+                .replace("$envmap test/cube", "$envmap test/underwater_cube"),
+        );
+        fixture.write(
+            "materials/test/underwater_overridden.vtf",
+            texture(false, false),
+        );
+        fixture.write("materials/test/underwater_cube.vtf", texture(true, false));
+        fixture.write(
+            "materials/test/underwater_cube.hdr.vtf",
+            texture(true, true),
+        );
+    } else {
+        fixture.write(
+            ROOT,
+            WATER.replace("$envmap test/cube", "$envmap env_cubemap"),
+        );
+    }
+    (fixture, source)
 }
 
 fn capture(
@@ -297,72 +352,221 @@ fn runtime_slime_keeps_original_closure_and_sample_bindings_through_capture_and_
 }
 
 #[test]
-fn runtime_slime_requires_dual_generation_and_original_source_custody() {
-    for (lighting, reflections) in [
-        (LightingMode::DirectLdr, false),
-        (LightingMode::DirectLdrHdr, false),
-        (LightingMode::DirectLdr, true),
+fn runtime_water_keeps_static_bottom_and_overridden_resources_through_capture_and_rebase() {
+    for patched in [false, true] {
+        let (mut fixture, source) = water_scene(patched);
+        let output = pending(&fixture, &source, LightingMode::DirectLdrHdr, true);
+        assert!(!output.report.has_errors(), "{:?}", output.report);
+        let plan = output.water_assets.as_ref().unwrap();
+        assert_eq!(plan.roots(), &[BOTTOM, ROOT]);
+        assert_eq!(plan.entries().len(), if patched { 14 } else { 6 });
+        for entry in plan.entries() {
+            assert_eq!(
+                entry.data,
+                fs::read(fixture.directory.path().join(&entry.name)).unwrap()
+            );
+        }
+        let water = plan.manifest();
+        let generated = output.cubemap_assets.as_ref().unwrap();
+        assert_eq!(generated.samples.len(), 2);
+        assert_eq!(generated.hdr_samples.len(), 2);
+        assert_eq!(generated.aliases.len(), 1);
+        assert_eq!(generated.aliases[0].material, "test/root");
+        assert_eq!(generated.aliases[0].dependencies, ["test/bottom"]);
+        assert!(generated.assignments[0].manual);
+        assert!(!generated.texinfo_bindings.is_empty() && !generated.face_bindings.is_empty());
+        let output = finalize(output, &fixture, &Control::default(), capture).unwrap();
+        assert_eq!(
+            output.cubemap_assets.as_ref().unwrap().phase,
+            CubemapAssetPhase::Verified
+        );
+        let bsp = output.bsp.as_ref().unwrap();
+        assert_eq!(bsp.records::<bsp::LeafWaterData>().unwrap().len(), 1);
+        assert!(
+            bsp.texdata_strings()
+                .unwrap()
+                .contains(&"TEST/BOTTOM".into())
+        );
+        fs::remove_dir_all(fixture.directory.path().join("materials")).unwrap();
+        fixture.game.mounts.clear();
+        verify_packed_water(bsp, &water, &Control::default()).unwrap();
+        let rebased = cubemap_assets::rebase_generated_cubemaps(
+            &bsp.to_bytes(),
+            "private_water",
+            &Control::default(),
+        )
+        .unwrap();
+        let rebased = bsp::Bsp::parse(&rebased).unwrap();
+        verify_packed_water(&rebased, &water, &Control::default()).unwrap();
+    }
+}
+
+#[test]
+fn runtime_water_refuses_implicit_or_unbound_graphs_and_incomplete_original_closures() {
+    for failure in [
+        "implicit",
+        "bottom",
+        "overlay",
+        "frame",
+        "repeated",
+        "cycle",
+        "overridden",
     ] {
-        let (fixture, source) = scene(false);
-        let output = pending(&fixture, &source, lighting, reflections);
-        assert!(output.bsp.is_none() && output.report.has_errors());
+        let (fixture, source) = water_scene(matches!(failure, "overridden" | "repeated"));
+        let expected = match failure {
+            "implicit" => {
+                fixture.write(ROOT, WATER.replace("$envmap test/cube", ""));
+                "explicit static $envmap"
+            }
+            "bottom" => {
+                fixture.write(
+                    BOTTOM,
+                    "Water { $normalmap test/normal $envmap env_cubemap }",
+                );
+                "no supported bound surface"
+            }
+            "overlay" => {
+                fixture.write(
+                    ROOT,
+                    WATER
+                        .replace("$envmap test/cube", "$envmap env_cubemap")
+                        .replace("$underwateroverlay 0", "$underwateroverlay test/overlay"),
+                );
+                fixture.write(
+                    "materials/test/overlay.vmt",
+                    "Water { $normalmap test/normal $envmap env_cubemap }",
+                );
+                "no supported bound surface"
+            }
+            "frame" => {
+                fixture.write(ROOT, "Water { $normalmap test/normal $envmap env_cubemap $envmapframe 1 $bottommaterial test/bottom }");
+                "integer $envmapframe 0"
+            }
+            "repeated" => {
+                fixture.write(
+                    ROOT,
+                    WATER_PATCH.replace("test/parent.vmt", "test/middle.vmt"),
+                );
+                fixture.write("materials/test/middle.vmt", "Patch { include materials/test/parent.vmt replace { $normalmap test/overridden } }");
+                "cannot edit the same key"
+            }
+            "cycle" => {
+                fixture.write(ROOT, "Water { $normalmap test/normal $envmap env_cubemap $bottommaterial test/root }");
+                "Cyclic Water material dependency"
+            }
+            "overridden" => {
+                fs::remove_file(
+                    fixture
+                        .directory
+                        .path()
+                        .join("materials/test/overridden_cube.hdr.vtf"),
+                )
+                .unwrap();
+                "overridden_cube.hdr.vtf"
+            }
+            _ => unreachable!(),
+        };
+        let path = fixture.directory.path().join("runtime_water.bsp");
+        fs::write(&path, b"previous BSP").unwrap();
+        fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
+        let output = pending(&fixture, &source, LightingMode::DirectLdrHdr, true);
+        assert!(
+            output.bsp.is_none() && output.report.has_errors(),
+            "{failure}: {:?}",
+            output.report
+        );
         assert!(
             output
                 .report
                 .diagnostics
                 .iter()
-                .any(|diagnostic| diagnostic.message.contains("runtime env_cubemap requires")),
-            "{:?}",
+                .any(|diagnostic| diagnostic.message.contains(expected)),
+            "{failure}: {:?}",
             output.report
         );
-    }
-    for (after_capture, during_capture) in [(false, false), (false, true), (true, false)] {
-        let (fixture, source) = scene(true);
-        let path = fixture.directory.path().join("runtime_slime.bsp");
-        fs::write(&path, b"previous BSP").unwrap();
-        fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
-        let control = Control::default();
-        let lease = OutputLease::acquire(&path, &control).unwrap();
-        let reservation = WriteReservation::new(&path, &control).unwrap();
-        let output = pending(&fixture, &source, LightingMode::DirectLdrHdr, true);
-        assert!(!output.report.has_errors(), "{:?}", output.report);
-        if after_capture {
-            let output = finalize(output, &fixture, &control, capture).unwrap();
-            let prepared = output
-                .prepare_write_reserved(reservation, &control)
+        assert!(
+            output
+                .prepare_write_controlled(&path, &Control::default())
                 .unwrap()
-                .unwrap();
-            fixture.write(
-                "materials/test/overridden.vtf",
-                b"changed overridden original texture",
-            );
-            assert!(prepared.commit_checked(&lease, &control).is_err());
-        } else {
-            if !during_capture {
-                fixture.write(
-                    "materials/test/normal.vtf",
-                    b"changed secondary original texture",
-                );
-            }
-            let mut calls = 0;
-            let result = finalize(output, &fixture, &control, |request, observer| {
-                calls += 1;
-                let receipt = capture(request, observer)?;
-                if during_capture && calls == 1 {
-                    fixture.write(
-                        "materials/test/overridden.vtf",
-                        b"changed overridden original texture during capture",
-                    );
-                }
-                Ok(receipt)
-            });
-            assert!(result.is_err());
-            assert_eq!(calls == 0, !during_capture);
-        }
+                .is_none()
+        );
         assert_eq!(fs::read(&path).unwrap(), b"previous BSP");
         assert_eq!(
             fs::read(path.with_extension("lin")).unwrap(),
             b"previous LIN"
         );
+    }
+}
+
+#[test]
+fn runtime_liquids_require_dual_generation_and_original_source_custody() {
+    for scene in [scene, water_scene] {
+        for (lighting, reflections) in [
+            (LightingMode::DirectLdr, false),
+            (LightingMode::DirectLdrHdr, false),
+            (LightingMode::DirectLdr, true),
+        ] {
+            let (fixture, source) = scene(false);
+            let output = pending(&fixture, &source, lighting, reflections);
+            assert!(output.bsp.is_none() && output.report.has_errors());
+            assert!(
+                output
+                    .report
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains("runtime env_cubemap requires")),
+                "{:?}",
+                output.report
+            );
+        }
+        for (after_capture, during_capture) in [(false, false), (false, true), (true, false)] {
+            let (fixture, source) = scene(true);
+            let path = fixture.directory.path().join("runtime_slime.bsp");
+            fs::write(&path, b"previous BSP").unwrap();
+            fs::write(path.with_extension("lin"), b"previous LIN").unwrap();
+            let control = Control::default();
+            let lease = OutputLease::acquire(&path, &control).unwrap();
+            let reservation = WriteReservation::new(&path, &control).unwrap();
+            let output = pending(&fixture, &source, LightingMode::DirectLdrHdr, true);
+            assert!(!output.report.has_errors(), "{:?}", output.report);
+            if after_capture {
+                let output = finalize(output, &fixture, &control, capture).unwrap();
+                let prepared = output
+                    .prepare_write_reserved(reservation, &control)
+                    .unwrap()
+                    .unwrap();
+                fixture.write(
+                    "materials/test/overridden.vtf",
+                    b"changed overridden original texture",
+                );
+                assert!(prepared.commit_checked(&lease, &control).is_err());
+            } else {
+                if !during_capture {
+                    fixture.write(
+                        "materials/test/normal.vtf",
+                        b"changed secondary original texture",
+                    );
+                }
+                let mut calls = 0;
+                let result = finalize(output, &fixture, &control, |request, observer| {
+                    calls += 1;
+                    let receipt = capture(request, observer)?;
+                    if during_capture && calls == 1 {
+                        fixture.write(
+                            "materials/test/overridden.vtf",
+                            b"changed overridden original texture during capture",
+                        );
+                    }
+                    Ok(receipt)
+                });
+                assert!(result.is_err());
+                assert_eq!(calls == 0, !during_capture);
+            }
+            assert_eq!(fs::read(&path).unwrap(), b"previous BSP");
+            assert_eq!(
+                fs::read(path.with_extension("lin")).unwrap(),
+                b"previous LIN"
+            );
+        }
     }
 }

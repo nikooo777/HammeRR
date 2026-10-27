@@ -222,7 +222,7 @@ fn verify_archive(
         .any(|path| reflections.is_runtime_source(path))
     {
         return Err(invalid(
-            "Runtime slime surface has no generated reflection material binding",
+            "Runtime liquid surface has no generated reflection material binding",
         ));
     }
     if surfaces.iter().any(|path| {
@@ -231,7 +231,7 @@ fn verify_archive(
             .is_some_and(|original| !roots.contains(original))
     }) {
         return Err(invalid(
-            "Generated slime surface has no registered original liquid root",
+            "Generated liquid surface has no registered original liquid root",
         ));
     }
     roots.extend(surfaces);

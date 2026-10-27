@@ -91,12 +91,12 @@ impl<'a> LiquidReflections<'a> {
             checkpoint(control)?;
             if !self.sources.contains_key(material.as_str()) {
                 return Err(invalid(format!(
-                    "Runtime slime has no original reflection source receipt: {material}"
+                    "Runtime liquid has no original reflection source receipt: {material}"
                 )));
             }
             let aliases = self.aliases.get(&material).ok_or_else(|| {
                 invalid(format!(
-                    "Runtime slime has no bound reflection alias: {material}"
+                    "Runtime liquid has no bound reflection alias: {material}"
                 ))
             })?;
             for alias in aliases {
@@ -110,7 +110,7 @@ impl<'a> LiquidReflections<'a> {
                     .unwrap();
                 if alias.envmaps.len() != 1 || alias.envmaps[0] != target {
                     return Err(invalid(format!(
-                        "Runtime slime alias does not use its assigned reflection sample: {}",
+                        "Runtime liquid alias does not use its assigned reflection sample: {}",
                         alias.alias
                     )));
                 }
@@ -122,7 +122,7 @@ impl<'a> LiquidReflections<'a> {
                 )?;
                 if !generated.runtime_materials.is_empty() {
                     return Err(invalid(
-                        "Generated slime alias has unresolved runtime resources",
+                        "Generated liquid alias has unresolved runtime resources",
                     ));
                 }
                 paths.extend(generated.paths);

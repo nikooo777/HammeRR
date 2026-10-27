@@ -682,3 +682,285 @@ fn collapsed_assemblies_refuse_changed_models_and_nonlocal_bindings_without_part
         .unwrap();
     assert_eq!(session.render_document().vmf(), &source);
 }
+
+#[test]
+fn selected_leading_collapse_preserves_nested_native_order_with_retained_later_reference() {
+    let (_directory, mut session, parent, child, middle) = fixture(["80", "95"]);
+    let mut leaf = Vmf::parse(&std::fs::read_to_string(&child).unwrap()).unwrap();
+    let mut spot = Entity::new(205, "light_spot");
+    for (key, value) in [
+        ("origin", "48 -16 80"),
+        ("target", "aim"),
+        ("pitch", "-45"),
+        ("_light", "64 255 128 140"),
+        ("_lightHDR", "255 64 128 240"),
+    ] {
+        spot.properties.set(key, value);
+    }
+    let mut target = Entity::new(206, "info_target");
+    target.properties.set("origin", "16 8 32");
+    target.properties.set("targetname", "aim");
+    leaf.entities.extend([spot, target]);
+    std::fs::write(&child, leaf.write(&Default::default())).unwrap();
+    let mut nested = Vmf::parse(&std::fs::read_to_string(&middle).unwrap()).unwrap();
+    for helper in &mut nested.entities {
+        helper
+            .properties
+            .set("targetname", format!("inner{}", helper.id));
+    }
+    std::fs::write(&middle, nested.write(&Default::default())).unwrap();
+    let roots = session
+        .edit(Actor::User, "three ordered roots", |tx| {
+            let mut root = tx.entity_mut(500)?.clone();
+            root.properties.set("targetname", "first");
+            root.properties.set("origin", "-96 0 128");
+            *tx.entity_mut(500)? = root.clone();
+            root.id = tx.new_object_id()?;
+            root.properties.set("targetname", "second");
+            root.properties.set("origin", "0 0 128");
+            let second = root.id;
+            tx.add_entity(root.clone())?;
+            root.id = tx.new_object_id()?;
+            root.properties.set("targetname", "retained");
+            root.properties.set("origin", "96 0 128");
+            let retained = root.id;
+            tx.add_entity(root)?;
+            for _ in 0..5 {
+                tx.new_object_id()?;
+            }
+            Ok([500, second, retained])
+        })
+        .unwrap();
+    session.save(Actor::User, None).unwrap();
+    session
+        .select(
+            &roots[..2]
+                .iter()
+                .copied()
+                .map(ObjectId::Entity)
+                .collect::<Vec<_>>(),
+            SelectMode::Replace,
+        )
+        .unwrap();
+    let source = session.document.vmf().clone();
+    let disk = [&parent, &child, &middle].map(|path| std::fs::read(path).unwrap());
+    let request = session
+        .begin_instance_collapse_scoped(
+            Actor::User,
+            &session.instance_collapse_stamp(),
+            Scope::SelectedLeadingReferences,
+        )
+        .unwrap();
+    let ready = session
+        .finish_instance_collapse(Actor::User, request.run())
+        .unwrap();
+    assert_eq!(ready["stats"]["instances"], 6);
+    for count in [
+        "world_brushes",
+        "detail_brushes",
+        "point_lights",
+        "spot_lights",
+        "spotlight_targets",
+    ] {
+        assert_eq!(ready["stats"][count], 4, "{count}");
+    }
+    assert_eq!(ready["stats"]["static_props"], 8);
+    assert_eq!(ready["stats"]["cubemaps"], 8);
+    let shown = session.render_document().vmf().clone();
+    assert_eq!(
+        shown.entities.iter().find(|entity| entity.id == roots[2]),
+        source.entities.iter().find(|entity| entity.id == roots[2])
+    );
+    assert_eq!(session.document.vmf(), &source);
+    let control = Control::default();
+    let context = instances::SourceContext::capture(&parent, &control).unwrap();
+    let before = instances::resolve_for_collapse(
+        &source,
+        Some(&context),
+        &control,
+        &mut compiler::Report::default(),
+    )
+    .unwrap();
+    let after = instances::resolve_for_collapse(
+        &shown,
+        Some(&context),
+        &control,
+        &mut compiler::Report::default(),
+    )
+    .unwrap();
+    let mut entities = id_map(&ready["entity_id_map"]);
+    let mut helpers = id_map(&ready["helper_id_map"]);
+    let mut props = id_map(&ready["static_prop_id_map"]);
+    for entity in &before.vmf().entities {
+        let Some((owner, file, original)) = before.entity_origin(entity.id) else {
+            continue;
+        };
+        if owner != roots[2] {
+            continue;
+        }
+        let route = before.entity_occurrence(entity.id).unwrap();
+        let matches = after
+            .vmf()
+            .entities
+            .iter()
+            .filter(|candidate| {
+                after.entity_origin(candidate.id) == Some((owner, file, original))
+                    && after.entity_occurrence(candidate.id) == Some(route)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(matches.len(), 1);
+        let destination = matches[0].id;
+        match entity.classname().unwrap() {
+            "light" | "light_spot" | "info_target" => {
+                assert!(entities.insert(entity.id, destination).is_none());
+            }
+            "prop_static" => {
+                assert!(props.insert(entity.id, destination).is_none());
+            }
+            class if class.eq_ignore_ascii_case("env_cubemap") => {
+                assert!(helpers.insert(entity.id, destination).is_none());
+            }
+            _ => {}
+        }
+    }
+    assert_eq!((entities.len(), helpers.len(), props.len()), (18, 12, 12));
+    assert!(
+        before
+            .vmf()
+            .entities
+            .iter()
+            .filter(|entity| before.root_entity(entity.id) == Some(roots[2])
+                && matches!(
+                    entity.classname(),
+                    Some("light" | "light_spot" | "info_target")
+                ))
+            .any(|entity| entities[&entity.id] != entity.id)
+    );
+    let mut sides = BTreeMap::new();
+    assert_eq!(before.vmf().solids().count(), after.vmf().solids().count());
+    for (original, actual) in before.vmf().solids().zip(after.vmf().solids()) {
+        let mut normalized = actual.clone();
+        normalized.id = original.id;
+        assert_eq!(original.sides.len(), actual.sides.len());
+        for (original, actual) in original.sides.iter().zip(&mut normalized.sides) {
+            assert!(sides.insert(original.id, actual.id).is_none());
+            actual.id = original.id;
+        }
+        assert_eq!(*original, normalized);
+    }
+    assert!(
+        sides
+            .values()
+            .zip(sides.values().skip(1))
+            .all(|(before, after)| before < after)
+    );
+    let options = Options {
+        lighting: LightingMode::DirectLdrHdr,
+        generate_reflections: true,
+        ..Default::default()
+    };
+    let output_context = CompileContext::new("selected_leading_cubes").unwrap();
+    let expanded = compiler::compile_with_source_controlled(
+        &source,
+        &session.game,
+        options,
+        Some(&output_context),
+        Some(&context),
+        &control,
+    );
+    let collapsed = compiler::compile_with_source_controlled(
+        &shown,
+        &session.game,
+        options,
+        Some(&output_context),
+        Some(&context),
+        &control,
+    );
+    assert!(!expanded.report.has_errors(), "{:?}", expanded.report);
+    assert!(!collapsed.report.has_errors(), "{:?}", collapsed.report);
+    assert_eq!(
+        remap_manifest(
+            expanded.cubemap_assets.as_ref().unwrap().clone(),
+            &helpers,
+            &sides
+        ),
+        *collapsed.cubemap_assets.as_ref().unwrap()
+    );
+    let expanded = expanded.bsp.unwrap();
+    let collapsed = collapsed.bsp.unwrap();
+    assert_eq!(collapsed.static_props().unwrap().unwrap().props.len(), 12);
+    assert_eq!(collapsed.records::<Cubemap>().unwrap().len(), 12);
+    for channel in [
+        source_formats::bsp::LightingKind::Ldr,
+        source_formats::bsp::LightingKind::Hdr,
+    ] {
+        assert_eq!(collapsed.world_lights(channel).unwrap().len(), 12);
+    }
+    assert_eq!(
+        (expanded.version, expanded.map_revision),
+        (collapsed.version, collapsed.map_revision)
+    );
+    assert_eq!(expanded.game_lumps, collapsed.game_lumps);
+    for (index, expected) in collapsed.lumps.iter().enumerate() {
+        if index != lump::PAKFILE && index != lump::ENTITIES {
+            assert_eq!(&expanded.lumps[index], expected, "native lump {index}");
+        }
+    }
+    let original_text = expanded.entities().unwrap();
+    let replacements = entities
+        .iter()
+        .map(|(before, after)| {
+            let original = format!("\"hammerid\" \"{before}\"\n");
+            assert_eq!(original_text.matches(&original).count(), 1);
+            (original, format!("\"hammerid\" \"{after}\"\n"))
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        original_text
+            .split_inclusive('\n')
+            .map(|line| replacements.get(line).map_or(line, String::as_str))
+            .collect::<String>(),
+        collapsed.entities().unwrap()
+    );
+    let before_pak = expanded.pak_data(PakLimits::default()).unwrap();
+    let after_pak = collapsed.pak_data(PakLimits::default()).unwrap();
+    let before_count = before_pak.entries.len();
+    let after_count = after_pak.entries.len();
+    let before_pak = before_pak
+        .entries
+        .iter()
+        .map(|entry| (entry.name.as_str(), entry.data.as_slice()))
+        .collect::<BTreeMap<_, _>>();
+    let after_pak = after_pak
+        .entries
+        .iter()
+        .map(|entry| (entry.name.as_str(), entry.data.as_slice()))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(before_pak.len(), before_count);
+    assert_eq!(after_pak.len(), after_count);
+    assert_eq!(
+        before_pak.keys().collect::<Vec<_>>(),
+        after_pak.keys().collect::<Vec<_>>()
+    );
+    for (name, bytes) in before_pak {
+        if name == MANIFEST_PATH {
+            assert_eq!(
+                remap_manifest(serde_json::from_slice(bytes).unwrap(), &helpers, &sides),
+                serde_json::from_slice::<CubemapAssetManifest>(after_pak[name]).unwrap()
+            );
+        } else {
+            assert_eq!(bytes, after_pak[name], "packed asset {name}");
+        }
+    }
+    let token = ready["token"].as_u64().unwrap();
+    let request = session.apply_instance_collapse(Actor::User, token).unwrap();
+    session
+        .finish_instance_collapse(Actor::User, request.run())
+        .unwrap();
+    assert_eq!(session.document.vmf(), &shown);
+    session.undo(Actor::User).unwrap();
+    assert_eq!(session.document.vmf(), &source);
+    for (path, bytes) in [&parent, &child, &middle].into_iter().zip(disk) {
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+}

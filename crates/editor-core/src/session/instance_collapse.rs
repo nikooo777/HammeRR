@@ -14,6 +14,30 @@ const MAX_PLAN_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ROWS: usize = 64;
 const MAX_PROVENANCE_SOURCE_BYTES: usize = 1024 * 1024;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Scope {
+    #[default]
+    AllVisibleReferences,
+    SelectedLeadingReferences,
+}
+
+impl Scope {
+    fn label(self) -> &'static str {
+        match self {
+            Self::AllVisibleReferences => "all_visible_references",
+            Self::SelectedLeadingReferences => "selected_leading_references",
+        }
+    }
+
+    fn history(self) -> &'static str {
+        match self {
+            Self::AllVisibleReferences => "collapse all visible instance references",
+            Self::SelectedLeadingReferences => "collapse selected leading instance references",
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct State {
     serial: u64,
@@ -29,10 +53,11 @@ struct Key {
     saved: u64,
     selection: BTreeSet<ObjectId>,
     path: Option<PathBuf>,
+    scope: Scope,
 }
 
 impl Key {
-    fn capture(session: &Session) -> Self {
+    fn capture(session: &Session, scope: Scope) -> Self {
         Self {
             generation: session.document_generation,
             revision: session.document.revision(),
@@ -40,6 +65,7 @@ impl Key {
             saved: session.history_save_serial,
             selection: session.selection.clone(),
             path: session.path.clone(),
+            scope,
         }
     }
 
@@ -106,6 +132,7 @@ struct Plan {
 }
 
 struct Ready {
+    scope: Scope,
     document: Document,
     plan: Plan,
     dependencies: DependencyGuard,
@@ -132,6 +159,7 @@ enum Work {
         document: Box<Document>,
         source: Box<SourceLocation>,
         removed: Vec<ObjectId>,
+        scope: Scope,
         catalog: CollapseCatalog,
     },
     Apply(Arc<Ready>),
@@ -171,6 +199,7 @@ impl Request {
                     document,
                     source,
                     removed,
+                    scope,
                     catalog,
                 } => {
                     let targets = removed.iter().map(|id| match id {
@@ -180,7 +209,7 @@ impl Request {
                     if has_incoming_checked(&document, &catalog, &targets, &mut || self.control.checkpoint())? {
                         return Err("A parent reference targets an instance helper; remove the binding before collapse".into());
                     }
-                    Arc::new(prepare(*document, *source, removed, &self.game, &self.control)?)
+                    Arc::new(prepare(*document, *source, removed, scope, &self.game, &self.control)?)
                 },
                 Work::Apply(ready) => ready,
             };
@@ -213,14 +242,25 @@ fn prepare(
     mut document: Document,
     source: SourceLocation,
     removed: Vec<ObjectId>,
+    scope: Scope,
     game: &source_formats::gamefs::GameFs,
     control: &Control,
 ) -> Result<Ready, String> {
     let source = source.hydrate(control).map_err(|error| error.to_string())?;
     let mut report = compiler::Report::default();
-    let prepared =
-        instances::resolve_for_collapse(document.vmf(), Some(&source), control, &mut report)
-            .map_err(|error| error.message)?;
+    let prepared = match scope {
+        Scope::AllVisibleReferences => {
+            instances::resolve_for_collapse(document.vmf(), Some(&source), control, &mut report)
+        }
+        Scope::SelectedLeadingReferences => instances::resolve_for_selected_collapse(
+            document.vmf(),
+            &removed,
+            Some(&source),
+            control,
+            &mut report,
+        ),
+    }
+    .map_err(|error| error.message)?;
     let dependencies = prepared
         .dependencies()
         .cloned()
@@ -343,6 +383,7 @@ fn prepare(
         })
         .map_err(|error| error.to_string())?;
     Ok(Ready {
+        scope,
         document,
         plan,
         dependencies,
@@ -488,6 +529,15 @@ impl Session {
         actor: Actor,
         snapshot: &str,
     ) -> Result<Request, String> {
+        self.begin_instance_collapse_scoped(actor, snapshot, Scope::default())
+    }
+
+    pub fn begin_instance_collapse_scoped(
+        &mut self,
+        actor: Actor,
+        snapshot: &str,
+        scope: Scope,
+    ) -> Result<Request, String> {
         if snapshot != self.instance_collapse_stamp() {
             return Err("Map or collapse review changed; inspect again".into());
         }
@@ -544,6 +594,12 @@ impl Session {
                 "Instance collapse exceeds the compiler's object, face or reference limits".into(),
             );
         }
+        let removed = match scope {
+            Scope::AllVisibleReferences => removed,
+            Scope::SelectedLeadingReferences => {
+                instances::selected_collapse_roots(self.document.vmf(), &self.selected_ids())?
+            }
+        };
         if self.document.vmf().extra.iter().any(|node| {
             ![
                 map_core::context::METADATA_KEY,
@@ -620,7 +676,7 @@ impl Session {
             .and_then(|form| form.ready);
         self.geometry.instance_collapse.serial += 1;
         let token = self.geometry.instance_collapse.serial;
-        let key = Key::capture(self);
+        let key = Key::capture(self, scope);
         let identity = Arc::new(());
         let control = Control::default();
         self.geometry.instance_collapse.form = Some(Form {
@@ -643,6 +699,7 @@ impl Session {
                 document: Box::new(self.document.preview_snapshot_uncached()),
                 source: Box::new(source),
                 removed,
+                scope,
                 catalog,
             },
             _worker: worker,
@@ -656,6 +713,16 @@ impl Session {
             .ready
             .clone()
             .ok_or("Prepare an instance collapse preview first")?;
+        if ready.scope != form.key.scope
+            || (ready.scope == Scope::SelectedLeadingReferences
+                && ready.plan.removed.iter().copied().collect::<BTreeSet<_>>()
+                    != form.key.selection)
+        {
+            return Err(
+                "The retained preview has a different collapse scope or selection; prepare again"
+                    .into(),
+            );
+        }
         let worker = self
             .geometry
             .instance_collapse
@@ -754,7 +821,7 @@ impl Session {
             .collect::<Vec<_>>();
         let before = self.document.revision();
         let applied = self.document.edit_with_finalizer(
-            "collapse all visible instance references",
+            completed.key.scope.history(),
             |tx| {
                 install(tx, &mut plan, &completed.control)?;
                 if plan.added != ready.plan.added || tx.vmf() != ready.document.vmf() {
@@ -781,7 +848,15 @@ impl Session {
             self.selection = ready.plan.added.iter().copied().collect();
             self.face_selection.clear();
             self.changed();
-            self.log(actor, "collapsed all visible instance references");
+            self.log(
+                actor,
+                match completed.key.scope {
+                    Scope::AllVisibleReferences => "collapsed all visible instance references",
+                    Scope::SelectedLeadingReferences => {
+                        "collapsed selected leading instance references"
+                    }
+                },
+            );
         }
         Ok(
             json!({"applied":true,"objects":ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>(),"captured_preview":captured_preview,"state":self.get_instance_collapse()}),
@@ -831,8 +906,24 @@ impl Session {
 
     pub fn get_instance_collapse(&self) -> Value {
         let state = &self.geometry.instance_collapse;
+        let mut root_order = self
+            .document
+            .vmf()
+            .entities
+            .iter()
+            .filter(|entity| {
+                !entity.hidden
+                    && entity
+                        .classname()
+                        .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+            })
+            .take(instances::MAX_INSTANCES + 1)
+            .map(|entity| crate::identity::id_string(ObjectId::Entity(entity.id)))
+            .collect::<Vec<_>>();
+        let root_order_truncated = root_order.len() > instances::MAX_INSTANCES;
+        root_order.truncate(instances::MAX_INSTANCES);
         let Some(form) = &state.form else {
-            return json!({"snapshot":self.instance_collapse_stamp(),"token":null,"ready":false,"worker_active":state.worker.busy(),"scope":"all_visible_references","writes_child_files":false});
+            return json!({"snapshot":self.instance_collapse_stamp(),"token":null,"ready":false,"worker_active":state.worker.busy(),"scope":"all_visible_references","available_scopes":["all_visible_references","selected_leading_references"],"visible_root_order":root_order,"visible_root_order_truncated":root_order_truncated,"writes_child_files":false});
         };
         let blocked = if !form.key.current(self) {
             Some("Map, selection or saved source changed".to_owned())
@@ -867,7 +958,7 @@ impl Session {
                 .is_none()
                 .then_some("Captured provenance routes exceed the bounded response-copy budget")
         });
-        json!({"snapshot":self.instance_collapse_stamp(),"token":form.token,"owner":form.owner.label(),"status":form.status,"error":blocked.as_ref().or(form.error.as_ref()),"ready":ready.is_some() && blocked.is_none() && form.status=="ready","worker_active":state.worker.busy(),"scope":"all_visible_references","recursive":true,"source":form.key.path,"stats":ready.map(|ready|&ready.stats),"removed":ready.map(|ready|ready.plan.removed.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"objects":ready.map(|ready|ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"face_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.faces.iter().take(MAX_ROWS).map(|face|json!({"side":face.side,"owner":crate::identity::id_string(ObjectId::Entity(face.owner)),"file":face.file,"original_solid":face.original_solid,"original_side":face.original_side,"occurrence":face.occurrence.as_ref(),"occurrence_label":face.occurrence.label()})).collect::<Vec<_>>()),"face_provenance_total":ready.map(|ready|ready.plan.faces.len()),"entity_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.emitted()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"helper_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.class.eq_ignore_ascii_case("env_cubemap")).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"static_prop_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.static_prop()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"entity_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.entity_origins.iter().take(MAX_ROWS).map(|origin|json!({"entity":crate::identity::id_string(ObjectId::Entity(origin.entity)),"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"owner":crate::identity::id_string(ObjectId::Entity(origin.owner)),"file":origin.file,"original_entity":origin.original,"classname":origin.class,"emitted":origin.emitted(),"compiler_handled":!origin.emitted(),"occurrence":origin.occurrence.as_ref(),"occurrence_label":origin.occurrence.label()})).collect::<Vec<_>>()),"entity_provenance_total":ready.map(|ready|ready.plan.entity_origins.len()),"provenance_error":provenance_error,"limits":{"plan_bytes":MAX_PLAN_BYTES,"provenance_source_bytes":MAX_PROVENANCE_SOURCE_BYTES,"occurrence_bytes":instances::MAX_OCCURRENCE_BYTES,"rows":MAX_ROWS,"helper_levels":instances::MAX_EXPANSION_DEPTH},"writes_child_files":false})
+        json!({"snapshot":self.instance_collapse_stamp(),"token":form.token,"owner":form.owner.label(),"status":form.status,"error":blocked.as_ref().or(form.error.as_ref()),"ready":ready.is_some() && blocked.is_none() && form.status=="ready","worker_active":state.worker.busy(),"visible_root_order":root_order,"visible_root_order_truncated":root_order_truncated,"scope":form.key.scope.label(),"preview_scope":ready.map(|ready|ready.scope.label()),"selected":form.key.selection.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>(),"recursive":true,"source":form.key.path,"stats":ready.map(|ready|&ready.stats),"removed":ready.map(|ready|ready.plan.removed.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"objects":ready.map(|ready|ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"face_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.faces.iter().take(MAX_ROWS).map(|face|json!({"side":face.side,"owner":crate::identity::id_string(ObjectId::Entity(face.owner)),"file":face.file,"original_solid":face.original_solid,"original_side":face.original_side,"occurrence":face.occurrence.as_ref(),"occurrence_label":face.occurrence.label()})).collect::<Vec<_>>()),"face_provenance_total":ready.map(|ready|ready.plan.faces.len()),"entity_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.emitted()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"helper_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.class.eq_ignore_ascii_case("env_cubemap")).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"static_prop_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.static_prop()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"entity_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.entity_origins.iter().take(MAX_ROWS).map(|origin|json!({"entity":crate::identity::id_string(ObjectId::Entity(origin.entity)),"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"owner":crate::identity::id_string(ObjectId::Entity(origin.owner)),"file":origin.file,"original_entity":origin.original,"classname":origin.class,"emitted":origin.emitted(),"compiler_handled":!origin.emitted(),"occurrence":origin.occurrence.as_ref(),"occurrence_label":origin.occurrence.label()})).collect::<Vec<_>>()),"entity_provenance_total":ready.map(|ready|ready.plan.entity_origins.len()),"provenance_error":provenance_error,"limits":{"plan_bytes":MAX_PLAN_BYTES,"provenance_source_bytes":MAX_PROVENANCE_SOURCE_BYTES,"occurrence_bytes":instances::MAX_OCCURRENCE_BYTES,"rows":MAX_ROWS,"helper_levels":instances::MAX_EXPANSION_DEPTH,"selected_scope":"nonempty_prefix_of_visible_root_reference_order"},"writes_child_files":false})
     }
 }
 
@@ -913,3 +1004,6 @@ mod cubemap_tests;
 
 #[cfg(test)]
 mod static_prop_tests;
+
+#[cfg(test)]
+mod selected_tests;

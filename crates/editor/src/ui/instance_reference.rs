@@ -3,6 +3,7 @@ use crate::runtime::{DocumentAccess, DocumentContinuation};
 use std::cell::Cell;
 
 use crate::InstanceReferenceWindow;
+use session::instance_collapse::Scope;
 use session::instance_reference::Changes;
 
 pub(super) struct Controller {
@@ -174,6 +175,12 @@ impl Controller {
             self.window.set_owned(owned);
             self.window.set_shared_form(!owned);
             self.window.set_ready(collapse["ready"] == true);
+            self.window
+                .set_collapse_scope(if collapse["scope"] == "selected_leading_references" {
+                    1
+                } else {
+                    0
+                });
             self.window.set_source(
                 format!(
                     "Parent: {}",
@@ -187,8 +194,33 @@ impl Controller {
                     .unwrap_or(collapse["status"].as_str().unwrap_or("Unavailable"))
                     .into(),
             );
-            self.window.set_contents(format!("All visible references · {} helper occurrences · {} world brushes · {} detail brushes · {} terrain patches\n{} static props · {} point lights · {} spot lights · {} local targets · {} cubemaps\nCollapse does not write child files.", collapse["stats"]["instances"].as_u64().unwrap_or_default(), collapse["stats"]["world_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["detail_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["terrain_patches"].as_u64().unwrap_or_default(), collapse["stats"]["static_props"].as_u64().unwrap_or_default(), collapse["stats"]["point_lights"].as_u64().unwrap_or_default(), collapse["stats"]["spot_lights"].as_u64().unwrap_or_default(), collapse["stats"]["spotlight_targets"].as_u64().unwrap_or_default(), collapse["stats"]["cubemaps"].as_u64().unwrap_or_default()).into());
+            let requested_scope = if collapse["scope"] == "selected_leading_references" {
+                "Selected leading references"
+            } else {
+                "All visible references"
+            };
+            let heading = if collapse["preview_scope"].is_string()
+                && collapse["preview_scope"] != collapse["scope"]
+            {
+                let previous = if collapse["preview_scope"] == "selected_leading_references" {
+                    "Selected leading references"
+                } else {
+                    "All visible references"
+                };
+                format!("Previous preview: {previous} · Requested: {requested_scope}")
+            } else {
+                requested_scope.to_owned()
+            };
+            self.window.set_contents(format!("{} · {} helper occurrences · {} world brushes · {} detail brushes · {} terrain patches\n{} static props · {} point lights · {} spot lights · {} local targets · {} cubemaps\nCollapse does not write child files.", heading, collapse["stats"]["instances"].as_u64().unwrap_or_default(), collapse["stats"]["world_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["detail_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["terrain_patches"].as_u64().unwrap_or_default(), collapse["stats"]["static_props"].as_u64().unwrap_or_default(), collapse["stats"]["point_lights"].as_u64().unwrap_or_default(), collapse["stats"]["spot_lights"].as_u64().unwrap_or_default(), collapse["stats"]["spotlight_targets"].as_u64().unwrap_or_default(), collapse["stats"]["cubemaps"].as_u64().unwrap_or_default()).into());
             let mut details = self.window.get_contents().to_string();
+            if let Some(roots) = collapse["removed"].as_array() {
+                let roots = roots
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                details.push_str(&format!("\nReviewed roots: {roots}"));
+            }
             for (field, label) in [("face_provenance", "Face"), ("entity_provenance", "Entity")] {
                 if let Some(rows) = collapse[field].as_array() {
                     for row in rows {
@@ -216,13 +248,31 @@ impl Controller {
         }
         let report = session.get_instance_reference();
         self.present(&report);
+        let summary = session
+            .inspect_instance_contents(0, 1)
+            .ok()
+            .and_then(|report| report["summary"].as_str().map(str::to_owned))
+            .unwrap_or_else(|| "Instance contents unavailable".into());
+        let order = collapse["visible_root_order"]
+            .as_array()
+            .map(|roots| {
+                roots
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" → ")
+            })
+            .unwrap_or_default();
         self.window.set_contents(
-            session
-                .inspect_instance_contents(0, 1)
-                .ok()
-                .and_then(|report| report["summary"].as_str().map(str::to_owned))
-                .unwrap_or_else(|| "Instance contents unavailable".into())
-                .into(),
+            format!(
+                "{summary}\nVisible root order: {order}{}",
+                if collapse["visible_root_order_truncated"] == true {
+                    " … (reference limit exceeded)"
+                } else {
+                    ""
+                }
+            )
+            .into(),
         );
     }
 
@@ -397,14 +447,31 @@ impl Controller {
         self.with_shared(true, |shared| {
             let request = {
                 let mut session = lock(shared);
+                let scope = match self.window.get_collapse_scope() {
+                    0 => Ok(Scope::AllVisibleReferences),
+                    1 => Ok(Scope::SelectedLeadingReferences),
+                    _ => Err("Select a valid collapse scope".to_string()),
+                };
                 if applying {
-                    self.token
-                        .get()
-                        .ok_or_else(|| "Instance collapse token is missing".to_string())
-                        .and_then(|token| session.apply_instance_collapse(Actor::User, token))
+                    scope.and_then(|scope| {
+                        let expected = if scope == Scope::SelectedLeadingReferences {
+                            "selected_leading_references"
+                        } else {
+                            "all_visible_references"
+                        };
+                        if session.get_instance_collapse()["scope"] != expected {
+                            return Err("Collapse scope changed; cancel and prepare again".into());
+                        }
+                        self.token
+                            .get()
+                            .ok_or_else(|| "Instance collapse token is missing".to_string())
+                            .and_then(|token| session.apply_instance_collapse(Actor::User, token))
+                    })
                 } else {
                     let snapshot = session.instance_collapse_stamp();
-                    session.begin_instance_collapse(Actor::User, &snapshot)
+                    scope.and_then(|scope| {
+                        session.begin_instance_collapse_scoped(Actor::User, &snapshot, scope)
+                    })
                 }
             };
             match request {

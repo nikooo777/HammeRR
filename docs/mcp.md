@@ -226,11 +226,17 @@ with `action:"extract"`, or cancel and prepare again to change it.
 Geometry and native texture/lightmap projections must remain unchanged.
 See [Extract an assembly](instance-extraction.md) for bounds and file rules.
 
-## Collapse all visible references
+## Collapse references
 
 Call `get_instance_collapse`, then `set_instance_collapse` with
 `action:"prepare"` and its `snapshot`. This recursively converts every visible
-root reference in one batch; there is no selected-only mode.
+root reference in one batch by default. To convert only a leading selection,
+select complete visible root references and pass Prepare-only
+`scope:"selected_leading_references"`. The selection must contain every earlier
+visible reference in `visible_root_order`; other references stay intact.
+Omitted scope keeps `all_visible_references`. The owned review freezes scope
+and selection. Arbitrary subsets are unavailable because they change compiler
+order. See [Assemblies](instances.md#collapse-references-into-editable-geometry).
 Inspect counts and fresh object IDs. The complete `entity_id_map` pairs
 `expanded` compiler entity IDs with fresh `authored` emitted light/target IDs.
 The separate complete `helper_id_map` pairs newly materialized cubemap helper IDs.

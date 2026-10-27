@@ -1,4 +1,4 @@
-import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+import { Button, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
 
 component ReferenceVector inherits HorizontalLayout {
     in property <string> label;
@@ -32,7 +32,7 @@ component ReferenceVector inherits HorizontalLayout {
 }
 
 export component InstanceReferenceWindow inherits Window {
-    title: root.collapse-active ? "Collapse all references - HammeRR" : root.edit-mode ? "Edit instance reference - HammeRR" : "Instance reference - HammeRR";
+    title: root.collapse-active ? "Collapse references - HammeRR" : root.edit-mode ? "Edit instance reference - HammeRR" : "Instance reference - HammeRR";
     preferred-width: 760px;
     preferred-height: 690px;
     background: #20242b;
@@ -42,6 +42,7 @@ export component InstanceReferenceWindow inherits Window {
     in property <bool> shared-form;
     in property <bool> collapse-active;
     in property <bool> can-collapse;
+    in-out property <int> collapse-scope;
     in property <string> source;
     in property <string> status;
     in property <string> contents;
@@ -71,7 +72,7 @@ export component InstanceReferenceWindow inherits Window {
         VerticalLayout {
             padding: 22px;
             spacing: 14px;
-            Text { text: root.collapse-active ? "Collapse all references" : root.edit-mode ? "Edit instance reference" : "Create instance reference"; font-size: 23px; font-weight: 600; color: #e1e7ef; }
+            Text { text: root.collapse-active ? "Collapse references" : root.edit-mode ? "Edit instance reference" : "Create instance reference"; font-size: 23px; font-weight: 600; color: #e1e7ef; }
             Text { text: root.source; color: #9eafc5; wrap: word-wrap; font-size: 12px; }
             if !root.collapse-active: VerticalLayout {
             spacing: 14px;
@@ -101,7 +102,13 @@ export component InstanceReferenceWindow inherits Window {
             }
             Text { text: root.status; color: #e4c19d; wrap: word-wrap; }
             if !root.collapse-active: Button { text: "Refresh instance contents"; clicked => { root.refresh-contents(); } }
-            if root.edit-mode && !root.collapse-active: Button { text: "Preview collapse all references…"; enabled: root.can-collapse; clicked => { root.preview-collapse(); } }
+            if root.edit-mode || root.collapse-active: HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Collapse scope"; color: #cbd6e4; vertical-alignment: center; }
+                ComboBox { model: ["All visible references", "Selected leading references"]; current-index <=> root.collapse-scope; enabled: root.can-collapse && !root.collapse-active; accessible-label: "Collapse scope"; horizontal-stretch: 1; }
+            }
+            if root.edit-mode && !root.collapse-active: Button { text: "Preview collapse references…"; enabled: root.can-collapse; clicked => { root.preview-collapse(); } }
+            if (root.edit-mode || root.collapse-active) && root.collapse-scope == 1: Text { text: "Select complete visible root references, starting with the first reference in parent entity order. Include every earlier visible root. Other selections stop the batch. Unselected roots stay unchanged."; color: #9eafc5; wrap: word-wrap; font-size: 12px; }
             contents-scroll := ScrollView {
                 min-height: 45px;
                 preferred-height: root.collapse-active ? 280px : 60px;
@@ -110,7 +117,7 @@ export component InstanceReferenceWindow inherits Window {
                 content-width: self.visible-width;
                 Text { width: contents-scroll.visible-width; text: root.contents; color: #a9bed5; wrap: word-wrap; }
             }
-            Text { text: root.collapse-active ? "Converts every visible reference recursively to editable brushes, terrain, static props, checked point/spot lights and cubemap samples. Child props require an empty lightingorigin. Reference markers and their color/layout are removed; child object settings remain. Hidden root references and child files stay intact. Unsupported child content stops the whole batch. Apply is one Undo step." : "File checks confirm path and presence only. Refresh or Compile validates committed child contents.\nFour helper levels · root-relative paths · world and func_detail brushes\nNo child editing, replacements or search fallback."; color: #9eafc5; wrap: word-wrap; font-size: 12px; }
+            Text { text: root.collapse-active ? "Converts the reviewed roots recursively to editable brushes, terrain, static props, checked point/spot lights and cubemap samples. Child props require an empty lightingorigin. Reference markers and their color/layout are removed; child object settings remain. Unselected and hidden root references and child files stay intact. Unsupported child content stops the whole batch. Apply is one Undo step." : "File checks confirm path and presence only. Refresh or Compile validates committed child contents.\nFour helper levels · root-relative paths · world and func_detail brushes\nNo child editing, replacements or search fallback."; color: #9eafc5; wrap: word-wrap; font-size: 12px; }
             if root.message != "": Text { text: root.message; color: #f0b377; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;

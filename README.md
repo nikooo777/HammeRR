@@ -98,7 +98,7 @@ See the [tool index and setup](docs/mcp.md).
 | [Compiler visibility](docs/visibility.md) | [Editable instances](docs/instances.md#collapse-references-into-editable-geometry) |
 | --- | --- |
 | ![Complete PVS destination bounds in a three-room map](docs/images/visibility-pvs.png) | ![Editable brush arches after instance collapse](docs/images/collapsed-assembly.png) |
-| Inspect native leaves, portals and complete PVS/PAS bounds. | Turn supported references into editable brushes, props, lights and cubemap samples. |
+| Inspect native leaves, portals and complete PVS/PAS bounds. | Convert all references or a leading selection into editable map objects. |
 
 | [Prop leaf bounds](docs/baked-prop-vertices.md) | [Final compiled details](docs/compiled-details.md) |
 | --- | --- |

@@ -944,17 +944,71 @@ pub fn resolve<'a>(
     resolve_purpose(vmf, source, control, report, PreparationPurpose::Reference)
 }
 
+pub fn selected_collapse_roots(vmf: &Vmf, selected: &[ObjectId]) -> Result<Vec<ObjectId>, String> {
+    if selected.is_empty() || selected.len() > MAX_INSTANCES {
+        return Err("Select a nonempty leading set of visible root instance references within the compiler reference limit".into());
+    }
+    let mut ids = BTreeSet::new();
+    for &id in selected {
+        if !matches!(id, ObjectId::Entity(_)) {
+            return Err("Select only complete visible root instance references before collapsing selected leading references".into());
+        }
+        if !ids.insert(id) {
+            return Err("Selected collapse root IDs must be unique".into());
+        }
+    }
+    let prefix = vmf
+        .entities
+        .iter()
+        .filter(|entity| !entity.hidden && is_instance(entity))
+        .take(selected.len())
+        .map(|entity| ObjectId::Entity(entity.id))
+        .collect::<Vec<_>>();
+    if prefix.len() != selected.len() || prefix.iter().any(|id| !ids.contains(id)) {
+        return Err("Selected references must form a nonempty prefix of the visible root-reference order; include every earlier visible root or use All visible references".into());
+    }
+    Ok(prefix)
+}
+
 pub fn resolve_for_collapse<'a>(
     vmf: &'a Vmf,
     source: Option<&SourceContext>,
     control: &Control,
     report: &mut Report,
 ) -> Result<PreparedInstances<'a>, Diagnostic> {
-    for helper in vmf
-        .entities
-        .iter()
-        .filter(|entity| !entity.hidden && is_instance(entity))
-    {
+    resolve_collapse_roots(vmf, source, control, report, None)
+}
+
+pub fn resolve_for_selected_collapse<'a>(
+    vmf: &'a Vmf,
+    selected: &[ObjectId],
+    source: Option<&SourceContext>,
+    control: &Control,
+    report: &mut Report,
+) -> Result<PreparedInstances<'a>, Diagnostic> {
+    let roots = selected_collapse_roots(vmf, selected)
+        .map_err(|message| Diagnostic::error(message, None, None))?
+        .into_iter()
+        .map(|id| match id {
+            ObjectId::Entity(id) => id,
+            _ => unreachable!(),
+        })
+        .collect::<BTreeSet<_>>();
+    resolve_collapse_roots(vmf, source, control, report, Some(&roots))
+}
+
+fn resolve_collapse_roots<'a>(
+    vmf: &'a Vmf,
+    source: Option<&SourceContext>,
+    control: &Control,
+    report: &mut Report,
+    roots: Option<&BTreeSet<u32>>,
+) -> Result<PreparedInstances<'a>, Diagnostic> {
+    for helper in vmf.entities.iter().filter(|entity| {
+        !entity.hidden
+            && is_instance(entity)
+            && roots.is_none_or(|roots| roots.contains(&entity.id))
+    }) {
         collapse::helper(helper).map_err(|message| {
             Diagnostic::error(
                 message,
@@ -963,7 +1017,14 @@ pub fn resolve_for_collapse<'a>(
             )
         })?;
     }
-    resolve_purpose(vmf, source, control, report, PreparationPurpose::Collapse)
+    resolve_purpose_roots(
+        vmf,
+        source,
+        control,
+        report,
+        PreparationPurpose::Collapse,
+        roots,
+    )
 }
 
 /// Resolve material-aware expanded geometry for inspection.
@@ -991,6 +1052,17 @@ fn resolve_purpose<'a>(
     report: &mut Report,
     purpose: PreparationPurpose<'_>,
 ) -> Result<PreparedInstances<'a>, Diagnostic> {
+    resolve_purpose_roots(vmf, source, control, report, purpose, None)
+}
+
+fn resolve_purpose_roots<'a>(
+    vmf: &'a Vmf,
+    source: Option<&SourceContext>,
+    control: &Control,
+    report: &mut Report,
+    purpose: PreparationPurpose<'_>,
+    roots: Option<&BTreeSet<u32>>,
+) -> Result<PreparedInstances<'a>, Diagnostic> {
     if let Some(diagnostic) = vmf
         .entities
         .iter()
@@ -1010,7 +1082,7 @@ fn resolve_purpose<'a>(
             None,
         ));
     }
-    prepare_purpose(vmf, source, control, report, purpose)
+    prepare_purpose_roots(vmf, source, control, report, purpose, roots)
 }
 
 #[cfg(test)]
@@ -1047,6 +1119,17 @@ fn prepare_purpose<'a>(
     report: &mut Report,
     purpose: PreparationPurpose<'_>,
 ) -> Result<Prepared<'a>, Diagnostic> {
+    prepare_purpose_roots(vmf, source, control, report, purpose, None)
+}
+
+fn prepare_purpose_roots<'a>(
+    vmf: &'a Vmf,
+    source: Option<&SourceContext>,
+    control: &Control,
+    report: &mut Report,
+    purpose: PreparationPurpose<'_>,
+    roots: Option<&BTreeSet<u32>>,
+) -> Result<Prepared<'a>, Diagnostic> {
     let mut prepared = Prepared {
         vmf: Cow::Borrowed(vmf),
         dependencies: None,
@@ -1066,7 +1149,11 @@ fn prepare_purpose<'a>(
     let helpers = vmf
         .entities
         .iter()
-        .filter(|entity| !entity.hidden && is_instance(entity))
+        .filter(|entity| {
+            !entity.hidden
+                && is_instance(entity)
+                && roots.is_none_or(|roots| roots.contains(&entity.id))
+        })
         .take(MAX_INSTANCES + 1)
         .collect::<Vec<_>>();
     let failure = |entity: &Entity, message: String| {

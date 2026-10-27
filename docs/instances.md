@@ -36,16 +36,26 @@ Picking a child prop selects its outer containing reference.
 
 1. Select a visible reference and open **Edit instance reference…**.
 2. Apply or cancel any edited reference fields first.
-3. Click **Preview collapse all references…**.
-4. Inspect the materialized content and brush, terrain, prop, light, target and cubemap counts.
-5. Click **Apply collapse**, or **Cancel collapse** to discard the preview.
+3. Set **Collapse scope** to **All visible references** or **Selected leading references**.
+4. Click **Preview collapse references…**.
+5. Inspect the materialized content and brush, terrain, prop, light, target and cubemap counts.
+6. Click **Apply collapse**, or **Cancel collapse** to discard the preview.
 
 ![Two collapsed arches; one arch's individual brushes are selected](images/collapsed-assembly.png)
 
-This converts **every visible root reference**, recursively, in one Undo step.
-Selection does not limit the batch. Hidden root references and child files stay
-unchanged. **Review collapse** transfers an idle shared preview to you before
-Apply or Cancel. Source or dependency changes require a new preview.
+**All visible references** is the default. It converts every visible root
+reference, recursively, in one Undo step.
+
+**Selected leading references** converts only selected complete visible root
+references. **Visible root order** lists their parent entity order. The selection
+must start with the first visible root reference in that order and include every
+earlier visible root. Empty, mixed, hidden or later-only selections stop the
+batch. No unselected reference is added to the selection or converted. Arbitrary subsets are not supported.
+
+Unselected and hidden root references and child files stay unchanged.
+**Review collapse** transfers an idle shared preview to you before Apply or
+Cancel. Selection, source or dependency changes require a new preview. Cancel
+and prepare again to change the scope.
 
 Collapse supports world and ordinary `func_detail` brushes, checked terrain,
 static `light`/`light_spot` assemblies with checked local `info_target`
@@ -61,8 +71,10 @@ Light assemblies retain independent LDR/HDR values, appearances 0–11, composed
 poses, whole-value bindings and scoped local spotlight targets. Targeted spots
 require the compiler's named ancestor scopes. Named/switchable lights and
 runtime connections remain unsupported. New light/target entities receive fresh
-editor IDs; their compiled `hammerid` follows those IDs. Other prepared entity fields,
-references and ordering stay intact.
+editor IDs; their compiled `hammerid` follows those IDs. Retained references
+expand again at Compile and can receive different build-local IDs and
+`hammerid` values. Other prepared entity fields, references and ordering stay
+intact.
 
 Cubemap samples keep their authored size/default fields and editor settings.
 Manual `sides` bindings follow the fresh side IDs of the same reviewed direct

@@ -55,11 +55,11 @@ fn software_instance_collapse_callbacks_preview_cancel_apply_and_undo_the_shared
         .unwrap()
         .id;
     let source = session.document().vmf().clone();
-    let history = session.document().undo_labels().count();
     let shared = Arc::new(Mutex::new(session));
     let controller = Controller::new(shared.clone()).unwrap();
     controller.open(Some(owner));
     assert!(controller.window.get_can_collapse());
+    assert_eq!(controller.window.get_collapse_scope(), 0);
     controller.window.invoke_preview_collapse();
     wait_for_collapse(&controller, &shared);
     assert!(controller.window.get_collapse_active());
@@ -75,9 +75,38 @@ fn software_instance_collapse_callbacks_preview_cancel_apply_and_undo_the_shared
     crate::ui::tests::save_ui_snapshot(controller.window.window(), "instance-collapse-review");
     controller.window.invoke_cancel();
     assert_eq!(lock(&shared).render_document().vmf(), &source);
+    let retained = lock(&shared)
+        .edit(Actor::User, "retain unselected reference", |tx| {
+            let id = tx.new_object_id()?;
+            let mut reference = source_formats::vmf::Entity::new(id, "func_instance");
+            reference.properties.set("file", "missing-unselected.vmf");
+            tx.add_entity(reference.clone())?;
+            Ok(reference)
+        })
+        .unwrap();
+    lock(&shared)
+        .select(&[ObjectId::Entity(owner)], SelectMode::Replace)
+        .unwrap();
+    let source = lock(&shared).document().vmf().clone();
+    let history = lock(&shared).document().undo_labels().count();
     controller.open(Some(owner));
+    controller.window.set_collapse_scope(1);
     controller.window.invoke_preview_collapse();
     wait_for_collapse(&controller, &shared);
+    assert_eq!(
+        lock(&shared).get_instance_collapse()["scope"],
+        "selected_leading_references"
+    );
+    assert!(
+        controller
+            .window
+            .get_contents()
+            .contains("Selected leading references")
+    );
+    crate::ui::tests::save_ui_snapshot(
+        controller.window.window(),
+        "instance-collapse-selected-review",
+    );
     let shown = lock(&shared).render_document().vmf().clone();
     assert_eq!(
         shown
@@ -87,6 +116,18 @@ fn software_instance_collapse_callbacks_preview_cancel_apply_and_undo_the_shared
             .count(),
         1
     );
+    assert_eq!(
+        shown
+            .entities
+            .iter()
+            .find(|entity| entity.id == retained.id),
+        Some(&retained)
+    );
+    controller.window.set_collapse_scope(0);
+    controller.window.invoke_apply();
+    assert!(controller.window.get_message().contains("scope changed"));
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(controller.window.get_collapse_scope(), 1);
     controller.window.invoke_apply();
     wait_for_collapse(&controller, &shared);
     assert_eq!(lock(&shared).document().vmf(), &shown);

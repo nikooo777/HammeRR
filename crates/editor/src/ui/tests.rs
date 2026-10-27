@@ -138,7 +138,7 @@ fn viewport_escape_cancels_owned_atlas_preview_and_preserves_agent_review() {
 }
 
 #[test]
-pub(crate) fn selection_outlines_control_shares_default_and_agent_view_without_map_changes() {
+pub(crate) fn selection_display_controls_share_default_and_agent_view_without_map_changes() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {
             renderer_name: Some("software".into()),
@@ -165,14 +165,19 @@ pub(crate) fn selection_outlines_control_shares_default_and_agent_view_without_m
     bind_view_controls(&app, shared.clone());
     refresh_view_controls(&app, &lock(&shared));
     assert!(app.get_selection_outlines());
+    assert!(app.get_selection_tint());
+    assert!(app.get_selection_tint());
+    app.set_selection_tint(false);
     app.set_selection_outlines(false);
     app.invoke_options_changed();
     assert!(!lock(&shared).view().selection_outlines);
+    assert!(!lock(&shared).view().selection_tint);
     {
         let mut session = lock(&shared);
         let view = session.view();
         session.set_view(render::ViewOptions {
             selection_outlines: true,
+            selection_tint: true,
             ..view
         });
     }

@@ -119,8 +119,6 @@ impl Session {
             || view.surface != SurfaceView::Textured
         {
             Some("unsupported_view")
-        } else if !view.tool_textures {
-            Some("tool_textures_hidden")
         } else if !sky.as_ref().is_some_and(|sky| sky.ready()) {
             Some("unavailable")
         } else {

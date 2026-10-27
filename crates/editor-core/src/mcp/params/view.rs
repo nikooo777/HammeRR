@@ -281,7 +281,7 @@ pub struct FacePreviewArgs {
 }
 
 pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
-    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"surface_shading":view.surface_shading,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"surface_shading":view.surface_shading,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"selection_tint":view.selection_tint,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
@@ -402,6 +402,8 @@ pub struct SetViewArgs {
     pub surface_shading: Option<bool>,
     /// Show selected object/face edges and model brackets. Defaults on; selection, picking and tool guides remain active.
     pub selection_outlines: Option<bool>,
+    /// Tint selected brush faces and models without changing selection or outlines.
+    pub selection_tint: Option<bool>,
     /// Show literal FGD icons and static Sprite resource guides; false keeps ordinary boxes without image admission.
     pub entity_images: Option<bool>,
     /// Show literal FGD studio/studioprop editor meshes; false keeps ordinary boxes.
@@ -445,6 +447,8 @@ pub struct RenderArgs {
     pub surface_shading: Option<bool>,
     /// Temporary selected-edge/model-bracket visibility override; leaves shared settings and picking unchanged.
     pub selection_outlines: Option<bool>,
+    /// Tint selected brush faces and models without changing selection or outlines.
+    pub selection_tint: Option<bool>,
     /// Show literal FGD icons and static Sprite resource guides; false keeps ordinary boxes without image admission.
     pub entity_images: Option<bool>,
     /// Show literal FGD studio/studioprop editor meshes; false keeps ordinary boxes.
@@ -452,6 +456,9 @@ pub struct RenderArgs {
     /// Camera overrides; defaults to the user's current view.
     pub camera: Option<CameraSpec>,
     /// Image size in pixels (default 1024x576).
+    /// Include static policies and limit catalogues. Default false; statuses and diagnostics are always returned.
+    #[serde(default)]
+    pub include_details: bool,
     pub width: Option<u32>,
     pub height: Option<u32>,
     /// Draw tool brushes (nodraw, clip, trigger, skybox). Defaults to the editor setting.
@@ -559,6 +566,7 @@ macro_rules! view_update {
                     sky3d_preview: self.sky3d_preview,
                     rope_preview: self.rope_preview,
                     selection_outlines: self.selection_outlines,
+                    selection_tint: self.selection_tint,
                     entity_images: self.entity_images,
                     entity_model_guides: self.entity_model_guides,
                     sky_channel: self.sky_channel.as_deref(),

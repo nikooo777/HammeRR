@@ -334,7 +334,7 @@ impl Session {
             .take(MAX_ROWS)
             .map(|(prop, instance)| {let (low,high)=instance.bounds();json!({
                 "owner":format!("entity:{}",prop.owner),"file":prop.occurrence.steps().last().map(|step|step.file.as_str()),
-                "child_entity":prop.child,"occurrence":prop.occurrence,"model":instance.asset.path,
+                "child_entity":prop.child,"occurrence":prop.occurrence.as_ref(),"model":instance.asset.path,
                 "origin":instance.origin.to_array(),"skin":instance.skin,"body":instance.body,
                 "bounds":[low.to_array(),high.to_array()]
             })}).collect::<Vec<_>>()).unwrap_or_default();

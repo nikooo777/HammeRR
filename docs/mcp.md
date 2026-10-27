@@ -103,7 +103,11 @@ A failed operation returns an explicit error. Inspect it before retrying.
 }
 ```
 
-`render_view` returns an image and the effective view state.
+`render_view` returns an image, effective view state and diagnostics.
+Set `include_details:true` to include the policy and resource-limit catalogues.
+Use `selection_tint:false` to remove highlights without clearing selection;
+`selection_outlines` controls edges separately. Sky previews remain visible
+when `tool_textures:false`.
 Temporary render overrides do not change the shared camera or view settings.
 Point lights use ordinary entity markers. Their marker is not an illumination preview.
 
@@ -113,7 +117,7 @@ Point lights use ordinary entity markers. Their marker is not an illumination pr
 - Omitting it is valid only with one live document. Desktop focus does not route requests.
 - `new_document` and `open_document` add a map. The limit is two maps.
 - `new_map` and `open_map` replace the target document's buffer.
-- Desktop-created maps can remain hidden. `show_document` presents them explicitly.
+- Desktop-created maps can remain hidden. `show_document` presents them explicitly. Set `focus:false` for **Show silently** on Hyprland with Lua window rules; unsupported display admission fails before opening the window.
 - Result metadata identifies the routed document.
 
 For replacement, use the current `replacement_review` from `get_map_info`.
@@ -128,7 +132,16 @@ Inspect every document result.
 Unnamed dirty maps need `save_map` with a destination.
 Pending previews must be applied or cancelled first.
 
+`find_objects` accepts `classname` and `exact_class` at the top level.
+Class filters in `get_object_report` and `select_object_report` match substrings
+by default. Use `filter:{"classname":"light","exact_class":true}` to select
+point lights without matching `light_environment` or `light_spot`.
+
 ### Close a document
+
+`list_documents` and `get_map_info.document_close.admission` report active
+requests and workers by name. A Close refusal names the current blockers.
+The review request excludes itself; the review token still guards document state.
 
 1. Read `get_map_info.document_close`.
 2. Review unsaved changes, drafts and owned work.

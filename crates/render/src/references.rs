@@ -35,6 +35,7 @@ impl crate::scene::SceneMesh {
         library: &mut crate::MaterialLibrary,
         owners: &std::collections::BTreeSet<u32>,
         selected: &std::collections::HashSet<map_core::ObjectId>,
+        selection_tint: bool,
     ) -> Result<(), String> {
         let mut counts = [0usize; 3];
         for brush in mesh
@@ -137,12 +138,13 @@ impl crate::scene::SceneMesh {
         {
             let selected = selected.contains(&map_core::ObjectId::Entity(brush.owner));
             let color = if selected { SELECTED } else { COLOR };
+            let surface_color = if selection_tint { color } else { COLOR };
             let first_vertex = self.vertices.len() as u32;
             self.vertices.extend(
                 mesh.vertices[brush.vertices.start as usize..brush.vertices.end as usize]
                     .iter()
                     .map(|vertex| Vertex {
-                        color: [color[0], color[1], color[2], 255],
+                        color: [surface_color[0], surface_color[1], surface_color[2], 255],
                         lightmap: [0.0; 3],
                         smoothing: 0,
                         opacity: 1.0,

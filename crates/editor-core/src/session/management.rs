@@ -28,6 +28,8 @@ mod light_value_binding_tests;
 pub struct ObjectFilter {
     pub query: Option<String>,
     pub classname: Option<String>,
+    #[serde(default)]
+    pub exact_class: bool,
     pub targetname: Option<String>,
     pub material: Option<String>,
     pub within: Option<[[f64; 3]; 2]>,
@@ -196,7 +198,15 @@ impl Session {
                 .get(&id)
                 .copied()
                 .or_else(|| query::bounds(&self.document, id));
-            if !contains(classname, &filter.classname)
+            let class_matches = if filter.exact_class {
+                filter
+                    .classname
+                    .as_ref()
+                    .is_none_or(|name| classname.eq_ignore_ascii_case(name))
+            } else {
+                contains(classname, &filter.classname)
+            };
+            if !class_matches
                 || !contains(targetname, &filter.targetname)
                 || filter.hidden.is_some_and(|wanted| wanted != hidden)
                 || filter.kind.as_deref().is_some_and(|wanted| {

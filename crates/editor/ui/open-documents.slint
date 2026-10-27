@@ -22,6 +22,7 @@ export component OpenDocumentsWindow inherits Window {
     callback save-all-named-maps();
     callback open-document();
     callback show-document(string);
+    callback show-silent(string);
     callback close-document(string);
     callback refresh();
     callback close-list();
@@ -44,6 +45,7 @@ export component OpenDocumentsWindow inherits Window {
                 Text { text: row.detail; color: #b9c5d6; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 10px;
+                    Button { text: "Show silently"; enabled: row.live && !root.busy; clicked => { root.show-silent(row.selector); } }
                     Button { text: "Show document"; enabled: row.live && !root.busy; clicked => { root.show-document(row.selector); } }
                     Button { text: "Close document"; enabled: row.live && !root.busy; clicked => { root.close-document(row.selector); } }
                 }

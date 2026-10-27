@@ -20,7 +20,7 @@ pub struct Sky3dPreviewArgs {
 #[tool_router(router = sky3d_preview_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect the default-off 3D sky preview and explicit authored sky_camera choices. Reports selected camera, origin/scale/errors, preparation status, readiness, current snapshot, diagnostics, geometry statistics and resource limits without graphics initialization. No automatic nearest/first camera selection. A ready prepared region does not prove that the current view displays sky pixels; perspective Textured and Tool textures are required. Source/material/visibility changes stale preparation. No source/history/selection/camera mutation or game/native-parity claim.",
+        description = "Inspect the default-off 3D sky preview and explicit authored sky_camera choices. Reports selected camera, origin/scale/errors, preparation status, readiness, current snapshot, diagnostics, geometry statistics and resource limits without graphics initialization. No automatic nearest/first camera selection. A ready prepared region does not prove that the current view displays sky pixels; perspective Textured is required. Source/material/visibility changes stale preparation. No source/history/selection/camera mutation or game/native-parity claim.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_3d_sky_preview(&self) -> ToolResult {

@@ -13,10 +13,16 @@ const FORMAT_VERSION: u32 = 1;
 #[serde(deny_unknown_fields)]
 pub struct Preview {
     pub selection_outlines: bool,
+    #[serde(default = "selection_tint_default")]
+    pub selection_tint: bool,
     pub entity_images: bool,
     pub entity_model_guides: bool,
     pub rope_preview: bool,
     pub sky_preview: bool,
+}
+
+fn selection_tint_default() -> bool {
+    true
 }
 
 impl Default for Preview {
@@ -29,6 +35,7 @@ impl From<render::ViewOptions> for Preview {
     fn from(view: render::ViewOptions) -> Self {
         Self {
             selection_outlines: view.selection_outlines,
+            selection_tint: view.selection_tint,
             entity_images: view.entity_images,
             entity_model_guides: view.entity_model_guides,
             rope_preview: view.rope_preview,
@@ -41,6 +48,7 @@ impl Preview {
     pub fn update(self) -> crate::session::ViewUpdate<'static> {
         crate::session::ViewUpdate {
             selection_outlines: Some(self.selection_outlines),
+            selection_tint: Some(self.selection_tint),
             entity_images: Some(self.entity_images),
             entity_model_guides: Some(self.entity_model_guides),
             rope_preview: Some(self.rope_preview),

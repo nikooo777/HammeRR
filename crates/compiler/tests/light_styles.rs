@@ -226,7 +226,58 @@ fn face_and_named_group_limits_reject_before_publication() {
     );
     let result = compile(document.vmf());
     assert!(result.report.has_errors() && result.bsp.is_none());
-    assert!(format!("{:?}", result.report).contains("four light styles"));
+    let diagnostic = result
+        .report
+        .diagnostics
+        .iter()
+        .find(|entry| entry.message.contains("four light styles"))
+        .unwrap();
+    assert!(diagnostic.position.unwrap().is_finite());
+    let side = diagnostic
+        .object
+        .as_deref()
+        .unwrap()
+        .strip_prefix("side:")
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
+    assert!(
+        document
+            .vmf()
+            .world
+            .solids
+            .iter()
+            .flat_map(|solid| &solid.sides)
+            .any(|source| source.id == side)
+    );
+    for entity in &document.vmf().entities {
+        if let Some(name) = entity.properties.get("targetname") {
+            assert!(
+                diagnostic
+                    .message
+                    .contains(&format!("entity:{}", entity.id)),
+                "{diagnostic:?}"
+            );
+            assert!(
+                diagnostic.message.contains(&format!("{name:?}")),
+                "{diagnostic:?}"
+            );
+        }
+    }
+    assert_eq!(
+        result
+            .report
+            .diagnostics
+            .iter()
+            .filter(|entry| entry.level == compiler::Level::Error)
+            .count(),
+        1
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("previous.bsp");
+    std::fs::write(&output, b"previous BSP").unwrap();
+    assert!(!result.write(&output).unwrap());
+    assert_eq!(std::fs::read(&output).unwrap(), b"previous BSP");
     let mut document = Document::new(common::room());
     for index in 0..32 {
         add_light(

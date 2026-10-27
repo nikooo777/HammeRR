@@ -101,7 +101,7 @@ fn cancelled_presentation_cannot_acknowledge_work_and_cleanup_quit_survives_wait
     let document =
         crate::test_assets::document(Arc::new(Mutex::new(Session::new(Err("no assets".into())))));
     let proxy = Proxy::default();
-    let pending = proxy.request(Action::Show(document.id()));
+    let pending = proxy.request(Action::Show(document.id(), true));
     assert_eq!(proxy.0.lock().unwrap().commands.len(), 1);
     drop(pending);
     assert!(

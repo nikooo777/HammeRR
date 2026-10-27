@@ -32,11 +32,12 @@ pub type WorkspaceUiFuture = Pin<Box<dyn Future<Output = Result<(), String>> + S
 type CreateHost =
     Arc<dyn Fn(DocumentHandle, String, TerminalClose, bool) -> WorkspaceUiFuture + Send + Sync>;
 type HostAction = Arc<dyn Fn(DocumentId) -> WorkspaceUiFuture + Send + Sync>;
+type ShowAction = Arc<dyn Fn(DocumentId, bool) -> WorkspaceUiFuture + Send + Sync>;
 
 #[derive(Clone)]
 pub struct WorkspaceUi {
     create: CreateHost,
-    show: HostAction,
+    show: ShowAction,
     retire: HostAction,
     release: HostAction,
     quit: Arc<dyn Fn() -> WorkspaceUiFuture + Send + Sync>,
@@ -48,13 +49,13 @@ impl WorkspaceUi {
         + Send
         + Sync
         + 'static,
-        show: impl Fn(DocumentId) -> WorkspaceUiFuture + Send + Sync + 'static,
+        show: impl Fn(DocumentId, bool) -> WorkspaceUiFuture + Send + Sync + 'static,
         retire: impl Fn(DocumentId) -> WorkspaceUiFuture + Send + Sync + 'static,
         release: impl Fn(DocumentId) -> WorkspaceUiFuture + Send + Sync + 'static,
         quit: impl Fn() -> WorkspaceUiFuture + Send + Sync + 'static,
     ) -> Self {
         let create: CreateHost = Arc::new(create);
-        let show: HostAction = Arc::new(show);
+        let show: ShowAction = Arc::new(show);
         let retire: HostAction = Arc::new(retire);
         let release: HostAction = Arc::new(release);
         let quit = Arc::new(quit);
@@ -62,7 +63,7 @@ impl WorkspaceUi {
             create: Arc::new(move |document, selector, terminal, present| {
                 guarded_ui(|| create(document, selector, terminal, present))
             }),
-            show: Arc::new(move |document| guarded_ui(|| show(document))),
+            show: Arc::new(move |document, focus| guarded_ui(|| show(document, focus))),
             retire: Arc::new(move |document| guarded_ui(|| retire(document))),
             release: Arc::new(move |document| guarded_ui(|| release(document))),
             quit: Arc::new(move || guarded_ui(|| quit())),
@@ -91,7 +92,7 @@ type CommandReply = oneshot::Sender<Result<Value, String>>;
 enum Command {
     New(Actor, bool, CommandReply),
     Open(Actor, PathBuf, bool, CommandReply),
-    Show(String, CommandReply),
+    Show(String, bool, CommandReply),
     SaveAll(startup::SaveAllRequest, CommandReply),
 }
 
@@ -305,7 +306,8 @@ impl Workspace {
         let documents: Vec<Value> = entries.iter().map(|entry| {
             let document = entry.document();
             let session = lock(document.session());
-            json!({"document_id":entry.selector(),"runtime_document_id":document.id().value(),"title":session.title(),"path":session.path().map(|path|path.display().to_string()),"unsaved_changes":session.document().is_dirty(),"lifecycle":entry.state().label(),"visibility":entry.visibility().label(),"work":if session.compiling(){"Compiling"}else if session.launching(){"Launching"}else if session.game_running(){"Game running"}else{"Idle"},"error":entry.error()})
+            let admission = document.admission_inspection();
+            json!({"document_id":entry.selector(),"runtime_document_id":document.id().value(),"title":session.title(),"path":session.path().map(|path|path.display().to_string()),"unsaved_changes":session.document().is_dirty(),"lifecycle":entry.state().label(),"visibility":entry.visibility().label(),"work":if session.compiling(){"Compiling"}else if session.launching(){"Launching"}else if session.game_running(){"Game running"}else if admission["active_operations"] != 0 {"Requests/workers"}else{"Idle"},"admission":admission,"error":entry.error()})
         }).collect();
         Ok(
             json!({"documents":documents,"limit":startup::DOCUMENT_LIMIT,"busy":self.0.factory.busy(),"can_create":self.0.factory.can_create()}),
@@ -337,8 +339,16 @@ impl Workspace {
     }
 
     pub async fn show_document(&self, selector: &str) -> Result<Value, String> {
+        self.show_document_with_focus(selector, true).await
+    }
+
+    pub async fn show_document_with_focus(
+        &self,
+        selector: &str,
+        focus: bool,
+    ) -> Result<Value, String> {
         let (send, receive) = oneshot::channel();
-        self.enqueue(Command::Show(selector.to_owned(), send))?;
+        self.enqueue(Command::Show(selector.to_owned(), focus, send))?;
         receive
             .await
             .map_err(|_| "The workspace command owner stopped".to_owned())?
@@ -570,6 +580,7 @@ fn show(
     workspace: &Workspace,
     runtime: &tokio::runtime::Runtime,
     selector: &str,
+    focus: bool,
 ) -> Result<Value, String> {
     let entry = workspace.0.factory.resolve(Some(selector))?;
     let ui = workspace
@@ -577,13 +588,13 @@ fn show(
         .ui
         .as_ref()
         .ok_or("The headless workspace cannot show native windows")?;
-    ui_wait(runtime, (ui.show)(entry.document().id()))?;
+    ui_wait(runtime, (ui.show)(entry.document().id(), focus))?;
     workspace
         .0
         .factory
         .set_visibility(entry.document().id(), DocumentVisibility::Visible)?;
     Ok(
-        json!({"document_id":selector,"runtime_document_id":entry.document().id().value(),"visibility":"visible"}),
+        json!({"document_id":selector,"runtime_document_id":entry.document().id().value(),"visibility":"visible","focus_requested":focus}),
     )
 }
 
@@ -807,9 +818,9 @@ fn run_commands(workspace: &Workspace, runtime: &tokio::runtime::Runtime) {
             Command::SaveAll(request, response) => {
                 let _ = response.send(Ok(request.run()));
             }
-            Command::Show(selector, response) => {
+            Command::Show(selector, focus, response) => {
                 if !response.is_closed() {
-                    let _ = response.send(show(workspace, runtime, &selector));
+                    let _ = response.send(show(workspace, runtime, &selector, focus));
                 }
             }
         }

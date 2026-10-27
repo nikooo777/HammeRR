@@ -10,11 +10,11 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | Area | Works | Not yet / limits |
 | --- | --- | --- |
 | [MCP](mcp.md) | Live desktop and private headless sessions; shared editing, rendering and builds. | Select a document explicitly when two maps are open. |
-| [Documents](open-documents.md) | Two map windows, reviewed Close, per-map Save results. | Tabs, bulk Quit and workspace restoration. |
+| [Documents](open-documents.md) | Two map windows, silent display, named Close blockers and per-map Save results. | Tabs, bulk Quit and workspace restoration. |
 | [VMF and recovery](map-tools.md) | Preserved imported fields, checked Save, recovery snapshots and map checks. | Other-editor round trips; general automatic repairs. |
 | [History](history.md) | Shared Undo/Redo and change summaries. | Persistent history and full property diffs. |
 | [External map comparison](map-comparison.md) | Bounded authored world-brush/whole-entity comparison by stored IDs, categorized pages and complete filtered current selection/framing. | No merge, map-settings comparison, recursive-instance expansion or geometric-equivalence claim. |
-| [Selection](selection.md) | Type filters, startup defaults, named profiles, overlap cycling, area, volume and paint selection. | Separate solid/group modes. |
+| [Selection](selection.md) | Type filters, independent selection tint/outlines, startup defaults, named profiles, overlap cycling, area, volume and paint selection. | Separate solid/group modes. |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | Configurable viewport commands, including temporary editor hide/show. | File, clipboard, physical-key and multi-key bindings. |
 | [Brushes](brushes.md) | Shapes, handles, exact transforms, selection or per-object grid snapping, pivots with grid snapping and saved defaults, mirror and shear. | Magnetic snapping and surface-attached pivots. |
 | [Brush tools](brush-tools.md) | Hollow, carve, clip, convex merge and polygon extrusion. | Concave merge and holes. |
@@ -24,7 +24,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | [Lighting preview](lighting-preview.md) | Unshadowed point, spot and sun lighting with checked receivers. | Shadows, sky visibility, bounce and native brightness match. |
 | [Color correction](color-correction.md) | One explicit Source RGB8 `.raw` LUT, shared enable/weight controls and complete viewport display-color preview. | Native HDR, tone mapping, entities/volumes and multiple-LUT composition. |
 | [Terrain](terrain.md) | Creation, sculpting, blending, masks, handles, resizing, sewing and full/half-edge subdivision. | Holes, triangle removal and general fractional joins. |
-| [Entities](entities.md) | Typed properties, colors, FGD helpers, connections, bounded I/O graph queries/connected selection/framing, batch edits and safe rename. | General graph canvas layouts and runtime simulation. |
+| [Entities](entities.md) | Typed properties, exact/substring class selection, colors, FGD helpers, connections, bounded I/O graph queries/connected selection/framing, batch edits and safe rename. | General graph canvas layouts and runtime simulation. |
 | [Models](models.md) | Meshes, reference poses, skins, bodygroups, dynamic scale, tint, opacity and attachments. | Animation, procedural poses, attachment parenting and physics preview. |
 | [Resource previews](sprite-guides.md) | Supported sprites, [static ropes with sag-aware framing and selection bounds](ropes.md), fog and LDR/HDR/3D skies. | Complete native effects and runtime behavior. |
 | [Particles](particles.md) | Active manifest metadata and effect assignment. | Particle rendering and animation. |
@@ -39,7 +39,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 | --- | --- | --- |
 | [World and visibility](compile-and-play.md) | Structural/detail geometry, Fast and Detailed visibility, hints, portals and fading windows. | General unsupported portal/model combinations. |
 | [Visibility inspection](visibility.md) | Owned world-leaf/cluster joins, original portal rings, native PVS/PAS pages, world-position/Perspective-camera lookup, framing, selected guides and complete bounded PVS/PAS destination bounds. | Declared f32 classification has no engine boundary bit-parity claim; destination guides cap at 512 leaves and native bounds are not exact cells; no compiled-cell picking or PRT import; freshness guards consumed compiler inputs, not a complete runtime material closure. |
-| [Lighting](compile-and-play.md#lighting) | LDR/HDR, styles, point/spot/sun/sky, soft sun, ambient probes and up to four diffuse bounces. | Material emission, per-texel prop lightmaps and general shader transport. |
+| [Lighting](compile-and-play.md#lighting) | LDR/HDR, styles with located overflow errors, point/spot/sun/sky, soft sun, ambient probes and up to four diffuse bounces. | Material emission, per-texel prop lightmaps and general shader transport. |
 | [Material lighting](compile-and-play.md#normal-map-lighting) | Checked normal maps, albedo, reflectivity and [binary texture shadows](brush-texture-shadows.md), including explicitly requested stationary root and child brush models. | Self shadows need a lit receiver in the same model; general translucent effects remain unsupported. |
 | [Physics](physics.md) | Engine world, terrain and supported brush-model collision, contact materials and derived mass. Builds track consumed surface definitions. | Custom density and broader moving-body behavior. |
 | [Brush entities](compile-and-play.md#brush-entities-and-pivots) | Checked pivots, initial rotation, moving models and attached lightmaps. | General parenting, arbitrary model classes and initial poses. |

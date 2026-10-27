@@ -11,6 +11,8 @@ const LIGHTMAP_SCALE: f64 = 255.0;
 const GOLDEN_ANGLE: f64 = 2.399_963_229_728_653;
 
 pub(super) struct Context<'a> {
+    pub instances: &'a crate::instances::Prepared<'a>,
+    pub report: &'a mut crate::Report,
     pub brush_textures: Option<&'a super::brush_alpha::Prepared>,
     pub face_sources: &'a [std::sync::Arc<[u32]>],
     pub kind: LightingKind,
@@ -215,7 +217,26 @@ pub(super) fn bake(
                                     let mut contribution = [DVec3::ZERO; super::bump::MAPS];
                                     contribution[map] =
                                         color * (LIGHTMAP_SCALE / directions.len() as f64);
-                                    channels.add(style, &contribution, &mut colors, budget)?;
+                                    channels
+                                        .add(style, None, &contribution, &mut colors, budget)
+                                        .map_err(|message| {
+                                            let sources = channels
+                                                .sources()
+                                                .filter(|(present, _)| *present != style)
+                                                .chain(std::iter::once((style, None)));
+                                            let diagnostic = super::bake::channel_failure(
+                                                ctx.instances,
+                                                ctx.map,
+                                                ctx.face_sources,
+                                                plan,
+                                                point,
+                                                sources,
+                                                message,
+                                            );
+                                            let message = diagnostic.message.clone();
+                                            ctx.report.diagnostics.push(diagnostic);
+                                            message
+                                        })?;
                                 }
                                 Ok(hit.color * LIGHTMAP_SCALE)
                             }
@@ -224,7 +245,7 @@ pub(super) fn bake(
                     })?;
                     let mut contribution = [DVec3::ZERO; super::bump::MAPS];
                     contribution[map] = bounce;
-                    channels.add(0, &contribution, &mut colors, budget)?;
+                    channels.add(0, None, &contribution, &mut colors, budget)?;
                 }
                 let positive = channels.finish_bounce_sample(t * width + s, &colors, budget)?;
                 budget.finish_sample();

@@ -2874,6 +2874,7 @@ impl Session {
             (&icons, &model_guides),
             skybox,
             view.tool_textures,
+            view.selection_tint,
             view.normal_maps && view.surface == render::SurfaceView::Textured,
             view.lighting_preview && view.surface == render::SurfaceView::Textured,
             &references.models,
@@ -2918,6 +2919,7 @@ impl Session {
                 &mut self.materials,
                 &references.owners,
                 &selected,
+                view.selection_tint,
             )
         {
             report["displayed"] = serde_json::json!(false);

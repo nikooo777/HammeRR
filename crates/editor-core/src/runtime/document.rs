@@ -1,4 +1,5 @@
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -40,16 +41,31 @@ pub enum DocumentLifecycle {
     Failed(String),
 }
 
-struct Admission {
-    lifecycle: Mutex<DocumentLifecycle>,
-    operations: AtomicUsize,
+#[derive(Default)]
+struct Operations {
+    next: u64,
+    active: BTreeMap<u64, String>,
 }
 
-struct Operation(Arc<Admission>);
+struct Admission {
+    lifecycle: Mutex<DocumentLifecycle>,
+    operations: Mutex<Operations>,
+}
+
+struct Operation {
+    admission: Arc<Admission>,
+    id: u64,
+}
 
 impl Drop for Operation {
     fn drop(&mut self) {
-        self.0.operations.fetch_sub(1, Ordering::AcqRel);
+        self.admission
+            .operations
+            .lock()
+            .expect("Document operations lock poisoned")
+            .active
+            .remove(&self.id)
+            .expect("Document operation missing");
     }
 }
 
@@ -59,22 +75,56 @@ pub struct DocumentOperation {
 }
 
 impl Admission {
-    fn admit(self: &Arc<Self>) -> Result<DocumentOperation, String> {
+    fn admit(self: &Arc<Self>, activity: &str) -> Result<DocumentOperation, String> {
         let lifecycle = self
             .lifecycle
             .lock()
             .expect("Document admission lock poisoned");
         match &*lifecycle {
             DocumentLifecycle::Live => {
-                self.operations.fetch_add(1, Ordering::AcqRel);
+                let mut operations = self
+                    .operations
+                    .lock()
+                    .expect("Document operations lock poisoned");
+                let id = operations
+                    .next
+                    .checked_add(1)
+                    .ok_or("Document operation capacity exhausted")?;
+                operations.next = id;
+                operations.active.insert(id, activity.to_owned());
                 Ok(DocumentOperation {
-                    _operation: Arc::new(Operation(self.clone())),
+                    _operation: Arc::new(Operation {
+                        admission: self.clone(),
+                        id,
+                    }),
                 })
             }
             DocumentLifecycle::Draining => Err("the editor is closing".into()),
             DocumentLifecycle::Finished => Err("the document is closed".into()),
             DocumentLifecycle::Failed(error) => Err(format!("document shutdown failed: {error}")),
         }
+    }
+
+    fn activities(&self, exclude: Option<u64>) -> Vec<(String, usize)> {
+        let operations = self
+            .operations
+            .lock()
+            .expect("Document operations lock poisoned");
+        let mut activities = BTreeMap::new();
+        for (id, name) in &operations.active {
+            if Some(*id) != exclude {
+                *activities.entry(name.clone()).or_insert(0) += 1;
+            }
+        }
+        activities.into_iter().collect()
+    }
+
+    fn count(&self) -> usize {
+        self.operations
+            .lock()
+            .expect("Document operations lock poisoned")
+            .active
+            .len()
     }
 
     fn begin_drain(&self) {
@@ -124,7 +174,7 @@ impl ShutdownGuard {
                     || session.instance_workers_busy()
                     || session.definitions_load_busy()
             };
-            if !busy && self.admission.operations.load(Ordering::Acquire) == 0 {
+            if !busy && self.admission.count() == 0 {
                 break;
             }
             std::thread::sleep(SHUTDOWN_POLL_INTERVAL);
@@ -197,6 +247,7 @@ pub struct DocumentHandle(Arc<DocumentRuntime>);
 pub struct DocumentCloseReview {
     document: DocumentId,
     session: crate::session::DocumentCloseReview,
+    activities: Vec<(String, usize)>,
 }
 
 impl DocumentCloseReview {
@@ -216,8 +267,14 @@ impl DocumentCloseReview {
         let mut result = self.session.inspection();
         result["document_id"] = serde_json::json!(self.document.value());
         result["review_token"] = serde_json::json!(self.token());
+        result["admission"] = admission_inspection(&self.activities);
         result
     }
+}
+
+fn admission_inspection(activities: &[(String, usize)]) -> Value {
+    serde_json::json!({"active_operations": activities.iter().map(|(_, count)| count).sum::<usize>(),
+        "activities": activities.iter().map(|(activity, count)| serde_json::json!({"activity":activity,"count":count})).collect::<Vec<_>>()})
 }
 
 impl DocumentHandle {
@@ -253,7 +310,7 @@ impl DocumentHandle {
         }
         let admission = Arc::new(Admission {
             lifecycle: Mutex::new(DocumentLifecycle::Live),
-            operations: AtomicUsize::new(0),
+            operations: Mutex::default(),
         });
         let recovery_worker = recovery::Worker::start(&session)?;
         Ok(Self(Arc::new(DocumentRuntime {
@@ -292,21 +349,42 @@ impl DocumentHandle {
     }
 
     pub fn admit(&self) -> Result<DocumentOperation, String> {
-        self.0.admission.admit()
+        self.admit_named("Document operation")
+    }
+
+    pub(crate) fn admit_named(&self, activity: &str) -> Result<DocumentOperation, String> {
+        self.0.admission.admit(activity)
+    }
+
+    #[cfg(feature = "mcp")]
+    pub(crate) fn admission_inspection(&self) -> Value {
+        admission_inspection(&self.0.admission.activities(None))
     }
 
     pub fn document_close_review(&self) -> Result<DocumentCloseReview, String> {
-        let _operation = self.admit()?;
-        Ok(self.close_review_for(&lock(self.session())))
+        let operation = self.admit_named("Close inspection")?;
+        Ok(self.close_review_excluding(&lock(self.session()), Some(&operation)))
     }
 
     pub(crate) fn close_review_for(
         &self,
         session: &crate::session::Session,
     ) -> DocumentCloseReview {
+        self.close_review_excluding(session, None)
+    }
+
+    pub(crate) fn close_review_excluding(
+        &self,
+        session: &crate::session::Session,
+        operation: Option<&DocumentOperation>,
+    ) -> DocumentCloseReview {
+        let exclude = operation
+            .filter(|operation| Arc::ptr_eq(&operation._operation.admission, &self.0.admission))
+            .map(|operation| operation._operation.id);
         DocumentCloseReview {
             document: self.id(),
             session: session.document_close_review(),
+            activities: self.0.admission.activities(exclude),
         }
     }
 
@@ -380,8 +458,16 @@ impl DocumentHandle {
         if *lifecycle != DocumentLifecycle::Live {
             return Err("The document is already closing or closed".into());
         }
-        if self.0.admission.operations.load(Ordering::Acquire) != 0 {
-            return Err("Close is busy with an admitted request or worker. Wait for it to finish, or cancel it using its normal control, then review Close again".into());
+        let activities = self.0.admission.activities(None);
+        if !activities.is_empty() {
+            let names = activities
+                .iter()
+                .map(|(name, count)| format!("{name} ({count})"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(format!(
+                "Close is busy with an admitted request or worker: {names}. Wait for it to finish, or cancel it using its normal control, then review Close again"
+            ));
         }
         let reserved = reserve()?;
         *lifecycle = DocumentLifecycle::Draining;
@@ -402,7 +488,7 @@ impl DocumentHandle {
 
     #[cfg(test)]
     pub(crate) fn active_operations(&self) -> usize {
-        self.0.admission.operations.load(Ordering::Acquire)
+        self.0.admission.count()
     }
 
     /// Call without a Session guard; draining waits for Session work to finish.
@@ -510,7 +596,7 @@ impl DocumentAccess {
         let operation = self
             .document
             .as_ref()
-            .map(DocumentHandle::admit)
+            .map(|document| document.admit_named("3D sky preview"))
             .transpose()?;
         let request = lock(&self.session).begin_sky3d_preview(actor)?;
         let token = request.token();
@@ -578,7 +664,7 @@ impl DocumentAccess {
             .document
             .as_ref()
             .ok_or("An owning document is required for queued compilation")?;
-        let operation = document.admit()?;
+        let operation = document.admit_named("Compile")?;
         let queue = document
             .0
             .queue

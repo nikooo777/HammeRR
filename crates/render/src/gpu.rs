@@ -229,6 +229,7 @@ pub struct ViewOptions {
     pub sky_exposure_ev: f32,
     pub rope_preview: bool,
     pub selection_outlines: bool,
+    pub selection_tint: bool,
     pub entity_images: bool,
     pub additive_sprite_guides: bool,
     pub entity_model_guides: bool,
@@ -264,6 +265,7 @@ impl Default for ViewOptions {
             sky_exposure_ev: 0.0,
             rope_preview: false,
             selection_outlines: true,
+            selection_tint: true,
             entity_images: true,
             additive_sprite_guides: false,
             entity_model_guides: true,
@@ -286,6 +288,7 @@ impl Default for ViewOptions {
 pub struct SceneKey {
     pub serial: u64,
     pub instance_contents_serial: u64,
+    selection_tint: bool,
     sky_channel: crate::sky::Channel,
     entity_images: bool,
     entity_model_guides: bool,
@@ -317,7 +320,6 @@ impl ViewOptions {
 
     pub fn sky3d_active(&self, camera: &Camera) -> bool {
         self.sky3d_preview
-            && self.tool_textures
             && self.surface == SurfaceView::Textured
             && camera.projection == crate::Projection::Perspective
     }
@@ -326,6 +328,7 @@ impl ViewOptions {
         SceneKey {
             serial,
             instance_contents_serial: 0,
+            selection_tint: self.selection_tint,
             sky_channel: self.sky_channel,
             entity_images: self.entity_images,
             entity_model_guides: self.entity_model_guides,
@@ -1381,7 +1384,11 @@ impl Renderer {
                     if options.surface == SurfaceView::Wireframe && !draw.helper {
                         continue;
                     }
-                    if !options.tool_textures && draw.tool {
+                    if !options.tool_textures
+                        && draw.tool
+                        && !(draw.sky && options.sky_preview)
+                        && !(draw.sky3d_eligible && options.sky3d_preview)
+                    {
                         continue;
                     }
                     let Some(Some(material)) = self.materials.get(draw.batch.material) else {

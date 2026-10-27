@@ -78,6 +78,7 @@ fn reference_append_filters_owners_preserves_root_and_reuses_edges_for_outlines(
         &mut materials,
         &BTreeSet::new(),
         &HashSet::new(),
+        true,
     )
     .unwrap();
     assert_eq!(mesh.vertices, root_vertices);
@@ -86,6 +87,7 @@ fn reference_append_filters_owners_preserves_root_and_reuses_edges_for_outlines(
         &mut materials,
         &BTreeSet::from([100]),
         &HashSet::from([ObjectId::Entity(100)]),
+        true,
     )
     .unwrap();
     assert_eq!(&mesh.vertices[..root_vertices.len()], root_vertices);
@@ -94,6 +96,32 @@ fn reference_append_filters_owners_preserves_root_and_reuses_edges_for_outlines(
     assert_eq!((mesh.mins, mesh.maxs), root_bounds);
     assert_eq!(mesh.reference_lines.len(), 8);
     assert_eq!(mesh.reference_selection_ranges, vec![0..8]);
+    let mut untinted = scene(&document, &mut materials);
+    untinted
+        .append_references(
+            &references,
+            &mut materials,
+            &BTreeSet::from([100]),
+            &HashSet::from([ObjectId::Entity(100)]),
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        untinted.reference_selection_ranges,
+        mesh.reference_selection_ranges
+    );
+    assert_eq!(untinted.reference_lines, mesh.reference_lines);
+    assert!(
+        untinted.vertices[root_vertices.len()..]
+            .iter()
+            .all(|vertex| vertex.color == [94, 177, 209, 255])
+    );
+    assert!(
+        mesh.vertices[root_vertices.len()..]
+            .iter()
+            .all(|vertex| vertex.color == [255, 167, 94, 255])
+    );
+
     for (source, drawn) in references
         .vertices
         .iter()
@@ -163,7 +191,8 @@ fn reference_append_rejects_invalid_ranges_indices_and_limits_atomically() {
                 &references,
                 &mut materials,
                 &BTreeSet::from([100]),
-                &HashSet::new()
+                &HashSet::new(),
+                true,
             )
             .is_err(),
             "{case}"
@@ -197,6 +226,7 @@ fn reference_gpu_preserves_disabled_pixels_wireframe_holes_and_ordinary_depth() 
         &mut materials,
         &BTreeSet::from([100]),
         &HashSet::new(),
+        true,
     )
     .unwrap();
     let uploaded = renderer.upload(&context, &mesh, &materials);
@@ -260,6 +290,7 @@ fn reference_gpu_preserves_disabled_pixels_wireframe_holes_and_ordinary_depth() 
         &mut materials,
         &BTreeSet::from([100]),
         &HashSet::new(),
+        true,
     )
     .unwrap();
     let uploaded = renderer.upload(&context, &mesh, &materials);

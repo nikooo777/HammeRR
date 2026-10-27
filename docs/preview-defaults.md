@@ -4,7 +4,7 @@
 
 Choose which images and guides appear at startup.
 
-1. Set **Selection outlines**, **Entity images** and **Entity model guides** under **Viewport**.
+1. Set **Selection outlines**, **Selection tint**, **Entity images** and **Entity model guides** under **Viewport**.
 2. Set **Rope preview** and **2D sky preview** as required.
 3. Open **Preview defaults…**.
 4. Click **Save current as defaults**.
@@ -16,8 +16,8 @@ See [Saved defaults](basics.md#saved-defaults) for storage errors.
 
 ## Limits
 
-- Only these five switches are stored.
-- Factory values enable outlines, entity images and model guides. Rope and sky previews start disabled.
+- Only these six switches are stored.
+- Factory values enable outlines, selection tint, entity images and model guides. Rope and sky previews start disabled.
 - Cameras, fog, sky exposure and viewport modes are separate.
 - Ordinary viewport changes do not change saved defaults.
 - Applying defaults requires finished previews and owned work.

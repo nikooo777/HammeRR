@@ -57,7 +57,11 @@ impl EditorServer {
         let working_region = session.working_region_summary();
         let document_close = self._document.as_ref().map_or_else(
             || session.document_close_review().inspection(),
-            |document| document.close_review_for(&session).inspection(),
+            |document| {
+                document
+                    .close_review_excluding(&session, self.operation.as_ref())
+                    .inspection()
+            },
         );
         let doc = session.document();
         let vmf = doc.vmf();
@@ -272,7 +276,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Find objects by classname, targetname, material, kind and/or a bounding box. Returns summaries with ids and bounds.",
+        description = "Find objects by classname, targetname, material, kind and/or a bounding box. Class names match case-insensitive substrings unless exact_class=true. Returns summaries with ids and bounds.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn find_objects(
@@ -285,6 +289,7 @@ impl EditorServer {
                 query: args.query,
                 hidden: args.hidden,
                 classname: args.classname,
+                exact_class: args.exact_class,
                 targetname: args.targetname,
                 material: args.material,
                 kind: args.kind,

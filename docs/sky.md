@@ -10,10 +10,10 @@ Preview the map sky and inspect its mounted LDR and HDR assets.
 2. Set **SkyBox Texture Name**, then click **Apply properties**.
 3. Apply `tools/toolsskybox` to the intended sky surfaces.
 4. Choose **Perspective** and **Textured**.
-5. Enable **Tool textures** and **2D sky preview**.
+5. Enable **2D sky preview**.
 6. Select **Sky channel → LDR**.
 
-Sky previews fill eligible sky surfaces. They do not add compiled sunlight.
+Sky previews fill eligible sky surfaces, even when **Tool textures** is off. They do not add compiled sunlight.
 Use a `light_environment` for [sun and sky lighting](compile-and-play.md#lighting).
 
 ## Preview linear HDR sky images
@@ -30,7 +30,7 @@ This exposure affects the editor sky only, not game tone mapping or baked lighti
 2. Use `func_detail` for decorative curves and structures.
 3. Place `sky_camera` inside its open space.
 4. Set **3D Skybox scale**; the default is 16.
-5. Choose **Perspective** and **Textured**, then enable **Tool textures**.
+5. Choose **Perspective** and **Textured**.
 6. Open **3D sky preview…**.
 7. Choose **Sky camera**, or enter **Camera entity ID** and click **Use camera**.
 8. Click **Prepare 3D sky**.

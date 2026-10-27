@@ -9,14 +9,15 @@ fn store(directory: &tempfile::TempDir) -> Store {
 }
 
 #[test]
-fn all_boolean_combinations_roundtrip_with_only_the_five_supported_fields() {
+fn preview_settings_roundtrip_and_legacy_files_keep_selection_tint() {
     let directory = tempfile::tempdir().unwrap();
     let store = store(&directory);
     assert_eq!(store.load().unwrap(), None);
     assert!(!store.directory.exists());
-    for bits in 0..32 {
+    for bits in 0..64 {
         let preview = Preview {
             selection_outlines: bits & 1 != 0,
+            selection_tint: bits & 32 != 0,
             entity_images: bits & 2 != 0,
             entity_model_guides: bits & 4 != 0,
             rope_preview: bits & 8 != 0,
@@ -27,8 +28,15 @@ fn all_boolean_combinations_roundtrip_with_only_the_five_supported_fields() {
         let value: serde_json::Value =
             serde_json::from_slice(&fs::read(store.path()).unwrap()).unwrap();
         assert_eq!(value, serde_json::json!({"version": 1, "preview": preview}));
-        assert_eq!(value["preview"].as_object().unwrap().len(), 5);
+        assert_eq!(value["preview"].as_object().unwrap().len(), 6);
     }
+    let mut legacy = serde_json::json!({"version":1,"preview":Preview::default()});
+    legacy["preview"]
+        .as_object_mut()
+        .unwrap()
+        .remove("selection_tint");
+    fs::write(store.path(), serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert!(store.load().unwrap().unwrap().selection_tint);
 }
 
 #[test]

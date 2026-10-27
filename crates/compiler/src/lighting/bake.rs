@@ -1483,6 +1483,83 @@ struct ChannelContext<'a> {
     options: crate::Options,
 }
 
+pub(super) fn channel_failure(
+    instances: &crate::instances::Prepared<'_>,
+    map: &Map<'_>,
+    face_sources: &[std::sync::Arc<[u32]>],
+    plan: &Plan,
+    point: DVec3,
+    sources: impl Iterator<Item = (u8, Option<u32>)>,
+    message: String,
+) -> Diagnostic {
+    let sides = &face_sources[plan.face];
+    let mut references = sides
+        .iter()
+        .take(16)
+        .map(|&side| {
+            if let Some((owner, file, solid, original)) = instances.face_origin(side) {
+                format!(
+                    "entity:{owner} -> {} solid:{solid} side:{original}",
+                    map_core::entity_helpers::bounded_preview(file, 128)
+                )
+            } else {
+                format!("side:{side}")
+            }
+        })
+        .collect::<Vec<_>>();
+    if sides.len() > 16 {
+        references.push(format!("{} additional source sides", sides.len() - 16));
+    }
+    let groups = sources
+        .map(|(style, source)| {
+            let source = source.or_else(|| {
+                map.entities
+                    .iter()
+                    .find(|entity| {
+                        ["light", "light_spot", "light_environment"]
+                            .iter()
+                            .any(|class| entity.classname.eq_ignore_ascii_case(class))
+                            && super::property(entity, "style")
+                                .map(str::trim)
+                                .and_then(|value| value.parse::<u8>().ok())
+                                == Some(style)
+                    })
+                    .map(|entity| entity.id)
+            });
+            let Some(id) = source else {
+                return format!("style {style}");
+            };
+            let name = map
+                .entities
+                .iter()
+                .find(|entity| entity.id == id)
+                .and_then(|entity| super::property(entity, "targetname"))
+                .filter(|name| !name.is_empty())
+                .map(|name| format!(" {:?}", map_core::entity_helpers::bounded_preview(name, 64)))
+                .unwrap_or_default();
+            if let Some((owner, file, original)) = instances.entity_origin(id) {
+                format!(
+                    "style {style}: entity:{owner} -> {} entity:{original}{name}",
+                    map_core::entity_helpers::bounded_preview(file, 128)
+                )
+            } else {
+                format!("style {style}: entity:{id}{name}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let message = format!(
+        "{message}; compiled face:{}; source sides: [{}]; representative light groups by style: [{groups}]",
+        plan.face,
+        references.join(", ")
+    );
+    Diagnostic::error(
+        message,
+        sides.first().map(|side| format!("side:{side}")),
+        Some(point),
+    )
+}
+
 fn bake_channel(
     ctx: &ChannelContext<'_>,
     kind: LightingKind,
@@ -1622,6 +1699,34 @@ fn bake_channel(
                 let origin = plan.origin(point, normal);
                 let normals = plan.shading_normals(normal, budget)?;
                 let mut color = [[DVec3::ZERO; super::bump::MAPS]; 4];
+                let mut add_channel =
+                    |channels: &mut super::styles::Channels,
+                     style,
+                     source,
+                     contributions: &[DVec3; super::bump::MAPS],
+                     colors: &mut super::styles::SampleColors,
+                     budget: &mut Budget<'_>| {
+                        channels
+                            .add(style, Some(source), contributions, colors, budget)
+                            .map_err(|message| {
+                                let sources = channels
+                                    .sources()
+                                    .filter(|(current, _)| *current != style)
+                                    .chain(std::iter::once((style, Some(source))));
+                                let diagnostic = channel_failure(
+                                    instances,
+                                    map,
+                                    face_sources,
+                                    plan,
+                                    point,
+                                    sources,
+                                    message,
+                                );
+                                let message = diagnostic.message.clone();
+                                report.diagnostics.push(diagnostic);
+                                message
+                            })
+                    };
                 let cluster = candidates.cluster(origin, map, tree, visibility, budget)?;
                 let culling_enabled = candidates.enabled();
                 let mut evaluated = 0;
@@ -1684,7 +1789,14 @@ fn bake_channel(
                                 )
                             },
                         )?;
-                        channels.add(0, &contributions, &mut color, budget)?;
+                        add_channel(
+                            &mut channels,
+                            0,
+                            light.source_id,
+                            &contributions,
+                            &mut color,
+                            budget,
+                        )?;
                     }
                     budget.phase(match light {
                         Emitter::Point(_) => LightingPhase::PointSpot,
@@ -1731,7 +1843,14 @@ fn bake_channel(
                                         Ok(light.contribution(point, normal)? * visibility)
                                     },
                                 )?;
-                                channels.add(light.style, &contributions, &mut color, budget)?;
+                                add_channel(
+                                    &mut channels,
+                                    light.style,
+                                    light.source_id,
+                                    &contributions,
+                                    &mut color,
+                                    budget,
+                                )?;
                             }
                         }
                         Emitter::Sky(light) => {
@@ -1773,7 +1892,14 @@ fn bake_channel(
                                     )
                                 },
                             )?;
-                            channels.add(0, &contributions, &mut color, budget)?;
+                            add_channel(
+                                &mut channels,
+                                0,
+                                light.source_id,
+                                &contributions,
+                                &mut color,
+                                budget,
+                            )?;
                         }
                     }
                 }
@@ -1831,6 +1957,8 @@ fn bake_channel(
             budget.consume(0)?;
             let (stats, surfaces) = super::bounce::bake(
                 &mut super::bounce::Context {
+                    instances,
+                    report,
                     brush_textures,
                     face_sources,
                     map,
@@ -1994,6 +2122,45 @@ fn bake_channel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn channel_error_resolves_imported_style_groups_without_retained_emitter_ids() {
+        let mut vmf = crate::test_common::room();
+        let mut entity = source_formats::vmf::Entity::new(1000, "LIGHT_SPOT");
+        entity.properties.set("origin", "0 0 128");
+        entity.properties.set("targetname", "imported_group");
+        entity.properties.set("style", " 32 ");
+        vmf.entities.push(entity);
+        let game = source_formats::gamefs::GameFs {
+            game_dir: Default::default(),
+            base_dir: Default::default(),
+            mounts: Vec::new(),
+        };
+        let mut report = Report::default();
+        let prepared =
+            crate::instances::prepare(&vmf, None, &Control::default(), &mut report).unwrap();
+        let map = Map::load(&vmf, &game, &mut report).unwrap();
+        let side = vmf.world.solids[0].sides[0].id;
+        let diagnostic = channel_failure(
+            &prepared,
+            &map,
+            &[std::sync::Arc::from([side])],
+            &plane_plan(),
+            DVec3::ZERO,
+            std::iter::once((32, None)),
+            "four light styles".into(),
+        );
+        assert_eq!(diagnostic.object, Some(format!("side:{side}")));
+        assert_eq!(diagnostic.position, Some(DVec3::ZERO));
+        assert!(
+            diagnostic.message.contains("style 32: entity:1000"),
+            "{diagnostic:?}"
+        );
+        assert!(
+            diagnostic.message.contains("imported_group"),
+            "{diagnostic:?}"
+        );
+    }
 
     fn plane_plan() -> Plan {
         let info = TexInfo {

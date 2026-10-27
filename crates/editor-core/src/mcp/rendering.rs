@@ -72,6 +72,7 @@ impl RenderedView {
         size: (u32, u32),
         view: ViewOptions,
         mut fog_preview: Value,
+        include_details: bool,
     ) -> ToolResult {
         let data = base64::engine::general_purpose::STANDARD.encode(self.png);
         let FrameMetadata {
@@ -101,11 +102,33 @@ impl RenderedView {
             .as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        let info = json!({ "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":self.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
+        let mut info = json!({ "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":self.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
+        if !include_details {
+            omit_render_catalogues(&mut info);
+        }
         Ok(CallToolResult::success(vec![
             ContentBlock::image(data, "image/png"),
             ContentBlock::text(info.to_string()),
         ]))
+    }
+}
+
+fn omit_render_catalogues(value: &mut Value) {
+    match value {
+        Value::Object(fields) => {
+            for key in ["limits", "policy", "policies"] {
+                fields.remove(key);
+            }
+            for value in fields.values_mut() {
+                omit_render_catalogues(value);
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                omit_render_catalogues(value);
+            }
+        }
+        _ => {}
     }
 }
 

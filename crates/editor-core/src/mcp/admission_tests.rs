@@ -199,6 +199,27 @@ async fn map_info_exposes_the_same_fixed_document_close_observation() {
     );
     assert_eq!(value["document_close"]["discard_required"], false);
     assert!(server.tool_router.get("close_document").is_some());
+    assert_eq!(value["document_close"]["admission"]["active_operations"], 0);
+    let review = document.document_close_review().unwrap();
+    let operation = document.admit_named("Background fixture").unwrap();
+    let retained = operation.clone();
+    drop(operation);
+    let inspected = snap_value(snap_request(&server, &running, "get_map_info", json!({})).await);
+    assert_eq!(
+        inspected["document_close"]["admission"],
+        json!({"active_operations":1,"activities":[{"activity":"Background fixture","count":1}]})
+    );
+    assert_eq!(
+        document.document_close_review().unwrap().token(),
+        review.token()
+    );
+    let error = document
+        .try_commit_reviewed_close(&review, false)
+        .unwrap_err();
+    assert!(error.contains("Background fixture (1)"), "{error}");
+    drop(retained);
+    assert_eq!(document.active_operations(), 0);
+    document.try_commit_reviewed_close(&review, false).unwrap();
     running.cancel().await.unwrap();
     document.shutdown().unwrap();
 }
@@ -300,7 +321,7 @@ fn never_run_worker_drops_recovery_request_and_token_before_last_runtime_owner_d
     lock(&shared)
         .create_block(Actor::User, DVec3::ZERO, DVec3::splat(16.0), "test", false)
         .unwrap();
-    let request = server.admitted().unwrap();
+    let request = server.admitted("test request").unwrap();
     let submission = crate::runtime::RecoverySubmission::begin(&shared, Actor::Agent).unwrap();
     let worker = request.worker(move || submission.run());
     assert_eq!(document.active_operations(), 1);
@@ -334,7 +355,7 @@ fn never_run_compile_drops_request_and_operation_before_last_runtime_owner_drain
     let shared = Arc::new(Mutex::new(state));
     let document = DocumentHandle::start(shared.clone()).unwrap();
     let server = EditorServer::for_document(document.clone(), None);
-    let request = server.admitted().unwrap();
+    let request = server.admitted("test request").unwrap();
     let path = directory.path().join("abandoned.bsp");
     let submission =
         CompileSubmission::begin(&shared, Actor::Agent, Some(&path), false, None).unwrap();
@@ -388,4 +409,79 @@ async fn failed_terminal_dispatch_retains_exact_shutdown_error_without_retry() {
     assert_eq!(document.shutdown().unwrap_err(), error);
     assert_eq!(std::fs::read_dir(&recovery).unwrap().count(), 0);
     service.cancel().await.unwrap();
+}
+
+#[tokio::test]
+async fn exact_class_report_and_selection_leave_the_sun_and_source_intact() {
+    let (_directory, document, server) = fixture();
+    let (light, source, history) = {
+        let mut session = lock(document.session());
+        let mut light = None;
+        for class in ["light", "light_spot", "light_environment"] {
+            let id = session
+                .create_entity(Actor::User, class, Some(DVec3::ZERO), Default::default())
+                .unwrap();
+            if class == "light" {
+                light = Some(id);
+            }
+        }
+        (
+            light.unwrap(),
+            session.document().vmf().clone(),
+            session.history_snapshot(),
+        )
+    };
+    let (running, _client) = service(server.clone());
+    let substring = snap_value(
+        snap_request(
+            &server,
+            &running,
+            "get_object_report",
+            json!({"filter":{"classname":"LIGHT"}}),
+        )
+        .await,
+    );
+    assert_eq!(substring["total"], 3);
+    let exact = json!({"filter":{"classname":"LIGHT","exact_class":true}});
+    let report =
+        snap_value(snap_request(&server, &running, "get_object_report", exact.clone()).await);
+    assert_eq!(report["total"], 1);
+    let found = snap_value(
+        snap_request(
+            &server,
+            &running,
+            "find_objects",
+            json!({"classname":"light","exact_class":true}),
+        )
+        .await,
+    );
+    assert_eq!(found["total"], 1);
+    let selected = snap_value(snap_request(&server, &running, "select_object_report", exact).await);
+    assert_eq!(selected["selection"], json!([id_string(light)]));
+    {
+        let mut session = lock(document.session());
+        for actor in [Actor::User, Actor::Agent] {
+            assert_eq!(
+                session
+                    .select_report(
+                        actor,
+                        &crate::session::ObjectFilter {
+                            classname: Some("LIGHT".into()),
+                            exact_class: true,
+                            ..Default::default()
+                        },
+                        SelectMode::Replace,
+                        false,
+                        1.0
+                    )
+                    .unwrap(),
+                1
+            );
+            assert_eq!(session.selected_ids(), vec![light]);
+        }
+        assert_eq!(session.document().vmf(), &source);
+        assert_eq!(session.history_snapshot(), history);
+    }
+    running.cancel().await.unwrap();
+    document.shutdown().unwrap();
 }

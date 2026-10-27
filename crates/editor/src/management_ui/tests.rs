@@ -679,3 +679,51 @@ fn rename_saved_color_button_preserves_invalid_local_draft_and_selects_sorted_na
         json!(precise)
     );
 }
+
+#[test]
+fn object_report_exact_class_uses_the_same_selection_filter() {
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+        },
+    )))
+    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let mut session = Session::new(Err("no assets required".into()));
+    session.configure_recovery(Ok(directory.path().join("recovery")));
+    let point = session
+        .create_entity(
+            Actor::User,
+            "light",
+            Some(glam::DVec3::ZERO),
+            Default::default(),
+        )
+        .unwrap();
+    session
+        .create_entity(
+            Actor::User,
+            "light_environment",
+            Some(glam::DVec3::Z),
+            Default::default(),
+        )
+        .unwrap();
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let shared = Arc::new(Mutex::new(session));
+    let document = crate::test_assets::document(shared.clone());
+    let window = ReportWindow::new().unwrap();
+    bind_report_with_access(&window, &DocumentAccess::for_document(document.clone()));
+    window.set_classname("LIGHT".into());
+    window.invoke_search();
+    assert_eq!(window.get_rows().row_count(), 2);
+    window.set_exact_class(true);
+    window.invoke_search();
+    assert_eq!(window.get_rows().row_count(), 1);
+    window.invoke_select_all(false);
+    assert_eq!(lock(&shared).selected_ids(), [point]);
+    assert_eq!(lock(&shared).document().vmf(), &source);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    document.shutdown().unwrap();
+}

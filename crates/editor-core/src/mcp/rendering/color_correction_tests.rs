@@ -44,7 +44,7 @@ fn color_correction_render_view_uses_final_pass_and_refuses_missing_or_oversized
         assert_eq!(pixel, [240, 120, 60, 255]);
     }
     let result = graded
-        .into_tool_result(camera, (8, 8), view, json!({}))
+        .into_tool_result(camera, (8, 8), view, json!({}), false)
         .unwrap();
     let report: Value = serde_json::from_str(&result.content[1].as_text().unwrap().text).unwrap();
     assert_eq!(report["color_correction"]["applied"], true);

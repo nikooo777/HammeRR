@@ -528,8 +528,6 @@ impl Session {
             || view.surface != render::SurfaceView::Textured
         {
             Some("unsupported_view")
-        } else if !view.tool_textures {
-            Some("tool_textures_hidden")
         } else if ready.is_none() {
             Some("not_prepared")
         } else {
@@ -554,7 +552,7 @@ impl Session {
         let summary = issue.clone().unwrap_or_else(|| {
             match status {
                 "ready" if !view.sky3d_preview => "3D sky preview prepared; display is off",
-                "ready" => "3D sky preview ready · perspective Textured view with Tool textures",
+                "ready" => "3D sky preview ready · perspective Textured view",
                 "loading" => "Preparing 3D sky preview…",
                 "cancelled" => "3D sky preview preparation cancelled",
                 "stale" => "3D sky preview changed; prepare again",

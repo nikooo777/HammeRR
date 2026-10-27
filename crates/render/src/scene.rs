@@ -148,6 +148,7 @@ pub struct FaceOverlay {
 
 struct Builder<'a> {
     tool_textures: bool,
+    selection_tint: bool,
     lighting: crate::lighting::Preview,
     normal_maps: crate::normal_maps::Report,
     icons: &'a BTreeMap<u32, crate::icons::Instance>,
@@ -266,7 +267,11 @@ impl Builder<'_> {
                     solid: solid.id,
                     side: side.id,
                 });
-            let tint = if selected { SELECTED_TINT } else { [255; 3] };
+            let tint = if selected && self.selection_tint {
+                SELECTED_TINT
+            } else {
+                [255; 3]
+            };
             let material = self.material(&side.material);
             let info = self.library.get(material);
             let tool = info.tool;
@@ -585,7 +590,7 @@ impl Builder<'_> {
             return;
         }
         let helper = self.helpers.get(&ObjectId::Entity(entity.id));
-        let [r, g, b] = if selected {
+        let [r, g, b] = if selected && self.selection_tint {
             SELECTED_EDGE[..3].try_into().expect("three channels")
         } else if helper.is_some_and(|helper| !helper.errors.is_empty())
             || self
@@ -794,7 +799,7 @@ impl Builder<'_> {
                 color: std::array::from_fn(|channel| {
                     if channel == 3 {
                         0
-                    } else if selected {
+                    } else if selected && self.selection_tint {
                         ((u16::from(instance.tint[channel])
                             * u16::from(SELECTED_MODEL_TINT[channel])
                             / 255) as u8)
@@ -1257,6 +1262,7 @@ impl SceneMesh {
             guides,
             skybox,
             tool_textures,
+            true,
             normal_maps,
             lighting,
             &[],
@@ -1281,6 +1287,7 @@ impl SceneMesh {
         ),
         skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
         tool_textures: bool,
+        selection_tint: bool,
         normal_maps: bool,
         lighting: bool,
         reference_models: &[crate::models::Instance],
@@ -1292,6 +1299,7 @@ impl SceneMesh {
         let terrain = terrain::prepare(vmf);
         let mut builder = Builder {
             tool_textures,
+            selection_tint,
             lighting: crate::lighting::Preview {
                 report: crate::lighting::Report {
                     requested: lighting,
@@ -1447,15 +1455,20 @@ impl SceneMesh {
             stats,
         };
         let ropes = crate::ropes::prepare(vmf, include);
-        mesh.add_rope_preview(&ropes, selected);
+        mesh.add_rope_preview(&ropes, selected, selection_tint);
         mesh
     }
 
-    fn add_rope_preview(&mut self, preview: &crate::ropes::Preview, selected: &HashSet<ObjectId>) {
+    fn add_rope_preview(
+        &mut self,
+        preview: &crate::ropes::Preview,
+        selected: &HashSet<ObjectId>,
+        selection_tint: bool,
+    ) {
         let first_index = self.indices.len() as u32;
         for link in &preview.links {
             let selected = selected.contains(&ObjectId::Entity(link.source));
-            let color = if selected {
+            let color = if selected && selection_tint {
                 SELECTED_TINT
             } else {
                 [170, 156, 125]

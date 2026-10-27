@@ -88,6 +88,9 @@ Unsupported portal shapes or bindings stop the build.
 Point and spot lights support color, brightness, falloff and checked directions.
 Use **50 percent falloff distance** and **0 percent falloff distance** for controlled attenuation.
 Named lights can use supported switching and built-in patterns. Custom or unsupported appearances reject.
+Each face supports four styles, including Normal. If this limit is exceeded,
+the build error identifies the source side, sample position and light groups.
+Remove unnecessary light names or reduce overlapping groups.
 
 For spotlights, set **Pitch Yaw Roll (Y Z X)** and cone angles.
 For sun, place one `light_environment` and set **Pitch**, direction, **Brightness** and **Ambient**.

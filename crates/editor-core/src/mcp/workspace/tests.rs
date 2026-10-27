@@ -368,7 +368,7 @@ async fn accepted_peer_close_survives_handler_loss_and_releases_capacity_after_r
     let quitting = quit.clone();
     let ui = WorkspaceUi::new(
         |_, _, _, _| Box::pin(async { Ok(()) }),
-        |_| Box::pin(async { Ok(()) }),
+        |_, _| Box::pin(async { Ok(()) }),
         move |_| {
             let entered = entered.lock().unwrap().take();
             let waiting = waiting.lock().unwrap().take();
@@ -461,7 +461,7 @@ async fn unpublished_host_failure_retains_failed_capacity_and_source_claims() {
                 Ok(())
             })
         },
-        |_| Box::pin(async { Ok(()) }),
+        |_, _| Box::pin(async { Ok(()) }),
         |_| Box::pin(async { Err("actual candidate retirement failed".into()) }),
         |_| Box::pin(async { panic!("An unconfirmed retired host must remain owned") }),
         || Box::pin(async { Ok(()) }),
@@ -527,7 +527,7 @@ async fn command_owner_panic_drains_accepted_close_and_preserves_all_errors() {
     );
     let ui = WorkspaceUi::new(
         |_, _, _, _| Box::pin(async { Ok(()) }),
-        |_| Box::pin(async { Ok(()) }),
+        |_, _| Box::pin(async { Ok(()) }),
         |_| Box::pin(async { Err("actual retire fault".into()) }),
         |_| Box::pin(async { Ok(()) }),
         || Box::pin(async { Err("actual quit fault".into()) }),
@@ -552,7 +552,7 @@ async fn command_owner_panic_drains_accepted_close_and_preserves_all_errors() {
     }));
     let (response, _show) = oneshot::channel();
     workspace
-        .enqueue(Command::Show(first.selector().to_owned(), response))
+        .enqueue(Command::Show(first.selector().to_owned(), true, response))
         .unwrap();
     observed.recv_timeout(TIMEOUT).unwrap();
     let server = owner.server();
@@ -618,4 +618,64 @@ async fn command_owner_panic_drains_accepted_close_and_preserves_all_errors() {
             .to_string()
             .contains("workspace command worker panicked")
     );
+}
+
+#[tokio::test]
+async fn silent_show_is_shared_and_refusal_keeps_the_document_hidden() {
+    let directory = tempfile::tempdir().unwrap();
+    let application = crate::test_assets::application(
+        Err("no assets required".into()),
+        directory.path().join("recovery"),
+    );
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let observed = requests.clone();
+    let ui = WorkspaceUi::new(
+        |_, _, _, _| Box::pin(async { Ok(()) }),
+        move |document, focus| {
+            observed.lock().unwrap().push((document, focus));
+            Box::pin(async move {
+                if focus {
+                    Ok(())
+                } else {
+                    Err("no silent-display admission".into())
+                }
+            })
+        },
+        |_| Box::pin(async { Ok(()) }),
+        |_| Box::pin(async { Ok(()) }),
+        || Box::pin(async { Ok(()) }),
+    );
+    let mut owner = WorkspaceOwner::start(application.workspace(), None, Some(ui)).unwrap();
+    let workspace = owner.workspace();
+    let peer = bounded(workspace.new_document(Actor::Agent, false))
+        .await
+        .unwrap();
+    let selector = peer["document_id"].as_str().unwrap();
+    let entry = application.workspace().resolve(Some(selector)).unwrap();
+    assert!(
+        bounded(workspace.show_document_with_focus(selector, false))
+            .await
+            .unwrap_err()
+            .contains("no silent-display admission")
+    );
+    assert_eq!(
+        workspace.list_documents().unwrap()["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["document_id"] == selector)
+            .unwrap()["visibility"],
+        "hidden"
+    );
+    let shown = bounded(workspace.show_document(selector)).await.unwrap();
+    assert_eq!(shown["focus_requested"], true);
+    assert_eq!(
+        *requests.lock().unwrap(),
+        [
+            (entry.document().id(), false),
+            (entry.document().id(), true)
+        ]
+    );
+    owner.shutdown().unwrap();
+    application.finish(Ok(())).unwrap();
 }

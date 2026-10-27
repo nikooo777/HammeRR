@@ -298,7 +298,7 @@ fn stalled_request_body_reports_memoized_timeout_and_releases_last_transport_own
 #[test]
 fn operation_bearing_transport_anchor_is_rejected_without_pinning_admission() {
     let (_directory, document, server) = fixture();
-    let admitted = server.admitted().unwrap();
+    let admitted = server.admitted("test request").unwrap();
     assert_eq!(document.active_operations(), 1);
     let error = spawn_http(admitted, address()).err().unwrap();
     assert_eq!(

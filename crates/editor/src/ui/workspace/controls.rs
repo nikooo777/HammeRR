@@ -12,6 +12,7 @@ pub(super) enum Operation {
     New,
     Open(std::path::PathBuf),
     Show(String),
+    ShowSilent(String),
     SaveAll,
 }
 
@@ -99,6 +100,26 @@ fn row(value: &Value, results: Option<&Value>) -> OpenDocumentRow {
             )
         })
         .unwrap_or_default();
+    let admissions = value["admission"]["activities"]
+        .as_array()
+        .map(|activities| {
+            activities
+                .iter()
+                .map(|activity| {
+                    format!(
+                        "{} ({})",
+                        activity["activity"]
+                            .as_str()
+                            .unwrap_or("Document operation"),
+                        activity["count"]
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .filter(|activities| !activities.is_empty())
+        .map(|activities| format!("\nActive: {activities}"))
+        .unwrap_or_default();
     let title = value["title"].as_str().unwrap_or("Untitled map");
     let dirty = value["unsaved_changes"] == true;
     let error = value["error"]
@@ -109,7 +130,7 @@ fn row(value: &Value, results: Option<&Value>) -> OpenDocumentRow {
         selector: value["document_id"].as_str().unwrap().into(),
         title: format!("{title}{}", if dirty { " · Unsaved changes" } else { "" }).into(),
         detail: format!(
-            "{}\nDocument {} · {} · {} · {}{error}{save}",
+            "{}\nDocument {} · {} · {} · {}{admissions}{error}{save}",
             value["path"].as_str().unwrap_or("Not saved"),
             value["runtime_document_id"],
             value["lifecycle"].as_str().unwrap_or("unknown"),
@@ -144,6 +165,9 @@ pub(super) fn submit(
             Operation::New => workspace.new_document(Actor::User, true).await,
             Operation::Open(path) => workspace.open_document(Actor::User, &path, true).await,
             Operation::Show(selector) => workspace.show_document(&selector).await,
+            Operation::ShowSilent(selector) => {
+                workspace.show_document_with_focus(&selector, false).await
+            }
             Operation::SaveAll => workspace.save_all_named_maps(Actor::User).await,
         };
         let (Some(owner), Some(controller)) = (owner.upgrade(), controller.upgrade()) else {
@@ -192,6 +216,16 @@ pub(super) fn open(owner: &SharedOwner, origin: runtime::DocumentId) {
     controller.window.on_new_document({
         let (owner, controller) = (target.clone(), weak.clone());
         move || submit(&owner, &controller, Operation::New)
+    });
+    controller.window.on_show_silent({
+        let (owner, controller) = (target.clone(), weak.clone());
+        move |selector| {
+            submit(
+                &owner,
+                &controller,
+                Operation::ShowSilent(selector.to_string()),
+            )
+        }
     });
     controller.window.on_show_document({
         let (owner, controller) = (target.clone(), weak.clone());

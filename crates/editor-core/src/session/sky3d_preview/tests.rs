@@ -548,8 +548,8 @@ fn temporary_view_and_camera_overrides_report_actual_eligibility_without_changin
     view.surface = render::SurfaceView::Textured;
     view.tool_textures = false;
     let tools_hidden = session.sky3d_preview_state_for(view, shared_camera);
-    assert_eq!(tools_hidden["suppression_reason"], "tool_textures_hidden");
-    assert_eq!(tools_hidden["eligible"], false);
+    assert_eq!(tools_hidden["suppression_reason"], Value::Null);
+    assert_eq!(tools_hidden["eligible"], true);
     assert_eq!(session.sky3d_preview_state(), ordinary);
     assert_eq!(session.view(), shared_view);
     assert_eq!(session.camera(), shared_camera);

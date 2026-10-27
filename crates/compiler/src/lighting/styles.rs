@@ -122,6 +122,7 @@ fn prepare_entity(
 
 struct Channel {
     style: u8,
+    source: Option<u32>,
     samples: Vec<RgbExp32>,
     total: DVec3,
     average: Option<DVec3>,
@@ -163,6 +164,12 @@ impl Channels {
         Ok(result)
     }
 
+    pub(super) fn sources(&self) -> impl Iterator<Item = (u8, Option<u32>)> + '_ {
+        self.channels
+            .iter()
+            .map(|channel| (channel.style, channel.source))
+    }
+
     fn allocate(&mut self, style: u8) -> Result<usize, String> {
         if self.channels.len() == MAX_FACE_STYLES {
             return Err("A face receives more than four light styles including Normal; reduce overlapping light groups or separate their reach".into());
@@ -180,6 +187,7 @@ impl Channels {
         let index = self.channels.len();
         self.channels.push(Channel {
             style,
+            source: None,
             samples: vec![RgbExp32::default(); samples],
             total: DVec3::ZERO,
             average: None,
@@ -190,6 +198,7 @@ impl Channels {
     pub(super) fn add(
         &mut self,
         style: u8,
+        source: Option<u32>,
         color: &[DVec3; super::bump::MAPS],
         colors: &mut SampleColors,
         budget: &mut Budget<'_>,
@@ -207,6 +216,9 @@ impl Channels {
             budget.consume(self.count * self.maps + 1)?;
             self.allocate(style)?
         };
+        if self.channels[index].source.is_none() {
+            self.channels[index].source = source;
+        }
         for (target, &contribution) in colors[index].iter_mut().zip(color).take(self.maps) {
             *target += contribution;
         }
@@ -319,6 +331,7 @@ mod tests {
             channels
                 .add(
                     32,
+                    None,
                     &[DVec3::X; super::super::bump::MAPS],
                     &mut colors,
                     &mut budget

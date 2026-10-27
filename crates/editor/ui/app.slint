@@ -1780,6 +1780,7 @@ export component ReportWindow inherits Window {
     preferred-width: 960px; preferred-height: 760px;
     in-out property <string> query;
     in-out property <string> classname;
+    in-out property <bool> exact-class;
     in-out property <string> targetname;
     in-out property <string> material;
     in-out property <int> kind;
@@ -1815,7 +1816,8 @@ export component ReportWindow inherits Window {
             LineEdit { text <=> root.query; placeholder-text: "Search IDs, names, classes and materials…"; edited => { root.page = 0; root.search(); } }
             HorizontalLayout {
                 spacing: 8px;
-                LineEdit { text <=> root.classname; placeholder-text: "Entity class"; edited => { root.page = 0; root.search(); } }
+                LineEdit { text <=> root.classname; placeholder-text: "Entity class contains…"; edited => { root.page = 0; root.search(); } }
+                CheckBox { text: "Exact class"; checked <=> root.exact-class; toggled => { root.page = 0; root.search(); } }
                 LineEdit { text <=> root.targetname; placeholder-text: "Entity name"; edited => { root.page = 0; root.search(); } }
                 LineEdit { text <=> root.material; placeholder-text: "Material"; edited => { root.page = 0; root.search(); } }
             }
@@ -1917,7 +1919,8 @@ component TransformVector inherits HorizontalLayout {
 }
 
 export component AppWindow inherits Window {
-    title: root.map-title + " - HammeRR";
+    title: (root.background-display ? "HammeRR background: " : "") + root.map-title + " - HammeRR";
+    in property <bool> background-display;
     preferred-width: 1600px;
     preferred-height: 960px;
     background: #111317;
@@ -2058,6 +2061,7 @@ export component AppWindow inherits Window {
     in property <bool> can-edit-instance-reference;
     in-out property <bool> rope-preview: false;
     in-out property <bool> selection-outlines: true;
+    in-out property <bool> selection-tint: true;
     in-out property <bool> entity-images: true;
     in-out property <bool> additive-sprite-guides: false;
     in-out property <bool> entity-model-guides: true;
@@ -2777,6 +2781,11 @@ export component AppWindow inherits Window {
                         selected => { root.surface-view-changed(); }
                     }
                     CheckBox {
+                        text: "Selection tint";
+                        checked <=> root.selection-tint;
+                        toggled => { root.options-changed(); }
+                    }
+                    CheckBox {
                         text: "Selection outlines";
                         checked <=> root.selection-outlines;
                         toggled => { root.options-changed(); }
@@ -2864,7 +2873,7 @@ export component AppWindow inherits Window {
                     }
                     if root.sky-preview-error != "": Text { text: root.sky-preview-error; color: #efb56b; wrap: word-wrap; }
                     if root.sky-preview: Text {
-                        text: root.sky-preview-status + "\nPerspective · Textured · Tool textures";
+                        text: root.sky-preview-status + "\nPerspective · Textured";
                         color: #aeb9c8;
                         wrap: word-wrap;
                     }

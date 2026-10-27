@@ -16,7 +16,7 @@ rfd = "0.17.2"
 serde_json = "1.0.151"
 slint.workspace = true
 source-formats.workspace = true
-tokio = { version = "1.53.2", features = ["sync"] }
+tokio = { version = "1.53.2", features = ["sync", "net", "io-util", "time"] }
 
 [dev-dependencies]
 editor-core = { path = "../editor-core", features = ["test-support"] }

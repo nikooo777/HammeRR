@@ -19,6 +19,7 @@ fn preview_defaults_window_compares_saves_applies_and_recovers_through_session_c
     let view = session.view();
     session.set_view(render::ViewOptions {
         selection_outlines: false,
+        selection_tint: false,
         entity_images: false,
         entity_model_guides: true,
         rope_preview: true,
@@ -34,11 +35,15 @@ fn preview_defaults_window_compares_saves_applies_and_recovers_through_session_c
     controller.show(&lock(&shared)).unwrap();
     window.window().set_size(slint::PhysicalSize::new(760, 760));
     assert!(window.get_ready());
-    assert_eq!(window.get_rows().row_count(), 5);
+    assert_eq!(window.get_rows().row_count(), 6);
     let outlines = window.get_rows().row_data(0).unwrap();
     assert_eq!(outlines.label, "Selection outlines");
     assert_eq!(outlines.current, "Off");
     assert_eq!(outlines.defaults, "On");
+    let tint = window.get_rows().row_data(1).unwrap();
+    assert_eq!(tint.label, "Selection tint");
+    assert_eq!(tint.current, "Off");
+    assert_eq!(tint.defaults, "On");
     crate::ui::tests::save_ui_snapshot(window.window(), "preview-defaults");
     for label in [
         "Save current as defaults",

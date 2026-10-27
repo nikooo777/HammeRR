@@ -9,6 +9,7 @@ fn action(session: &mut Session, actor: Actor, action: &str) -> Result<Value, St
 fn custom() -> Preview {
     Preview {
         selection_outlines: false,
+        selection_tint: false,
         entity_images: false,
         entity_model_guides: false,
         rope_preview: true,
@@ -119,11 +120,15 @@ fn malformed_startup_retry_and_reset_never_change_current_settings_until_apply()
 }
 
 #[test]
-fn snapshots_guard_all_five_current_settings_without_capturing_unrelated_settings() {
+fn snapshots_guard_all_preview_settings_without_capturing_unrelated_settings() {
     let directory = tempfile::tempdir().unwrap();
     let mut session = Session::new(Err("no assets needed".into()));
     session.configure_recovery(Ok(directory.path().into()));
     for preview in [
+        Preview {
+            selection_tint: false,
+            ..Preview::default()
+        },
         Preview {
             selection_outlines: false,
             ..Preview::default()

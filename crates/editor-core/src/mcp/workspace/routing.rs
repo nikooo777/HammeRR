@@ -31,6 +31,7 @@ struct OpenArgs {
 #[serde(deny_unknown_fields)]
 struct ShowArgs {
     document_id: String,
+    focus: Option<bool>,
 }
 
 fn command<T: schemars::JsonSchema>(name: &'static str, description: &'static str) -> Tool {
@@ -66,7 +67,7 @@ pub(super) fn tools() -> Result<Vec<Tool>, String> {
         command::<EmptyArgs>("save_all_named_maps", "Save all named maps through the same Open documents… action. Takes no arguments or document selector. Freezes up to two admitted document identities before scheduling, then attempts each once using its own Session.save and original source claim. Clean named maps verify their original source identity without writing. Unnamed dirty maps require Save as, pending reviews are preserved and block saving, and stale/busy/closing/source/write errors remain per-document results. Partial results return isError with complete:false/status:not_complete. No path invention, file chooser, focus, window show, rollback across documents or automatic retry."),
         command::<EmptyArgs>("new_document", "Create a second independent untitled document without replacing an existing buffer. Desktop creation is hidden until show_document; headless creation stays headless. Rejects full or busy workspace."),
         command::<OpenArgs>("open_document", "Open an absolute VMF path in a new independent document, without replacing existing buffers. Requires a free workspace slot and path claims. Desktop creation is hidden until show_document."),
-        command::<ShowArgs>("show_document", "Show and focus the exact desktop document identified by its opaque document_id from list_documents. Headless workspaces reject; unknown or closing selectors never fall back."),
+        command::<ShowArgs>("show_document", "Show the exact desktop document identified by document_id. focus defaults true. focus=false requests silent display through the same Open documents → Show silently operation; requires supported Hyprland Lua rules and refuses before showing if admission fails. Headless workspaces reject; unknown or closing selectors never fall back."),
     ]);
     Ok(tools)
 }
@@ -245,7 +246,9 @@ impl ServerHandler for WorkspaceServer {
                             Some(target) => stamp_error(error, target),
                             None => error,
                         })?;
-                    self.0.show_document(&args.document_id).await
+                    self.0
+                        .show_document_with_focus(&args.document_id, args.focus.unwrap_or(true))
+                        .await
                 }
                 _ => unreachable!(),
             };

@@ -52,11 +52,12 @@ fn hdr_sky_view_requests_validate_atomically_before_graphics_and_preserve_source
     let view = value(
         server.set_view(Parameters(
             serde_json::from_value(
-                json!({"sky_preview":true,"sky_channel":"hdr","sky_exposure_ev":2}),
+                json!({"sky_preview":true,"sky_channel":"hdr","sky_exposure_ev":2,"selection_tint":false}),
             )
             .unwrap(),
         )),
     );
+    assert_eq!(view["selection_tint"], false);
     assert_eq!(view["sky_channel"], "hdr");
     assert_eq!(view["sky_exposure_ev"], 2.0);
     let state = value(server.get_map_info());

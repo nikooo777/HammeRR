@@ -23,6 +23,7 @@ fn mcp_and_ui_operations_share_explicit_defaults_without_starting_graphics() {
     let server = EditorServer::new(shared.clone(), None);
     let custom = crate::preview_preferences::Preview {
         selection_outlines: false,
+        selection_tint: false,
         entity_images: false,
         entity_model_guides: false,
         rope_preview: true,

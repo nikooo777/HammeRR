@@ -11,6 +11,7 @@ use super::*;
 use editor_core::startup::{DocumentVisibility, Workspace as Factory};
 
 mod controls;
+mod presentation;
 
 const MAX_UI_COMMANDS: usize = 8;
 const DISPATCH_INTERVAL: Duration = Duration::from_millis(16);
@@ -22,7 +23,7 @@ type WeakOwner = std::rc::Weak<RefCell<Owner>>;
 
 enum Action {
     Create(DocumentHandle, String, mcp::TerminalClose, bool),
-    Show(runtime::DocumentId),
+    Show(runtime::DocumentId, bool),
     Retire(runtime::DocumentId),
     Release(runtime::DocumentId),
     Quit,
@@ -89,7 +90,7 @@ impl Proxy {
         let cancelled = Arc::new(AtomicBool::new(false));
         let pending = Pending {
             cancelled: cancelled.clone(),
-            cancellable: matches!(action, Action::Create(..) | Action::Show(_)),
+            cancellable: matches!(action, Action::Create(..) | Action::Show(..)),
         };
         let immediate = {
             let mut queue = self.0.lock().expect("Workspace UI queue poisoned");
@@ -98,7 +99,7 @@ impl Proxy {
                 .retain(|command| !command.cancelled.load(Ordering::Acquire));
             match queue.phase {
                 Phase::Closed => Some(queue.closed_result(&action)),
-                Phase::Closing if matches!(action, Action::Create(..) | Action::Show(_)) => {
+                Phase::Closing if matches!(action, Action::Create(..) | Action::Show(..)) => {
                     Some(Err("The UI event loop is closing".into()))
                 }
                 _ if matches!(action, Action::Quit) && queue.terminal_quit.is_some() => {
@@ -151,7 +152,15 @@ impl Proxy {
             move |document, selector, terminal, present| {
                 create.request(Action::Create(document, selector, terminal, present))
             },
-            move |document| show.request(Action::Show(document)),
+            move |document, focus| {
+                let show = show.clone();
+                Box::pin(async move {
+                    if !focus {
+                        presentation::prepare_silent_show().await?;
+                    }
+                    show.request(Action::Show(document, focus)).await
+                })
+            },
             move |document| retire.request(Action::Retire(document)),
             move |document| release.request(Action::Release(document)),
             move || quit.request(Action::Quit),
@@ -292,7 +301,7 @@ impl Owner {
         Err(error)
     }
 
-    fn show(&mut self, document: runtime::DocumentId) -> Result<(), String> {
+    fn show(&mut self, document: runtime::DocumentId, focus: bool) -> Result<(), String> {
         let host = self
             .hosts
             .iter()
@@ -304,6 +313,7 @@ impl Owner {
             .app
             .as_ref()
             .ok_or("The document UI has retired")?;
+        app.set_background_display(!focus);
         app.show().map_err(|error| error.to_string())
     }
 
@@ -350,7 +360,7 @@ impl Owner {
             Action::Create(document, selector, terminal, present) => {
                 self.create(document, selector, terminal, present)
             }
-            Action::Show(document) => self.show(document),
+            Action::Show(document, focus) => self.show(document, focus),
             Action::Retire(document) => self.retire(document),
             Action::Release(document) => self.release(document),
             Action::Quit => {

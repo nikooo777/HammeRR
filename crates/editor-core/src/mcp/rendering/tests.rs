@@ -135,7 +135,7 @@ fn render_response_assembly_preserves_captured_metadata_across_later_edits() {
     assert_eq!(current.working_region["enabled"], false);
     assert_eq!(current.rope_preview["applied"], false);
     assert_ne!(current.material_reload["generation"], generation);
-    let result = report(rendered.into_tool_result(camera(), (65, 65), view, json!({})));
+    let result = report(rendered.into_tool_result(camera(), (65, 65), view, json!({}), true));
     assert_eq!(result["skybox"]["name"], "frame_before");
     assert_eq!(result["skybox"]["ready"], true);
     assert_eq!(result["skybox"]["exposure_ev"], 2.0);
@@ -146,6 +146,19 @@ fn render_response_assembly_preserves_captured_metadata_across_later_edits() {
     assert_eq!(result["sky3d_preview"]["retained"], "sky3d");
     assert_eq!(result["sprite_guides"]["retained"], "sprite");
     assert_eq!(result["view"]["rope_preview"], true);
+    let mut concise = result.clone();
+    omit_render_catalogues(&mut concise);
+    assert!(result["rope_preview"].get("limits").is_some());
+    assert!(concise["rope_preview"].get("limits").is_none());
+    assert_eq!(
+        concise["rope_preview"]["diagnostics"],
+        result["rope_preview"]["diagnostics"]
+    );
+    assert_eq!(concise["skybox"]["ready"], true);
+    assert_eq!(concise["skybox"]["suppression_reason"], Value::Null);
+    assert!(
+        serde_json::to_vec(&concise).unwrap().len() < serde_json::to_vec(&result).unwrap().len()
+    );
 }
 
 #[test]
@@ -163,7 +176,7 @@ fn frame_metadata_tracks_uniform_overrides_without_scene_key_changes_or_shared_e
         (true, true, true, Value::Null),
         (false, true, true, Value::Null),
         (true, false, true, json!("disabled")),
-        (true, true, false, json!("tool_textures_hidden")),
+        (true, true, false, Value::Null),
     ] {
         let temporary = ViewOptions {
             rope_preview: rope,
@@ -177,7 +190,7 @@ fn frame_metadata_tracks_uniform_overrides_without_scene_key_changes_or_shared_e
         assert_eq!(metadata.rope_preview["enabled"], rope);
         assert_eq!(metadata.rope_preview["applied"], rope);
         assert_eq!(metadata.rope_preview["links"].as_array().unwrap().len(), 1);
-        assert_eq!(metadata.skybox["eligible"], sky && tools);
+        assert_eq!(metadata.skybox["eligible"], sky);
         assert_eq!(metadata.skybox["suppression_reason"], suppression);
         assert_eq!(metadata.skybox["exposure_ev"], -3.0);
     }
@@ -220,7 +233,7 @@ fn rendered_metadata_retains_uploaded_frame_through_cache_toggles_and_later_edit
     assert_eq!(lock(&shared).view(), shared_view);
 
     replace_context(&mut lock(&shared), source);
-    let retained = report(rendered.into_tool_result(camera(), (65, 65), view, json!({})));
+    let retained = report(rendered.into_tool_result(camera(), (65, 65), view, json!({}), true));
     assert_eq!(retained["rope_preview"], rope);
     assert_eq!(retained["skybox"]["name"], "frame_before");
     assert_eq!(retained["skybox"]["ready"], true);
@@ -234,4 +247,49 @@ fn rendered_metadata_retains_uploaded_frame_through_cache_toggles_and_later_edit
     assert_eq!(changed.metadata.skybox["ready"], false);
     assert_eq!(changed.metadata.working_region["enabled"], false);
     assert_ne!(changed.metadata.material_reload["generation"], generation);
+}
+
+#[test]
+fn selection_tint_changes_geometry_but_keeps_selection_outlines_and_source() {
+    let (_directory, mut session, _) = fixture();
+    let block = session
+        .create_block(
+            Actor::User,
+            DVec3::ZERO,
+            DVec3::splat(32.0),
+            "test/checker",
+            false,
+        )
+        .unwrap();
+    session.select(&[block], SelectMode::Replace).unwrap();
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    let tinted = session.view();
+    let untinted = session
+        .resolve_view_update(ViewUpdate {
+            selection_tint: Some(false),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_ne!(
+        session.render_scene_key(tinted),
+        session.render_scene_key(untinted)
+    );
+    let with = session.build_scene_for_view(tinted);
+    let without = session.build_scene_for_view(untinted);
+    assert_eq!(with.vertices.len(), without.vertices.len());
+    assert!(
+        with.vertices
+            .iter()
+            .zip(&without.vertices)
+            .any(|(a, b)| a.color != b.color)
+    );
+    assert_eq!(
+        with.selection_outline_ranges,
+        without.selection_outline_ranges
+    );
+    assert_eq!(session.selected_ids(), [block]);
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+    assert_eq!(session.view(), tinted);
 }

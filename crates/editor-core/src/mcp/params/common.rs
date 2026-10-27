@@ -58,6 +58,8 @@ pub struct FindArgs {
     pub hidden: Option<bool>,
     /// Case-insensitive substring of the entity classname (e.g. 'info_player', 'func_').
     pub classname: Option<String>,
+    #[serde(default)]
+    pub exact_class: bool,
     /// Case-insensitive substring of targetname.
     pub targetname: Option<String>,
     /// Case-insensitive substring of a face material.

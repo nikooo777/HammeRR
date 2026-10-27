@@ -91,7 +91,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Searchable object report with IDs, type, class, name, materials, visibility and bounds. Same filters as the human Object report. Default page 100, maximum 500.",
+        description = "Searchable object report with IDs, type, class, name, materials, visibility and bounds. Same filters as the human Object report. Class, name and material filters are case-insensitive substrings; exact_class=true requires the complete class name. Default page 100, maximum 500.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_object_report(
@@ -109,7 +109,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Select ALL matching report objects, including results beyond a page. Optionally frame the resulting selection. Uses shared report filters and replace/add/remove/toggle selection."
+        description = "Select ALL matching report objects, including results beyond a page. Optionally frame the resulting selection. Uses shared report filters (classname is a case-insensitive substring unless exact_class=true) and replace/add/remove/toggle selection."
     )]
     pub(in crate::mcp) fn select_object_report(
         &self,

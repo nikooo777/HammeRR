@@ -37,9 +37,10 @@ impl Session {
 
     fn preview_stamp(&self, saved: &Snapshot<Preview>) -> String {
         format!(
-            "{}:{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}:{}",
             saved.serial,
             self.view.selection_outlines,
+            self.view.selection_tint,
             self.view.entity_images,
             self.view.entity_model_guides,
             self.view.rope_preview,
@@ -70,7 +71,7 @@ impl Session {
         let saved = self.preview_preferences.authority().snapshot();
         let mut state = saved.report(Preview::from(self.view), self.preview_stamp(&saved));
         state.as_object_mut().unwrap().extend(json!({"limits":{"file_bytes":crate::preview_preferences::MAX_FILE_BYTES},
-            "persistence":"Only Save current as defaults and Reset saved defaults write user preferences. Ordinary viewport toggles and temporary render_view overrides never save automatically. Only the five reported booleans are stored."}).as_object().unwrap().clone());
+            "persistence":"Only Save current as defaults and Reset saved defaults write user preferences. Ordinary viewport toggles and temporary render_view overrides never save automatically. Only the six reported booleans are stored."}).as_object().unwrap().clone());
         state
     }
 

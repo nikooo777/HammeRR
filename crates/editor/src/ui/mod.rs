@@ -332,6 +332,7 @@ fn refresh_view_controls(app: &AppWindow, session: &Session) {
     app.set_show_leak(session.view().leak_path);
     app.set_sky_preview(session.view().sky_preview);
     app.set_selection_outlines(session.view().selection_outlines);
+    app.set_selection_tint(session.view().selection_tint);
     app.set_entity_images(session.view().entity_images);
     app.set_entity_model_guides(session.view().entity_model_guides);
     app.set_instance_contents(session.view().instance_contents);
@@ -449,6 +450,7 @@ fn apply_view_controls(app: AppWindow, shared: &SharedSession) {
     view.sky_preview = app.get_sky_preview();
     view.rope_preview = app.get_rope_preview();
     view.selection_outlines = app.get_selection_outlines();
+    view.selection_tint = app.get_selection_tint();
     view.entity_images = app.get_entity_images();
     view.entity_model_guides = app.get_entity_model_guides();
     view.leak_path = app.get_show_leak();

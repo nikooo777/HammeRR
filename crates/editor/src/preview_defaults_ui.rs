@@ -27,6 +27,7 @@ fn refresh(window: &PreviewDefaultsWindow, session: &Session, snapshot: &RefCell
     *snapshot.borrow_mut() = state["snapshot"].as_str().unwrap().into();
     let rows: Vec<_> = [
         ("selection_outlines", "Selection outlines"),
+        ("selection_tint", "Selection tint"),
         ("entity_images", "Entity images"),
         ("entity_model_guides", "Entity model guides"),
         ("rope_preview", "Rope preview"),

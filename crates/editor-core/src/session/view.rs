@@ -18,6 +18,7 @@ pub struct ViewUpdate<'a> {
     pub sky3d_preview: Option<bool>,
     pub rope_preview: Option<bool>,
     pub selection_outlines: Option<bool>,
+    pub selection_tint: Option<bool>,
     pub entity_images: Option<bool>,
     pub additive_sprite_guides: Option<bool>,
     pub entity_model_guides: Option<bool>,
@@ -65,6 +66,9 @@ impl Session {
         }
         if let Some(value) = update.rope_preview {
             view.rope_preview = value;
+        }
+        if let Some(value) = update.selection_tint {
+            view.selection_tint = value;
         }
         if let Some(value) = update.selection_outlines {
             view.selection_outlines = value;

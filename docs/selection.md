@@ -13,6 +13,14 @@ Choose objects, faces or bounded groups of visible geometry.
 Use **Pick object types** to allow **World brushes**, **Brush entities** and **Point entities & models**.
 Alt+click cycles overlapping object hits. **Bypass groups** selects individual members.
 
+## Show selection
+
+1. Open **Viewport**.
+2. Use **Selection outlines** to show or hide selected edges.
+3. Use **Selection tint** to show or hide the surface highlight.
+
+These switches keep selection and picking active.
+
 ## Save selection defaults
 
 1. Choose the types under **Pick object types**.

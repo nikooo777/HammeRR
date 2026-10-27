@@ -710,7 +710,7 @@ fn miniature_composites_only_sky_retains_depth_and_excludes_sky2d() {
         tool_textures: false,
         ..options
     };
-    assert_eq!(
+    assert_ne!(
         renderer.render_to_rgba(&ctx, &scene, &main, &filtered, 65, 65),
         renderer.render_to_rgba(
             &ctx,

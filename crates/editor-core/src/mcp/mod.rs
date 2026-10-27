@@ -454,13 +454,18 @@ impl EditorServer {
         lock(&self.session)
     }
 
-    fn admitted(&self) -> Result<Self, String> {
+    fn admitted(&self, tool: &str) -> Result<Self, String> {
         let mut server = self.clone();
         if server.operation.is_none() {
             server.operation = server
                 ._document
                 .as_ref()
-                .map(DocumentHandle::admit)
+                .map(|document| {
+                    document.admit_named(&format!(
+                        "MCP {}",
+                        map_core::entity_helpers::bounded_preview(tool, 96)
+                    ))
+                })
                 .transpose()?;
         }
         Ok(server)
@@ -585,7 +590,7 @@ impl ServerHandler for EditorServer {
             let context = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
             return self.tool_router.call(context).await;
         }
-        let server = match self.admitted() {
+        let server = match self.admitted(request.name.as_ref()) {
             Ok(server) => server,
             Err(error) => return fail(error).map(Into::into),
         };

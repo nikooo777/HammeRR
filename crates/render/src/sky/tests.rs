@@ -404,7 +404,13 @@ fn rendered_six_face_directions_translation_depth_and_fallback() {
         tool_textures: false,
         ..options
     };
+    let visible_sky = renderer.render_to_rgba(&ctx, &complete_scene, &camera, &filtered, 65, 65);
     assert_eq!(
+        visible_sky,
+        renderer.render_to_rgba(&ctx, &complete_scene, &camera, &options, 65, 65)
+    );
+    assert_ne!(
+        visible_sky,
         renderer.render_to_rgba(
             &ctx,
             &complete_scene,
@@ -415,8 +421,7 @@ fn rendered_six_face_directions_translation_depth_and_fallback() {
             },
             65,
             65
-        ),
-        renderer.render_to_rgba(&ctx, &complete_scene, &camera, &filtered, 65, 65)
+        )
     );
 }
 

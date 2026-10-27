@@ -601,6 +601,7 @@ fn filter(window: &ReportWindow) -> Result<ObjectFilter, String> {
     Ok(ObjectFilter {
         query: text(window.get_query()),
         classname: text(window.get_classname()),
+        exact_class: window.get_exact_class(),
         targetname: text(window.get_targetname()),
         material: text(window.get_material()),
         kind: [

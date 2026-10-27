@@ -111,6 +111,16 @@ Exact names reach every matching entity, including intentional fan-out. Cycles a
 
 Saved **Hide** entities and expanded instance contents are excluded; temporary editor exclusions do not change connectivity. Unapplied drafts are excluded. Finish geometry drafts and active viewport gestures before selection or framing. A changed map requires **Inspect graph** again.
 
+## Select by class
+
+1. Open **Object report…**.
+2. Enter a class in **Entity class contains…**, for example `light`.
+3. Enable **Exact class** to exclude classes such as `light_environment`.
+4. Inspect the rows, then use **Select all matches**.
+
+Class matching ignores letter case. With **Exact class** off, it matches part
+of the class name.
+
 ## Rename safely
 
 1. Open **References and rename…** for the selected entity.

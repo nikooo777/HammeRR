@@ -40,6 +40,7 @@ pub(crate) enum WorkerProfile {
     Reflection(ReflectionProfile),
     PplUv857(crate::PplUv857Case),
     PplMidrange909(crate::PplMidrange909Case),
+    PplSpatial919(crate::PplSpatial919Case),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -54,9 +55,9 @@ impl WorkerRequest {
     pub fn map_name(&self) -> &str {
         match &self.profile {
             WorkerProfile::Reflection(profile) => &profile.map_name,
-            WorkerProfile::PplUv857(_) | WorkerProfile::PplMidrange909(_) => {
-                crate::diagnostic::MAP_NAME
-            }
+            WorkerProfile::PplUv857(_)
+            | WorkerProfile::PplMidrange909(_)
+            | WorkerProfile::PplSpatial919(_) => crate::diagnostic::MAP_NAME,
         }
     }
 }
@@ -899,6 +900,21 @@ pub fn diagnose_ppl_midrange909_with_cleanup(
     })
 }
 
+pub fn diagnose_ppl_spatial919_with_cleanup(
+    request: crate::PplSpatial919Request,
+    observer: &mut dyn CaptureObserver,
+) -> Result<crate::PplSpatial919Receipt, crate::CaptureFailure> {
+    let (artifacts, elapsed_ms) = diagnose_ppl_with_cleanup((&request).into(), observer)?;
+    Ok(crate::PplSpatial919Receipt {
+        case: request.case,
+        artifacts,
+        elapsed_ms,
+        verified_controls: true,
+        hardware_observed: true,
+        preservation_passed: true,
+    })
+}
+
 fn diagnose_ppl_with_cleanup(
     request: crate::diagnostic::DiagnosticRequest<'_>,
     observer: &mut dyn CaptureObserver,
@@ -944,6 +960,9 @@ fn diagnose_ppl_inner(
             crate::diagnostic::DiagnosticCase::Uv857(case) => WorkerProfile::PplUv857(case),
             crate::diagnostic::DiagnosticCase::Midrange909(case) => {
                 WorkerProfile::PplMidrange909(case)
+            }
+            crate::diagnostic::DiagnosticCase::Spatial919(case) => {
+                WorkerProfile::PplSpatial919(case)
             }
         },
     };

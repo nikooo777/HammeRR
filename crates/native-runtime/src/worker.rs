@@ -94,11 +94,18 @@ pub(crate) fn game_directory(directory: &Path, request: &WorkerRequest) -> io::R
     for name in ["config.cfg", "autoexec.cfg"] {
         util::atomic_write(&game.join("cfg").join(name), b"")?;
     }
-    if matches!(
-        request.profile,
-        WorkerProfile::PplUv857(_) | WorkerProfile::PplMidrange909(_)
-    ) {
-        crate::diagnostic::configure_game(directory, &game)?;
+    let diagnostic_case = match &request.profile {
+        WorkerProfile::PplUv857(case) => Some(crate::diagnostic::DiagnosticCase::Uv857(*case)),
+        WorkerProfile::PplMidrange909(case) => {
+            Some(crate::diagnostic::DiagnosticCase::Midrange909(*case))
+        }
+        WorkerProfile::PplSpatial919(case) => {
+            Some(crate::diagnostic::DiagnosticCase::Spatial919(*case))
+        }
+        WorkerProfile::Reflection(_) => None,
+    };
+    if let Some(case) = diagnostic_case {
+        crate::diagnostic::configure_game(directory, &game, case)?;
         fs::copy(
             directory.join("staged.bsp"),
             game.join("maps/hammerr_runtime.bsp"),
@@ -381,6 +388,13 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
                 directory,
                 request,
                 crate::diagnostic::DiagnosticCase::Midrange909(*case),
+            );
+        }
+        WorkerProfile::PplSpatial919(case) => {
+            return crate::diagnostic::execute(
+                directory,
+                request,
+                crate::diagnostic::DiagnosticCase::Spatial919(*case),
             );
         }
         WorkerProfile::Reflection(_) => {}

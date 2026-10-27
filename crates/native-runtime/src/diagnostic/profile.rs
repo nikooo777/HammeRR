@@ -14,6 +14,7 @@ use crate::util::{self, invalid};
 use crate::{CaptureEnvironment, ContentMount};
 
 use super::midrange::{PplMidrange909Case, PplMidrange909Request};
+use super::spatial::{self, PplSpatial919Case, PplSpatial919Request};
 
 pub(crate) const MAP_NAME: &str = "hammerr_runtime";
 pub(super) const PROBE: &str = "pinned-hardware-observer.so";
@@ -92,6 +93,7 @@ pub struct PplUv857Receipt {
 pub(crate) enum DiagnosticCase {
     Uv857(PplUv857Case),
     Midrange909(PplMidrange909Case),
+    Spatial919(PplSpatial919Case),
 }
 
 impl DiagnosticCase {
@@ -99,6 +101,7 @@ impl DiagnosticCase {
         match self {
             Self::Uv857(case) => case.bsp_sha(),
             Self::Midrange909(case) => case.bsp_sha(),
+            Self::Spatial919(case) => case.bsp_sha(),
         }
     }
 
@@ -106,6 +109,7 @@ impl DiagnosticCase {
         match self {
             Self::Uv857(_) => "frozen_ppl_uv857",
             Self::Midrange909(_) => "frozen_ppl_midrange909",
+            Self::Spatial919(_) => "frozen_ppl_spatial919",
         }
     }
 }
@@ -136,6 +140,19 @@ impl<'a> From<&'a PplMidrange909Request> for DiagnosticRequest<'a> {
     fn from(request: &'a PplMidrange909Request) -> Self {
         Self {
             case: DiagnosticCase::Midrange909(request.case),
+            environment: &request.environment,
+            bsp: &request.bsp,
+            fixture_game: &request.fixture_game,
+            observer_library: &request.observer_library,
+            artifacts_parent: &request.artifacts_parent,
+        }
+    }
+}
+
+impl<'a> From<&'a PplSpatial919Request> for DiagnosticRequest<'a> {
+    fn from(request: &'a PplSpatial919Request) -> Self {
+        Self {
+            case: DiagnosticCase::Spatial919(request.case),
             environment: &request.environment,
             bsp: &request.bsp,
             fixture_game: &request.fixture_game,
@@ -460,7 +477,11 @@ pub(super) fn private_write(path: &Path, text: &str) -> io::Result<()> {
     util::atomic_write(path, text.as_bytes())
 }
 
-pub(crate) fn configure_game(directory: &Path, game: &Path) -> io::Result<()> {
+pub(crate) fn configure_game(
+    directory: &Path,
+    game: &Path,
+    case: DiagnosticCase,
+) -> io::Result<()> {
     for &(name, expected) in FIXTURE_FILES {
         let bytes = pinned_bytes(&directory.join("fixture").join(name), expected, MAX_INPUT)?;
         let destination = game.join(name);
@@ -471,9 +492,13 @@ pub(crate) fn configure_game(directory: &Path, game: &Path) -> io::Result<()> {
         )?;
         util::atomic_write(&destination, &bytes)?;
     }
+    let observer = match case {
+        DiagnosticCase::Spatial919(_) => spatial::observer()?,
+        _ => OBSERVER.to_owned(),
+    };
     private_write(
         &game.join("scripts/vscripts/hammerr_observer.nut"),
-        OBSERVER,
+        &observer,
     )?;
     private_write(
         &game.join("scripts/vscripts/mapspawn.nut"),
@@ -483,12 +508,18 @@ pub(crate) fn configure_game(directory: &Path, game: &Path) -> io::Result<()> {
         &game.join("cfg/hammerr_diagnostic_once.cfg"),
         "echo HAMMERR_DIAGNOSTIC_WAITING\n",
     )?;
+    let additional = match case {
+        DiagnosticCase::Spatial919(_) => spatial::CONTROLS,
+        _ => &[],
+    };
     let controls = CONTROLS
         .iter()
+        .chain(additional)
         .map(|(name, value)| format!("toggle {name} {value}\n"))
         .collect::<String>();
     let queries = CONTROLS
         .iter()
+        .chain(additional)
         .map(|(name, _)| format!("help {name}\n"))
         .collect::<String>();
     let postmap = format!("{controls}{queries}");

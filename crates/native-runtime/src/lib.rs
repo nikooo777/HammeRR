@@ -109,10 +109,14 @@ mod worker;
 
 pub use adapter::{capture_staging_bsp, capture_staging_bsp_for_channel, preflight_vmf};
 pub use diagnostic::{PplMidrange909Case, PplMidrange909Receipt, PplMidrange909Request};
+pub use diagnostic::{PplSpatial919Case, PplSpatial919Receipt, PplSpatial919Request};
 pub use diagnostic::{PplUv857Case, PplUv857Receipt, PplUv857Request};
 pub use guard::{resolve_environment, validate_environment};
 pub use process::{capture, capture_with_cleanup};
-pub use process::{diagnose_ppl_midrange909_with_cleanup, diagnose_ppl_uv857_with_cleanup};
+pub use process::{
+    diagnose_ppl_midrange909_with_cleanup, diagnose_ppl_spatial919_with_cleanup,
+    diagnose_ppl_uv857_with_cleanup,
+};
 
 pub fn worker_entry(arguments: Vec<std::ffi::OsString>) -> io::Result<()> {
     match arguments.as_slice() {
@@ -136,6 +140,9 @@ pub fn worker_entry(arguments: Vec<std::ffi::OsString>) -> io::Result<()> {
         }
         [mode, request] if mode == "--diagnose-ppl-midrange909" => {
             diagnostic::cli_midrange(std::path::Path::new(request))
+        }
+        [mode, request] if mode == "--diagnose-ppl-spatial919" => {
+            diagnostic::cli_spatial(std::path::Path::new(request))
         }
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidInput,

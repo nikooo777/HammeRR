@@ -17,6 +17,7 @@ use crate::{CaptureEnvironment, CaptureObserver};
 mod hardware;
 mod midrange;
 mod profile;
+mod spatial;
 
 use hardware::{hardware_records, loaded_observer, verify_hardware};
 pub use midrange::{PplMidrange909Case, PplMidrange909Receipt, PplMidrange909Request};
@@ -30,6 +31,7 @@ pub(crate) use profile::{
     path_text, stage, validate_request_paths, verify_sources,
 };
 pub use profile::{PplUv857Case, PplUv857Receipt, PplUv857Request};
+pub use spatial::{PplSpatial919Case, PplSpatial919Receipt, PplSpatial919Request};
 
 fn live_identity(
     launch: &crate::isolation::Launch,
@@ -116,6 +118,57 @@ fn check_cancelled(directory: &Path, request: &WorkerRequest) -> io::Result<()> 
         ));
     }
     Ok(())
+}
+
+fn verify_case_controls(
+    text: &str,
+    case: DiagnosticCase,
+) -> io::Result<std::collections::BTreeMap<String, f64>> {
+    match case {
+        DiagnosticCase::Spatial919(_) => {
+            Ok(spatial::verify_phase(text, spatial::Phase::Readiness)?.controls)
+        }
+        _ => verify_controls(text),
+    }
+}
+
+fn observe_spatial_phase(
+    directory: &Path,
+    request: &WorkerRequest,
+    console: &Path,
+    phase: spatial::Phase,
+    deadline: Instant,
+) -> io::Result<spatial::Observation> {
+    let before = util::diagnostic_text(console, util::MAX_LOG)?;
+    if phase.started(&before) {
+        return Err(invalid(
+            "Spatial diagnostic requires a fresh phase observation",
+        ));
+    }
+    private_write(
+        &directory.join("cstrike/cfg/hammerr_diagnostic_once.cfg"),
+        phase.request()?,
+    )?;
+    loop {
+        check_cancelled(directory, request)?;
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Spatial diagnostic observation exceeded the native deadline",
+            ));
+        }
+        let text = util::diagnostic_text(console, util::MAX_LOG)?;
+        verify_loads(&text)?;
+        crate::worker::loader_budget(directory)?;
+        util::private_budget(directory, &request.environment.engine_root)?;
+        if fs::metadata(directory.join("launcher.log"))?.len() > 8 * 1024 * 1024 {
+            return Err(invalid("Native diagnostic launcher log exceeds 8 MiB"));
+        }
+        if phase.complete(&text) {
+            return spatial::verify_phase(&text, phase);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 pub(crate) fn execute(
@@ -218,7 +271,7 @@ pub(crate) fn execute(
             util::private_budget(directory, &root)?;
             if !directory.join("probe-ready").exists() && text.contains(READY) {
                 verify_order(&text, false)?;
-                verify_controls(&text)?;
+                verify_case_controls(&text, case)?;
                 let identity = native.as_ref().ok_or_else(|| {
                     invalid("Diagnostic did not establish isolated native identity")
                 })?;
@@ -240,23 +293,61 @@ pub(crate) fn execute(
                 }
                 live_identity(&isolated, &child, &executable, identity)?;
                 loaded_observer(directory, &root, identity)?;
+                let spatial_capture = match case {
+                    DiagnosticCase::Spatial919(_) => {
+                        let observation = observe_spatial_phase(
+                            directory,
+                            request,
+                            &console,
+                            spatial::Phase::Capture,
+                            started + TIMEOUT,
+                        )?;
+                        live_identity(&isolated, &child, &executable, identity)?;
+                        Some(observation)
+                    }
+                    _ => None,
+                };
                 snapshot(directory, request, false, started + TIMEOUT)?;
                 live_identity(&isolated, &child, &executable, identity)?;
                 snapshot(directory, request, true, started + TIMEOUT)?;
                 live_identity(&isolated, &child, &executable, identity)?;
-                let text = util::diagnostic_text(&console, util::MAX_LOG)?;
+                let mut text = util::diagnostic_text(&console, util::MAX_LOG)?;
+                let spatial_observations = match spatial_capture {
+                    Some(capture) => {
+                        let final_observation = observe_spatial_phase(
+                            directory,
+                            request,
+                            &console,
+                            spatial::Phase::Final,
+                            started + TIMEOUT,
+                        )?;
+                        live_identity(&isolated, &child, &executable, identity)?;
+                        text = util::diagnostic_text(&console, util::MAX_LOG)?;
+                        Some(vec![
+                            spatial::verify_phase(&text, spatial::Phase::Readiness)?,
+                            capture,
+                            final_observation,
+                        ])
+                    }
+                    None => None,
+                };
                 verify_loads(&text)?;
-                let controls = verify_controls(&text)?;
-                util::json_write(
-                    &directory.join("diagnostic-observation.json"),
-                    &json!({
-                        "profile":case.profile_name(),"case":case,"camera_origin":[-192,-240,160],"camera_angles":[25,50,0],
-                        "controls":controls,"hardware":hardware,"bsp_sha256":case.bsp_sha(),
-                        "png_sha256":util::hash_file(&directory.join("game.png"),8*1024*1024)?,
-                        "ppm_sha256":util::hash_file(&directory.join("game.ppm"),8*1024*1024)?,
-                        "pixel_acceptance_evaluated":false,
-                    }),
-                )?;
+                let controls = match &spatial_observations {
+                    Some(observations) => observations[2].controls.clone(),
+                    None => verify_case_controls(&text, case)?,
+                };
+                let mut observation = json!({
+                    "profile":case.profile_name(),"case":case,"camera_origin":[-192,-240,160],"camera_angles":[25,50,0],
+                    "controls":controls,"hardware":hardware,"bsp_sha256":case.bsp_sha(),
+                    "png_sha256":util::hash_file(&directory.join("game.png"),8*1024*1024)?,
+                    "ppm_sha256":util::hash_file(&directory.join("game.ppm"),8*1024*1024)?,
+                    "pixel_acceptance_evaluated":false,
+                });
+                if let Some(observations) = spatial_observations {
+                    observation["spatial_camera_observed"] = json!(&observations[1].camera);
+                    observation["spatial_phase_observations"] = json!(observations);
+                }
+                util::json_write(&directory.join("diagnostic-observation.json"), &observation)?;
                 private_write(
                     &game.join("cfg/hammerr_diagnostic_once.cfg"),
                     &format!("echo {COMPLETE}\ndisconnect\necho {DISCONNECTED}\nquit\n"),
@@ -276,7 +367,14 @@ pub(crate) fn execute(
         let text = util::diagnostic_text(&console, util::MAX_LOG)?;
         verify_loads(&text)?;
         verify_order(&text, true)?;
-        verify_controls(&text)?;
+        match case {
+            DiagnosticCase::Spatial919(_) => {
+                spatial::verify_final(&text)?;
+            }
+            _ => {
+                verify_case_controls(&text, case)?;
+            }
+        }
         let identity = native
             .as_ref()
             .ok_or_else(|| invalid("Missing diagnostic native identity"))?;
@@ -364,6 +462,29 @@ pub(crate) fn cli_midrange(path: &Path) -> io::Result<()> {
         .map_err(|failure| failure.error)?;
     println!(
         "HAMMERR_PPL_MIDRANGE909 {}",
+        serde_json::to_string(&receipt).map_err(io::Error::other)?
+    );
+    Ok(())
+}
+
+pub(crate) fn cli_spatial(path: &Path) -> io::Result<()> {
+    let request: CliRequest<PplSpatial919Case> = util::json_read(path, 16 * 1024)?;
+    let request = PplSpatial919Request {
+        case: request.case,
+        environment: CaptureEnvironment {
+            engine_root: request.engine_root,
+            steam_root: request.steam_root,
+            mounts: Vec::new(),
+        },
+        bsp: request.bsp,
+        fixture_game: request.fixture_game,
+        observer_library: request.observer_library,
+        artifacts_parent: request.artifacts_parent,
+    };
+    let receipt = crate::diagnose_ppl_spatial919_with_cleanup(request, &mut CliObserver)
+        .map_err(|failure| failure.error)?;
+    println!(
+        "HAMMERR_PPL_SPATIAL919 {}",
         serde_json::to_string(&receipt).map_err(io::Error::other)?
     );
     Ok(())
@@ -628,6 +749,56 @@ mod tests {
         let mut changed = request;
         changed["case"] = json!("missing-uv");
         assert!(serde_json::from_value::<CliRequest<PplMidrange909Case>>(changed).is_err());
+    }
+
+    #[test]
+    fn spatial_profile_rejects_cross_profile_cases_and_admission_overrides() {
+        let directory = tempfile::tempdir().unwrap();
+        let bsp = directory.path().join("wrong-case.bsp");
+        fs::write(&bsp, b"unapproved BSP").unwrap();
+        for (name, case, expected) in [
+            (
+                "chart-a",
+                PplSpatial919Case::ChartA,
+                "1238dc003cb4a814c2c136bb401a74acebb73136dd481c181e23b498d7301748",
+            ),
+            (
+                "chart-b",
+                PplSpatial919Case::ChartB,
+                "9038832643f35b7ee87246cda5ce8b9a6d3032e7f7f5d7a607127f41f9150879",
+            ),
+        ] {
+            assert_eq!(case.bsp_sha(), expected);
+            assert!(pinned_bytes(&bsp, case.bsp_sha(), MAX_INPUT).is_err());
+            assert!(serde_json::from_value::<PplUv857Case>(json!(name)).is_err());
+            assert!(serde_json::from_value::<PplMidrange909Case>(json!(name)).is_err());
+            let profile = crate::process::WorkerProfile::PplSpatial919(case);
+            let value = json!({"kind":"ppl_spatial919", "parameters":name});
+            assert_eq!(serde_json::to_value(profile).unwrap(), value);
+            assert!(serde_json::from_value::<crate::process::WorkerProfile>(value).is_ok());
+        }
+        for case in ["target-032", "missing-uv", "chart-c"] {
+            assert!(serde_json::from_value::<PplSpatial919Case>(json!(case)).is_err());
+        }
+        for value in [
+            json!({"kind":"ppl_spatial919", "parameters":"target-032"}),
+            json!({"kind":"ppl_spatial919", "parameters":"chart-a", "command":"anything"}),
+            json!({"kind":"ppl_spatial919", "parameters":{"case":"chart-a", "bsp_sha256":"anything"}}),
+        ] {
+            assert!(serde_json::from_value::<crate::process::WorkerProfile>(value).is_err());
+        }
+        let request = json!({
+            "case":"chart-a", "engine_root":"/engine", "steam_root":"/steam",
+            "bsp":"/case.bsp", "fixture_game":"/fixture", "observer_library":"/observer.so",
+            "artifacts_parent":"/artifacts",
+        });
+        assert!(serde_json::from_value::<CliRequest<PplSpatial919Case>>(request.clone()).is_ok());
+        let mut changed = request.clone();
+        changed["bsp_sha256"] = json!("anything");
+        assert!(serde_json::from_value::<CliRequest<PplSpatial919Case>>(changed).is_err());
+        let mut changed = request;
+        changed["case"] = json!("target-032");
+        assert!(serde_json::from_value::<CliRequest<PplSpatial919Case>>(changed).is_err());
     }
 
     #[test]

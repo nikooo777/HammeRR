@@ -254,6 +254,8 @@ pub(super) fn supported_slime_key(key: &str) -> bool {
             | "$bottommaterial"
             | "$basetexture"
             | "$bumpmap"
+            | "$envmap"
+            | "$envmapframe"
             | "%tooltexture"
             | "$surfaceprop"
             | "%keywords"

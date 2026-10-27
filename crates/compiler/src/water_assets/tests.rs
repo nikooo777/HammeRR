@@ -19,10 +19,16 @@ pub(super) const BOTTOM_WATER: &str =
     "Water { $normalmap test/normal $envmap test/cube $underwateroverlay 0 }";
 pub(super) const SLIME: &str = "LightmappedGeneric { %compileslime 1 $bottommaterial TEST/ROOT $basetexture test/color $bumpmap test/normal %tooltexture test/color $alpha 1 $additive 0 $nofog 0 $fogenable 1 $fogcolor \"[0.1 0.2 0.3]\" $fogstart 0 $fogend 512 $color \"[0.5 1 0.5]\" $color2 \"[1 1 1]\" $basetexturetransform \"center 0.5 0.5 scale 2 3 rotate 15 translate 0.25 0\" $bumptransform \"scale 2 3\" $reflectivity \"[0.2 0.3 0.1]\" }";
 pub(super) const UNLIT_SLIME: &str = "UnlitGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $nofog 1 $fogenable 0 }";
-pub(super) const SLIME_BASE: &str = "LightmappedGeneric { %compileslime 1 $bottommaterial test/bottom $basetexture test/overridden $nofog 0 $fogenable 0 $fogcolor \"[0.1 0.2 0.3]\" $basetexturetransform \"scale 1 1\" $reflectivity \"[0.2 0.3 0.1]\" }";
-pub(super) const SLIME_PATCH: &str = "Patch { include materials/test/bottom.vmt replace { $bottommaterial test/root $basetexture test/color $fogenable 1 $basetexturetransform \"scale 2 2\" } insert { $bumpmap test/normal %tooltexture test/color } }";
-pub(super) const STATIC_LIQUIDS: [(&str, usize); 4] =
-    [(WATER, 6), (SLIME, 3), (UNLIT_SLIME, 2), (SLIME_PATCH, 5)];
+pub(super) const SLIME_STATIC_ENVMAP: &str = "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $envmap test/cube }";
+pub(super) const SLIME_BASE: &str = "LightmappedGeneric { %compileslime 1 $bottommaterial test/bottom $basetexture test/overridden $envmap test/overridden_cube $envmapframe 1 $nofog 0 $fogenable 0 $fogcolor \"[0.1 0.2 0.3]\" $basetexturetransform \"scale 1 1\" $reflectivity \"[0.2 0.3 0.1]\" }";
+pub(super) const SLIME_PATCH: &str = "Patch { include materials/test/bottom.vmt replace { $bottommaterial test/root $basetexture test/color $envmap test/cube $envmapframe 0 $fogenable 1 $basetexturetransform \"scale 2 2\" } insert { $bumpmap test/normal %tooltexture test/color } }";
+pub(super) const STATIC_LIQUIDS: [(&str, usize); 5] = [
+    (WATER, 6),
+    (SLIME, 3),
+    (UNLIT_SLIME, 2),
+    (SLIME_STATIC_ENVMAP, 4),
+    (SLIME_PATCH, 9),
+];
 
 pub(super) struct Fixture {
     pub(super) directory: tempfile::TempDir,
@@ -72,6 +78,11 @@ impl Fixture {
         if material == SLIME_PATCH {
             self.write(BOTTOM, SLIME_BASE);
             self.write("materials/test/overridden.vtf", texture(false, false));
+            self.write("materials/test/overridden_cube.vtf", texture(true, false));
+            self.write(
+                "materials/test/overridden_cube.hdr.vtf",
+                texture(true, true),
+            );
         }
     }
 
@@ -248,24 +259,33 @@ fn mutation_after_original_material_or_metric_texture_read_is_refused() {
 }
 
 #[test]
-fn missing_or_ldr_formatted_hdr_sibling_is_never_fallback_complete() {
-    for ldr_in_hdr in [false, true] {
-        let fixture = Fixture::new();
-        if ldr_in_hdr {
-            fixture.write(HDR_CUBE, texture(true, false));
-        } else {
-            fs::remove_file(fixture.directory.path().join(HDR_CUBE)).unwrap();
+fn incomplete_or_mismatched_hdr_siblings_are_never_fallback_complete() {
+    for material in [WATER, SLIME_STATIC_ENVMAP] {
+        for failure in ["missing", "ldr_format", "layout"] {
+            let fixture = Fixture::new();
+            fixture.liquid(material);
+            match failure {
+                "ldr_format" => fixture.write(HDR_CUBE, texture(true, false)),
+                "layout" => {
+                    let mut bytes = texture(true, true);
+                    bytes[16..18].copy_from_slice(&2u16.to_le_bytes());
+                    bytes[18..20].copy_from_slice(&2u16.to_le_bytes());
+                    bytes.resize(88 + 7 * 4 * 8, 0);
+                    fixture.write(HDR_CUBE, bytes);
+                }
+                _ => fs::remove_file(fixture.directory.path().join(HDR_CUBE)).unwrap(),
+            }
+            fixture.seed(ROOT);
+            let error = fixture.plan(&[ROOT]).unwrap_err().to_string();
+            assert!(
+                error.contains(match failure {
+                    "ldr_format" => "HDR color format",
+                    "layout" => "layouts differ",
+                    _ => "Missing Water source",
+                }),
+                "{error}"
+            );
         }
-        fixture.seed(ROOT);
-        let error = fixture.plan(&[ROOT]).unwrap_err().to_string();
-        assert!(
-            error.contains(if ldr_in_hdr {
-                "HDR color format"
-            } else {
-                "Missing Water source"
-            }),
-            "{error}"
-        );
     }
 }
 
@@ -373,7 +393,10 @@ fn dynamic_unknown_cyclic_and_non_water_graphs_are_refused() {
         "Patch { include materials/test/root.vmt }",
         "LightmappedGeneric { $basetexture test/color }",
         "Water { $normalmap test/normal $envmap test/cube $envmap test/cube }",
-        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $envmap env_cubemap }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $envmap env_cubemap }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $envmap test/color }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $envmap test/cube $envmapframe 1 }",
+        "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $envmap test/cube $envmapframe 1e-500 }",
         "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $envmap test/cube }",
         "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $detail test/color }",
         "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $additive 1 }",
@@ -500,7 +523,15 @@ fn empty_selection_has_an_explicit_empty_manifest() {
 fn offline_verification_requires_every_dependency_and_water_surface_coverage() {
     for (material, omitted) in [
         (WATER, vec![BOTTOM, HDR_CUBE]),
-        (SLIME_PATCH, vec![BOTTOM, "materials/test/overridden.vtf"]),
+        (
+            SLIME_PATCH,
+            vec![
+                BOTTOM,
+                "materials/test/overridden.vtf",
+                "materials/test/overridden_cube.hdr.vtf",
+                HDR_CUBE,
+            ],
+        ),
     ] {
         let fixture = Fixture::new();
         fixture.liquid(material);
@@ -545,6 +576,7 @@ fn offline_verification_requires_every_dependency_and_water_surface_coverage() {
 fn offline_verification_rechecks_texture_semantics_after_hashes_are_updated() {
     for (material, path, reason) in [
         (WATER, HDR_CUBE, "finite and nonnegative"),
+        (SLIME_STATIC_ENVMAP, HDR_CUBE, "finite and nonnegative"),
         (SLIME, NORMAL, "first_frame 0"),
     ] {
         let fixture = Fixture::new();
@@ -559,7 +591,7 @@ fn offline_verification_rechecks_texture_semantics_after_hashes_are_updated() {
             .iter_mut()
             .find(|entry| entry.name == path)
             .unwrap();
-        if material == WATER {
+        if path == HDR_CUBE {
             entry.data[88..90].copy_from_slice(&0x7c00u16.to_le_bytes());
         } else {
             entry.data[26..28].copy_from_slice(&1u16.to_le_bytes());

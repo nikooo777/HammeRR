@@ -42,7 +42,7 @@ Static scalar `LightmappedGeneric`, `UnlitGeneric` and scalar `Patch` chains are
 Every slime material must explicitly name itself in `$bottommaterial` for native below-view lookup. Use the material name without `materials/`, `.vmt`, extra whitespace or alternate path spelling; letter case may differ. A Patch must name the applied top material, not its include parent.
 Keep alpha at one and additive, translucent and vertex-alpha effects off. Conditional, proxy and animated blocks are unsupported.
 The material keeps its lighting and opaque envmap effects; Water-shader reflection and refraction are unavailable.
-Enable **Pack liquid assets** for the supported non-reflective static subset described below. Other slime material assets must remain mounted.
+Enable **Pack liquid assets** for the supported static subset described below. Other slime material assets must remain mounted.
 
 ## Inspect water material dependencies
 
@@ -64,8 +64,8 @@ Inspection does not pack assets.
 Packing supports a checked static subset, not every animated stock Water shader.
 Static envmaps require matching supported LDR and HDR cubemap files. Unsupported dependencies fail explicitly.
 
-Slime packing supports non-reflective `LightmappedGeneric`, `UnlitGeneric` and unambiguous scalar `Patch` chains with `%compileslime 1`, an explicit `$basetexture` and the exact native self-bottom declaration. It includes every original material and declared `$basetexture`, `$bumpmap` and `%tooltexture` VTF, including textures overridden by a Patch. These textures must be supported static one-frame 2D VTFs, version 7.0–7.4, with depth one and `first_frame 0`.
-Neutral opacity settings, `$surfaceprop`, `%keywords`, static fog/color controls, UV transforms and authored `$reflectivity` are admitted. Fog switches and `%notooltexture` use literal `0` or `1`; fog distances must be finite. Colors and reflectivity use normalized square-bracket RGB triples. UV transforms use the supported center/scale/rotate/translate syntax with finite components within ±1024 and no repeated operations. Other parameters, envmaps, detail textures, additional material references and effects stop packing. A Patch chain cannot edit the same key in multiple materials. Missing dependencies and unsupported texture layouts stop publication without replacing the previous BSP.
+Slime packing supports static opaque `LightmappedGeneric`, `UnlitGeneric` and unambiguous scalar `Patch` chains with `%compileslime 1`, an explicit `$basetexture` and the exact native self-bottom declaration. It includes every original material and declared `$basetexture`, `$bumpmap` and `%tooltexture` VTF, including textures overridden by a Patch. These textures must be supported static one-frame 2D VTFs, version 7.0–7.4, with depth one and `first_frame 0`.
+Neutral opacity settings, `$surfaceprop`, `%keywords`, static fog/color controls, UV transforms and authored `$reflectivity` are admitted. Fog switches and `%notooltexture` use literal `0` or `1`; fog distances must be finite. Colors and reflectivity use normalized square-bracket RGB triples. UV transforms use the supported center/scale/rotate/translate syntax with finite components within ±1024 and no repeated operations. A named static `$envmap` also packs its original LDR and HDR cube files, including declarations overridden by a Patch. Both cubes require the existing VTF 7.4 layout with seven stored square faces, `first_frame 0` and matching width, height and mip count; the HDR sibling must use the supported HDR format. Effective `$envmapframe` must be absent or zero. Dynamic `env_cubemap`, missing cube siblings, other parameters, detail textures, additional material references and effects stop packing. A Patch chain cannot edit the same key in multiple materials. Missing dependencies and unsupported texture layouts stop publication without replacing the previous BSP.
 
 Assets outside the packed closure must remain mounted in the game.
 

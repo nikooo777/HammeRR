@@ -356,7 +356,7 @@ apply to supported water and slime. The shared property fields are
 **Liquid current · world units/s** and **Liquid pressure damping**. Compile with
 engine physics. Complete structural-world liquid volumes can remain inside a
 compile region. See [Water and slime](water.md) for material and volume limits.
-Set `pack_water_assets:true` for **Pack liquid assets**, including supported non-reflective static slime materials. Settings, recipes and build results retain the `pack_water_assets` and `water_assets` field names. Unsupported closures stop the build.
+Set `pack_water_assets:true` for **Pack liquid assets**, including supported static slime materials, including named envmaps with matching LDR/HDR cubemap files. Settings, recipes and build results retain the `pack_water_assets` and `water_assets` field names. Unsupported closures stop the build.
 
 For [stationary child brush rotation](instances.md#rotate-a-stationary-child-brush), set canonical `angles` through `set_entity_properties` or property-edit tools.
 Save the child, then compile its parent. Compilation lowers the initial pose into body geometry and emits zero angles.

@@ -307,19 +307,13 @@ where
                 )));
             }
             let material = matches!(key, "$bottommaterial" | "$underwateroverlay");
-            let target = logical_path(reference, material, false)?;
             if material {
+                let target = logical_path(reference, true, false)?;
                 self.walk(&target, depth + 1)?;
             } else if key == "$envmap" {
-                let ldr = self.texture(&target, true, false)?;
-                let hdr_path = logical_path(reference, false, true)?;
-                let hdr = self.texture(&hdr_path, true, true)?;
-                if (ldr.width, ldr.height, ldr.mips) != (hdr.width, hdr.height, hdr.mips) {
-                    return Err(invalid(format!(
-                        "Water LDR/HDR cubemap layouts differ: {target} and {hdr_path}"
-                    )));
-                }
+                self.cubemap_pair(reference)?;
             } else {
+                let target = logical_path(reference, false, false)?;
                 self.texture(&target, false, false)?;
             }
         }
@@ -346,7 +340,7 @@ where
         for (key, _) in &resolved.declarations {
             if !raw::supported_slime_key(key) {
                 return Err(invalid(format!(
-                    "Unsupported static slime declaration {key}; envmaps, effects and other resources are outside the packing subset: {path}"
+                    "Unsupported static slime declaration {key}; effects and other resources are outside the packing subset: {path}"
                 )));
             }
         }
@@ -356,6 +350,13 @@ where
                 .get(key)
                 .map(|parameter| parameter.value.as_str())
         };
+        if get("$envmapframe")
+            .is_some_and(|value| !value.trim().parse::<i32>().is_ok_and(|frame| frame == 0))
+        {
+            return Err(invalid(format!(
+                "Static slime requires integer $envmapframe 0 or absent: {path}"
+            )));
+        }
         if get("%compileslime").map(str::trim) != Some("1") {
             return Err(invalid(format!(
                 "Non-Water liquid packing requires %compileslime 1: {path}"
@@ -411,6 +412,10 @@ where
         }
         self.edge()?;
         for (key, parameter) in &resolved.declarations {
+            if key == "$envmap" {
+                self.edge()?;
+                self.cubemap_pair(&parameter.value)?;
+            }
             if matches!(key.as_str(), "$basetexture" | "$bumpmap" | "%tooltexture") {
                 self.edge()?;
                 let target = logical_path(&parameter.value, false, false)?;
@@ -423,6 +428,19 @@ where
             }
         }
         self.completed.insert(path.into());
+        Ok(())
+    }
+
+    fn cubemap_pair(&mut self, reference: &str) -> io::Result<()> {
+        let target = logical_path(reference, false, false)?;
+        let ldr = self.texture(&target, true, false)?;
+        let hdr_path = logical_path(reference, false, true)?;
+        let hdr = self.texture(&hdr_path, true, true)?;
+        if (ldr.width, ldr.height, ldr.mips) != (hdr.width, hdr.height, hdr.mips) {
+            return Err(invalid(format!(
+                "Water LDR/HDR cubemap layouts differ: {target} and {hdr_path}"
+            )));
+        }
         Ok(())
     }
 

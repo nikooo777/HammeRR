@@ -4,7 +4,10 @@ use glam::DVec3;
 use map_core::{Document, ObjectId, Plane, compile_region, edit};
 use source_formats::{bsp, vmf::Vmf};
 
-use super::tests::{BOTTOM, Fixture, NORMAL, ROOT, SLIME, SLIME_PATCH, STATIC_LIQUIDS, WATER};
+use super::tests::{
+    BOTTOM, CUBE, Fixture, HDR_CUBE, NORMAL, ROOT, SLIME, SLIME_PATCH, SLIME_STATIC_ENVMAP,
+    STATIC_LIQUIDS, WATER,
+};
 use super::*;
 use crate::{Control, Options, OutputLease, WriteReservation, test_common};
 
@@ -104,8 +107,8 @@ fn unsupported_liquid_packing_preserves_prior_outputs_and_source() {
             "supported Water-shader or static opaque SLIME",
         ),
         (
-            "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $envmap test/cube }",
-            "$envmap",
+            "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $envmap env_cubemap }",
+            "runtime env_cubemap",
         ),
         (
             "LightmappedGeneric { %compileslime 1 $bottommaterial test/root $basetexture test/color $detail test/color }",
@@ -164,7 +167,7 @@ fn unsupported_liquid_packing_preserves_prior_outputs_and_source() {
 
 #[test]
 fn water_publication_keeps_original_sources_through_preparation_and_commit() {
-    for material in [WATER, SLIME_PATCH] {
+    for material in [WATER, SLIME_PATCH, SLIME_STATIC_ENVMAP] {
         for after_preparation in [false, true] {
             let fixture = fixture();
             fixture.liquid(material);
@@ -182,7 +185,13 @@ fn water_publication_keeps_original_sources_through_preparation_and_commit() {
                     .unwrap()
                     .unwrap();
                 fixture.write(
-                    if material == WATER { NORMAL } else { BOTTOM },
+                    if material == WATER {
+                        NORMAL
+                    } else if material == SLIME_STATIC_ENVMAP {
+                        CUBE
+                    } else {
+                        BOTTOM
+                    },
                     b"changed original bytes",
                 );
                 assert!(prepared.commit_checked(&lease, &control).is_err());
@@ -190,6 +199,8 @@ fn water_publication_keeps_original_sources_through_preparation_and_commit() {
                 fixture.write(
                     if material == WATER {
                         NORMAL
+                    } else if material == SLIME_STATIC_ENVMAP {
+                        HDR_CUBE
                     } else {
                         "materials/test/overridden.vtf"
                     },

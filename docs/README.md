@@ -84,6 +84,7 @@ See [Status](status.md) for supported features and limits.
 - [Model detail props](model-detail-props.md)
 - [Detail sprites](detail-sprites.md)
 - [Material detail scattering](material-detail-scattering.md)
+- [Final compiled details](compiled-details.md)
 - [Occluders](occluders.md)
 - [Visibility clusters](visclusters.md)
 

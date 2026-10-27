@@ -395,6 +395,7 @@ fn prepare_scene_refresh(
     session.preflight_instance_contents();
     session.poll_color_correction();
     session.preflight_compiled_visibility();
+    session.preflight_compiled_details();
     session.preflight_compiled_prop_leaf_bounds();
     let view = session.view();
     let next = session.render_scene_key(view);

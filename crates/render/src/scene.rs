@@ -96,6 +96,8 @@ pub struct SceneStats {
 
 #[derive(Debug)]
 pub struct SceneMesh {
+    pub detail_billboards: Vec<crate::compiled_details::Billboard>,
+    pub detail_parts: Vec<crate::compiled_details::Part>,
     pub reference_lines: Vec<LineVertex>,
     pub reference_selection_ranges: Vec<std::ops::Range<u32>>,
     pub lighting: crate::lighting::Preview,
@@ -1433,6 +1435,8 @@ impl SceneMesh {
         }
         stats.missing_materials = missing_materials.len();
         let mut mesh = Self {
+            detail_billboards: Vec::new(),
+            detail_parts: Vec::new(),
             reference_lines: Vec::new(),
             reference_selection_ranges: Vec::new(),
             lighting: builder.lighting,

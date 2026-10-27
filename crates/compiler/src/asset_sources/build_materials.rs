@@ -172,6 +172,43 @@ pub struct BuildMaterialSources {
 }
 
 impl BuildMaterialSources {
+    pub fn bounded(
+        payload_bytes: usize,
+        logical_paths: usize,
+        physical_paths: usize,
+        lookup_rows: usize,
+    ) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(State {
+                limits: Limits {
+                    payload_bytes,
+                    logical_paths,
+                    physical_paths,
+                    lookup_rows,
+                },
+                ..State::default()
+            })),
+        }
+    }
+
+    pub fn original_source_guard(
+        &self,
+        control: &Control,
+        maximum_metadata_bytes: usize,
+    ) -> io::Result<AssetSourceGuard> {
+        control.checkpoint().map_err(io::Error::other)?;
+        let state = self.lock()?;
+        if let Some(failure) = &state.failure {
+            return Err(failure.error());
+        }
+        let guard = AssetSourceGuard {
+            stamps: state.stamps.values().cloned().collect(),
+            material_lookups: BTreeMap::new(),
+        };
+        guard.verify_original_metadata(control, maximum_metadata_bytes)?;
+        Ok(guard)
+    }
+
     pub(crate) fn same_capture(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.state, &other.state)
     }

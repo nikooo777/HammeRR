@@ -172,13 +172,10 @@ impl<'a> Builder<'a> {
             pending: Vec::new(),
             models: BTreeMap::new(),
             sprites: BTreeMap::new(),
-            sprite_material: vmf
-                .world
-                .properties
-                .get("detailmaterial")
-                .filter(|value| !value.is_empty())
-                .unwrap_or("detail/detailsprites")
-                .to_owned(),
+            sprite_material: DetailProps::sprite_material_name(
+                vmf.world.properties.get("detailmaterial"),
+            )
+            .to_owned(),
             sprite_atlas_checked: false,
             validator: assets::ModelValidator::new(sources),
             work: 0,

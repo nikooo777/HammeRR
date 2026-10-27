@@ -2,6 +2,7 @@
 
 pub mod camera;
 pub mod color_correction;
+pub mod compiled_details;
 pub mod fog;
 pub mod gpu;
 mod grid;

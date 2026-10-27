@@ -649,3 +649,48 @@ fn resolved_guards_require_original_logical_observations_and_honor_cancellation(
     let error = guard.verify_resolved_sources(&game, &control).unwrap_err();
     assert!(error.to_string().contains("cancelled"));
 }
+
+#[test]
+fn bounded_preview_owner_preserves_original_payload_and_metadata_guards() {
+    let (directory, game) = fixture();
+    let control = Control::default();
+    let short = BuildMaterialSources::bounded(MATERIAL.len() - 1, 4, 128, 128);
+    assert!(
+        short
+            .read_asset(&game, "materials/source.vmt", MATERIAL.len())
+            .is_err()
+    );
+    assert!(short.original_source_guard(&control, 1024 * 1024).is_err());
+    let sources = BuildMaterialSources::bounded(MATERIAL.len(), 4, 128, 128);
+    let original = sources
+        .read_asset(&game, "materials/source.vmt", MATERIAL.len())
+        .unwrap()
+        .unwrap();
+    assert_eq!(original.bytes(), MATERIAL);
+    assert!(sources.original_source_guard(&control, 0).is_err());
+    let guard = sources
+        .original_source_guard(&control, 1024 * 1024)
+        .unwrap();
+    std::fs::write(
+        directory.path().join("materials/source.vmt"),
+        b"UnlitGeneric {}",
+    )
+    .unwrap();
+    assert!(
+        guard
+            .verify_original_metadata(&control, 1024 * 1024)
+            .is_err()
+    );
+    assert!(
+        sources
+            .original_source_guard(&control, 1024 * 1024)
+            .is_err()
+    );
+    assert_eq!(original.bytes(), MATERIAL);
+    control.cancel().unwrap();
+    assert!(
+        sources
+            .original_source_guard(&control, 1024 * 1024)
+            .is_err()
+    );
+}

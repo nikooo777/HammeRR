@@ -330,6 +330,14 @@ Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
 See [Compile and play](compile-and-play.md).
 
+For [final detail placements](compiled-details.md), call `set_compiled_details`
+with `action:"prepare"`. Set `background:true` to read the owned BSP in a worker.
+Use `inspect_compiled_details` to check readiness and page native records.
+Pass the returned `token` to `show`, `hide`, `clear` or `cancel` actions, and to
+inspection pages after offset zero. Show loads the complete supported asset set;
+compiler freshness and additional preview-asset observations remain separate.
+The layer does not edit or select authored objects.
+
 `get_compile_status` marks a completed job stale when consumed material, detail or physics-definition inputs change. `job.material_source_issue` gives the cause; unused runtime assets remain outside this check.
 
 For [stationary child brush rotation](instances.md#rotate-a-stationary-child-brush), set canonical `angles` through `set_entity_properties` or property-edit tools.

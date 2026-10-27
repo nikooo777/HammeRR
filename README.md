@@ -100,10 +100,10 @@ See the [tool index and setup](docs/mcp.md).
 | ![Complete PVS destination bounds in a three-room map](docs/images/visibility-pvs.png) | ![Editable brush arches after instance collapse](docs/images/collapsed-assembly.png) |
 | Inspect native leaves, portals and complete PVS/PAS bounds. | Turn supported references into editable brushes, props, lights and cubemap samples. |
 
-| [Prop leaf bounds](docs/baked-prop-vertices.md) |
-| --- |
-| ![Complete native static-prop leaf bounds](docs/images/prop-leaf-bounds.png) |
-| Show every compiled leaf bound assigned to a static prop. |
+| [Prop leaf bounds](docs/baked-prop-vertices.md) | [Final compiled details](docs/compiled-details.md) |
+| --- | --- |
+| ![Complete native static-prop leaf bounds](docs/images/prop-leaf-bounds.png) | ![Compiled grass cards and shapes in the editor](docs/images/compiled-details.png) |
+| Show every compiled leaf bound assigned to a static prop. | Inspect final scattered models and cards from the built map. |
 
 | [Map comparison](docs/map-comparison.md) |
 | --- |

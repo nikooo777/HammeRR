@@ -7,6 +7,8 @@ struct AuthoredLight {
 }
 
 const SUN_KIND: f32 = 2.0;
+const FULL_BILLBOARD_TAG: f32 = -2.5;
+const VERTICAL_BILLBOARD_TAG: f32 = -3.5;
 
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -112,14 +114,36 @@ fn authored_irradiance(position: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
     return total;
 }
 
+fn detail_billboard_basis(origin: vec3<f32>, vertical: bool) -> mat2x3<f32> {
+    var direction = globals.eye.xyz - origin;
+    if vertical { direction.z = 0.0; }
+    let maximum = max(max(abs(direction.x),abs(direction.y)),abs(direction.z));
+    if maximum > 0.0 { direction /= maximum; }
+    let horizontal = length(direction.xy);
+    if horizontal == 0.0 {
+        return mat2x3<f32>(vec3<f32>(0.0,-1.0,0.0),vec3<f32>(select(1.0,-1.0,direction.z > 0.0),0.0,0.0));
+    }
+    let distance = length(direction);
+    return mat2x3<f32>(vec3<f32>(direction.y/horizontal,-direction.x/horizontal,0.0),
+        vec3<f32>(-direction.x*direction.z/(horizontal*distance),-direction.y*direction.z/(horizontal*distance),horizontal/distance));
+}
+
 @vertex
 fn vs_main(v: VertexIn) -> VertexOut {
     var out: VertexOut;
-    out.clip = globals.view_proj * vec4<f32>(v.position, 1.0);
+    var position = v.position;
+    var normal = v.normal;
+    // Fractional negative tags carry detail offsets; ordinary lightmaps use integer scales.
+    if v.lightmap.z == FULL_BILLBOARD_TAG || v.lightmap.z == VERTICAL_BILLBOARD_TAG {
+        let basis = detail_billboard_basis(v.position,v.lightmap.z == VERTICAL_BILLBOARD_TAG);
+        position += basis[0]*v.lightmap.x + basis[1]*v.lightmap.y;
+        normal = cross(basis[0],basis[1]);
+    }
+    out.clip = globals.view_proj * vec4<f32>(position, 1.0);
     out.uv = v.uv;
-    out.normal = v.normal;
+    out.normal = normal;
     out.color = v.color;
-    out.world_position = v.position;
+    out.world_position = position;
     out.lightmap = v.lightmap;
     out.smoothing = v.smoothing;
     out.opacity = v.opacity;

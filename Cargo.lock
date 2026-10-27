@@ -4103,6 +4103,7 @@ dependencies = [
  "png",
  "pollster 1.0.1",
  "serde",
+ "sha2",
  "source-formats",
  "tempfile",
  "wgpu",

@@ -5,6 +5,7 @@ mod checks;
 mod clipboard;
 mod color_correction;
 mod color_palette;
+mod compiled_details;
 mod compiled_face_framing;
 mod components;
 mod context;

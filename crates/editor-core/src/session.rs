@@ -28,6 +28,7 @@ mod baked_build;
 pub mod baked_lightmaps;
 pub mod baked_prop_vertices;
 mod buffer_replacement;
+pub mod compiled_details;
 mod compiled_source_selection;
 pub mod compiled_visibility;
 pub mod compiled_world_lights;
@@ -378,6 +379,7 @@ pub struct Session {
     launch_serial: u64,
     compiled: Option<CompiledMap>,
     compiled_visibility: compiled_visibility::State,
+    compiled_details: compiled_details::State,
     compiled_prop_leaf_bounds: baked_prop_vertices::leaf_bounds::State,
     leak: Option<(Snapshot, compiler::Leak)>,
     game_run: Option<game::Run>,
@@ -710,6 +712,7 @@ impl Session {
             launch_serial: 0,
             compiled: None,
             compiled_visibility: compiled_visibility::State::default(),
+            compiled_details: compiled_details::State::default(),
             compiled_prop_leaf_bounds: baked_prop_vertices::leaf_bounds::State::default(),
             leak: None,
             game_run: None,
@@ -1563,6 +1566,7 @@ impl Session {
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
         self.clear_external_comparison();
         self.reset_instance_contents();
+        self.reset_compiled_details();
         self.reset_sky3d_preview();
         self.native_capture.invalidate();
         self.groups.draft = None;
@@ -2537,6 +2541,7 @@ impl Session {
         }
         self.shutdown_definitions_load();
         self.reset_instance_contents();
+        self.reset_compiled_details();
         self.shutdown_sky3d_preview();
         self.shutdown_instance_extraction();
         self.clear_external_comparison();
@@ -2559,7 +2564,8 @@ impl Session {
     }
 
     pub(crate) fn instance_workers_busy(&self) -> bool {
-        self.instance_contents.worker.busy()
+        self.compiled_details.worker.busy()
+            || self.instance_contents.worker.busy()
             || self.instance_extraction.worker.busy()
             || self.external_comparison.worker.busy()
             || self.geometry.instance_collapse.worker.busy()
@@ -2716,6 +2722,7 @@ impl Session {
 
     pub fn build_scene_for_view(&mut self, view: ViewOptions) -> SceneMesh {
         self.preflight_compiled_visibility();
+        self.preflight_compiled_details();
         self.preflight_compiled_prop_leaf_bounds();
         let sky3d = self.sky3d_preview_scene();
         let skybox = self.skybox_preview_for(view);
@@ -2952,6 +2959,7 @@ impl Session {
         self.append_volume_guide(&mut mesh);
         self.append_compile_region_guide(&mut mesh);
         self.append_compiled_visibility_guide(&mut mesh);
+        self.append_compiled_details(&mut mesh);
         self.append_compiled_prop_leaf_bounds(&mut mesh);
         self.append_overlay_guide(&mut mesh);
         self.append_component_guides(&mut mesh);

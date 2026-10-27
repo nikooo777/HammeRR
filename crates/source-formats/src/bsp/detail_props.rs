@@ -90,6 +90,11 @@ fn append<T: Pod>(data: &mut Vec<u8>, records: &[T]) {
 }
 
 impl DetailProps {
+    pub fn sprite_material_name(name: Option<&str>) -> &str {
+        name.filter(|name| !name.is_empty())
+            .unwrap_or("detail/detailsprites")
+    }
+
     pub fn model_record(name: &str) -> io::Result<[u8; DETAIL_PROP_NAME_BYTES]> {
         super::StaticProps::model_record(name)
     }

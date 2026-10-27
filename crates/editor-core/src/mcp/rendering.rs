@@ -218,6 +218,7 @@ impl EditorServer {
             renderer.set_color_correction(color_correction.clone());
             session.preflight_instance_contents();
             session.preflight_compiled_visibility();
+            session.preflight_compiled_details();
             session.preflight_compiled_prop_leaf_bounds();
             *sky3d_preview = session.sky3d_preview_state_for(view, *camera);
             let key = session.render_scene_key(view);

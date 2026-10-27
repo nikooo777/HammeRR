@@ -210,6 +210,7 @@ Open **Build details…** after a lit build:
 - [**Inspect baked lightmaps…**](baked-lightmaps.md) shows face samples and source contributors.
 - [**Inspect baked prop vertices…**](baked-prop-vertices.md) shows prop vertex colors.
 - [**Inspect compiled lights…**](compiled-lights.md) shows emitted light records.
+- [**Compiled details…**](compiled-details.md) shows final detail placements.
 
 Changed source or settings can make inspection stale. Build again before treating it as current.
 

@@ -390,6 +390,8 @@ struct IconDraw {
 
 /// Geometry uploaded by a [`Renderer`]; draw it with the same renderer.
 pub struct GpuScene {
+    detail_billboards: Vec<crate::compiled_details::Billboard>,
+    detail_billboard_lines: Option<wgpu::Buffer>,
     sky3d: Option<std::sync::Arc<miniature::Miniature>>,
     sky3d_error: Option<String>,
     reference_lines: Option<(wgpu::Buffer, u32)>,
@@ -999,7 +1001,17 @@ impl Renderer {
             },
             None => (None, None),
         };
+        let detail_billboard_lines = (!mesh.detail_billboards.is_empty()).then(|| {
+            ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("compiled detail billboard edges"),
+                size: (mesh.detail_billboards.len() * 8 * size_of::<LineVertex>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
         GpuScene {
+            detail_billboards: mesh.detail_billboards.clone(),
+            detail_billboard_lines,
             sky3d,
             sky3d_error,
             reference_lines,
@@ -1322,6 +1334,22 @@ impl Renderer {
                 .write_buffer(&self.overlay, 0, bytemuck::cast_slice(&overlay));
         }
 
+        if options.surface == SurfaceView::Wireframe
+            && let Some(buffer) = &scene.detail_billboard_lines
+        {
+            let mut lines = Vec::with_capacity(scene.detail_billboards.len() * 8);
+            for billboard in &scene.detail_billboards {
+                let quad = billboard.quad(camera.position);
+                for (a, b) in [(0, 1), (1, 2), (2, 3), (3, 0)] {
+                    lines.extend([a, b].map(|index| LineVertex {
+                        position: quad[index].to_array(),
+                        color: [90, 125, 150, 255],
+                    }));
+                }
+            }
+            ctx.queue
+                .write_buffer(buffer, 0, bytemuck::cast_slice(&lines));
+        }
         let mut encoder = ctx
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("map") });
@@ -1471,6 +1499,11 @@ impl Renderer {
                 }
             }
             if options.surface == SurfaceView::Wireframe {
+                if let Some(lines) = &scene.detail_billboard_lines {
+                    pass.set_pipeline(&self.line_pipeline);
+                    pass.set_vertex_buffer(0, lines.slice(..));
+                    pass.draw(0..(scene.detail_billboards.len() * 8) as u32, 0..1);
+                }
                 for lines in [&scene.wire_lines, &scene.tool_wire_lines]
                     .into_iter()
                     .take(if options.tool_textures { 2 } else { 1 })

@@ -11,7 +11,7 @@ Generate noncolliding detail models and sprites from exposed ground materials.
 5. Apply the material to exposed world/detail faces or terrain.
 6. Compile with **Build lighting → Direct LDR**.
 7. Inspect **Detail props**, **Model assets**, **Sprite entries** and diagnostics.
-8. Play the built map to inspect the generated decoration.
+8. Use [Final compiled details](compiled-details.md) to inspect placement, or play the built map to inspect native appearance.
 
 The absent dictionary path uses `detail.vbsp`.
 A declared type must exist exactly once in that dictionary.
@@ -35,7 +35,7 @@ Use **Remove override** to restore the absent setting.
 
 ## Limits
 
-- This is compile-time generation; the editor does not preview the generated runtime cards or models.
+- Generation runs during compilation. The editor can show final static placements; runtime motion and lighting require the game.
 - Hidden geometry is excluded. Placement and output use bounded deterministic sampling.
 - Missing types, malformed dictionaries, unsupported assets or exceeded budgets fail explicitly.
 - Changes to consumed dictionaries, models, materials or sprite atlases require a new build.

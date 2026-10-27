@@ -1517,6 +1517,7 @@ impl Session {
                         result.output.bsp.as_ref(),
                     ),
                 });
+                self.reset_compiled_details();
                 self.compiled_visibility = super::compiled_visibility::State::default();
                 self.compiled_prop_leaf_bounds =
                     super::baked_prop_vertices::leaf_bounds::State::default();

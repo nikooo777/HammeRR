@@ -924,3 +924,34 @@ fn blank_bodygroups_keep_helpers_and_visible_variants_use_only_their_meshes() {
     assert!(visible.pick(&ray).is_some());
     assert!(visible.bounds().1.x > 8.0);
 }
+
+#[test]
+fn verified_cache_reuses_matching_geometry_and_preserves_pinned_old_accounting() {
+    let directory = tempfile::tempdir().unwrap();
+    let fs = material_game(directory.path());
+    let expected = source_identity(b"mdl", b"vvd", b"vtx");
+    assert_ne!(expected, source_identity(b"md", b"lvvd", b"vtx"));
+    let mut initial = Arc::try_unwrap(asset()).unwrap();
+    initial.source_identity = Some(expected);
+    let initial = Arc::new(initial);
+    let mut library = cached_asset(initial.clone());
+    let verified = library.get_verified(&fs, &initial.path, expected).unwrap();
+    assert!(Arc::ptr_eq(&initial, &verified));
+    let bytes = library.bytes;
+    assert!(library.get_verified(&fs, &initial.path, [0; 32]).is_err());
+    assert_eq!(library.bytes, bytes);
+    assert!(Arc::ptr_eq(
+        &initial,
+        library.entries[&initial.path].result.as_ref().unwrap()
+    ));
+}
+
+#[test]
+fn compiled_detail_transform_preserves_native_float_origin_without_text_conversion() {
+    let origin = [0.1f32, 64.1, 32.125];
+    let instance = Instance::compiled_detail(asset(), origin, [0.0, 90.0, 0.0]).unwrap();
+    assert_eq!(instance.origin, DVec3::from_array(origin.map(f64::from)));
+    assert!((instance.point([1.0, 0.0, 0.0]) - instance.origin - DVec3::Y).length() < 1e-12);
+    assert_eq!(instance.skin, 0);
+    assert_eq!(instance.body, 0);
+}

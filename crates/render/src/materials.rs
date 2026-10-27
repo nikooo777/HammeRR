@@ -538,6 +538,30 @@ impl MaterialLibrary {
         Ok(id)
     }
 
+    pub fn reload_limited(
+        &mut self,
+        fs: &GameFs,
+        name: &str,
+        limits: [usize; 2],
+    ) -> Result<MaterialId, String> {
+        let key = name.to_ascii_lowercase();
+        let material = MaterialInfo::load_checked(fs, &key, Some(limits))?;
+        if material.missing {
+            return Err(format!("Material {key} has no usable base texture"));
+        }
+        let id = if let Some(&id) = self.by_name.get(&key) {
+            self.materials[id] = material;
+            id
+        } else {
+            let id = self.materials.len();
+            self.materials.push(material);
+            self.by_name.insert(key, id);
+            id
+        };
+        self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+        Ok(id)
+    }
+
     pub fn insert_base_texture(
         &mut self,
         name: &str,

@@ -9,6 +9,7 @@ use map_core::{
     ObjectId,
     query::{Hit, Ray},
 };
+use sha2::{Digest, Sha256};
 use source_formats::{
     gamefs::{GameFs, asset_relative},
     model::Model,
@@ -36,6 +37,7 @@ pub struct Asset {
     pub model: Model,
     materials: RwLock<Result<Vec<String>, String>>,
     material_bytes: AtomicUsize,
+    source_identity: Option<[u8; 32]>,
 }
 
 #[derive(Debug)]
@@ -71,6 +73,7 @@ impl Asset {
             model,
             materials: RwLock::new(materials),
             material_bytes,
+            source_identity: None,
         }
     }
 
@@ -130,6 +133,15 @@ fn read(fs: &GameFs, path: &str) -> Result<Vec<u8>, String> {
         .ok_or_else(|| format!("Model asset {path} was not found"))
 }
 
+pub fn source_identity(mdl: &[u8], vvd: &[u8], vtx: &[u8]) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    for bytes in [mdl, vvd, vtx] {
+        digest.update((bytes.len() as u64).to_le_bytes());
+        digest.update(bytes);
+    }
+    digest.finalize().into()
+}
+
 fn load(fs: &GameFs, path: &str, material_bindings: bool) -> Result<Asset, String> {
     let stem = path.strip_suffix(".mdl").unwrap();
     let mdl = read(fs, path)?;
@@ -142,7 +154,9 @@ fn load(fs: &GameFs, path: &str, material_bindings: bool) -> Result<Asset, Strin
     } else {
         Err("Flat editor guide does not request material bindings".into())
     };
-    Ok(Asset::new(path.into(), model, materials))
+    let mut asset = Asset::new(path.into(), model, materials);
+    asset.source_identity = Some(source_identity(&mdl, &vvd, &vtx));
+    Ok(asset)
 }
 
 fn resolve_materials(fs: &GameFs, model: &Model) -> Result<Vec<String>, String> {
@@ -191,6 +205,38 @@ pub struct MaterialReloadReport {
 }
 
 impl Library {
+    pub fn get_verified(
+        &mut self,
+        fs: &GameFs,
+        path: &str,
+        expected: [u8; 32],
+    ) -> Result<Arc<Asset>, String> {
+        let path = model_path(path)?;
+        if let Some(entry) = self.entries.get_mut(&path) {
+            let matches = entry
+                .result
+                .as_ref()
+                .is_ok_and(|asset| asset.source_identity == Some(expected));
+            if matches {
+                entry.material_bindings = false;
+            } else {
+                if entry
+                    .result
+                    .as_ref()
+                    .is_ok_and(|asset| Arc::strong_count(asset) != 1)
+                {
+                    return Err("A cached model with older bytes is still in use; Reload models and compile again before preparing details".into());
+                }
+                self.bytes -= self.entries.remove(&path).unwrap().bytes;
+            }
+        }
+        let asset = self.get(fs, &path)?;
+        if asset.source_identity != Some(expected) {
+            return Err("Model bytes changed during verified preview loading".into());
+        }
+        Ok(asset)
+    }
+
     pub fn get(&mut self, fs: &GameFs, path: &str) -> Result<Arc<Asset>, String> {
         self.get_with_materials(fs, path, true)
     }
@@ -405,6 +451,35 @@ pub fn scale(entity: &Entity) -> Result<f32, String> {
 }
 
 impl Instance {
+    pub fn compiled_detail(
+        asset: Arc<Asset>,
+        origin: [f32; 3],
+        angles: [f32; 3],
+    ) -> Result<Self, String> {
+        if !asset.model.header.is_static_prop() || asset.model.skins.is_empty() {
+            return Err("Compiled detail models require a static-prop asset with skin 0".into());
+        }
+        let origin = DVec3::from_array(origin.map(f64::from));
+        let angles = DVec3::from_array(angles.map(f64::from));
+        if !origin.is_finite() || !angles.is_finite() {
+            return Err("Compiled detail model transforms must be finite".into());
+        }
+        let radians = angles.map(|angle| angle.rem_euclid(360.0).to_radians());
+        Self {
+            id: ObjectId::Entity(0),
+            asset,
+            origin,
+            rotation: DQuat::from_euler(EulerRot::ZYX, radians.y, radians.x, radians.z),
+            scale: 1.0,
+            skin: 0,
+            body: 0,
+            tint: [255; 3],
+            appearance: source_formats::render_color::model_appearance(None, None, None)?,
+            helper_bounds: map_core::query::point_entity_bounds(origin),
+        }
+        .checked_bounds()
+    }
+
     pub fn new(entity: &Entity, asset: Arc<Asset>) -> Result<Self, String> {
         Self::with_appearance(entity, asset, true)
     }
@@ -509,14 +584,18 @@ impl Instance {
             helper_bounds: map_core::query::entity_bounds(entity)
                 .unwrap_or_else(|| map_core::query::point_entity_bounds(origin)),
         };
-        let (mins, maxs) = instance.bounds();
+        instance.checked_bounds()
+    }
+
+    fn checked_bounds(self) -> Result<Self, String> {
+        let (mins, maxs) = self.bounds();
         if !mins.is_finite()
             || !maxs.is_finite()
             || mins.abs().max_element().max(maxs.abs().max_element()) > 65536.0
         {
             return Err("Transformed model bounds must fit ±65536".into());
         }
-        Ok(instance)
+        Ok(self)
     }
 
     pub fn point(&self, point: [f32; 3]) -> DVec3 {

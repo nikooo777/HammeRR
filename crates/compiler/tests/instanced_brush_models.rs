@@ -181,6 +181,16 @@ fn child(bounds: &[Bounds], pivot: DVec3) -> Vmf {
     document.into_vmf()
 }
 
+fn set_model_class(entity: &mut Entity, classname: &str) {
+    entity.properties.set("classname", classname);
+    if classname == "func_wall" {
+        for key in ["Solidity", "StartDisabled", "InputFilter"] {
+            entity.properties.remove(key);
+        }
+        entity.properties.set("spawnflags", "0");
+    }
+}
+
 fn room() -> Vmf {
     let mut source = common::room();
     for solid in &mut source.world.solids {
@@ -471,8 +481,15 @@ fn source_initial_rotation_precedes_nested_helpers_and_matches_a_literal_bsp() {
 
 #[test]
 fn nested_compounds_match_literal_local_geometry_uvs_and_shared_lighting_consumers() {
+    for classname in ["func_brush", "func_wall"] {
+        check_nested_compounds(classname);
+    }
+}
+
+fn check_nested_compounds(classname: &str) {
     let (directory, game) = fixture();
-    let leaf = child(&SOURCE, PIVOT);
+    let mut leaf = child(&SOURCE, PIVOT);
+    set_model_class(&mut leaf.entities[0], classname);
     let leaf_bytes = write(directory.path(), "leaf.vmf", &leaf);
     let mut middle = Document::empty().into_vmf();
     instance(&mut middle, "leaf.vmf", "16 32 0", "0 90 0");
@@ -526,10 +543,18 @@ fn nested_compounds_match_literal_local_geometry_uvs_and_shared_lighting_consume
             pivot,
         );
         let actual = generated[index];
+        assert_eq!(actual.classname(), Some(classname));
         assert_eq!(prepared.root_entity(actual.id), Some(owners[index]));
         assert_eq!(actual.origin(), Some(pivot));
         assert_eq!(actual.properties.get("angles"), Some("0 0 0"));
-        assert_eq!(actual.properties.get("Solidity"), Some("0"));
+        assert_eq!(
+            actual.properties.get("Solidity"),
+            if classname == "func_brush" {
+                Some("0")
+            } else {
+                None
+            }
+        );
         assert_eq!(actual.solids.len(), 2);
         for (solid, source) in actual.solids.iter().zip(&leaf.entities[0].solids) {
             for (side, original) in solid.sides.iter().zip(&source.sides) {
@@ -546,6 +571,7 @@ fn nested_compounds_match_literal_local_geometry_uvs_and_shared_lighting_consume
         }
         flat.edit("literal side order and attached UVs", |tx| {
             let literal = tx.entity_mut(id)?;
+            set_model_class(literal, classname);
             for solid in &mut literal.solids {
                 let sides = solid.sides.clone();
                 solid.sides = NESTED_SIDE_ORDER.map(|side| sides[side].clone()).to_vec();
@@ -573,6 +599,16 @@ fn nested_compounds_match_literal_local_geometry_uvs_and_shared_lighting_consume
         flat = Document::new(literal);
     }
     let flat = flat.into_vmf();
+    if classname == "func_wall" {
+        let options = Options::default();
+        let output = compile(&parent, &game, &context, options);
+        let expected = compiler::compile_with_options(&flat, &game, options);
+        literal_bsp(
+            successful(&output),
+            successful(&expected),
+            "wall Fullbright",
+        );
+    }
     let mut direct = None;
     for bounces in [0, 1] {
         let options = Options {
@@ -715,7 +751,7 @@ fn nested_compounds_match_literal_local_geometry_uvs_and_shared_lighting_consume
         .unwrap()
         .entities
         .iter()
-        .find(|entity| entity.classname() == Some("func_brush"))
+        .find(|entity| entity.classname() == Some(classname))
         .unwrap();
     let pivot = mixed_point(PIVOT);
     assert!(actual.origin().unwrap().abs_diff_eq(pivot, 1e-9));
@@ -788,14 +824,21 @@ fn preserved(destination: &Path) {
 
 #[test]
 fn whole_model_region_selection_cannot_hide_source_intermediate_local_or_material_failures() {
+    for classname in ["func_brush", "func_wall"] {
+        check_whole_model_regions_and_failures(classname);
+    }
+}
+
+fn check_whole_model_regions_and_failures(classname: &str) {
     let (directory, game) = fixture();
-    let leaf = child(
+    let mut leaf = child(
         &[
             ([-192.0, -32.0, 32.0], [192.0, 32.0, 48.0]),
             ([-48.0, -16.0, 80.0], [48.0, 16.0, 96.0]),
         ],
         DVec3::new(-128.0, 0.0, 4.0),
     );
+    set_model_class(&mut leaf.entities[0], classname);
     write(directory.path(), "leaf.vmf", &leaf);
     let mut base = room();
     region(&mut base);
@@ -834,6 +877,7 @@ fn whole_model_region_selection_cannot_hide_source_intermediate_local_or_materia
         );
         let mut literal = flat.into_vmf();
         let model = entity(&mut literal, id);
+        set_model_class(model, classname);
         let mut axes = source_axes();
         axes[0].offset = (-10219.0 - 2.0 * shift) / 3.0;
         axes[1].offset = (479.0 + shift) / 3.0;
@@ -895,6 +939,7 @@ fn whole_model_region_selection_cannot_hide_source_intermediate_local_or_materia
         "missing",
     ] {
         let mut leaf = child(&[([32.0, -16.0, 32.0], [64.0, 16.0, 48.0])], DVec3::ZERO);
+        set_model_class(&mut leaf.entities[0], classname);
         let mut parent = room();
         region(&mut parent);
         let (owner, reason) = match case {
@@ -956,13 +1001,80 @@ fn whole_model_region_selection_cannot_hide_source_intermediate_local_or_materia
         assert!(!output.write(&destination).unwrap());
         preserved(&destination);
     }
+    if classname == "func_wall" {
+        std::fs::write(
+            directory.path().join("game/materials/test/cutout.vmt"),
+            "LightmappedGeneric { $basetexture test/white $alphatest 1 }",
+        )
+        .unwrap();
+        for (key, value, reason) in [
+            ("angles", Some("0 1 0"), "source angles must be zero"),
+            ("vrad_brush_cast_shadows", Some("1"), "must be neutral"),
+            ("Solidity", Some("0"), "property Solidity is unsupported"),
+            (
+                "origin",
+                None,
+                "explicit origin or one visible resolved origin brush",
+            ),
+            (
+                "material",
+                Some("test/cutout"),
+                "requires ordinary SOLID contents",
+            ),
+        ] {
+            let mut leaf = child(&SOURCE, PIVOT);
+            let model = &mut leaf.entities[0];
+            set_model_class(model, classname);
+            match (key, value) {
+                ("material", Some(material)) => {
+                    for side in model.solids.iter_mut().flat_map(|solid| &mut solid.sides) {
+                        side.material = material.into();
+                    }
+                }
+                (_, Some(value)) => model.properties.set(key, value),
+                (_, None) => {
+                    model.properties.remove(key);
+                }
+            }
+            let leaf_bytes = write(directory.path(), "leaf.vmf", &leaf);
+            let mut parent = room();
+            region(&mut parent);
+            let owner = instance(&mut parent, "leaf.vmf", "0 0 0", "0 0 0");
+            let before = parent.clone();
+            let context = saved(directory.path(), &parent);
+            let output = compile(
+                &parent,
+                &game,
+                &context,
+                Options {
+                    lighting: LightingMode::DirectLdrHdr,
+                    brush_texture_shadows: true,
+                    ..Default::default()
+                },
+            );
+            failed(&output, owner, reason);
+            assert!(!output.write(&destination).unwrap());
+            preserved(&destination);
+            assert_eq!(parent, before);
+            assert_eq!(
+                std::fs::read(directory.path().join("maps/leaf.vmf")).unwrap(),
+                leaf_bytes
+            );
+        }
+    }
 }
 
 #[test]
 fn prepared_publication_retains_child_and_classification_material_sources_after_output_drop() {
-    for change_child in [true, false] {
+    for (classname, change_child) in [
+        ("func_brush", true),
+        ("func_brush", false),
+        ("func_wall", true),
+        ("func_wall", false),
+    ] {
         let (directory, game) = fixture();
-        let leaf = child(&[([-32.0, -16.0, 32.0], [32.0, 16.0, 48.0])], PIVOT);
+        let mut leaf = child(&[([-32.0, -16.0, 32.0], [32.0, 16.0, 48.0])], PIVOT);
+        set_model_class(&mut leaf.entities[0], classname);
         write(directory.path(), "leaf.vmf", &leaf);
         let mut parent = room();
         instance(&mut parent, "leaf.vmf", "1024 1024 1024", "0 0 0");
@@ -999,7 +1111,11 @@ fn native_engine_compound_child_matches_literal_physics() {
         std::env::var_os("CSS_DIR").expect("set CSS_DIR for the explicit child-model native cook"),
     );
     assert!(install.join("bin/linux64/vphysics.so").is_file());
-    for rotated in [false, true] {
+    for (classname, rotated) in [
+        ("func_brush", false),
+        ("func_brush", true),
+        ("func_wall", false),
+    ] {
         let (directory, mut game) = fixture();
         game.base_dir = install.clone();
         let scripts = directory.path().join("game/scripts");
@@ -1022,6 +1138,7 @@ fn native_engine_compound_child_matches_literal_physics() {
         )
         .unwrap();
         let mut leaf = child(&SOURCE, DVec3::ZERO);
+        set_model_class(&mut leaf.entities[0], classname);
         let mut volume = Document::empty();
         volume
             .edit("native consumed pivot", |tx| {
@@ -1074,6 +1191,7 @@ fn native_engine_compound_child_matches_literal_physics() {
         );
         flat.edit("literal translated UVs and IDs", |tx| {
             let literal = tx.entity_mut(id)?;
+            set_model_class(literal, classname);
             let mut axes = source_axes();
             if rotated {
                 axes[0].axis = DVec3::new(-2.0, 1.0, 2.0) / 3.0;

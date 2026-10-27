@@ -21,7 +21,7 @@ Compile supported contents of saved child VMFs into a parent map.
 | Spotlight targets | Named static `info_target` endpoints in the same child, with Prefix names. |
 | Static props | Supported models, skins, transforms and scoped lighting origins. |
 | Player spawns | Supported CS:S spawn classes. |
-| Stationary brush models | `func_brush` with supported pivots and initial poses. |
+| Stationary brush models | `func_brush` with supported pivots and initial poses; ordinary opaque `func_wall` with zero source angles. |
 | Overlays | Supported unnamed projections bound to direct child world/detail or terrain faces. |
 | Cubemap samples | Supported positions and direct ordinary world/detail manual bindings. |
 | Visibility helpers and occluders | Checked static helper classes and supported geometry. |
@@ -120,6 +120,28 @@ Valid opaque catalog extensions remain editor-only. Catalogs are never copied in
 Malformed or duplicate catalogs, unsupported versions and unknown top-level map blocks reject. Nested and repeated references follow the same rules.
 Changing only a saved region or catalog extension still makes prior previews and builds stale because dependency checks retain the complete original child file.
 
+## Include a stationary wall
+
+1. Open the child VMF as a normal map and select its ordinary solid brushes.
+2. Click **Tie to entity…**, choose `func_wall`, then click **Tie selected brushes to entity**.
+3. Enable **Advanced properties**.
+4. Enter `origin` under **Property key** and a finite source pivot, such as `16 8 4`, under **Value**, then press Enter.
+5. Keep the render fields at their neutral defaults and **Name** and **Global Entity Name** empty.
+6. Save the child, return to the parent, and compile.
+
+The installed FGD has no origin field for `func_wall`; use the raw property or
+one visible resolved origin brush in the same entity. Compilation consumes that
+origin brush. Containing references can translate and rotate the whole model
+with its attached textures. The emitted entity keeps its `func_wall` class and
+zero source pose.
+
+Source `angles` must be absent or one canonical three-component zero value.
+Only ordinary opaque SOLID body materials are supported. Cutouts, nonneutral
+render or shadow fields, brush-only controls, `_minlight`, runtime names,
+parenting and connections reject. `vrad_brush_cast_shadows` must be absent or
+zero; global shadow requests remain available only to eligible `func_brush`
+models. Child wall geometry is unavailable in the parent reference preview.
+
 ## Rotate a stationary child brush
 
 1. Open the child VMF as a normal map.
@@ -142,7 +164,7 @@ The compiled body has zero entity angles; the child VMF keeps its authored value
 The foreground assembly combines initial pitch, yaw and roll with a containing reference rotation.
 
 Moving brush models, parenting and named brush models remain unsupported.
-Eligible child models with **Shadows → Yes** can cast [binary cutout shadows](brush-texture-shadows.md#cast-from-a-stationary-child-brush-model) when **Brush texture shadows** is enabled in a lit build. Without a global request, supported child cutouts affect only lit receivers in the same model. General translucent materials remain unsupported. Effective origins and initial poses use the same lowering described above.
+Eligible child `func_brush` models with **Shadows → Yes** can cast [binary cutout shadows](brush-texture-shadows.md#cast-from-a-stationary-child-brush-model) when **Brush texture shadows** is enabled in a lit build. Without a global request, supported child cutouts affect only lit receivers in the same model. General translucent materials remain unsupported. Effective origins and initial poses use the same lowering described above.
 The compiled entity does not retain the child's original angle value.
 The parent reference preview remains unavailable for child models.
 

@@ -752,9 +752,11 @@ impl<'a> Expansion<'a> {
         let Some(shape) = brush_models::shape(original).map_err(EditError::Invalid)? else {
             return Ok(());
         };
-        let rotation =
-            crate::brush_model_pose::initial_rotation("func_brush", &original.properties.0)
-                .map_err(EditError::Invalid)?;
+        let classname = brush_models::classname(original).ok_or_else(|| {
+            EditError::Invalid("Child brush model has no admitted classname".into())
+        })?;
+        let rotation = crate::brush_model_pose::initial_rotation(classname, &original.properties.0)
+            .map_err(EditError::Invalid)?;
         let lower_pose =
             matches!(self.purpose, PreparationPurpose::Compile(..)) && rotation.is_some();
         self.objects = self.objects.saturating_add(1 + shape.brushes);
@@ -830,7 +832,7 @@ impl<'a> Expansion<'a> {
         } else {
             None
         };
-        let mut entity = Entity::new(tx.new_object_id()?, "func_brush");
+        let mut entity = Entity::new(tx.new_object_id()?, classname);
         entity.properties = original.properties.clone();
         if let Some(origins) = &origins
             && !origins.volumes.is_empty()
@@ -1352,8 +1354,14 @@ mod tests {
 
     #[test]
     fn compound_model_reserves_entity_solids_sides_and_every_pose_before_geometry() {
+        for classname in ["func_brush", "func_wall"] {
+            check_compound_model_budgets(classname);
+        }
+    }
+
+    fn check_compound_model_budgets(classname: &str) {
         let (_directory, vmf, mut helper, source) = fixture();
-        helper.properties.set("classname", "func_brush");
+        helper.properties.set("classname", classname);
         helper.properties.set("origin", "0 0 0");
         let mut second = helper.solids[0].clone();
         second.id += 10_000;
@@ -1434,7 +1442,7 @@ mod tests {
             .vmf()
             .entities
             .iter()
-            .find(|entity| entity.classname() == Some("func_brush"))
+            .find(|entity| entity.classname() == Some(classname))
             .unwrap();
         assert_eq!(generated.solids.len(), 2);
         assert!(generated.properties.get("angles").is_none());
@@ -1442,10 +1450,16 @@ mod tests {
 
     #[test]
     fn consumed_origins_keep_source_budgets_and_material_owner_before_cloning() {
+        for classname in ["func_brush", "func_wall"] {
+            check_consumed_origin_budgets(classname);
+        }
+    }
+
+    fn check_consumed_origin_budgets(classname: &str) {
         use source_formats::gamefs::{Mount, MountedPath};
 
         let (directory, vmf, mut helper, source) = fixture();
-        helper.properties.set("classname", "func_brush");
+        helper.properties.set("classname", classname);
         let mut origin = helper.solids[0].clone();
         origin.id += 10_000;
         for side in &mut origin.sides {
@@ -1557,7 +1571,7 @@ mod tests {
             .vmf()
             .entities
             .iter()
-            .find(|entity| entity.classname() == Some("func_brush"))
+            .find(|entity| entity.classname() == Some(classname))
             .unwrap();
         assert_eq!(generated.origin(), Some(DVec3::new(0.0, 0.0, -8.0)));
         assert_eq!(generated.solids.len(), 1);

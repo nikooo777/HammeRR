@@ -13,9 +13,15 @@ pub(crate) struct Shape {
 }
 
 pub(super) fn is_model(entity: &Entity) -> bool {
-    entity
-        .classname()
-        .is_some_and(|class| class.eq_ignore_ascii_case("func_brush"))
+    classname(entity).is_some()
+}
+
+pub(super) fn classname(entity: &Entity) -> Option<&'static str> {
+    match entity.classname() {
+        Some(class) if class.eq_ignore_ascii_case("func_brush") => Some("func_brush"),
+        Some(class) if class.eq_ignore_ascii_case("func_wall") => Some("func_wall"),
+        _ => None,
+    }
 }
 
 pub(crate) fn shape(entity: &Entity) -> Result<Option<Shape>, String> {
@@ -80,18 +86,28 @@ fn zero_angles(raw: &str) -> Result<(), String> {
 }
 
 pub(super) fn admit(entity: &Entity) -> Result<(), String> {
-    admit_fields(entity, true, false)?;
+    let classname = classname(entity)
+        .ok_or("Child brush model requires canonical classname func_brush or func_wall")?;
+    admit_fields(entity, classname, classname == "func_brush", false)?;
     if shape(entity)?.is_some() {
-        crate::brush_model_pose::initial_rotation("func_brush", &entity.properties.0)?;
+        crate::brush_model_pose::initial_rotation(classname, &entity.properties.0)?;
     }
     Ok(())
 }
 
 pub(crate) fn admit_stationary(entity: &Entity, rotation: bool) -> Result<(), String> {
-    admit_fields(entity, rotation, true)
+    if entity.classname() != Some("func_brush") {
+        return Err("Child brush model requires canonical classname func_brush".into());
+    }
+    admit_fields(entity, "func_brush", rotation, true)
 }
 
-fn admit_fields(entity: &Entity, rotation: bool, require_origin: bool) -> Result<(), String> {
+fn admit_fields(
+    entity: &Entity,
+    classname: &str,
+    rotation: bool,
+    require_origin: bool,
+) -> Result<(), String> {
     if shape(entity)?.is_none() {
         return Ok(());
     }
@@ -108,19 +124,13 @@ fn admit_fields(entity: &Entity, rotation: bool, require_origin: bool) -> Result
         "origin",
         "angles",
         "spawnflags",
-        "Solidity",
-        "StartDisabled",
-        "solidbsp",
-        "invert_exclusion",
         "vrad_brush_cast_shadows",
-        "InputFilter",
         "renderfx",
         "rendermode",
         "disableshadows",
         "disablereceiveshadows",
         "renderamt",
         "rendercolor",
-        "excludednpc",
         "targetname",
         "target",
         "parentname",
@@ -131,27 +141,41 @@ fn admit_fields(entity: &Entity, rotation: bool, require_origin: bool) -> Result
         "mindxlevel",
         "maxdxlevel",
     ];
+    let brush_fields = [
+        "Solidity",
+        "StartDisabled",
+        "solidbsp",
+        "invert_exclusion",
+        "InputFilter",
+        "excludednpc",
+    ];
+    let class_fields = if classname == "func_brush" {
+        brush_fields.as_slice()
+    } else {
+        &[]
+    };
     let mut seen = 0_u32;
     for (key, value) in entity.properties.iter() {
         field(key)?;
         field(value)?;
-        let index = fields
+        let (index, canonical) = fields
             .iter()
-            .position(|field| field.eq_ignore_ascii_case(key))
+            .chain(class_fields)
+            .enumerate()
+            .find(|(_, field)| field.eq_ignore_ascii_case(key))
             .ok_or_else(|| format!("Child brush model property {key} is unsupported"))?;
         let bit = 1 << index;
         if seen & bit != 0 {
             return Err(format!("Child brush model repeats property {key}"));
         }
         seen |= bit;
-        if key != fields[index] {
+        if key != *canonical {
             return Err(format!(
-                "Child brush model requires canonical property {}",
-                fields[index]
+                "Child brush model requires canonical property {canonical}"
             ));
         }
         let neutral = match key {
-            "classname" => value == "func_brush",
+            "classname" => value == classname,
             "origin" => true,
             "angles" => {
                 if !rotation {
@@ -159,7 +183,10 @@ fn admit_fields(entity: &Entity, rotation: bool, require_origin: bool) -> Result
                 }
                 true
             }
-            "spawnflags" => matches!(value.trim().parse::<u32>(), Ok(0 | 2)),
+            "spawnflags" if classname == "func_brush" => {
+                matches!(value.trim().parse::<u32>(), Ok(0 | 2))
+            }
+            "spawnflags" => value.trim().parse::<u32>() == Ok(0),
             "Solidity"
             | "StartDisabled"
             | "solidbsp"
@@ -171,7 +198,10 @@ fn admit_fields(entity: &Entity, rotation: bool, require_origin: bool) -> Result
             | "disablereceiveshadows"
             | "mindxlevel"
             | "maxdxlevel" => value.trim().parse::<u32>() == Ok(0),
-            "vrad_brush_cast_shadows" => matches!(value.trim().parse::<u32>(), Ok(0 | 1)),
+            "vrad_brush_cast_shadows" if classname == "func_brush" => {
+                matches!(value.trim().parse::<u32>(), Ok(0 | 1))
+            }
+            "vrad_brush_cast_shadows" => value.trim().parse::<u32>() == Ok(0),
             "renderamt" => value.trim().parse::<u32>() == Ok(255),
             "rendercolor" => vector(entity, "rendercolor")? == DVec3::splat(255.0),
             "excludednpc" | "targetname" | "target" | "parentname" | "name" | "globalname"
@@ -182,8 +212,10 @@ fn admit_fields(entity: &Entity, rotation: bool, require_origin: bool) -> Result
             return Err(format!("Child brush model property {key} must be neutral"));
         }
     }
-    if entity.properties.get("classname") != Some("func_brush") {
-        return Err("Child brush model requires canonical classname func_brush".into());
+    if entity.properties.get("classname") != Some(classname) {
+        return Err(format!(
+            "Child brush model requires canonical classname {classname}"
+        ));
     }
     if require_origin || entity.properties.get("origin").is_some() {
         origin(entity)?;
@@ -335,6 +367,7 @@ fn validate_solid_materials(
     sources: &BuildMaterialSources,
     checked_cutouts: &mut std::collections::BTreeSet<usize>,
 ) -> Result<(), String> {
+    let brush_texture_shadows = brush_texture_shadows && entity.classname() == Some("func_brush");
     for side in &solid.sides {
         control.checkpoint()?;
         let index = materials.load(&side.material)?;
@@ -493,6 +526,93 @@ mod tests {
             invalid.properties.set(key, value);
             assert!(admit_stationary(&invalid, true).is_err(), "{key}");
         }
+    }
+
+    #[test]
+    fn walls_share_only_neutral_fields_and_keep_zero_source_angles_and_no_global_request() {
+        let mut entity = model();
+        entity.properties.set("classname", "func_wall");
+        let original = entity.clone();
+        admit(&entity).unwrap();
+        assert_eq!(entity, original);
+        for (key, value) in [
+            ("spawnflags", "0"),
+            ("vrad_brush_cast_shadows", "0"),
+            ("renderfx", "0"),
+            ("rendermode", "0"),
+            ("disableshadows", "0"),
+            ("disablereceiveshadows", "0"),
+            ("renderamt", "255"),
+            ("rendercolor", "255 255 255"),
+            ("mindxlevel", "0"),
+            ("maxdxlevel", "0"),
+            ("targetname", ""),
+            ("target", ""),
+            ("parentname", ""),
+            ("name", ""),
+            ("globalname", ""),
+            ("killtarget", ""),
+            ("lightingorigin", ""),
+            ("angles", "-0 +0.0 0e-300"),
+        ] {
+            entity.properties.set(key, value);
+        }
+        let original = entity.clone();
+        admit(&entity).unwrap();
+        assert_eq!(entity, original);
+        for rotation in [false, true] {
+            assert!(
+                admit_stationary(&entity, rotation)
+                    .unwrap_err()
+                    .contains("canonical classname func_brush")
+            );
+        }
+        for (key, value) in [
+            ("classname", "FUNC_WALL"),
+            ("angles", "0 1 0"),
+            ("angles", "1e-4000 0 0"),
+            ("angles", "0 0"),
+            ("angle", "0"),
+            ("Angles", "0 0 0"),
+            ("spawnflags", "2"),
+            ("vrad_brush_cast_shadows", "1"),
+            ("Solidity", "0"),
+            ("StartDisabled", "0"),
+            ("solidbsp", "0"),
+            ("invert_exclusion", "0"),
+            ("InputFilter", "0"),
+            ("excludednpc", ""),
+            ("_minlight", "0"),
+            ("renderfx", "1"),
+            ("rendermode", "1"),
+            ("disableshadows", "1"),
+            ("disablereceiveshadows", "1"),
+            ("renderamt", "254"),
+            ("rendercolor", "255 255 0"),
+            ("mindxlevel", "1"),
+            ("maxdxlevel", "1"),
+            ("targetname", " "),
+            ("parentname", "parent"),
+            ("origin", "NaN 0 0"),
+            ("origin", "16385 0 0"),
+        ] {
+            let mut invalid = entity.clone();
+            if key == "Angles" {
+                invalid.properties.remove("angles");
+                invalid.properties.0.push((key.into(), value.into()));
+            } else {
+                invalid.properties.set(key, value);
+            }
+            assert!(admit(&invalid).is_err(), "{key}={value}");
+        }
+        entity.properties.0.push(("angles".into(), "0 0 0".into()));
+        assert!(admit(&entity).unwrap_err().contains("repeats property"));
+        entity = original;
+        entity.connections = Some(vec![source_formats::vmf::Connection {
+            output: "OnUser1".into(),
+            value: "other,Kill,,0,-1".into(),
+        }]);
+        assert!(admit(&entity).unwrap_err().contains("connections"));
     }
 
     #[test]

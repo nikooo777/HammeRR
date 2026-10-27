@@ -5,29 +5,43 @@ use std::collections::BTreeMap;
 #[test]
 #[ignore = "requires installed CS:S FGD chain"]
 fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_preview() {
-    for actor in [Actor::User, Actor::Agent] {
+    for (actor, classname) in [
+        (Actor::User, "func_brush"),
+        (Actor::Agent, "func_brush"),
+        (Actor::User, "func_wall"),
+        (Actor::Agent, "func_wall"),
+    ] {
         let (_directory, game, source, child) = crate::test_assets::instance_map(false);
         let fgd = crate::steam::find_css_fgd(&game).expect("installed CS:S FGD chain is required");
         let definitions = Catalog::load(&fgd).unwrap();
-        let class = definitions.class("func_brush").unwrap();
-        assert_eq!(class.property("origin").unwrap().label, "Origin (X Y Z)");
-        assert!(class.property("origin").unwrap().default.is_none());
-        assert!(!class.property("origin").unwrap().read_only);
+        let class = definitions.class(classname).unwrap();
+        if classname == "func_brush" {
+            assert_eq!(class.property("origin").unwrap().label, "Origin (X Y Z)");
+            assert!(class.property("origin").unwrap().default.is_none());
+            assert!(!class.property("origin").unwrap().read_only);
+        } else {
+            assert!(class.property("origin").is_none());
+        }
         assert!(class.property("angles").is_none());
-        let shadows = class.property("vrad_brush_cast_shadows").unwrap();
-        assert_eq!(shadows.label, "Shadows");
-        assert_eq!(shadows.default.as_deref(), Some("0"));
-        assert!(!shadows.read_only);
-        assert_eq!(
-            shadows
-                .choices
-                .iter()
-                .map(|choice| (choice.value.as_str(), choice.label.as_str()))
-                .collect::<Vec<_>>(),
-            [("0", "No"), ("1", "Yes")]
-        );
+        if classname == "func_brush" {
+            let shadows = class.property("vrad_brush_cast_shadows").unwrap();
+            assert_eq!(shadows.label, "Shadows");
+            assert_eq!(shadows.default.as_deref(), Some("0"));
+            assert!(!shadows.read_only);
+            assert_eq!(
+                shadows
+                    .choices
+                    .iter()
+                    .map(|choice| (choice.value.as_str(), choice.label.as_str()))
+                    .collect::<Vec<_>>(),
+                [("0", "No"), ("1", "Yes")]
+            );
+        } else {
+            assert!(class.property("vrad_brush_cast_shadows").is_none());
+            assert!(class.property("_minlight").unwrap().default.is_none());
+        }
         let defaults = class.defaults();
-        for (key, value) in [
+        let brush_defaults = [
             ("spawnflags", "2"),
             ("Solidity", "0"),
             ("StartDisabled", "0"),
@@ -35,6 +49,19 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
             ("invert_exclusion", "0"),
             ("vrad_brush_cast_shadows", "0"),
             ("InputFilter", "0"),
+            ("excludednpc", ""),
+        ];
+        for (key, value) in brush_defaults {
+            assert_eq!(
+                defaults.get(key).map(String::as_str),
+                if classname == "func_brush" {
+                    Some(value)
+                } else {
+                    None
+                }
+            );
+        }
+        for (key, value) in [
             ("renderfx", "0"),
             ("rendermode", "0"),
             ("disableshadows", "0"),
@@ -42,7 +69,6 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
             ("renderamt", "255"),
             ("rendercolor", "255 255 255"),
             ("globalname", ""),
-            ("excludednpc", ""),
         ] {
             assert_eq!(defaults.get(key).map(String::as_str), Some(value));
         }
@@ -62,7 +88,7 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
             );
         }
         let ObjectId::Entity(model) = session
-            .tie_to_entity(actor, &blocks, "func_brush", BTreeMap::new())
+            .tie_to_entity(actor, &blocks, classname, BTreeMap::new())
             .unwrap()
         else {
             unreachable!()
@@ -77,27 +103,35 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
         session
             .set_entity_properties(actor, model, &[("origin".into(), Some("16 8 4".into()))])
             .unwrap();
+        let angles = if classname == "func_brush" {
+            "15 35 10"
+        } else {
+            "0 0 0"
+        };
+        let shadows = if classname == "func_brush" { "1" } else { "0" };
         session
-            .set_entity_properties(actor, model, &[("angles".into(), Some("15 35 10".into()))])
+            .set_entity_properties(actor, model, &[("angles".into(), Some(angles.into()))])
             .unwrap();
         session
             .set_entity_properties(
                 actor,
                 model,
-                &[("vrad_brush_cast_shadows".into(), Some("1".into()))],
+                &[("vrad_brush_cast_shadows".into(), Some(shadows.into()))],
             )
             .unwrap();
         let authored = session.document().vmf().clone();
         let history = session.history_snapshot();
-        assert!(
-            session
-                .set_entity_properties(
-                    actor,
-                    model,
-                    &[("vrad_brush_cast_shadows".into(), Some("2".into()))]
-                )
-                .is_err()
-        );
+        if classname == "func_brush" {
+            assert!(
+                session
+                    .set_entity_properties(
+                        actor,
+                        model,
+                        &[("vrad_brush_cast_shadows".into(), Some("2".into()))]
+                    )
+                    .is_err()
+            );
+        }
         assert_eq!(session.document().vmf(), &authored);
         assert_eq!(session.history_snapshot(), history);
         session.save(actor, None).unwrap();
@@ -120,7 +154,7 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
                 .unwrap()
                 .properties
                 .get("angles"),
-            Some("15 35 10")
+            Some(angles)
         );
         assert_eq!(
             session
@@ -129,7 +163,7 @@ fn installed_fgd_brush_models_keep_shared_authoring_source_identity_and_honest_p
                 .unwrap()
                 .properties
                 .get("vrad_brush_cast_shadows"),
-            Some("1")
+            Some(shadows)
         );
         session.open(actor, &source, false).unwrap();
         let owner = ObjectId::Entity(session.document().vmf().entities.last().unwrap().id);

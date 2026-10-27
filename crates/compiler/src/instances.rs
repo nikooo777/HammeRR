@@ -689,7 +689,7 @@ fn child_admission(
             .is_some_and(|class| class.eq_ignore_ascii_case("func_detail"))
         {
             return Err(format!(
-                "Child entity {} ({}) is unsupported; only world/func_detail brushes, bounded unnamed ordinary func_brush models, unnamed static point/spot/environment lights and static LDR fog controllers, bounded static props, scoped info_lighting and info_target helpers, neutral player spawns, consumed func_viscluster volumes, unnamed stationary func_occluder helpers, bounded unnamed info_overlay projections, bounded env_cubemap samples and bounded func_instance helpers are supported",
+                "Child entity {} ({}) is unsupported; only world/func_detail brushes, bounded unnamed ordinary func_brush and zero-source-angle func_wall models, unnamed static point/spot/environment lights and static LDR fog controllers, bounded static props, scoped info_lighting and info_target helpers, neutral player spawns, consumed func_viscluster volumes, unnamed stationary func_occluder helpers, bounded unnamed info_overlay projections, bounded env_cubemap samples and bounded func_instance helpers are supported",
                 entity.id,
                 entity.classname().unwrap_or("missing class")
             ));

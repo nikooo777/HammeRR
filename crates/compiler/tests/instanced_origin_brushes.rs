@@ -455,8 +455,21 @@ fn projected(row: [f32; 4], point: DVec3) -> f64 {
 
 #[test]
 fn asymmetric_volume_resolves_before_rotation_and_region_uses_the_resolved_pivot() {
+    for classname in ["func_brush", "func_wall"] {
+        check_asymmetric_volume(classname);
+    }
+}
+
+fn check_asymmetric_volume(classname: &str) {
     let (directory, game) = fixture();
     let mut leaf = child(Some(DVec3::new(0.0, -64.0, 0.0)));
+    leaf.entities[0].properties.set("classname", classname);
+    if classname == "func_wall" {
+        for key in ["Solidity", "StartDisabled", "InputFilter"] {
+            leaf.entities[0].properties.remove(key);
+        }
+        leaf.entities[0].properties.set("spawnflags", "0");
+    }
     leaf.entities[0].solids.pop();
     prism(&mut leaf.entities[0].solids[1]);
     let source = write(directory.path(), "leaf.vmf", &leaf);
@@ -470,6 +483,7 @@ fn asymmetric_volume_resolves_before_rotation_and_region_uses_the_resolved_pivot
         .iter()
         .find(|entity| prepared.root_entity(entity.id) == Some(owner))
         .unwrap();
+    assert_eq!(generated.classname(), Some(classname));
     let root_two = 2.0_f64.sqrt();
     let pivot = DVec3::new(64.0 + root_two, -32.0 + 3.0 * root_two, 65.0);
     let late_center = DVec3::new(64.0 + root_two, -32.0 + 2.0 * root_two, 65.0);

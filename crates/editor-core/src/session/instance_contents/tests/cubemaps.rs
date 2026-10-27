@@ -163,11 +163,6 @@ fn assert_sample_only(session: &mut Session, actor: Actor, owner: ObjectId, repo
             .contains("no visible geometry")
     );
     assert_eq!(session.camera(), camera);
-    let bindings = session
-        .get_cubemap_bindings(crate::session::cubemap_bindings::Query::default())
-        .unwrap();
-    assert_eq!(bindings["available"], false);
-    assert_eq!(bindings["assignments"], json!([]));
 }
 
 #[test]
@@ -201,6 +196,12 @@ fn fgd_authored_cubemap_samples_share_counts_empty_preview_and_source_custody_fo
         );
         let report = refresh(session, actor);
         assert_sample_only(session, actor, fixture.owner, &report);
+        let bindings = session
+            .get_cubemap_bindings(crate::session::cubemap_bindings::Query::default())
+            .unwrap();
+        assert_eq!(bindings["available"], true);
+        assert_eq!(bindings["total"], 0);
+        assert_eq!(bindings["assignments"], json!([]));
         assert_eq!(report["owners"][0]["file"], "child.vmf");
         assert_eq!(report["stats"]["dependencies"][0]["path"], "child.vmf");
         assert_eq!(report["stats"]["dependencies"][0]["bytes"], child.len());
@@ -334,6 +335,17 @@ fn cubemap_counts_precede_regions_and_failed_or_cancelled_refresh_clears_preview
         std::fs::write(&fixture.child, child.write(&Default::default())).unwrap();
         let report = refresh(session, actor);
         assert_sample_only(session, actor, fixture.owner, &report);
+        let bindings = session
+            .get_cubemap_bindings(crate::session::cubemap_bindings::Query::default())
+            .unwrap();
+        assert_eq!(bindings["available"], false);
+        assert_eq!(bindings["total"], 0);
+        assert_eq!(bindings["assignments"], json!([]));
+        assert!(
+            bindings["diagnostics"]
+                .to_string()
+                .contains("size 256 requires a larger verified viewport")
+        );
 
         let mut child = Vmf::parse(&String::from_utf8(original.clone()).unwrap()).unwrap();
         let hidden = child

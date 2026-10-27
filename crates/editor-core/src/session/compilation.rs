@@ -1041,6 +1041,9 @@ impl Session {
             );
         }
         if options != self.compilation.options {
+            if options.brush_texture_shadows != self.compilation.options.brush_texture_shadows {
+                self.cubemap_bindings.texture_shadows_changed();
+            }
             self.compilation.options = options;
             self.compilation.recipes.set_active(None);
             self.compilation.recipes.changed_local();

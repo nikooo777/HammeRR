@@ -185,6 +185,39 @@ fn cubemap_window_labels_child_choices_and_invalidates_drafts_after_source_drift
             .contains(&format!("child helper {}", fixture.child_helper))
     );
     assert!(row.choice.contains("middle.vmf") && row.choice.contains("leaf.vmf"));
+    let cached = controller.form.borrow().report.clone();
+    let scene = lock(&shared).scene_serial();
+    for enabled in [true, false] {
+        lock(&shared)
+            .update_build_settings(
+                Actor::User,
+                editor_core::session::compilation::BuildSettingsUpdate {
+                    lighting: Some("direct_ldr"),
+                    brush_texture_shadows: Some(enabled),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        controller.refresh(&lock(&shared));
+        assert!(!controller.window.get_ready());
+        assert!(!controller.window.get_can_review());
+        assert!(
+            controller
+                .window
+                .get_inspection_label()
+                .contains("Refresh assignments")
+        );
+        assert_eq!(controller.form.borrow().report, cached);
+    }
+    assert_eq!(lock(&shared).scene_serial(), scene);
+    controller.window.invoke_refresh();
+    assert!(!controller.window.get_ready());
+    controller.window.invoke_clear_bindings();
+    assert!(
+        controller.window.get_ready(),
+        "{}",
+        controller.window.get_message()
+    );
     let token = lock(&shared).cubemap_binding_state()["draft"]["token"]
         .as_u64()
         .unwrap();

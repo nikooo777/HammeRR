@@ -112,15 +112,22 @@ pub fn inspect_root_cubemap_bindings(
     }
     let mut report = Report::default();
     let context = CompileContext::new(query.namespace.as_deref().unwrap_or("untitled"))?;
-    let instances = crate::instances::resolve_for_compile(vmf, source, fs, control, &mut report)
-        .map_err(|error| error.message)?;
+    let instances = crate::instances::resolve_for_compile_with_texture_shadows(
+        vmf,
+        source,
+        fs,
+        query.brush_texture_shadows,
+        control,
+        &mut report,
+    )
+    .map_err(|error| error.message)?;
     let materials = instances
         .material_sources
         .clone()
         .unwrap_or_else(BuildMaterialSources::without_retained_payloads);
     if instances.has_brush_models() {
         instances
-            .validate_brush_model_materials(fs, &materials, control, false)
+            .validate_brush_model_materials(fs, &materials, control, query.brush_texture_shadows)
             .map_err(|error| error.message)?;
     }
     let assembled = instances.compilation_vmf()?;

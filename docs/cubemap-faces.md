@@ -26,3 +26,4 @@ Removing a root binding may select a child sample.
 - Child faces and helpers are read-only from the parent map. Open the child source to edit its own faces, including when it has nested references, then save it.
 - Changes to referenced sources or material sources invalidate the draft. With visible instances, this also covers the saved parent. Refreshing an identical assignment does not make an old draft valid; preview it again.
 - Unsupported or unavailable instance content rejects inspection and drafts without changing the map.
+- Inspection uses the current **Brush texture shadows** build setting, including admitted child brush models with **Shadows** set to **Yes** and supported binary cutout materials. Changing this setting invalidates cached reports and drafts, including when it is changed back; refresh and preview again. This does not bake shadows or capture reflections.

@@ -337,7 +337,7 @@ Reflection capture also needs a ready `get_native_capture_runtime` result.
 See [Compile and play](compile-and-play.md).
 
 `get_cubemap_bindings` lists root-authored faces with sample choices from the complete assembled map. Child choices use `helper:null` and a source-qualified `helper_source` occurrence.
-Use `set_cubemap_bindings` to preview and apply root-face bindings to root helpers. Save maps with visible references first. Changed referenced files or consumed materials invalidate drafts.
+Use `set_cubemap_bindings` to preview and apply root-face bindings to root helpers. Save maps with visible references first. Changed referenced files or consumed materials invalidate drafts. Inspection follows `brush_texture_shadows`; `state.brush_texture_shadows` reports its value. Changing it invalidates reports and drafts, including when restored. Refresh and preview again.
 
 For [final detail placements](compiled-details.md), call `set_compiled_details`
 with `action:"prepare"`. Set `background:true` to read the owned BSP in a worker.

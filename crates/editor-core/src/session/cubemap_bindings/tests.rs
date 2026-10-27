@@ -197,6 +197,90 @@ fn row_for_face(report: &Value, face: FaceId) -> &Value {
 }
 
 #[test]
+fn texture_shadow_settings_admit_child_cutout_casters_and_monotonically_stale_bindings() {
+    for actor in [Actor::User, Actor::Agent] {
+        let mut opaque = test_support::instance_fixture();
+        let session = &mut opaque.session;
+        let report = session.get_cubemap_bindings(Query::default()).unwrap();
+        let stamp = report["report_snapshot"].as_str().unwrap();
+        let source = session.document.vmf().clone();
+        let history = session.history_snapshot();
+        let scene = session.scene_serial();
+        let draft = preview(session, actor, opaque.far, opaque.face, Operation::Bind);
+        let token = draft["draft"]["token"].as_u64().unwrap();
+        for enabled in [true, false] {
+            session
+                .update_build_settings(
+                    actor,
+                    super::super::compilation::BuildSettingsUpdate {
+                        lighting: Some("direct_ldr"),
+                        brush_texture_shadows: Some(enabled),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            assert_ne!(stamp, session.cubemap_binding_report_stamp());
+            assert_eq!(session.cubemap_binding_state()["draft"]["valid"], false);
+            assert!(session.review_cubemap_bindings(actor, token).is_err());
+            assert!(session.apply_cubemap_bindings(actor, token).is_err());
+        }
+        assert_eq!(session.document.vmf(), &source);
+        assert_eq!(session.history_snapshot(), history);
+        assert_eq!(session.scene_serial(), scene);
+        session.cancel_cubemap_bindings(actor, token).unwrap();
+
+        let mut fixture = test_support::cutout_instance_fixture();
+        let session = &mut fixture.session;
+        let before = session.document.vmf().clone();
+        let history = session.document.undo_labels().count();
+        let unavailable = session.get_cubemap_bindings(Query::default()).unwrap();
+        assert_eq!(unavailable["available"], false, "{unavailable}");
+        assert_eq!(unavailable["assignments"], json!([]));
+        assert!(
+            unavailable["diagnostics"][0]
+                .as_str()
+                .unwrap()
+                .contains("Child brush-model material"),
+            "{unavailable}"
+        );
+        session
+            .update_build_settings(
+                actor,
+                super::super::compilation::BuildSettingsUpdate {
+                    lighting: Some("direct_ldr"),
+                    brush_texture_shadows: Some(true),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let report = session.get_cubemap_bindings(Query::default()).unwrap();
+        assert_eq!(report["available"], true, "{report}");
+        assert_eq!(report["state"]["brush_texture_shadows"], true);
+        assert_eq!(
+            row_for_face(&report, fixture.face)["helper_source"]["scope"],
+            "instance"
+        );
+        let draft = preview(session, actor, fixture.far, fixture.face, Operation::Bind);
+        session
+            .apply_cubemap_bindings(actor, draft["draft"]["token"].as_u64().unwrap())
+            .unwrap();
+        assert_eq!(session.document.undo_labels().count(), history + 1);
+        session.undo(actor).unwrap();
+        assert_eq!(session.document.vmf(), &before);
+        let draft = preview(session, actor, fixture.far, fixture.face, Operation::Bind);
+        let token = draft["draft"]["token"].as_u64().unwrap();
+        let path = fixture.assets.path().join("materials/test/cutout.vtf");
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes[83] = 255;
+        std::fs::write(path, bytes).unwrap();
+        assert_eq!(session.cubemap_binding_state()["draft"]["valid"], false);
+        assert!(session.apply_cubemap_bindings(actor, token).is_err());
+        session.cancel_cubemap_bindings(actor, token).unwrap();
+        assert_eq!(session.document.vmf(), &before);
+    }
+}
+
+#[test]
 fn original_instance_and_material_sources_stay_frozen_across_refresh_review_and_apply() {
     for actor in [Actor::User, Actor::Agent] {
         for name in [

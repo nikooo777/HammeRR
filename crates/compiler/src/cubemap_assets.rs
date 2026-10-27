@@ -162,6 +162,7 @@ pub struct CubemapAssetManifest {
 
 #[derive(Debug, Clone, Default)]
 pub struct CubemapBindingQuery {
+    pub brush_texture_shadows: bool,
     pub helper_id: Option<u32>,
     pub offset: usize,
     pub limit: usize,

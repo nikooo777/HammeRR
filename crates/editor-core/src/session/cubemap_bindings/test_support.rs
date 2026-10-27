@@ -147,3 +147,37 @@ pub fn instance_fixture() -> InstanceFixture {
         child_helper,
     }
 }
+
+pub fn cutout_instance_fixture() -> InstanceFixture {
+    let fixture = instance_fixture();
+    std::fs::write(
+        fixture.assets.path().join("materials/test/cutout.vmt"),
+        "LightmappedGeneric { $basetexture test/cutout $alphatest 1 }",
+    )
+    .unwrap();
+    let mut texture =
+        std::fs::read(fixture.assets.path().join("materials/test/checker.vtf")).unwrap();
+    texture[20..24].copy_from_slice(&0x1000_u32.to_le_bytes());
+    for (index, pixel) in texture[80..].as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        pixel[3] = if index % 2 == 0 { 0 } else { 255 };
+    }
+    std::fs::write(
+        fixture.assets.path().join("materials/test/cutout.vtf"),
+        texture,
+    )
+    .unwrap();
+    let path = fixture.directory.path().join("leaf.vmf");
+    let mut child =
+        source_formats::vmf::Vmf::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let id = child.object_ids().chain(child.side_ids()).max().unwrap() + 1;
+    let mut model = source_formats::vmf::Entity::new(id, "func_brush");
+    model.properties.set("origin", "272 0 8");
+    model.properties.set("vrad_brush_cast_shadows", "1");
+    model.solids = std::mem::take(&mut child.world.solids);
+    for side in model.solids.iter_mut().flat_map(|solid| &mut solid.sides) {
+        side.material = "test/cutout".into();
+    }
+    child.entities.push(model);
+    std::fs::write(path, child.write(&Default::default())).unwrap();
+    fixture
+}

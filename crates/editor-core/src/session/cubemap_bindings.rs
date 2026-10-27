@@ -61,6 +61,11 @@ impl State {
     pub(super) fn context_changed(&mut self) {
         self.context_serial += 1;
     }
+
+    pub(super) fn texture_shadows_changed(&mut self) {
+        self.context_changed();
+        self.inspection_serial.set(self.inspection_serial.get() + 1);
+    }
 }
 
 struct Draft {
@@ -238,11 +243,12 @@ fn report_json(vmf: &Vmf, inspection: &CubemapBindingInspection) -> Value {
 impl Session {
     fn cubemap_binding_source(&self) -> String {
         format!(
-            "{}:{}:{}:{}:{}:{}:{:?}:{:?}",
+            "{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}",
             self.document_generation,
             self.document.revision(),
             self.build_content_epoch(),
             self.cubemap_bindings.context_serial,
+            self.compile_options().brush_texture_shadows,
             self.cubemap_binding_namespace()
                 .unwrap_or_else(|error| error),
             self.face_mode,
@@ -267,10 +273,11 @@ impl Session {
 
     pub fn cubemap_binding_report_stamp(&self) -> String {
         format!(
-            "{}:{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}:{}",
             self.document_generation,
             self.document.revision(),
             self.build_content_epoch(),
+            self.compile_options().brush_texture_shadows,
             self.cubemap_binding_namespace()
                 .unwrap_or_else(|error| error),
             self.cubemap_bindings
@@ -335,6 +342,7 @@ impl Session {
             "snapshot":self.cubemap_bindings_stamp(),
             "generation":self.document_generation,"revision":self.document.revision(),
             "content_epoch":self.build_content_epoch(),
+            "brush_texture_shadows":self.compile_options().brush_texture_shadows,
             "selected_helper":self.selected_cubemap_helper(),
             "selected_faces":self.selected_faces().into_iter().map(face_json).collect::<Vec<_>>(),
             "context_error":self.cubemap_binding_context().err(),
@@ -408,6 +416,7 @@ impl Session {
             self.inspect_cubemap_binding_map(
                 self.document.vmf(),
                 &CubemapBindingQuery {
+                    brush_texture_shadows: self.compile_options().brush_texture_shadows,
                     helper_id: query.helper,
                     namespace: Some(namespace),
                     offset: query.offset,
@@ -549,6 +558,7 @@ impl Session {
         let report = self.inspect_cubemap_binding_map(
             &candidate,
             &CubemapBindingQuery {
+                brush_texture_shadows: self.compile_options().brush_texture_shadows,
                 namespace: Some(self.cubemap_binding_namespace()?),
                 face_ids: requested.into_iter().collect(),
                 limit: MAX_FACES,

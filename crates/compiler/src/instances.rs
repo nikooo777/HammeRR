@@ -1036,12 +1036,23 @@ pub fn resolve_for_compile<'a>(
     control: &Control,
     report: &mut Report,
 ) -> Result<PreparedInstances<'a>, Diagnostic> {
+    resolve_for_compile_with_texture_shadows(vmf, source, fs, false, control, report)
+}
+
+pub fn resolve_for_compile_with_texture_shadows<'a>(
+    vmf: &'a Vmf,
+    source: Option<&SourceContext>,
+    fs: &source_formats::gamefs::GameFs,
+    brush_texture_shadows: bool,
+    control: &Control,
+    report: &mut Report,
+) -> Result<PreparedInstances<'a>, Diagnostic> {
     resolve_purpose(
         vmf,
         source,
         control,
         report,
-        PreparationPurpose::Compile(fs, false),
+        PreparationPurpose::Compile(fs, brush_texture_shadows),
     )
 }
 

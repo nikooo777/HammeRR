@@ -127,3 +127,66 @@ fn mcp_root_bindings_use_child_sample_provenance_and_reject_refreshed_transitive
     value(server.set_cubemap_bindings(Parameters(SetCubemapBindingsArgs::Cancel { token })));
     assert!(server.offscreen.lock().unwrap().renderer.is_none());
 }
+
+#[test]
+fn mcp_cubemap_inspection_uses_shared_texture_shadow_settings_without_reviving_drafts() {
+    let fixture = crate::session::cubemap_bindings::test_support::cutout_instance_fixture();
+    let before = fixture.session.document().vmf().clone();
+    let shared = Arc::new(Mutex::new(fixture.session));
+    let server = EditorServer::new(shared.clone(), None);
+    let args = || {
+        Parameters(CubemapBindingsArgs {
+            helper: None,
+            query: None,
+            offset: None,
+            limit: None,
+        })
+    };
+    assert_eq!(
+        value(server.get_cubemap_bindings(args()))["available"],
+        false
+    );
+    value(
+        server.set_compile_settings(Parameters(
+            serde_json::from_value(json!({
+                "lighting":"direct_ldr","brush_texture_shadows":true,
+            }))
+            .unwrap(),
+        )),
+    );
+    let report = value(server.get_cubemap_bindings(args()));
+    assert_eq!(report["available"], true, "{report}");
+    assert_eq!(report["state"]["brush_texture_shadows"], true);
+    let draft = value(server.set_cubemap_bindings(Parameters(serde_json::from_value(json!({
+        "action":"preview","helper":fixture.far,"faces":[{"solid":fixture.face.solid,"side":fixture.face.side}],
+        "operation":"bind","snapshot":report["state"]["snapshot"],
+    })).unwrap())));
+    let token = draft["draft"]["token"].as_u64().unwrap();
+    for enabled in [false, true] {
+        value(
+            server.set_compile_settings(Parameters(
+                serde_json::from_value(json!({
+                    "brush_texture_shadows":enabled,
+                }))
+                .unwrap(),
+            )),
+        );
+        let report = value(server.get_cubemap_bindings(args()));
+        assert_eq!(report["available"], enabled, "{report}");
+        assert_eq!(report["state"]["draft"]["valid"], false);
+        assert!(
+            server
+                .set_cubemap_bindings(Parameters(SetCubemapBindingsArgs::Apply { token }))
+                .unwrap()
+                .is_error
+                .unwrap_or(false)
+        );
+    }
+    assert_eq!(lock(&shared).document().vmf(), &before);
+    assert_eq!(
+        lock(&shared).cubemap_binding_state()["draft"]["token"],
+        token
+    );
+    value(server.set_cubemap_bindings(Parameters(SetCubemapBindingsArgs::Cancel { token })));
+    assert!(server.offscreen.lock().unwrap().renderer.is_none());
+}

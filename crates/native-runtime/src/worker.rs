@@ -102,6 +102,7 @@ pub(crate) fn game_directory(directory: &Path, request: &WorkerRequest) -> io::R
         WorkerProfile::PplSpatial919(case) => {
             Some(crate::diagnostic::DiagnosticCase::Spatial919(*case))
         }
+        WorkerProfile::PplMips931(case) => Some(crate::diagnostic::DiagnosticCase::Mips931(*case)),
         WorkerProfile::Reflection(_) => None,
     };
     if let Some(case) = diagnostic_case {
@@ -395,6 +396,13 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
                 directory,
                 request,
                 crate::diagnostic::DiagnosticCase::Spatial919(*case),
+            );
+        }
+        WorkerProfile::PplMips931(case) => {
+            return crate::diagnostic::execute(
+                directory,
+                request,
+                crate::diagnostic::DiagnosticCase::Mips931(*case),
             );
         }
         WorkerProfile::Reflection(_) => {}

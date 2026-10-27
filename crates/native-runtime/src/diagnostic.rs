@@ -16,11 +16,13 @@ use crate::{CaptureEnvironment, CaptureObserver};
 
 mod hardware;
 mod midrange;
+mod mips;
 mod profile;
 mod spatial;
 
 use hardware::{hardware_records, loaded_observer, verify_hardware};
 pub use midrange::{PplMidrange909Case, PplMidrange909Receipt, PplMidrange909Request};
+pub use mips::{PplMips931Case, PplMips931Receipt, PplMips931Request};
 use profile::{
     COMPLETE, DISCONNECTED, MAX_INPUT, PROBE_SHA, READY, TIMEOUT, pinned_bytes, private_write,
     verify_controls, verify_installed, verify_loads, verify_order, verify_private_fixture,
@@ -125,7 +127,7 @@ fn verify_case_controls(
     case: DiagnosticCase,
 ) -> io::Result<std::collections::BTreeMap<String, f64>> {
     match case {
-        DiagnosticCase::Spatial919(_) => {
+        DiagnosticCase::Spatial919(_) | DiagnosticCase::Mips931(_) => {
             Ok(spatial::verify_phase(text, spatial::Phase::Readiness)?.controls)
         }
         _ => verify_controls(text),
@@ -294,7 +296,7 @@ pub(crate) fn execute(
                 live_identity(&isolated, &child, &executable, identity)?;
                 loaded_observer(directory, &root, identity)?;
                 let spatial_capture = match case {
-                    DiagnosticCase::Spatial919(_) => {
+                    DiagnosticCase::Spatial919(_) | DiagnosticCase::Mips931(_) => {
                         let observation = observe_spatial_phase(
                             directory,
                             request,
@@ -368,7 +370,7 @@ pub(crate) fn execute(
         verify_loads(&text)?;
         verify_order(&text, true)?;
         match case {
-            DiagnosticCase::Spatial919(_) => {
+            DiagnosticCase::Spatial919(_) | DiagnosticCase::Mips931(_) => {
                 spatial::verify_final(&text)?;
             }
             _ => {
@@ -485,6 +487,29 @@ pub(crate) fn cli_spatial(path: &Path) -> io::Result<()> {
         .map_err(|failure| failure.error)?;
     println!(
         "HAMMERR_PPL_SPATIAL919 {}",
+        serde_json::to_string(&receipt).map_err(io::Error::other)?
+    );
+    Ok(())
+}
+
+pub(crate) fn cli_mips(path: &Path) -> io::Result<()> {
+    let request: CliRequest<PplMips931Case> = util::json_read(path, 16 * 1024)?;
+    let request = PplMips931Request {
+        case: request.case,
+        environment: CaptureEnvironment {
+            engine_root: request.engine_root,
+            steam_root: request.steam_root,
+            mounts: Vec::new(),
+        },
+        bsp: request.bsp,
+        fixture_game: request.fixture_game,
+        observer_library: request.observer_library,
+        artifacts_parent: request.artifacts_parent,
+    };
+    let receipt = crate::diagnose_ppl_mips931_with_cleanup(request, &mut CliObserver)
+        .map_err(|failure| failure.error)?;
+    println!(
+        "HAMMERR_PPL_MIPS931 {}",
         serde_json::to_string(&receipt).map_err(io::Error::other)?
     );
     Ok(())
@@ -799,6 +824,70 @@ mod tests {
         let mut changed = request;
         changed["case"] = json!("target-032");
         assert!(serde_json::from_value::<CliRequest<PplSpatial919Case>>(changed).is_err());
+    }
+
+    #[test]
+    fn mips_profile_rejects_other_cases_hashes_and_admission_overrides() {
+        let directory = tempfile::tempdir().unwrap();
+        let bsp = directory.path().join("wrong-case.bsp");
+        fs::write(&bsp, b"unapproved BSP").unwrap();
+        for (name, case, expected) in [
+            (
+                "tail-032",
+                PplMips931Case::Tail032,
+                "a5ebd9d7d915faa8d56d0aa5b1a366821b53151d731e630960a265e9d0cd3ebc",
+            ),
+            (
+                "tail-096",
+                PplMips931Case::Tail096,
+                "191d6e17e900fd56ab6713f73c296b8131405957394b3456231f4137ac7f13aa",
+            ),
+            (
+                "reference-032",
+                PplMips931Case::Reference032,
+                "76ea7591eddd1262cf0c8f409078430c49ab01219695084bbea0554839e6c8c0",
+            ),
+            (
+                "reference-096",
+                PplMips931Case::Reference096,
+                "7d90a2bfb370e166a68ebcca937d4b1791486874792ab41524f7596bab655d19",
+            ),
+        ] {
+            assert_eq!(case.bsp_sha(), expected);
+            assert!(pinned_bytes(&bsp, expected, MAX_INPUT).is_err());
+            assert!(serde_json::from_value::<PplUv857Case>(json!(name)).is_err());
+            assert!(serde_json::from_value::<PplSpatial919Case>(json!(name)).is_err());
+            let profile = crate::process::WorkerProfile::PplMips931(case);
+            let value = json!({"kind":"ppl_mips931", "parameters":name});
+            assert_eq!(serde_json::to_value(profile).unwrap(), value);
+            assert!(serde_json::from_value::<crate::process::WorkerProfile>(value).is_ok());
+            let request = json!({
+                "case":name, "engine_root":"/engine", "steam_root":"/steam",
+                "bsp":"/case.bsp", "fixture_game":"/fixture", "observer_library":"/observer.so",
+                "artifacts_parent":"/artifacts",
+            });
+            assert!(serde_json::from_value::<CliRequest<PplMips931Case>>(request.clone()).is_ok());
+            let mut changed = request;
+            changed["bsp_sha256"] = json!("anything");
+            assert!(serde_json::from_value::<CliRequest<PplMips931Case>>(changed).is_err());
+        }
+        for case in [
+            "target-032",
+            "reference-064",
+            "chart-a",
+            "missing-uv",
+            "tail-064",
+        ] {
+            assert!(serde_json::from_value::<PplMips931Case>(json!(case)).is_err());
+            let value = json!({"kind":"ppl_mips931", "parameters":case});
+            assert!(serde_json::from_value::<crate::process::WorkerProfile>(value).is_err());
+        }
+        for value in [
+            json!({"kind":"ppl_mips931", "parameters":"tail-032", "command":"anything"}),
+            json!({"kind":"ppl_mips931", "parameters":{"case":"tail-032", "bsp_sha256":"anything"}}),
+        ] {
+            assert!(serde_json::from_value::<crate::process::WorkerProfile>(value).is_err());
+        }
     }
 
     #[test]

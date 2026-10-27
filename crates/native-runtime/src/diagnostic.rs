@@ -852,6 +852,26 @@ mod tests {
                 PplMips931Case::Reference096,
                 "7d90a2bfb370e166a68ebcca937d4b1791486874792ab41524f7596bab655d19",
             ),
+            (
+                "filter-a",
+                PplMips931Case::FilterA,
+                "ac9831337a9811c7008397655c79280b29e2ab34f7de141b7d8069a2f146dc4a",
+            ),
+            (
+                "filter-b",
+                PplMips931Case::FilterB,
+                "a43c084d307163d583894645749db3aeebf9dbedeae438485f0e8c8a0155f029",
+            ),
+            (
+                "filter-reference-064",
+                PplMips931Case::FilterReference064,
+                "7f0b49548e11bc529d7fdbcdf62a84496c3389693fd4b73df5b3789d099265e5",
+            ),
+            (
+                "filter-reference-096",
+                PplMips931Case::FilterReference096,
+                "7d90a2bfb370e166a68ebcca937d4b1791486874792ab41524f7596bab655d19",
+            ),
         ] {
             assert_eq!(case.bsp_sha(), expected);
             assert!(pinned_bytes(&bsp, expected, MAX_INPUT).is_err());
@@ -877,6 +897,8 @@ mod tests {
             "chart-a",
             "missing-uv",
             "tail-064",
+            "filter-c",
+            "filter-reference-032",
         ] {
             assert!(serde_json::from_value::<PplMips931Case>(json!(case)).is_err());
             let value = json!({"kind":"ppl_mips931", "parameters":case});

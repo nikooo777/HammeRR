@@ -14,6 +14,14 @@ pub enum PplMips931Case {
     Reference032,
     #[serde(rename = "reference-096")]
     Reference096,
+    #[serde(rename = "filter-a")]
+    FilterA,
+    #[serde(rename = "filter-b")]
+    FilterB,
+    #[serde(rename = "filter-reference-064")]
+    FilterReference064,
+    #[serde(rename = "filter-reference-096")]
+    FilterReference096,
 }
 
 impl PplMips931Case {
@@ -25,6 +33,14 @@ impl PplMips931Case {
                 "76ea7591eddd1262cf0c8f409078430c49ab01219695084bbea0554839e6c8c0"
             }
             Self::Reference096 => {
+                "7d90a2bfb370e166a68ebcca937d4b1791486874792ab41524f7596bab655d19"
+            }
+            Self::FilterA => "ac9831337a9811c7008397655c79280b29e2ab34f7de141b7d8069a2f146dc4a",
+            Self::FilterB => "a43c084d307163d583894645749db3aeebf9dbedeae438485f0e8c8a0155f029",
+            Self::FilterReference064 => {
+                "7f0b49548e11bc529d7fdbcdf62a84496c3389693fd4b73df5b3789d099265e5"
+            }
+            Self::FilterReference096 => {
                 "7d90a2bfb370e166a68ebcca937d4b1791486874792ab41524f7596bab655d19"
             }
         }

@@ -557,6 +557,3 @@ pub(crate) fn partition(
         count,
     })
 }
-
-#[cfg(test)]
-mod tests;

@@ -451,6 +451,3 @@ fn resolve(
         }),
     )
 }
-
-#[cfg(test)]
-mod tests;

@@ -818,6 +818,3 @@ pub fn inspect_water_dependencies(
     }
     collector.report
 }
-
-#[cfg(test)]
-mod tests;

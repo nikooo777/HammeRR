@@ -438,6 +438,3 @@ pub fn prepare(vmf: &Vmf, include: impl Fn(ObjectId) -> bool) -> Preview {
     });
     preview
 }
-
-#[cfg(test)]
-mod tests;

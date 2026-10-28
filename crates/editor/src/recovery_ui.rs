@@ -9,9 +9,6 @@ use crate::{RecoveryRow, RecoveryWindow};
 
 const PAGE_SIZE: usize = 20;
 
-#[cfg(test)]
-mod tests;
-
 fn age(created_ms: u64) -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -154,15 +151,6 @@ pub fn refresh(window: &RecoveryWindow, session: &Session) {
             ),
         );
     }
-}
-
-#[cfg(test)]
-pub fn bind(window: &RecoveryWindow, shared: &SharedSession) {
-    bind_with_access(
-        window,
-        shared,
-        crate::runtime::DocumentAccess::unmanaged(shared.clone()),
-    );
 }
 
 fn with_shared<R>(

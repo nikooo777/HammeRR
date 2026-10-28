@@ -8,8 +8,7 @@ const MAX_TOPOLOGY_WORK: usize = 2_000_000;
 const MAX_NORMAL_WORK: usize = 4_000_000;
 
 mod spans;
-#[cfg(test)]
-mod tests;
+
 pub use spans::find_spans;
 
 pub struct SurfaceGrid<'a> {

@@ -202,11 +202,6 @@ fn catalog(window: &ParticleBrowserWindow, session: &mut Session, state: &mut Ca
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let target = access.downgrade();
         let window = ParticleBrowserWindow::new()?;
@@ -396,9 +391,3 @@ impl Controller {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod admission_tests;

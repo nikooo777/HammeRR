@@ -4,8 +4,6 @@ use std::rc::Rc;
 use map_core::surface::FaceId;
 use slint::{ComponentHandle, Model, VecModel};
 
-#[cfg(test)]
-use crate::runtime::SharedSession;
 use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, Session};
 use crate::{HollowWindow, OpeningRow};
@@ -216,11 +214,6 @@ fn with_session<R>(
     }
 }
 
-#[cfg(test)]
-pub fn bind(window: &HollowWindow, shared: &SharedSession) {
-    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
-}
-
 pub fn bind_with_access(window: &HollowWindow, access: &DocumentAccess) {
     window.on_close_openings({
         let (window, access) = (window.as_weak(), access.downgrade());
@@ -341,6 +334,3 @@ pub fn bind_with_access(window: &HollowWindow, access: &DocumentAccess) {
         }
     });
 }
-
-#[cfg(test)]
-mod tests;

@@ -7,9 +7,6 @@ use crate::session::Session;
 use crate::session::statistics::{PAGE_SIZE, Section};
 use crate::{StatisticRow, StatisticsWindow};
 
-#[cfg(test)]
-use crate::runtime::SharedSession;
-
 pub fn refresh(window: &StatisticsWindow, session: &Session) {
     let section = match window.get_section() {
         1 => Section::EntityClasses,
@@ -109,11 +106,6 @@ fn admitted_refresh(window: &slint::Weak<StatisticsWindow>, target: &DocumentCon
     if let Err(error) = result {
         window.set_summary(error.into());
     }
-}
-
-#[cfg(test)]
-pub fn bind(window: &StatisticsWindow, shared: &SharedSession) {
-    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
 }
 
 pub fn bind_with_access(window: &StatisticsWindow, access: &DocumentAccess) {

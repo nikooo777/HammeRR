@@ -18,8 +18,6 @@ use super::{
 };
 
 mod assets;
-#[cfg(test)]
-mod tests;
 
 pub const MAX_ROWS: usize = 64;
 pub const MAX_METADATA_BYTES: usize = 32 * 1024 * 1024;

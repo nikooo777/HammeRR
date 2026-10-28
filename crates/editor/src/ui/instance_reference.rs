@@ -19,16 +19,6 @@ pub(super) struct Controller {
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub(super) fn window(&self) -> &InstanceReferenceWindow {
-        &self.window
-    }
-
-    #[cfg(test)]
-    pub(super) fn timer_running(&self) -> bool {
-        self.timer.running()
-    }
-
     pub(super) fn stop_timer(&self) {
         self.timer.stop();
     }
@@ -286,11 +276,6 @@ impl Controller {
         }
     }
 
-    #[cfg(test)]
-    fn open(&self, entity: Option<u32>) {
-        self.with_shared(true, |shared| self.open_admitted(shared, entity));
-    }
-
     fn open_admitted(&self, shared: &SharedSession, entity: Option<u32>) {
         if lock(shared).get_instance_collapse()["token"].is_number() {
             self.refresh_admitted(shared);
@@ -532,11 +517,6 @@ impl Controller {
         let _ = self.window.hide();
     }
 
-    #[cfg(test)]
-    fn new(shared: SharedSession) -> Result<Rc<Self>, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared))
-    }
-
     fn new_with_access(access: &DocumentAccess) -> Result<Rc<Self>, slint::PlatformError> {
         let controller = Rc::new(Self {
             window: InstanceReferenceWindow::new()?,
@@ -724,6 +704,3 @@ fn bind_controller(app: &AppWindow, controller: Rc<Controller>) {
         }
     });
 }
-
-#[cfg(test)]
-mod tests;

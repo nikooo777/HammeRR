@@ -13,32 +13,21 @@ const BOX_FACES: [[usize; 4]; 6] = [
     [2, 3, 7, 6],
 ];
 
-#[cfg(test)]
-mod tests;
-
 #[derive(Clone, Copy)]
 struct Limits {
     work: usize,
     points: usize,
     fragment_points: usize,
     fragment_faces: usize,
-    #[cfg(test)]
-    cancel_after_work: Option<usize>,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        #[cfg(test)]
-        if let Some(limits) = TEST_LIMITS.with(std::cell::Cell::get) {
-            return limits;
-        }
         Self {
             work: MAX_LEAF_WORK,
             points: MAX_CLIPPED_POINTS,
             fragment_points: MAX_FRAGMENT_POINTS,
             fragment_faces: MAX_FRAGMENT_FACES,
-            #[cfg(test)]
-            cancel_after_work: None,
         }
     }
 }
@@ -58,15 +47,7 @@ impl Budget<'_> {
             .checked_add(amount)
             .filter(|&work| work <= self.limits.work)
             .ok_or("Static-prop leaf clipping exceeded its work budget")?;
-        #[cfg(test)]
-        if self
-            .limits
-            .cancel_after_work
-            .is_some_and(|limit| *self.work >= limit)
-        {
-            self.control.cancel()?;
-            self.control.checkpoint()?;
-        }
+
         Ok(())
     }
 
@@ -82,11 +63,6 @@ impl Budget<'_> {
             .ok_or("Static-prop leaf clipping exceeded its winding-point allocation budget")?;
         Ok(())
     }
-}
-
-#[cfg(test)]
-thread_local! {
-    static TEST_LIMITS: std::cell::Cell<Option<Limits>> = const { std::cell::Cell::new(None) };
 }
 
 fn push(points: &mut Vec<DVec3>, point: DVec3) -> Result<(), String> {

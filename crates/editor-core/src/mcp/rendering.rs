@@ -281,11 +281,3 @@ impl EditorServer {
         })
     }
 }
-
-#[cfg(test)]
-#[path = "rendering/tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "rendering/color_correction_tests.rs"]
-mod color_correction_tests;

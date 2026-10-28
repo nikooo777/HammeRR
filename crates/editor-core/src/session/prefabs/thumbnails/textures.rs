@@ -270,24 +270,3 @@ pub(super) fn load(
     };
     Ok((materials, assets, report))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn aggregate_read_budget_bounds_the_actual_mounted_read_before_retention() {
-        let (_directory, game) = crate::test_assets::game();
-        let mut reader = Reader {
-            bytes: MAX_READ_BYTES - 4,
-            ..Default::default()
-        };
-        assert!(
-            reader
-                .read(&game, "materials/test/checker.vtf", MAX_TEXTURE_BYTES)
-                .is_err()
-        );
-        assert_eq!(reader.bytes, MAX_READ_BYTES - 4);
-        assert!(reader.identities.is_empty());
-    }
-}

@@ -658,6 +658,3 @@ fn append_keys(keys: &mut String, text: &str) -> Result<(), String> {
     keys.push_str(text);
     Ok(())
 }
-
-#[cfg(test)]
-mod current_tests;

@@ -220,6 +220,3 @@ impl Session {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

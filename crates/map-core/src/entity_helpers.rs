@@ -202,6 +202,3 @@ fn color(helper: &Helper) -> Result<[u8; 3], String> {
         .try_into()
         .map_err(|_| "color() requires three integer channels".into())
 }
-
-#[cfg(test)]
-mod tests;

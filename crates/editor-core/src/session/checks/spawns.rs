@@ -443,6 +443,3 @@ fn intersects_box(projections: &[Projection], mins: DVec3, maxs: DVec3) -> bool 
             && projection.min < middle + radius - CONTACT_TOLERANCE
     })
 }
-
-#[cfg(test)]
-mod tests;

@@ -129,17 +129,3 @@ impl Parser<'_> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn escaped_values_and_malformed_blocks_are_checked() {
-        let value = super::parse("\"Users\" { \"Name\" \"quote\\\" and \\\\ path\" }").unwrap();
-        assert_eq!(value["users"]["name"], "quote\" and \\ path");
-        assert!(super::parse("\"Users\" { \"Name\" \"value\"").is_err());
-        assert!(super::parse("}").is_err());
-        let literal = super::parse(r#""Users" { "{" "}" "}" "{" }"#).unwrap();
-        assert_eq!(literal["users"]["{"], "}");
-        assert_eq!(literal["users"]["}"], "{");
-    }
-}

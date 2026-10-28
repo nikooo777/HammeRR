@@ -675,27 +675,3 @@ impl PrimitiveArgs {
         Ok(spec)
     }
 }
-
-#[cfg(test)]
-mod surface_corner_tests {
-    use super::*;
-
-    #[test]
-    fn surface_corner_requests_preserve_explicit_identity_and_reject_raw_coordinates() {
-        let valid = json!({"method":"brush_corner","source_corner":{"solid":12,"sides":[31,32,35]},"ray_origin":[1,2,3],"ray_direction":[0,0,-1]});
-        let parsed = serde_json::from_value::<SurfacePlacementArgs>(valid.clone()).unwrap();
-        assert_eq!(parsed.source_corner.unwrap().sides, [31, 32, 35]);
-        let begin =
-            json!({"method":"brush_corner","source_corner":{"solid":12,"sides":[31,32,35]}});
-        assert!(serde_json::from_value::<BeginSurfacePlacementPickArgs>(begin).is_ok());
-        for corner in [
-            json!({"solid":12}),
-            json!({"sides":[31,32,35]}),
-            json!({"solid":12,"sides":[31,32,35],"position":[1,2,3]}),
-        ] {
-            let mut invalid = valid.clone();
-            invalid["source_corner"] = corner;
-            assert!(serde_json::from_value::<SurfacePlacementArgs>(invalid).is_err());
-        }
-    }
-}

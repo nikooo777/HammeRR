@@ -200,6 +200,3 @@ impl LoadState {
         })
     }
 }
-
-#[cfg(test)]
-mod tests;

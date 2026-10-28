@@ -19,8 +19,6 @@ const MAX_CELLS: usize = CELLS * MAX_CAGE_CELLS;
 const MAX_SIZE: usize = MAX_CELLS + 1;
 
 mod cage;
-#[cfg(test)]
-mod tests;
 
 pub struct Plan {
     pub edits: Vec<(FaceId, DispInfo)>,

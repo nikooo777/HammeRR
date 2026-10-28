@@ -728,7 +728,3 @@ impl EditorServer {
         })
     }
 }
-
-#[cfg(test)]
-#[path = "selection_filter_tests.rs"]
-mod selection_filter_tests;

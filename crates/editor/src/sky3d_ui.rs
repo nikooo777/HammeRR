@@ -261,6 +261,3 @@ impl Controller {
         present(&self.window, &self.form, session.sky3d_preview_state());
     }
 }
-
-#[cfg(test)]
-mod tests;

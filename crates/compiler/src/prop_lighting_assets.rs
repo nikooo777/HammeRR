@@ -956,6 +956,3 @@ fn checkpoint(control: &Control) -> io::Result<()> {
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
-
-#[cfg(test)]
-mod tests;

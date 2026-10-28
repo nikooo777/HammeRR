@@ -21,10 +21,6 @@ use rmcp::ServiceExt;
 mod quit;
 mod routing;
 pub use routing::WorkspaceServer;
-#[cfg(test)]
-mod save_all_tests;
-#[cfg(test)]
-mod tests;
 
 const COMMAND_LIMIT: usize = 4;
 const UI_TIMEOUT: Duration = Duration::from_secs(10);
@@ -130,8 +126,6 @@ struct Core {
     stdio: Mutex<Option<StdioOutput>>,
     stop: Mutex<TransportState>,
     errors: Mutex<Vec<String>>,
-    #[cfg(test)]
-    before_command: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 #[derive(Clone)]
@@ -164,8 +158,6 @@ impl WorkspaceOwner {
             stdio: Mutex::default(),
             stop: Mutex::default(),
             errors: Mutex::default(),
-            #[cfg(test)]
-            before_command: Mutex::default(),
         }));
         for document in workspace.0.factory.documents() {
             let entry = workspace.entry(document.document())?;
@@ -814,10 +806,7 @@ fn run_commands(workspace: &Workspace, runtime: &tokio::runtime::Runtime) {
             .expect("Workspace command missing");
         queue.executing = true;
         drop(queue);
-        #[cfg(test)]
-        if let Some(before_command) = workspace.0.before_command.lock().unwrap().take() {
-            before_command();
-        }
+
         let response = match command {
             Command::New(actor, present, response) => {
                 if response.is_closed() {

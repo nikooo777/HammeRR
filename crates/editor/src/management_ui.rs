@@ -10,9 +10,6 @@ use crate::{
     ColorWindow, ManagedFieldRow, MaterialWindow, ObjectReportRow, PropertiesWindow, ReportWindow,
 };
 
-#[cfg(test)]
-use crate::runtime::{SharedSession, lock};
-
 fn token(window: &PropertiesWindow) -> Result<u64, String> {
     window
         .get_draft_token()
@@ -190,14 +187,6 @@ fn with_material<R>(
             None
         }
     }
-}
-
-#[cfg(test)]
-pub fn bind_properties(
-    window: &PropertiesWindow,
-    shared: &SharedSession,
-) -> Result<(), slint::PlatformError> {
-    bind_properties_with_access(window, &DocumentAccess::unmanaged(shared.clone())).map(|_| ())
 }
 
 pub(crate) struct PropertyPickers {
@@ -698,11 +687,6 @@ fn with_report<R>(
     }
 }
 
-#[cfg(test)]
-pub fn bind_report(window: &ReportWindow, shared: &SharedSession) {
-    bind_report_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
-}
-
 pub fn bind_report_with_access(window: &ReportWindow, access: &DocumentAccess) {
     let access = access.downgrade();
     window.on_search({
@@ -776,18 +760,3 @@ pub fn bind_report_with_access(window: &ReportWindow, access: &DocumentAccess) {
         }
     });
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod entity_report_admission_tests;
-
-#[cfg(test)]
-mod water_current_tests;
-
-#[cfg(test)]
-mod water_damping_tests;
-
-#[cfg(test)]
-mod material_emission_tests;

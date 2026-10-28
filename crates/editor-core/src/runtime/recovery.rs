@@ -9,7 +9,7 @@ use crate::session::{Actor, RecoveryRequest};
 
 const QUEUED: u8 = 0;
 const STARTED: u8 = 1;
-#[cfg(any(feature = "mcp", test))]
+#[cfg(feature = "mcp")]
 const CANCELLED: u8 = 2;
 
 pub(crate) struct RecoverySubmission {
@@ -19,7 +19,7 @@ pub(crate) struct RecoverySubmission {
     phase: Arc<AtomicU8>,
 }
 
-#[cfg(any(feature = "mcp", test))]
+#[cfg(feature = "mcp")]
 pub(crate) struct RecoveryCancellation(Option<Arc<AtomicU8>>);
 
 #[cfg(feature = "mcp")]
@@ -29,7 +29,7 @@ impl RecoveryCancellation {
     }
 }
 
-#[cfg(any(feature = "mcp", test))]
+#[cfg(feature = "mcp")]
 impl Drop for RecoveryCancellation {
     fn drop(&mut self) {
         if let Some(phase) = &self.0 {
@@ -49,7 +49,7 @@ impl RecoverySubmission {
         })
     }
 
-    #[cfg(any(feature = "mcp", test))]
+    #[cfg(feature = "mcp")]
     pub(crate) fn cancellation(&self) -> RecoveryCancellation {
         RecoveryCancellation(Some(self.phase.clone()))
     }
@@ -102,6 +102,3 @@ pub fn start_recovery_snapshot(session: &SharedSession, actor: Actor) -> Result<
         })
         .map(drop)
 }
-
-#[cfg(test)]
-mod tests;

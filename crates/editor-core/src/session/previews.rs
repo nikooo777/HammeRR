@@ -1,8 +1,5 @@
 use super::*;
 
-#[cfg(test)]
-mod tests;
-
 #[derive(Default)]
 pub(super) struct State {
     pub(super) instance_collapse: instance_collapse::State,

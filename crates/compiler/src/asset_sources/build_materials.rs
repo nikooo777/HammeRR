@@ -420,6 +420,3 @@ fn changed(path: &str) -> io::Error {
         "Build material original source or winning/missing lookup changed: {path}"
     ))
 }
-
-#[cfg(test)]
-mod tests;

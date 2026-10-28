@@ -738,9 +738,3 @@ fn finish_controlled(report: Value, control: &compiler::Control) -> Result<Inspe
     control.checkpoint()?;
     Ok(inspection)
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_support;

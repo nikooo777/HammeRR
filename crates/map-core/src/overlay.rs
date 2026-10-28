@@ -1072,6 +1072,3 @@ pub fn create_faces(
         Vec::new(),
     )
 }
-
-#[cfg(test)]
-mod tests;

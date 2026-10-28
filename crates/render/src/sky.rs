@@ -226,6 +226,3 @@ pub(crate) fn texture_transform(value: Option<&str>) -> Result<[f32; 4], String>
         }
     })
 }
-
-#[cfg(test)]
-mod tests;

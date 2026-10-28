@@ -172,12 +172,6 @@ impl Ui {
         )
     }
 
-    #[cfg(test)]
-    fn new(session: SharedSession, ctx: GpuContext) -> Self {
-        let access = runtime::DocumentAccess::unmanaged(session.clone());
-        Self::new_with_access(session, ctx, access)
-    }
-
     fn new_with_access(
         session: SharedSession,
         ctx: GpuContext,
@@ -415,12 +409,6 @@ fn prepare_scene_refresh(
     }
     *options = view;
     Some(next)
-}
-
-#[cfg(test)]
-fn bind_view_controls(app: &AppWindow, shared: SharedSession) {
-    let weak = app.as_weak();
-    app.on_options_changed(move || apply_view_controls(weak.unwrap(), &shared));
 }
 
 fn apply_view_controls(app: AppWindow, shared: &SharedSession) {
@@ -3554,24 +3542,6 @@ fn create_document_window(
         instance_extraction,
     ))
 }
-
-#[cfg(test)]
-pub(crate) mod tests;
-
-#[cfg(test)]
-mod surface_shading_tests;
-
-#[cfg(test)]
-mod viscluster_tests;
-
-#[cfg(test)]
-mod model_scale_tests;
-
-#[cfg(test)]
-mod hdr_sky_tests;
-
-#[cfg(test)]
-mod ownership_tests;
 
 pub(crate) use entities::property_row;
 pub(crate) use materials::{

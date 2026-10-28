@@ -358,8 +358,3 @@ impl EditorServer {
         ok(json!({ "redone": redone }))
     }
 }
-
-#[cfg(test)]
-mod recent_tests;
-#[cfg(test)]
-mod replacement_tests;

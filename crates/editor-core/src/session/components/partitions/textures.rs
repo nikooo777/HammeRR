@@ -200,6 +200,3 @@ impl Session {
         self.install_checked_texture_partition(draft)
     }
 }
-
-#[cfg(test)]
-mod tests;

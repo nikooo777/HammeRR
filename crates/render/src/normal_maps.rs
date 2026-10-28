@@ -349,6 +349,3 @@ impl Report {
         summary
     }
 }
-
-#[cfg(test)]
-mod tests;

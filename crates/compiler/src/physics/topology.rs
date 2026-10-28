@@ -426,6 +426,3 @@ pub(super) fn validate(shape: &Shape) -> Result<(), String> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

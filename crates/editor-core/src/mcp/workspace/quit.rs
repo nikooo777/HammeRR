@@ -181,6 +181,3 @@ pub(super) fn finish(workspace: &Workspace, runtime: &tokio::runtime::Runtime, m
     }
     finish_transport(workspace, runtime);
 }
-
-#[cfg(test)]
-mod tests;

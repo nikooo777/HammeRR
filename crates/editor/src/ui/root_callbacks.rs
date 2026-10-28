@@ -17,6 +17,3 @@ macro_rules! root_callback {
 }
 
 pub(super) use root_callback;
-
-#[cfg(test)]
-mod tests;

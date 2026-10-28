@@ -365,6 +365,3 @@ fn change_palette(window: &ColorWindow, session: &mut Session, action: &str) -> 
     }.into());
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

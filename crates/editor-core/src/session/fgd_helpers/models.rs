@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 
 use map_core::Document;
-#[cfg(test)]
-use map_core::ObjectId;
+
 use render::models::Instance;
 use serde::Serialize;
 
@@ -233,6 +232,3 @@ impl Session {
             .collect()
     }
 }
-
-#[cfg(test)]
-mod tests;

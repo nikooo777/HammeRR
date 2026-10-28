@@ -540,12 +540,3 @@ impl State {
         })
     }
 }
-
-#[cfg(test)]
-pub(crate) mod tests;
-
-#[cfg(test)]
-pub(crate) mod existing_tests;
-
-#[cfg(test)]
-pub(crate) mod node_changes_tests;

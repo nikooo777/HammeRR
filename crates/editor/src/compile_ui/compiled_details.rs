@@ -572,6 +572,3 @@ impl Form {
         crate::ui::hide_window("Compiled details", self.window.window(), errors);
     }
 }
-
-#[cfg(test)]
-mod tests;

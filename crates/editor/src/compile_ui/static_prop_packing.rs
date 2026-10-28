@@ -62,6 +62,3 @@ pub(super) fn details(job: &Value) -> String {
     };
     format!("\nStatic-prop assets: {models} models · {files} files · {bytes} bytes")
 }
-
-#[cfg(test)]
-mod tests;

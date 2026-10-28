@@ -1,6 +1,4 @@
 fn main() {
-    let config = slint_build::CompilerConfiguration::new()
-        .with_style("fluent-dark".into())
-        .with_debug_info(true);
+    let config = slint_build::CompilerConfiguration::new().with_style("fluent-dark".into());
     slint_build::compile_with_config("../editor/ui/app.slint", config).expect("compile Slint UI");
 }

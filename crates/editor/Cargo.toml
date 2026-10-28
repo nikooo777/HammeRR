@@ -4,6 +4,14 @@ version = "0.1.0"
 description = "HammeRR, a map editor for Source engine games"
 edition.workspace = true
 rust-version.workspace = true
+autotests = false
+autobenches = false
+
+[[bin]]
+name = "editor"
+path = "src/main.rs"
+test = false
+bench = false
 
 [dependencies]
 editor-core = { path = "../editor-core", features = ["mcp"] }
@@ -17,8 +25,3 @@ serde_json = "1.0.151"
 slint.workspace = true
 source-formats.workspace = true
 tokio = { version = "1.53.2", features = ["sync", "net", "io-util", "time"] }
-
-[dev-dependencies]
-editor-core = { path = "../editor-core", features = ["test-support"] }
-tempfile = "3.27.0"
-i-slint-backend-testing = { version = "=1.18.1", features = ["renderer-software"] }

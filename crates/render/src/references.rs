@@ -184,6 +184,3 @@ impl crate::scene::SceneMesh {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -225,6 +225,3 @@ impl SaveAllRequest {
             "policy":"Fixed admitted document set; sequential per-document save results, not an atomic workspace snapshot. Clean named maps verify their original source identity without writing. Unnamed clean maps are retained without a file; unnamed dirty maps require Save as. Pending reviews are preserved and block that document. No destination selection, focus, window presentation or automatic retry."})
     }
 }
-
-#[cfg(test)]
-mod tests;

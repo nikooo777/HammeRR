@@ -2,8 +2,7 @@ use slint::ComponentHandle;
 
 use crate::PointfileWindow;
 use crate::runtime::{DocumentAccess, DocumentContinuation};
-#[cfg(test)]
-use crate::runtime::{SharedSession, lock};
+
 use crate::session::{Actor, Session};
 
 pub fn refresh(window: &PointfileWindow, session: &Session) {
@@ -214,6 +213,3 @@ pub fn bind_with_access(window: &PointfileWindow, access: &DocumentAccess) {
         }
     });
 }
-
-#[cfg(test)]
-mod tests;

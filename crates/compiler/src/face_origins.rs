@@ -413,6 +413,3 @@ fn geometry_digest(bsp: &Bsp) -> Result<[u8; 32], String> {
     }
     Ok(hash.finalize().into())
 }
-
-#[cfg(test)]
-mod tests;

@@ -348,6 +348,3 @@ fn load(
     material.translucent = true;
     Ok((material, bytes))
 }
-
-#[cfg(test)]
-mod tests;

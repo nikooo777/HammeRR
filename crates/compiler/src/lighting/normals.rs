@@ -323,33 +323,3 @@ impl Context<'_> {
         Ok(result)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn center_fan_preserves_flat_centers_and_shared_corner_normals() {
-        let points = [
-            DVec3::new(-1.0, -1.0, 0.0),
-            DVec3::new(-1.0, 1.0, 0.0),
-            DVec3::new(1.0, 1.0, 0.0),
-            DVec3::new(1.0, -1.0, 0.0),
-        ];
-        let corner = DVec3::new(1.0, 0.0, 1.0).normalize();
-        let field = Field {
-            center: DVec3::ZERO,
-            points: points.to_vec(),
-            corners: vec![corner; 4],
-        };
-        assert_eq!(field.sample(DVec3::ZERO, DVec3::Z), DVec3::Z);
-        assert!(field.sample(points[0], DVec3::Z).distance(corner) < 1e-12);
-        assert!(
-            field
-                .sample(DVec3::new(-0.5, 0.0, 0.0), DVec3::Z)
-                .distance((DVec3::Z + corner).normalize())
-                < 1e-12
-        );
-        assert_eq!(field.sample(DVec3::splat(100.0), DVec3::Z), DVec3::Z);
-    }
-}

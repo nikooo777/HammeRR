@@ -417,11 +417,6 @@ impl Form {
         crate::ui::hide_window("Baked lightmaps", self.window.window(), errors);
     }
 
-    #[cfg(test)]
-    pub(super) fn window(&self) -> &BakedLightmapsWindow {
-        &self.window
-    }
-
     pub(super) fn is_visible(&self) -> bool {
         self.window.window().is_visible()
     }
@@ -672,6 +667,3 @@ pub(super) fn bind(
         lists,
     })
 }
-
-#[cfg(test)]
-mod tests;

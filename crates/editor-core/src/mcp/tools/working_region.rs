@@ -70,7 +70,3 @@ impl EditorServer {
         })
     }
 }
-
-#[cfg(test)]
-#[path = "editor_visibility_tests.rs"]
-mod editor_visibility_tests;

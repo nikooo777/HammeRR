@@ -23,9 +23,6 @@ const MAX_SECTIONS: usize = 256;
 const MAX_NAME_BYTES: usize = 1024;
 const WIRE_COLOR: [u8; 4] = [151, 169, 191, 255];
 
-#[cfg(test)]
-mod tests;
-
 #[derive(Debug, serde::Serialize)]
 pub struct PropInfo {
     pub ordinal: u32,

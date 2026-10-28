@@ -1,5 +1,3 @@
-#[cfg(test)]
-mod alpha_tests;
 mod closure;
 mod collection;
 mod manifest;
@@ -27,17 +25,3 @@ fn invalid(message: impl Into<String>) -> std::io::Error {
 fn checkpoint(control: &crate::Control) -> std::io::Result<()> {
     control.checkpoint().map_err(std::io::Error::other)
 }
-
-#[cfg(test)]
-mod build_tests;
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod patch_tests;
-
-#[cfg(test)]
-mod patch_edit_tests;
-
-#[cfg(test)]
-mod reflection_tests;

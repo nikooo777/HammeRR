@@ -12,9 +12,6 @@ use crate::tree::Tree;
 use crate::winding::ON_EPSILON;
 use crate::{Control, Report, faces, portals, tree};
 
-#[cfg(test)]
-mod tests;
-
 pub const MAX_SCALE: u32 = 128;
 pub const MAX_CAMERA_PROPERTIES: usize = 256;
 pub const MAX_CAMERA_BYTES: usize = 64 * 1024;

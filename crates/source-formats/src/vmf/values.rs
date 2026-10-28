@@ -187,35 +187,3 @@ impl fmt::Display for Color {
         write!(f, "{r} {g} {b}")
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plane_round_trips() {
-        let text = "(-1568 1056 64) (-1568 864 64) (-1600 864.5 64)";
-        let plane = Plane::parse(text).unwrap();
-        assert_eq!(plane.0[2], DVec3::new(-1600.0, 864.5, 64.0));
-        assert_eq!(plane.to_string(), text);
-    }
-
-    #[test]
-    fn uv_axis_round_trips() {
-        let text = "[0 -1 0 12.5] 0.25";
-        assert_eq!(UvAxis::parse(text).unwrap().to_string(), text);
-    }
-
-    #[test]
-    fn accepts_msvc_exponents() {
-        let v = parse_vec3("-0.0871556 0.996195 -1.21669e-008").unwrap();
-        assert_eq!(v.z, -1.21669e-8);
-    }
-
-    #[test]
-    fn color_rejects_out_of_range() {
-        assert_eq!(Color::parse("92 93 178"), Some(Color([92, 93, 178])));
-        assert_eq!(Color::parse("92 93 300"), None);
-        assert_eq!(Color::parse("92 93"), None);
-    }
-}

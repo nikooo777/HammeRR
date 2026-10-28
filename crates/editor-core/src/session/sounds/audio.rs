@@ -144,9 +144,3 @@ impl Drop for Playback {
         let _ = self.child.wait();
     }
 }
-
-#[cfg(test)]
-mod close_tests;
-
-#[cfg(all(test, unix))]
-mod status_tests;

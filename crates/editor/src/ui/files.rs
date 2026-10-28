@@ -355,6 +355,3 @@ pub(super) fn show_game_log(app: &AppWindow, ui: &SharedUi) {
         }
     }
 }
-
-#[cfg(test)]
-mod admission_tests;

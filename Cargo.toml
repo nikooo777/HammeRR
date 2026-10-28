@@ -16,7 +16,7 @@ render = { path = "crates/render" }
 slint = { version = "=1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-femtovg-wgpu", "unstable-wgpu-30", "accessibility", "compat-1-2"] }
 
 slint-build = "=1.18.1"
-# Share the font-cache feature with software tests without adding a renderer.
+# Keep shared font-cache support in generated UI.
 i-slint-core = { version = "=1.18.1", default-features = false, features = ["shared-swash"] }
 
 [profile.dev]
@@ -25,15 +25,7 @@ opt-level = 2
 [profile.dev.package."*"]
 opt-level = 3
 
-[profile.test]
-opt-level = 2
-
 [profile.dev.package.editor-ui]
-opt-level = 0
-debug = 0
-incremental = false
-
-[profile.test.package.editor-ui]
 opt-level = 0
 debug = 0
 incremental = false
@@ -43,17 +35,7 @@ opt-level = 0
 debug = 0
 incremental = false
 
-[profile.test.package.editor-app-ui]
-opt-level = 0
-debug = 0
-incremental = false
-
 [profile.dev.package.editor-build-ui]
-opt-level = 0
-debug = 0
-incremental = false
-
-[profile.test.package.editor-build-ui]
 opt-level = 0
 debug = 0
 incremental = false
@@ -63,25 +45,11 @@ opt-level = 0
 debug = "line-tables-only"
 incremental = false
 
-[profile.test.package.editor-core]
-opt-level = 0
-debug = "line-tables-only"
-incremental = false
-
 [profile.dev.package.compiler]
-debug = "line-tables-only"
-
-[profile.test.package.compiler]
 debug = "line-tables-only"
 
 [profile.dev.package.render]
 debug = "line-tables-only"
 
-[profile.test.package.render]
-debug = "line-tables-only"
-
 [profile.dev.package.editor]
-debug = "line-tables-only"
-
-[profile.test.package.editor]
 debug = "line-tables-only"

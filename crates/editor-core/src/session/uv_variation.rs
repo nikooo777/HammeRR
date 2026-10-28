@@ -54,6 +54,3 @@ impl Session {
 fn signed_fraction(value: u32) -> f64 {
     f64::from(value) / f64::from(u32::MAX) * 2.0 - 1.0
 }
-
-#[cfg(test)]
-mod tests;

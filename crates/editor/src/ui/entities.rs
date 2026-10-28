@@ -895,9 +895,3 @@ pub(super) fn single_selected_entity(session: &Session) -> Option<u32> {
         _ => None,
     }
 }
-
-#[cfg(test)]
-mod fgd_loading_tests;
-
-#[cfg(test)]
-mod admission_tests;

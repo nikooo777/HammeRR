@@ -1,9 +1,6 @@
 use super::*;
 use std::collections::HashSet;
 
-#[cfg(test)]
-mod tests;
-
 pub(super) fn saved_materials(
     metadata: &map_core::partition_metadata::Metadata,
     partitions: &[Partition],

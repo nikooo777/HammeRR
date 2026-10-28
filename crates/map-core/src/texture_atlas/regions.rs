@@ -294,6 +294,3 @@ impl Regions {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests;

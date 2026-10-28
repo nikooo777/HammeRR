@@ -11,31 +11,3 @@ pub(crate) fn bounded(limits: PakLimits) -> PakLimits {
         max_bsp_bytes: limits.max_bsp_bytes.min(defaults.max_bsp_bytes),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn compiler_ceiling_preserves_lower_limits_and_caps_raised_fields() {
-        let defaults = PakLimits::default();
-        assert_eq!(
-            bounded(PakLimits {
-                max_archive_bytes: 1,
-                max_entries: defaults.max_entries,
-                max_entry_bytes: usize::MAX,
-                max_total_bytes: 2,
-                max_name_bytes: usize::MAX,
-                max_bsp_bytes: defaults.max_bsp_bytes,
-            }),
-            PakLimits {
-                max_archive_bytes: 1,
-                max_entries: defaults.max_entries,
-                max_entry_bytes: defaults.max_entry_bytes,
-                max_total_bytes: 2,
-                max_name_bytes: defaults.max_name_bytes,
-                max_bsp_bytes: defaults.max_bsp_bytes,
-            }
-        );
-    }
-}

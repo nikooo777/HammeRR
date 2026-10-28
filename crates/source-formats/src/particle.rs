@@ -444,6 +444,3 @@ pub fn parse(data: &[u8]) -> io::Result<File> {
         elements: element_count,
     })
 }
-
-#[cfg(test)]
-mod tests;

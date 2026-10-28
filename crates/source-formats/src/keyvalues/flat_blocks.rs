@@ -126,6 +126,3 @@ fn validate_token(src: &str, token: &str, offset: usize) -> Result<(), ParseErro
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

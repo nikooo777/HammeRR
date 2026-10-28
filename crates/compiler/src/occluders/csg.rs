@@ -14,10 +14,6 @@ const MAX_FRAGMENTS: usize = 65_536;
 const GEOMETRY_EPSILON: f64 = 1e-7;
 const NORMAL_EPSILON: f64 = 1e-10;
 
-#[cfg(test)]
-#[path = "csg/tests.rs"]
-mod tests;
-
 pub(crate) struct Budget {
     work: usize,
     points: usize,
@@ -25,8 +21,6 @@ pub(crate) struct Budget {
     max_work: usize,
     max_points: usize,
     max_fragments: usize,
-    #[cfg(test)]
-    cancel_after_work: Option<usize>,
 }
 
 impl Default for Budget {
@@ -38,8 +32,6 @@ impl Default for Budget {
             max_work: MAX_WORK,
             max_points: MAX_ALLOCATED_POINTS,
             max_fragments: MAX_FRAGMENTS,
-            #[cfg(test)]
-            cancel_after_work: None,
         }
     }
 }
@@ -52,11 +44,7 @@ impl Budget {
             .checked_add(work)
             .filter(|&value| value <= self.max_work)
             .ok_or("Occluder union exceeds its four-million work-unit budget")?;
-        #[cfg(test)]
-        if self.cancel_after_work.is_some_and(|work| self.work >= work) {
-            control.cancel()?;
-            control.checkpoint()?;
-        }
+
         Ok(())
     }
 

@@ -4,6 +4,13 @@ version = "0.1.0"
 description = "Readers and writers for Source engine file formats (KeyValues, VMF, ...)"
 edition.workspace = true
 rust-version.workspace = true
+autotests = false
+autobenches = false
+
+[lib]
+test = false
+doctest = false
+bench = false
 
 [dependencies]
 bytemuck.workspace = true

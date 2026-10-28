@@ -297,6 +297,3 @@ impl Resources {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

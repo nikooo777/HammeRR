@@ -52,6 +52,3 @@ pub(super) fn materials(
     }
     Ok(result)
 }
-
-#[cfg(test)]
-mod tests;

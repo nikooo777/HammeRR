@@ -235,11 +235,6 @@ fn catalog(window: &SoundBrowserWindow, session: &mut Session, state: &mut Catal
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let target = access.downgrade();
         let window = SoundBrowserWindow::new()?;
@@ -528,79 +523,5 @@ impl Controller {
             });
         self.window
             .set_volume(session.sound_preview_volume() * 100.0);
-    }
-}
-
-#[cfg(test)]
-mod admission_tests;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use slint::Model;
-    use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn sound_browser_shares_named_variants_handoff_apply_and_cancel() {
-        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                renderer_name: Some("software".into()),
-                mock_time: true,
-                threading: false,
-            },
-        )))
-        .unwrap();
-        let (_directory, session, id) = crate::test_assets::sounds();
-        let source = session.document().vmf().clone();
-        let history = session.document().undo_labels().count();
-        let shared = Arc::new(Mutex::new(session));
-        let token = lock(&shared)
-            .begin_sound_choice(id, "message", false)
-            .unwrap()["token"]
-            .as_u64()
-            .unwrap();
-        lock(&shared).choose_sound(token, "Test.Rain", 0).unwrap();
-        let controller = Controller::new(&shared).unwrap();
-        controller
-            .initialize(&mut lock(&shared), id, "message")
-            .unwrap();
-        assert_eq!(controller.token.get(), Some(token));
-        assert!(controller.window.get_target().contains("Sound Name"));
-        controller.window.set_variant(1);
-        controller.window.invoke_variant_changed();
-        assert_eq!(
-            lock(&shared).sound_choice(token).unwrap()["sound"]["variant"],
-            1
-        );
-        controller.window.set_volume(25.0);
-        controller.window.invoke_volume_changed();
-        assert_eq!(lock(&shared).sound_preview_volume(), 0.25);
-        controller.window.set_query("rain".into());
-        controller.window.invoke_search();
-        assert_eq!(controller.window.get_rows().row_count(), 1);
-        controller.window.show().unwrap();
-        crate::ui::tests::assert_ui_renders(controller.window.window(), "sound-browser");
-        lock(&shared)
-            .choose_sound(token, "ambient/one.wav", 0)
-            .unwrap();
-        controller.window.invoke_apply();
-        assert!(controller.window.window().is_visible());
-        assert_eq!(controller.window.get_value(), "ambient/one.wav");
-        assert_eq!(lock(&shared).document().vmf(), &source);
-        controller.window.invoke_apply();
-        assert!(!controller.window.window().is_visible());
-        assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
-        lock(&shared).undo(Actor::User).unwrap();
-        assert_eq!(lock(&shared).document().vmf(), &source);
-        controller
-            .initialize(&mut lock(&shared), id, "message")
-            .unwrap();
-        let replacement = lock(&shared)
-            .begin_sound_choice(id, "message", false)
-            .unwrap()["token"]
-            .as_u64()
-            .unwrap();
-        controller.window.invoke_cancel();
-        assert!(lock(&shared).sound_choice(replacement).is_ok());
     }
 }

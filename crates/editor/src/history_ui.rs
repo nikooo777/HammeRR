@@ -4,8 +4,7 @@ use std::rc::Rc;
 use slint::{ComponentHandle, VecModel};
 
 use crate::runtime::{DocumentAccess, DocumentContinuation};
-#[cfg(test)]
-use crate::runtime::{SharedSession, lock};
+
 use crate::session::history::{INITIAL_STATE, PAGE_SIZE, Report};
 use crate::session::{Actor, Session};
 use crate::{HistoryRow, HistoryWindow};
@@ -308,11 +307,6 @@ fn with_session(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = HistoryWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
@@ -397,6 +391,3 @@ impl Controller {
         self.window.show()
     }
 }
-
-#[cfg(test)]
-mod tests;

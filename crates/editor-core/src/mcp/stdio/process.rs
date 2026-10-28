@@ -118,6 +118,3 @@ pub(in crate::mcp) fn process_transport()
 -> Result<(ProcessRead, ProcessWrite, ProcessGuard), String> {
     Err("Owned cancellable MCP standard streams require Unix pipes or regular files".into())
 }
-
-#[cfg(all(test, unix))]
-mod tests;

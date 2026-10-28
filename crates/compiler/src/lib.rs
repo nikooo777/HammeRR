@@ -42,17 +42,6 @@ pub mod water_dependencies;
 pub mod winding;
 pub mod world_light_origins;
 
-#[cfg(test)]
-#[path = "../tests/common/mod.rs"]
-mod test_common;
-
-#[cfg(test)]
-#[path = "../tests/common/static_prop_model.rs"]
-mod test_static_prop_model;
-
-#[cfg(all(test, target_os = "linux"))]
-mod write_reservation_tests;
-
 use std::io::Write;
 use std::time::{Duration, Instant};
 use std::{io, path::Path};

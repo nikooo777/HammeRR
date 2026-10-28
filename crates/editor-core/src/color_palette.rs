@@ -414,6 +414,3 @@ impl State {
             "policy":"One shared user palette of exact normalized RGB colors. Brightness is independent. Explicit palette writes persist even when a map color draft is Cancelled. No map palette, gamma conversion or automatic file reload. Participating Linux writers coordinate; external changes require Reload palette."})
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -179,11 +179,6 @@ fn read_slot(window: &ShortcutsWindow, alternate: bool) -> Option<Chord> {
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = ShortcutsWindow::new()?;
         let bindings = Bindings::default();
@@ -432,6 +427,3 @@ pub fn refresh_hint(app: &AppWindow, session: &Session) {
             .into(),
     );
 }
-
-#[cfg(test)]
-mod tests;

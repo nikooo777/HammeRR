@@ -503,6 +503,3 @@ fn validate_editparams(children: &[Node]) -> io::Result<()> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

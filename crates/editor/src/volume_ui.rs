@@ -7,8 +7,7 @@ use slint::ComponentHandle;
 use source_formats::vmf::format_number;
 
 use crate::VolumeWindow;
-#[cfg(test)]
-use crate::runtime::SharedSession;
+
 use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::volume::Spec;
 use crate::session::{Actor, SelectMode, Session};
@@ -133,16 +132,6 @@ fn callback(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(
-        shared: &SharedSession,
-        aspect: impl Fn() -> f32 + 'static,
-    ) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()), move || {
-            Some(aspect())
-        })
-    }
-
     pub fn new_with_access(
         access: &DocumentAccess,
         aspect: impl Fn() -> Option<f32> + 'static,

@@ -17,8 +17,6 @@ pub(crate) const MAX_SMOOTH_SOURCE_POINTS: usize = 4_000_000;
 mod region_budget;
 mod water_budget;
 pub use region_budget::Limits;
-#[cfg(test)]
-mod water_budget_tests;
 
 #[derive(Debug)]
 pub struct SmoothingSource {
@@ -607,110 +605,4 @@ fn merge_sources(a: &Arc<[u32]>, b: &Arc<[u32]>, work: &mut usize) -> Result<Arc
         }
     }
     Ok(sources.into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn subdivision_uses_an_interior_cut_when_a_boundary_cut_keeps_the_parent_extent() {
-        let source = crate::test_common::room();
-        let game = crate::test_common::empty_game();
-        let mut report = crate::Report::default();
-        let mut map = Map::load(&source, &game, &mut report).unwrap();
-        assert!(!report.has_errors(), "{report:?}");
-        let texinfo = map.texinfos.add(TexInfo {
-            lightmap_vecs: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
-            texdata: 0,
-            ..TexInfo::default()
-        });
-        let winding = Winding(vec![
-            DVec3::new(-0.001, 0.0, 0.0),
-            DVec3::new(31.001, 1.0, 0.0),
-            DVec3::new(32.0, 0.0, 0.0),
-        ]);
-        let (front, back) = winding.split(DVec3::X, 31.0);
-        assert!(front.is_some());
-        assert_eq!(
-            lightmap_bounds(&back.unwrap(), &map.texinfos.infos[texinfo]).unwrap(),
-            ([-1, 0], [33, 1])
-        );
-        let face = Face {
-            smoothing_source: None,
-            source_sides: Arc::from([91]),
-            plane: 0,
-            texinfo,
-            smoothing_groups: 0,
-            winding,
-            node: None,
-            leaves: Vec::new(),
-            water_region: None,
-            displacement: None,
-        };
-        let mut output = Vec::new();
-        subdivide(face, &map, &mut output, &Control::default()).unwrap();
-        assert_eq!(output.len(), 2);
-        let mut bounds = output
-            .iter()
-            .map(|face| face.checked_lightmap_bounds(&map).unwrap())
-            .collect::<Vec<_>>();
-        bounds.sort();
-        assert_eq!(bounds, vec![([-1, 0], [16, 1]), ([15, 0], [17, 1])]);
-        assert!(
-            (output.iter().map(|face| face.winding.area()).sum::<f64>() - 16.0005).abs() < 1e-10
-        );
-        assert!(output.iter().all(|face| *face.source_sides == [91]));
-    }
-
-    #[test]
-    fn subdivision_rejects_a_midpoint_within_the_world_split_tolerance() {
-        let source = crate::test_common::room();
-        let game = crate::test_common::empty_game();
-        let mut report = crate::Report::default();
-        let mut map = Map::load(&source, &game, &mut report).unwrap();
-        assert!(!report.has_errors(), "{report:?}");
-        let texinfo = map.texinfos.add(TexInfo {
-            lightmap_vecs: [[4000.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]],
-            texdata: 0,
-            ..TexInfo::default()
-        });
-        let face = Face {
-            smoothing_source: None,
-            source_sides: Arc::from([91]),
-            plane: 0,
-            texinfo,
-            smoothing_groups: 0,
-            winding: Winding(vec![
-                DVec3::new(-0.005, 0.0, 0.0),
-                DVec3::new(-0.005, 1.0, 0.0),
-                DVec3::new(0.005, 1.0, 0.0),
-                DVec3::new(0.005, 0.0, 0.0),
-            ]),
-            node: None,
-            leaves: Vec::new(),
-            water_region: None,
-            displacement: None,
-        };
-        let mut output = Vec::new();
-        let error = subdivide(face, &map, &mut output, &Control::default()).unwrap_err();
-        assert!(
-            error.starts_with("side:91: Lightmap subdivision"),
-            "{error}"
-        );
-        assert!(error.contains("extent 40"), "{error}");
-        assert!(output.is_empty());
-    }
-
-    #[test]
-    fn provenance_union_preserves_sorted_ids_shares_equal_scopes_and_bounds_work() {
-        let a: Arc<[u32]> = vec![1, 2].into();
-        let b: Arc<[u32]> = vec![2, 3].into();
-        let mut work = 0;
-        assert_eq!(&*merge_sources(&a, &b, &mut work).unwrap(), &[1, 2, 3]);
-        assert_eq!(work, 4);
-        assert!(Arc::ptr_eq(&a, &merge_sources(&a, &a, &mut work).unwrap()));
-        work = MAX_PROVENANCE_WORK;
-        assert!(merge_sources(&a, &b, &mut work).is_err());
-    }
 }

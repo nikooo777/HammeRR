@@ -6,13 +6,6 @@ use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession};
 use crate::session::{Actor, Session};
 use crate::{RecentMapRow, RecentMapsWindow};
 
-#[cfg(test)]
-std::thread_local! {
-    static BEFORE_ACTION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const {
-        std::cell::RefCell::new(None)
-    };
-}
-
 fn map_guard(session: &Session) -> String {
     session.buffer_replacement_review().token()
 }
@@ -138,32 +131,16 @@ pub fn refresh(window: &RecentMapsWindow, session: &Session) {
     }
 }
 
-#[cfg(test)]
-pub fn bind(window: &RecentMapsWindow, shared: &SharedSession) {
-    bind_with_access(
-        window,
-        shared,
-        crate::runtime::DocumentAccess::unmanaged(shared.clone()),
-    );
-}
-
 fn with_session<R>(
     window: &slint::Weak<RecentMapsWindow>,
     access: &DocumentContinuation,
     body: impl FnOnce(&RecentMapsWindow, &mut Session) -> R,
 ) -> Option<R> {
     let window = window.upgrade()?;
-    match access.upgrade().and_then(|access| {
-        access.with_session(|session| {
-            #[cfg(test)]
-            let before = BEFORE_ACTION.with(|hook| hook.borrow_mut().take());
-            #[cfg(test)]
-            if let Some(before) = before {
-                before();
-            }
-            Ok(body(&window, session))
-        })
-    }) {
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
         Ok(result) => Some(result),
         Err(error) => {
             window.set_message(error.into());
@@ -280,6 +257,3 @@ pub fn bind_with_access(
         }
     });
 }
-
-#[cfg(test)]
-mod tests;

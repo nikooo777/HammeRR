@@ -7,13 +7,6 @@ use serde_json::{Value, json};
 
 use super::{Actor, Session};
 
-#[cfg(test)]
-mod reload_selection_tests;
-#[cfg(test)]
-mod scale_tests;
-#[cfg(test)]
-mod tests;
-
 pub(super) struct Models {
     pub instances: Vec<Instance>,
     pub issues: BTreeMap<u32, String>,

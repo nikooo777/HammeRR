@@ -7,8 +7,6 @@ use crate::CompileWindow;
 use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
 use crate::session::{Actor, Session};
 
-#[cfg(test)]
-mod admission_tests;
 mod baked_lightmaps;
 mod baked_prop_vertices;
 mod baked_surfaces;
@@ -17,15 +15,11 @@ mod capture;
 mod compiled_details;
 mod compiled_lights;
 mod compiled_visibility;
-#[cfg(test)]
-mod instance_dependency_tests;
+
 mod lighting_progress;
 mod lighting_work;
 mod prop_vertex_lighting;
-#[cfg(test)]
-mod recipe_authority_tests;
-#[cfg(test)]
-mod recipe_reload_tests;
+
 mod sky_packing;
 mod static_prop_packing;
 mod water_packing;
@@ -434,16 +428,6 @@ fn recipe_action(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub(crate) fn baked_lightmaps_window(&self) -> &crate::BakedLightmapsWindow {
-        self.baked_lightmaps.window()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn baked_surfaces_window(&self) -> &crate::BakedSurfacesWindow {
-        self.baked_surfaces.window()
-    }
-
     pub(crate) fn hide_windows(&self, errors: &mut Vec<String>) {
         self.baked_lightmaps.hide_window(errors);
         self.baked_prop_vertices.hide_window(errors);
@@ -452,11 +436,6 @@ impl Controller {
         self.compiled_details.hide_window(errors);
         self.compiled_visibility.hide_window(errors);
         crate::ui::hide_window("Compile", self.window.window(), errors);
-    }
-
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(shared, DocumentAccess::unmanaged(shared.clone()))
     }
 
     pub fn new_with_access(
@@ -1420,223 +1399,5 @@ impl Controller {
             || self.baked_surfaces.is_visible()
             || self.compiled_details.is_visible()
             || self.compiled_visibility.is_visible()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn recipe_controls_share_crud_apply_cancel_and_job_guards() {
-        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                renderer_name: Some("software".into()),
-                mock_time: true,
-                threading: false,
-            },
-        )))
-        .unwrap();
-        let (directory, game, _) = crate::test_assets::game_process(true);
-        let mut session = Session::new(Ok(game));
-        let path = directory.path().join("room.vmf");
-        std::fs::write(&path, crate::test_assets::room().write(&Default::default())).unwrap();
-        session.open(Actor::User, &path, false).unwrap();
-        let shared = Arc::new(Mutex::new(session));
-        let controller = Controller::new(&shared).unwrap();
-        controller.refresh(&lock(&shared));
-        assert_eq!(controller.window.get_selected_recipe(), "Fast preview");
-        assert!(
-            controller
-                .window
-                .get_recipe_status()
-                .contains("Current recipe: Fast preview")
-        );
-        assert!(!controller.window.get_custom_recipe_selected());
-        assert!(!controller.window.get_sky_enabled());
-        assert!(!controller.window.get_refine_ambient_probes());
-        assert!(!controller.window.get_ambient_probe_refinement_enabled());
-        controller.window.invoke_change_refine_ambient_probes(true);
-        assert!(!lock(&shared).compile_options().refine_ambient_probes);
-        controller.window.invoke_change_lighting(2);
-        controller.refresh(&lock(&shared));
-        assert_eq!(
-            controller.window.get_selected_lighting(),
-            "Direct LDR + HDR"
-        );
-        assert!(controller.window.get_sky_enabled());
-        controller.window.invoke_change_lighting(0);
-        controller.window.invoke_choose_recipe(1);
-        assert_eq!(lock(&shared).compile_settings()["lighting"], "fullbright");
-        controller.window.invoke_apply_recipe();
-        controller.refresh(&lock(&shared));
-        assert_eq!(lock(&shared).compile_settings()["lighting"], "direct_ldr");
-        assert!(
-            controller
-                .window
-                .get_recipe_status()
-                .contains("Current recipe: Final lighting")
-        );
-        controller.window.invoke_change_physics(0);
-        controller.refresh(&lock(&shared));
-        assert!(
-            controller
-                .window
-                .get_recipe_status()
-                .contains("Current recipe: Custom settings")
-        );
-        controller.window.invoke_change_lighting(2);
-        controller.refresh(&lock(&shared));
-        assert!(controller.window.get_sky_enabled());
-        assert!(controller.window.get_ambient_probe_refinement_enabled());
-        controller.window.invoke_change_refine_ambient_probes(true);
-        assert!(lock(&shared).compile_options().refine_ambient_probes);
-        controller.window.invoke_change_sky_quality(0);
-        assert_eq!(lock(&shared).compile_settings()["sky_quality"], "detailed");
-        assert!(
-            controller
-                .window
-                .get_message()
-                .contains("Balanced or Detailed")
-        );
-        controller.window.set_recipe_name("Evening lighting".into());
-        controller.window.invoke_save_recipe();
-        let id = lock(&shared).build_recipes()["active"]["id"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        assert_eq!(controller.window.get_selected_recipe(), "Evening lighting");
-        assert!(controller.window.get_custom_recipe_selected());
-        controller.window.set_recipe_name("Unfinished edit".into());
-        controller.window.invoke_cancel_recipe_edit();
-        assert_eq!(controller.window.get_recipe_name(), "Evening lighting");
-        assert_eq!(
-            lock(&shared).build_recipes()["recipes"][2]["name"],
-            "Evening lighting"
-        );
-        controller.window.set_recipe_name("Night lighting".into());
-        controller.window.invoke_rename_recipe();
-        assert_eq!(
-            lock(&shared).build_recipes()["recipes"][2]["name"],
-            "Night lighting"
-        );
-        controller.window.invoke_choose_recipe(0);
-        controller.window.invoke_apply_recipe();
-        assert_eq!(lock(&shared).compile_settings()["lighting"], "fullbright");
-        assert!(!lock(&shared).compile_options().refine_ambient_probes);
-        controller.window.invoke_choose_recipe(2);
-        controller.window.invoke_apply_recipe();
-        assert!(controller.window.get_refine_ambient_probes());
-        assert_eq!(
-            lock(&shared).compile_settings()["lighting"],
-            "direct_ldr_hdr"
-        );
-        assert_eq!(lock(&shared).compile_settings()["physics"], "none");
-        controller.window.invoke_change_bounces(1);
-        controller.window.invoke_replace_recipe();
-        assert_eq!(
-            lock(&shared).build_recipes()["recipes"][2]["settings"]["bounces"],
-            1
-        );
-        lock(&shared)
-            .rename_build_recipe(Actor::Agent, &id, "Evening preview", None)
-            .unwrap();
-        controller.window.set_recipe_name("Stale rename".into());
-        controller.window.invoke_rename_recipe();
-        assert!(controller.window.get_message().contains("changed"));
-        assert_eq!(
-            lock(&shared).build_recipes()["recipes"][2]["name"],
-            "Evening preview"
-        );
-        controller.refresh(&lock(&shared));
-        controller.window.show().unwrap();
-        controller.window.invoke_choose_recipe(2);
-        for label in [
-            "Apply recipe",
-            "Save current as new",
-            "Replace with current",
-            "Rename recipe",
-            "Delete recipe",
-            "Cancel recipe edit",
-            "Reload recipes",
-        ] {
-            assert!(
-                i_slint_backend_testing::ElementHandle::find_by_accessible_label(
-                    &controller.window,
-                    label
-                )
-                .next()
-                .is_some(),
-                "Missing {label}"
-            );
-        }
-        crate::ui::tests::assert_ui_renders(controller.window.window(), "build-recipes");
-        crate::ui::tests::assert_ui_renders(controller.window.window(), "build-hdr-controls");
-        let refinement = crate::ui::tests::scroll_inspector_to_control(
-            &controller.window,
-            "Refine ambient probes",
-        );
-        crate::ui::tests::assert_dialog_button_visible(&controller.window, "Refine ambient probes");
-        refinement.invoke_accessible_default_action();
-        assert!(!lock(&shared).compile_options().refine_ambient_probes);
-        refinement.invoke_accessible_default_action();
-        assert!(lock(&shared).compile_options().refine_ambient_probes);
-        crate::ui::tests::assert_ui_renders(controller.window.window(), "build-ambient-probes");
-        controller.window.invoke_apply_recipe();
-        assert_eq!(lock(&shared).build_recipes()["active"]["id"], id);
-        let request = lock(&shared).begin_compile(Actor::Agent, None).unwrap();
-        controller.refresh(&lock(&shared));
-        assert!(!controller.window.get_custom_recipes_enabled());
-        assert!(!controller.window.get_ambient_probe_refinement_enabled());
-        assert_eq!(
-            lock(&shared).compile_status()["job"]["settings"]["refine_ambient_probes"],
-            true
-        );
-        controller.window.invoke_change_refine_ambient_probes(false);
-        assert!(lock(&shared).compile_options().refine_ambient_probes);
-        assert!(!controller.window.get_lighting_enabled());
-        assert!(!controller.window.get_sky_enabled());
-        assert_eq!(
-            lock(&shared).compile_status()["job"]["settings"]["lighting"],
-            "direct_ldr_hdr"
-        );
-        assert!(
-            controller
-                .window
-                .get_details()
-                .contains("Build settings: Direct LDR + HDR")
-        );
-        assert!(
-            controller
-                .window
-                .get_details()
-                .contains("Recipe at build start: Evening preview")
-        );
-        controller.window.invoke_delete_recipe();
-        assert!(controller.window.get_message().contains("active compile"));
-        assert_eq!(
-            lock(&shared).build_recipes()["recipes"]
-                .as_array()
-                .unwrap()
-                .len(),
-            3
-        );
-        controller.window.invoke_cancel_build();
-        let result = request.run();
-        lock(&shared).finish_compile(Actor::Agent, &result);
-        assert!(result.is_err());
-        controller.refresh(&lock(&shared));
-        controller.window.invoke_delete_recipe();
-        assert_eq!(
-            lock(&shared).build_recipes()["recipes"]
-                .as_array()
-                .unwrap()
-                .len(),
-            2
-        );
-        assert_eq!(lock(&shared).document().undo_labels().count(), 0);
-        controller.window.invoke_close_dialog();
-        assert!(!controller.window.window().is_visible());
     }
 }

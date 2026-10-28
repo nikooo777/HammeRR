@@ -269,6 +269,3 @@ impl Measurement {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests;

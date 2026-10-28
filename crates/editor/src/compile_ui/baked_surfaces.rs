@@ -571,11 +571,6 @@ pub(super) fn bind(
 }
 
 impl Form {
-    #[cfg(test)]
-    pub(super) fn window(&self) -> &BakedSurfacesWindow {
-        &self.window
-    }
-
     pub(super) fn refresh(&self, session: &Session) {
         if !self.is_visible() {
             return;

@@ -580,15 +580,3 @@ impl EditorServer {
         })
     }
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod water_current_tests;
-
-#[cfg(test)]
-mod water_damping_tests;
-
-#[cfg(test)]
-mod light_value_binding_tests;

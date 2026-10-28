@@ -31,16 +31,6 @@ fn coordinates(value: &serde_json::Value) -> String {
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub(super) fn window(&self) -> &InstanceContentsWindow {
-        &self.window
-    }
-
-    #[cfg(test)]
-    pub(super) fn timer_running(&self) -> bool {
-        self.timer.running()
-    }
-
     pub(super) fn stop_timer(&self) {
         self.timer.stop();
     }
@@ -418,11 +408,6 @@ impl Controller {
         });
     }
 
-    #[cfg(test)]
-    fn new(shared: SharedSession) -> Result<Rc<Self>, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared))
-    }
-
     fn new_with_access(access: &DocumentAccess) -> Result<Rc<Self>, slint::PlatformError> {
         let controller = Rc::new(Self {
             window: InstanceContentsWindow::new()?,
@@ -539,6 +524,3 @@ fn bind_controller(app: &AppWindow, controller: Rc<Controller>) {
         }
     });
 }
-
-#[cfg(test)]
-mod tests;

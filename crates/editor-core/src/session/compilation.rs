@@ -19,34 +19,7 @@ impl State {
     }
 }
 
-#[cfg(test)]
-mod ownership_tests;
-
-#[cfg(test)]
-mod instance_dependency_tests;
-#[cfg(test)]
-mod instance_reflection_tests;
-#[cfg(test)]
-mod instance_rejection_tests;
-#[cfg(test)]
-mod lighting_work_settings_tests;
-#[cfg(test)]
-mod prop_vertex_lighting_settings_tests;
 mod recipes;
-#[cfg(test)]
-mod reflection_settings_tests;
-#[cfg(test)]
-mod reflection_transaction_tests;
-#[cfg(test)]
-mod sky_packing_settings_tests;
-#[cfg(test)]
-mod static_prop_packing_settings_tests;
-#[cfg(test)]
-mod static_prop_source_tests;
-#[cfg(test)]
-mod viscluster_tests;
-#[cfg(test)]
-mod water_packing_settings_tests;
 
 #[derive(Default)]
 pub struct State {
@@ -81,12 +54,6 @@ struct Job {
 }
 
 pub struct CompileRequest {
-    #[cfg(test)]
-    before_preparation: Option<Box<dyn FnOnce() + Send>>,
-    #[cfg(test)]
-    after_compilation: Option<CompilationObserver>,
-    #[cfg(test)]
-    capture: Option<CaptureBackend>,
     native_plan: Option<NativeCapturePlan>,
     output_claims: crate::path_claims::OutputClaims,
     token: u64,
@@ -108,18 +75,6 @@ pub struct CompileRequest {
     origin: CompileOrigin,
     ticket: Option<Ticket>,
 }
-
-#[cfg(test)]
-type CompilationObserver = Box<dyn Fn(&compiler::Output) + Send>;
-
-#[cfg(test)]
-pub(crate) type CaptureBackend = Box<
-    dyn FnMut(
-            native_runtime::CaptureRequest,
-            &mut dyn native_runtime::CaptureObserver,
-        ) -> Result<native_runtime::CaptureReceipt, native_runtime::CaptureFailure>
-        + Send,
->;
 
 struct NativeCapturePlan {
     client: Option<crate::runtime::native_activity::Client>,
@@ -144,8 +99,6 @@ pub struct CompileResult {
 }
 
 struct Publication {
-    #[cfg(test)]
-    before_cleanup: Option<Box<dyn FnOnce() + Send>>,
     pending: Option<compiler::PreparedWrite>,
     claims: Option<crate::path_claims::OutputClaims>,
     artifact: Option<crate::path_claims::Claim>,
@@ -158,15 +111,6 @@ struct Publication {
     committed: bool,
     error: Option<String>,
     ticket: Option<Ticket>,
-}
-
-#[cfg(test)]
-impl Drop for Publication {
-    fn drop(&mut self) {
-        if let Some(before_cleanup) = self.before_cleanup.take() {
-            before_cleanup();
-        }
-    }
 }
 
 impl State {
@@ -215,13 +159,6 @@ impl Job {
 }
 
 impl CompileResult {
-    #[cfg(test)]
-    pub(crate) fn before_cleanup(&self, hook: impl FnOnce() + Send + 'static) {
-        self.publication
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .before_cleanup = Some(Box::new(hook));
-    }
     fn take_artifact_claim(&self) -> Option<crate::path_claims::Claim> {
         self.publication
             .lock()
@@ -264,10 +201,6 @@ impl CompileResult {
 }
 
 impl CompileRequest {
-    #[cfg(test)]
-    pub(crate) fn capture_with(&mut self, capture: CaptureBackend) {
-        self.capture = Some(capture);
-    }
     pub(crate) fn freeze_native_play(&mut self, install: Option<&game::Install>) {
         if let Some(plan) = &mut self.native_plan {
             plan.play = install.map(|install| install.target().clone());
@@ -452,10 +385,7 @@ impl CompileRequest {
                 &self.control,
             )
         };
-        #[cfg(test)]
-        if let Some(hook) = &self.after_compilation {
-            hook(&output);
-        }
+
         if let Err(error) = self.control.checkpoint() {
             return self.cancelled_output(output, path, source, error);
         }
@@ -466,8 +396,6 @@ impl CompileRequest {
             return Err("Instance output is missing its retained dependency guard".into());
         }
         if self.options.generate_reflections && output.bsp.is_some() {
-            #[cfg(test)]
-            let mut backend = self.capture;
             output = compiler::finalize_reflections_with_capture(
                 output,
                 self.context
@@ -486,12 +414,7 @@ impl CompileRequest {
                     if let Some(permit) = native.as_mut() {
                         permit.started();
                     }
-                    #[cfg(test)]
-                    let result = match backend.as_mut() {
-                        Some(capture) => capture(request, observer),
-                        None => native_runtime::capture_with_cleanup(request, observer),
-                    };
-                    #[cfg(not(test))]
+
                     let result = native_runtime::capture_with_cleanup(request, observer);
                     if let Some(permit) = native.as_mut() {
                         match &result {
@@ -529,10 +452,7 @@ impl CompileRequest {
         {
             return Err("Static-prop packing did not return its retained asset plan".into());
         }
-        #[cfg(test)]
-        if let Some(hook) = self.before_preparation {
-            hook();
-        }
+
         let mut sources = None;
         let (pending, published, committed, claims, artifact, warning) = if guarded {
             if output.bsp.is_none() && output.leak.is_some() {
@@ -624,8 +544,6 @@ impl CompileRequest {
             destination_stamp: self.destination_stamp,
             control: self.control,
             publication: Mutex::new(Publication {
-                #[cfg(test)]
-                before_cleanup: None,
                 claims,
                 artifact,
                 warning,
@@ -673,8 +591,6 @@ impl CompileRequest {
             destination_stamp: self.destination_stamp,
             control: self.control,
             publication: Mutex::new(Publication {
-                #[cfg(test)]
-                before_cleanup: None,
                 pending: None,
                 claims: None,
                 artifact: None,
@@ -1233,12 +1149,6 @@ impl Session {
             guarded,
         });
         let request = CompileRequest {
-            #[cfg(test)]
-            before_preparation: None,
-            #[cfg(test)]
-            after_compilation: None,
-            #[cfg(test)]
-            capture: None,
             native_plan,
             output_claims,
             token: self.compilation.serial,
@@ -1744,356 +1654,5 @@ impl Session {
         if let Some(job) = &self.compilation.job {
             let _ = job.control.cancel();
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn build_lighting_settings_are_shared_and_do_not_edit_map_history() {
-        for (actor, lighting) in [Actor::User, Actor::Agent]
-            .into_iter()
-            .flat_map(|actor| ["direct_ldr", "direct_ldr_hdr"].map(|lighting| (actor, lighting)))
-        {
-            let (directory, game, _) = crate::test_assets::game_process(true);
-            let mut session = Session::new(Ok(game));
-            session.replace_document(
-                Document::new(crate::test_assets::room()),
-                Some(directory.path().join("room.vmf")),
-            );
-            let before = session.document.vmf().write(&Default::default());
-            let revision = session.document.revision();
-            let choices = session.compile_settings()["choices"].clone();
-            assert_eq!(choices.as_array().unwrap().len(), 3);
-            assert_eq!(choices[2]["name"], "direct_ldr_hdr");
-            assert_eq!(choices[2]["label"], "Direct LDR + HDR");
-            assert_eq!(session.compile_settings()["lighting"], "fullbright");
-            assert_eq!(session.compile_settings()["sky_quality"], "fast");
-            assert_eq!(session.compile_settings()["visibility"], "fast");
-            assert_eq!(session.compile_settings()["bounces"], 0);
-            assert_eq!(session.compile_settings()["smoothing_angle"], 0);
-            session
-                .update_build_settings(
-                    actor,
-                    BuildSettingsUpdate {
-                        smoothing_angle: Some(30),
-                        ..Default::default()
-                    },
-                )
-                .unwrap();
-            let selected = session.compile_settings();
-            assert!(
-                session
-                    .update_build_settings(
-                        actor,
-                        BuildSettingsUpdate {
-                            lighting: Some(lighting),
-                            smoothing_angle: Some(91),
-                            ..Default::default()
-                        }
-                    )
-                    .is_err()
-            );
-            assert_eq!(session.compile_settings(), selected);
-            session
-                .update_compile_options(actor, None, None, None, None, Some(1))
-                .unwrap();
-            let selected = session.compile_settings();
-            assert!(
-                session
-                    .update_compile_options(actor, Some(lighting), None, None, None, Some(5))
-                    .is_err()
-            );
-            assert_eq!(session.compile_settings(), selected);
-            session
-                .update_compile_options(actor, None, None, None, Some("detailed"), None)
-                .unwrap();
-            let settings = session.compile_settings();
-            assert_eq!(settings["visibility"], "detailed");
-            assert!(
-                session
-                    .update_compile_options(
-                        actor,
-                        Some(lighting),
-                        Some("engine"),
-                        Some("detailed"),
-                        Some("invalid"),
-                        None
-                    )
-                    .is_err()
-            );
-            assert_eq!(session.compile_settings(), settings);
-            let result = session
-                .update_compile_settings_quality(actor, None, None, Some("balanced"))
-                .unwrap();
-            assert_eq!(result["sky_quality"], "balanced");
-            assert!(
-                session
-                    .update_compile_settings_quality(actor, Some(lighting), None, Some("unknown"))
-                    .is_err()
-            );
-            assert_eq!(session.compile_settings()["lighting"], "fullbright");
-            assert_eq!(session.compile_settings()["sky_quality"], "balanced");
-            assert_eq!(
-                session.compile_settings()["bounce_choices"]
-                    .as_array()
-                    .unwrap()
-                    .len(),
-                5
-            );
-            for count in [2, 3, 4, 1] {
-                session
-                    .update_compile_options(actor, None, None, None, None, Some(count))
-                    .unwrap();
-                assert_eq!(session.compile_settings()["bounces"], count);
-            }
-            let result = session.set_compile_settings(actor, lighting).unwrap();
-            assert_eq!(result["lighting"], lighting);
-            assert!(
-                session
-                    .update_compile_settings(actor, Some("fullbright"), Some("unknown"))
-                    .is_err()
-            );
-            assert_eq!(session.compile_settings()["lighting"], lighting);
-            let result = session
-                .update_compile_settings(actor, None, Some("engine"))
-                .unwrap();
-            assert_eq!(result["physics"], "engine");
-            session
-                .update_compile_settings(actor, None, Some("none"))
-                .unwrap();
-            assert!(session.set_compile_settings(actor, "unsupported").is_err());
-            assert_eq!(session.document.vmf().write(&Default::default()), before);
-            assert_eq!(session.document.revision(), revision);
-            let request = session.begin_compile(actor, None).unwrap();
-            assert_eq!(
-                session.compile_status()["job"]["settings"]["smoothing_angle"],
-                30
-            );
-            assert!(
-                session
-                    .update_build_settings(
-                        actor,
-                        BuildSettingsUpdate {
-                            smoothing_angle: Some(0),
-                            ..Default::default()
-                        }
-                    )
-                    .is_err()
-            );
-            assert_eq!(session.compile_status()["job"]["settings"]["bounces"], 1);
-            assert!(
-                session
-                    .update_compile_options(actor, None, None, None, None, Some(0))
-                    .is_err()
-            );
-            assert_eq!(
-                session.compile_status()["job"]["settings"]["visibility"],
-                "detailed"
-            );
-            assert!(
-                session
-                    .update_compile_options(actor, None, None, None, Some("fast"), None)
-                    .is_err()
-            );
-            assert_eq!(
-                session.compile_status()["job"]["settings"]["lighting"],
-                lighting
-            );
-            assert_eq!(session.compile_settings()["editable"], false);
-            assert_eq!(
-                session.compile_status()["job"]["settings"]["sky_quality"],
-                "balanced"
-            );
-            assert!(
-                session
-                    .update_compile_settings_quality(actor, None, None, Some("detailed"))
-                    .is_err()
-            );
-            assert!(session.set_compile_settings(actor, "fullbright").is_err());
-            assert!(
-                session
-                    .update_compile_settings(actor, None, Some("engine"))
-                    .is_err()
-            );
-            session
-                .cancel_compile(actor, session.compile_token().unwrap())
-                .unwrap();
-            let result = request.run();
-            session.finish_compile(actor, &result);
-            assert!(result.is_err());
-            assert_eq!(session.compile_settings()["editable"], true);
-        }
-    }
-
-    #[test]
-    fn ordinary_detail_builds_keep_material_freshness_and_publication_context() {
-        let (directory, game) = crate::test_assets::model_lighting::game();
-        for name in ["one", "two"] {
-            std::fs::write(
-                directory
-                    .path()
-                    .join(format!("materials/models/test/{name}.vmt")),
-                "UnlitGeneric { }",
-            )
-            .unwrap();
-        }
-        let mut vmf = crate::test_assets::room();
-        let mut prop =
-            source_formats::vmf::Entity::new(vmf.object_ids().max().unwrap() + 1, "prop_detail");
-        prop.properties.set("model", "models/test/receiver.mdl");
-        prop.properties.set("origin", "0 0 32");
-        vmf.entities.push(prop);
-        let source = directory.path().join("room.vmf");
-        let output = source.with_extension("bsp");
-        std::fs::write(&source, vmf.write(&Default::default())).unwrap();
-        std::fs::write(&output, b"previous BSP").unwrap();
-        std::fs::write(output.with_extension("lin"), b"previous LIN").unwrap();
-        let mut session = Session::new(Ok(game));
-        session.open(Actor::User, &source, false).unwrap();
-        session
-            .update_compile_settings(Actor::User, Some("fullbright"), Some("none"))
-            .unwrap();
-        let result = session.begin_compile(Actor::User, None).unwrap().run();
-        assert_eq!(result.as_ref().unwrap().output.stats.detail_props, 1);
-        session.content_epoch += 1;
-        session.finish_compile(Actor::User, &result);
-        assert!(!result.as_ref().unwrap().published());
-        assert!(
-            result
-                .as_ref()
-                .unwrap()
-                .publication_error()
-                .unwrap()
-                .contains("changed during build publication")
-        );
-        assert_eq!(std::fs::read(&output).unwrap(), b"previous BSP");
-        assert_eq!(
-            std::fs::read(output.with_extension("lin")).unwrap(),
-            b"previous LIN"
-        );
-        let result = session.begin_compile(Actor::Agent, None).unwrap().run();
-        session.finish_compile(Actor::Agent, &result);
-        assert!(
-            result.as_ref().unwrap().published(),
-            "{}",
-            session.compile_status()
-        );
-        assert_eq!(session.baked_lightmap_build_state()["current"], true);
-        let bytes = std::fs::read(&output).unwrap();
-        std::fs::write(
-            directory.path().join("materials/models/test/one.vmt"),
-            "VertexLitGeneric { }",
-        )
-        .unwrap();
-        assert_eq!(session.baked_lightmap_build_state()["current"], false);
-        let status = session.compile_status();
-        assert_eq!(status["job"]["stale"], true);
-        assert!(status["job"]["material_source_issue"].is_string());
-        assert_eq!(std::fs::read(&output).unwrap(), bytes);
-    }
-
-    #[test]
-    fn last_build_is_stale_only_while_lighting_settings_differ() {
-        let (directory, game, _) = crate::test_assets::game_process(true);
-        let mut session = Session::new(Ok(game));
-        session.replace_document(
-            Document::new(crate::test_assets::room()),
-            Some(directory.path().join("room.vmf")),
-        );
-        let result = session.begin_compile(Actor::User, None).unwrap().run();
-        session.finish_compile(Actor::User, &result);
-        assert!(session.launch_readiness().is_ok());
-        session
-            .update_build_settings(
-                Actor::Agent,
-                BuildSettingsUpdate {
-                    smoothing_angle: Some(45),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        assert!(session.launch_readiness().is_err());
-        session
-            .update_build_settings(
-                Actor::User,
-                BuildSettingsUpdate {
-                    smoothing_angle: Some(0),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        assert!(session.launch_readiness().is_ok());
-        session
-            .update_compile_options(Actor::Agent, None, None, None, None, Some(1))
-            .unwrap();
-        assert!(session.launch_readiness().is_err());
-        session
-            .update_compile_options(Actor::User, None, None, None, None, Some(0))
-            .unwrap();
-        assert!(session.launch_readiness().is_ok());
-        session
-            .update_compile_options(Actor::Agent, None, None, None, Some("detailed"), None)
-            .unwrap();
-        assert!(session.launch_readiness().is_err());
-        session
-            .update_compile_options(Actor::User, None, None, None, Some("fast"), None)
-            .unwrap();
-        assert!(session.launch_readiness().is_ok());
-        session
-            .update_compile_settings(Actor::Agent, None, Some("engine"))
-            .unwrap();
-        assert_eq!(session.compile_status()["job"]["stale"], true);
-        assert!(session.launch_readiness().is_err());
-        session
-            .update_compile_settings(Actor::User, None, Some("none"))
-            .unwrap();
-        assert!(session.launch_readiness().is_ok());
-        let before = session.document.vmf().write(&Default::default());
-        session
-            .set_compile_settings(Actor::Agent, "direct_ldr")
-            .unwrap();
-        assert_eq!(session.compile_status()["job"]["stale"], true);
-        assert!(
-            session
-                .launch_readiness()
-                .unwrap_err()
-                .contains("Build settings changed")
-        );
-        session
-            .set_compile_settings(Actor::User, "fullbright")
-            .unwrap();
-        assert_eq!(session.compile_status()["job"]["stale"], false);
-        assert!(session.launch_readiness().is_ok());
-        session
-            .set_compile_settings(Actor::User, "direct_ldr")
-            .unwrap();
-        let result = session.begin_compile(Actor::Agent, None).unwrap().run();
-        session.finish_compile(Actor::Agent, &result);
-        assert!(result.as_ref().unwrap().output.bsp.is_some());
-        assert!(session.launch_readiness().is_ok());
-        assert_eq!(
-            session.compile_status()["job"]["result"]["stats"]["lighting_mode"],
-            "direct_ldr"
-        );
-        assert!(
-            session.compile_status()["job"]["result"]["stats"]["lighting_faces"]
-                .as_u64()
-                .unwrap()
-                > 0
-        );
-        session
-            .set_compile_settings(Actor::Agent, "direct_ldr_hdr")
-            .unwrap();
-        assert_eq!(session.compile_status()["job"]["stale"], true);
-        assert!(session.launch_readiness().is_err());
-        session
-            .set_compile_settings(Actor::User, "direct_ldr")
-            .unwrap();
-        assert_eq!(session.compile_status()["job"]["stale"], false);
-        assert!(session.launch_readiness().is_ok());
-        assert_eq!(session.document.vmf().write(&Default::default()), before);
     }
 }

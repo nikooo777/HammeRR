@@ -147,11 +147,6 @@ pub(super) fn change_clip_points(
     )
 }
 
-#[cfg(test)]
-pub(super) fn bind_clip_controls(app: &AppWindow, shared: SharedSession) {
-    bind_clip_controls_with_access(app, &runtime::DocumentAccess::unmanaged(shared));
-}
-
 pub(super) fn bind_clip_controls_with_access(app: &AppWindow, access: &runtime::DocumentAccess) {
     app.on_clip_handles_changed({
         let callback = admission::SessionCallback::new(app, access);

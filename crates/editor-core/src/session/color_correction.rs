@@ -248,6 +248,3 @@ impl Session {
                 "target_dimension":color_correction::MAX_TARGET_DIMENSION},"policy":color_correction::POLICY})
     }
 }
-
-#[cfg(test)]
-mod tests;

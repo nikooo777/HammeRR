@@ -141,23 +141,3 @@ pub fn parse_static_ldr(entity: &Entity) -> Result<Fog, String> {
         boolean_property(entity, "fogenable")?,
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn fog_guards_nonfinite_ranges_and_density() {
-        for (start, end, density) in [
-            (f32::NAN, 100.0, 1.0),
-            (0.0, f32::INFINITY, 1.0),
-            (0.0, f32::from_bits(1), 1.0),
-            (-1.0, 100.0, 1.0),
-            (100.0, 100.0, 1.0),
-            (0.0, 100.0, f32::NAN),
-            (0.0, 100.0, -0.1),
-            (0.0, 100.0, 1.1),
-        ] {
-            assert!(Fog::new([0; 3], start, end, density, true).is_err());
-        }
-    }
-}

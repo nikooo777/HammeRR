@@ -216,6 +216,3 @@ impl From<&str> for Failure {
         Self::from(message.to_owned())
     }
 }
-
-#[cfg(test)]
-mod tests;

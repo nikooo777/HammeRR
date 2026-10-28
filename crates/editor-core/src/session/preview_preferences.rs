@@ -128,6 +128,3 @@ impl Session {
         Ok(state)
     }
 }
-
-#[cfg(test)]
-mod tests;

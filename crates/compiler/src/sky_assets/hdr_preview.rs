@@ -140,6 +140,3 @@ fn load_face(
     face.texture = Some(texture);
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

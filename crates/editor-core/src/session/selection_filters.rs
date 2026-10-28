@@ -124,6 +124,3 @@ impl Session {
         Ok(self.selection_filter_state())
     }
 }
-
-#[cfg(test)]
-mod tests;

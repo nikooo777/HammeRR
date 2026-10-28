@@ -21,9 +21,6 @@ use editor_core::session::terrain_vertices::{
     MAX_HEIGHT_CSV_BYTES, VertexSetFace, VertexSource, parse_height_csv,
 };
 
-#[cfg(test)]
-use crate::runtime::SharedSession;
-
 struct Target {
     context: crate::face_edit_ui::Context,
     preview: Option<u64>,
@@ -315,18 +312,9 @@ fn with_session<R>(
     body: impl FnOnce(&TerrainTrianglesWindow, &mut Session) -> R,
 ) -> Option<R> {
     let window = window.upgrade()?;
-    let result = continuation.upgrade().and_then(|access| {
-        access.with_session(|session| {
-            #[cfg(test)]
-            {
-                let hook = BEFORE_ACTION.with(|slot| slot.borrow_mut().take());
-                if let Some(hook) = hook {
-                    hook();
-                }
-            }
-            Ok(body(&window, session))
-        })
-    });
+    let result = continuation
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))));
     match result {
         Ok(result) => Some(result),
         Err(error) => {
@@ -337,11 +325,6 @@ fn with_session<R>(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = TerrainTrianglesWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
@@ -833,11 +816,3 @@ impl Controller {
         }
     }
 }
-
-#[cfg(test)]
-std::thread_local! {
-    static BEFORE_ACTION: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
-}
-
-#[cfg(test)]
-mod admission_tests;

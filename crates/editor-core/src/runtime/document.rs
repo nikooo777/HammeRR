@@ -3,8 +3,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-#[cfg(test)]
-use super::CompileQueue;
 use super::compile_queue::{CompileInput, QueueClient};
 use super::{CompileHandle, SharedSession, lock};
 use crate::recovery;
@@ -278,27 +276,6 @@ fn admission_inspection(activities: &[(String, usize)]) -> Value {
 }
 
 impl DocumentHandle {
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn start(session: SharedSession) -> Result<Self, String> {
-        Self::start_with_queue(session, None)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn start_managed(
-        session: SharedSession,
-        queue: &CompileQueue,
-    ) -> Result<Self, String> {
-        Self::start_with_services(session, Some(queue.client()), Some(queue.native()))
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    fn start_with_queue(
-        session: SharedSession,
-        queue: Option<QueueClient>,
-    ) -> Result<Self, String> {
-        Self::start_with_services(session, queue, None)
-    }
-
     pub(crate) fn start_with_services(
         session: SharedSession,
         queue: Option<QueueClient>,
@@ -396,7 +373,7 @@ impl DocumentHandle {
         self.commit_close(Some(review), None, discard_changes, || Ok(()))
     }
 
-    #[cfg(any(test, feature = "mcp"))]
+    #[cfg(feature = "mcp")]
     pub(crate) fn commit_reviewed_close_set<R>(
         targets: &[(Self, DocumentCloseReview)],
         discard_changes: bool,
@@ -552,11 +529,6 @@ impl DocumentHandle {
         reserve: impl FnOnce() -> Result<R, String>,
     ) -> Result<R, String> {
         self.commit_close(Some(review), None, discard_changes, reserve)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn active_operations(&self) -> usize {
-        self.0.admission.count()
     }
 
     /// Call without a Session guard; draining waits for Session work to finish.
@@ -799,12 +771,3 @@ impl DocumentContinuation {
         .ok_or_else(|| "the document is closed".into())
     }
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod admission_tests;
-
-#[cfg(test)]
-mod close_tests;

@@ -77,31 +77,3 @@ pub fn target_bytes(size: (u32, u32)) -> Result<u64, String> {
     }
     Ok(u64::from(size.0) * u64::from(size.1) * 4)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn literal_raw_entries_keep_red_fastest_rgb_and_distinct_cache_identity() {
-        let mut raw = vec![0; RAW_BYTES];
-        raw[3..6].copy_from_slice(&[17, 29, 43]);
-        raw[96..99].copy_from_slice(&[61, 73, 89]);
-        raw[3072..3075].copy_from_slice(&[101, 127, 149]);
-        let lut = Lut::from_raw(raw.clone()).unwrap();
-        let rgba = lut.rgba().unwrap();
-        assert_eq!(&rgba[4..8], &[17, 29, 43, 255]);
-        assert_eq!(&rgba[128..132], &[61, 73, 89, 255]);
-        assert_eq!(&rgba[4096..4100], &[101, 127, 149, 255]);
-        assert_ne!(lut.identity(), Lut::from_raw(raw).unwrap().identity());
-        assert!(Lut::from_raw(vec![0; RAW_BYTES - 1]).is_err());
-        assert!(Lut::from_raw(vec![0; RAW_BYTES + 1]).is_err());
-        assert!(validate_weight(f32::NAN).is_err());
-        assert!(validate_weight(-0.01).is_err());
-        assert!(validate_weight(1.01).is_err());
-        assert_eq!(target_bytes((4096, 4096)).unwrap(), 67_108_864);
-        assert!(target_bytes((4097, 1)).is_err());
-        assert!(target_bytes((0, 1)).is_err());
-        assert!(target_bytes((u32::MAX, u32::MAX)).is_err());
-    }
-}

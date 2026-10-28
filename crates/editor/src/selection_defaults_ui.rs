@@ -247,6 +247,3 @@ impl Controller {
         self.window.show()
     }
 }
-
-#[cfg(test)]
-mod tests;

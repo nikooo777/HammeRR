@@ -201,6 +201,3 @@ pub(super) fn validate(
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

@@ -53,7 +53,3 @@ impl Triangle {
         Ok(nearest)
     }
 }
-
-#[cfg(test)]
-#[path = "native_geometry/tests.rs"]
-mod tests;

@@ -121,8 +121,6 @@ pub struct MaterialInspectionCapture<'a> {
     stamps: BTreeMap<PathBuf, FileStamp>,
     lookup_rows: usize,
     issue: OnceLock<MaterialInspectionIssue>,
-    #[cfg(test)]
-    payload_reads: usize,
 }
 
 impl<'a> MaterialInspectionCapture<'a> {
@@ -136,8 +134,6 @@ impl<'a> MaterialInspectionCapture<'a> {
             stamps: BTreeMap::new(),
             lookup_rows: 0,
             issue: OnceLock::new(),
-            #[cfg(test)]
-            payload_reads: 0,
         }
     }
 
@@ -323,10 +319,7 @@ impl<'a> MaterialInspectionCapture<'a> {
             },
         );
         self.control.checkpoint().map_err(io::Error::other)?;
-        #[cfg(test)]
-        {
-            self.payload_reads += 1;
-        }
+
         let asset = self.game.read_asset_limited(path, maximum);
         let content = asset
             .as_ref()
@@ -417,6 +410,3 @@ fn check_length(bytes: usize, maximum: usize, origin: Option<&AssetOrigin>) -> i
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

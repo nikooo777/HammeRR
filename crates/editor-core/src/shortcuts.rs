@@ -466,15 +466,6 @@ impl Store {
         value.bindings.validated().map(Some)
     }
 
-    #[cfg(test)]
-    pub(crate) fn save(&self, bindings: Bindings) -> Result<(), String> {
-        let source = self.read_source()?;
-        self.save_checked(bindings, &source)
-            .map_err(|error| error.message)?
-            .source
-            .map(|_| ())
-    }
-
     pub(crate) fn save_checked(
         &self,
         bindings: Bindings,
@@ -488,6 +479,3 @@ impl Store {
         self.target().publish(&bytes, expected)
     }
 }
-
-#[cfg(test)]
-mod tests;

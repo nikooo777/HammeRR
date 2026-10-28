@@ -620,12 +620,4 @@ impl Form {
             current(&self.window, session, &self.state);
         }
     }
-
-    #[cfg(test)]
-    pub(super) fn window(&self) -> &BakedPropVerticesWindow {
-        &self.window
-    }
 }
-
-#[cfg(test)]
-mod tests;

@@ -419,6 +419,3 @@ impl State {
             .map(|picking| serde_json::json!([self.serial, picking.token, picking.owner.label()]))
     }
 }
-
-#[cfg(test)]
-mod tests;

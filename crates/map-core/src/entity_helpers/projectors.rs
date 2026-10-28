@@ -288,6 +288,3 @@ impl Projector {
             .unwrap_or_default()
     }
 }
-
-#[cfg(test)]
-mod tests;

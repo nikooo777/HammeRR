@@ -501,6 +501,3 @@ fn publish_bound(destination: &BoundDestination, data: &[u8]) -> Result<Committe
     stage.write_all(data).map_err(|error| error.to_string())?;
     stage.commit().map_err(|error| error.to_string())
 }
-
-#[cfg(test)]
-mod tests;

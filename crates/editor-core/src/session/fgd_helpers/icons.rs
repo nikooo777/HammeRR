@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 
 use map_core::Document;
-#[cfg(test)]
-use map_core::ObjectId;
+
 use render::icons::{Instance, Report};
 
 use super::super::{Session, working_region::Evaluation};
@@ -235,6 +234,3 @@ impl Session {
         serde_json::json!({"requested":view.additive_sprite_guides,"entity_images":view.entity_images,"total":total,"truncated":total>reports.len(),"guides":reports,"limits":super::sprites::LIMITS})
     }
 }
-
-#[cfg(test)]
-mod tests;

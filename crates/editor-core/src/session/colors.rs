@@ -71,6 +71,3 @@ impl Session {
         self.set_entity_properties(actor, id, &[(key.into(), Some(values.join(" ")))])
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -8,9 +8,6 @@ use crate::session::saved_views::Guard;
 use crate::session::{Actor, Session};
 use crate::{SavedViewRow, SavedViewsWindow};
 
-#[cfg(test)]
-use crate::runtime::{SharedSession, lock};
-
 #[derive(Default)]
 struct Form {
     guard: Option<Guard>,
@@ -170,11 +167,6 @@ fn callback(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = SavedViewsWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
@@ -224,6 +216,3 @@ impl Controller {
         self.window.show()
     }
 }
-
-#[cfg(test)]
-mod admission_tests;

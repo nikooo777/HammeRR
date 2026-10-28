@@ -13,9 +13,6 @@ mod budget;
 use budget::Budget;
 pub use budget::Limits;
 
-#[cfg(test)]
-mod budget_tests;
-
 #[derive(Debug)]
 pub struct Portal {
     pub leaves: [usize; 2],

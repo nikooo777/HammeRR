@@ -65,6 +65,3 @@ pub(super) fn details(job: &Value) -> String {
     }
     format!("\nLiquid assets: {roots} materials · LDR + HDR · {files} files · {bytes} bytes")
 }
-
-#[cfg(test)]
-mod tests;

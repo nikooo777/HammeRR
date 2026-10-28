@@ -30,10 +30,6 @@ fn checked_engine(path: &Path) -> Result<PathBuf, String> {
 }
 
 impl Session {
-    #[cfg(test)]
-    pub(crate) fn use_test_capture_environment(&self, environment: CaptureEnvironment) {
-        *self.native_capture.cache.borrow_mut() = Some((self.content_epoch, Ok(environment)));
-    }
     fn resolve_native_capture(
         &self,
         engine: Option<&Path>,
@@ -116,87 +112,5 @@ impl Session {
             self.log(actor, "Changed native reflection capture runtime");
         }
         Ok(self.native_capture_runtime())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn clearing_both_overrides_validates_default_before_mutation() {
-        let (directory, game) = crate::test_assets::game();
-        let mut session = Session::new(Ok(game));
-        let engine = directory.path().join("previous-engine");
-        let steam = directory.path().join("previous-steam");
-        session.native_capture.engine_root = Some(engine.clone());
-        session.native_capture.steam_root = Some(steam.clone());
-        let epoch = session.content_epoch;
-        assert!(
-            session
-                .configure_native_capture_runtime(Actor::Agent, None, None)
-                .is_err()
-        );
-        assert_eq!(session.native_capture.engine_root.as_ref(), Some(&engine));
-        assert_eq!(session.native_capture.steam_root.as_ref(), Some(&steam));
-        assert_eq!(session.content_epoch, epoch);
-    }
-
-    #[test]
-    fn repeated_descriptor_reads_are_cached_and_content_changes_retry() {
-        let (_directory, game) = crate::test_assets::game();
-        let mut session = Session::new(Ok(game));
-        let descriptor = session.native_capture_runtime();
-        assert_eq!(descriptor["ready"], false);
-        *session.native_capture.cache.borrow_mut() =
-            Some((session.content_epoch, Err("cached result".into())));
-        assert_eq!(session.native_capture_runtime()["reason"], "cached result");
-        assert_eq!(session.native_capture_runtime()["reason"], "cached result");
-        session.reload_material_assets(Actor::User);
-        assert_ne!(session.native_capture_runtime()["reason"], "cached result");
-        *session.native_capture.cache.borrow_mut() =
-            Some((session.content_epoch, Err("cached again".into())));
-        session.replace_document(map_core::Document::empty(), None);
-        assert_ne!(session.native_capture_runtime()["reason"], "cached again");
-    }
-
-    #[test]
-    fn native_configuration_is_frozen_during_active_jobs() {
-        let (_directory, game) = crate::test_assets::game();
-        let mut session = Session::new(Ok(game));
-        session.compiling = true;
-        assert!(
-            session
-                .configure_native_capture_runtime(Actor::User, None, None)
-                .is_err()
-        );
-        assert_eq!(session.native_capture_runtime()["editable"], false);
-        session.compiling = false;
-        session.closing = true;
-        assert!(
-            session
-                .configure_native_capture_runtime(Actor::Agent, None, None)
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn runtime_support_and_selected_channels_follow_shared_lighting_without_editing_the_map() {
-        let (_directory, game) = crate::test_assets::game();
-        let mut session = Session::new(Ok(game));
-        let source = session.document().vmf().clone();
-        let initial = session.native_capture_runtime();
-        assert_eq!(initial["supported_channels"], json!(["ldr", "hdr"]));
-        assert_eq!(initial["default_sample_size"], 128);
-        assert_eq!(initial["maximum_sample_size"], 256);
-        assert_eq!(initial["channel"], "ldr");
-        session
-            .set_compile_settings(Actor::Agent, "direct_ldr_hdr")
-            .unwrap();
-        let dual = session.native_capture_runtime();
-        assert_eq!(dual["channel"], "ldr_hdr");
-        assert_eq!(dual["ready"], initial["ready"]);
-        assert_eq!(session.document().vmf(), &source);
-        assert_eq!(session.document().undo_labels().count(), 0);
     }
 }

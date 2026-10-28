@@ -555,6 +555,3 @@ pub(super) fn run(
     })();
     owner.borrow_mut().finish(result)
 }
-
-#[cfg(test)]
-mod tests;

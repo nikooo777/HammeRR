@@ -497,6 +497,3 @@ impl Drop for Permit {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

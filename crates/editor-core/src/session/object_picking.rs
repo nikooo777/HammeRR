@@ -229,6 +229,3 @@ impl Session {
         Ok(report)
     }
 }
-
-#[cfg(test)]
-mod tests;

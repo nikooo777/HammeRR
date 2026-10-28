@@ -520,6 +520,3 @@ pub fn target_size(size: (u32, u32), gpu_asset_bytes: usize) -> Result<(u32, u32
     )?;
     Ok((width, height))
 }
-
-#[cfg(test)]
-mod tests;

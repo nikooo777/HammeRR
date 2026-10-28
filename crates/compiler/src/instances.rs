@@ -561,11 +561,6 @@ fn admit_helper(entity: &Entity, template: bool) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
-fn checked_solid(solid: &Solid) -> Result<(), String> {
-    checked_solid_controlled(solid, &Control::default())
-}
-
 fn checked_solid_controlled(solid: &Solid, control: &Control) -> Result<(), String> {
     checked_solid_geometry_controlled(solid, control).map(|_| ())
 }
@@ -1096,16 +1091,6 @@ fn resolve_purpose_roots<'a>(
     prepare_purpose_roots(vmf, source, control, report, purpose, roots)
 }
 
-#[cfg(test)]
-pub(crate) fn prepare<'a>(
-    vmf: &'a Vmf,
-    source: Option<&SourceContext>,
-    control: &Control,
-    report: &mut Report,
-) -> Result<Prepared<'a>, Diagnostic> {
-    prepare_purpose(vmf, source, control, report, PreparationPurpose::Reference)
-}
-
 pub(crate) fn prepare_for_compile<'a>(
     vmf: &'a Vmf,
     source: Option<&SourceContext>,
@@ -1260,6 +1245,3 @@ fn prepare_purpose_roots<'a>(
     }
     Ok(prepared)
 }
-
-#[cfg(test)]
-mod tests;

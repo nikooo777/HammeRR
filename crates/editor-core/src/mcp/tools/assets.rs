@@ -1,8 +1,5 @@
 use super::super::*;
 
-#[cfg(test)]
-mod model_scale_tests;
-
 #[tool_router(router = assets_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(

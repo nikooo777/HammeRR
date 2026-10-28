@@ -86,11 +86,6 @@ fn act(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &crate::runtime::SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = PreviewDefaultsWindow::new()?;
         let snapshot = Rc::new(RefCell::new(String::new()));
@@ -135,6 +130,3 @@ impl Controller {
         self.window.show()
     }
 }
-
-#[cfg(test)]
-mod tests;

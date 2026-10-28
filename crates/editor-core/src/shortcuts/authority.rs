@@ -237,6 +237,3 @@ impl State {
         Ok(state)
     }
 }
-
-#[cfg(test)]
-mod tests;

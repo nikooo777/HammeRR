@@ -5,8 +5,7 @@ use editor_core::sky_assets::{SkyAssetSource, SkyAssetsReport, SkyChannelReport}
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::runtime::{DocumentAccess, DocumentContinuation};
-#[cfg(test)]
-use crate::runtime::{SharedSession, lock};
+
 use crate::session::Session;
 use crate::{PropertiesWindow, SkyAssetFaceRow, SkyAssetsWindow};
 
@@ -250,14 +249,6 @@ impl Controller {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn bind(
-    parent: &PropertiesWindow,
-    shared: SharedSession,
-) -> Rc<RefCell<Option<Controller>>> {
-    bind_with_access(parent, &DocumentAccess::unmanaged(shared))
-}
-
 pub(crate) fn bind_with_access(
     parent: &PropertiesWindow,
     access: &DocumentAccess,
@@ -296,6 +287,3 @@ pub(crate) fn bind_with_access(
     });
     controller
 }
-
-#[cfg(test)]
-mod tests;

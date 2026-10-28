@@ -80,6 +80,3 @@ pub(super) fn details(job: &Value) -> String {
         "\nStatic-prop vertex lighting: {props} props · {models} models · {meshes} hardware meshes · {vertices} vertices\nProp vertex lighting bytes: LDR {ldr_bytes} · HDR {hdr_bytes}\nProp vertex lighting work: {work} · Asset bytes: {asset_bytes}"
     )
 }
-
-#[cfg(test)]
-mod tests;

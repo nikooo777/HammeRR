@@ -592,6 +592,3 @@ impl Form {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

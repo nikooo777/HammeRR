@@ -1,7 +1,5 @@
 use std::collections::BTreeMap;
 
-#[cfg(test)]
-use glam::EulerRot;
 use glam::{DQuat, DVec3};
 use source_formats::bsp::{self, Bsp, Leaf, Model, Node, Plane, StaticProp, StaticProps, contents};
 use source_formats::gamefs::{GameFs, asset_relative};
@@ -495,6 +493,3 @@ pub(crate) fn bake(
         source_owner: Some(source_owner),
     })
 }
-
-#[cfg(test)]
-mod source_tests;

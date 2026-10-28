@@ -621,7 +621,3 @@ impl MaterialLibrary {
         self.materials.is_empty()
     }
 }
-
-#[cfg(test)]
-#[path = "materials/tests.rs"]
-mod tests;

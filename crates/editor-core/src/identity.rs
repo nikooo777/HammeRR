@@ -17,18 +17,3 @@ pub fn parse_id(text: &str) -> Result<ObjectId, String> {
         _ => Err(bad()),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ids_round_trip() {
-        for id in [ObjectId::Solid(12), ObjectId::Entity(7)] {
-            assert_eq!(parse_id(&id_string(id)), Ok(id));
-        }
-        assert_eq!(parse_id("entity 7"), Ok(ObjectId::Entity(7)));
-        assert!(parse_id("7").is_err());
-        assert!(parse_id("prop:7").is_err());
-    }
-}

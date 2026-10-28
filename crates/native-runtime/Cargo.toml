@@ -4,6 +4,13 @@ version = "0.1.0"
 description = "Private supervised Source client capture runtime"
 edition.workspace = true
 rust-version.workspace = true
+autotests = false
+autobenches = false
+
+[lib]
+test = false
+doctest = false
+bench = false
 
 [dependencies]
 source-formats.workspace = true
@@ -20,3 +27,5 @@ getrandom = "0.4.3"
 [[bin]]
 name = "hammerr-native-runtime"
 path = "src/main.rs"
+test = false
+bench = false

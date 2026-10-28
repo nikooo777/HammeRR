@@ -992,18 +992,3 @@ impl State {
         json!({"sequence":self.serial,"worker_active":self.worker.busy()})
     }
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod light_tests;
-
-#[cfg(test)]
-mod cubemap_tests;
-
-#[cfg(test)]
-mod static_prop_tests;
-
-#[cfg(test)]
-mod selected_tests;

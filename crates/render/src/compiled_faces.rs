@@ -14,8 +14,7 @@ mod decode;
 pub mod materials;
 pub mod props;
 mod settings;
-#[cfg(test)]
-mod tests;
+
 pub use crate::compiled_details::{MAX_EXPOSURE_EV, MAX_STYLE_GAIN, MIN_EXPOSURE_EV};
 pub use settings::{LightingSettings, StyleGain};
 

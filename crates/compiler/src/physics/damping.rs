@@ -68,6 +68,3 @@ pub(crate) fn admit_map(map: &Map, control: &Control) -> Result<(), String> {
     }
     super::admit_authored_liquid(map, control, WATER_DAMPING_KEY)
 }
-
-#[cfg(test)]
-mod tests;

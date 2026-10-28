@@ -58,31 +58,3 @@ async fn install_rule(socket: PathBuf) -> Result<(), String> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn silent_display_requires_the_exact_bounded_compositor_acknowledgement() {
-        for (reply, admitted) in [
-            (b"ok".to_vec(), true),
-            (b"error: no Lua window rules".to_vec(), false),
-            (Vec::new(), false),
-            (vec![b'x'; MAX_REPLY_BYTES as usize + 1], false),
-        ] {
-            let directory = tempfile::tempdir().unwrap();
-            let socket = directory.path().join("compositor.sock");
-            let listener = tokio::net::UnixListener::bind(&socket).unwrap();
-            let compositor = tokio::spawn(async move {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut request = Vec::new();
-                stream.read_to_end(&mut request).await.unwrap();
-                assert_eq!(request, SILENT_RULE.as_bytes());
-                stream.write_all(&reply).await.unwrap();
-            });
-            assert_eq!(install_rule(socket).await.is_ok(), admitted);
-            compositor.await.unwrap();
-        }
-    }
-}

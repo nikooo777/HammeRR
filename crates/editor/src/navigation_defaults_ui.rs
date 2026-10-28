@@ -8,9 +8,6 @@ use crate::{
     session::{Actor, Session},
 };
 
-#[cfg(test)]
-use crate::runtime::{SharedSession, lock};
-
 pub struct Controller {
     pub window: NavigationDefaultsWindow,
     snapshot: Rc<RefCell<String>>,
@@ -19,11 +16,6 @@ pub struct Controller {
 pub fn refresh_speed(app: &AppWindow, session: &Session) {
     app.set_fly_speed(session.fly_speed().to_string().into());
     app.set_navigation_defaults_error(session.navigation_preferences_error().is_some());
-}
-
-#[cfg(test)]
-pub fn bind_speed(app: &AppWindow, shared: &SharedSession) {
-    bind_speed_with_access(app, &DocumentAccess::unmanaged(shared.clone()));
 }
 
 pub fn bind_speed_with_access(app: &AppWindow, access: &DocumentAccess) {
@@ -129,11 +121,6 @@ fn act(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = NavigationDefaultsWindow::new()?;
         let snapshot = Rc::new(RefCell::new(String::new()));
@@ -178,6 +165,3 @@ impl Controller {
         self.window.show()
     }
 }
-
-#[cfg(test)]
-mod tests;

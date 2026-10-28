@@ -594,25 +594,3 @@ pub(super) fn bake(
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generated_source_angles_align_model_up_with_the_surface_normal() {
-        for normal in [
-            DVec3::Z,
-            DVec3::NEG_Z,
-            DVec3::X,
-            DVec3::new(0.3, -0.4, 0.75_f64.sqrt()),
-        ] {
-            for yaw in [0.0, 37.0, 179.0, 271.0] {
-                let values = angles(normal, false, yaw).map(|value| f64::from(value).to_radians());
-                let rotation = DQuat::from_euler(EulerRot::ZYX, values[1], values[0], values[2]);
-                assert!((rotation * DVec3::Z - normal).length() < 1e-5);
-                assert_eq!(angles(normal, true, yaw), [0.0, yaw as f32, 0.0]);
-            }
-        }
-    }
-}

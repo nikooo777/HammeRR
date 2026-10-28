@@ -3,8 +3,6 @@ use std::rc::Rc;
 
 use slint::ComponentHandle;
 
-#[cfg(test)]
-use crate::runtime::SharedSession;
 use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::material_search::{Query, Scope};
 use crate::session::{Actor, SelectMode, Session};
@@ -104,11 +102,6 @@ fn with_session<R>(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = MaterialReplaceWindow::new()?;
         let target = Rc::new(RefCell::new(Target::default()));
@@ -298,6 +291,3 @@ impl Controller {
         refresh(&self.window, session, &self.target.borrow());
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -402,6 +402,3 @@ pub(crate) fn remap(groups: &mut [VisGroup], mapping: &BTreeMap<u32, u32>) {
         remap(&mut group.children, mapping);
     }
 }
-
-#[cfg(test)]
-mod tests;

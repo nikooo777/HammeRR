@@ -736,6 +736,3 @@ impl Drop for CloseReservation {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

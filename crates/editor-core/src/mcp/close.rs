@@ -156,8 +156,6 @@ struct Core {
     ui: Option<TerminalUi>,
     state: Mutex<State>,
     changed: Condvar,
-    #[cfg(test)]
-    before_commit: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 #[derive(Clone)]
@@ -181,8 +179,6 @@ impl TerminalOwner {
             ui,
             state: Mutex::default(),
             changed: Condvar::new(),
-            #[cfg(test)]
-            before_commit: Mutex::default(),
         });
         let worker = core.clone();
         let thread = std::thread::Builder::new()
@@ -313,10 +309,7 @@ impl TerminalClose {
         }
         let mut state = self.0.state.lock().unwrap_or_else(PoisonError::into_inner);
         ensure_available(&state)?;
-        #[cfg(test)]
-        if let Some(before_commit) = self.0.before_commit.lock().unwrap().take() {
-            before_commit();
-        }
+
         let attempt = TerminalAttempt::new()?;
         let (response, receiver) = oneshot::channel();
         let output = self
@@ -613,67 +606,4 @@ fn run_worker(core: Arc<Core>, runtime: tokio::runtime::Runtime) {
     if let Some(workspace) = workspace {
         (workspace.complete)(workspace.reservation, result, response, ui_state);
     }
-}
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(feature = "test-support")]
-pub fn validate_terminal_close_output(
-    mut server: EditorServer,
-    token: String,
-    before_send: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
-    use super::ServerHandler;
-    use rmcp::model::{
-        CallToolRequestParams, CallToolResponse, JsonRpcMessage, RequestId, ServerResult,
-    };
-    use rmcp::service::serve_directly;
-    use rmcp::transport::Transport;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| error.to_string())?;
-    runtime.block_on(async {
-        let (mut transport, output) =
-            super::stdio::transport(tokio::io::empty(), tokio::io::sink());
-        server.stdio_output = Some(output);
-        let (service_io, _peer) = tokio::io::duplex(4096);
-        let running =
-            serve_directly::<rmcp::RoleServer, _, _, _, _>(server.clone(), service_io, None);
-        let id = RequestId::String("owned-host-output-fixture".into());
-        let context = RequestContext::new(id.clone(), running.peer().clone());
-        let request = CallToolRequestParams::new(TOOL_NAME).with_arguments(
-            serde_json::json!({"review_token":token,"discard_changes":true})
-                .as_object()
-                .unwrap()
-                .clone(),
-        );
-        let result = tokio::time::timeout(OUTPUT_TIMEOUT * 2, server.call_tool(request, context))
-            .await
-            .map_err(|_| "The owned-host Close dispatcher timed out".to_owned())?
-            .map_err(|error| error.to_string())?;
-        let CallToolResponse::Complete(result) = result else {
-            return Err("The owned-host Close did not return a completed result".into());
-        };
-        if result.is_error == Some(true) || result.meta.is_none() {
-            return Err(format!("The owned-host Close failed: {result:?}"));
-        }
-        before_send()?;
-        tokio::time::timeout(
-            OUTPUT_TIMEOUT,
-            transport.send(JsonRpcMessage::response(
-                ServerResult::CallToolResult(result),
-                id,
-            )),
-        )
-        .await
-        .map_err(|_| "The owned-host terminal send timed out".to_owned())?
-        .map_err(|error| error.to_string())?;
-        tokio::time::timeout(OUTPUT_TIMEOUT, running.cancel())
-            .await
-            .map_err(|_| "The owned-host fixture service did not stop".to_owned())?
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    })
 }

@@ -139,7 +139,7 @@ impl Workspace {
         review
     }
 
-    #[cfg(any(test, feature = "mcp"))]
+    #[cfg(feature = "mcp")]
     pub(crate) fn commit_quit<R>(
         &self,
         review: &WorkspaceQuitReview,
@@ -210,7 +210,7 @@ impl QuitReservation {
         &self.entries
     }
 
-    #[cfg(any(test, feature = "mcp"))]
+    #[cfg(feature = "mcp")]
     pub(crate) fn finish_document(
         &mut self,
         id: DocumentId,
@@ -243,7 +243,7 @@ impl QuitReservation {
         result
     }
 
-    #[cfg(any(test, feature = "mcp"))]
+    #[cfg(feature = "mcp")]
     pub(crate) fn finish(&mut self) {
         self.finished = true;
         self.membership.release();
@@ -270,6 +270,3 @@ impl Drop for QuitReservation {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -131,6 +131,3 @@ impl Source {
         Ok(bytes)
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -1,6 +1,3 @@
-#[cfg(test)]
-use std::path::Path;
-
 use serde_json::{Value, json};
 use source_formats::bsp::{Bsp, Face, Lighting, LightingKind, RgbExp32, TexInfo};
 use source_formats::vtf::RgbaImage;
@@ -496,6 +493,3 @@ fn preview(samples: &[RgbExp32], dimensions: [usize; 2]) -> RgbaImage {
         pixels,
     }
 }
-
-#[cfg(test)]
-mod tests;

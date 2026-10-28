@@ -34,8 +34,7 @@ mod particles;
 mod partitions;
 mod pivot_preferences;
 mod placement;
-#[cfg(test)]
-mod preview_handle_tests;
+
 mod preview_preferences;
 mod prop_leaf_bounds;
 mod recovery;

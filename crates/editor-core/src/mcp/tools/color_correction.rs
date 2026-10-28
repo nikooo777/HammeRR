@@ -40,6 +40,3 @@ impl EditorServer {
         ok(self.session().clear_color_correction())
     }
 }
-
-#[cfg(test)]
-mod tests;

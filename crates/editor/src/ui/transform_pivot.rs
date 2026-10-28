@@ -47,11 +47,6 @@ pub(super) fn refresh_pivot_pick_controls(
     });
 }
 
-#[cfg(test)]
-pub(super) fn bind_pivot_pick_controls(app: &AppWindow, shared: SharedSession) {
-    bind_pivot_pick_controls_with_access(app, &runtime::DocumentAccess::unmanaged(shared));
-}
-
 pub(super) fn bind_pivot_pick_controls_with_access(
     app: &AppWindow,
     access: &runtime::DocumentAccess,
@@ -141,6 +136,3 @@ pub(super) fn pick_pivot_pixel(
     refresh_pivot_pick_controls(app, session, camera);
     true
 }
-
-#[cfg(test)]
-mod tests;

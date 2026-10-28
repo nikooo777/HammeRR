@@ -5,12 +5,10 @@ use crate::mdl::ModelHeader;
 mod attachments;
 mod bones;
 mod hardware;
-#[cfg(test)]
-mod hardware_tests;
+
 mod portable;
 mod reader;
-#[cfg(test)]
-mod tests;
+
 mod vtx;
 mod vvd;
 

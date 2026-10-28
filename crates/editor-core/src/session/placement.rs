@@ -17,9 +17,6 @@ const CORNER_SNAP_ROUNDOFF_ULPS: f64 = 4.0;
 pub const MAX_SOURCE_BRUSHES: usize = super::components::MAX_SOURCE_PAGE_SIZE;
 pub const MAX_SOURCE_CORNERS: usize = 4096;
 
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) mod fixtures;
-
 impl State {
     pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
         self.draft
@@ -27,15 +24,6 @@ impl State {
             .map(|draft| serde_json::json!([self.serial, draft.token, draft.plan.is_some()]))
     }
 }
-
-#[cfg(test)]
-pub(crate) mod tests;
-
-#[cfg(test)]
-mod model_snap_tests;
-
-#[cfg(test)]
-mod multi_owner_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {

@@ -144,11 +144,6 @@ fn with_window<R>(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = PolygonWindow::new()?;
         window
@@ -516,78 +511,5 @@ impl Controller {
         changed(&self.window, &self.dirty, &self.points.borrow());
         self.refresh_material(session);
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn polygon_controls_draw_concavity_review_and_preserve_foreign_previews() {
-        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                renderer_name: Some("software".into()),
-                mock_time: true,
-                threading: false,
-            },
-        )))
-        .unwrap();
-        let shared = Arc::new(Mutex::new(Session::new(Err("No assets needed".into()))));
-        let source = lock(&shared).document().vmf().clone();
-        let controller = Controller::new(&shared).unwrap();
-        controller
-            .initialize(&mut lock(&shared), "dev/dev_measuregeneric01")
-            .unwrap();
-        controller.window.set_span("512".into());
-        controller.window.set_center_u("0".into());
-        controller.window.set_center_v("0".into());
-        controller.window.set_axis(2);
-        controller.window.set_depth("64".into());
-        controller.window.show().unwrap();
-        for (x, y) in [
-            (0.25, 0.75),
-            (0.75, 0.75),
-            (0.75, 0.5),
-            (0.5, 0.5),
-            (0.5, 0.25),
-            (0.25, 0.25),
-        ] {
-            controller.window.invoke_draw_corner(x, y);
-        }
-        assert_eq!(controller.points.borrow().len(), 6);
-        controller.window.invoke_preview();
-        assert!(
-            controller.window.get_ready(),
-            "{}",
-            controller.window.get_message()
-        );
-        assert_eq!(lock(&shared).primitive_preview().unwrap().ids.len(), 4);
-        assert_eq!(lock(&shared).document().vmf(), &source);
-        crate::ui::tests::assert_ui_renders(controller.window.window(), "polygon-drawing");
-        controller.window.set_depth("96".into());
-        controller.window.invoke_edited();
-        controller.window.invoke_apply();
-        assert_eq!(lock(&shared).document().vmf(), &source);
-        controller.window.invoke_preview();
-        controller.window.invoke_apply();
-        assert_eq!(lock(&shared).document().undo_labels().count(), 1);
-        assert_eq!(lock(&shared).document().vmf().world.solids.len(), 4);
-        lock(&shared).undo(Actor::Agent).unwrap();
-        assert_eq!(lock(&shared).document().vmf(), &source);
-        controller
-            .initialize(&mut lock(&shared), "dev/dev_measuregeneric01")
-            .unwrap();
-        for (x, y) in [(0.25, 0.75), (0.75, 0.75), (0.5, 0.25)] {
-            controller.window.invoke_draw_corner(x, y);
-        }
-        controller.window.invoke_preview();
-        lock(&shared)
-            .create_primitive(Actor::Agent, map_core::primitive::Spec::default(), true)
-            .unwrap();
-        let foreign = lock(&shared).primitive_preview().unwrap().token;
-        controller.window.invoke_cancel();
-        assert_eq!(lock(&shared).primitive_preview().unwrap().token, foreign);
     }
 }

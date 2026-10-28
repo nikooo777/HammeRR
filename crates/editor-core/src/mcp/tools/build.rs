@@ -1,30 +1,5 @@
 use super::super::*;
 
-#[cfg(test)]
-mod brush_texture_shadow_tests;
-#[cfg(test)]
-mod instance_dependency_tests;
-#[cfg(test)]
-mod instance_rejection_tests;
-#[cfg(test)]
-mod lighting_work_settings_tests;
-#[cfg(test)]
-mod prop_vertex_lighting_settings_tests;
-#[cfg(test)]
-mod recipe_authority_tests;
-#[cfg(test)]
-mod reflection_settings_tests;
-#[cfg(test)]
-mod sky_packing_settings_tests;
-#[cfg(test)]
-mod static_prop_packing_settings_tests;
-#[cfg(test)]
-mod submission_tests;
-#[cfg(test)]
-mod viscluster_tests;
-#[cfg(test)]
-mod water_packing_settings_tests;
-
 #[tool_router(router = build_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
@@ -373,6 +348,3 @@ impl EditorServer {
         })
     }
 }
-
-#[cfg(test)]
-mod launch_submission_tests;

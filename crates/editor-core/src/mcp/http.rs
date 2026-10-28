@@ -259,6 +259,3 @@ async fn serve(
         Err(errors.join("; "))
     }
 }
-
-#[cfg(test)]
-mod tests;

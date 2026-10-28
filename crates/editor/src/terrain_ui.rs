@@ -4,8 +4,7 @@ use std::rc::Rc;
 use slint::ComponentHandle;
 
 use crate::TerrainWindow;
-#[cfg(test)]
-use crate::runtime::SharedSession;
+
 use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, Session};
 
@@ -194,18 +193,9 @@ fn with_session<R>(
     body: impl FnOnce(&TerrainWindow, &mut Session) -> R,
 ) -> Option<R> {
     let window = window.upgrade()?;
-    let result = continuation.upgrade().and_then(|access| {
-        access.with_session(|session| {
-            #[cfg(test)]
-            {
-                let hook = BEFORE_ACTION.with(|slot| slot.borrow_mut().take());
-                if let Some(hook) = hook {
-                    hook();
-                }
-            }
-            Ok(body(&window, session))
-        })
-    });
+    let result = continuation
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))));
     match result {
         Ok(result) => Some(result),
         Err(error) => {
@@ -216,11 +206,6 @@ fn with_session<R>(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = TerrainWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
@@ -826,11 +811,3 @@ impl Controller {
         }
     }
 }
-
-#[cfg(test)]
-std::thread_local! {
-    static BEFORE_ACTION: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
-}
-
-#[cfg(test)]
-mod admission_tests;

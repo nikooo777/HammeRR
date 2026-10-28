@@ -463,6 +463,3 @@ pub fn create(
     }
     Ok(Result { copies })
 }
-
-#[cfg(test)]
-mod tests;

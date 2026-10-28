@@ -21,31 +21,12 @@ impl Default for Limits {
     }
 }
 
-#[cfg_attr(not(test), derive(Default))]
+#[derive(Default)]
 pub(super) struct Budget {
     limits: Limits,
     work: usize,
     fragments: usize,
     points: usize,
-    #[cfg(test)]
-    visits: usize,
-    #[cfg(test)]
-    cancel_after_visits: Option<usize>,
-}
-
-#[cfg(test)]
-impl Default for Budget {
-    fn default() -> Self {
-        let config = TEST_CONFIG.with(std::cell::Cell::get).unwrap_or_default();
-        Self {
-            limits: config.limits,
-            work: 0,
-            fragments: 0,
-            points: 0,
-            visits: 0,
-            cancel_after_visits: config.cancel_after_visits,
-        }
-    }
 }
 
 impl Budget {
@@ -84,14 +65,7 @@ impl Budget {
 
     pub fn visit(&mut self, points: usize, control: &Control) -> Result<(), String> {
         self.charge(points.saturating_add(1), 0, 0, control)?;
-        #[cfg(test)]
-        {
-            self.visits += 1;
-            if self.cancel_after_visits == Some(self.visits) {
-                control.cancel()?;
-                control.checkpoint()?;
-            }
-        }
+
         Ok(())
     }
 
@@ -126,34 +100,4 @@ impl Budget {
     pub fn clone_points(&mut self, points: usize, control: &Control) -> Result<(), String> {
         self.charge(points.saturating_add(1), 0, points, control)
     }
-
-    #[cfg(test)]
-    pub(super) fn usage(&self) -> (usize, usize, usize) {
-        (self.work, self.fragments, self.points)
-    }
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Default)]
-pub(super) struct TestConfig {
-    pub limits: Limits,
-    pub cancel_after_visits: Option<usize>,
-}
-
-#[cfg(test)]
-thread_local! {
-    static TEST_CONFIG: std::cell::Cell<Option<TestConfig>> = const { std::cell::Cell::new(None) };
-}
-
-#[cfg(test)]
-pub(super) fn with_config<T>(config: TestConfig, operation: impl FnOnce() -> T) -> T {
-    struct Restore(Option<TestConfig>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            TEST_CONFIG.with(|slot| slot.set(self.0));
-        }
-    }
-    let previous = TEST_CONFIG.with(|slot| slot.replace(Some(config)));
-    let _restore = Restore(previous);
-    operation()
 }

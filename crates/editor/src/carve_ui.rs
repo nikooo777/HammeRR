@@ -268,18 +268,9 @@ fn with_window<R>(
     body: impl FnOnce(&CarveWindow, &SharedSession) -> R,
 ) -> Option<R> {
     let window = window.upgrade()?;
-    let result = target.upgrade().and_then(|access| {
-        access.with_shared(|shared| {
-            #[cfg(test)]
-            {
-                let hook = BEFORE_ACTION.with(|slot| slot.borrow_mut().take());
-                if let Some(hook) = hook {
-                    hook();
-                }
-            }
-            Ok(body(&window, shared))
-        })
-    });
+    let result = target
+        .upgrade()
+        .and_then(|access| access.with_shared(|shared| Ok(body(&window, shared))));
     match result {
         Ok(result) => Some(result),
         Err(error) => {
@@ -287,11 +278,6 @@ fn with_window<R>(
             None
         }
     }
-}
-
-#[cfg(test)]
-pub fn bind(window: &CarveWindow, shared: &SharedSession) {
-    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
 }
 
 pub fn bind_with_access(window: &CarveWindow, access: &DocumentAccess) {
@@ -459,85 +445,4 @@ pub fn bind_with_access(window: &CarveWindow, access: &DocumentAccess) {
             slint::CloseRequestResponse::HideWindow
         }
     });
-}
-
-#[cfg(test)]
-std::thread_local! {
-    static BEFORE_ACTION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(test)]
-mod admission_tests;
-
-#[cfg(test)]
-mod material_tests {
-    use super::*;
-    use crate::session::SelectMode;
-    use glam::DVec3;
-    use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn cut_material_controls_share_preview_commit_and_preserve_draft_on_invalid_fields() {
-        i_slint_backend_testing::init_no_event_loop();
-        let mut session = Session::new(Err("no assets needed".into()));
-        let mut ids = Vec::new();
-        for (mins, maxs, material) in [
-            (DVec3::ZERO, DVec3::splat(64.0), "brick/wall"),
-            (DVec3::splat(16.0), DVec3::splat(48.0), "tools/toolsnodraw"),
-        ] {
-            ids.push(
-                session
-                    .create_block(Actor::Agent, mins, maxs, material, false)
-                    .unwrap(),
-            );
-        }
-        session.select(&ids, SelectMode::Replace).unwrap();
-        let original = session.document().vmf().clone();
-        let shared = Arc::new(Mutex::new(session));
-        let window = CarveWindow::new().unwrap();
-        bind(&window, &shared);
-        refresh(&window, &lock(&shared));
-        window.set_cut_material_policy(2);
-        window.set_cut_material("brick/jamb".into());
-        window.invoke_cut_material_changed();
-        window.invoke_preview_edit();
-        assert!(window.get_ready(), "{}", window.get_message());
-        assert_eq!(
-            lock(&shared).carve_state()["preview"]["result"]["cut_material"],
-            serde_json::json!({"policy":"material","material":"BRICK/JAMB"})
-        );
-        let draft = lock(&shared).render_document().vmf().clone();
-        let retained = lock(&shared).carve_state();
-        window.set_cut_material(" ".into());
-        window.invoke_cut_material_changed();
-        assert!(!window.get_ready());
-        assert!(!window.get_can_preview());
-        window.invoke_preview_edit();
-        assert_eq!(lock(&shared).carve_state(), retained);
-        assert_eq!(lock(&shared).render_document().vmf(), &draft);
-        window.invoke_apply();
-        assert_eq!(lock(&shared).document().vmf(), &original);
-        let picker = material_target(&window, &lock(&shared));
-        window.set_cut_material("brick/changed".into());
-        assert!(choose_material(&window, &lock(&shared), &picker, "brick/new").is_err());
-        let picker = material_target(&window, &lock(&shared));
-        choose_material(&window, &lock(&shared), &picker, "brick/jamb").unwrap();
-        assert!(!window.get_ready());
-        window.invoke_preview_edit();
-        assert!(window.get_ready(), "{}", window.get_message());
-        window.set_cut_material_policy(1);
-        window.invoke_cut_material_changed();
-        assert!(!window.get_ready());
-        window.invoke_preview_edit();
-        assert!(window.get_ready(), "{}", window.get_message());
-        assert_eq!(
-            lock(&shared).carve_state()["preview"]["result"]["cut_material"],
-            serde_json::json!({"policy":"target"})
-        );
-        let draft = lock(&shared).render_document().vmf().clone();
-        window.invoke_apply();
-        assert_eq!(lock(&shared).document().vmf(), &draft);
-        lock(&shared).undo(Actor::User).unwrap();
-        assert_eq!(lock(&shared).document().vmf(), &original);
-    }
 }

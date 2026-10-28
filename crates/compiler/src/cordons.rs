@@ -178,16 +178,6 @@ fn origin(entity: &Entity) -> Result<Option<DVec3>, String> {
     Ok(point)
 }
 
-#[cfg(test)]
-pub(super) fn prepare<'a>(
-    source: &'a Vmf,
-    fs: &GameFs,
-    report: &mut Report,
-    control: &Control,
-) -> Result<Prepared<'a>, String> {
-    prepare_with_material_sources(source, fs, report, control, None)
-}
-
 pub(super) fn prepare_with_material_sources<'a>(
     source: &'a Vmf,
     fs: &GameFs,
@@ -359,6 +349,3 @@ pub(super) fn prepare_with_material_sources<'a>(
         region: Some(summary),
     })
 }
-
-#[cfg(test)]
-mod tests;

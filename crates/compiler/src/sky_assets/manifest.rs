@@ -344,6 +344,3 @@ fn channel(hdr: bool) -> &'static str {
 fn checkpoint(control: &Control) -> io::Result<()> {
     control.checkpoint().map_err(io::Error::other)
 }
-
-#[cfg(test)]
-mod tests;

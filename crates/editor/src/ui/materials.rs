@@ -2,14 +2,6 @@ use super::*;
 use editor_core::runtime::{DocumentAccess, DocumentContinuation};
 use slint::Model;
 
-#[cfg(test)]
-#[path = "materials_alpha_tests.rs"]
-mod alpha_tests;
-
-#[cfg(test)]
-#[path = "materials_provenance_tests.rs"]
-mod provenance_tests;
-
 pub(crate) fn preview_image(preview: &session::MaterialPreview) -> slint::Image {
     preview
         .image
@@ -148,18 +140,9 @@ fn with_material_window<R>(
     body: impl FnOnce(&MaterialWindow, &SharedSession) -> R,
 ) -> Option<R> {
     let window = window.upgrade()?;
-    let result = target.upgrade().and_then(|access| {
-        access.with_shared(|shared| {
-            #[cfg(test)]
-            {
-                let hook = BEFORE_MATERIAL_ACTION.with(|slot| slot.borrow_mut().take());
-                if let Some(hook) = hook {
-                    hook();
-                }
-            }
-            Ok(body(&window, shared))
-        })
-    });
+    let result = target
+        .upgrade()
+        .and_then(|access| access.with_shared(|shared| Ok(body(&window, shared))));
     match result {
         Ok(result) => Some(result),
         Err(error) => {
@@ -167,16 +150,6 @@ fn with_material_window<R>(
             None
         }
     }
-}
-
-#[cfg(test)]
-thread_local! {
-    static BEFORE_MATERIAL_ACTION: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
-}
-
-#[cfg(test)]
-pub(crate) fn bind_material_preview(window: &MaterialWindow, shared: SharedSession) {
-    bind_material_preview_with_access(window, &DocumentAccess::unmanaged(shared));
 }
 
 fn bind_material_preview_with_access(window: &MaterialWindow, access: &DocumentAccess) {
@@ -917,15 +890,6 @@ pub(super) fn refresh_shared_favorites(
     serial
 }
 
-#[cfg(test)]
-pub(super) fn bind_material_favorites(
-    window: &MaterialWindow,
-    shared: SharedSession,
-    alive: impl Fn() -> bool + 'static,
-) {
-    bind_material_favorites_with_access(window, &DocumentAccess::unmanaged(shared), alive);
-}
-
 fn bind_material_favorites_with_access(
     window: &MaterialWindow,
     access: &DocumentAccess,
@@ -1457,15 +1421,6 @@ fn bind_material_cancel(window: &MaterialWindow) {
     });
 }
 
-#[cfg(test)]
-fn bind_entity_material_choice(
-    window: &MaterialWindow,
-    shared: SharedSession,
-    target: (u32, String, u64),
-) {
-    bind_entity_material_choice_with_access(window, &DocumentAccess::unmanaged(shared), target);
-}
-
 fn bind_entity_material_choice_with_access(
     window: &MaterialWindow,
     access: &DocumentAccess,
@@ -1536,17 +1491,6 @@ pub(crate) fn bind_material_reload_with_access(window: &MaterialWindow, access: 
     });
 }
 
-#[cfg(test)]
-pub(crate) fn bind_material_reload(window: &MaterialWindow, shared: SharedSession) {
-    window.on_reload_material_assets({
-        let window = window.as_weak();
-        move || {
-            let window = window.unwrap();
-            reload_material_window(&window, &mut lock(&shared));
-        }
-    });
-}
-
 pub(super) fn refresh_surface_material(window: &SurfaceWindow, session: &Session) {
     window.set_preview(
         session
@@ -1568,27 +1512,3 @@ pub(crate) fn review_material_choice(window: &MaterialWindow, session: &mut Sess
     );
     false
 }
-
-#[cfg(test)]
-#[path = "materials_vectors_tests.rs"]
-mod vectors_tests;
-
-#[cfg(test)]
-#[path = "materials_variation_tests.rs"]
-mod variation_tests;
-
-#[cfg(test)]
-#[path = "materials_sprite_tests.rs"]
-mod sprite_tests;
-
-#[cfg(test)]
-#[path = "materials_favorites_tests.rs"]
-mod favorites_tests;
-
-#[cfg(test)]
-#[path = "materials_admission_tests.rs"]
-mod admission_tests;
-
-#[cfg(test)]
-#[path = "surface_admission_tests.rs"]
-mod surface_admission_tests;

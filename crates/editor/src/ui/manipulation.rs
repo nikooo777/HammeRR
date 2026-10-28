@@ -293,11 +293,6 @@ pub(super) fn refresh_terrain_controls(app: &AppWindow, session: &Session) {
     );
 }
 
-#[cfg(test)]
-pub(super) fn bind_terrain_controls(app: &AppWindow, shared: SharedSession) {
-    bind_terrain_controls_with_access(app, &runtime::DocumentAccess::unmanaged(shared));
-}
-
 pub(super) fn bind_terrain_controls_with_access(app: &AppWindow, access: &runtime::DocumentAccess) {
     app.on_create_terrain({
         let callback = admission::SessionCallback::new(app, access);
@@ -345,11 +340,6 @@ pub(super) fn bind_terrain_controls_with_access(app: &AppWindow, access: &runtim
             })
         }
     });
-}
-
-#[cfg(test)]
-pub(super) fn bind_manipulation_controls(app: &AppWindow, shared: SharedSession) {
-    bind_manipulation_controls_with_access(app, &runtime::DocumentAccess::unmanaged(shared));
 }
 
 pub(super) fn bind_manipulation_controls_with_access(

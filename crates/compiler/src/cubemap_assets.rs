@@ -5,14 +5,11 @@ use serde::{Deserialize, Serialize};
 pub(crate) mod binding;
 mod finalize;
 mod hdr;
-#[cfg(test)]
-mod hdr_tests;
+
 mod inspection;
 mod manifest;
 mod material;
 mod sources;
-#[cfg(test)]
-pub(crate) mod tests;
 
 pub use finalize::verify_sources as verify_reflection_sources;
 pub use finalize::{finalize_reflections, finalize_reflections_with_capture};

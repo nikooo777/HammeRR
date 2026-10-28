@@ -1538,18 +1538,9 @@ fn with_window<R>(
     body: impl FnOnce(&ComponentsWindow, &SharedSession) -> R,
 ) -> Option<R> {
     let window = window.upgrade()?;
-    let result = target.upgrade().and_then(|access| {
-        access.with_shared(|shared| {
-            #[cfg(test)]
-            {
-                let hook = BEFORE_ACTION.with(|slot| slot.borrow_mut().take());
-                if let Some(hook) = hook {
-                    hook();
-                }
-            }
-            Ok(body(&window, shared))
-        })
-    });
+    let result = target
+        .upgrade()
+        .and_then(|access| access.with_shared(|shared| Ok(body(&window, shared))));
     match result {
         Ok(result) => Some(result),
         Err(error) => {
@@ -1557,11 +1548,6 @@ fn with_window<R>(
             None
         }
     }
-}
-
-#[cfg(test)]
-pub fn bind(window: &ComponentsWindow, shared: &SharedSession) {
-    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
 }
 
 pub fn bind_with_access(window: &ComponentsWindow, access: &DocumentAccess) {
@@ -2102,11 +2088,3 @@ pub fn refresh_material_previews(window: &ComponentsWindow, session: &Session) {
             .unwrap_or_default(),
     );
 }
-
-#[cfg(test)]
-std::thread_local! {
-    static BEFORE_ACTION: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
-}
-
-#[cfg(test)]
-mod admission_tests;

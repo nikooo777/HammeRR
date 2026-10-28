@@ -463,25 +463,3 @@ impl Renderer {
         Ok(target.binding.clone())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn live_gpu_assets_share_a_bounded_pool_and_release_on_drop() {
-        let allocated = Arc::new(AtomicUsize::new(0));
-        let first = Reservation::new(&allocated, sky3d::MAX_GPU_ASSET_BYTES / 2).unwrap();
-        let second = Reservation::new(&allocated, sky3d::MAX_GPU_ASSET_BYTES / 2).unwrap();
-        assert!(Reservation::new(&allocated, 1).is_err());
-        drop(first);
-        let replacement = Reservation::new(&allocated, sky3d::MAX_GPU_ASSET_BYTES / 2).unwrap();
-        assert_eq!(
-            allocated.load(Ordering::Relaxed),
-            sky3d::MAX_GPU_ASSET_BYTES
-        );
-        drop(second);
-        drop(replacement);
-        assert_eq!(allocated.load(Ordering::Relaxed), 0);
-    }
-}

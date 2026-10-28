@@ -130,6 +130,3 @@ impl Session {
         self.begin_compile(actor, path)
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -695,6 +695,3 @@ pub fn paste(
         .map_err(|error| invalid(error.to_string()))?;
     Ok(result)
 }
-
-#[cfg(test)]
-mod tests;

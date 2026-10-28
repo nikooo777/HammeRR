@@ -157,8 +157,6 @@ pub(crate) struct Snapshot<T> {
     pub storage_error: Option<String>,
     pub path: Option<PathBuf>,
     pub serial: u64,
-    #[cfg(test)]
-    pub source: Option<ObservedSource>,
 }
 
 impl<T: Copy + Default + Serialize> Snapshot<T> {
@@ -249,11 +247,6 @@ impl<S: Store> Authority<S> {
         }
     }
 
-    #[cfg(test)]
-    pub fn accept(&self, settings: S::Settings, publication: Publication) {
-        self.lock().accept(settings, publication);
-    }
-
     pub fn fail(&self, error: String) -> String {
         self.lock().fail(error)
     }
@@ -268,8 +261,6 @@ impl<S: Store> State<S> {
             storage_error: self.store.as_ref().err().cloned(),
             path: self.store.as_ref().ok().map(Store::path),
             serial: self.serial,
-            #[cfg(test)]
-            source: self.source.clone(),
         }
     }
 
@@ -374,6 +365,3 @@ impl<S: Store> Binding<S> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

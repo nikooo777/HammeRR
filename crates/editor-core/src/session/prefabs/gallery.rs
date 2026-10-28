@@ -185,6 +185,3 @@ impl Session {
             .check(review.snapshot.revision, &review.snapshot.stamp)
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -7,8 +7,6 @@ use super::{Actor, Session};
 
 mod audio;
 mod catalog;
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) mod fixtures;
 
 impl State {
     pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
@@ -34,9 +32,6 @@ impl State {
         })
     }
 }
-
-#[cfg(test)]
-pub(crate) mod tests;
 
 const MAX_AUDIO_BYTES: usize = 16 * 1024 * 1024;
 

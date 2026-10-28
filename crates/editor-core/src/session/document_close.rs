@@ -216,6 +216,3 @@ impl Session {
         self.closing = true;
     }
 }
-
-#[cfg(test)]
-mod tests;

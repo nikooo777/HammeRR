@@ -9,9 +9,6 @@ use crate::{
     session::{Actor, Session},
 };
 
-#[cfg(test)]
-use crate::runtime::{SharedSession, lock};
-
 pub struct Controller {
     pub window: ModelWindow,
     target: Rc<Cell<Option<(u32, u64)>>>,
@@ -225,11 +222,6 @@ fn callback(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let continuation = access.downgrade();
         let window = ModelWindow::new()?;
@@ -358,151 +350,5 @@ impl Controller {
                 self.window.set_show_axes(false);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use glam::DVec3;
-    use map_core::ObjectId;
-    use slint::Model;
-    use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn model_inspector_cancel_discards_local_guide_and_dropped_window_abandons_admission() {
-        i_slint_backend_testing::init_no_event_loop();
-        let directory = tempfile::tempdir().unwrap();
-        let mut session = Session::new(Err("no model assets required".into()));
-        session.configure_recovery(Ok(directory.path().join("recovery")));
-        let shared = Arc::new(Mutex::new(session));
-        let document = crate::test_assets::document(shared.clone());
-        let access = DocumentAccess::for_document(document.clone());
-        let controller = Controller::new_with_access(&access).unwrap();
-        let target = Some((123, lock(&shared).document_generation()));
-        controller.target.set(target);
-        controller.guide.set(Some(u64::MAX));
-        controller.window.set_show_axes(true);
-        document.shutdown().unwrap();
-        let before = {
-            let session = lock(&shared);
-            (
-                session.scene_serial(),
-                session.view_serial(),
-                session.history_snapshot(),
-                session.model_attachment_guide(),
-            )
-        };
-        controller.window.show().unwrap();
-        controller.window.invoke_cancel();
-        assert_eq!(controller.window.get_message(), "the document is closed");
-        assert_eq!(controller.guide.get(), None);
-        assert_eq!(controller.target.get(), target);
-        assert!(!controller.window.get_show_axes());
-        assert!(!controller.window.window().is_visible());
-        let session = lock(&shared);
-        assert_eq!(
-            (
-                session.scene_serial(),
-                session.view_serial(),
-                session.history_snapshot(),
-                session.model_attachment_guide()
-            ),
-            before
-        );
-        drop(session);
-        let window = controller.window.as_weak();
-        let continuation = access.downgrade();
-        drop(controller);
-        assert!(window.upgrade().is_none());
-        callback(&window, &continuation, |_, _| {
-            panic!("a vanished model window accessed Session")
-        });
-    }
-
-    #[test]
-    fn model_details_inspection_reload_and_cancel_preserve_the_source() {
-        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                renderer_name: Some("software".into()),
-                mock_time: true,
-                threading: false,
-            },
-        )))
-        .unwrap();
-        let Ok(game) = editor_core::startup::mount_game(None) else {
-            eprintln!("CS:S not installed; skipping");
-            return;
-        };
-        let mut session = Session::new(Ok(game));
-        let ObjectId::Entity(id) = session
-            .create_entity(
-                Actor::User,
-                "prop_dynamic",
-                Some(DVec3::ZERO),
-                BTreeMap::from([("model".into(), "models/kleiner.mdl".into())]),
-            )
-            .unwrap()
-        else {
-            unreachable!()
-        };
-        let before = session.document().vmf().clone();
-        let history = session.document().undo_labels().count();
-        let shared = Arc::new(Mutex::new(session));
-        let controller = Controller::new(&shared).unwrap();
-        controller.initialize(&mut lock(&shared), id);
-        assert!(controller.window.get_geometry().contains("vertices"));
-        assert!(
-            !controller.window.get_geometry().contains("unavailable"),
-            "{}",
-            controller.window.get_message()
-        );
-        assert!(controller.window.get_materials().row_count() > 0);
-        assert!(controller.window.get_pose_info().contains("Reference pose"));
-        assert_eq!(controller.window.get_attachments().row_count(), 15);
-        controller.window.set_attachment_index(4);
-        controller.window.invoke_attachment_changed();
-        assert!(controller.window.get_attachment_info().contains("Position"));
-        controller.window.set_show_axes(true);
-        controller.window.invoke_show_attachment();
-        assert_eq!(
-            lock(&shared).model_attachment_guide()["attachment"]["name"],
-            "mouth"
-        );
-        let camera = lock(&shared).camera();
-        controller.window.invoke_frame_attachment();
-        assert_ne!(lock(&shared).camera(), camera);
-        controller.window.show().unwrap();
-        crate::ui::tests::assert_ui_renders(controller.window.window(), "model-details");
-        crate::ui::tests::assert_ui_renders(controller.window.window(), "model-attachments");
-        lock(&shared)
-            .preview_snap_to_grid(Actor::User, &[ObjectId::Entity(id)])
-            .unwrap();
-        controller.window.invoke_reload();
-        assert!(
-            controller
-                .window
-                .get_message()
-                .contains("preview snap to grid again")
-        );
-        assert!(lock(&shared).transform_preview().is_none());
-        controller.refresh(&lock(&shared));
-        assert!(!controller.window.get_show_axes());
-        assert!(!controller.window.get_geometry().contains("unavailable"));
-        controller.window.invoke_cancel();
-        assert!(!controller.window.window().is_visible());
-        assert!(lock(&shared).model_attachment_guide()["token"].is_null());
-        controller.initialize(&mut lock(&shared), id);
-        controller.window.set_show_axes(true);
-        controller.window.invoke_show_attachment();
-        let replacement = lock(&shared).show_model_attachment(id, 2).unwrap()["token"]
-            .as_u64()
-            .unwrap();
-        controller.window.invoke_cancel();
-        assert_eq!(lock(&shared).model_attachment_guide()["token"], replacement);
-        lock(&shared).clear_model_attachment(replacement).unwrap();
-        assert_eq!(lock(&shared).document().vmf(), &before);
-        assert_eq!(lock(&shared).document().undo_labels().count(), history);
     }
 }

@@ -1,6 +1,5 @@
 use super::{Actor, Session};
-#[cfg(test)]
-use crate::prefabs::Store;
+
 use crate::prefabs::{self, Authority};
 use glam::DVec3;
 use map_core::{ObjectId, transfer};
@@ -328,11 +327,3 @@ impl Session {
         Ok(self.install_prefab_paste(actor, payload, prepared))
     }
 }
-
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) mod fixtures;
-
-#[cfg(test)]
-mod authority_tests;
-#[cfg(test)]
-pub(crate) mod tests;

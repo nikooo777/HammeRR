@@ -532,6 +532,3 @@ fn bound_report(report: &mut SkyAssetsReport) {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

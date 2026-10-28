@@ -4,9 +4,6 @@ use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, Session};
 use crate::{RenameRow, RenameWindow};
 
-#[cfg(test)]
-use crate::runtime::SharedSession;
-
 fn guard(window: &RenameWindow, session: &Session) -> Result<(), String> {
     session.check_rename_draft(
         window
@@ -240,11 +237,6 @@ fn with_rename<R>(
             None
         }
     }
-}
-
-#[cfg(test)]
-pub fn bind(window: &RenameWindow, shared: &SharedSession) {
-    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
 }
 
 pub fn bind_with_access(window: &RenameWindow, access: &DocumentAccess) {

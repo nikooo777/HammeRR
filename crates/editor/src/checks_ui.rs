@@ -1,7 +1,5 @@
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-#[cfg(test)]
-use crate::runtime::SharedSession;
 use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, Session};
 use crate::{CheckIssueRow, ChecksWindow};
@@ -227,11 +225,6 @@ fn with_session<R>(
     }
 }
 
-#[cfg(test)]
-pub fn bind(window: &ChecksWindow, shared: &SharedSession) {
-    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
-}
-
 pub fn bind_with_access(window: &ChecksWindow, access: &DocumentAccess) {
     window.on_run_checks({
         let (window, access) = (window.as_weak(), access.downgrade());
@@ -383,6 +376,3 @@ pub fn bind_with_access(window: &ChecksWindow, access: &DocumentAccess) {
         }
     });
 }
-
-#[cfg(test)]
-mod admission_tests;

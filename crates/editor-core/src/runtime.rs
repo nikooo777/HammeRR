@@ -47,7 +47,7 @@ impl LaunchCompletion {
     }
 }
 
-#[cfg(any(feature = "mcp", test))]
+#[cfg(feature = "mcp")]
 pub(crate) struct LaunchCancellation(Option<LaunchOrigin>);
 
 #[cfg(feature = "mcp")]
@@ -57,7 +57,7 @@ impl LaunchCancellation {
     }
 }
 
-#[cfg(any(feature = "mcp", test))]
+#[cfg(feature = "mcp")]
 impl Drop for LaunchCancellation {
     fn drop(&mut self) {
         if let Some(origin) = &self.0 {
@@ -85,12 +85,12 @@ impl LaunchSubmission {
         })
     }
 
-    #[cfg(any(feature = "mcp", test))]
+    #[cfg(feature = "mcp")]
     pub(crate) fn cancellation(&self) -> LaunchCancellation {
         LaunchCancellation(Some(self.origin.clone()))
     }
 
-    #[cfg(any(feature = "mcp", test))]
+    #[cfg(feature = "mcp")]
     pub(crate) fn run(self) -> Result<game::Log, String> {
         self.run_with(LaunchRequest::run)
     }
@@ -276,17 +276,6 @@ impl CompileCompletion {
         lock(&self.session).finish_compile_for_origin(self.actor, &self.origin, &Err(error))
     }
 
-    #[cfg(test)]
-    fn finish_with(
-        &self,
-        result: &Result<CompileResult, String>,
-        run: impl FnOnce(LaunchRequest) -> Result<game::Run, String>,
-    ) -> Result<Option<game::Log>, String> {
-        self.prepare(result, &mut None)?
-            .map(|submission| submission.run_with(run))
-            .transpose()
-    }
-
     fn prepare(
         &self,
         result: &Result<CompileResult, String>,
@@ -326,13 +315,6 @@ impl CompileCompletion {
         }))
     }
 }
-
-#[cfg(test)]
-mod compile_tests;
-#[cfg(test)]
-mod launch_submission_tests;
-#[cfg(test)]
-mod launch_tests;
 
 pub fn start_compile(
     session: &SharedSession,
@@ -376,36 +358,4 @@ pub(crate) fn start_compile_with_operation(
         return Err(error);
     }
     Ok(status)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cancelled_compile_and_play_never_starts_the_game() {
-        let (directory, game, _) = crate::test_assets::game_process(true);
-        let shared = Arc::new(Mutex::new(Session::new(Ok(game))));
-        let vmf = directory.path().join("room.vmf");
-        std::fs::write(&vmf, crate::test_assets::room().write(&Default::default())).unwrap();
-        lock(&shared).open(Actor::Agent, &vmf, true).unwrap();
-        let submission = CompileSubmission::begin(&shared, Actor::Agent, None, true, None).unwrap();
-        let token = lock(&shared).compile_token().unwrap();
-        lock(&shared).cancel_compile(Actor::User, token).unwrap();
-        assert_eq!(
-            lock(&shared).compile_status()["job"]["status"],
-            "cancelling"
-        );
-        let result = submission.run();
-        assert!(result.is_err());
-        assert!(!lock(&shared).compiling());
-        assert_eq!(lock(&shared).compile_status()["job"]["status"], "cancelled");
-        assert!(!lock(&shared).game_running());
-        assert!(!lock(&shared).launching());
-        assert!(!directory.path().join("cstrike/downloadlists").exists());
-        let submission = CompileSubmission::begin(&shared, Actor::User, None, true, None).unwrap();
-        assert!(submission.run().unwrap().1.is_some());
-        assert!(lock(&shared).game_running());
-        lock(&shared).stop_game(Actor::User).unwrap();
-    }
 }

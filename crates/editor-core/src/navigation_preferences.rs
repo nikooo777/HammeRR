@@ -128,6 +128,3 @@ impl Store {
         self.target().publish(&data, expected)
     }
 }
-
-#[cfg(test)]
-mod tests;

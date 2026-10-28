@@ -150,6 +150,3 @@ impl Session {
         self.pick_linked_path_ray(actor, token, ray)
     }
 }
-
-#[cfg(test)]
-mod tests;

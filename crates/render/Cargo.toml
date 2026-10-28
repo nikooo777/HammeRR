@@ -4,6 +4,13 @@ version = "0.1.0"
 description = "wgpu renderer for Source maps, independent of the editor UI"
 edition.workspace = true
 rust-version.workspace = true
+autotests = false
+autobenches = false
+
+[lib]
+test = false
+doctest = false
+bench = false
 
 [dependencies]
 bytemuck.workspace = true
@@ -17,6 +24,3 @@ sha2 = "0.10.9"
 serde = { version = "1.0.229", features = ["derive"] }
 schemars = "1.2.2"
 wgpu = "30"
-
-[dev-dependencies]
-tempfile = "3.27.0"

@@ -3,8 +3,6 @@ use map_core::context::{self, Scope};
 use serde_json::Value;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-#[cfg(test)]
-use crate::runtime::SharedSession;
 use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::context::{Fields, Query};
 use crate::session::{Actor, Session};
@@ -294,24 +292,16 @@ fn with_session<R>(
     body: impl FnOnce(&ContextWindow, &mut Session) -> R,
 ) -> Option<R> {
     let window = window.upgrade()?;
-    match access.upgrade().and_then(|access| {
-        access.with_session(|session| {
-            #[cfg(test)]
-            admission_tests::before_action();
-            Ok(body(&window, session))
-        })
-    }) {
+    match access
+        .upgrade()
+        .and_then(|access| access.with_session(|session| Ok(body(&window, session))))
+    {
         Ok(result) => Some(result),
         Err(error) => {
             window.set_message(error.into());
             None
         }
     }
-}
-
-#[cfg(test)]
-pub fn bind(window: &ContextWindow, shared: &SharedSession) {
-    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
 }
 
 pub fn bind_with_access(window: &ContextWindow, access: &DocumentAccess) {
@@ -430,6 +420,3 @@ pub fn bind_with_access(window: &ContextWindow, access: &DocumentAccess) {
         }
     });
 }
-
-#[cfg(test)]
-mod admission_tests;

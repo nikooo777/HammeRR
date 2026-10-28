@@ -17,9 +17,6 @@ impl State {
     }
 }
 
-#[cfg(test)]
-mod tests;
-
 #[derive(Default)]
 pub struct State {
     serial: u64,

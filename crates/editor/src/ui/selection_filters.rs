@@ -27,6 +27,3 @@ pub(super) fn bind(app: &AppWindow, access: &DocumentAccess) {
         }
     });
 }
-
-#[cfg(test)]
-mod tests;

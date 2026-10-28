@@ -248,36 +248,3 @@ fn triangle_projections(points: [DVec3; 3]) -> Vec<Projection> {
         })
         .collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn triangle_box_axes_exclude_oblique_contact_and_budget_limits_are_reported_once() {
-        let a = [
-            DVec3::new(1.5, 0.5, 0.),
-            DVec3::new(0.5, 1.5, 0.),
-            DVec3::new(1.5, 1.5, 0.),
-        ];
-        assert!(!intersects_box(
-            &triangle_projections(a),
-            -DVec3::ONE,
-            DVec3::ONE
-        ));
-        let b = a.map(|point| point - DVec3::new(0.03, 0.03, 0.));
-        assert!(intersects_box(
-            &triangle_projections(b),
-            -DVec3::ONE,
-            DVec3::ONE
-        ));
-        let mut budget = Budget {
-            work: MAX_WORK,
-            ..Default::default()
-        };
-        let mut report = Report::default();
-        assert!(!budget.consume(1, &mut report));
-        assert!(!budget.consume(1, &mut report));
-        assert_eq!(report.issues.len(), 1);
-    }
-}

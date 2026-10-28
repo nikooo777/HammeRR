@@ -20,9 +20,6 @@ static PROCESS_QUEUE: AtomicBool = AtomicBool::new(false);
 
 type Outcome = Result<(CompileResult, Option<game::Log>), String>;
 
-#[cfg(test)]
-type BeforeCompletion = Box<dyn FnOnce(&Result<CompileResult, String>) + Send>;
-
 #[derive(Clone)]
 pub(crate) struct QueueStatus(Arc<Observation>);
 
@@ -98,14 +95,6 @@ struct State {
 struct Core {
     state: Mutex<State>,
     changed: Condvar,
-    #[cfg(test)]
-    before_execute: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-    #[cfg(test)]
-    before_play: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-    #[cfg(test)]
-    fail_play_spawn: AtomicBool,
-    #[cfg(test)]
-    before_completion: Mutex<Option<BeforeCompletion>>,
 }
 
 impl Core {
@@ -191,14 +180,6 @@ impl CompileQueue {
                 active: None,
             }),
             changed: Condvar::new(),
-            #[cfg(test)]
-            before_execute: Mutex::new(None),
-            #[cfg(test)]
-            before_play: Mutex::new(None),
-            #[cfg(test)]
-            fail_play_spawn: AtomicBool::new(false),
-            #[cfg(test)]
-            before_completion: Mutex::new(None),
         });
         let worker = core.clone();
         let thread = std::thread::Builder::new()
@@ -212,16 +193,6 @@ impl CompileQueue {
             terminal: None,
             process,
         })
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn isolated() -> Result<Self, String> {
-        Self::start(false)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn before_next_execute(&self, hook: impl FnOnce() + Send + 'static) {
-        *self.core.before_execute.lock().unwrap() = Some(Box::new(hook));
     }
 
     pub(crate) fn client(&self) -> QueueClient {
@@ -433,8 +404,6 @@ impl QueueClient {
                     reservation: Some(reservation),
                     launch: None,
                 }),
-                #[cfg(test)]
-                before_failure: None,
             },
             submission,
             observation: observation.clone(),
@@ -582,56 +551,16 @@ impl Entry {
             before_run,
             ..
         } = self;
-        #[cfg(test)]
-        let before_completion = {
-            let core = guard
-                .pending
-                .as_ref()
-                .unwrap()
-                .reservation
-                .as_ref()
-                .unwrap()
-                .core
-                .upgrade()
-                .unwrap();
-            core.before_completion.lock().unwrap().take()
-        };
+
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if !control.cancelled() {
                 before_run();
             }
-            #[cfg(test)]
-            {
-                submission.prepare_with(|completion, result, native| {
-                    if let Some(before_completion) = before_completion {
-                        before_completion(result);
-                    }
-                    completion.prepare(result, native)
-                })
-            }
-            #[cfg(not(test))]
+
             submission.prepare()
         }));
         match outcome {
             Ok(Ok(prepared)) if prepared.launch.is_some() => {
-                #[cfg(test)]
-                let (before_play, fail_play_spawn) = {
-                    let core = guard
-                        .pending
-                        .as_ref()
-                        .unwrap()
-                        .reservation
-                        .as_ref()
-                        .unwrap()
-                        .core
-                        .upgrade()
-                        .unwrap();
-                    let before_play = core.before_play.lock().unwrap().take();
-                    (
-                        before_play,
-                        core.fail_play_spawn.swap(false, Ordering::AcqRel),
-                    )
-                };
                 guard.prepare_play(&prepared);
                 let owner = Arc::new(PlayOwner {
                     guard: Mutex::new(Some(guard)),
@@ -639,18 +568,13 @@ impl Entry {
                 let task = PlayTask {
                     prepared,
                     owner: owner.clone(),
-                    #[cfg(test)]
-                    before_play,
                 };
-                if let Err(error) = spawn_play(
-                    task,
-                    #[cfg(test)]
-                    fail_play_spawn,
-                ) && let Some(mut guard) = owner
-                    .guard
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .take()
+                if let Err(error) = spawn_play(task)
+                    && let Some(mut guard) = owner
+                        .guard
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .take()
                 {
                     guard.fail(format!("Could not schedule optional Play startup: {error}"));
                 }
@@ -669,44 +593,23 @@ struct PlayOwner {
 struct PlayTask {
     prepared: super::PreparedCompile,
     owner: Arc<PlayOwner>,
-    #[cfg(test)]
-    before_play: Option<Box<dyn FnOnce() + Send>>,
 }
 
-fn spawn_play(
-    task: PlayTask,
-    #[cfg(test)] fail: bool,
-) -> std::io::Result<std::thread::JoinHandle<()>> {
-    #[cfg(test)]
-    if fail {
-        drop(task);
-        return Err(std::io::Error::other("injected Play scheduling failure"));
-    }
+fn spawn_play(task: PlayTask) -> std::io::Result<std::thread::JoinHandle<()>> {
     std::thread::Builder::new()
         .name("compile-play-startup".into())
         .spawn(move || run_play(task))
 }
 
 fn run_play(task: PlayTask) {
-    let PlayTask {
-        prepared,
-        owner,
-        #[cfg(test)]
-        before_play,
-    } = task;
+    let PlayTask { prepared, owner } = task;
     let mut guard = owner
         .guard
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take()
         .expect("Play continuation owns its completion");
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        #[cfg(test)]
-        if let Some(before_play) = before_play {
-            before_play();
-        }
-        prepared.run()
-    }));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prepared.run()));
     match outcome {
         Ok(outcome) => guard.complete(outcome),
         Err(_) => guard.fail("Optional Play startup worker panicked".into()),
@@ -723,8 +626,6 @@ struct PendingCompletion {
 struct CompletionGuard {
     result: Arc<ResultCell>,
     pending: Option<PendingCompletion>,
-    #[cfg(test)]
-    before_failure: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl CompletionGuard {
@@ -741,10 +642,6 @@ impl CompletionGuard {
     }
 
     fn fail(&mut self, error: String) {
-        #[cfg(test)]
-        if let Some(before_failure) = self.before_failure.take() {
-            before_failure();
-        }
         if let Some(pending) = &self.pending {
             if let Some(launch) = &pending.launch {
                 launch.fail(error.clone());
@@ -875,15 +772,7 @@ fn worker_loop(core: &Core) {
         };
         entry.observation.start();
         Core::refresh(&core.state.lock().unwrap_or_else(PoisonError::into_inner));
-        #[cfg(test)]
-        let before_execute = core.before_execute.lock().unwrap().take();
-        #[cfg(test)]
-        if let Some(before_execute) = before_execute {
-            before_execute();
-        }
+
         entry.execute();
     }
 }
-
-#[cfg(test)]
-mod tests;

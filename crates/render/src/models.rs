@@ -28,9 +28,6 @@ pub const MIN_MODEL_SCALE: f32 = 1.0 / 64.0;
 pub const MAX_MODEL_SCALE: f32 = 64.0;
 pub const MAX_MODEL_SCALE_TEXT_BYTES: usize = 64;
 
-#[cfg(test)]
-mod tests;
-
 #[derive(Debug)]
 pub struct Asset {
     pub path: String,

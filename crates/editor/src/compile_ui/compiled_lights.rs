@@ -546,11 +546,6 @@ impl Form {
         self.window.set_aspect(aspect);
     }
 
-    #[cfg(test)]
-    pub(super) fn window(&self) -> &CompiledLightsWindow {
-        &self.window
-    }
-
     pub(super) fn hide_window(&self, errors: &mut Vec<String>) {
         crate::ui::hide_window("Compiled lights", self.window.window(), errors);
     }
@@ -568,6 +563,3 @@ impl Form {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

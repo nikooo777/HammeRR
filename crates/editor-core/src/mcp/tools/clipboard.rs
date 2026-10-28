@@ -317,10 +317,3 @@ impl EditorServer {
         })
     }
 }
-
-#[cfg(test)]
-mod authority_tests;
-#[cfg(test)]
-mod gallery_tests;
-#[cfg(test)]
-mod thumbnail_tests;

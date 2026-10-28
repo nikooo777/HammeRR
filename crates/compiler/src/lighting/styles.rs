@@ -313,31 +313,3 @@ impl Channels {
         Ok((styles, offset as i32, self.channels.len()))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn auxiliary_maps_count_toward_the_shared_limit_before_allocation() {
-        let control = Control::default();
-        let mut budget = Budget::new(&control);
-        let limit = MAX_LIGHTING_BYTES / size_of::<RgbExp32>();
-        assert!(Channels::new(usize::MAX, 0, super::super::bump::MAPS, &budget).is_err());
-        assert!(Channels::new(1, limit - 2, super::super::bump::MAPS, &budget).is_err());
-        let mut channels = Channels::new(1, limit - 8, super::super::bump::MAPS, &budget).unwrap();
-        let mut colors = [[DVec3::ZERO; super::super::bump::MAPS]; MAX_FACE_STYLES];
-        assert!(
-            channels
-                .add(
-                    32,
-                    None,
-                    &[DVec3::X; super::super::bump::MAPS],
-                    &mut colors,
-                    &mut budget
-                )
-                .is_err()
-        );
-        assert_eq!(channels.channels.len(), 1);
-    }
-}

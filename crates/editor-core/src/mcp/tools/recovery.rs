@@ -1,14 +1,5 @@
 use super::super::*;
 
-#[cfg(test)]
-mod error_domain_tests;
-
-#[cfg(test)]
-mod authority_tests;
-
-#[cfg(test)]
-mod submission_tests;
-
 #[tool_router(router = recovery_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(

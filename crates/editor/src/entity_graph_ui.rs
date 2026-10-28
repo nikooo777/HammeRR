@@ -434,10 +434,7 @@ impl Form {
             .set_message("Entity graph window is retired".into());
         crate::ui::hide_window("Entity graph", self.window.window(), errors);
     }
-    #[cfg(test)]
-    pub(crate) fn window(&self) -> &EntityGraphWindow {
-        &self.window
-    }
+
     pub fn refresh_visible(&self, session: &Session, aspect: f32) {
         if !self.window.window().is_visible() {
             return;
@@ -454,6 +451,3 @@ impl Form {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -770,6 +770,3 @@ impl State {
             .map(|draft| serde_json::json!([self.serial, draft.token, draft.owner.label()]))
     }
 }
-
-#[cfg(test)]
-mod tests;

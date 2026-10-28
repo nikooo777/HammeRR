@@ -432,6 +432,3 @@ impl<R: AsyncRead, W: AsyncWrite> Drop for ObservedStdio<R, W> {
         self.output.finish(StdioFenceError::TransportDropped);
     }
 }
-
-#[cfg(test)]
-mod tests;

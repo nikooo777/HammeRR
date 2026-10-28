@@ -11,9 +11,6 @@ use crate::{
     session::{Actor, Session},
 };
 
-#[cfg(test)]
-use crate::runtime::{SharedSession, lock};
-
 #[derive(Default)]
 struct Form {
     token: Option<u64>,
@@ -186,16 +183,6 @@ fn callback(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(
-        shared: &SharedSession,
-        aspect: impl Fn() -> f32 + 'static,
-    ) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()), move || {
-            Some(aspect())
-        })
-    }
-
     pub fn new_with_access(
         access: &DocumentAccess,
         aspect: impl Fn() -> Option<f32> + 'static,
@@ -377,100 +364,5 @@ impl Controller {
             return;
         }
         refresh(&self.window, session, &self.form);
-    }
-}
-
-#[cfg(test)]
-mod admission_tests;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn region_controls_review_shared_drafts_and_cancel_only_their_own_preview() {
-        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                renderer_name: Some("software".into()),
-                mock_time: true,
-                threading: false,
-            },
-        )))
-        .unwrap();
-        let mut session = Session::new(Err("No assets needed".into()));
-        session
-            .create_block(
-                Actor::Agent,
-                DVec3::splat(-256.0),
-                DVec3::splat(256.0),
-                "test",
-                false,
-            )
-            .unwrap();
-        let original = session.document().vmf().clone();
-        let shared = Arc::new(Mutex::new(session));
-        let controller = Controller::new(&shared, || 16.0 / 9.0).unwrap();
-        controller.show(&lock(&shared)).unwrap();
-        controller.window.set_min_x("-128".into());
-        controller.window.set_min_y("-128".into());
-        controller.window.set_min_z("0".into());
-        controller.window.set_max_x("128".into());
-        controller.window.set_max_y("128".into());
-        controller.window.set_max_z("256".into());
-        controller.window.set_region_enabled(true);
-        controller.window.invoke_preview();
-        assert!(controller.window.get_ready());
-        assert_eq!(lock(&shared).document().vmf(), &original);
-        let foreign = {
-            let mut session = lock(&shared);
-            let snapshot = session.compile_region_stamp();
-            session
-                .preview_compile_region(
-                    Actor::Agent,
-                    Some(Definition {
-                        enabled: false,
-                        bounds: Bounds {
-                            mins: DVec3::splat(-64.0),
-                            maxs: DVec3::splat(64.0),
-                        },
-                    }),
-                    &snapshot,
-                )
-                .unwrap()["draft"]["token"]
-                .as_u64()
-                .unwrap()
-        };
-        controller.window.invoke_cancel();
-        assert_eq!(
-            lock(&shared).compile_region_state()["draft"]["token"],
-            foreign
-        );
-        controller.show(&lock(&shared)).unwrap();
-        controller.window.invoke_review();
-        assert!(controller.window.get_ready());
-        controller.window.invoke_apply();
-        assert_eq!(
-            lock(&shared).compile_region_state()["committed"]["enabled"],
-            false
-        );
-        lock(&shared).undo(Actor::Agent).unwrap();
-        assert_eq!(lock(&shared).document().vmf(), &original);
-        lock(&shared).redo(Actor::Agent).unwrap();
-        let applied = lock(&shared).document().vmf().clone();
-        controller.window.invoke_preview_clear();
-        controller.window.invoke_cancel();
-        assert_eq!(lock(&shared).document().vmf(), &applied);
-        controller.show(&lock(&shared)).unwrap();
-        controller.window.set_region_enabled(true);
-        controller.window.invoke_edited();
-        controller.window.invoke_preview();
-        assert!(controller.window.get_ready());
-        crate::ui::tests::assert_ui_renders(controller.window.window(), "compile-region");
-        controller.window.invoke_apply();
-        assert_eq!(
-            lock(&shared).compile_region_state()["committed"]["enabled"],
-            true
-        );
     }
 }

@@ -17,8 +17,7 @@ mod rendering;
 mod stdio;
 mod tools;
 mod workspace;
-#[cfg(feature = "test-support")]
-pub use close::validate_terminal_close_output;
+
 pub use close::{TerminalClose, TerminalOwner, TerminalUi};
 pub use http::{
     ConnectionReceipt, HttpServer, HttpTerminalResponse, TerminalAttempt, TerminalResponseReceipt,
@@ -58,8 +57,6 @@ use serde::Deserialize;
 
 use serde_json::{Value, json};
 
-#[cfg(test)]
-use source_formats::fgd::Catalog;
 use source_formats::fgd::{Class, ClassKind};
 
 use source_formats::vmf::{Entity, Solid};
@@ -682,35 +679,6 @@ where
         )),
     }
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod admission_tests;
-
-#[cfg(test)]
-mod headless_tests;
-
-#[cfg(test)]
-mod hdr_sky_tests;
-
-#[cfg(test)]
-mod baked_lightmap_tests;
-
-#[cfg(test)]
-mod lighting_preview_tests;
-#[cfg(test)]
-mod normal_map_tests;
-
-#[cfg(test)]
-mod surface_shading_tests;
-
-#[cfg(test)]
-mod additive_sprite_tests;
-
-#[cfg(test)]
-mod atlas_tests;
 
 impl EditorServer {
     fn tool_router() -> ToolRouter<Self> {

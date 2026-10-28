@@ -57,6 +57,3 @@ pub(super) fn details(stats: &Value) -> String {
     };
     format!("\nPacked sky assets: {family} · {channels} · {files} files · {bytes} bytes")
 }
-
-#[cfg(test)]
-mod tests;

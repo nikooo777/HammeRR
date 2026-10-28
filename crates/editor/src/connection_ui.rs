@@ -6,9 +6,6 @@ use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, ConnectionFields, ConnectionRecord, Session};
 use crate::{ConnectionRow, ConnectionWindow};
 
-#[cfg(test)]
-use crate::runtime::SharedSession;
-
 fn source(window: &ConnectionWindow) -> Result<u32, String> {
     match parse_id(window.get_source_id().as_str())? {
         ObjectId::Entity(id) => Ok(id),
@@ -217,11 +214,6 @@ fn with_connection<R>(
             None
         }
     }
-}
-
-#[cfg(test)]
-pub fn bind(window: &ConnectionWindow, shared: &SharedSession) {
-    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
 }
 
 pub fn bind_with_access(window: &ConnectionWindow, access: &DocumentAccess) {

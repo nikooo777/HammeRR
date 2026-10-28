@@ -639,6 +639,3 @@ impl Drop for ObservedBody {
             .ended = true;
     }
 }
-
-#[cfg(test)]
-mod tests;

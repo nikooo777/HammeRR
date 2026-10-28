@@ -15,9 +15,6 @@ use crate::{
 
 const PAGE_SIZE: usize = 20;
 
-#[cfg(test)]
-use crate::runtime::{SharedSession, lock};
-
 #[derive(Default)]
 struct Form {
     helper: Option<u32>,
@@ -443,11 +440,6 @@ fn callback(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = CubemapFacesWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
@@ -647,9 +639,3 @@ impl Controller {
         refresh(&self.window, session, &self.form);
     }
 }
-
-#[cfg(test)]
-mod admission_tests;
-
-#[cfg(test)]
-mod tests;

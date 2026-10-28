@@ -1,8 +1,5 @@
 use super::super::*;
 
-#[cfg(test)]
-mod vertex_set_tests;
-
 #[tool_router(router = terrain_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(

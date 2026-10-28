@@ -537,11 +537,6 @@ fn with_window<R>(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = AtlasWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
@@ -741,12 +736,6 @@ impl Controller {
         Ok(Self { window, target })
     }
 
-    #[cfg(test)]
-    pub fn show(&self, session: &mut Session, material: &str) -> Result<(), String> {
-        self.initialize(session, material)?;
-        self.window.show().map_err(|error| error.to_string())
-    }
-
     pub(crate) fn initialize(&self, session: &mut Session, material: &str) -> Result<(), String> {
         if let Some(previous) = self.target.borrow_mut().as_mut() {
             cancel_rectangle(&self.window, previous);
@@ -861,9 +850,3 @@ impl Controller {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod admission_tests;

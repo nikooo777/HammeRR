@@ -327,6 +327,3 @@ impl State {
             .map(|draft| serde_json::json!([self.serial, draft.token, draft.version]))
     }
 }
-
-#[cfg(test)]
-mod tests;

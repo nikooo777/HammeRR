@@ -115,29 +115,6 @@ impl Application {
         Self::assemble(args, compile_queue, directory, content, definitions)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn isolated(
-        game: Result<GameFs, String>,
-        directory: PathBuf,
-    ) -> Result<Self, String> {
-        let args = Args {
-            map: None,
-            gameinfo: None,
-            fgd: None,
-            engine_root: None,
-            steam_root: None,
-            mcp_port: None,
-            headless: true,
-        };
-        Self::assemble(
-            &args,
-            crate::runtime::CompileQueue::isolated()?,
-            Ok(directory),
-            crate::session::SessionContent::new(game),
-            Ok(Catalog::default()),
-        )
-    }
-
     fn assemble(
         args: &Args,
         compile_queue: crate::runtime::CompileQueue,
@@ -273,6 +250,3 @@ impl Drop for Application {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

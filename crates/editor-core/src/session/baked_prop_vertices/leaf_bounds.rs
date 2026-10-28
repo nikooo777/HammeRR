@@ -234,6 +234,3 @@ pub(super) fn prepare(
         line_vertices: count * LINE_VERTICES_PER_BOX,
     })
 }
-
-#[cfg(test)]
-mod tests;

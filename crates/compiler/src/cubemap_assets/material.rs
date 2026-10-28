@@ -734,6 +734,3 @@ fn rewrite_nodes(
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

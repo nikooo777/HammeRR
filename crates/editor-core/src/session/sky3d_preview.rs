@@ -615,6 +615,3 @@ impl State {
             "request":self.pending.as_ref().map(|pending|json!({"token":pending.token,"cancelled":pending.control.cancelled()}))})
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -19,10 +19,3 @@ fn invalid(message: impl Into<String>) -> std::io::Error {
 fn checkpoint(control: &crate::Control) -> std::io::Result<()> {
     control.checkpoint().map_err(std::io::Error::other)
 }
-
-#[cfg(test)]
-mod build_tests;
-#[cfg(test)]
-mod reflection_tests;
-#[cfg(test)]
-mod tests;

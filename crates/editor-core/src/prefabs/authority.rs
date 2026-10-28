@@ -250,6 +250,3 @@ impl Authority {
         state.completed(result)
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -8,12 +8,6 @@ use crate::FogWindow;
 use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::Session;
 
-#[cfg(test)]
-use crate::runtime::SharedSession;
-
-#[cfg(test)]
-mod admission_tests;
-
 #[derive(Default)]
 struct Form {
     snapshot: String,
@@ -110,11 +104,6 @@ fn callback(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let target = access.downgrade();
         let window = FogWindow::new()?;

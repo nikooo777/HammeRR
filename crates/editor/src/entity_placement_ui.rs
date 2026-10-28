@@ -10,9 +10,6 @@ use crate::{
     session::{Actor, Session, entity_placement::Request},
 };
 
-#[cfg(test)]
-use crate::runtime::{SharedSession, lock};
-
 #[derive(Default)]
 struct Form {
     token: Option<u64>,
@@ -91,11 +88,6 @@ fn present(window: &EntityPlacementWindow, report: &Value, dirty: bool) {
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = EntityPlacementWindow::new()?;
         let form = Rc::new(RefCell::new(Form::default()));
@@ -277,9 +269,3 @@ fn callback<R>(
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod admission_tests;

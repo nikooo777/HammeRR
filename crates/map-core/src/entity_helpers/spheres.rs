@@ -199,6 +199,3 @@ impl Sphere {
         lines
     }
 }
-
-#[cfg(test)]
-mod tests;

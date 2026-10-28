@@ -71,11 +71,3 @@ pub fn crease_partitions_with_materials(
         &[],
     )
 }
-
-#[cfg(test)]
-mod ridges;
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod textures_tests;

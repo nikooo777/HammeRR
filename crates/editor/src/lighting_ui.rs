@@ -8,12 +8,6 @@ use crate::runtime::{DocumentAccess, DocumentContinuation};
 use crate::session::{Actor, Session};
 use crate::{LightingGroup, LightingWindow};
 
-#[cfg(test)]
-use crate::runtime::SharedSession;
-
-#[cfg(test)]
-mod admission_tests;
-
 #[derive(Clone)]
 struct Target {
     context: crate::face_edit_ui::Context,
@@ -144,11 +138,6 @@ fn callback(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let continuation = access.downgrade();
         let window = LightingWindow::new()?;

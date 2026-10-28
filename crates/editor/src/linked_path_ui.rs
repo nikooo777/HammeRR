@@ -7,9 +7,6 @@ use glam::DVec3;
 use serde_json::Value;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
-#[cfg(test)]
-use crate::runtime::{SharedSession, lock};
-
 use crate::{
     LinkedPathPoint, LinkedPathWindow,
     runtime::{DocumentAccess, DocumentContinuation},
@@ -329,11 +326,6 @@ fn with_session<R>(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let access = access.downgrade();
         let window = LinkedPathWindow::new()?;
@@ -725,9 +717,3 @@ impl Controller {
         refresh(&self.window, session, &self.form);
     }
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod admission_tests;

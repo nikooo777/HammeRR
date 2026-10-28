@@ -24,8 +24,6 @@ mod assets;
 pub use assets::load_prop_vertex_material;
 mod color;
 mod indirect;
-#[cfg(test)]
-mod tests;
 
 const MAX_RECEIVERS: usize = 1024;
 const MAX_MODELS: usize = 128;

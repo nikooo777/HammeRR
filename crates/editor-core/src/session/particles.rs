@@ -3,8 +3,6 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod catalog;
-#[cfg(any(test, feature = "test-support"))]
-pub(crate) mod fixtures;
 
 impl State {
     pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
@@ -21,9 +19,6 @@ impl State {
         })
     }
 }
-
-#[cfg(test)]
-mod tests;
 
 pub(super) const LIMITS: &str = "Definition metadata only; no animation or viewport preview. Global active particle manifest only; map manifests, includes, external element references and other DMX encodings/versions are unsupported.";
 

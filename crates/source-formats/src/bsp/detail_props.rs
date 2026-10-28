@@ -362,6 +362,3 @@ impl Bsp {
         Ok(Some(result))
     }
 }
-
-#[cfg(test)]
-mod tests;

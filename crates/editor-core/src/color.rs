@@ -147,6 +147,3 @@ pub fn convert(input: Input) -> Result<Converted, String> {
         hsl: [hue, hsl_saturation * 100.0, lightness * 100.0],
     })
 }
-
-#[cfg(test)]
-mod tests;

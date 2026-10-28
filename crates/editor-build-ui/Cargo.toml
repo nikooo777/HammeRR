@@ -4,10 +4,13 @@ version = "0.1.0"
 description = "Generated Slint bindings for the HammeRR compiler windows"
 edition.workspace = true
 rust-version.workspace = true
+autotests = false
+autobenches = false
 
 [lib]
 test = false
 doctest = false
+bench = false
 
 [dependencies]
 slint.workspace = true

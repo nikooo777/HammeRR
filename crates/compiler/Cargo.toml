@@ -4,14 +4,25 @@ version = "0.1.0"
 description = "Compiles VMF maps into Source engine BSP files"
 edition.workspace = true
 rust-version.workspace = true
+autotests = false
+autobenches = false
 
 [[bin]]
 name = "hammerr-compile"
 path = "src/main.rs"
+test = false
+bench = false
 
 [[bin]]
 name = "hammerr-physics"
 path = "src/physics_main.rs"
+test = false
+bench = false
+
+[lib]
+test = false
+doctest = false
+bench = false
 
 [dependencies]
 glam.workspace = true

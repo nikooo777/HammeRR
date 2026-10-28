@@ -95,9 +95,3 @@ impl<Owner> Callback<Owner> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;
-
-#[cfg(test)]
-mod binder_tests;

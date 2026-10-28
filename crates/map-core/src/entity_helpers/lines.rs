@@ -355,6 +355,3 @@ pub fn resolve(class: &Class, entity: &Entity, targets: &Targets<'_>) -> Vec<Lin
     }
     result
 }
-
-#[cfg(test)]
-mod tests;

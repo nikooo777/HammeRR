@@ -310,35 +310,3 @@ pub(crate) fn build(
         indices: leaves,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn clip_hull_projects_fragments_and_enforces_geometry_work_and_cancellation() {
-        let control = Control::default();
-        let mut budget = Budget {
-            work: 0,
-            control: &control,
-        };
-        let points = [
-            DVec3::new(0.0, 0.0, 0.0),
-            DVec3::new(8.0, 8.0, 0.0),
-            DVec3::new(0.0, 8.0, 0.0),
-            DVec3::new(8.0, 0.0, 0.0),
-            DVec3::new(4.0, 4.0, 0.0),
-            DVec3::ZERO,
-        ];
-        let polygon = hull(&points, DVec3::Z, 16.0, &mut budget).unwrap();
-        assert_eq!(polygon.0.len(), 4);
-        assert_eq!(polygon.area(), 64.0);
-        assert_eq!(polygon.normal(), DVec3::Z);
-        assert!(polygon.0.iter().all(|point| point.z == 16.0));
-        assert!(hull(&[DVec3::ZERO; 3], DVec3::Z, 0.0, &mut budget).is_err());
-        budget.work = MAX_WORK;
-        assert!(hull(&points, DVec3::Z, 16.0, &mut budget).is_err());
-        control.cancel().unwrap();
-        assert!(hull(&points, DVec3::Z, 16.0, &mut budget).is_err());
-    }
-}

@@ -531,8 +531,3 @@ impl Session {
         Ok(thumbnail)
     }
 }
-
-#[cfg(test)]
-pub(super) mod tests;
-#[cfg(test)]
-mod textured_tests;

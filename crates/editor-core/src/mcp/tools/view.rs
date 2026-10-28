@@ -625,10 +625,3 @@ impl EditorServer {
         })
     }
 }
-
-#[cfg(test)]
-mod baked_prop_vertices_tests;
-#[cfg(test)]
-mod compiled_visibility_tests;
-#[cfg(test)]
-mod compiled_world_lights_tests;

@@ -7,8 +7,6 @@ use compiler::water_dependencies::{
 };
 use slint::ComponentHandle;
 
-#[cfg(test)]
-use crate::runtime::SharedSession;
 use crate::runtime::{DocumentAccess, DocumentContinuation, lock};
 use crate::session::{Session, material_source::Report};
 use crate::{MaterialSourceWindow, MaterialWindow};
@@ -352,20 +350,6 @@ impl Controller {
         *self.material.borrow_mut() = name.to_owned();
         refresh(&self.window, session, name);
     }
-
-    #[cfg(test)]
-    pub fn show(&self, session: &Session, name: &str) -> Result<(), slint::PlatformError> {
-        self.populate(session, name);
-        self.window.show()
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn bind(
-    window: &MaterialWindow,
-    shared: SharedSession,
-) -> Rc<RefCell<Option<Controller>>> {
-    bind_with_access(window, &DocumentAccess::unmanaged(shared))
 }
 
 pub(crate) fn bind_with_access(
@@ -422,6 +406,3 @@ pub(crate) fn bind_with_access(
     });
     controller
 }
-
-#[cfg(test)]
-mod tests;

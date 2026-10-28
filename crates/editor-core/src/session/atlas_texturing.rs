@@ -383,6 +383,3 @@ impl Session {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests;

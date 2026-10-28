@@ -55,8 +55,7 @@ mod surface_group_ui;
 mod terrain_triangles_ui;
 mod terrain_ui;
 mod working_region_ui;
-#[cfg(test)]
-use editor_core::test_assets;
+
 mod ui;
 mod viewport;
 mod volume_ui;
@@ -68,8 +67,7 @@ use editor_core::{
     game, identity, inspector, interaction, material_favorites, mcp, model_preview, recent_maps,
     recovery, runtime, session, spatial, steam,
 };
-#[cfg(test)]
-use mcp::EditorServer;
+
 use render::GpuContext;
 use runtime::{DocumentHandle, SharedSession, lock};
 use session::{Actor, Session};

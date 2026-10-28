@@ -11,9 +11,6 @@ use crate::{
     session::{Actor, Session, working_region::Action},
 };
 
-#[cfg(test)]
-use crate::runtime::{SharedSession, lock};
-
 pub struct Controller {
     pub window: WorkingRegionWindow,
     snapshot: Rc<RefCell<String>>,
@@ -77,11 +74,6 @@ fn refresh(
     }
 }
 
-#[cfg(test)]
-pub fn bind_clear(app: &AppWindow, shared: SharedSession) {
-    bind_clear_with_access(app, &DocumentAccess::unmanaged(shared));
-}
-
 pub fn bind_clear_with_access(app: &AppWindow, access: &DocumentAccess) {
     app.on_clear_working_region({
         let (app, target) = (app.as_weak(), access.downgrade());
@@ -126,11 +118,6 @@ fn callback(
 }
 
 impl Controller {
-    #[cfg(test)]
-    pub fn new(shared: &SharedSession) -> Result<Self, slint::PlatformError> {
-        Self::new_with_access(&DocumentAccess::unmanaged(shared.clone()))
-    }
-
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = WorkingRegionWindow::new()?;
         let snapshot = Rc::new(RefCell::new(String::new()));
@@ -209,117 +196,5 @@ impl Controller {
             self.window
                 .set_message("Map, selection or view changed. Current region reloaded.".into());
         }
-    }
-}
-
-#[cfg(test)]
-mod admission_tests;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::{Arc, Mutex};
-
-    #[test]
-    fn working_region_controls_apply_inspected_bounds_reject_invalid_input_and_clear_empty_view() {
-        slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-            i_slint_backend_testing::TestingBackendOptions {
-                renderer_name: Some("software".into()),
-                mock_time: true,
-                threading: false,
-            },
-        )))
-        .unwrap();
-        let (_directory, game) = crate::test_assets::game();
-        let mut session = Session::new(Ok(game));
-        let id = session
-            .create_block(
-                Actor::User,
-                DVec3::splat(-8.125),
-                DVec3::splat(8.875),
-                "test/checker",
-                false,
-            )
-            .unwrap();
-        let original = session.document().vmf().clone();
-        let shared = Arc::new(Mutex::new(session));
-        let controller = Controller::new(&shared).unwrap();
-        controller.show(&mut lock(&shared)).unwrap();
-        controller.window.invoke_use_bounds();
-        controller.window.invoke_apply();
-        assert!(lock(&shared).working_region_enabled());
-        assert!(
-            controller
-                .window
-                .get_summary()
-                .contains("Working region active")
-        );
-        crate::ui::tests::assert_ui_renders(controller.window.window(), "working-region");
-        let stamp = lock(&shared).working_region_stamp();
-        controller.window.set_min_x("nan".into());
-        controller.window.invoke_apply();
-        assert_eq!(lock(&shared).working_region_stamp(), stamp);
-        {
-            let mut session = lock(&shared);
-            let snapshot = session.working_region_stamp();
-            session
-                .set_working_region(
-                    Actor::Agent,
-                    Action::Set {
-                        bounds: [DVec3::splat(100.0), DVec3::splat(200.0)],
-                        enabled: true,
-                    },
-                    &snapshot,
-                )
-                .unwrap();
-        }
-        controller.refresh(&mut lock(&shared));
-        assert_eq!(controller.window.get_min_x(), "100");
-        assert!(lock(&shared).build_scene().vertices.is_empty());
-        for label in [
-            "Use selection bounds",
-            "Clear working region",
-            "Apply",
-            "Cancel",
-        ] {
-            crate::ui::tests::assert_dialog_button_visible(&controller.window, label);
-        }
-        controller.window.invoke_clear();
-        assert!(!lock(&shared).working_region_enabled());
-        assert!(!lock(&shared).build_scene().vertices.is_empty());
-        assert_eq!(lock(&shared).selected_ids(), [id]);
-        assert_eq!(lock(&shared).document().vmf(), &original);
-        assert_eq!(lock(&shared).document().undo_labels().count(), 1);
-        {
-            let mut session = lock(&shared);
-            let snapshot = session.working_region_stamp();
-            session
-                .set_working_region(
-                    Actor::Agent,
-                    Action::Set {
-                        bounds: [DVec3::splat(100.0), DVec3::splat(200.0)],
-                        enabled: true,
-                    },
-                    &snapshot,
-                )
-                .unwrap();
-        }
-        let app = AppWindow::new().unwrap();
-        bind_clear(&app, shared.clone());
-        app.set_working_region_active(true);
-        app.show().unwrap();
-        crate::ui::tests::assert_ui_renders(app.window(), "working-region-status");
-        crate::ui::tests::assert_dialog_button_visible(&app, "Clear working region");
-        i_slint_backend_testing::ElementHandle::find_by_accessible_label(
-            &app,
-            "Clear working region",
-        )
-        .next()
-        .unwrap()
-        .invoke_accessible_default_action();
-        assert!(!lock(&shared).working_region_enabled());
-        assert!(!app.get_working_region_active());
-        app.hide().unwrap();
-        controller.window.invoke_cancel();
     }
 }

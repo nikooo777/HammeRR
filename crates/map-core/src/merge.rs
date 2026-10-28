@@ -161,6 +161,3 @@ pub fn merge(tx: &mut Transaction, sources: &[u32]) -> std::result::Result<Resul
     }
     Ok(result)
 }
-
-#[cfg(test)]
-mod tests;

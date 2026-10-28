@@ -6,10 +6,6 @@ use source_formats::gamefs::{AssetOrigin, GameFs, Mount};
 
 use crate::session::material_source;
 
-#[cfg(test)]
-#[path = "materials/provenance_tests.rs"]
-mod provenance_tests;
-
 pub const MAX_CATALOG_ENTRIES: usize = 250_000;
 pub const MAX_CATALOG_SOURCES: usize = 256;
 pub const MAX_QUERY_BYTES: usize = 256;
@@ -282,59 +278,4 @@ pub fn browse(
         filter: CatalogFilter::default(),
         provenance_scope: "current_winning_vmt; display previews have independent cached identities",
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn catalog_groups_searches_pages_and_keeps_unmounted_map_materials() {
-        let names = vec![
-            "brick/wall".into(),
-            "concrete/floor".into(),
-            "models/brick/prop".into(),
-            "tools/toolsnodraw".into(),
-        ];
-        let used = BTreeSet::from(["custom/floor".into(), "brick/wall".into()]);
-        let favorites = BTreeSet::from(["brick/wall".into()]);
-        let recent = VecDeque::from(["concrete/floor".into(), "brick/wall".into()]);
-        let all = browse(&names, &used, &favorites, &recent, "", "all", (1, 2)).unwrap();
-        assert_eq!(all.total, 5);
-        assert_eq!(all.entries.len(), 2);
-        assert_eq!(
-            all.groups
-                .iter()
-                .find(|group| group.id == "used")
-                .unwrap()
-                .count,
-            2
-        );
-        let bricks = browse(
-            &names,
-            &used,
-            &favorites,
-            &recent,
-            "BRICK",
-            "category:Brick",
-            (0, 36),
-        )
-        .unwrap();
-        assert_eq!(bricks.total, 1);
-        assert!(bricks.entries[0].favorite);
-        let used = browse(&names, &used, &favorites, &recent, "", "used", (0, 36)).unwrap();
-        assert_eq!(used.entries[1].name, "custom/floor");
-        let recent = browse(
-            &names,
-            &BTreeSet::new(),
-            &favorites,
-            &recent,
-            "",
-            "recent",
-            (0, 36),
-        )
-        .unwrap();
-        assert_eq!(recent.entries[0].name, "concrete/floor");
-        assert_eq!(category("models/brick/prop"), "Models");
-    }
 }

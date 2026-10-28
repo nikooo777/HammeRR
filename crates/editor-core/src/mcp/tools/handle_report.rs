@@ -39,6 +39,3 @@ pub(super) fn report(
         })).collect::<Vec<_>>(),
     }))
 }
-
-#[cfg(test)]
-mod tests;

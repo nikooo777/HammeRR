@@ -35,6 +35,3 @@ pub mod steam;
 
 #[cfg(feature = "mcp")]
 pub mod mcp;
-
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_assets;

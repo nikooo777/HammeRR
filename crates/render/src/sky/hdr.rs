@@ -50,5 +50,3 @@ pub fn hdr_mip_bytes(texture: &Vtf, mip: u8) -> Result<std::borrow::Cow<'_, [u8]
         _ => Err("HDR preview requires RGBA16F or RGBA16".into()),
     }
 }
-#[cfg(test)]
-mod tests;

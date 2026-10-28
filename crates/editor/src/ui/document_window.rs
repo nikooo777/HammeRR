@@ -15,11 +15,6 @@ pub(super) struct DocumentWindow {
 }
 
 pub(crate) fn hide_window(label: &str, window: &slint::Window, errors: &mut Vec<String>) {
-    #[cfg(test)]
-    if tests::fail_hide(label) {
-        errors.push(format!("{label}: injected hide failure"));
-        return;
-    }
     if let Err(error) = window.hide() {
         errors.push(format!("{label}: {error}"));
     }
@@ -274,6 +269,3 @@ impl Ui {
         }
     }
 }
-
-#[cfg(test)]
-pub(super) mod tests;

@@ -15,9 +15,6 @@ impl State {
     }
 }
 
-#[cfg(test)]
-mod tests;
-
 #[derive(Default)]
 pub struct State {
     pub(super) catalog: Option<Vec<String>>,

@@ -206,29 +206,70 @@ impl DetailProps {
         }
         Ok(data)
     }
-}
 
-impl Bsp {
-    fn check_detail_prop_lighting(&self, props: &DetailProps) -> io::Result<()> {
-        if props.props.iter().all(|prop| prop.light_style_count == 0) {
-            return Ok(());
+    pub fn validate_lighting(
+        &self,
+        ldr: Option<&[DetailPropLighting]>,
+        hdr: Option<&[DetailPropLighting]>,
+    ) -> io::Result<()> {
+        let total = ldr
+            .map_or(0, <[DetailPropLighting]>::len)
+            .checked_add(hdr.map_or(0, <[DetailPropLighting]>::len));
+        if self.props.len() > MAX_DETAIL_PROPS
+            || total.is_none_or(|count| count > MAX_DETAIL_PROP_LIGHTING)
+            || ldr
+                .into_iter()
+                .chain(hdr)
+                .flatten()
+                .any(|record| record.style > 63)
+            || ldr.zip(hdr).is_some_and(|(ldr, hdr)| {
+                hdr.len() != ldr.len() || hdr.iter().zip(ldr).any(|(a, b)| a.style != b.style)
+            })
+        {
+            return Err(invalid(
+                "detail-prop lighting exceeds its total bound or channel style layout differs",
+            ));
         }
-        let mut present = false;
-        for hdr in [false, true] {
-            if let Some(lighting) = self.detail_prop_lighting(hdr)? {
-                present = true;
-                if props.props.iter().any(|prop| {
-                    prop.light_style_count != 0
-                        && u64::from(prop.light_styles) + u64::from(prop.light_style_count)
-                            > lighting.len() as u64
-                }) {
+        for prop in &self.props {
+            if prop.light_style_count > 64 {
+                return Err(invalid(
+                    "detail-prop lighting range exceeds its bounded style array",
+                ));
+            }
+            if prop.light_style_count == 0 {
+                continue;
+            }
+            let start = prop.light_styles as usize;
+            let end = start
+                .checked_add(usize::from(prop.light_style_count))
+                .filter(|&end| end <= MAX_DETAIL_PROP_LIGHTING)
+                .ok_or_else(|| {
+                    invalid("detail-prop lighting range exceeds its bounded style array")
+                })?;
+            for records in ldr.into_iter().chain(hdr) {
+                let active = records.get(start..end).ok_or_else(|| {
+                    invalid("detail-prop light-style range exceeds its lighting lump")
+                })?;
+                if active.windows(2).any(|pair| pair[0].style >= pair[1].style) {
                     return Err(invalid(
-                        "detail-prop light-style range exceeds its lighting lump",
+                        "detail-prop receiver styles must be distinct and increasing",
                     ));
                 }
             }
         }
-        if !present {
+        Ok(())
+    }
+}
+
+impl Bsp {
+    fn check_detail_prop_lighting(&self, props: &DetailProps) -> io::Result<()> {
+        let ldr = self.detail_prop_lighting(false)?;
+        let hdr = self.detail_prop_lighting(true)?;
+        props.validate_lighting(ldr.as_deref(), hdr.as_deref())?;
+        if ldr.is_none()
+            && hdr.is_none()
+            && props.props.iter().any(|prop| prop.light_style_count != 0)
+        {
             return Err(invalid("detail-prop light styles require a lighting lump"));
         }
         Ok(())
@@ -266,45 +307,7 @@ impl Bsp {
         ldr: &[DetailPropLighting],
         hdr: Option<&[DetailPropLighting]>,
     ) -> io::Result<()> {
-        let total = ldr
-            .len()
-            .checked_add(hdr.map_or(0, <[DetailPropLighting]>::len));
-        if props.props.len() > MAX_DETAIL_PROPS
-            || props.models.len() > MAX_DETAIL_PROP_MODELS
-            || props.sprites.len() > MAX_SPRITES
-            || total.is_none_or(|count| count > MAX_DETAIL_PROP_LIGHTING)
-            || ldr
-                .iter()
-                .chain(hdr.into_iter().flatten())
-                .any(|record| !(1..=63).contains(&record.style))
-            || hdr.is_some_and(|hdr| {
-                hdr.len() != ldr.len() || hdr.iter().zip(ldr).any(|(a, b)| a.style != b.style)
-            })
-        {
-            return Err(invalid(
-                "detail-prop lighting exceeds its total bound or channel style layout differs",
-            ));
-        }
-        for prop in &props.props {
-            let start = prop.light_styles as usize;
-            let end = start.checked_add(usize::from(prop.light_style_count));
-            if prop.light_style_count > 63
-                || end.is_none_or(|end| end > ldr.len()) && prop.light_style_count != 0
-            {
-                return Err(invalid(
-                    "detail-prop lighting range exceeds its bounded style array",
-                ));
-            }
-            if prop.light_style_count != 0
-                && ldr[start..end.unwrap()]
-                    .windows(2)
-                    .any(|pair| pair[0].style >= pair[1].style)
-            {
-                return Err(invalid(
-                    "detail-prop receiver styles must be distinct and increasing",
-                ));
-            }
-        }
+        props.validate_lighting(Some(ldr), hdr)?;
         let data = props.to_bytes(self.records::<Leaf>()?.len())?;
         let mut ldr_data = Vec::new();
         append(&mut ldr_data, ldr);

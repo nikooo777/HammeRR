@@ -296,7 +296,7 @@ fn named_receivers_remain_attached_when_native_leaf_sort_reverses_emission_order
 }
 
 #[test]
-fn detail_direct_color_uses_rotated_validated_hull_center_and_hdr_last_pass() {
+fn detail_direct_color_uses_rotated_validated_hull_center_and_independent_static_channels() {
     let mut fixture = fixture();
     let path = fixture.directory.path().join("models/props/test.mdl");
     let mut mdl = std::fs::read(&path).unwrap();
@@ -307,7 +307,7 @@ fn detail_direct_color_uses_rotated_validated_hull_center_and_hdr_last_pass() {
     let prop = fixture.source.entities.last_mut().unwrap();
     prop.properties.set("origin", "10 20 30");
     prop.properties.set("angles", "0 90 0");
-    entity(
+    let light = entity(
         &mut fixture.source,
         "light",
         "4 23 138",
@@ -323,9 +323,23 @@ fn detail_direct_color_uses_rotated_validated_hull_center_and_hdr_last_pass() {
     let ldr = compiled(&fixture, LightingMode::DirectLdr, 0);
     let dual = compiled(&fixture, LightingMode::DirectLdrHdr, 0);
     assert!((color(&ldr) - DVec3::new(200.0, 0.0, 0.0)).length() < 0.01);
-    assert!((color(&dual) - DVec3::new(0.0, 0.0, 80.0)).length() < 0.01);
+    assert_eq!(color(&dual), DVec3::ZERO);
+    assert!(ldr.detail_prop_lighting(false).unwrap().is_none());
+    assert!(ldr.detail_prop_lighting(true).unwrap().is_none());
+    let ldr_static = dual.detail_prop_lighting(false).unwrap().unwrap();
+    let hdr_static = dual.detail_prop_lighting(true).unwrap().unwrap();
+    assert_eq!(ldr_static.len(), 1);
+    assert_eq!(hdr_static.len(), 1);
+    assert_eq!(ldr_static[0].style, 0);
+    assert_eq!(hdr_static[0].style, 0);
+    assert_eq!(
+        ldr_static[0].lighting,
+        ldr.detail_props().unwrap().unwrap().props[0].lighting
+    );
+    assert_eq!(hdr_static[0].lighting.linear(), [0.0, 0.0, 80.0]);
     let mut expected: DetailProps = ldr.detail_props().unwrap().unwrap();
-    expected.props[0].lighting = dual.detail_props().unwrap().unwrap().props[0].lighting;
+    expected.props[0].lighting = Default::default();
+    expected.props[0].light_style_count = 1;
     assert_eq!(expected, dual.detail_props().unwrap().unwrap());
     assert_eq!(
         compiled(&fixture, LightingMode::DirectLdrHdr, 0).to_bytes(),
@@ -344,6 +358,18 @@ fn detail_direct_color_uses_rotated_validated_hull_center_and_hdr_last_pass() {
         dual.to_bytes()
     );
     assert_eq!(fixture.source.write(&Default::default()), source);
+
+    fixture.source.entities[light]
+        .properties
+        .set("_lightHDR", "255 0 0 200");
+    let equal = compiled(&fixture, LightingMode::DirectLdrHdr, 0);
+    assert_eq!(equal.detail_props().unwrap(), ldr.detail_props().unwrap());
+    assert_eq!(
+        equal.game_lump(*b"dprp").unwrap().data,
+        ldr.game_lump(*b"dprp").unwrap().data
+    );
+    assert!(equal.detail_prop_lighting(false).unwrap().is_none());
+    assert!(equal.detail_prop_lighting(true).unwrap().is_none());
 }
 
 #[test]
@@ -711,7 +737,7 @@ fn material_sprites_and_explicit_models_share_baked_color_without_reseeding() {
 #[test]
 fn detail_style_channel_union_keeps_shared_offsets_and_zero_fills_missing_channels() {
     let mut fixture = fixture();
-    entity(
+    let second = entity(
         &mut fixture.source,
         "prop_detail",
         "64 0 16",
@@ -781,4 +807,58 @@ fn detail_style_channel_union_keeps_shared_offsets_and_zero_fills_missing_channe
     let fullbright = compiled(&fixture, LightingMode::Fullbright, 0);
     assert!(fullbright.detail_prop_lighting(false).unwrap().is_none());
     assert!(fullbright.detail_prop_lighting(true).unwrap().is_none());
+
+    entity(
+        &mut fixture.source,
+        "light",
+        "0.5 0.5 180",
+        &[
+            ("_light", "255 0 0 200"),
+            ("_lightHDR", "0 0 255 80"),
+            ("_constant_attn", "1"),
+            ("_quadratic_attn", "0"),
+        ],
+    );
+    fixture.source.entities[second]
+        .properties
+        .set("_detail_lighting_tint", "0 0 0");
+    let split = compiled(&fixture, LightingMode::DirectLdrHdr, 0);
+    let props = split.detail_props().unwrap().unwrap();
+    let split_ldr = split.detail_prop_lighting(false).unwrap().unwrap();
+    let split_hdr = split.detail_prop_lighting(true).unwrap().unwrap();
+    assert_eq!(
+        props
+            .props
+            .iter()
+            .map(|prop| (prop.light_styles, prop.light_style_count))
+            .collect::<Vec<_>>(),
+        [(0, 3), (3, 2)]
+    );
+    assert!(props.props.iter().all(|prop| prop.lighting.rgb == [0; 3]));
+    assert_eq!(split_ldr[0].style, 0);
+    assert_eq!(split_hdr[0].style, 0);
+    assert_eq!(split_ldr[0].lighting.linear(), [200.0, 0.0, 0.0]);
+    assert_eq!(split_hdr[0].lighting.linear(), [0.0, 0.0, 80.0]);
+    assert_eq!(&split_ldr[1..3], &ldr[..2]);
+    assert_eq!(&split_hdr[1..3], &hdr[..2]);
+    assert_eq!(
+        split_ldr
+            .iter()
+            .map(|record| record.style)
+            .collect::<Vec<_>>(),
+        [0, 1, 2, 1, 2]
+    );
+    assert_eq!(
+        split_hdr
+            .iter()
+            .map(|record| record.style)
+            .collect::<Vec<_>>(),
+        [0, 1, 2, 1, 2]
+    );
+    assert!(
+        split_ldr[3..]
+            .iter()
+            .chain(&split_hdr[3..])
+            .all(|record| record.lighting.rgb == [0; 3])
+    );
 }

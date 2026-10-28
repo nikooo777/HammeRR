@@ -108,11 +108,29 @@ impl LightingSettings {
     }
 
     pub fn gain(&self, style: u8) -> f64 {
+        if style == 0 {
+            return 1.0;
+        }
         self.style_gains
             .iter()
             .find(|entry| entry.style == style)
             .map_or(0.0, |entry| entry.gain)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StaticSource {
+    SharedNativeBase,
+    SelectedChannelStyleZero,
+    SharedNativeBaseAndSelectedChannelStyleZero,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StaticLighting {
+    pub source: StaticSource,
+    pub style_zero: Option<RgbExp32>,
+    pub linear: [f64; 3],
 }
 
 #[derive(Debug, Default, Clone)]
@@ -131,51 +149,9 @@ impl BakedLighting {
     }
 
     pub fn validate(&self, records: &DetailProps) -> Result<(), String> {
-        let total = self
-            .ldr
-            .as_ref()
-            .map_or(0, Vec::len)
-            .checked_add(self.hdr.as_ref().map_or(0, Vec::len));
-        if total.is_none_or(|total| total > source_formats::bsp::MAX_DETAIL_PROP_LIGHTING) {
-            return Err(
-                "Compiled detail lighting exceeds the 65,536 total style-record budget".into(),
-            );
-        }
-        if records.props.len() > source_formats::bsp::MAX_DETAIL_PROPS {
-            return Err("Compiled detail lighting exceeds the native prop-record budget".into());
-        }
-        if let (Some(ldr), Some(hdr)) = (&self.ldr, &self.hdr)
-            && (ldr.len() != hdr.len()
-                || ldr
-                    .iter()
-                    .zip(hdr)
-                    .any(|(left, right)| left.style != right.style))
-        {
-            return Err("Compiled detail lighting channel style layouts differ".into());
-        }
-        for table in [&self.ldr, &self.hdr].into_iter().flatten() {
-            if table.iter().any(|entry| !(1..=63).contains(&entry.style)) {
-                return Err("Compiled detail lighting table contains an invalid style ID".into());
-            }
-            for (ordinal, prop) in records.props.iter().enumerate() {
-                if prop.light_style_count == 0 {
-                    continue;
-                }
-                let start = prop.light_styles as usize;
-                let end = start.checked_add(usize::from(prop.light_style_count));
-                let range = end.and_then(|end| table.get(start..end));
-                if prop.light_style_count > 63
-                    || range.is_none_or(|range| {
-                        range.windows(2).any(|pair| pair[0].style >= pair[1].style)
-                    })
-                {
-                    return Err(format!(
-                        "Detail record {ordinal} has an invalid style range or ordering"
-                    ));
-                }
-            }
-        }
-        Ok(())
+        records
+            .validate_lighting(self.ldr.as_deref(), self.hdr.as_deref())
+            .map_err(|error| error.to_string())
     }
 
     pub fn channel_issue(
@@ -206,21 +182,30 @@ impl BakedLighting {
 
     pub fn available_styles(&self, records: &DetailProps) -> Vec<u8> {
         let mut styles = std::collections::BTreeSet::new();
-        for table in [&self.ldr, &self.hdr].into_iter().flatten() {
+        for channel in [crate::LightingChannel::Ldr, crate::LightingChannel::Hdr] {
             for prop in &records.props {
-                if prop.light_style_count == 0 {
-                    continue;
-                }
-                let start = prop.light_styles as usize;
-                if let Some(range) = start
-                    .checked_add(usize::from(prop.light_style_count))
-                    .and_then(|end| table.get(start..end))
-                {
-                    styles.extend(range.iter().map(|entry| entry.style));
+                if let Ok(range) = self.extras(prop, channel) {
+                    styles.extend(
+                        range
+                            .iter()
+                            .map(|entry| entry.style)
+                            .filter(|&style| style != 0),
+                    );
                 }
             }
         }
         styles.into_iter().collect()
+    }
+
+    pub fn has_channel_static(&self, records: &DetailProps) -> bool {
+        [crate::LightingChannel::Ldr, crate::LightingChannel::Hdr]
+            .into_iter()
+            .any(|channel| {
+                records.props.iter().any(|prop| {
+                    self.extras(prop, channel)
+                        .is_ok_and(|entries| entries.iter().any(|entry| entry.style == 0))
+                })
+            })
     }
 
     pub fn extras(
@@ -246,8 +231,11 @@ impl BakedLighting {
         prop: &DetailProp,
         settings: &LightingSettings,
     ) -> Result<[f64; 3], String> {
-        let mut color = baked_ldr_linear(prop.lighting);
+        let mut color = self.static_lighting(prop, settings.channel)?.linear;
         for entry in self.extras(prop, settings.channel)? {
+            if entry.style == 0 {
+                continue;
+            }
             let gain = settings.gain(entry.style);
             for (total, value) in color.iter_mut().zip(baked_ldr_linear(entry.lighting)) {
                 *total += value * gain;
@@ -256,20 +244,72 @@ impl BakedLighting {
         Ok(color)
     }
 
+    pub fn static_lighting(
+        &self,
+        prop: &DetailProp,
+        channel: crate::LightingChannel,
+    ) -> Result<StaticLighting, String> {
+        let style_zero = self
+            .extras(prop, channel)?
+            .iter()
+            .find(|entry| entry.style == 0)
+            .map(|entry| entry.lighting);
+        let mut linear = baked_ldr_linear(prop.lighting);
+        if let Some(color) = style_zero {
+            for (total, value) in linear.iter_mut().zip(baked_ldr_linear(color)) {
+                *total += value;
+            }
+        }
+        let source = match (style_zero.is_some(), prop.lighting.rgb != [0; 3]) {
+            (false, _) => StaticSource::SharedNativeBase,
+            (true, false) => StaticSource::SelectedChannelStyleZero,
+            (true, true) => StaticSource::SharedNativeBaseAndSelectedChannelStyleZero,
+        };
+        Ok(StaticLighting {
+            source,
+            style_zero,
+            linear,
+        })
+    }
+
+    pub fn baked_ldr_issue(&self, records: &DetailProps) -> Option<String> {
+        for (ordinal, prop) in records.props.iter().enumerate() {
+            let entries = match self.extras(prop, crate::LightingChannel::Ldr) {
+                Ok(entries) => entries,
+                Err(error) => return Some(format!("Detail record {ordinal}: {error}")),
+            };
+            let runtime_styles = entries.iter().filter(|entry| entry.style != 0).count();
+            if runtime_styles != 0 {
+                return Some(format!(
+                    "Detail record {ordinal} uses {runtime_styles} runtime light styles; Baked LDR requires static lighting only"
+                ));
+            }
+        }
+        None
+    }
+
     pub fn colors(
         &self,
         records: &DetailProps,
         settings: &LightingSettings,
-    ) -> Result<Vec<[f32; 3]>, String> {
+    ) -> Result<Vec<[f64; 3]>, String> {
         settings.validate()?;
         self.validate(records)?;
-        if settings.mode != Lighting::BakedRadiance {
-            if settings.mode == Lighting::BakedLdr
-                && let Some(issue) = baked_ldr_issue(records)
-            {
+        if settings.mode == Lighting::EditorShading {
+            return Ok(Vec::new());
+        }
+        if settings.mode == Lighting::BakedLdr {
+            if let Some(issue) = self.baked_ldr_issue(records) {
                 return Err(issue);
             }
-            return Ok(Vec::new());
+            return records
+                .props
+                .iter()
+                .map(|prop| {
+                    self.static_lighting(prop, crate::LightingChannel::Ldr)
+                        .map(|color| color.linear)
+                })
+                .collect();
         }
         if let Some(issue) = self.channel_issue(records, settings.channel) {
             return Err(issue);
@@ -296,7 +336,7 @@ impl BakedLighting {
                     "Detail record {ordinal} exposed radiance exceeds finite GPU range"
                 ));
             }
-            colors.push(exposed.map(|value| value as f32));
+            colors.push(exposed);
         }
         Ok(colors)
     }
@@ -304,15 +344,6 @@ impl BakedLighting {
 
 pub fn baked_ldr_linear(color: RgbExp32) -> [f64; 3] {
     color.linear().map(|channel| channel / 255.0)
-}
-
-pub fn baked_ldr_issue(records: &DetailProps) -> Option<String> {
-    records.props.iter().enumerate().find_map(|(ordinal, prop)| {
-        (prop.light_style_count != 0).then(|| format!(
-            "Detail record {ordinal} uses {} runtime light styles; Baked LDR requires zero-style final records",
-            prop.light_style_count
-        ))
-    })
 }
 
 #[derive(Debug, Clone)]
@@ -576,13 +607,13 @@ impl SceneMesh {
         for part in &self.detail_parts {
             let color = match settings.mode {
                 Lighting::EditorShading | Lighting::BakedRadiance => [255; 3],
-                Lighting::BakedLdr => baked_ldr_linear(records.props[part.ordinal].lighting)
+                Lighting::BakedLdr => radiance[part.ordinal]
                     .map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8),
             };
             for vertex in &mut self.vertices[part.vertices.clone()] {
                 vertex.color[..3].copy_from_slice(&color);
                 vertex.baked_irradiance = if settings.mode == Lighting::BakedRadiance {
-                    radiance[part.ordinal]
+                    radiance[part.ordinal].map(|value| value as f32)
                 } else {
                     [0.0; 3]
                 };
@@ -1033,6 +1064,81 @@ mod tests {
         mesh.set_compiled_detail_lighting_options(&records, &baked, &LightingSettings::default())
             .unwrap();
         assert_eq!(mesh.vertices, original);
+        baked.ldr = Some(Vec::new());
+        baked.hdr = Some(Vec::new());
+        for (ordinal, prop) in records.props.iter_mut().enumerate() {
+            prop.lighting = RgbExp32 {
+                rgb: if ordinal == 0 { [255, 0, 0] } else { [0; 3] },
+                exponent: 1,
+            };
+            prop.light_styles = (ordinal * 3) as u32;
+            prop.light_style_count = 3;
+            for (table, colors) in [
+                (&mut baked.ldr, [[0, 64, 0], [60, 0, 0], [0; 3]]),
+                (&mut baked.hdr, [[0, 128, 0], [0; 3], [0, 0, 40]]),
+            ] {
+                table
+                    .as_mut()
+                    .unwrap()
+                    .extend(colors.into_iter().enumerate().map(|(style, rgb)| {
+                        DetailPropLighting {
+                            style: style as u8,
+                            lighting: RgbExp32 { rgb, exponent: 0 },
+                        }
+                    }));
+            }
+        }
+        assert_eq!(baked.available_styles(&records), [1, 2]);
+        for channel in [crate::LightingChannel::Ldr, crate::LightingChannel::Hdr] {
+            let mut settings = settings.clone();
+            settings.channel = channel;
+            mesh.set_compiled_detail_lighting_options(&records, &baked, &settings)
+                .unwrap();
+            for part in &mesh.detail_parts {
+                let shared_red = if part.ordinal == 0 { 4.0 } else { 0.0 };
+                let expected = if channel == crate::LightingChannel::Ldr {
+                    [shared_red + 120.0 / 255.0, 128.0 / 255.0, 0.0]
+                } else {
+                    [shared_red, 256.0 / 255.0, 40.0 / 255.0]
+                }
+                .map(|value| value as f32);
+                assert!(
+                    mesh.vertices[part.vertices.clone()]
+                        .iter()
+                        .all(|vertex| vertex.baked_irradiance == expected)
+                );
+            }
+            settings.style_gains.clear();
+            mesh.set_compiled_detail_lighting_options(&records, &baked, &settings)
+                .unwrap();
+            for part in &mesh.detail_parts {
+                assert_eq!(
+                    mesh.vertices[part.vertices.start].baked_irradiance[1],
+                    if channel == crate::LightingChannel::Ldr {
+                        (128.0 / 255.0) as f32
+                    } else {
+                        (256.0 / 255.0) as f32
+                    }
+                );
+            }
+        }
+        let before = mesh.vertices.clone();
+        let mut invalid = settings.clone();
+        invalid.style_gains.push(StyleGain {
+            style: 0,
+            gain: 1.0,
+        });
+        assert!(
+            mesh.set_compiled_detail_lighting_options(&records, &baked, &invalid)
+                .is_err()
+        );
+        baked.hdr = None;
+        assert!(
+            mesh.set_compiled_detail_lighting_options(&records, &baked, &settings)
+                .unwrap_err()
+                .contains("absent")
+        );
+        assert_eq!(mesh.vertices, before);
     }
 
     #[test]
@@ -1057,35 +1163,49 @@ mod tests {
         };
         baked.validate(&records).unwrap();
         baked.ldr.as_mut().unwrap().push(entry);
-        assert!(
-            baked
-                .validate(&records)
-                .unwrap_err()
-                .contains("total style-record")
-        );
+        assert!(baked.validate(&records).is_err());
         baked.ldr.as_mut().unwrap().pop();
         baked.hdr.as_mut().unwrap()[0].style = 2;
-        assert!(
-            baked
-                .validate(&records)
-                .unwrap_err()
-                .contains("layouts differ")
-        );
+        assert!(baked.validate(&records).is_err());
         baked.hdr = None;
         baked.ldr = Some(vec![entry, entry]);
         let mut active = records.clone();
         active.props[0].light_styles = 0;
         active.props[0].light_style_count = 2;
-        assert!(baked.validate(&active).unwrap_err().contains("ordering"));
+        assert!(baked.validate(&active).is_err());
         active.props[0].light_styles = u32::MAX;
         assert!(baked.validate(&active).unwrap_err().contains("range"));
-        baked.ldr.as_mut().unwrap()[0].style = 0;
-        assert!(
-            baked
-                .validate(&records)
-                .unwrap_err()
-                .contains("invalid style ID")
+        baked.ldr.as_mut().unwrap()[0].style = 64;
+        assert!(baked.validate(&records).unwrap_err().contains("style"));
+        active.props[0].light_styles = 0;
+        active.props[0].light_style_count = 64;
+        active.props[0].lighting = RgbExp32::default();
+        baked.ldr = Some(
+            (0..=63)
+                .map(|style| DetailPropLighting {
+                    style,
+                    lighting: RgbExp32 {
+                        rgb: if style == 0 { [17, 34, 51] } else { [0; 3] },
+                        exponent: 1,
+                    },
+                })
+                .collect(),
         );
+        baked.validate(&active).unwrap();
+        assert_eq!(
+            baked.available_styles(&active),
+            (1..=63).collect::<Vec<_>>()
+        );
+        let settings = LightingSettings {
+            mode: Lighting::BakedRadiance,
+            ..Default::default()
+        };
+        assert_eq!(
+            baked.colors(&active, &settings).unwrap(),
+            vec![[34.0 / 255.0, 68.0 / 255.0, 102.0 / 255.0]]
+        );
+        active.props[0].light_style_count = 65;
+        assert!(baked.validate(&active).is_err());
         let empty = BakedLighting {
             base_channel: Some(crate::LightingChannel::Hdr),
             ..Default::default()
@@ -1166,14 +1286,45 @@ mod tests {
         assert_eq!((mesh.mins, mesh.maxs), bounds);
         assert_eq!(mesh.wire_lines, wires);
         let colored = mesh.vertices.clone();
-        records.props[2].light_style_count = 1;
+        let mut baked = BakedLighting {
+            ldr: Some(Vec::new()),
+            ..Default::default()
+        };
+        for (ordinal, prop) in records.props.iter_mut().enumerate() {
+            let mut extra = prop.lighting;
+            if ordinal == 0 {
+                prop.lighting.rgb = prop.lighting.rgb.map(|value| value / 2);
+                for (value, shared) in extra.rgb.iter_mut().zip(prop.lighting.rgb) {
+                    *value -= shared;
+                }
+            } else {
+                prop.lighting = RgbExp32::default();
+            }
+            prop.light_styles = ordinal as u32;
+            prop.light_style_count = 1;
+            baked.ldr.as_mut().unwrap().push(DetailPropLighting {
+                lighting: extra,
+                style: 0,
+            });
+        }
+        let settings = LightingSettings {
+            mode: Lighting::BakedLdr,
+            ..Default::default()
+        };
+        mesh.set_compiled_detail_lighting_options(&records, &baked, &settings)
+            .unwrap();
+        assert_eq!(mesh.vertices, colored);
+        baked.ldr.as_mut().unwrap()[2].style = 32;
         assert!(
-            mesh.set_compiled_detail_lighting(&records, Lighting::BakedLdr)
+            mesh.set_compiled_detail_lighting_options(&records, &baked, &settings)
                 .unwrap_err()
                 .contains("runtime light styles")
         );
         assert_eq!(mesh.vertices, colored);
-        records.props[2].light_style_count = 0;
+        records
+            .props
+            .iter_mut()
+            .for_each(|prop| prop.light_style_count = 0);
         mesh.detail_parts[1].ordinal = mesh.detail_parts[0].ordinal;
         assert!(
             mesh.set_compiled_detail_lighting(&records, Lighting::EditorShading)

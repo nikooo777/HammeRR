@@ -97,6 +97,54 @@ fn compiled_detail_controls_share_background_prepare_show_clear_and_output_inval
     assert!(!form.window.get_has_token());
     assert!(form.window.get_state().contains("not_loaded"));
     assert_eq!(form.window.get_lighting_index(), 0);
+    let mut report = lock(&shared).inspect_compiled_details(None, 0, 64).unwrap();
+    report["lighting"]["mode"] = serde_json::json!("baked_radiance");
+    report["lighting"]["baked_ldr_available"] = serde_json::json!(true);
+    report["lighting"]["available_styles"] = serde_json::json!([1]);
+    report["lighting"]["base_policy"] = serde_json::json!("per_record_static_contributions");
+    report["page"]["total"] = serde_json::json!(1);
+    report["page"]["returned"] = serde_json::json!(1);
+    report["counts"] = serde_json::json!({"models":0,"cards":1,"cross":0,"tri":0});
+    for (channel, rgb) in [("ldr", [0, 64, 0]), ("hdr", [0, 128, 0])] {
+        report["lighting"]["channel"] = serde_json::json!(channel);
+        let linear = rgb.map(|value| f64::from(value) / 255.0);
+        report["page"]["rows"] = serde_json::json!([{
+            "ordinal":0,"kind_name":"card","leaf":0,"dictionary_index":0,"origin":[0,0,0],"angles":[0,0,0],"scale":1,"orientation":0,"sway":0,"shape_angle":0,"shape_size":0,"light_styles":0,"light_style_count":2,
+            "lighting":{"rgb":[0,0,0],"exponent":0,"static_contribution":{"source":"selected_channel_style_zero","selected_channel":channel,"style_zero":{"rgb":rgb,"exponent":0,"weight":1},"linear":linear},"exposed_linear":[8.0/255.0,linear[1],0.0],"style_extras":[{"style":0,"rgb":rgb,"exponent":0,"effective_weight":1},{"style":1,"rgb":[16,0,0],"exponent":0,"effective_weight":0.5}]}
+        }]);
+        present(
+            &form.window,
+            &mut form.state.borrow_mut(),
+            report.clone(),
+            serde_json::Value::Null,
+        )
+        .unwrap();
+        assert_eq!(
+            form.window.get_lighting_channel_index(),
+            i32::from(channel == "hdr")
+        );
+        assert!(
+            form.window
+                .get_lighting_state()
+                .contains(&channel.to_ascii_uppercase())
+        );
+        assert!(form.window.get_rows().contains(&format!(
+            "stored style 0 RGBExp32 {} exponent 0 · editor weight 1",
+            serde_json::json!(rgb)
+        )));
+        assert_eq!(form.state.borrow().styles, [1]);
+        assert_eq!(form.state.borrow().selected_style, Some(1));
+        form.window.invoke_choose_style(0);
+        form.window.set_style_gain(0.5);
+        let chosen = chosen_lighting(&form.window, &mut form.state.borrow_mut(), 2).unwrap();
+        assert_eq!(
+            chosen.style_gains,
+            [StyleGain {
+                style: 1,
+                gain: 0.5
+            }]
+        );
+    }
     let session = lock(&shared);
     assert_eq!(
         (

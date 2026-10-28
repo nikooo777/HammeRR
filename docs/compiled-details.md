@@ -28,14 +28,16 @@ Full and vertical cards face the current camera. **Prepare details** and **Clear
 5. Select a **Style** and set **Style gain**. Repeat for other styles.
 6. Click **Apply lighting**. A failed update keeps the previous settings.
 
-Styles without a gain are off. Gains range from 0 to 2; exposure ranges from
+Runtime styles without a gain are off. Gains range from 0 to 2; exposure ranges from
 −8 to +8 EV. The preview multiplies the linear material colour by stored light,
 then applies exposure and Reinhard tone mapping. It keeps values above 1 until
 that step. Authored-light and sky exposure controls remain separate.
 
-A dual build stores one shared HDR base colour. **LDR** selects its LDR style
-extras; it cannot recover a separate LDR base. Inspection reports the base
-source, available channels, raw style records and effective linear colour.
+A new dual build retains separate static colours when LDR and HDR differ.
+Choose **Lighting channel** to see each result. Static light stays at full
+weight; **Style gain** controls only styles 1–63. Inspection reports the static
+source, raw records and effective colour for each placement. Older builds with
+one shared base retain that base for both channels.
 **Prepare details** and **Clear details** reset all preview lighting settings.
 
 ![Compiled cards, shapes and a model use the selected HDR style contributions](images/compiled-detail-radiance.png)
@@ -47,7 +49,7 @@ source, available channels, raw style records and effective linear colour.
 - Editing tools, geometry drafts and Faces mode hide the layer. Working region filters whole native props; authored hide/show stays separate.
 - Only the current session's retained BSP is eligible. Arbitrary BSP import is unavailable.
 - Models use skin 0 and body 0. Materials require supported static `UnlitGeneric` textures.
-- **Baked LDR** uses the native base color with static style 0 at full weight. A record with runtime light styles stops the complete mode; the previous mode stays active.
+- **Baked LDR** uses the LDR static colour, including stored style 0 at full weight. A record with runtime light styles stops the complete mode; the previous mode stays active.
 - **Baked LDR** clamps colours to an 8-bit display range. **Baked radiance** needs a lit build; HDR needs a dual-channel build. Missing selected style tables and invalid records reject.
 - Static gains do not animate runtime light patterns. Dynamic lights, native exposure adaptation and exact native appearance are not simulated.
 - Sway, avoidance, runtime mirroring and fading are not displayed.

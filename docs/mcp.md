@@ -423,21 +423,25 @@ inspection pages after offset zero. Show loads the complete supported asset set;
 compiler freshness and additional preview-asset observations remain separate.
 The layer does not edit or select authored objects.
 Use `lighting:"baked_ldr"` for static base colours, or `editor_shading` for the
-default preview. Styled records refuse Baked LDR and preserve the previous mode.
+default preview. Records with runtime styles refuse Baked LDR and preserve the previous mode.
 For radiance, send one complete update:
 
 ```json
 {"action":"lighting","token":"…","lighting":"baked_radiance","channel":"hdr","exposure_ev":0,"style_gains":[{"style":1,"gain":0},{"style":2,"gain":1}]}
 ```
 
-All three radiance fields are required. Unlisted styles are off; gains are 0–2
+All three radiance fields are required. Unlisted runtime styles are off; gains are 0–2
 for distinct available styles 1–63. EV is −8 to +8. Legacy modes reject these
-extra fields. Inspection reports options, channel availability, selected raw
-extras, effective linear colour and `base_policy:"shared_native_base"`.
-Dual builds use the shared HDR base for both extra-channel choices. Missing
-selected tables reject styled records; valid zero-style builds need no tables.
-Inspection pages accept `limit:1` through `64`, with at most 63 style extras per
-prop (4,032 extras per page).
+extra fields. Static style 0 stays at unity and does not accept a gain.
+New dual builds retain separate static LDR/HDR colours when they differ.
+Inspection reports options, available channels, raw extras, effective linear
+colour and exposed colour. Each row's `lighting.static_contribution` identifies
+its shared base and selected-channel style 0. Such builds report
+`base_policy:"per_record_static_contributions"`; older shared-base builds keep
+`base_policy:"shared_native_base"`. Missing selected tables reject styled
+records; valid zero-style builds need no tables.
+Inspection pages accept `limit:1` through `64`, with at most 64 stored style
+records per prop (4,096 per page).
 `render_view.compiled_details` binds the actual layer state and lighting policy
 to its image. Prepare and Clear reset options; Hide preserves them.
 

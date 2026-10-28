@@ -7,7 +7,7 @@ use render::{
 };
 use serde_json::{Value, json};
 use source_formats::{
-    bsp::{Bsp, DetailProps, lump},
+    bsp::{Bsp, DetailProp, DetailProps, lump},
     gamefs::asset_relative,
     keyvalues::{FlatBlockLimits, parse_flat_blocks_controlled},
 };
@@ -27,7 +27,7 @@ const SOURCE_MODE: baked_build::SourceVerification =
     baked_build::SourceVerification::OriginalMetadata {
         maximum_bytes: MAX_METADATA_BYTES,
     };
-const NOTES: &str = "Final native dprp v4 records from the retained successful BSP, including explicit and scattered details; native ordinals have no authored identity. Editor shading is the default preview lighting. Baked LDR uses the native base RGBExp32 divided by 255 as linear modulation, clamped to 0–1 and rounded to 8-bit vertex color, with the editor's sRGB output. It requires zero-style records and applies no editor directional or authored lighting. Runtime styles refuse the complete Baked LDR layer. Fixed native card/cross/tri forms and live full/vertical camera-facing cards remain static. Baked radiance selects exact LDR/HDR style extras with explicit static gains and independent EV, preserving linear range until material multiplication and Reinhard display. Dual builds retain one shared HDR base in both extra-channel choices. Dynamic lights, runtime style patterns, sway, avoidance, runtime random card mirroring, fades, animation, native gamma and native appearance parity are not simulated. Exact pole/coincident views use the Source VectorAngles singular basis. Original compiler source guards and separately captured preview asset observations are checked independently. Preview texture reads do not acquire compiler provenance. Preparation verifies exact MDL/VVD/VTX identities in the shared model cache and refreshes requested stable material IDs. Currentness covers the committed map/settings/content epoch and tracked guards, not every world material. Unapplied drafts are not compiled. The layer never participates in authored picking, bounds, selection or Undo.";
+const NOTES: &str = "Final native dprp v4 records from the retained successful BSP, including explicit and scattered details; native ordinals have no authored identity. Editor shading is the default preview lighting. Baked LDR adds the shared native base and stored LDR style 0 at editor unity, divides RGBExp32 by 255 as linear modulation, clamps to 0–1 and rounds to 8-bit vertex color, with the editor's sRGB output and no editor lighting. Ordinary runtime styles refuse the complete Baked LDR layer. Fixed native card/cross/tri forms and live full/vertical camera-facing cards remain static. Baked radiance adds the shared base and selected LDR/HDR style 0 at editor unity, then ordinary stored style contributions with explicit gains and independent EV, preserving linear range until material multiplication and Reinhard display. Static contribution provenance is reported per record; old shared bases keep their original interpretation. Dynamic lights, runtime style patterns including native style-0 modulation, sway, avoidance, runtime random card mirroring, fades, animation, native gamma and native appearance parity are not simulated. Exact pole/coincident views use the Source VectorAngles singular basis. Original compiler source guards and separately captured preview asset observations are checked independently. Preview texture reads do not acquire compiler provenance. Preparation verifies exact MDL/VVD/VTX identities in the shared model cache and refreshes requested stable material IDs. Currentness covers the committed map/settings/content epoch and tracked guards, not every world material. Unapplied drafts are not compiled. The layer never participates in authored picking, bounds, selection or Undo.";
 
 struct Pending {
     token: u64,
@@ -188,6 +188,39 @@ fn decode(
         material,
         baked,
     })
+}
+
+fn lighting_row(
+    ready: &Ready,
+    prop: &DetailProp,
+    settings: &LightingSettings,
+) -> Result<Value, String> {
+    let channel = settings.channel;
+    let static_color = ready.baked.static_lighting(prop, channel);
+    let static_contribution = static_color.as_ref().ok().map(|color| json!({
+        "source":color.source,"selected_channel":channel,
+        "shared_base_source_channel":if prop.lighting.rgb == [0;3] {None}else{ready.baked.base_channel},
+        "style_zero":color.style_zero.map(|color|json!({"rgb":color.rgb,"exponent":color.exponent,"linear":render::compiled_details::baked_ldr_linear(color),"weight":1.0})),
+        "linear":color.linear,"style_zero_policy":"editor_unity"
+    }));
+    let effective = match settings.mode {
+        Lighting::EditorShading => None,
+        Lighting::BakedLdr => Some(static_color.as_ref().map_err(Clone::clone)?.linear),
+        Lighting::BakedRadiance => Some(ready.baked.linear(prop, settings)?),
+    };
+    let extras = ready.baked.extras(prop, channel).ok().map(|entries| entries.iter().map(|entry| json!({
+        "style":entry.style,"rgb":entry.lighting.rgb,"exponent":entry.lighting.exponent,
+        "linear":render::compiled_details::baked_ldr_linear(entry.lighting),"gain":settings.gain(entry.style),
+        "effective_weight":if settings.mode == Lighting::EditorShading {0.0}else{settings.gain(entry.style)},
+        "role":if entry.style == 0 {"static"}else{"runtime_style"}
+    })).collect::<Vec<_>>());
+    Ok(json!({
+        "rgb":prop.lighting.rgb,"exponent":prop.lighting.exponent,"linear":render::compiled_details::baked_ldr_linear(prop.lighting),
+        "static_contribution":static_contribution,"selected_table_unavailable_reason":static_color.err(),
+        "effective_linear":effective,"exposed_linear":if settings.mode == Lighting::BakedRadiance {effective.map(|color|color.map(|value|value*2.0f64.powf(settings.exposure_ev)))}else{None},
+        "vertex_color":if settings.mode == Lighting::BakedLdr {effective.map(|color|color.map(|value|(value.clamp(0.0,1.0)*255.0).round() as u8))}else{None},
+        "style_extras":extras
+    }))
 }
 
 impl Session {
@@ -439,19 +472,23 @@ impl Session {
         }));
         let radiance_issue =
             ready.and_then(|ready| ready.baked.channel_issue(&ready.records, settings.channel));
+        let channel_static =
+            ready.is_some_and(|ready| ready.baked.has_channel_static(&ready.records));
         json!({
             "mode":settings.mode.name(),"channel":settings.channel,"exposure_ev":settings.exposure_ev,"style_gains":settings.style_gains,
-            "baked_ldr_available":ready.map(|ready|render::compiled_details::baked_ldr_issue(&ready.records).is_none()),
-            "unavailable_reason":ready.and_then(|ready|render::compiled_details::baked_ldr_issue(&ready.records)),
+            "baked_ldr_available":ready.map(|ready|ready.baked.baked_ldr_issue(&ready.records).is_none()),
+            "unavailable_reason":ready.and_then(|ready|ready.baked.baked_ldr_issue(&ready.records)),
             "radiance_available":ready.map(|_|radiance_issue.is_none()),"radiance_unavailable_reason":radiance_issue,
             "available_styles":ready.map(|ready|ready.baked.available_styles(&ready.records)),
-            "base_source_channel":ready.and_then(|ready|ready.baked.base_channel),"base_policy":"shared_native_base",
+            "base_source_channel":ready.filter(|_|!channel_static).and_then(|ready|ready.baked.base_channel),
+            "base_policy":if channel_static {"per_record_static_contributions"}else{"shared_native_base"},
+            "style_zero_policy":"editor_unity",
             "channels":channels,"ldr_style_records":ready.and_then(|ready|ready.baked.ldr.as_ref().map(Vec::len)),
             "hdr_style_records":ready.and_then(|ready|ready.baked.hdr.as_ref().map(Vec::len)),
             "display_policy":match settings.mode {
                 Lighting::EditorShading => "ordinary editor material and directional shading; stored baked colors and style extras are not applied",
-                Lighting::BakedLdr => "native base linear RGB / 255; clamp 0–1; round to 8-bit; editor sRGB output; style 0 fixed at unity; no editor lighting; native gamma parity unqualified",
-                Lighting::BakedRadiance => "shared native base RGB / 255 plus selected-channel stored style extras / 255 times explicit gain; omitted gains zero; linear base texture times lighting times 2^EV, per-channel Reinhard, one editor sRGB output; no native gamma or runtime-style parity",
+                Lighting::BakedLdr => "shared native base plus stored LDR style 0 at editor unity, linear RGB / 255; clamp 0–1; round to 8-bit; editor sRGB output; no editor lighting; native gamma parity unqualified",
+                Lighting::BakedRadiance => "shared native base plus selected-channel stored style 0 at editor unity, then ordinary stored style extras times explicit gain; RGB / 255; omitted ordinary gains zero; linear base texture times lighting times 2^EV, per-channel Reinhard, one editor sRGB output; no native gamma or runtime-style parity",
             }
         })
     }
@@ -514,32 +551,18 @@ impl Session {
         self.preflight_compiled_details_ownership();
         let state = self.detail_current(&Control::default())?;
         let ready = self.compiled_details.ready.as_ref();
-        let effective = if self.compiled_details.lighting.mode == Lighting::BakedRadiance {
-            ready
-                .map(|ready| {
-                    ready
-                        .records
-                        .props
-                        .iter()
-                        .skip(offset)
-                        .take(limit)
-                        .map(|prop| ready.baked.linear(prop, &self.compiled_details.lighting))
-                        .collect::<Result<Vec<_>, _>>()
-                })
-                .transpose()?
-        } else {
-            None
-        };
-        let extras = if self.compiled_details.lighting.mode == Lighting::BakedRadiance {
-            ready.map(|ready| ready.records.props.iter().skip(offset).take(limit).map(|prop| {
-                ready.baked.extras(prop, self.compiled_details.lighting.channel).map(|entries| entries.iter().map(|entry| json!({
-                    "style":entry.style,"rgb":entry.lighting.rgb,"exponent":entry.lighting.exponent,
-                    "linear":render::compiled_details::baked_ldr_linear(entry.lighting),"gain":self.compiled_details.lighting.gain(entry.style)
-                })).collect::<Vec<_>>())
-            }).collect::<Result<Vec<_>,_>>()).transpose()?
-        } else {
-            None
-        };
+        let lighting_rows = ready
+            .map(|ready| {
+                ready
+                    .records
+                    .props
+                    .iter()
+                    .skip(offset)
+                    .take(limit)
+                    .map(|prop| lighting_row(ready, prop, &self.compiled_details.lighting))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?;
         let total = ready.map(|ready| ready.records.props.len());
         if total.is_some_and(|total| offset > total) || total.is_none() && offset != 0 {
             return Err("Compiled detail page offset exceeds its retained table".into());
@@ -549,7 +572,7 @@ impl Session {
             "dictionary_index":prop.model,"model":if prop.kind == 0 {ready.records.model_name(usize::from(prop.model)).ok()} else {None},
             "leaf":prop.leaf,"origin":prop.origin,"angles":prop.angles,"scale":if prop.kind == 0 {1.0} else {prop.scale},
             "orientation":prop.orientation,"sway":prop.sway,"shape_angle":prop.shape_angle,"shape_size":prop.shape_size,
-            "lighting":{"rgb":prop.lighting.rgb,"exponent":prop.lighting.exponent,"linear":render::compiled_details::baked_ldr_linear(prop.lighting),"effective_linear":effective.as_ref().map(|colors|colors[ordinal-offset]),"style_extras":extras.as_ref().map(|values|&values[ordinal-offset])},"light_styles":prop.light_styles,"light_style_count":prop.light_style_count,
+            "lighting":lighting_rows.as_ref().map(|rows|&rows[ordinal-offset]),"light_styles":prop.light_styles,"light_style_count":prop.light_style_count,
             "source_association":null,
             "bounds":ready.geometry.as_ref().and_then(|mesh|mesh.detail_parts.iter().find(|part|part.ordinal==ordinal)).map(|part|part.bounds.map(|point|point.to_array())),
             "bounds_policy":if prop.kind==1 && prop.orientation!=0 {"conservative_camera_rotation_envelope"}else{"posed_geometry"}
@@ -599,6 +622,7 @@ impl Session {
             for field in [
                 "hdr_style_records",
                 "base_source_channel",
+                "base_policy",
                 "available_styles",
                 "channels",
                 "radiance_available",

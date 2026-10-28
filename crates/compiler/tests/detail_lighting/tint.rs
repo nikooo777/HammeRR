@@ -160,7 +160,13 @@ fn linear_tint_modulates_completed_base_and_half_styles_without_changing_native_
             assert_eq!(details.models, original.models);
             assert_eq!(details.sprites, original.sprites);
             for (&actual, &old) in details.props.iter().zip(&original.props) {
-                assert_record(actual, old, tint);
+                let mut comparable = actual;
+                if mode == LightingMode::DirectLdrHdr && tint == [0; 3] {
+                    assert_eq!(actual.light_style_count + 1, old.light_style_count);
+                    comparable.light_styles = old.light_styles;
+                    comparable.light_style_count = old.light_style_count;
+                }
+                assert_record(comparable, old, tint);
                 if mode == LightingMode::Fullbright {
                     assert_eq!(actual.lighting.rgb, tint);
                     assert_eq!(actual.lighting.exponent, 0);
@@ -172,8 +178,16 @@ fn linear_tint_modulates_completed_base_and_half_styles_without_changing_native_
                 assert_eq!(new.is_some(), old.is_some());
                 if let Some(old) = old {
                     let new = new.unwrap();
-                    assert_eq!(new.len(), old.len());
-                    for (actual, old) in new.iter().zip(old) {
+                    let expected = old
+                        .iter()
+                        .filter(|record| {
+                            record.style != 0
+                                || mode != LightingMode::DirectLdrHdr
+                                || tint != [0; 3]
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(new.len(), expected.len());
+                    for (actual, old) in new.iter().zip(expected) {
                         assert_eq!(actual.style, old.style);
                         assert_color(actual.lighting, old.lighting, tint);
                     }
@@ -420,7 +434,7 @@ fn distinct_tints_and_named_receivers_follow_duplicate_records_through_reversed_
 }
 
 #[test]
-fn black_tint_retains_style_membership_and_native_half_scale_validation() {
+fn black_tint_and_independent_bases_preserve_native_half_scale_validation() {
     let mut fixture = fixture();
     atlas(&mut fixture);
     let index = sprite(&mut fixture, "0 0 16", 2, None);
@@ -438,36 +452,56 @@ fn black_tint_retains_style_membership_and_native_half_scale_validation() {
             .iter()
             .any(|prop| prop.kind == 1 && prop.lighting.rgb == [0; 3])
     );
-    entity(
+    let light = entity(
         &mut fixture.source,
         "light",
         "0 0 180",
         &[
             ("_light", "255 255 255 120"),
-            ("style", "1"),
+            ("_lightHDR", "0 0 255 80"),
             ("_constant_attn", "1"),
             ("_quadratic_attn", "0"),
         ],
     );
-    let before = fixture.source.write(&Default::default());
     let path = fixture.directory.path().join("previous-half.bsp");
     std::fs::write(&path, unstyled.to_bytes()).unwrap();
-    let output = compiler::compile_with_options(
-        &fixture.source,
-        &fixture.game,
-        options(LightingMode::DirectLdr, 0),
-    );
-    assert!(output.bsp.is_none());
-    assert!(
-        output
-            .report
-            .diagnostics
-            .iter()
-            .any(|row| row.message.contains("half precision")),
-        "{:?}",
-        output.report
-    );
-    assert!(!output.write(&path).unwrap());
-    assert_eq!(std::fs::read(&path).unwrap(), unstyled.to_bytes());
-    assert_eq!(fixture.source.write(&Default::default()), before);
+    for (mode, tint, style) in [
+        (LightingMode::DirectLdrHdr, "255 255 255", "0"),
+        (LightingMode::DirectLdr, "0 0 0", "1"),
+    ] {
+        fixture.source.entities[index].properties.set(KEY, tint);
+        fixture.source.entities[light]
+            .properties
+            .set("style", style);
+        if style == "0" {
+            let ldr = compiled(&fixture, LightingMode::DirectLdr, 0);
+            assert!(ldr.detail_prop_lighting(false).unwrap().is_none());
+            assert!(
+                ldr.detail_props()
+                    .unwrap()
+                    .unwrap()
+                    .props
+                    .iter()
+                    .any(|prop| {
+                        prop.kind == 1 && prop.light_style_count == 0 && prop.lighting.rgb != [0; 3]
+                    })
+            );
+        }
+        let before = fixture.source.write(&Default::default());
+        let output =
+            compiler::compile_with_options(&fixture.source, &fixture.game, options(mode, 0));
+        assert!(output.bsp.is_none());
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|row| row.message.contains("half precision")),
+            "{:?}",
+            output.report
+        );
+        assert!(!output.write(&path).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), unstyled.to_bytes());
+        assert_eq!(fixture.source.write(&Default::default()), before);
+    }
 }

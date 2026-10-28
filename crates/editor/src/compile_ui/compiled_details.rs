@@ -137,6 +137,64 @@ fn chosen_lighting(
     })
 }
 
+fn static_source_label(source: &str) -> &'static str {
+    match source {
+        "shared_native_base" => "shared native base",
+        "selected_channel_style_zero" => "selected channel style 0",
+        "shared_native_base_and_selected_channel_style_zero" => {
+            "shared native base + selected channel style 0"
+        }
+        _ => "unavailable static contribution",
+    }
+}
+
+fn lighting_text(lighting: &Value) -> String {
+    let mut text = format!(
+        "shared RGBExp32 {} exponent {}",
+        lighting["rgb"], lighting["exponent"]
+    );
+    if let Some(reason) = lighting["selected_table_unavailable_reason"].as_str() {
+        text.push_str(&format!(" · {reason}"));
+        return text;
+    }
+    let contribution = &lighting["static_contribution"];
+    text.push_str(&format!(
+        " · static {} ({}) linear {}",
+        contribution["selected_channel"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_ascii_uppercase(),
+        static_source_label(contribution["source"].as_str().unwrap_or("")),
+        contribution["linear"]
+    ));
+    if contribution["style_zero"].is_object() {
+        text.push_str(&format!(
+            "\n    stored style 0 RGBExp32 {} exponent {} · editor weight 1",
+            contribution["style_zero"]["rgb"], contribution["style_zero"]["exponent"]
+        ));
+    }
+    if !lighting["exposed_linear"].is_null() {
+        text.push_str(&format!(
+            "\n    exposed linear {}",
+            lighting["exposed_linear"]
+        ));
+    } else if !lighting["vertex_color"].is_null() {
+        text.push_str(&format!(
+            "\n    linear vertex colour {}",
+            lighting["vertex_color"]
+        ));
+    }
+    if let Some(extras) = lighting["style_extras"].as_array() {
+        for entry in extras.iter().filter(|entry| entry["style"] != 0) {
+            text.push_str(&format!(
+                "\n    style {} RGBExp32 {} exponent {} · effective weight {}",
+                entry["style"], entry["rgb"], entry["exponent"], entry["effective_weight"]
+            ));
+        }
+    }
+    text
+}
+
 fn present(
     window: &CompiledDetailsWindow,
     state: &mut State,
@@ -171,16 +229,23 @@ fn present(
     show_lighting(window, &state.lighting);
     show_style(window, state);
     let lighting_state = if report["lighting"]["baked_ldr_available"].is_null() {
-        "Prepare details to inspect lighting"
+        "Prepare details to inspect lighting".to_owned()
     } else {
         match state.lighting.mode {
-            Lighting::EditorShading => "Editor shading",
+            Lighting::EditorShading => "Editor shading".to_owned(),
             Lighting::BakedLdr => report["lighting"]["unavailable_reason"]
                 .as_str()
-                .unwrap_or("Stored static base colours"),
+                .unwrap_or("LDR static colours · stored style 0 at editor unity")
+                .to_owned(),
             Lighting::BakedRadiance => report["lighting"]["radiance_unavailable_reason"]
                 .as_str()
-                .unwrap_or("Shared base + selected style contributions"),
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    format!(
+                        "{} static colours + manual styles · stored style 0 at editor unity",
+                        state.lighting.channel.name().to_ascii_uppercase()
+                    )
+                }),
         }
     };
     window.set_lighting_state(lighting_state.into());
@@ -231,7 +296,7 @@ fn present(
         "#{}  {}  leaf {}  dictionary {}{}\n    origin {}  angles {}  scale {}  orientation {}  sway {}  shape angle/size {}/{}\n    native lighting {}  styles offset/count {}/{}",
         row["ordinal"],row["kind_name"].as_str().unwrap_or("unknown"),row["leaf"],row["dictionary_index"],
         row["model"].as_str().map(|name|format!("  {name}")).unwrap_or_default(),row["origin"],row["angles"],row["scale"],
-        row["orientation"],row["sway"],row["shape_angle"],row["shape_size"],row["lighting"],row["light_styles"],row["light_style_count"]
+        row["orientation"],row["sway"],row["shape_angle"],row["shape_size"],lighting_text(&row["lighting"]),row["light_styles"],row["light_style_count"]
     )).collect::<Vec<_>>().join("\n\n")).unwrap_or_default();
     window.set_rows(rows.into());
     let mut messages = Vec::new();

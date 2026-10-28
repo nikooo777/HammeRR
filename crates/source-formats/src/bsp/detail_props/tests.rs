@@ -8,7 +8,7 @@ fn checked_detail_style_writer_is_atomic_and_preserves_native_five_byte_layout()
     props.props[0].light_style_count = 2;
     let ldr = [
         DetailPropLighting {
-            style: 1,
+            style: 0,
             lighting: RgbExp32 {
                 rgb: [60, 0, 0],
                 exponent: 0,
@@ -21,7 +21,7 @@ fn checked_detail_style_writer_is_atomic_and_preserves_native_five_byte_layout()
     ];
     let hdr = [
         DetailPropLighting {
-            style: 1,
+            style: 0,
             ..Default::default()
         },
         DetailPropLighting {
@@ -63,7 +63,7 @@ fn checked_detail_style_writer_is_atomic_and_preserves_native_five_byte_layout()
             .is_err()
     );
     let too_many = vec![ldr[0]; MAX_DETAIL_PROP_LIGHTING / 2 + 1];
-    for style in [0, 64] {
+    for style in [64, 255] {
         let mut invalid = ldr;
         invalid[0].style = style;
         assert!(
@@ -76,6 +76,50 @@ fn checked_detail_style_writer_is_atomic_and_preserves_native_five_byte_layout()
             .is_err()
     );
     assert_eq!(bsp.to_bytes(), before);
+
+    let all = (0..64)
+        .map(|style| DetailPropLighting { style, ..ldr[0] })
+        .collect::<Vec<_>>();
+    props.props[0].light_style_count = 64;
+    props.props[1].light_styles = u32::MAX;
+    props.validate_lighting(Some(&all), None).unwrap();
+    props.validate_lighting(None, Some(&all)).unwrap();
+    props.validate_lighting(None, None).unwrap();
+    bsp.set_detail_props_with_lighting(&props, &all, Some(&all))
+        .unwrap();
+    let parsed = Bsp::parse(&bsp.to_bytes()).unwrap();
+    assert_eq!(parsed.detail_props().unwrap().unwrap(), props);
+    assert_eq!(parsed.detail_prop_lighting(false).unwrap().unwrap(), all);
+    let before = bsp.to_bytes();
+    let mut invalid = all.clone();
+    invalid[63].style = 62;
+    assert!(props.validate_lighting(None, Some(&invalid)).is_err());
+    assert!(
+        bsp.set_detail_props_with_lighting(&props, &invalid, Some(&invalid))
+            .is_err()
+    );
+    props.props[0].light_style_count = 65;
+    assert!(props.validate_lighting(Some(&all), None).is_err());
+    assert!(props.validate_lighting(None, Some(&all)).is_err());
+    assert!(
+        bsp.set_detail_props_with_lighting(&props, &all, Some(&all))
+            .is_err()
+    );
+    assert_eq!(bsp.to_bytes(), before);
+
+    let mut no_styles = fixture();
+    no_styles.props[0].light_styles = u32::MAX;
+    let at_limit = vec![ldr[0]; MAX_DETAIL_PROP_LIGHTING / 2];
+    no_styles
+        .validate_lighting(Some(&at_limit), Some(&at_limit))
+        .unwrap();
+    assert!(
+        no_styles
+            .validate_lighting(Some(&too_many), Some(&too_many))
+            .is_err()
+    );
+    invalid[63].style = 64;
+    assert!(no_styles.validate_lighting(None, Some(&invalid)).is_err());
 }
 
 fn fixture() -> DetailProps {

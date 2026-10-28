@@ -80,28 +80,56 @@ fn assert_tinted(actual: &Bsp, reference: &Bsp, factors: [u8; 3]) {
     assert_eq!(new.models, old.models);
     assert_eq!(new.sprites, old.sprites);
     assert_eq!(new.props.len(), old.props.len());
+    let old_ldr = reference.detail_prop_lighting(false).unwrap();
     for (&new, &old) in new.props.iter().zip(&old.props) {
         let factors = if old.origin[2] == 16.0 {
             [255; 3]
         } else {
             factors
         };
-        tint::assert_record(new, old, factors);
+        let old_start = old.light_styles as usize;
+        let old_end = old_start + usize::from(old.light_style_count);
+        let new_start = new.light_styles as usize;
+        let new_end = new_start + usize::from(new.light_style_count);
+        let drops_static = factors == [0; 3]
+            && old_ldr.as_ref().is_some_and(|records| {
+                records[old_start..old_end]
+                    .first()
+                    .is_some_and(|record| record.style == 0)
+            });
+        assert_eq!(
+            usize::from(new.light_style_count) + usize::from(drops_static),
+            usize::from(old.light_style_count)
+        );
+        let mut comparable = new;
+        comparable.light_styles = old.light_styles;
+        comparable.light_style_count = old.light_style_count;
+        tint::assert_record(comparable, old, factors);
         for hdr in [false, true] {
             let old_styles = reference.detail_prop_lighting(hdr).unwrap();
             let new_styles = actual.detail_prop_lighting(hdr).unwrap();
             assert_eq!(new_styles.is_some(), old_styles.is_some());
             if let Some(old_styles) = old_styles {
                 let new_styles = new_styles.unwrap();
-                assert_eq!(new_styles.len(), old_styles.len());
-                let start = old.light_styles as usize;
-                for index in start..start + usize::from(old.light_style_count) {
-                    assert_eq!(new_styles[index].style, old_styles[index].style);
-                    tint::assert_color(
-                        new_styles[index].lighting,
-                        old_styles[index].lighting,
-                        factors,
-                    );
+                let old_active = &old_styles[old_start..old_end];
+                let new_active = &new_styles[new_start..new_end];
+                let old_base = old_active
+                    .first()
+                    .filter(|record| record.style == 0)
+                    .map_or(old.lighting, |record| record.lighting);
+                let new_base = new_active
+                    .first()
+                    .filter(|record| record.style == 0)
+                    .map_or(new.lighting, |record| record.lighting);
+                tint::assert_color(new_base, old_base, factors);
+                let expected = old_active
+                    .iter()
+                    .filter(|record| record.style != 0 || !drops_static)
+                    .collect::<Vec<_>>();
+                assert_eq!(new_active.len(), expected.len());
+                for (actual, old) in new_active.iter().zip(expected) {
+                    assert_eq!(actual.style, old.style);
+                    tint::assert_color(actual.lighting, old.lighting, factors);
                 }
             }
         }
@@ -198,7 +226,9 @@ fn generated_detail_tint_keeps_white_bytes_rng_and_explicit_lighting_independent
                     .unwrap()
                     .props
                     .iter()
-                    .all(|prop| prop.light_style_count == 2)
+                    .all(
+                        |prop| prop.light_style_count == if prop.origin[2] == 16.0 { 3 } else { 2 }
+                    )
             );
         }
     }
@@ -293,7 +323,7 @@ fn dictionary_entry_tint_composes_fractional_fullbright_and_preserves_dual_style
     let composed = compiled(&fixture, LightingMode::DirectLdrHdr, 0);
     assert_product(&composed, &dual);
     let details = composed.detail_props().unwrap().unwrap();
-    assert!(details.props.iter().all(|prop| prop.light_style_count == 2));
+    assert!(details.props.iter().all(|prop| prop.light_style_count == 3));
     for (hdr, absent_style) in [(false, 2), (true, 1)] {
         let styles = composed.detail_prop_lighting(hdr).unwrap().unwrap();
         assert!(styles.iter().any(|style| style.style == absent_style));
@@ -314,7 +344,7 @@ fn dictionary_entry_tint_composes_fractional_fullbright_and_preserves_dual_style
             .unwrap()
             .props
             .iter()
-            .all(|prop| prop.light_style_count == 2)
+            .all(|prop| prop.light_style_count == if prop.origin[2] == 16.0 { 3 } else { 2 })
     );
     assert!(!composed.entities().unwrap().contains(ENTRY_KEY));
 }

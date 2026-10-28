@@ -23,6 +23,7 @@ const OPEN_RECEIVER: &str =
 pub(super) struct Channel {
     ranges: Vec<std::ops::Range<usize>>,
     records: Vec<DetailPropLighting>,
+    bases: Vec<RgbExp32>,
     _allocation: super::bake::Allocation,
 }
 
@@ -201,11 +202,12 @@ pub(super) fn bake(
     }
     let cone = (1.0 - 2.0 / ctx.directions.len() as f64).acos().tan();
     let allocation = budget.reserve_bytes(
-        details.props.len() * size_of::<std::ops::Range<usize>>()
+        details.props.len() * (size_of::<std::ops::Range<usize>>() + size_of::<RgbExp32>())
             + MAX_DETAIL_PROP_LIGHTING * size_of::<DetailPropLighting>(),
     )?;
     let mut ranges = Vec::with_capacity(details.props.len());
     let mut records = Vec::with_capacity(MAX_DETAIL_PROP_LIGHTING);
+    let mut bases = Vec::with_capacity(details.props.len());
     for index in 0..details.props.len() {
         budget.consume(1)?;
         let prop = details.props[index];
@@ -235,6 +237,8 @@ pub(super) fn bake(
         let ambient_scale = LIGHTING_SCALE / ctx.directions.len() as f64;
         details.props[index].lighting =
             encode_color(tint.apply(colors[0] + ambient[0] * ambient_scale))?;
+        budget.consume(1)?;
+        bases.push(details.props[index].lighting);
         let start = records.len();
         for (style, (color, ambient)) in colors.iter_mut().zip(ambient).enumerate().skip(1) {
             *color += ambient * ambient_scale;
@@ -258,7 +262,7 @@ pub(super) fn bake(
         .map_err(|error| error.to_string())?;
     report.diagnostics.push(Diagnostic::info(
         format!(
-            "Baked {} detail model/sprite colors and {} light-style contributions from direct light and filtered spherical world/terrain/sky radiance ({:?} shared base)",
+            "Baked {} detail model/sprite colors and {} light-style contributions from direct light and filtered spherical world/terrain/sky radiance ({:?} channel)",
             details.props.len(), records.len(), ctx.kind,
         ),
         None,
@@ -267,6 +271,7 @@ pub(super) fn bake(
     Ok(Some(Channel {
         ranges,
         records,
+        bases,
         _allocation: allocation,
     }))
 }
@@ -280,7 +285,23 @@ pub(super) fn finish(
     let Some(ldr) = ldr else {
         return Ok(());
     };
-    if ldr.records.is_empty() && hdr.is_none_or(|channel| channel.records.is_empty()) {
+    if ldr.bases.len() != ldr.ranges.len()
+        || hdr.is_some_and(|channel| {
+            channel.bases.len() != channel.ranges.len() || channel.bases.len() != ldr.bases.len()
+        })
+    {
+        return Err("Detail lighting channel receiver counts differ".into());
+    }
+    let separate_bases = if let Some(hdr) = hdr {
+        budget.consume(ldr.bases.len())?;
+        ldr.bases != hdr.bases
+    } else {
+        false
+    };
+    if !separate_bases
+        && ldr.records.is_empty()
+        && hdr.is_none_or(|channel| channel.records.is_empty())
+    {
         return Ok(());
     }
     let raw = bsp
@@ -315,6 +336,21 @@ pub(super) fn finish(
         });
         let (mut a, mut b) = (0, 0);
         let start = ldr_records.len();
+        if let Some(hdr) = hdr.filter(|hdr| ldr.bases[index] != hdr.bases[index]) {
+            budget.consume(1)?;
+            if (ldr_records.len() + 1) * channels > MAX_DETAIL_PROP_LIGHTING {
+                return Err("Detail lighting exceeds its 65,536 total style-record budget".into());
+            }
+            prop.lighting = RgbExp32::default();
+            ldr_records.push(DetailPropLighting {
+                style: 0,
+                lighting: ldr.bases[index],
+            });
+            hdr_records.push(DetailPropLighting {
+                style: 0,
+                lighting: hdr.bases[index],
+            });
+        }
         while a < left.len() || b < right.len() {
             budget.consume(1)?;
             if (ldr_records.len() + 1) * channels > MAX_DETAIL_PROP_LIGHTING {
@@ -343,8 +379,8 @@ pub(super) fn finish(
             }
         }
         let count = ldr_records.len() - start;
-        if count > 63 {
-            return Err("Detail receiver exceeds 63 native light styles".into());
+        if count > STYLE_COUNT {
+            return Err("Detail receiver exceeds 64 native light styles".into());
         }
         if count != 0 && prop.kind == 1 {
             crate::detail_props::check_native_sprite_transform(
@@ -451,11 +487,15 @@ mod tests {
 
     fn channel(budget: &mut Budget<'_>, props: usize, records: &[DetailPropLighting]) -> Channel {
         let allocation = budget
-            .reserve_bytes(props * size_of::<std::ops::Range<usize>>() + size_of_val(records))
+            .reserve_bytes(
+                props * (size_of::<std::ops::Range<usize>>() + size_of::<RgbExp32>())
+                    + size_of_val(records),
+            )
             .unwrap();
         Channel {
             ranges: vec![0..records.len(); props],
             records: records.to_vec(),
+            bases: vec![DetailProp::default().lighting; props],
             _allocation: allocation,
         }
     }
@@ -493,7 +533,19 @@ mod tests {
         let mut bsp = style_bsp(&details);
         let before = bsp.to_bytes();
         let empty = channel(&mut budget, 1, &[]);
+        let mut separate = channel(&mut budget, 1, &[]);
+        separate.bases[0] = RgbExp32 {
+            rgb: [0, 0, 80],
+            exponent: 0,
+        };
         finish(&mut bsp, Some(&empty), None, &mut budget).unwrap();
+        finish(&mut bsp, Some(&empty), Some(&empty), &mut budget).unwrap();
+        assert_eq!(bsp.to_bytes(), before);
+        assert!(
+            finish(&mut bsp, Some(&empty), Some(&separate), &mut budget)
+                .unwrap_err()
+                .contains("half precision")
+        );
         assert_eq!(bsp.to_bytes(), before);
         assert!(
             finish(&mut bsp, Some(&style), None, &mut budget)
@@ -512,6 +564,12 @@ mod tests {
             finish(&mut bsp, Some(&empty), None, &mut budget).unwrap();
             assert_eq!(bsp.to_bytes(), before);
             assert!(
+                finish(&mut bsp, Some(&empty), Some(&separate), &mut budget)
+                    .unwrap_err()
+                    .contains(expected)
+            );
+            assert_eq!(bsp.to_bytes(), before);
+            assert!(
                 finish(&mut bsp, Some(&style), None, &mut budget)
                     .unwrap_err()
                     .contains(expected)
@@ -527,22 +585,55 @@ mod tests {
             1
         );
 
+        let mut bsp = style_bsp(&details);
+        let records = (1..STYLE_COUNT as u8)
+            .map(|style| DetailPropLighting {
+                style,
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        let mut ldr = channel(&mut budget, 1, &records);
+        let mut hdr = channel(&mut budget, 1, &records);
+        ldr.bases[0] = RgbExp32 {
+            rgb: [200, 0, 0],
+            exponent: 0,
+        };
+        hdr.bases[0] = separate.bases[0];
+        finish(&mut bsp, Some(&ldr), Some(&hdr), &mut budget).unwrap();
+        let props = bsp.detail_props().unwrap().unwrap();
+        assert_eq!(props.props[0].lighting, RgbExp32::default());
+        assert_eq!(props.props[0].light_style_count, 64);
+        for (hdr, expected) in [(false, ldr.bases[0]), (true, hdr.bases[0])] {
+            let styles = bsp.detail_prop_lighting(hdr).unwrap().unwrap();
+            assert_eq!(styles.len(), STYLE_COUNT);
+            assert_eq!(styles[0].lighting, expected);
+            assert!(styles.iter().map(|record| record.style).eq(0..64));
+            assert_eq!(&styles[1..], records);
+        }
+
         let count = source_formats::bsp::MAX_DETAIL_PROPS;
-        let records = (1..=3)
+        let records = (1..=2)
             .map(|style| DetailPropLighting {
                 style,
                 ..Default::default()
             })
             .collect::<Vec<_>>();
         let ldr = channel(&mut budget, count, &records);
-        let hdr = channel(&mut budget, count, &records);
+        let mut hdr = channel(&mut budget, count, &records);
         let details = DetailProps {
             models: vec![DetailProps::model_record("models/test.mdl").unwrap()],
             props: vec![DetailProp::default(); count],
             ..Default::default()
         };
         let mut bsp = style_bsp(&details);
+        finish(&mut bsp, Some(&ldr), Some(&hdr), &mut budget).unwrap();
+        assert_eq!(
+            bsp.detail_prop_lighting(false).unwrap().unwrap().len()
+                + bsp.detail_prop_lighting(true).unwrap().unwrap().len(),
+            MAX_DETAIL_PROP_LIGHTING
+        );
         let before = bsp.to_bytes();
+        hdr.bases.fill(separate.bases[0]);
         assert!(
             finish(&mut bsp, Some(&ldr), Some(&hdr), &mut budget)
                 .unwrap_err()
@@ -586,10 +677,10 @@ mod tests {
     }
 
     #[test]
-    fn both_style_arrays_check_final_shared_hdr_base_for_native_float_overflow() {
+    fn both_style_arrays_check_shared_and_independent_bases_for_native_float_overflow() {
         let control = crate::Control::default();
         let mut budget = Budget::new(&control);
-        let ldr = channel(
+        let mut ldr = channel(
             &mut budget,
             1,
             &[DetailPropLighting {
@@ -600,7 +691,7 @@ mod tests {
                 },
             }],
         );
-        let hdr = channel(
+        let mut hdr = channel(
             &mut budget,
             1,
             &[DetailPropLighting {
@@ -619,6 +710,8 @@ mod tests {
             }],
             ..Default::default()
         };
+        ldr.bases[0] = details.props[0].lighting;
+        hdr.bases[0] = details.props[0].lighting;
         assert!(
             native_color(details.props[0].lighting)
                 .into_iter()
@@ -628,6 +721,20 @@ mod tests {
         assert!(check_native_sum(RgbExp32::default(), &ldr.records).is_ok());
         let mut bsp = style_bsp(&details);
         let before = bsp.to_bytes();
+        assert!(
+            finish(&mut bsp, Some(&ldr), Some(&hdr), &mut budget)
+                .unwrap_err()
+                .contains("overflows native linear")
+        );
+        assert_eq!(bsp.to_bytes(), before);
+        hdr.bases[0] = RgbExp32::default();
+        assert!(
+            finish(&mut bsp, Some(&ldr), Some(&hdr), &mut budget)
+                .unwrap_err()
+                .contains("overflows native linear")
+        );
+        assert_eq!(bsp.to_bytes(), before);
+        std::mem::swap(&mut ldr, &mut hdr);
         assert!(
             finish(&mut bsp, Some(&ldr), Some(&hdr), &mut budget)
                 .unwrap_err()

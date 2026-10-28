@@ -145,7 +145,11 @@ fn retain_native_fixture(session: &mut Session, bsp: &Bsp) {
     build.lightmap_identity.output = Ok(identity);
 }
 
-fn radiance_fixture(dual: bool, styled: bool) -> (tempfile::TempDir, Session, PathBuf) {
+fn radiance_fixture(
+    dual: bool,
+    styled: bool,
+    independent_static: bool,
+) -> (tempfile::TempDir, Session, PathBuf) {
     let (directory, mut session, source) = fixture();
     std::fs::write(
         directory.path().join("materials/test/ground.vmt"),
@@ -181,7 +185,14 @@ fn radiance_fixture(dual: bool, styled: bool) -> (tempfile::TempDir, Session, Pa
             ("origin", "0 0 224"),
             ("style", style),
             ("_light", ldr),
-            ("_lightHDR", hdr),
+            (
+                "_lightHDR",
+                if style == "0" && !independent_static {
+                    ldr
+                } else {
+                    hdr
+                },
+            ),
             ("_constant_attn", "1"),
             ("_linear_attn", "0"),
             ("_quadratic_attn", "0"),
@@ -234,7 +245,7 @@ fn radiance_settings(channel: LightingChannel, exposure_ev: f64) -> LightingSett
 
 #[test]
 fn compiled_detail_radiance_consumes_actual_channel_union_for_every_receiver_and_lifecycle() {
-    let (_directory, mut session, source) = radiance_fixture(true, true);
+    let (_directory, mut session, source) = radiance_fixture(true, true, true);
     let before = (
         session.document().vmf().clone(),
         session.camera(),
@@ -245,16 +256,32 @@ fn compiled_detail_radiance_consumes_actual_channel_union_for_every_receiver_and
     let native = bsp.detail_props().unwrap().unwrap();
     let ldr = bsp.detail_prop_lighting(false).unwrap().unwrap();
     let hdr = bsp.detail_prop_lighting(true).unwrap().unwrap();
-    assert!(native.props.iter().all(|prop| prop.light_style_count == 2));
-    assert!(ldr.as_chunks::<2>().0.iter().all(|pair| pair[0].style == 1
-        && pair[0].lighting.rgb[0] > 0
-        && pair[1].style == 2
-        && pair[1].lighting.rgb == [0; 3]));
     assert!(
-        hdr.as_chunks::<2>()
+        native
+            .props
+            .iter()
+            .all(|prop| prop.light_style_count == 3 && prop.lighting.rgb == [0; 3])
+    );
+    assert!(
+        ldr.as_chunks::<3>()
             .0
             .iter()
-            .all(|pair| pair[0].lighting.rgb == [0; 3] && pair[1].lighting.rgb[2] > 0)
+            .all(|entries| entries[0].style == 0
+                && entries[0].lighting.rgb[1] > 0
+                && entries[1].style == 1
+                && entries[1].lighting.rgb[0] > 0
+                && entries[2].style == 2
+                && entries[2].lighting.rgb == [0; 3])
+    );
+    assert!(
+        hdr.as_chunks::<3>()
+            .0
+            .iter()
+            .zip(ldr.as_chunks::<3>().0)
+            .all(|(hdr, ldr)| hdr[0].style == 0
+                && hdr[0].lighting.linear()[1] > ldr[0].lighting.linear()[1]
+                && hdr[1].lighting.rgb == [0; 3]
+                && hdr[2].lighting.rgb[2] > 0)
     );
     let token = prepare(&mut session);
     let settings = radiance_settings(LightingChannel::Hdr, 1.0);
@@ -264,7 +291,11 @@ fn compiled_detail_radiance_consumes_actual_channel_union_for_every_receiver_and
         .unwrap();
     assert!(session.scene_serial() > old_serial);
     assert_eq!(report["complete"], false);
-    assert_eq!(report["lighting"]["base_source_channel"], "hdr");
+    assert!(report["lighting"]["base_source_channel"].is_null());
+    assert_eq!(
+        report["lighting"]["base_policy"],
+        "per_record_static_contributions"
+    );
     assert_eq!(report["lighting"]["available_styles"], json!([1, 2]));
     assert_eq!(
         report["lighting"]["style_gains"],
@@ -284,18 +315,34 @@ fn compiled_detail_radiance_consumes_actual_channel_union_for_every_receiver_and
             &ldr
         };
         for (ordinal, prop) in native.props.iter().enumerate() {
+            let lighting = &inspection["page"]["rows"][ordinal]["lighting"];
+            assert_eq!(
+                lighting["static_contribution"]["source"],
+                "selected_channel_style_zero"
+            );
+            assert_eq!(
+                lighting["static_contribution"]["selected_channel"],
+                channel.name()
+            );
+            assert!(lighting["static_contribution"]["shared_base_source_channel"].is_null());
+            assert_eq!(lighting["static_contribution"]["style_zero"]["weight"], 1.0);
+            assert_eq!(
+                lighting["static_contribution"]["style_zero_policy"],
+                "editor_unity"
+            );
             let extras = inspection["page"]["rows"][ordinal]["lighting"]["style_extras"]
                 .as_array()
                 .unwrap();
-            assert_eq!(extras.len(), 2);
-            for (value, entry) in extras
-                .iter()
-                .zip(&selected[prop.light_styles as usize..prop.light_styles as usize + 2])
-            {
+            assert_eq!(extras.len(), 3);
+            for (value, entry) in extras.iter().zip(
+                &selected[prop.light_styles as usize
+                    ..prop.light_styles as usize + usize::from(prop.light_style_count)],
+            ) {
                 assert_eq!(value["style"], entry.style);
                 assert_eq!(value["rgb"], json!(entry.lighting.rgb));
                 assert_eq!(value["exponent"], entry.lighting.exponent);
-                assert_eq!(value["gain"], if entry.style == 1 { 1.0 } else { 0.5 });
+                assert_eq!(value["gain"], if entry.style == 2 { 0.5 } else { 1.0 });
+                assert_eq!(value["effective_weight"], value["gain"]);
                 assert_eq!(
                     value["linear"],
                     json!(entry.lighting.rgb.map(|channel| f64::from(channel)
@@ -322,14 +369,21 @@ fn compiled_detail_radiance_consumes_actual_channel_union_for_every_receiver_and
                 &ldr
             };
             let mut expected = prop.lighting.rgb.map(|value| f64::from(value) * base_scale);
-            for entry in &table[prop.light_styles as usize..prop.light_styles as usize + 2] {
-                let weight = if entry.style == 1 { 1.0 } else { 0.5 };
+            for entry in &table[prop.light_styles as usize
+                ..prop.light_styles as usize + usize::from(prop.light_style_count)]
+            {
+                let weight = if entry.style == 2 { 0.5 } else { 1.0 };
                 let scale = 2.0f64.powi(i32::from(entry.lighting.exponent)) * weight / 255.0;
                 for (total, value) in expected.iter_mut().zip(entry.lighting.rgb) {
                     *total += f64::from(value) * scale;
                 }
             }
             let expected = expected.map(|value| (value * 2.0) as f32);
+            let exposed: [f64; 3] = serde_json::from_value(
+                inspection["page"]["rows"][part.ordinal]["lighting"]["exposed_linear"].clone(),
+            )
+            .unwrap();
+            assert_eq!(exposed.map(|value| value as f32), expected);
             assert!(!part.vertices.is_empty());
             assert!(mesh.vertices[part.vertices.clone()].iter().all(
                 |vertex| vertex.baked_irradiance == expected
@@ -367,6 +421,58 @@ fn compiled_detail_radiance_consumes_actual_channel_union_for_every_receiver_and
         session.compiled_details.lighting,
         LightingSettings::default()
     );
+    let mut bsp = Bsp::read(&session.compiled.as_ref().unwrap().path).unwrap();
+    let mut complete = native.clone();
+    let mut complete_ldr = Vec::new();
+    let mut complete_hdr = Vec::new();
+    for prop in &mut complete.props {
+        let old_offset = prop.light_styles as usize;
+        prop.light_styles = complete_ldr.len() as u32;
+        prop.light_style_count = 64;
+        for (output, input) in [(&mut complete_ldr, &ldr), (&mut complete_hdr, &hdr)] {
+            output.extend_from_slice(&input[old_offset..old_offset + 3]);
+            output.extend(
+                (3..=63).map(|style| source_formats::bsp::DetailPropLighting {
+                    style,
+                    lighting: Default::default(),
+                }),
+            );
+        }
+    }
+    bsp.set_detail_props_with_lighting(&complete, &complete_ldr, Some(&complete_hdr))
+        .unwrap();
+    retain_native_fixture(&mut session, &bsp);
+    let token = prepare(&mut session);
+    let mut settings = radiance_settings(LightingChannel::Ldr, 0.0);
+    settings
+        .style_gains
+        .push(render::compiled_details::StyleGain {
+            style: 63,
+            gain: 2.0,
+        });
+    let report = session
+        .set_compiled_details_lighting_options(Actor::User, token, settings)
+        .unwrap();
+    assert_eq!(
+        report["lighting"]["available_styles"],
+        json!((1..=63).collect::<Vec<_>>())
+    );
+    assert_eq!(report["page"]["rows"][0]["light_style_count"], 64);
+    assert_eq!(
+        report["page"]["rows"][0]["lighting"]["style_extras"]
+            .as_array()
+            .unwrap()
+            .len(),
+        64
+    );
+    assert_eq!(
+        report["page"]["rows"][0]["lighting"]["style_extras"][0]["effective_weight"],
+        1.0
+    );
+    session
+        .set_compiled_details_visible(Actor::User, token, true)
+        .unwrap();
+    session.clear_compiled_details(Actor::User, token).unwrap();
     assert_eq!(
         (
             session.document().vmf().clone(),
@@ -380,11 +486,14 @@ fn compiled_detail_radiance_consumes_actual_channel_union_for_every_receiver_and
 
 #[test]
 fn radiance_channel_availability_distinguishes_zero_extras_missing_tables_and_fullbright() {
-    for dual in [false, true] {
-        let (_directory, mut session, _source) = radiance_fixture(dual, false);
+    for (dual, independent_static) in [(false, false), (true, false), (true, true)] {
+        let (_directory, mut session, _source) = radiance_fixture(dual, false, independent_static);
         let token = prepare(&mut session);
         let baked = &session.compiled_details.ready.as_ref().unwrap().baked;
-        assert!(baked.ldr.is_none() && baked.hdr.is_none());
+        assert_eq!(
+            baked.ldr.is_some() && baked.hdr.is_some(),
+            independent_static
+        );
         for channel in [LightingChannel::Ldr, LightingChannel::Hdr] {
             let settings = LightingSettings {
                 mode: Lighting::BakedRadiance,
@@ -399,9 +508,46 @@ fn radiance_channel_availability_distinguishes_zero_extras_missing_tables_and_fu
                 assert_eq!(session.compiled_details_observation(), before);
             }
         }
+        if independent_static {
+            let report = session
+                .set_compiled_details_lighting(Actor::User, token, "baked_ldr")
+                .unwrap();
+            assert_eq!(report["lighting"]["baked_ldr_available"], true);
+            assert_eq!(report["lighting"]["available_styles"], json!([]));
+            let ldr = Bsp::read(&session.compiled.as_ref().unwrap().path)
+                .unwrap()
+                .detail_prop_lighting(false)
+                .unwrap()
+                .unwrap();
+            session
+                .set_compiled_details_visible(Actor::User, token, true)
+                .unwrap();
+            let ready = session.compiled_details.ready.as_ref().unwrap();
+            for part in &ready.geometry.as_ref().unwrap().detail_parts {
+                let prop = ready.records.props[part.ordinal];
+                let color = ldr[prop.light_styles as usize].lighting;
+                let expected = color.rgb.map(|value| {
+                    (f64::from(value) * 2.0f64.powi(i32::from(color.exponent)))
+                        .clamp(0.0, 255.0)
+                        .round() as u8
+                });
+                assert_ne!(expected, [0; 3]);
+                assert!(
+                    ready.geometry.as_ref().unwrap().vertices[part.vertices.clone()]
+                        .iter()
+                        .all(|vertex| vertex.color[..3] == expected)
+                );
+            }
+        }
     }
-    let (_directory, mut session, _source) = radiance_fixture(true, true);
+    let (_directory, mut session, _source) = radiance_fixture(true, true, true);
     let mut bsp = Bsp::read(&session.compiled.as_ref().unwrap().path).unwrap();
+    let hdr_lump = bsp
+        .game_lumps
+        .iter()
+        .find(|lump| lump.id == *b"dplh")
+        .unwrap()
+        .clone();
     bsp.game_lumps.retain(|lump| lump.id != *b"dplh");
     retain_native_fixture(&mut session, &bsp);
     let token = prepare(&mut session);
@@ -420,6 +566,41 @@ fn radiance_channel_availability_distinguishes_zero_extras_missing_tables_and_fu
                 token,
                 radiance_settings(LightingChannel::Hdr, 0.0)
             )
+            .unwrap_err()
+            .contains("absent")
+    );
+    assert_eq!(session.compiled_details_observation(), before);
+    assert!(
+        session
+            .set_compiled_details_lighting(Actor::User, token, "baked_ldr")
+            .is_err()
+    );
+    let mut bsp = Bsp::read(&session.compiled.as_ref().unwrap().path).unwrap();
+    bsp.game_lumps.push(hdr_lump);
+    bsp.game_lumps.retain(|lump| lump.id != *b"dplt");
+    retain_native_fixture(&mut session, &bsp);
+    let token = prepare(&mut session);
+    let inspected = session.inspect_compiled_details(Some(token), 0, 1).unwrap();
+    assert!(
+        inspected["page"]["rows"][0]["lighting"]["selected_table_unavailable_reason"]
+            .as_str()
+            .unwrap()
+            .contains("absent")
+    );
+    let before = session.compiled_details_observation();
+    assert!(
+        session
+            .set_compiled_details_lighting_options(
+                Actor::User,
+                token,
+                radiance_settings(LightingChannel::Ldr, 0.0)
+            )
+            .unwrap_err()
+            .contains("absent")
+    );
+    assert!(
+        session
+            .set_compiled_details_lighting(Actor::User, token, "baked_ldr")
             .unwrap_err()
             .contains("absent")
     );
@@ -443,7 +624,7 @@ fn radiance_channel_availability_distinguishes_zero_extras_missing_tables_and_fu
 
 #[test]
 fn radiance_settings_refuse_invalid_or_stale_updates_without_mesh_or_options_changes() {
-    let (_directory, mut session, _source) = radiance_fixture(true, true);
+    let (_directory, mut session, _source) = radiance_fixture(true, true, true);
     let token = prepare(&mut session);
     session
         .set_compiled_details_visible(Actor::User, token, true)
@@ -526,7 +707,7 @@ fn radiance_settings_refuse_invalid_or_stale_updates_without_mesh_or_options_cha
 
 #[test]
 fn malformed_present_hdr_extras_fail_preparation_even_when_no_prop_uses_them() {
-    let (_directory, mut session, _source) = radiance_fixture(true, false);
+    let (_directory, mut session, _source) = radiance_fixture(true, false, false);
     let mut bsp = Bsp::read(&session.compiled.as_ref().unwrap().path).unwrap();
     assert!(
         bsp.detail_props()
@@ -678,6 +859,71 @@ fn baked_ldr_modes_use_owned_literal_model_and_card_colors_and_preserve_state_on
         "baked_ldr"
     );
 
+    let shared_native = native.clone();
+    let mut static_entries = Vec::new();
+    for (ordinal, prop) in native.props.iter_mut().enumerate() {
+        if ordinal.is_multiple_of(3) {
+            continue;
+        }
+        let mut extra = prop.lighting;
+        if ordinal % 3 == 1 {
+            prop.lighting = source_formats::bsp::RgbExp32::default();
+        } else {
+            prop.lighting.rgb = prop.lighting.rgb.map(|value| value / 2);
+            for (value, shared) in extra.rgb.iter_mut().zip(prop.lighting.rgb) {
+                *value -= shared;
+            }
+        }
+        prop.light_styles = static_entries.len() as u32;
+        prop.light_style_count = 1;
+        static_entries.push(source_formats::bsp::DetailPropLighting {
+            lighting: extra,
+            style: 0,
+        });
+    }
+    bsp.set_detail_props_with_lighting(&native, &static_entries, None)
+        .unwrap();
+    retain_native_fixture(&mut session, &bsp);
+    let token = prepare(&mut session);
+    let report = session
+        .set_compiled_details_lighting(Actor::User, token, "baked_ldr")
+        .unwrap();
+    assert!(report["lighting"]["base_source_channel"].is_null());
+    assert_eq!(
+        report["lighting"]["base_policy"],
+        "per_record_static_contributions"
+    );
+    for (ordinal, row) in report["page"]["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(
+            row["lighting"]["static_contribution"]["source"],
+            match ordinal % 3 {
+                0 => "shared_native_base",
+                1 => "selected_channel_style_zero",
+                _ => "shared_native_base_and_selected_channel_style_zero",
+            }
+        );
+    }
+    session
+        .set_compiled_details_visible(Actor::User, token, true)
+        .unwrap();
+    assert_eq!(
+        session
+            .compiled_details
+            .ready
+            .as_ref()
+            .unwrap()
+            .geometry
+            .as_ref()
+            .unwrap()
+            .vertices,
+        baked
+    );
+    native = shared_native;
     native.props.last_mut().unwrap().light_style_count = 1;
     bsp.set_detail_props_with_lighting(
         &native,

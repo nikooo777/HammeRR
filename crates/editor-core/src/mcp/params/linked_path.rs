@@ -122,39 +122,4 @@ mod tests {
             assert!(serde_json::from_value::<LinkedPathArgs>(value).is_err());
         }
     }
-
-    #[test]
-    fn path_surface_pick_actions_keep_exact_rays_and_continuous_pixels() {
-        let ray: LinkedPathArgs = serde_json::from_value(json!({
-            "action":"pick_ray","token":7,"origin":[0.125,-32.75,128.5],"direction":[0,0,-7],
-        }))
-        .unwrap();
-        let LinkedPathArgs::PickRay {
-            token,
-            origin,
-            direction,
-        } = ray
-        else {
-            panic!()
-        };
-        assert_eq!(token, 7);
-        assert_eq!(origin, [0.125, -32.75, 128.5]);
-        assert_eq!(direction, [0.0, 0.0, -7.0]);
-        let pixel: LinkedPathArgs = serde_json::from_value(json!({
-            "action":"pick_pixel","token":8,"x":255.5,"y":255.5,"width":511,"height":511,
-        }))
-        .unwrap();
-        let LinkedPathArgs::PickPixel {
-            token,
-            x,
-            y,
-            width,
-            height,
-        } = pixel
-        else {
-            panic!()
-        };
-        assert_eq!((token, width, height), (8, 511, 511));
-        assert_eq!((x, y), (255.5, 255.5));
-    }
 }

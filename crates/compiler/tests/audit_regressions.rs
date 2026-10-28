@@ -253,29 +253,3 @@ fn compiler_reports_duplicate_imported_ids_before_building() {
             .any(|diagnostic| diagnostic.message.contains("duplicate object ID"))
     );
 }
-
-#[test]
-#[ignore = "timing probe: run with --ignored --nocapture"]
-fn history_heavy_preview_cost() {
-    let mut document = Document::new(common::room());
-    let ids = document.objects().take(6).collect::<Vec<_>>();
-    for _ in 0..1_000 {
-        document
-            .edit("move room", |tx| edit::translate(tx, &ids, DVec3::X, true))
-            .unwrap();
-    }
-    let started = std::time::Instant::now();
-    for _ in 0..10 {
-        std::hint::black_box(document.clone());
-    }
-    let full_clone = started.elapsed();
-    let started = std::time::Instant::now();
-    for _ in 0..10 {
-        std::hint::black_box(document.preview_snapshot());
-    }
-    let preview_snapshot = started.elapsed();
-    assert_eq!(document.preview_snapshot().vmf(), document.vmf());
-    println!(
-        "6 brushes, 2 entities, 1000 translations, 10 copies: full_clone={full_clone:?}, preview_snapshot={preview_snapshot:?}"
-    );
-}

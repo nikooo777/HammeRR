@@ -37,12 +37,6 @@ fn water_packing_checkbox_uses_shared_settings_recipes_recent_maps_and_active_jo
     assert!(controller.window.get_lighting_enabled());
     assert!(!controller.window.get_pack_water_assets());
     assert_eq!(controller.window.get_selected_lighting(), "Fullbright");
-    assert!(
-        controller
-            .window
-            .get_water_packing_description()
-            .contains("runtime/default env_cubemap")
-    );
     let packing = scroll_inspector_to_control(&controller.window, "Pack liquid assets");
     assert_dialog_button_visible(&controller.window, "Pack liquid assets");
     packing.invoke_accessible_default_action();

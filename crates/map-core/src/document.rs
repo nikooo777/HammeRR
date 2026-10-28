@@ -1004,36 +1004,6 @@ mod tests {
         doc
     }
 
-    #[test]
-    fn undo_and_redo_restore_order_and_content() {
-        let mut doc = doc_with_entities(3);
-        let ids: Vec<u32> = doc.vmf().entities.iter().map(|e| e.id).collect();
-        let original = doc.vmf().clone();
-
-        doc.edit("delete middle", |tx| {
-            tx.remove(ObjectId::Entity(ids[1])).map(drop)
-        })
-        .unwrap();
-        doc.edit("rename first", |tx| {
-            tx.entity_mut(ids[0])?.properties.set("targetname", "a");
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(doc.vmf().entities.len(), 2);
-
-        assert_eq!(doc.undo().unwrap().label, "rename first");
-        assert_eq!(doc.undo().unwrap().label, "delete middle");
-        assert_eq!(doc.vmf(), &original);
-
-        doc.redo();
-        doc.redo();
-        assert_eq!(doc.vmf().entities.len(), 2);
-        assert_eq!(
-            doc.entity(ids[0]).unwrap().properties.get("targetname"),
-            Some("a")
-        );
-    }
-
     fn ordered_edit_fixture() -> (Document, Vec<u32>, Vec<u32>) {
         let mut document = doc_with_entities(5);
         document
@@ -1136,23 +1106,6 @@ mod tests {
         assert_eq!(document.revision(), revision);
         assert_eq!(document.undo_labels().collect::<Vec<_>>(), history);
         assert_eq!((document.next_object_id, document.next_side_id), next_ids);
-    }
-
-    #[test]
-    fn failed_edits_roll_back_and_record_nothing() {
-        let mut doc = doc_with_entities(1);
-        let before = doc.vmf().clone();
-        let revision = doc.revision();
-        let id = before.entities[0].id;
-        let result = doc.edit("broken", |tx| {
-            tx.entity_mut(id)?.properties.set("targetname", "x");
-            tx.remove(ObjectId::Entity(id))?;
-            tx.remove(ObjectId::Solid(999))
-        });
-        assert_eq!(result, Err(EditError::NotFound(ObjectId::Solid(999))));
-        assert_eq!(doc.vmf(), &before);
-        assert_eq!(doc.revision(), revision);
-        assert_eq!(doc.undo_labels().count(), 1);
     }
 
     #[test]

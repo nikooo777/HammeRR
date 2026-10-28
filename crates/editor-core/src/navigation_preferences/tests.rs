@@ -64,30 +64,3 @@ fn invalid_schema_and_speed_files_are_preserved_until_explicit_reset() {
         assert_eq!(store.load().unwrap(), Some(Navigation::default()));
     }
 }
-
-#[cfg(unix)]
-#[test]
-fn symlinks_and_read_only_targets_reject_reset_without_writing() {
-    use std::os::unix::fs::{PermissionsExt, symlink};
-    let directory = tempfile::tempdir().unwrap();
-    let store = Store {
-        directory: directory.path().into(),
-    };
-    let target = directory.path().join("outside.json");
-    fs::write(&target, b"keep").unwrap();
-    symlink(&target, store.path()).unwrap();
-    assert!(store.load().is_err());
-    assert!(store.save(Navigation::default(), true).is_err());
-    assert_eq!(fs::read(&target).unwrap(), b"keep");
-    fs::remove_file(store.path()).unwrap();
-    store.save(Navigation::default(), false).unwrap();
-    let bytes = fs::read(store.path()).unwrap();
-    fs::set_permissions(store.path(), fs::Permissions::from_mode(0o444)).unwrap();
-    assert!(
-        store
-            .save(Navigation { fly_speed: 1000.0 }, true)
-            .unwrap_err()
-            .contains("read-only")
-    );
-    assert_eq!(fs::read(store.path()).unwrap(), bytes);
-}

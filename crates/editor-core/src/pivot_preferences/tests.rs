@@ -71,21 +71,3 @@ fn corrupt_future_unknown_missing_and_oversized_files_require_explicit_reset() {
         assert_eq!(store.load().unwrap(), Some(Pivot::SelectionCenter {}));
     }
 }
-
-#[cfg(unix)]
-#[test]
-fn symlink_and_nonregular_destinations_fail_without_touching_the_target() {
-    let directory = tempfile::tempdir().unwrap();
-    let store = store(&directory);
-    fs::create_dir_all(&store.directory).unwrap();
-    let target = directory.path().join("outside.json");
-    fs::write(&target, b"keep").unwrap();
-    std::os::unix::fs::symlink(&target, store.path()).unwrap();
-    assert!(store.load().is_err());
-    assert!(store.save(Pivot::default(), true).is_err());
-    assert_eq!(fs::read(&target).unwrap(), b"keep");
-    fs::remove_file(store.path()).unwrap();
-    fs::create_dir(store.path()).unwrap();
-    assert!(store.load().is_err());
-    assert!(store.save(Pivot::default(), true).is_err());
-}

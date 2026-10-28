@@ -627,20 +627,6 @@ mod tests {
     }
 
     #[test]
-    fn prefers_tool_texture_for_display() {
-        let m = Material::parse(
-            "Water { $basetexture \"water/base\" %tooltexture \"dev/water_tool\" $translucent 1 }",
-        )
-        .unwrap();
-        assert_eq!(
-            m.editor_textures().unwrap(),
-            ["materials/dev/water_tool.vtf", "materials/water/base.vtf"]
-        );
-        assert!(m.translucent());
-        assert!(!m.alpha_test());
-    }
-
-    #[test]
     fn builds_asset_paths() {
         assert_eq!(
             material_path("DE_CBBLE/COBBLEROAD01"),

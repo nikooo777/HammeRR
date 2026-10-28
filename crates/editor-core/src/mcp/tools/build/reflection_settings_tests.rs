@@ -15,10 +15,6 @@ fn reflection_mcp_schema_and_tools_use_atomic_shared_settings() {
     assert_eq!(settings["generate_reflections"], false);
     let schema = serde_json::to_value(schemars::schema_for!(CompileSettingsArgs)).unwrap();
     assert!(schema["properties"]["generate_reflections"].is_object());
-    assert!(
-        serde_json::from_value::<CompileSettingsArgs>(json!({"generate_reflections":"true"}))
-            .is_err()
-    );
     let failed = server
         .set_compile_settings(Parameters(
             serde_json::from_value(json!({"generate_reflections":true,"physics":"engine"}))

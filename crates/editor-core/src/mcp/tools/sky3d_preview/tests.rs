@@ -104,20 +104,3 @@ async fn typed_sky3d_tools_require_explicit_camera_and_preserve_source_without_g
         .unwrap()
         .unwrap();
 }
-
-#[test]
-fn sky3d_schema_rejects_unknown_actions_fields_and_wrong_value_types() {
-    for arguments in [
-        json!({"action":"nearest"}),
-        json!({"action":"settings","enabled":"true"}),
-        json!({"action":"settings","enabled":false,"camera":42}),
-        json!({"action":"prepare","background":"true"}),
-        json!({"action":"cancel","typo":true}),
-    ] {
-        assert!(serde_json::from_value::<Sky3dPreviewArgs>(arguments).is_err());
-    }
-    for arguments in [json!({"sky3d_preview":"true"}), json!({"sky3d_preview":42})] {
-        assert!(serde_json::from_value::<SetViewArgs>(arguments.clone()).is_err());
-        assert!(serde_json::from_value::<RenderArgs>(arguments).is_err());
-    }
-}

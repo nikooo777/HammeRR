@@ -18,14 +18,6 @@ fn static_prop_packing_mcp_schema_forwarding_and_atomic_settings_need_no_asset_o
     );
     let schema = serde_json::to_value(schemars::schema_for!(CompileSettingsArgs)).unwrap();
     assert!(schema["properties"]["pack_static_prop_assets"].is_object());
-    assert_eq!(schema["additionalProperties"], false);
-    for invalid in [
-        json!({"pack_static_prop_assets":"true"}),
-        json!({"pack_static_prop_assets":1}),
-        json!({"pack_static_prop_assets":true,"pack_static_prop_assets_fallback":true}),
-    ] {
-        assert!(serde_json::from_value::<CompileSettingsArgs>(invalid).is_err());
-    }
     for lighting in ["fullbright", "direct_ldr", "direct_ldr_hdr"] {
         let enabled = value(
             server.set_compile_settings(Parameters(

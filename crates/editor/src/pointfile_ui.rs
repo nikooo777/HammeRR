@@ -121,11 +121,6 @@ fn accept_browse(
     }
 }
 
-#[cfg(test)]
-pub fn bind(window: &PointfileWindow, shared: &SharedSession) {
-    bind_with_access(window, &DocumentAccess::unmanaged(shared.clone()));
-}
-
 pub fn bind_with_access(window: &PointfileWindow, access: &DocumentAccess) {
     window.on_load({
         let (window, target) = (window.as_weak(), access.downgrade());

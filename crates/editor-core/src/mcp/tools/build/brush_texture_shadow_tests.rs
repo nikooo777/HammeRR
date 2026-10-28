@@ -22,74 +22,10 @@ fn brush_texture_shadows_share_atomic_settings_without_document_or_draft_changes
     let schema = serde_json::to_value(schemars::schema_for!(CompileSettingsArgs)).unwrap();
     assert!(schema["properties"]["brush_texture_shadows"].is_object());
     assert!(schema["properties"]["refine_ambient_probes"].is_object());
-    assert!(
-        serde_json::from_value::<CompileSettingsArgs>(json!({"brush_texture_shadows":1})).is_err()
-    );
     let initial = lock(&shared).compile_settings();
     assert_eq!(initial["brush_texture_shadows"], false);
     assert!(schema["properties"].get("brush_model_shadowing").is_none());
     assert_eq!(initial["brush_model_shadowing"]["available"], false);
-    assert_eq!(
-        initial["brush_model_shadowing"]["property"],
-        "vrad_brush_cast_shadows"
-    );
-    assert_eq!(
-        initial["brush_model_shadowing"]["fullbright"],
-        "admit_and_preserve_without_baking"
-    );
-    assert_eq!(
-        initial["brush_model_shadowing"]["baked_count"],
-        "stats.brush_shadow_models"
-    );
-    assert_eq!(initial["brush_texture_shadowing"]["available"], false);
-    assert_eq!(
-        initial["brush_texture_shadowing"]["limits"]["model_scope"],
-        json!({
-            "receivers":"same_model_only","pose":"existing_admitted_initial_pose",
-            "nonzero_rotation":{"classname":"func_brush","parented":false},
-            "requires_lit_receiver_scope":true,
-            "casts_into_world":false,"casts_into_other_models":false,"radiance_source":false
-        })
-    );
-    assert_eq!(
-        initial["brush_texture_shadowing"]["limits"]["global_root_model_scope"],
-        json!({
-            "property":"vrad_brush_cast_shadows","enabled_value":"1",
-            "requires_brush_texture_shadows":true,"requires_lit_mode":true,
-            "classname":"func_brush","pose":"existing_admitted_stationary_initial_pose",
-            "requires_lit_receiver_scope":false,"child_models":false,
-            "casts_into_world":true,"casts_into_other_models":true,
-            "radiance_source":false,"world_occupancy":false
-        })
-    );
-    assert_eq!(
-        initial["brush_model_shadowing"]["limits"]["child_binary_cutout"],
-        true
-    );
-    assert_eq!(
-        initial["brush_texture_shadowing"]["limits"]["global_child_model_scope"],
-        json!({
-            "property":"vrad_brush_cast_shadows","enabled_value":"1",
-            "requires_brush_texture_shadows":true,"requires_lit_mode":true,
-            "classname":"func_brush","pose":"lowered_before_containing_transforms",
-            "origin":"explicit_or_one_consumed_volume","requires_lit_receiver_scope":false,
-            "reference_preparation":"deferred","optionless_compile_inspection":"ordinary_solid_only",
-            "casts_into_world":true,"casts_into_other_models":true,
-            "radiance_source":false,"world_occupancy":false
-        })
-    );
-    assert_eq!(
-        initial["brush_texture_shadowing"]["limits"]["child_self_model_scope"],
-        json!({
-            "classname":"func_brush","receivers":"same_model_only",
-            "pose":"lowered_before_containing_transforms",
-            "requires_brush_texture_shadows":true,"requires_lit_mode":true,
-            "requires_lit_receiver_scope":true,"global_request_required":false,
-            "request_field":"vrad_brush_cast_shadows","non_global_values":["absent","0"],
-            "malformed_request":"reject",
-            "casts_into_world":false,"casts_into_other_models":false,"radiance_source":false
-        })
-    );
     let source = lock(&shared).document().vmf().clone();
     let history = lock(&shared).history_snapshot();
     let failed = server

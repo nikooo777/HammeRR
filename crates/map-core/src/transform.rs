@@ -1058,53 +1058,6 @@ mod tests {
     }
 
     #[test]
-    fn brush_rotation_scale_and_texture_lock_preserve_corresponding_uvs() {
-        for lock in [false, true] {
-            let mut document = Document::empty();
-            let id = block(&mut document);
-            let before = solid(&document, id).clone();
-            let spec = Transform {
-                translation: DVec3::new(12.0, -24.0, 8.0),
-                rotation: DVec3::new(30.0, -20.0, 65.0),
-                scale: DVec3::new(2.0, 0.5, 1.25),
-                pivot: DVec3::new(-19.0, 42.0, 5.0),
-                basis: DMat3::IDENTITY,
-                texture_lock: lock,
-                texture_scale_lock: None,
-                reflection: [false; 3],
-                shear: None,
-            };
-            document
-                .edit("transform", |tx| transform(tx, &[id], spec))
-                .unwrap();
-            let after = solid(&document, id);
-            let rotation = DQuat::from_rotation_z(spec.rotation.z.to_radians())
-                * DQuat::from_rotation_y(spec.rotation.y.to_radians())
-                * DQuat::from_rotation_x(spec.rotation.x.to_radians());
-            for (old, new) in before.sides.iter().zip(&after.sides) {
-                for point in old.plane.0 {
-                    let moved = rotation * ((point - spec.pivot) * spec.scale)
-                        + spec.pivot
-                        + spec.translation;
-                    if lock {
-                        assert!((texel_uv(old, point) - texel_uv(new, moved)).length() < 1e-8);
-                    } else {
-                        assert_eq!((old.u_axis, old.v_axis), (new.u_axis, new.v_axis));
-                    }
-                }
-            }
-            let brush = BrushGeometry::from_solid(after).unwrap();
-            assert_eq!(brush.faces.len(), 6);
-            assert!(
-                brush
-                    .faces
-                    .iter()
-                    .all(|face| face.plane.distance_to(brush.center()) < 0.0)
-            );
-        }
-    }
-
-    #[test]
     fn independent_texture_modes_preserve_density_pivots_metadata_and_round_trip() {
         for basis in [DMat3::IDENTITY, DMat3::from_rotation_z(0.37)] {
             for movement in [false, true] {

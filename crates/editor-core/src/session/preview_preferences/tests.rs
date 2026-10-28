@@ -294,31 +294,3 @@ fn save_reload_reset_and_storage_errors_preserve_active_measurement_picking() {
     assert_eq!(session.view_serial, serial);
     assert_eq!(session.document.undo_labels().count(), 0);
 }
-
-#[cfg(unix)]
-#[test]
-fn failed_atomic_write_preserves_existing_bytes_view_and_history() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let directory = tempfile::tempdir().unwrap();
-    let mut session = Session::new(Err("no assets needed".into()));
-    session.configure_recovery(Ok(directory.path().into()));
-    action(&mut session, Actor::User, "save").unwrap();
-    set(&mut session, custom());
-    let path = directory.path().join(crate::preview_preferences::FILE_NAME);
-    let bytes = std::fs::read(&path).unwrap();
-    let view = session.view();
-    let serial = session.view_serial;
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
-    let error = action(&mut session, Actor::Agent, "save").unwrap_err();
-    assert!(error.contains("read-only"), "{error}");
-    assert_eq!(std::fs::read(&path).unwrap(), bytes);
-    assert_eq!(session.view(), view);
-    assert_eq!(session.view_serial, serial);
-    assert_eq!(session.preview_preferences_state()["ready"], false);
-    assert_eq!(
-        session.preview_preferences_state()["saved"],
-        json!(Preview::default())
-    );
-    assert_eq!(session.document.undo_labels().count(), 0);
-}

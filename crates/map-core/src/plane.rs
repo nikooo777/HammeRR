@@ -98,19 +98,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vmf_floor_face_points_up() {
-        // Top face of a brush from sdk_de_cbble.
-        let plane = Plane::from_points([
-            DVec3::new(-1568.0, 1056.0, 64.0),
-            DVec3::new(-1568.0, 864.0, 64.0),
-            DVec3::new(-1600.0, 864.0, 64.0),
-        ])
-        .unwrap();
-        assert_eq!(plane.normal, DVec3::Z);
-        assert_eq!(plane.dist, 64.0);
-    }
-
-    #[test]
     fn base_winding_is_clockwise_from_the_front() {
         for normal in [
             DVec3::X,

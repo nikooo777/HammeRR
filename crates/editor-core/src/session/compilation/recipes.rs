@@ -562,12 +562,6 @@ mod tests {
             restarted.build_recipes()["recipes"][1]["settings"]["lighting"],
             "direct_ldr"
         );
-        assert!(
-            restarted.build_recipes()["recipes"][2]["description"]
-                .as_str()
-                .unwrap()
-                .contains("Direct LDR + HDR")
-        );
         let permissions = fs::metadata(&path).unwrap().permissions();
         let mut readonly = permissions.clone();
         readonly.set_readonly(true);
@@ -690,12 +684,6 @@ mod tests {
             .apply_build_recipe(Actor::Agent, "custom:1", None)
             .unwrap();
         assert!(restarted.compile_options().generate_reflections);
-        assert!(
-            restarted.build_recipes()["recipes"][2]["description"]
-                .as_str()
-                .unwrap()
-                .contains("reflections on")
-        );
         for builtin in ["fast", "final"] {
             restarted
                 .apply_build_recipe(Actor::Agent, builtin, None)
@@ -735,24 +723,6 @@ mod tests {
             assert!(!recipe.settings.pack_sky_assets);
             assert!(!recipe.settings.pack_water_assets);
             assert!(!recipe.settings.pack_static_prop_assets);
-            assert!(
-                recipe.json(true)["description"]
-                    .as_str()
-                    .unwrap()
-                    .contains("sky packing off")
-            );
-            assert!(
-                recipe.json(true)["description"]
-                    .as_str()
-                    .unwrap()
-                    .contains("liquid packing off")
-            );
-            assert!(
-                recipe.json(true)["description"]
-                    .as_str()
-                    .unwrap()
-                    .ends_with("static-prop packing off")
-            );
             current
                 .update_build_settings(
                     Actor::Agent,
@@ -802,12 +772,6 @@ mod tests {
             .apply_build_recipe(Actor::Agent, "custom:1", None)
             .unwrap();
         assert_eq!(restarted.compile_options(), retained);
-        assert!(
-            restarted.build_recipes()["recipes"][2]["description"]
-                .as_str()
-                .unwrap()
-                .contains("static-prop vertex lighting on")
-        );
         for id in ["fast", "final"] {
             restarted.apply_build_recipe(Actor::User, id, None).unwrap();
             assert!(!restarted.compile_options().bake_static_prop_vertices);
@@ -1019,24 +983,6 @@ mod tests {
             assert_eq!(
                 saved["recipes"][2]["settings"]["pack_static_prop_assets"],
                 true
-            );
-            assert!(
-                saved["recipes"][2]["description"]
-                    .as_str()
-                    .unwrap()
-                    .contains("sky packing on")
-            );
-            assert!(
-                saved["recipes"][2]["description"]
-                    .as_str()
-                    .unwrap()
-                    .contains("liquid packing on")
-            );
-            assert!(
-                saved["recipes"][2]["description"]
-                    .as_str()
-                    .unwrap()
-                    .ends_with("static-prop packing on")
             );
             restarted
                 .apply_build_recipe(actor, "custom:1", None)

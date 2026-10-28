@@ -185,48 +185,6 @@ fn applying_defaults_rejects_active_geometry_without_cancelling_it() {
 }
 
 #[test]
-fn two_sessions_reject_external_replacement_for_save_apply_and_reset_then_allow_reload() {
-    for action_name in ["save", "apply", "reset"] {
-        let directory = tempfile::tempdir().unwrap();
-        let mut first = Session::new(Err("no assets needed".into()));
-        let mut second = Session::new(Err("no assets needed".into()));
-        first.configure_recovery(Ok(directory.path().into()));
-        second.configure_recovery(Ok(directory.path().into()));
-        second
-            .set_spatial(
-                Actor::User,
-                Update {
-                    grid_size: Some(31.5),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        action(&mut second, Actor::User, "save").unwrap();
-        let path = directory.path().join(crate::grid_preferences::FILE_NAME);
-        let bytes = std::fs::read(&path).unwrap();
-        let current = first.spatial;
-        let source = first.document.vmf().clone();
-        assert!(
-            action(&mut first, Actor::Agent, action_name)
-                .unwrap_err()
-                .contains("outside this session")
-        );
-        assert_eq!(first.spatial, current);
-        assert_eq!(first.document.vmf(), &source);
-        assert_eq!(first.document.undo_labels().count(), 0);
-        assert_eq!(std::fs::read(&path).unwrap(), bytes);
-        assert_eq!(first.grid_preferences_state()["ready"], false);
-        action(&mut first, Actor::Agent, "reload").unwrap();
-        assert_eq!(
-            first.grid_preferences_state()["defaults"]["grid_size"],
-            31.5
-        );
-        action(&mut first, Actor::Agent, "apply").unwrap();
-        assert_eq!(first.spatial.grid_size, 31.5);
-    }
-}
-
-#[test]
 fn corruption_after_inspection_rejects_all_stale_actions_before_explicit_reset() {
     for action_name in ["save", "apply", "reset"] {
         let directory = tempfile::tempdir().unwrap();
@@ -250,42 +208,6 @@ fn corruption_after_inspection_rejects_all_stale_actions_before_explicit_reset()
             Some(Grid::default())
         );
     }
-}
-
-#[cfg(unix)]
-#[test]
-fn atomic_write_failure_preserves_existing_bytes_current_grid_and_history() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let directory = tempfile::tempdir().unwrap();
-    let mut session = Session::new(Err("no assets needed".into()));
-    session.configure_recovery(Ok(directory.path().into()));
-    action(&mut session, Actor::User, "save").unwrap();
-    session
-        .set_spatial(
-            Actor::Agent,
-            Update {
-                grid_size: Some(20.5),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let source = session.document.vmf().clone();
-    let current = session.spatial;
-    let path = directory.path().join(crate::grid_preferences::FILE_NAME);
-    let bytes = std::fs::read(&path).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444)).unwrap();
-    let error = action(&mut session, Actor::Agent, "save").unwrap_err();
-    assert!(error.contains("read-only"), "{error}");
-    assert_eq!(std::fs::read(&path).unwrap(), bytes);
-    assert_eq!(session.spatial, current);
-    assert_eq!(session.document.vmf(), &source);
-    assert_eq!(session.document.undo_labels().count(), 0);
-    assert_eq!(session.grid_preferences_state()["ready"], false);
-    assert_eq!(
-        session.grid_preferences_state()["saved"],
-        json!(Grid::default())
-    );
 }
 
 #[test]

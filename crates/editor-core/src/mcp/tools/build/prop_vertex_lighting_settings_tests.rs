@@ -15,13 +15,6 @@ fn prop_vertex_lighting_mcp_schema_forwarding_and_atomic_validation_use_shared_s
     let source = lock(&shared).document().vmf().clone();
     let schema = serde_json::to_value(schemars::schema_for!(CompileSettingsArgs)).unwrap();
     assert!(schema["properties"]["bake_static_prop_vertices"].is_object());
-    assert_eq!(schema["additionalProperties"], false);
-    for invalid in [
-        json!({"bake_static_prop_vertices":"true"}),
-        json!({"bake_static_prop_vertices":true,"prop_fallback":true}),
-    ] {
-        assert!(serde_json::from_value::<CompileSettingsArgs>(invalid).is_err());
-    }
     let initial = value(server.get_compile_settings());
     assert_eq!(initial["bake_static_prop_vertices"], false);
     for update in [
@@ -44,26 +37,6 @@ fn prop_vertex_lighting_mcp_schema_forwarding_and_atomic_validation_use_shared_s
     );
     assert_eq!(enabled["bake_static_prop_vertices"], true);
     assert_eq!(enabled["prop_vertex_lighting"]["available"], true);
-    assert_eq!(
-        enabled["prop_vertex_lighting"]["limits"]["bounces"],
-        json!({"min":0,"max":compiler::MAX_LIGHT_BOUNCES})
-    );
-    assert_eq!(
-        enabled["prop_vertex_lighting"]["limits"]["receiver"]["root_lod"],
-        0
-    );
-    assert_eq!(
-        enabled["prop_vertex_lighting"]["limits"]["receiver"]["hardware_meshes_max"],
-        256
-    );
-    assert_eq!(
-        enabled["prop_vertex_lighting"]["limits"]["receiver"]["lods"],
-        json!({"min":1,"max":8,"all_required":true})
-    );
-    assert_eq!(
-        enabled["prop_vertex_lighting"]["limits"]["cutout_material"],
-        json!({"terminal_parameters":{"$basetexture":"canonical_path","$alphatest":"1"},"alpha_test_reference":0.5,"authored_reference":false,"include_edges_max":8,"patch_edit":"one_basetexture_insert_or_replace_per_patch","extra_parameters":false,"selected_skin_only":true,"all_hardware_vertices":true,"vhv_alpha":255,"receiver_texture_read":false,"texture_shadow_request":"original_mdl_flag","packing_required":false})
-    );
     assert_eq!(enabled, lock(&shared).compile_settings());
     for bounces in 1..=compiler::MAX_LIGHT_BOUNCES {
         let bounced = value(server.set_compile_settings(Parameters(

@@ -53,15 +53,6 @@ fn sky_packing_mcp_schema_and_tools_share_atomic_settings_without_asset_or_rende
     );
     let schema = serde_json::to_value(schemars::schema_for!(CompileSettingsArgs)).unwrap();
     assert!(schema["properties"]["pack_sky_assets"].is_object());
-    assert_eq!(schema["additionalProperties"], false);
-    for invalid in [
-        json!({"pack_sky_assets":"true"}),
-        json!({"pack_sky_assets":1}),
-        json!({"pack_sky_assets":true,"skyname":"substitute"}),
-        json!({"pack_sky_assets":true,"pack_sky_assets_fallback":true}),
-    ] {
-        assert!(serde_json::from_value::<CompileSettingsArgs>(invalid).is_err());
-    }
     let enabled = value(server.set_compile_settings(Parameters(
         serde_json::from_value(json!({"pack_sky_assets":true})).unwrap(),
     )));

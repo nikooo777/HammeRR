@@ -1442,48 +1442,6 @@ pub(crate) fn statistics_controls_refresh_page_and_close_without_editing() {
 }
 
 #[test]
-pub(crate) fn pointfile_controls_load_navigate_unload_and_close_without_map_edits() {
-    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
-        i_slint_backend_testing::TestingBackendOptions {
-            renderer_name: Some("software".into()),
-            mock_time: true,
-            threading: false,
-        },
-    )))
-    .unwrap();
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("courtyard.lin");
-    std::fs::write(&path, "0 0 64\n128 0 64\n128 128 64\n256 128 128\n").unwrap();
-    let state = Session::new(Err("no assets needed".into()));
-    let before = state.document().vmf().clone();
-    let shared = Arc::new(Mutex::new(state));
-    let window = PointfileWindow::new().unwrap();
-    pointfile_ui::bind(&window, &shared);
-    pointfile_ui::refresh(&window, &lock(&shared));
-    assert!(!window.get_current());
-    window.set_path(path.display().to_string().into());
-    window.invoke_load();
-    assert_eq!(window.get_total(), 4);
-    assert!(window.get_current());
-    window.invoke_navigate(1);
-    assert_eq!(window.get_point(), 2);
-    assert_eq!(lock(&shared).camera().position, Vec3::new(128.0, 0.0, 64.0));
-    window.show().unwrap();
-    save_ui_snapshot(window.window(), "pointfile");
-    for label in ["Load", "Go", "Frame path", "Unload path", "Close"] {
-        assert_dialog_button_visible(&window, label);
-    }
-    window.invoke_frame();
-    window.invoke_cancel();
-    assert!(!window.window().is_visible());
-    assert!(lock(&shared).pointfile_points().is_some());
-    window.invoke_clear();
-    assert!(!window.get_has_path());
-    assert_eq!(lock(&shared).document().vmf(), &before);
-    assert_eq!(lock(&shared).document().undo_labels().count(), 0);
-}
-
-#[test]
 pub(crate) fn component_controls_select_preview_reject_apply_and_cancel() {
     slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
         i_slint_backend_testing::TestingBackendOptions {

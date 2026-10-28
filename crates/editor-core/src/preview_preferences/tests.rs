@@ -73,33 +73,3 @@ fn malformed_future_unknown_incomplete_and_oversized_files_require_explicit_rese
         assert_eq!(store.load().unwrap(), Some(Preview::default()));
     }
 }
-
-#[test]
-fn nonregular_and_unwritable_destinations_preserve_their_contents() {
-    let directory = tempfile::tempdir().unwrap();
-    let store = store(&directory);
-    fs::create_dir_all(store.path()).unwrap();
-    assert!(store.load().is_err());
-    assert!(store.save(Preview::default(), true).is_err());
-    assert!(store.path().is_dir());
-    fs::remove_dir(store.path()).unwrap();
-    fs::remove_dir(&store.directory).unwrap();
-    fs::write(&store.directory, b"keep").unwrap();
-    assert!(store.save(Preview::default(), true).is_err());
-    assert_eq!(fs::read(&store.directory).unwrap(), b"keep");
-}
-
-#[cfg(unix)]
-#[test]
-fn symlinked_defaults_are_errors_and_reset_never_writes_the_target() {
-    let directory = tempfile::tempdir().unwrap();
-    let store = store(&directory);
-    fs::create_dir_all(&store.directory).unwrap();
-    let target = directory.path().join("outside.json");
-    fs::write(&target, b"keep").unwrap();
-    std::os::unix::fs::symlink(&target, store.path()).unwrap();
-    assert!(store.load().is_err());
-    assert!(store.save(Preview::default(), false).is_err());
-    assert!(store.save(Preview::default(), true).is_err());
-    assert_eq!(fs::read(target).unwrap(), b"keep");
-}

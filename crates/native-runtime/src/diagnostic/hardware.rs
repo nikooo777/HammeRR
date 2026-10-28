@@ -118,13 +118,10 @@ pub(super) fn verify_hardware(records: &[Value], native: &Identity) -> io::Resul
         || samples.len() != SAMPLE_COUNT
         || acquired.is_none()
         || implementations.len() != 1
-        || !matches!(
-            implementations[0]["module"].as_str(),
-            Some("shaderapivk.so" | "shaderapidx9.so")
-        )
+        || implementations[0]["module"].as_str() != Some("shaderapivk.so")
     {
         return Err(invalid(
-            "Hardware observer requires acquisition, one start, completion and exactly eight samples",
+            "Hardware observer requires the pinned Vulkan implementation, acquisition, one start, completion and exactly eight samples",
         ));
     }
     let first_sample = records
@@ -172,7 +169,11 @@ pub(super) fn verify_hardware(records: &[Value], native: &Identity) -> io::Resul
     ))
 }
 
-pub(super) fn loaded_observer(directory: &Path, root: &Path, native: &Identity) -> io::Result<()> {
+pub(super) fn loaded_observer(
+    directory: &Path,
+    root: &Path,
+    native: &Identity,
+) -> io::Result<String> {
     let maps = util::text(
         &PathBuf::from(format!("/proc/{}/maps", native.pid)),
         4 * 1024 * 1024,
@@ -181,6 +182,7 @@ pub(super) fn loaded_observer(directory: &Path, root: &Path, native: &Identity) 
     for path in [
         directory.join(PROBE),
         root.join("bin/linux64/materialsystem.so"),
+        root.join("bin/linux64/shaderapivk.so"),
         root.join("bin/linux64/libdxvk_d3d9.so"),
     ] {
         let canonical = path.canonicalize()?;
@@ -195,5 +197,5 @@ pub(super) fn loaded_observer(directory: &Path, root: &Path, native: &Identity) 
             )));
         }
     }
-    Ok(())
+    Ok(maps)
 }

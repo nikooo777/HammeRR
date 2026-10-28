@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::isolation::Identity;
@@ -18,6 +18,7 @@ mod hardware;
 mod midrange;
 mod mips;
 mod profile;
+mod sampler_profile;
 mod spatial;
 
 use hardware::{hardware_records, loaded_observer, verify_hardware};
@@ -34,6 +35,13 @@ pub(crate) use profile::{
 };
 pub use profile::{PplUv857Case, PplUv857Receipt, PplUv857Request};
 pub use spatial::{PplSpatial919Case, PplSpatial919Receipt, PplSpatial919Request};
+
+#[derive(Serialize)]
+struct DiagnosticObservation {
+    #[serde(flatten)]
+    capture: serde_json::Value,
+    sampler_delivery: sampler_profile::SamplerDelivery,
+}
 
 fn live_identity(
     launch: &crate::isolation::Launch,
@@ -228,6 +236,7 @@ pub(crate) fn execute(
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log);
+    let sampler = sampler_profile::Prepared::prepare(directory, command)?;
     util::json_write(
         &directory.join("command.json"),
         &json!({
@@ -236,6 +245,7 @@ pub(crate) fn execute(
             "native_program":executable,"cwd":root,"desktop_input":false,
             "filesystem_isolation":{"external_paths":"read_only","writable_capture_directory":directory},
             "observer_sha256":PROBE_SHA,"hardware_channel":"observed_ldr_required","timeout_seconds":TIMEOUT.as_secs(),
+            "sampler_profile":sampler_profile::PROFILE,"dxvk_environment":sampler.expected_environment(),
         }),
     )?;
     crate::guard::ensure_no_client(&root)?;
@@ -244,7 +254,8 @@ pub(crate) fn execute(
     let started = Instant::now();
     let console = game.join("hammerr-runtime.log");
     let mut native = None;
-    let mut captured = false;
+    let mut capture_observation = None;
+    let mut sampler_ready = None;
     let result = (|| {
         loop {
             check_cancelled(directory, request)?;
@@ -278,13 +289,15 @@ pub(crate) fn execute(
                     invalid("Diagnostic did not establish isolated native identity")
                 })?;
                 live_identity(&isolated, &child, &executable, identity)?;
+                sampler_ready = Some(sampler.observe_ready(&root, identity)?);
+                live_identity(&isolated, &child, &executable, identity)?;
                 util::atomic_write(
                     &directory.join("probe-ready"),
                     b"verified post-map controls\n",
                 )?;
             }
             let records = hardware_records(&directory.join("hardware.jsonl"))?;
-            if !captured
+            if capture_observation.is_none()
                 && let Some(identity) = &native
                 && let Some(hardware) = verify_hardware(&records, identity)?
             {
@@ -349,15 +362,14 @@ pub(crate) fn execute(
                     observation["spatial_camera_observed"] = json!(&observations[1].camera);
                     observation["spatial_phase_observations"] = json!(observations);
                 }
-                util::json_write(&directory.join("diagnostic-observation.json"), &observation)?;
                 private_write(
                     &game.join("cfg/hammerr_diagnostic_once.cfg"),
                     &format!("echo {COMPLETE}\ndisconnect\necho {DISCONNECTED}\nquit\n"),
                 )?;
-                captured = true;
+                capture_observation = Some(observation);
             }
             if let Some(status) = child.try_wait()? {
-                if !status.success() || !captured {
+                if !status.success() || capture_observation.is_none() {
                     return Err(invalid(format!(
                         "Native diagnostic exited without a completed capture: {status}"
                     )));
@@ -391,6 +403,17 @@ pub(crate) fn execute(
             MAX_INPUT,
         )?;
         verify_installed(&root)?;
+        let sampler_delivery =
+            sampler
+                .finish(sampler_ready.ok_or_else(|| {
+                    invalid("Missing required DXVK sampler readiness evidence")
+                })?)?;
+        let observation = DiagnosticObservation {
+            capture: capture_observation
+                .ok_or_else(|| invalid("Missing diagnostic capture observation"))?,
+            sampler_delivery,
+        };
+        util::json_write(&directory.join("diagnostic-observation.json"), &observation)?;
         util::json_write(&directory.join("progress.json"), &[1, 1])?;
         util::private_budget(directory, &root)
     })();

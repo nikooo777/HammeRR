@@ -35,7 +35,7 @@ Use **Remove override** to restore the absent setting.
 
 ## Limits
 
-- Generation runs during compilation. The editor can show final static placements; runtime motion and lighting require the game.
+- Generation runs during compilation. The editor can show final placements and static baked styles. Runtime motion, style animation and native appearance require the game.
 - Hidden geometry is excluded. Placement and output use bounded deterministic sampling.
 - Missing types, malformed dictionaries, unsupported assets or exceeded budgets fail explicitly.
 - Changes to consumed dictionaries, models, materials or sprite atlases require a new build.

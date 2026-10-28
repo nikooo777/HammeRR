@@ -4102,6 +4102,7 @@ dependencies = [
  "map-core",
  "png",
  "pollster 1.0.1",
+ "schemars",
  "serde",
  "sha2",
  "source-formats",

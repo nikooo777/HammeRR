@@ -54,19 +54,40 @@ fn compiled_detail_controls_share_background_prepare_show_clear_and_output_inval
         lock(&shared).inspect_compiled_details(None, 0, 1).unwrap()["lighting"]["mode"],
         "baked_ldr"
     );
-    form.window.invoke_change_lighting(2);
+    form.window.invoke_change_lighting(99);
     assert_eq!(form.window.get_lighting_index(), 1);
     assert!(
         form.window
             .get_message()
             .contains("Unknown compiled detail lighting mode")
     );
+    form.window.invoke_change_lighting(2);
+    assert_eq!(form.window.get_lighting_index(), 2);
+    form.window.set_exposure_ev(0.5);
+    form.window.invoke_apply_lighting();
+    assert_eq!(
+        lock(&shared).inspect_compiled_details(None, 0, 1).unwrap()["lighting"]["exposure_ev"],
+        0.5
+    );
+    form.window.set_lighting_channel_index(1);
+    form.window.set_exposure_ev(2.0);
+    form.window.invoke_apply_lighting();
+    assert_eq!(form.window.get_lighting_index(), 2);
+    assert_eq!(form.window.get_lighting_channel_index(), 0);
+    assert_eq!(form.window.get_exposure_ev(), 0.5);
+    assert!(
+        form.window
+            .get_message()
+            .to_ascii_lowercase()
+            .contains("hdr")
+    );
     form.window.invoke_show_details();
     assert!(form.window.get_state().contains("displayed true"));
     assert!(form.window.get_state().contains("complete geometry true"));
     form.window.invoke_hide_details();
     assert!(form.window.get_state().contains("displayed false"));
-    assert_eq!(form.window.get_lighting_index(), 1);
+    assert_eq!(form.window.get_lighting_index(), 2);
+    assert_eq!(form.window.get_exposure_ev(), 0.5);
     form.window.invoke_show_details();
     std::fs::write(source.with_extension("bsp"), b"replaced output").unwrap();
     form.window.invoke_refresh_inspection();

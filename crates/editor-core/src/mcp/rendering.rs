@@ -51,6 +51,7 @@ struct FrameMetadata {
     working_region: Value,
     rope_preview: Value,
     material_reload: Value,
+    compiled_details: Value,
 }
 
 impl FrameMetadata {
@@ -61,6 +62,7 @@ impl FrameMetadata {
             working_region: session.working_region_summary(),
             rope_preview: session.rope_preview_report(view.rope_preview),
             material_reload: json!(session.material_reload_report()),
+            compiled_details: json!({"state":session.compiled_details_observation(),"lighting":session.compiled_details_lighting_report()}),
         }
     }
 }
@@ -81,6 +83,7 @@ impl RenderedView {
             working_region,
             rope_preview,
             material_reload,
+            compiled_details,
         } = self.metadata;
         color_correction["applied"] =
             json!(color_correction["enabled"] == true && color_correction["ready"] == true);
@@ -102,7 +105,7 @@ impl RenderedView {
             .as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        let mut info = json!({ "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "preview_issues_omitted": self.issues.omitted, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":self.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
+        let mut info = json!({ "compiled_details":compiled_details, "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "preview_issues_omitted": self.issues.omitted, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":self.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
         if !include_details {
             omit_render_catalogues(&mut info);
         }

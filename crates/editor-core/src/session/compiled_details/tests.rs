@@ -145,6 +145,413 @@ fn retain_native_fixture(session: &mut Session, bsp: &Bsp) {
     build.lightmap_identity.output = Ok(identity);
 }
 
+fn radiance_fixture(dual: bool, styled: bool) -> (tempfile::TempDir, Session, PathBuf) {
+    let (directory, mut session, source) = fixture();
+    std::fs::write(
+        directory.path().join("materials/test/ground.vmt"),
+        "UnlitGeneric { }",
+    )
+    .unwrap();
+    let mut vmf = session.document().vmf().clone();
+    let card = vmf
+        .entities
+        .iter()
+        .find(|entity| entity.classname() == Some("prop_detail_sprite"))
+        .unwrap()
+        .clone();
+    for orientation in [1, 2] {
+        let mut card = card.clone();
+        card.id = 9003 + orientation;
+        card.properties
+            .set("detailOrientation", orientation.to_string());
+        card.properties
+            .set("origin", format!("{} 0 64", orientation * 32));
+        vmf.entities.push(card);
+    }
+    for (id, style, ldr, hdr) in [
+        (9100, "0", "0 255 0 32", "0 255 0 64"),
+        (9101, "1", "255 0 0 120", "0 0 0 0"),
+        (9102, "2", "0 0 0 0", "0 0 255 80"),
+    ] {
+        if style != "0" && !styled {
+            continue;
+        }
+        let mut light = Entity::new(id, "light");
+        for (key, value) in [
+            ("origin", "0 0 224"),
+            ("style", style),
+            ("_light", ldr),
+            ("_lightHDR", hdr),
+            ("_constant_attn", "1"),
+            ("_linear_attn", "0"),
+            ("_quadratic_attn", "0"),
+        ] {
+            light.properties.set(key, value);
+        }
+        vmf.entities.push(light);
+    }
+    std::fs::write(&source, vmf.write(&Default::default())).unwrap();
+    session.open(Actor::User, &source, false).unwrap();
+    session
+        .update_build_settings(
+            Actor::User,
+            BuildSettingsUpdate {
+                lighting: Some(if dual { "direct_ldr_hdr" } else { "direct_ldr" }),
+                sky_quality: Some("fast"),
+                bounces: Some(0),
+                refine_ambient_probes: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let completed = session.begin_compile(Actor::User, None).unwrap().run();
+    session.finish_compile(Actor::User, &completed);
+    assert!(
+        completed.as_ref().unwrap().published(),
+        "{:?}",
+        session.compile_status()
+    );
+    (directory, session, source)
+}
+
+fn radiance_settings(channel: LightingChannel, exposure_ev: f64) -> LightingSettings {
+    LightingSettings {
+        mode: Lighting::BakedRadiance,
+        channel,
+        exposure_ev,
+        style_gains: vec![
+            render::compiled_details::StyleGain {
+                style: 1,
+                gain: 1.0,
+            },
+            render::compiled_details::StyleGain {
+                style: 2,
+                gain: 0.5,
+            },
+        ],
+    }
+}
+
+#[test]
+fn compiled_detail_radiance_consumes_actual_channel_union_for_every_receiver_and_lifecycle() {
+    let (_directory, mut session, source) = radiance_fixture(true, true);
+    let before = (
+        session.document().vmf().clone(),
+        session.camera(),
+        session.history_snapshot(),
+        std::fs::read(&source).unwrap(),
+    );
+    let bsp = Bsp::read(&session.compiled.as_ref().unwrap().path).unwrap();
+    let native = bsp.detail_props().unwrap().unwrap();
+    let ldr = bsp.detail_prop_lighting(false).unwrap().unwrap();
+    let hdr = bsp.detail_prop_lighting(true).unwrap().unwrap();
+    assert!(native.props.iter().all(|prop| prop.light_style_count == 2));
+    assert!(ldr.as_chunks::<2>().0.iter().all(|pair| pair[0].style == 1
+        && pair[0].lighting.rgb[0] > 0
+        && pair[1].style == 2
+        && pair[1].lighting.rgb == [0; 3]));
+    assert!(
+        hdr.as_chunks::<2>()
+            .0
+            .iter()
+            .all(|pair| pair[0].lighting.rgb == [0; 3] && pair[1].lighting.rgb[2] > 0)
+    );
+    let token = prepare(&mut session);
+    let settings = radiance_settings(LightingChannel::Hdr, 1.0);
+    let old_serial = session.scene_serial();
+    let report = session
+        .set_compiled_details_lighting_options(Actor::User, token, settings.clone())
+        .unwrap();
+    assert!(session.scene_serial() > old_serial);
+    assert_eq!(report["complete"], false);
+    assert_eq!(report["lighting"]["base_source_channel"], "hdr");
+    assert_eq!(report["lighting"]["available_styles"], json!([1, 2]));
+    assert_eq!(
+        report["lighting"]["style_gains"],
+        json!([{"style":1,"gain":1.0},{"style":2,"gain":0.5}])
+    );
+    session
+        .set_compiled_details_visible(Actor::User, token, true)
+        .unwrap();
+    for channel in [LightingChannel::Hdr, LightingChannel::Ldr] {
+        let settings = radiance_settings(channel, 1.0);
+        let inspection = session
+            .set_compiled_details_lighting_options(Actor::Agent, token, settings)
+            .unwrap();
+        let selected = if channel == LightingChannel::Hdr {
+            &hdr
+        } else {
+            &ldr
+        };
+        for (ordinal, prop) in native.props.iter().enumerate() {
+            let extras = inspection["page"]["rows"][ordinal]["lighting"]["style_extras"]
+                .as_array()
+                .unwrap();
+            assert_eq!(extras.len(), 2);
+            for (value, entry) in extras
+                .iter()
+                .zip(&selected[prop.light_styles as usize..prop.light_styles as usize + 2])
+            {
+                assert_eq!(value["style"], entry.style);
+                assert_eq!(value["rgb"], json!(entry.lighting.rgb));
+                assert_eq!(value["exponent"], entry.lighting.exponent);
+                assert_eq!(value["gain"], if entry.style == 1 { 1.0 } else { 0.5 });
+                assert_eq!(
+                    value["linear"],
+                    json!(entry.lighting.rgb.map(|channel| f64::from(channel)
+                        * 2.0f64.powi(i32::from(entry.lighting.exponent))
+                        / 255.0))
+                );
+            }
+        }
+        let mesh = session
+            .compiled_details
+            .ready
+            .as_ref()
+            .unwrap()
+            .geometry
+            .as_ref()
+            .unwrap();
+        assert_eq!(mesh.detail_parts.len(), 6);
+        for part in &mesh.detail_parts {
+            let prop = native.props[part.ordinal];
+            let base_scale = 2.0f64.powi(i32::from(prop.lighting.exponent)) / 255.0;
+            let table = if channel == LightingChannel::Hdr {
+                &hdr
+            } else {
+                &ldr
+            };
+            let mut expected = prop.lighting.rgb.map(|value| f64::from(value) * base_scale);
+            for entry in &table[prop.light_styles as usize..prop.light_styles as usize + 2] {
+                let weight = if entry.style == 1 { 1.0 } else { 0.5 };
+                let scale = 2.0f64.powi(i32::from(entry.lighting.exponent)) * weight / 255.0;
+                for (total, value) in expected.iter_mut().zip(entry.lighting.rgb) {
+                    *total += f64::from(value) * scale;
+                }
+            }
+            let expected = expected.map(|value| (value * 2.0) as f32);
+            assert!(!part.vertices.is_empty());
+            assert!(mesh.vertices[part.vertices.clone()].iter().all(
+                |vertex| vertex.baked_irradiance == expected
+                    && vertex.lighting_receiver
+                        == render::compiled_details::BAKED_RADIANCE_RECEIVER
+                    && vertex.color[..3] == [255; 3]
+            ));
+        }
+    }
+    session
+        .set_compiled_details_visible(Actor::User, token, false)
+        .unwrap();
+    let settings = radiance_settings(LightingChannel::Hdr, -1.0);
+    session
+        .set_compiled_details_lighting_options(Actor::User, token, settings.clone())
+        .unwrap();
+    session
+        .set_compiled_details_visible(Actor::User, token, true)
+        .unwrap();
+    assert_eq!(session.compiled_details.lighting, settings);
+    let token = prepare(&mut session);
+    assert_eq!(
+        session.compiled_details.lighting,
+        LightingSettings::default()
+    );
+    session
+        .set_compiled_details_lighting_options(
+            Actor::User,
+            token,
+            radiance_settings(LightingChannel::Hdr, 0.0),
+        )
+        .unwrap();
+    session.clear_compiled_details(Actor::User, token).unwrap();
+    assert_eq!(
+        session.compiled_details.lighting,
+        LightingSettings::default()
+    );
+    assert_eq!(
+        (
+            session.document().vmf().clone(),
+            session.camera(),
+            session.history_snapshot(),
+            std::fs::read(&source).unwrap()
+        ),
+        before
+    );
+}
+
+#[test]
+fn radiance_channel_availability_distinguishes_zero_extras_missing_tables_and_fullbright() {
+    for dual in [false, true] {
+        let (_directory, mut session, _source) = radiance_fixture(dual, false);
+        let token = prepare(&mut session);
+        let baked = &session.compiled_details.ready.as_ref().unwrap().baked;
+        assert!(baked.ldr.is_none() && baked.hdr.is_none());
+        for channel in [LightingChannel::Ldr, LightingChannel::Hdr] {
+            let settings = LightingSettings {
+                mode: Lighting::BakedRadiance,
+                channel,
+                ..Default::default()
+            };
+            let before = session.compiled_details_observation();
+            let result =
+                session.set_compiled_details_lighting_options(Actor::User, token, settings);
+            assert_eq!(result.is_ok(), dual || channel == LightingChannel::Ldr);
+            if result.is_err() {
+                assert_eq!(session.compiled_details_observation(), before);
+            }
+        }
+    }
+    let (_directory, mut session, _source) = radiance_fixture(true, true);
+    let mut bsp = Bsp::read(&session.compiled.as_ref().unwrap().path).unwrap();
+    bsp.game_lumps.retain(|lump| lump.id != *b"dplh");
+    retain_native_fixture(&mut session, &bsp);
+    let token = prepare(&mut session);
+    session
+        .set_compiled_details_lighting_options(
+            Actor::User,
+            token,
+            radiance_settings(LightingChannel::Ldr, 0.0),
+        )
+        .unwrap();
+    let before = session.compiled_details_observation();
+    assert!(
+        session
+            .set_compiled_details_lighting_options(
+                Actor::User,
+                token,
+                radiance_settings(LightingChannel::Hdr, 0.0)
+            )
+            .unwrap_err()
+            .contains("absent")
+    );
+    assert_eq!(session.compiled_details_observation(), before);
+    let (_directory, mut session, _source) = fixture();
+    let token = prepare(&mut session);
+    assert!(
+        session
+            .set_compiled_details_lighting_options(
+                Actor::User,
+                token,
+                LightingSettings {
+                    mode: Lighting::BakedRadiance,
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .contains("Fullbright")
+    );
+}
+
+#[test]
+fn radiance_settings_refuse_invalid_or_stale_updates_without_mesh_or_options_changes() {
+    let (_directory, mut session, _source) = radiance_fixture(true, true);
+    let token = prepare(&mut session);
+    session
+        .set_compiled_details_visible(Actor::User, token, true)
+        .unwrap();
+    let valid = radiance_settings(LightingChannel::Hdr, 0.0);
+    session
+        .set_compiled_details_lighting_options(Actor::User, token, valid.clone())
+        .unwrap();
+    let original = session.compiled_details_observation();
+    let vertices = session
+        .compiled_details
+        .ready
+        .as_ref()
+        .unwrap()
+        .geometry
+        .as_ref()
+        .unwrap()
+        .vertices
+        .clone();
+    let mut bad = Vec::new();
+    for ev in [f64::NAN, f64::INFINITY, -9.0, 9.0] {
+        let mut value = valid.clone();
+        value.exposure_ev = ev;
+        bad.push(value);
+    }
+    for (style, gain) in [
+        (0, 1.0),
+        (64, 1.0),
+        (3, 1.0),
+        (1, -0.1),
+        (1, 2.1),
+        (1, f64::NAN),
+    ] {
+        let mut value = valid.clone();
+        value.style_gains = vec![render::compiled_details::StyleGain { style, gain }];
+        bad.push(value);
+    }
+    let mut duplicate = valid.clone();
+    duplicate.style_gains.push(duplicate.style_gains[0]);
+    bad.push(duplicate);
+    for value in bad {
+        assert!(
+            session
+                .set_compiled_details_lighting_options(Actor::User, token, value)
+                .is_err()
+        );
+        assert_eq!(session.compiled_details_observation(), original);
+        assert_eq!(
+            session
+                .compiled_details
+                .ready
+                .as_ref()
+                .unwrap()
+                .geometry
+                .as_ref()
+                .unwrap()
+                .vertices,
+            vertices
+        );
+    }
+    assert!(
+        session
+            .set_compiled_details_lighting_options(Actor::User, token + 1, valid.clone())
+            .is_err()
+    );
+    assert_eq!(session.compiled_details_observation(), original);
+    session
+        .edit(Actor::User, "change source", |tx| {
+            tx.world_properties_mut()
+                .set("detailmaterial", "test/changed");
+            Ok(())
+        })
+        .unwrap();
+    assert!(
+        session
+            .set_compiled_details_lighting_options(Actor::User, token, valid)
+            .is_err()
+    );
+}
+
+#[test]
+fn malformed_present_hdr_extras_fail_preparation_even_when_no_prop_uses_them() {
+    let (_directory, mut session, _source) = radiance_fixture(true, false);
+    let mut bsp = Bsp::read(&session.compiled.as_ref().unwrap().path).unwrap();
+    assert!(
+        bsp.detail_props()
+            .unwrap()
+            .unwrap()
+            .props
+            .iter()
+            .all(|prop| prop.light_style_count == 0)
+    );
+    bsp.game_lumps.push(source_formats::bsp::GameLump {
+        id: *b"dplh",
+        version: 0,
+        flags: 0,
+        data: vec![1, 0, 0, 0],
+    });
+    retain_native_fixture(&mut session, &bsp);
+    let request = session.begin_compiled_details(Actor::Agent).unwrap();
+    let report = session
+        .finish_compiled_details(Actor::Agent, request.run())
+        .unwrap();
+    assert_eq!(report["status"], "unavailable");
+    assert_eq!(report["complete"], false);
+    assert!(report["error"].as_str().unwrap().contains("truncated"));
+}
+
 #[test]
 fn baked_ldr_modes_use_owned_literal_model_and_card_colors_and_preserve_state_on_refusal() {
     let (_directory, mut session, source) = fixture();

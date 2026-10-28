@@ -455,6 +455,7 @@ impl Scene {
                     opacity: 1.0,
                     texture_alpha: 0,
                     tangent: [0.0; 4],
+                    baked_irradiance: [0.0; 3],
                     lighting_receiver: 0,
                 });
             }

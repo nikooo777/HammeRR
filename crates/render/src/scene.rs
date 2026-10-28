@@ -66,6 +66,7 @@ pub struct Vertex {
     pub texture_alpha: u32,
     pub tangent: [f32; 4],
     pub lighting_receiver: u32,
+    pub baked_irradiance: [f32; 3],
 }
 
 #[repr(C)]
@@ -532,6 +533,7 @@ impl Builder<'_> {
                 opacity: 1.0,
                 texture_alpha: 0,
                 tangent,
+                baked_irradiance: [0.0; 3],
                 lighting_receiver,
             });
         }
@@ -637,6 +639,7 @@ impl Builder<'_> {
                 opacity: 1.0,
                 texture_alpha: 0,
                 tangent: [0.0; 4],
+                baked_irradiance: [0.0; 3],
                 lighting_receiver,
             });
         }
@@ -734,6 +737,7 @@ impl Builder<'_> {
                     opacity: 1.0,
                     texture_alpha: 0,
                     tangent: [0.0; 4],
+                    baked_irradiance: [0.0; 3],
                     lighting_receiver: 0,
                 });
             }
@@ -779,6 +783,7 @@ impl Builder<'_> {
                 opacity: 1.0,
                 texture_alpha: 0,
                 tangent: [0.0; 4],
+                baked_irradiance: [0.0; 3],
                 lighting_receiver: 0,
             });
         }
@@ -885,6 +890,7 @@ impl Builder<'_> {
                     instance.appearance.mode == source_formats::render_color::TEXTURE,
                 ),
                 tangent: [0.0; 4],
+                baked_irradiance: [0.0; 3],
                 lighting_receiver: 0,
             });
         }
@@ -1566,6 +1572,7 @@ impl SceneMesh {
                         opacity: 1.0,
                         texture_alpha: 0,
                         tangent: [0.0; 4],
+                        baked_irradiance: [0.0; 3],
                         lighting_receiver: 0,
                     });
                     self.mins = self.mins.min(point.as_vec3());

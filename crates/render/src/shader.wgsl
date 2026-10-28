@@ -10,6 +10,7 @@ const SUN_KIND: f32 = 2.0;
 const FULL_BILLBOARD_TAG: f32 = -2.5;
 const VERTICAL_BILLBOARD_TAG: f32 = -3.5;
 const BAKED_DETAIL_RECEIVER: u32 = 2u;
+const BAKED_RADIANCE_RECEIVER: u32 = 3u;
 
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -52,6 +53,7 @@ struct VertexIn {
     @location(7) texture_alpha: u32,
     @location(8) tangent: vec4<f32>,
     @location(9) lighting_receiver: u32,
+    @location(10) baked_irradiance: vec3<f32>,
 }
 
 struct VertexOut {
@@ -67,6 +69,7 @@ struct VertexOut {
     @location(8) tangent: vec4<f32>,
     @location(9) @interpolate(flat) lighting_receiver: u32,
     @location(10) authored_irradiance: vec3<f32>,
+    @location(11) baked_irradiance: vec3<f32>,
 }
 
 fn authored_irradiance(position: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
@@ -151,6 +154,7 @@ fn vs_main(v: VertexIn) -> VertexOut {
     out.texture_alpha = v.texture_alpha;
     out.tangent = v.tangent;
     out.lighting_receiver = v.lighting_receiver;
+    out.baked_irradiance = v.baked_irradiance;
     out.authored_irradiance = vec3<f32>(0.0);
     if globals.lighting_settings.z > 0.5 && globals.lighting_settings.y < 0.5 && v.lighting_receiver == 1u {
         out.authored_irradiance = authored_irradiance(v.position, normalize(v.normal));
@@ -166,7 +170,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let uv_dy = dpdy(in.uv);
     let grid_width = max(fwidth(in.lightmap.xy), vec2<f32>(0.00001));
     if globals.surface_view.x == 3u && in.lightmap.z != 0.0 {
-        let shade = select(0.55 + 0.45 * clamp(dot(normalize(in.normal), globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0), 1.0, in.lighting_receiver == BAKED_DETAIL_RECEIVER);
+        let shade = select(0.55 + 0.45 * clamp(dot(normalize(in.normal), globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0), 1.0, in.lighting_receiver == BAKED_DETAIL_RECEIVER || in.lighting_receiver == BAKED_RADIANCE_RECEIVER);
         return vec4<f32>(vec3<f32>(0.65) * in.color.rgb * shade, 1.0);
     }
     if (globals.surface_view.x == 1u || globals.surface_view.x == 2u) && in.lightmap.z != 0.0 {
@@ -220,6 +224,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         var irradiance = in.authored_irradiance;
         if globals.lighting_settings.y > 0.5 { irradiance = authored_irradiance(in.world_position, shading_normal); }
         let radiance = texel.rgb * in.color.rgb * irradiance * globals.lighting_settings.w;
+        color = radiance / (vec3<f32>(1.0) + radiance);
+    }
+    if in.lighting_receiver == BAKED_RADIANCE_RECEIVER {
+        let radiance = texel.rgb * in.color.rgb * in.baked_irradiance;
         color = radiance / (vec3<f32>(1.0) + radiance);
     }
     if globals.fog_color.a > 0.0 && material.helper.y < 0.5 {

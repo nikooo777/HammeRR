@@ -422,7 +422,24 @@ Pass the returned `token` to `show`, `hide`, `clear` or `cancel` actions, and to
 inspection pages after offset zero. Show loads the complete supported asset set;
 compiler freshness and additional preview-asset observations remain separate.
 The layer does not edit or select authored objects.
-Set `action:"lighting"`, the current `token` and `lighting:"baked_ldr"` to show static base LDR colors. Use `lighting:"editor_shading"` for the default preview. Runtime style records refuse Baked LDR without changing the previous mode. `inspect_compiled_details.lighting` reports the mode, availability and reason. Prepare and Clear reset the mode.
+Use `lighting:"baked_ldr"` for static base colours, or `editor_shading` for the
+default preview. Styled records refuse Baked LDR and preserve the previous mode.
+For radiance, send one complete update:
+
+```json
+{"action":"lighting","token":"…","lighting":"baked_radiance","channel":"hdr","exposure_ev":0,"style_gains":[{"style":1,"gain":0},{"style":2,"gain":1}]}
+```
+
+All three radiance fields are required. Unlisted styles are off; gains are 0–2
+for distinct available styles 1–63. EV is −8 to +8. Legacy modes reject these
+extra fields. Inspection reports options, channel availability, selected raw
+extras, effective linear colour and `base_policy:"shared_native_base"`.
+Dual builds use the shared HDR base for both extra-channel choices. Missing
+selected tables reject styled records; valid zero-style builds need no tables.
+Inspection pages accept `limit:1` through `64`, with at most 63 style extras per
+prop (4,032 extras per page).
+`render_view.compiled_details` binds the actual layer state and lighting policy
+to its image. Prepare and Clear reset options; Hide preserves them.
 
 `get_compile_status` marks a completed job stale when consumed material, detail or physics-definition inputs change. `job.material_source_issue` gives the cause; unused runtime assets remain outside this check.
 

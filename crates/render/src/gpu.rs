@@ -620,6 +620,7 @@ impl Renderer {
                             7 => Uint32,
                             8 => Float32x4,
                             9 => Uint32,
+                            10 => Float32x3,
                         ],
                     })],
                 },

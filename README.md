@@ -102,8 +102,8 @@ See the [tool index and setup](docs/mcp.md).
 
 | [Prop leaf bounds](docs/baked-prop-vertices.md) | [Final compiled details](docs/compiled-details.md) |
 | --- | --- |
-| ![Complete native static-prop leaf bounds](docs/images/prop-leaf-bounds.png) | ![Compiled grass cards and shapes in the editor](docs/images/compiled-details.png) |
-| Show every compiled leaf bound assigned to a static prop. | Inspect final scattered models and cards with baked LDR colors. |
+| ![Complete native static-prop leaf bounds](docs/images/prop-leaf-bounds.png) | ![Final details use baked HDR style colours](docs/images/compiled-detail-radiance.png) |
+| Show every compiled leaf bound assigned to a static prop. | Preview final models and cards with baked LDR/HDR styles. |
 
 | [Map comparison](docs/map-comparison.md) |
 | --- |

@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use compiler::{Control, FileIdentity, asset_sources::AssetSourceGuard};
-use render::{SceneMesh, compiled_details::Lighting};
+use render::{
+    LightingChannel, SceneMesh,
+    compiled_details::{BakedLighting, Lighting, LightingSettings},
+};
 use serde_json::{Value, json};
 use source_formats::{
     bsp::{Bsp, DetailProps, lump},
@@ -24,7 +27,7 @@ const SOURCE_MODE: baked_build::SourceVerification =
     baked_build::SourceVerification::OriginalMetadata {
         maximum_bytes: MAX_METADATA_BYTES,
     };
-const NOTES: &str = "Final native dprp v4 records from the retained successful BSP, including explicit and scattered details; native ordinals have no authored identity. Editor shading is the default preview lighting. Baked LDR uses the native base RGBExp32 divided by 255 as linear modulation, clamped to 0–1 and rounded to 8-bit vertex color, with the editor's sRGB output. It requires zero-style records and applies no editor directional or authored lighting. Runtime styles refuse the complete Baked LDR layer. Fixed native card/cross/tri forms and live full/vertical camera-facing cards remain static. Dynamic lights, sway, avoidance, runtime random card mirroring, fades, HDR, animation, native gamma and native appearance parity are not simulated. Exact pole/coincident views use the Source VectorAngles singular basis. Original compiler source guards and separately captured preview asset observations are checked independently. Preview texture reads do not acquire compiler provenance. Preparation verifies exact MDL/VVD/VTX identities in the shared model cache and refreshes requested stable material IDs. Currentness covers the committed map/settings/content epoch and tracked guards, not every world material. Unapplied drafts are not compiled. The layer never participates in authored picking, bounds, selection or Undo.";
+const NOTES: &str = "Final native dprp v4 records from the retained successful BSP, including explicit and scattered details; native ordinals have no authored identity. Editor shading is the default preview lighting. Baked LDR uses the native base RGBExp32 divided by 255 as linear modulation, clamped to 0–1 and rounded to 8-bit vertex color, with the editor's sRGB output. It requires zero-style records and applies no editor directional or authored lighting. Runtime styles refuse the complete Baked LDR layer. Fixed native card/cross/tri forms and live full/vertical camera-facing cards remain static. Baked radiance selects exact LDR/HDR style extras with explicit static gains and independent EV, preserving linear range until material multiplication and Reinhard display. Dual builds retain one shared HDR base in both extra-channel choices. Dynamic lights, runtime style patterns, sway, avoidance, runtime random card mirroring, fades, animation, native gamma and native appearance parity are not simulated. Exact pole/coincident views use the Source VectorAngles singular basis. Original compiler source guards and separately captured preview asset observations are checked independently. Preview texture reads do not acquire compiler provenance. Preparation verifies exact MDL/VVD/VTX identities in the shared model cache and refreshes requested stable material IDs. Currentness covers the committed map/settings/content epoch and tracked guards, not every world material. Unapplied drafts are not compiled. The layer never participates in authored picking, bounds, selection or Undo.";
 
 struct Pending {
     token: u64,
@@ -43,14 +46,14 @@ pub(super) struct State {
     displayed: bool,
     status: &'static str,
     error: Option<String>,
-    lighting: Lighting,
+    lighting: LightingSettings,
 }
 
 struct Ready {
     build: u64,
     records: DetailProps,
     material: String,
-    ldr_style_records: Option<usize>,
+    baked: BakedLighting,
     geometry: Option<SceneMesh>,
     asset_guard: Option<AssetSourceGuard>,
     asset_bytes: usize,
@@ -68,6 +71,7 @@ pub struct Request {
     identity: Arc<()>,
     control: Control,
     output: FileIdentity,
+    lighting: compiler::LightingMode,
     worker: Ticket,
 }
 
@@ -83,7 +87,7 @@ pub struct Preparation {
 struct Decoded {
     records: DetailProps,
     material: String,
-    ldr_style_records: Option<usize>,
+    baked: BakedLighting,
 }
 
 impl Request {
@@ -93,7 +97,7 @@ impl Request {
 
     pub fn run(self) -> Preparation {
         let records = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            decode(&self.output, &self.control)
+            decode(&self.output, self.lighting, &self.control)
         }))
         .unwrap_or_else(|_| Err("Compiled detail preparation panicked".into()));
         Preparation {
@@ -107,7 +111,11 @@ impl Request {
     }
 }
 
-fn decode(output: &FileIdentity, control: &Control) -> Result<Decoded, String> {
+fn decode(
+    output: &FileIdentity,
+    mode: compiler::LightingMode,
+    control: &Control,
+) -> Result<Decoded, String> {
     let bytes = baked_build::read_owned_bytes_controlled(output, control)?;
     baked_build::decoded_bsp_bound(&bytes)?;
     control.checkpoint()?;
@@ -121,10 +129,20 @@ fn decode(output: &FileIdentity, control: &Control) -> Result<Decoded, String> {
         .detail_props()
         .map_err(|error| error.to_string())?
         .unwrap_or_default();
-    let ldr_style_records = bsp
-        .detail_prop_lighting(false)
-        .map_err(|error| error.to_string())?
-        .map(|records| records.len());
+    let baked = BakedLighting {
+        ldr: bsp
+            .detail_prop_lighting(false)
+            .map_err(|error| error.to_string())?,
+        hdr: bsp
+            .detail_prop_lighting(true)
+            .map_err(|error| error.to_string())?,
+        base_channel: match mode {
+            compiler::LightingMode::Fullbright => None,
+            compiler::LightingMode::DirectLdr => Some(LightingChannel::Ldr),
+            compiler::LightingMode::DirectLdrHdr => Some(LightingChannel::Hdr),
+        },
+    };
+    baked.validate(&records)?;
     let material = if records.props.iter().any(|prop| prop.kind != 0) {
         let blocks = parse_flat_blocks_controlled(
             bsp.entities().map_err(|error| error.to_string())?,
@@ -168,7 +186,7 @@ fn decode(output: &FileIdentity, control: &Control) -> Result<Decoded, String> {
     Ok(Decoded {
         records,
         material,
-        ldr_style_records,
+        baked,
     })
 }
 
@@ -193,6 +211,7 @@ impl Session {
             .as_ref()
             .map_err(|error| baked_build::bounded_message(error))?
             .clone();
+        let lighting = build.options.lighting;
         let build = build.lightmap_identity.token;
         let worker = self
             .compiled_details
@@ -207,7 +226,7 @@ impl Session {
         self.compiled_details.status = "loading";
         self.compiled_details.error = None;
         self.compiled_details.displayed = false;
-        self.compiled_details.lighting = Lighting::EditorShading;
+        self.compiled_details.lighting = LightingSettings::default();
         self.compiled_details.pending = Some(Pending {
             token,
             build,
@@ -222,6 +241,7 @@ impl Session {
             identity,
             control,
             output,
+            lighting,
             worker,
         })
     }
@@ -265,7 +285,7 @@ impl Session {
                         build: prepared.build,
                         records: decoded.records,
                         material: decoded.material,
-                        ldr_style_records: decoded.ldr_style_records,
+                        baked: decoded.baked,
                         geometry: None,
                         asset_guard: None,
                         asset_bytes: 0,
@@ -346,7 +366,7 @@ impl Session {
         self.compiled_details.displayed = false;
         self.compiled_details.status = "not_loaded";
         self.compiled_details.error = None;
-        self.compiled_details.lighting = Lighting::EditorShading;
+        self.compiled_details.lighting = LightingSettings::default();
         self.compiled_details.serial = self.compiled_details.serial.wrapping_add(1);
         self.scene_serial += 1;
     }
@@ -405,9 +425,35 @@ impl Session {
             "status":if self.compiled_details.status.is_empty(){"not_loaded"}else{self.compiled_details.status},
             "worker_active":self.compiled_details.worker.busy(),"requested":self.compiled_details.requested,
             "displayed":self.compiled_details.displayed,"error":self.compiled_details.error,
-            "lighting":self.compiled_details.lighting.name(),
+            "lighting":self.compiled_details.lighting.mode.name(),"lighting_options":self.compiled_details.lighting,
             "complete":self.compiled_details.ready.as_ref().is_some_and(|ready|ready.geometry.is_some()),
             "context_ready":self.detail_context_ready(),"working_region":{"enabled":self.working_region.enabled,"bounds":self.working_region.bounds.map(|bounds|bounds.map(|point|point.to_array()))},"total":self.compiled_details.ready.as_ref().map(|ready|ready.records.props.len())})
+    }
+
+    pub fn compiled_details_lighting_report(&self) -> Value {
+        let ready = self.compiled_details.ready.as_ref();
+        let settings = &self.compiled_details.lighting;
+        let channels = ready.map(|ready| [LightingChannel::Ldr, LightingChannel::Hdr].map(|channel| {
+            let issue = ready.baked.channel_issue(&ready.records, channel);
+            json!({"channel":channel,"available":issue.is_none(),"extra_table_present":ready.baked.table(channel).is_some(),"extra_records":ready.baked.table(channel).map(|table|table.len()),"unavailable_reason":issue})
+        }));
+        let radiance_issue =
+            ready.and_then(|ready| ready.baked.channel_issue(&ready.records, settings.channel));
+        json!({
+            "mode":settings.mode.name(),"channel":settings.channel,"exposure_ev":settings.exposure_ev,"style_gains":settings.style_gains,
+            "baked_ldr_available":ready.map(|ready|render::compiled_details::baked_ldr_issue(&ready.records).is_none()),
+            "unavailable_reason":ready.and_then(|ready|render::compiled_details::baked_ldr_issue(&ready.records)),
+            "radiance_available":ready.map(|_|radiance_issue.is_none()),"radiance_unavailable_reason":radiance_issue,
+            "available_styles":ready.map(|ready|ready.baked.available_styles(&ready.records)),
+            "base_source_channel":ready.and_then(|ready|ready.baked.base_channel),"base_policy":"shared_native_base",
+            "channels":channels,"ldr_style_records":ready.and_then(|ready|ready.baked.ldr.as_ref().map(Vec::len)),
+            "hdr_style_records":ready.and_then(|ready|ready.baked.hdr.as_ref().map(Vec::len)),
+            "display_policy":match settings.mode {
+                Lighting::EditorShading => "ordinary editor material and directional shading; stored baked colors and style extras are not applied",
+                Lighting::BakedLdr => "native base linear RGB / 255; clamp 0–1; round to 8-bit; editor sRGB output; style 0 fixed at unity; no editor lighting; native gamma parity unqualified",
+                Lighting::BakedRadiance => "shared native base RGB / 255 plus selected-channel stored style extras / 255 times explicit gain; omitted gains zero; linear base texture times lighting times 2^EV, per-channel Reinhard, one editor sRGB output; no native gamma or runtime-style parity",
+            }
+        })
     }
 
     pub fn preflight_compiled_details(&mut self) {
@@ -468,6 +514,32 @@ impl Session {
         self.preflight_compiled_details_ownership();
         let state = self.detail_current(&Control::default())?;
         let ready = self.compiled_details.ready.as_ref();
+        let effective = if self.compiled_details.lighting.mode == Lighting::BakedRadiance {
+            ready
+                .map(|ready| {
+                    ready
+                        .records
+                        .props
+                        .iter()
+                        .skip(offset)
+                        .take(limit)
+                        .map(|prop| ready.baked.linear(prop, &self.compiled_details.lighting))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let extras = if self.compiled_details.lighting.mode == Lighting::BakedRadiance {
+            ready.map(|ready| ready.records.props.iter().skip(offset).take(limit).map(|prop| {
+                ready.baked.extras(prop, self.compiled_details.lighting.channel).map(|entries| entries.iter().map(|entry| json!({
+                    "style":entry.style,"rgb":entry.lighting.rgb,"exponent":entry.lighting.exponent,
+                    "linear":render::compiled_details::baked_ldr_linear(entry.lighting),"gain":self.compiled_details.lighting.gain(entry.style)
+                })).collect::<Vec<_>>())
+            }).collect::<Result<Vec<_>,_>>()).transpose()?
+        } else {
+            None
+        };
         let total = ready.map(|ready| ready.records.props.len());
         if total.is_some_and(|total| offset > total) || total.is_none() && offset != 0 {
             return Err("Compiled detail page offset exceeds its retained table".into());
@@ -477,7 +549,7 @@ impl Session {
             "dictionary_index":prop.model,"model":if prop.kind == 0 {ready.records.model_name(usize::from(prop.model)).ok()} else {None},
             "leaf":prop.leaf,"origin":prop.origin,"angles":prop.angles,"scale":if prop.kind == 0 {1.0} else {prop.scale},
             "orientation":prop.orientation,"sway":prop.sway,"shape_angle":prop.shape_angle,"shape_size":prop.shape_size,
-            "lighting":{"rgb":prop.lighting.rgb,"exponent":prop.lighting.exponent,"linear":render::compiled_details::baked_ldr_linear(prop.lighting)},"light_styles":prop.light_styles,"light_style_count":prop.light_style_count,
+            "lighting":{"rgb":prop.lighting.rgb,"exponent":prop.lighting.exponent,"linear":render::compiled_details::baked_ldr_linear(prop.lighting),"effective_linear":effective.as_ref().map(|colors|colors[ordinal-offset]),"style_extras":extras.as_ref().map(|values|&values[ordinal-offset])},"light_styles":prop.light_styles,"light_style_count":prop.light_style_count,
             "source_association":null,
             "bounds":ready.geometry.as_ref().and_then(|mesh|mesh.detail_parts.iter().find(|part|part.ordinal==ordinal)).map(|part|part.bounds.map(|point|point.to_array())),
             "bounds_policy":if prop.kind==1 && prop.orientation!=0 {"conservative_camera_rotation_envelope"}else{"posed_geometry"}
@@ -497,7 +569,7 @@ impl Session {
         let mut report = json!({"status":status,"token":self.detail_token(),
             "build":state.build,"preview_assets":state.preview_assets,"current":state.current,"requested":self.compiled_details.requested,"displayed":self.compiled_details.displayed,"worker_active":self.compiled_details.worker.busy(),
             "complete":ready.is_some_and(|ready|ready.geometry.is_some()),"error":self.compiled_details.error,
-            "lighting":{"mode":self.compiled_details.lighting.name(),"baked_ldr_available":ready.map(|ready|render::compiled_details::baked_ldr_issue(&ready.records).is_none()),"unavailable_reason":ready.and_then(|ready|render::compiled_details::baked_ldr_issue(&ready.records)),"ldr_style_records":ready.and_then(|ready|ready.ldr_style_records),"display_policy":"native base linear RGB / 255; clamp 0–1; round to 8-bit; editor sRGB output; style 0 fixed at unity; no editor lighting; native gamma parity unqualified"},
+            "lighting":self.compiled_details_lighting_report(),
             "suppression_reason":if self.detail_context_ready(){None}else{Some("Use Objects mode and finish editing tools/drafts to show the compiled detail layer")},
             "page":{"offset":offset,"limit":limit,"total":total,"returned":rows.len(),"next_offset":total.filter(|total|offset+rows.len()<*total).map(|_|offset+rows.len()),"rows":rows},
             "sprite_material":ready.map(|ready|ready.material.as_str()),"counts":ready.map(|ready|{
@@ -524,6 +596,16 @@ impl Session {
             report["lighting"]["baked_ldr_available"] = Value::Null;
             report["lighting"]["unavailable_reason"] = Value::Null;
             report["lighting"]["ldr_style_records"] = Value::Null;
+            for field in [
+                "hdr_style_records",
+                "base_source_channel",
+                "available_styles",
+                "channels",
+                "radiance_available",
+                "radiance_unavailable_reason",
+            ] {
+                report["lighting"][field] = Value::Null;
+            }
             report["page"] = json!({"offset":offset,"limit":limit,"total":null,"returned":0,"next_offset":null,"rows":[]});
             for field in [
                 "counts",
@@ -588,7 +670,11 @@ impl Session {
             if ready.geometry.is_none() {
                 let (mut mesh, guard, bytes) =
                     self.prepare_detail_assets(&ready.records, &ready.material, &control)?;
-                mesh.set_compiled_detail_lighting(&ready.records, self.compiled_details.lighting)?;
+                mesh.set_compiled_detail_lighting_options(
+                    &ready.records,
+                    &ready.baked,
+                    &self.compiled_details.lighting,
+                )?;
                 ready.geometry = Some(mesh);
                 ready.asset_guard = Some(guard);
                 ready.asset_bytes = bytes;
@@ -642,9 +728,32 @@ impl Session {
         token: u64,
         lighting: &str,
     ) -> Result<Value, String> {
+        let mode = Lighting::parse(lighting)?;
+        if mode == Lighting::BakedRadiance {
+            return Err(
+                "Baked radiance requires explicit channel, exposure and style gains".into(),
+            );
+        }
+        self.set_compiled_details_lighting_options(
+            actor,
+            token,
+            LightingSettings {
+                mode,
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn set_compiled_details_lighting_options(
+        &mut self,
+        actor: Actor,
+        token: u64,
+        mut lighting: LightingSettings,
+    ) -> Result<Value, String> {
         self.ensure_not_closing()?;
         self.check_detail_token(token)?;
-        let lighting = Lighting::parse(lighting)?;
+        lighting.validate()?;
+        lighting.style_gains.sort_by_key(|entry| entry.style);
         if self.compiled_details.worker.busy() {
             return Err(
                 "Wait for the compiled detail worker before changing preview lighting".into(),
@@ -655,11 +764,7 @@ impl Session {
             .ready
             .as_ref()
             .ok_or("Prepare compiled details first")?;
-        if lighting == Lighting::BakedLdr
-            && let Some(issue) = render::compiled_details::baked_ldr_issue(&ready.records)
-        {
-            return Err(issue);
-        }
+        ready.baked.colors(&ready.records, &lighting)?;
         let control = Control::default();
         if !self.detail_current(&control)?.current {
             return Err("Compiled detail lighting requires the current owned build and unchanged preview assets".into());
@@ -684,13 +789,14 @@ impl Session {
             .as_mut()
             .ok_or("Prepare compiled details first")?;
         if let Some(mesh) = &mut ready.geometry {
-            mesh.set_compiled_detail_lighting(&ready.records, lighting)?;
+            mesh.set_compiled_detail_lighting_options(&ready.records, &ready.baked, &lighting)?;
         }
+        let mode = lighting.mode;
         self.compiled_details.lighting = lighting;
         self.scene_serial += 1;
         self.log(
             actor,
-            format!("Compiled detail preview lighting {}", lighting.name()),
+            format!("Compiled detail preview lighting {}", mode.name()),
         );
         self.inspect_compiled_details(None, 0, MAX_ROWS)
     }

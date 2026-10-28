@@ -1,4 +1,4 @@
-import { Button, ComboBox, TextEdit } from "std-widgets.slint";
+import { Button, ComboBox, Slider, TextEdit } from "std-widgets.slint";
 
 export component CompiledDetailsWindow inherits Window {
     title: "Compiled details - HammeRR";
@@ -17,6 +17,13 @@ export component CompiledDetailsWindow inherits Window {
     in property <bool> next;
     in-out property <int> lighting-index;
     in property <string> lighting-state;
+    in-out property <int> lighting-channel-index;
+    in-out property <float> exposure-ev;
+    in property <[string]> style-options;
+    in-out property <int> style-index;
+    in-out property <float> style-gain;
+    callback choose-style(int);
+    callback apply-lighting();
     callback prepare-details();
     callback cancel-preparation();
     callback clear-details();
@@ -54,14 +61,35 @@ export component CompiledDetailsWindow inherits Window {
                 spacing: 8px;
                 Text { text: "Preview lighting"; vertical-alignment: center; }
                 lighting := ComboBox {
-                    model: ["Editor shading", "Baked LDR"];
+                    model: ["Editor shading", "Baked LDR", "Baked radiance"];
                     current-index <=> root.lighting-index;
                     enabled: root.has-token && !root.worker-active;
                     selected(value) => { root.change-lighting(lighting.current-index); }
                 }
                 Text { text: root.lighting-state; wrap: word-wrap; horizontal-stretch: 1; }
             }
-            Text { text: "Shows final BSP placements. Baked LDR adds static base colors; runtime light styles are unsupported. Cards face the camera. Motion and HDR are not previewed. Details cannot be selected."; wrap: word-wrap; color: #bac2ce; }
+            if root.lighting-index == 2: VerticalLayout {
+                spacing: 8px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "Lighting channel"; vertical-alignment: center; }
+                    ComboBox { model: ["LDR", "HDR"]; current-index <=> root.lighting-channel-index; enabled: root.has-token && !root.worker-active; }
+                    Text { text: "Exposure (EV)"; vertical-alignment: center; }
+                    Slider { minimum: -8; maximum: 8; value <=> root.exposure-ev; enabled: root.has-token && !root.worker-active; horizontal-stretch: 1; }
+                    Text { text: "\{round(root.exposure-ev * 100) / 100}"; width: 55px; vertical-alignment: center; }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "Style"; vertical-alignment: center; }
+                    styles := ComboBox { model: root.style-options; current-index <=> root.style-index; enabled: root.has-token && !root.worker-active && root.style-options.length > 0; selected => { root.choose-style(styles.current-index); } }
+                    Text { text: "Style gain"; vertical-alignment: center; }
+                    Slider { minimum: 0; maximum: 2; value <=> root.style-gain; enabled: root.has-token && !root.worker-active && root.style-options.length > 0; horizontal-stretch: 1; }
+                    Text { text: "\{round(root.style-gain * 100) / 100}"; width: 55px; vertical-alignment: center; }
+                    Button { text: "Apply lighting"; enabled: root.has-token && !root.worker-active; clicked => { root.apply-lighting(); } }
+                }
+                Text { text: "Set style gains and exposure, then Apply lighting. Styles without a gain are off. Both channels use the one stored base colour; a dual build stores the HDR base."; wrap: word-wrap; color: #bac2ce; }
+            }
+            Text { text: "Shows final BSP placements. Baked radiance previews stored style contributions with editor tone mapping. Motion and native appearance are not simulated. Details cannot be selected."; wrap: word-wrap; color: #bac2ce; }
             HorizontalLayout {
                 spacing: 8px;
                 Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }

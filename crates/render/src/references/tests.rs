@@ -15,6 +15,7 @@ fn vertex(position: [f32; 3]) -> Vertex {
         opacity: 0.25,
         texture_alpha: 1,
         tangent: [1.0; 4],
+        baked_irradiance: [1.0, 2.0, 3.0],
         lighting_receiver: 1,
     }
 }
@@ -130,6 +131,7 @@ fn reference_append_filters_owners_preserves_root_and_reuses_edges_for_outlines(
         assert_eq!(source.position, drawn.position);
         assert_eq!(source.normal, drawn.normal);
         assert_eq!(drawn.lighting_receiver, 0);
+        assert_eq!(drawn.baked_irradiance, [0.0; 3]);
         assert_eq!(drawn.lightmap, [0.0; 3]);
         assert_eq!(drawn.tangent, [0.0; 4]);
         assert_eq!(drawn.opacity, 1.0);

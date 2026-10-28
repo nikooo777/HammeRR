@@ -1,5 +1,7 @@
 use std::{cell::RefCell, rc::Rc};
 
+use render::LightingChannel;
+use render::compiled_details::{Lighting, LightingSettings, StyleGain};
 use serde_json::Value;
 use slint::ComponentHandle;
 
@@ -16,6 +18,9 @@ struct State {
     token: Option<u64>,
     offset: usize,
     observation: Option<Value>,
+    lighting: LightingSettings,
+    styles: Vec<u8>,
+    selected_style: Option<u8>,
 }
 
 #[derive(Clone, Copy)]
@@ -28,22 +33,157 @@ enum Action {
     Inspect,
     Page(i32),
     Lighting(i32),
+    ApplyLighting,
+    Style(i32),
 }
 
-fn present(window: &CompiledDetailsWindow, state: &mut State, report: Value, observation: Value) {
+fn mode_index(mode: Lighting) -> i32 {
+    match mode {
+        Lighting::EditorShading => 0,
+        Lighting::BakedLdr => 1,
+        Lighting::BakedRadiance => 2,
+    }
+}
+
+fn read_lighting(value: &Value) -> Result<LightingSettings, String> {
+    Ok(LightingSettings {
+        mode: Lighting::parse(
+            value["mode"]
+                .as_str()
+                .ok_or("Missing detail lighting mode")?,
+        )?,
+        channel: LightingChannel::parse(
+            value["channel"]
+                .as_str()
+                .ok_or("Missing detail lighting channel")?,
+        )?,
+        exposure_ev: value["exposure_ev"]
+            .as_f64()
+            .ok_or("Missing detail exposure")?,
+        style_gains: serde_json::from_value(value["style_gains"].clone())
+            .map_err(|error| format!("Invalid detail style settings: {error}"))?,
+    })
+}
+
+fn show_lighting(window: &CompiledDetailsWindow, settings: &LightingSettings) {
+    window.set_lighting_index(mode_index(settings.mode));
+    window.set_lighting_channel_index(i32::from(settings.channel == LightingChannel::Hdr));
+    window.set_exposure_ev(settings.exposure_ev as f32);
+}
+
+fn show_style(window: &CompiledDetailsWindow, state: &State) {
+    window.set_style_index(
+        state
+            .selected_style
+            .and_then(|style| {
+                state
+                    .styles
+                    .iter()
+                    .position(|&candidate| candidate == style)
+            })
+            .map_or(-1, |index| index as i32),
+    );
+    window.set_style_gain(
+        state
+            .selected_style
+            .map_or(0.0, |style| state.lighting.gain(style)) as f32,
+    );
+}
+
+fn keep_style_gain(window: &CompiledDetailsWindow, state: &mut State) {
+    if let Some(style) = state.selected_style {
+        let gain = f64::from(window.get_style_gain());
+        if let Some(entry) = state
+            .lighting
+            .style_gains
+            .iter_mut()
+            .find(|entry| entry.style == style)
+        {
+            entry.gain = gain;
+        } else {
+            state.lighting.style_gains.push(StyleGain { style, gain });
+        }
+    }
+}
+
+fn chosen_lighting(
+    window: &CompiledDetailsWindow,
+    state: &mut State,
+    index: i32,
+) -> Result<LightingSettings, String> {
+    let mode = match index {
+        0 => Lighting::EditorShading,
+        1 => Lighting::BakedLdr,
+        2 => Lighting::BakedRadiance,
+        _ => return Err("Unknown compiled detail lighting mode".into()),
+    };
+    if mode != Lighting::BakedRadiance {
+        return Ok(LightingSettings {
+            mode,
+            ..Default::default()
+        });
+    }
+    let channel = match window.get_lighting_channel_index() {
+        0 => LightingChannel::Ldr,
+        1 => LightingChannel::Hdr,
+        _ => return Err("Unknown compiled detail lighting channel".into()),
+    };
+    keep_style_gain(window, state);
+    Ok(LightingSettings {
+        mode,
+        channel,
+        exposure_ev: f64::from(window.get_exposure_ev()),
+        style_gains: state.lighting.style_gains.clone(),
+    })
+}
+
+fn present(
+    window: &CompiledDetailsWindow,
+    state: &mut State,
+    report: Value,
+    observation: Value,
+) -> Result<(), String> {
     state.token = report["token"]
         .as_str()
         .and_then(|token| token.parse().ok());
     state.observation = Some(observation);
     window.set_has_token(state.token.is_some());
     window.set_worker_active(report["worker_active"].as_bool().unwrap_or(false));
-    window.set_lighting_index(i32::from(report["lighting"]["mode"] == "baked_ldr"));
-    window.set_lighting_state(
-        report["lighting"]["unavailable_reason"]
-            .as_str()
-            .unwrap_or("Baked LDR: native base lighting, zero runtime styles")
-            .into(),
+    state.lighting = read_lighting(&report["lighting"])?;
+    let styles: Option<Vec<u8>> =
+        serde_json::from_value(report["lighting"]["available_styles"].clone())
+            .map_err(|error| format!("Invalid detail style list: {error}"))?;
+    state.styles = styles.unwrap_or_default();
+    state.selected_style = state
+        .selected_style
+        .filter(|style| state.styles.contains(style))
+        .or_else(|| state.styles.first().copied());
+    window.set_style_options(
+        Rc::new(slint::VecModel::from(
+            state
+                .styles
+                .iter()
+                .map(|style| slint::SharedString::from(format!("Style {style}")))
+                .collect::<Vec<_>>(),
+        ))
+        .into(),
     );
+    show_lighting(window, &state.lighting);
+    show_style(window, state);
+    let lighting_state = if report["lighting"]["baked_ldr_available"].is_null() {
+        "Prepare details to inspect lighting"
+    } else {
+        match state.lighting.mode {
+            Lighting::EditorShading => "Editor shading",
+            Lighting::BakedLdr => report["lighting"]["unavailable_reason"]
+                .as_str()
+                .unwrap_or("Stored static base colours"),
+            Lighting::BakedRadiance => report["lighting"]["radiance_unavailable_reason"]
+                .as_str()
+                .unwrap_or("Shared base + selected style contributions"),
+        }
+    };
+    window.set_lighting_state(lighting_state.into());
     window.set_state(
         format!(
             "{} · requested {} · displayed {} · complete geometry {}",
@@ -118,6 +258,7 @@ fn present(window: &CompiledDetailsWindow, state: &mut State, report: Value, obs
         );
     }
     window.set_message(messages.join("\n").into());
+    Ok(())
 }
 
 fn perform(
@@ -126,6 +267,18 @@ fn perform(
     state: &Rc<RefCell<State>>,
     action: Action,
 ) -> Result<(), String> {
+    if let Action::Style(index) = action {
+        let mut state = state.borrow_mut();
+        let selected = usize::try_from(index)
+            .ok()
+            .and_then(|index| state.styles.get(index))
+            .copied()
+            .ok_or("Choose an available detail style")?;
+        keep_style_gain(window, &mut state);
+        state.selected_style = Some(selected);
+        show_style(window, &state);
+        return Ok(());
+    }
     if matches!(action, Action::Prepare) {
         let request = lock(shared).begin_compiled_details(Actor::User)?;
         let token = request.token();
@@ -177,17 +330,19 @@ fn perform(
                 offset.saturating_add(64)
             };
         }
-        Action::Lighting(index) => {
-            session.set_compiled_details_lighting(
+        lighting_action @ (Action::Lighting(_) | Action::ApplyLighting) => {
+            let index = match lighting_action {
+                Action::Lighting(index) => index,
+                _ => window.get_lighting_index(),
+            };
+            let settings = chosen_lighting(window, &mut state.borrow_mut(), index)?;
+            session.set_compiled_details_lighting_options(
                 Actor::User,
                 token.ok_or("Prepare compiled details first")?,
-                match index {
-                    0 => "editor_shading",
-                    1 => "baked_ldr",
-                    _ => return Err("Unknown compiled detail lighting mode".into()),
-                },
+                settings,
             )?;
         }
+        Action::Style(_) => unreachable!(),
         Action::Prepare | Action::Inspect => {}
     }
     let offset = state.borrow().offset;
@@ -203,7 +358,7 @@ fn perform(
         &mut state.borrow_mut(),
         report,
         session.compiled_details_observation(),
-    );
+    )?;
     Ok(())
 }
 
@@ -222,7 +377,10 @@ fn handler(
             target.with_shared(|shared| perform(&window, shared, &state, action(value)))
         });
         if let Err(error) = result {
-            if matches!(action(value), Action::Lighting(_)) {
+            if matches!(
+                action(value),
+                Action::Lighting(_) | Action::ApplyLighting | Action::Style(_)
+            ) {
                 let _ = target.upgrade().and_then(|target| {
                     target.with_shared(|shared| perform(&window, shared, &state, Action::Inspect))
                 });
@@ -269,6 +427,9 @@ pub(super) fn bind(
     let callback = handler(&window, access, &state, |_| Action::Hide);
     window.on_hide_details(move || callback(0));
     window.on_change_lighting(handler(&window, access, &state, Action::Lighting));
+    window.on_choose_style(handler(&window, access, &state, Action::Style));
+    let callback = handler(&window, access, &state, |_| Action::ApplyLighting);
+    window.on_apply_lighting(move || callback(0));
     let callback = handler(&window, access, &state, |_| Action::Inspect);
     window.on_refresh_inspection(move || callback(0));
     window.on_page_records(handler(&window, access, &state, Action::Page));
@@ -298,10 +459,24 @@ impl Form {
         self.window.set_page("".into());
         self.window
             .set_worker_active(observation["worker_active"].as_bool().unwrap_or(false));
+        let settings = match read_lighting(&observation["lighting_options"]) {
+            Ok(settings) => settings,
+            Err(error) => {
+                self.window.set_message(error.into());
+                return;
+            }
+        };
+        show_lighting(&self.window, &settings);
+        {
+            let mut state = self.state.borrow_mut();
+            state.lighting = settings;
+            state.styles.clear();
+            state.selected_style = None;
+            self.window.set_style_options(slint::ModelRc::default());
+            show_style(&self.window, &state);
+        }
         self.window
-            .set_lighting_index(i32::from(observation["lighting"] == "baked_ldr"));
-        self.window
-            .set_lighting_state("Refresh inspection to check Baked LDR availability".into());
+            .set_lighting_state("Refresh inspection to check channels and styles".into());
         self.state.borrow_mut().token = observation["token"]
             .as_str()
             .and_then(|token| token.parse::<u64>().ok())

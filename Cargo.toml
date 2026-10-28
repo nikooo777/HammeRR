@@ -59,10 +59,12 @@ debug = 0
 incremental = false
 
 [profile.dev.package.editor-core]
+opt-level = 0
 debug = "line-tables-only"
 incremental = false
 
 [profile.test.package.editor-core]
+opt-level = 0
 debug = "line-tables-only"
 incremental = false
 

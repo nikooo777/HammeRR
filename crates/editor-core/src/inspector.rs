@@ -120,8 +120,16 @@ fn dynamic_model(entity: &Entity, class: Option<&Class>) -> bool {
             .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
 }
 
-fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
-    let property = class.and_then(|class| class.property(&key));
+fn field(entity: &Entity, class: Option<&Class>, key: String, stored_value: Option<&str>) -> Field {
+    let material_emission = compiler::is_material_emission_key(&key)
+        && entity
+            .classname()
+            .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"));
+    let property = if material_emission {
+        None
+    } else {
+        class.and_then(|class| class.property(&key))
+    };
     let lower = key.to_ascii_lowercase();
     let dynamic_model = dynamic_model(entity, class);
     let detail_tint = lower == "_detail_lighting_tint"
@@ -159,9 +167,12 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
             |property| property.kind.as_str(),
         )
     };
-    let value = entity
-        .properties
-        .get(&key)
+    let stored = if material_emission {
+        stored_value
+    } else {
+        entity.properties.get(&key)
+    };
+    let value = stored
         .map(str::to_owned)
         .or_else(|| water_current.then(|| WATER_CURRENT_DEFAULT.into()))
         .or_else(|| water_damping.then(|| compiler::DEFAULT_WATER_DAMPING.to_string()))
@@ -216,6 +227,22 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
     }
     if generated_detail_tint {
         result.description = "Three integer linear RGB channels from 0 to 255 attenuate baked lighting on all generated detail models, cards and shapes. White preserves their lighting; 128 approximately halves a linear channel. Explicit detail entities keep their own tint. Compiler Fullbright starts from tinted white; dynamic lights and the client's mat_fullbright override keep their engine behavior. This map-wide control does not edit dictionary entries.".into();
+    }
+    if material_emission {
+        result.label = "Emission file".into();
+        result.description = format!(
+            "Mounted relative path, up to {} ASCII bytes. Blank turns emission off. Compile to bake light from the declared world/detail materials. Fullbright does not bake emission.",
+            compiler::MAX_MATERIAL_EMISSION_FILE_PATH_BYTES
+        );
+        result.advanced = false;
+        if let Err(error) = compiler::validate_material_emission_file(&result.value) {
+            result
+                .description
+                .push_str(&format!(" Stored emission file is invalid: {error}"));
+        }
+        if let Err(error) = compiler::material_emission_file_field(&entity.properties) {
+            result.description.push_str(&format!(" {error}"));
+        }
     }
     if water_current {
         result.label = "Liquid current · world units/s".into();
@@ -457,18 +484,25 @@ fn field(entity: &Entity, class: Option<&Class>, key: String) -> Field {
 }
 
 pub fn inspect(entity: &Entity, class: Option<&Class>) -> Inspector {
-    let mut names: Vec<String> = entity
+    let mut names: Vec<(String, Option<&str>)> = entity
         .properties
         .iter()
-        .map(|(key, _)| key.into())
+        .map(|(key, value)| (key.into(), Some(value)))
         .collect();
     if let Some(class) = class {
         for property in &class.properties {
+            if entity
+                .classname()
+                .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"))
+                && compiler::is_material_emission_key(&property.name)
+            {
+                continue;
+            }
             if !names
                 .iter()
-                .any(|name| name.eq_ignore_ascii_case(&property.name))
+                .any(|(name, _)| name.eq_ignore_ascii_case(&property.name))
             {
-                names.push(property.name.clone());
+                names.push((property.name.clone(), None));
             }
         }
     }
@@ -476,26 +510,32 @@ pub fn inspect(entity: &Entity, class: Option<&Class>) -> Inspector {
         && render::models::scale_editable(entity)
         && !names
             .iter()
-            .any(|name| name.eq_ignore_ascii_case("modelscale"))
+            .any(|(name, _)| name.eq_ignore_ascii_case("modelscale"))
     {
-        names.push("modelscale".into());
+        names.push(("modelscale".into(), None));
     }
     if entity
         .classname()
         .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"))
     {
+        if !names
+            .iter()
+            .any(|(name, _)| name == compiler::MATERIAL_EMISSION_FILE_KEY)
+        {
+            names.push((compiler::MATERIAL_EMISSION_FILE_KEY.into(), None));
+        }
         for key in [
             compiler::WATER_CURRENT_VELOCITY_KEY,
             compiler::WATER_DAMPING_KEY,
         ] {
-            if !names.iter().any(|name| name.eq_ignore_ascii_case(key)) {
-                names.push(key.into());
+            if !names.iter().any(|(name, _)| name.eq_ignore_ascii_case(key)) {
+                names.push((key.into(), None));
             }
         }
     }
     let mut properties: Vec<Field> = names
         .into_iter()
-        .map(|key| field(entity, class, key))
+        .map(|(key, value)| field(entity, class, key, value))
         .collect();
     properties.sort_by_key(|field| {
         let priority = match field.key.to_ascii_lowercase().as_str() {

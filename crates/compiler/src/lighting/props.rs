@@ -311,6 +311,19 @@ impl<'fs, 'tracking> Assets<'fs, 'tracking> {
         .map_err(|error| format!("Brush texture shadows material {name}: {error}"))
     }
 
+    pub(super) fn brush_opaque_material(
+        &mut self,
+        name: &str,
+        budget: &mut Budget<'_>,
+    ) -> Result<Material, String> {
+        crate::brush_shadow_casters::validate_material_with_reader(
+            name,
+            &mut |path| self.read_brush_material(path, budget),
+            false,
+        )
+        .map_err(|error| format!("Material emission source {name}: {error}"))
+    }
+
     fn read_brush_material(
         &mut self,
         path: &str,

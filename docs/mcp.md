@@ -530,6 +530,21 @@ The same inspection accepts `target: {"kind":"position","source":{"kind":"positi
 
 Use the same roots/direction/depth and snapshot with `select_entity_graph` (`mode`: `replace`, `add`, `remove`, `toggle`) or `frame_entity_graph` (optional `aspect`: 0.01–100, default 1). Both recompute all reached nodes within the depth, including roots, independently of search and pages. Stale/foreign snapshots and active geometry work refuse before mutation. Framing preserves selection. Saved-hidden entities, expanded instances and unapplied drafts are excluded. Wildcard-prefix, missing, malformed and class/runtime-dependent references never become guessed concrete links. Count, work, field-byte, page and storage ceilings are returned in `limits`; exceeding them refuses the complete request.
 
+### Material emission
+
+1. Call `begin_property_edit {"world":true}`.
+2. Pass its draft token to `update_property_edit` with
+   `changes:[{"action":"set","key":"_hammerr_emission_file","value":"scripts/room.rad"}]`.
+3. Call `commit_property_edit` with the same token, then compile normally.
+
+Use `cancel_property_edit` to discard, or action `remove` in a new draft to
+disable emission. File paths use shared validation; compilation checks the
+mounted file and materials. `get_compile_settings.material_emission_description`
+describes the capability. Build results report actual counts, area, per-channel
+power and sampling work under `stats.material_emission`. Empty source counts
+do not establish illumination. See [Material emission](material-emission.md)
+for source, sampling and native HDR limits.
+
 ## Tool reference
 
 The server publishes the complete parameter schema for every tool.

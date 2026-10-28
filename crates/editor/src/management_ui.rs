@@ -788,3 +788,6 @@ mod water_current_tests;
 
 #[cfg(test)]
 mod water_damping_tests;
+
+#[cfg(test)]
+mod material_emission_tests;

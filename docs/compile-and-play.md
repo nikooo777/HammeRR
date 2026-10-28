@@ -110,6 +110,9 @@ Set **SunSpreadAngle** for soft sun shadows. Only sky-visible rays admit the sky
 
 ![Baked lighting and shadows in the compiled courtyard](images/courtyard-native-shadows.png)
 
+Use [material emission](material-emission.md) to bake light from supported
+world/detail surfaces through **World settings… → Emission file**.
+
 ### Bounced light
 
 Choose one to four diffuse bounces under **Indirect light**.

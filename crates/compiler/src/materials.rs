@@ -238,6 +238,10 @@ impl<'a> Materials<'a> {
         &self.infos[index]
     }
 
+    pub(crate) fn cached(&self, canonical_name: &str) -> Option<usize> {
+        self.by_name.get(canonical_name).copied()
+    }
+
     pub(crate) fn track_prop_lighting_sources(
         &mut self,
         mode: PropSourceMode,

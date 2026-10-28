@@ -168,6 +168,11 @@ impl<'a> Expansion<'a> {
             return Err(format!("Instance sources exceed {MAX_TOTAL_NODES} nodes"));
         }
         let child = Vmf::from_nodes(&parsed).map_err(|error| error.to_string())?;
+        if crate::lighting::emission::file(&child.world.properties)?.is_some() {
+            return Err(format!(
+                "Instance {relative}: child Emission file is unsupported; select the assembled material declaration file in the root World settings"
+            ));
+        }
         let targets = targets::LocalIndex::new(&child, &mut self.work, self.control)
             .map_err(|error| format!("Instance {relative}: {error}"))?;
         let positions = targets.positions(&mut self.work, self.control)?;

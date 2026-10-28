@@ -919,6 +919,8 @@ fn point_admission_distinguishes_brush_boundary_band_terrain_owners_and_budget()
     let empty_terrain = ShadowIndex::new(Vec::<Triangle>::new(), &mut |_| Ok(())).unwrap();
     let empty_props = ShadowIndex::new(Vec::<PropTriangle>::new(), &mut |_| Ok(())).unwrap();
     let mut ctx = receivers::Context {
+        emission: None,
+        kind: source_formats::bsp::LightingKind::Ldr,
         lights: &[],
         shadows: &brushes,
         terrain: &empty_terrain,
@@ -1004,6 +1006,8 @@ fn point_admission_distinguishes_brush_boundary_band_terrain_owners_and_budget()
         }
         let mixed = ShadowIndex::new(triangles, &mut |_| Ok(())).unwrap();
         let overlap = receivers::Context {
+            emission: None,
+            kind: source_formats::bsp::LightingKind::Ldr,
             props: &mixed,
             ..ctx
         };
@@ -1069,6 +1073,8 @@ fn unknown_cluster_samples_all_lights_and_floor_intervals_decide_contact_visibil
     let terrain = ShadowIndex::new(Vec::<Triangle>::new(), &mut |_| Ok(())).unwrap();
     let props = ShadowIndex::new(Vec::<PropTriangle>::new(), &mut |_| Ok(())).unwrap();
     let mut ctx = receivers::Context {
+        emission: None,
+        kind: source_formats::bsp::LightingKind::Ldr,
         lights: &lights,
         shadows: &brushes,
         terrain: &terrain,

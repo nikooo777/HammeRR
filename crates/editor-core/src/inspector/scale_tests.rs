@@ -28,12 +28,12 @@ fn model_scale_control_uses_native_default_and_preserves_unsupported_authored_va
     }
     entity.properties.set("modelscale", "0.5");
     assert_eq!(
-        field(&entity, None, "modelscale".into()).control,
+        field(&entity, None, "modelscale".into(), None).control,
         Control::Number
     );
     for raw in ["0", "NaN", "2 2 2", "65"] {
         entity.properties.set("modelscale", raw);
-        let field = field(&entity, None, "modelscale".into());
+        let field = field(&entity, None, "modelscale".into(), None);
         assert_eq!(field.control, Control::Text);
         assert_eq!(field.value, raw);
         assert!(!field.advanced);

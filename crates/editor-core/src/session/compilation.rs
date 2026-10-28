@@ -799,6 +799,7 @@ impl Session {
         };
         settings["lighting_work_limit"] = self.compilation.options.lighting_work_limit.into();
         settings["light_value_bindings"] = instance_reference::light_value_binding_scope();
+        settings["material_emission_description"] = "World settings → Emission file (_hammerr_emission_file) selects an optional mounted relative declaration file; blank or Remove override turns emission off. File contents and source assets validate at compile time. Finite-area sources use sampled baked lighting; dynamic receivers use indexed ambient lighting only. No native emission records or shader glow. Direct LDR + HDR with emitting faces requires a real authored point, spot or environment world light; zero brightness is allowed.".into();
         settings["lighting_work_limit_range"] = json!({
             "min":compiler::MIN_LIGHTING_WORK_LIMIT,
             "max":compiler::MAX_LIGHTING_WORK_LIMIT,

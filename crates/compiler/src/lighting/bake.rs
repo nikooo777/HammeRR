@@ -29,6 +29,7 @@ pub(super) const SAMPLE_BIAS: f64 = 0.5;
 #[derive(Debug, Default)]
 pub(crate) struct BakeStats {
     pub world_light_origins: crate::world_light_origins::WorldLightOrigins,
+    pub material_emission: Option<super::emission::MaterialEmissionStats>,
     pub brush_shadow_models: usize,
     pub prop_lighting_assets: Option<crate::prop_lighting_assets::PropLightingPlan>,
     pub prop_vertex_lighting: Option<crate::PropVertexLightingStats>,
@@ -260,7 +261,7 @@ impl Budget<'_> {
         )
     }
 
-    fn with_options(control: &Control, options: crate::Options) -> Budget<'_> {
+    pub(super) fn with_options(control: &Control, options: crate::Options) -> Budget<'_> {
         Budget {
             work: 0,
             progress: LightingProgress::new(options.lighting_work_limit, options.sky_quality),
@@ -977,6 +978,7 @@ fn mapped_colors(
 
 pub(crate) struct Settings<'a> {
     pub control: &'a Control,
+    pub emission: Option<super::emission::Input<'a>>,
     pub instances: &'a crate::instances::Prepared<'a>,
     pub fs: &'a source_formats::gamefs::GameFs,
     pub vmf: &'a source_formats::vmf::Vmf,
@@ -1073,16 +1075,35 @@ pub(crate) fn bake(
     visibility: &Visibility,
     bsp: &mut Bsp,
     report: &mut Report,
-    settings: Settings<'_>,
+    mut settings: Settings<'_>,
     progress: &mut Option<LightingProgress>,
 ) -> Result<BakeStats, String> {
-    let mut budget = Budget::with_options(settings.control, settings.options);
-    let result = bake_inner(map, tree, visibility, bsp, report, settings, &mut budget);
+    let (mut budget, emission) = match settings.emission.take() {
+        Some(input) => {
+            let (budget, declarations) = input.into_parts();
+            (budget, Some(declarations))
+        }
+        None => (
+            Budget::with_options(settings.control, settings.options),
+            None,
+        ),
+    };
+    let result = bake_inner(
+        map,
+        tree,
+        visibility,
+        bsp,
+        report,
+        settings,
+        emission.as_ref(),
+        &mut budget,
+    );
     budget.progress.completed = result.is_ok() && !report.has_errors();
     *progress = Some(budget.progress);
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn bake_inner(
     map: &Map,
     tree: &Tree,
@@ -1090,6 +1111,7 @@ fn bake_inner(
     bsp: &mut Bsp,
     report: &mut Report,
     settings: Settings<'_>,
+    emission_input: Option<&super::emission::Declarations>,
     budget: &mut Budget<'_>,
 ) -> Result<BakeStats, String> {
     let control = budget.control;
@@ -1110,6 +1132,7 @@ fn bake_inner(
         budget.reserve::<crate::detail_props::Tint>(settings.detail_lighting_tints.len())?;
     let brush_textures = settings
         .brush_material_sources
+        .filter(|_| options.brush_texture_shadows)
         .map(|sources| super::brush_alpha::prepare(map, settings.fs, sources, budget))
         .transpose()?;
     if options.brush_texture_shadows && brush_textures.is_none() {
@@ -1298,6 +1321,18 @@ fn bake_inner(
         None
     };
     budget.phase(LightingPhase::Preparation);
+    let emission = emission_input
+        .map(|input| {
+            super::emission::prepare(
+                input,
+                map,
+                bsp,
+                settings.face_sources,
+                settings.instances,
+                budget,
+            )
+        })
+        .transpose()?;
     bsp.set_records(&infos);
     if !map.terrains.is_empty() {
         let mut data = bsp
@@ -1351,6 +1386,7 @@ fn bake_inner(
             .map_err(|error| error.to_string())?;
     }
     let ctx = ChannelContext {
+        emission: emission.as_ref(),
         world_leaf_nodes: settings.world_leaf_nodes,
         map,
         tree,
@@ -1454,12 +1490,14 @@ fn bake_inner(
     if let Some(hdr) = &mut stats.hdr {
         hdr.lighting_work = budget.progress.hdr_work as usize;
     }
+    stats.material_emission = emission.as_ref().map(super::emission::Prepared::stats);
     stats.total_work = budget.work;
     stats.brush_shadow_models = brush_shadow_models;
     Ok(stats)
 }
 
 struct ChannelContext<'a> {
+    emission: Option<&'a super::emission::Prepared>,
     instances: &'a crate::instances::Prepared<'a>,
     brush_textures: Option<&'a super::brush_alpha::Prepared>,
     face_sources: &'a [std::sync::Arc<[u32]>],
@@ -1572,6 +1610,7 @@ fn bake_channel(
     budget.channel(kind);
     let start_work = budget.work;
     let ChannelContext {
+        emission,
         instances,
         brush_textures,
         face_sources,
@@ -1604,6 +1643,12 @@ fn bake_channel(
         .flat_map(Emitter::world_lights)
         .flatten()
         .count();
+    if emission.is_some_and(super::emission::Prepared::has_sources)
+        && kind == LightingKind::Hdr
+        && count == 0
+    {
+        return Err("HDR material emission requires at least one real authored point/spot/environment world light; add an authored light (zero brightness is allowed) or use Direct LDR. The installed engine does not activate HDR without WORLDLIGHTS_HDR; no substitute light is generated".into());
+    }
     if count > MAX_WORLD_LIGHTS {
         return Err(
             "Direct lighting exceeds the 8,192 world-light limit including sky ambient".into(),
@@ -1656,6 +1701,8 @@ fn bake_channel(
         tree,
         visibility,
         direct: super::receivers::Context {
+            emission,
+            kind,
             lights: &lights,
             shadows,
             terrain: terrain_shadows,
@@ -1904,6 +1951,30 @@ fn bake_channel(
                     }
                 }
                 budget.phase(LightingPhase::Direct);
+                if let Some(emission) = emission {
+                    let mut contributions = [DVec3::ZERO; super::bump::MAPS];
+                    for (map_index, &shading) in normals.iter().enumerate().take(plan.map_count()) {
+                        contributions[map_index] = emission.gather(
+                            kind,
+                            super::emission::Sample {
+                                point,
+                                normal: shading,
+                                origin,
+                                face: Some(plan.face),
+                                angular: super::ReceiverAngularMode::Normal,
+                            },
+                            super::emission::Context {
+                                shadows,
+                                terrain: terrain_shadows,
+                                props: prop_shadows,
+                                model: model_shadows[plan.model].as_ref(),
+                                skip_owner: None,
+                            },
+                            budget,
+                        )?;
+                    }
+                    channels.add(0, None, &contributions, &mut color, budget)?;
+                }
                 candidates.stats.evaluated += evaluated;
                 candidates.stats.range_skipped += range_skipped;
                 channels.finish_sample(t * width + s, &color, budget)?;
@@ -2046,6 +2117,7 @@ fn bake_channel(
     budget.phase(LightingPhase::AmbientProbes);
     let ambient = super::probes::bake(
         &super::probes::Context {
+            emission,
             brush_textures,
             face_sources,
             world_leaf_nodes,
@@ -2068,6 +2140,7 @@ fn bake_channel(
     budget.phase(LightingPhase::DetailProps);
     *detail_lighting = super::details::bake(
         &super::details::Context {
+            emission,
             brush_textures,
             face_sources,
             map,

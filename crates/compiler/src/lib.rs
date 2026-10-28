@@ -72,6 +72,10 @@ pub use cubemap_assets::{
 pub use detail_props::{
     GENERATED_DETAIL_LIGHTING_TINT_KEY, validate_generated_detail_lighting_tint,
 };
+pub use lighting::emission::{
+    MATERIAL_EMISSION_FILE_KEY, MAX_MATERIAL_EMISSION_FILE_PATH_BYTES, MaterialEmissionStats,
+    is_material_emission_key, material_emission_file_field, validate_material_emission_file,
+};
 pub use physics::current::{
     MAX_WATER_CURRENT_SPEED, MAX_WATER_CURRENT_VALUE_BYTES, WATER_CURRENT_COMPONENTS,
     WATER_CURRENT_VELOCITY_KEY, validate_water_current_velocity,
@@ -490,6 +494,8 @@ pub struct HdrLightingStats {
 
 #[derive(Debug, Default, serde::Serialize)]
 pub struct Stats {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub material_emission: Option<MaterialEmissionStats>,
     pub brush_shadow_models: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instances: Option<instances::InstanceStats>,
@@ -1067,6 +1073,7 @@ fn build(
     let vmf = prepared_instances.compilation_vmf()?;
     let mut face_origins = face_origins::FaceOrigins::prepare(vmf, prepared_instances);
     options.validate()?;
+    let emission_file = lighting::emission::file(&vmf.world.properties)?;
     let water_current = physics::current::from_world(vmf, options.physics)?;
     let water_damping = physics::damping::from_world(vmf, options.physics)?;
     control.advance(Stage::Loading)?;
@@ -1109,7 +1116,8 @@ fn build(
             .material_sources
             .clone()
             .unwrap_or_else(|| {
-                if !caster_requests.is_empty()
+                if emission_file.is_some()
+                    || !caster_requests.is_empty()
                     || options.pack_water_assets
                     || options.pack_static_prop_assets
                     || options.brush_texture_shadows
@@ -1121,6 +1129,19 @@ fn build(
                 }
             }),
     );
+    let emission_input = lighting::emission::preflight(
+        prepared_instances,
+        fs,
+        material_sources
+            .as_ref()
+            .ok_or("Emission material capture is unavailable")?,
+        options,
+        control,
+        &mut output.report,
+    )?;
+    output.stats.material_emission = emission_input
+        .as_ref()
+        .map(lighting::emission::Input::stats);
     if let Some(sources) = &material_sources
         && let Err(diagnostic) = brush_shadow_casters::validate(
             &caster_requests,
@@ -1664,6 +1685,7 @@ fn build(
             &mut output.report,
             lighting::Settings {
                 control,
+                emission: emission_input,
                 instances: prepared_instances,
                 fs,
                 vmf,
@@ -1680,7 +1702,7 @@ fn build(
                 prop_asset_sources: prop_stats.source_owner.as_ref(),
                 brush_material_sources: material_sources
                     .as_ref()
-                    .filter(|_| options.brush_texture_shadows),
+                    .filter(|_| options.brush_texture_shadows || emission_file.is_some()),
             },
             &mut output.stats.lighting_progress,
         );
@@ -1700,7 +1722,25 @@ fn build(
         if output.report.has_errors() {
             return Ok(());
         }
+        if let Some(emission) = &stats.material_emission {
+            let message = if emission.source_faces == 0 {
+                "Material emission: no rendered source faces; no emission was baked".into()
+            } else {
+                format!(
+                    "Material emission: {} source faces, {:.3} square units, {} LDR and {} HDR shadow rays",
+                    emission.source_faces,
+                    emission.source_area,
+                    emission.channel_rays[0],
+                    emission.channel_rays[1],
+                )
+            };
+            output
+                .report
+                .diagnostics
+                .push(Diagnostic::info(message, None, None));
+        }
         output.world_light_origins = Some(std::sync::Arc::new(stats.world_light_origins));
+        output.stats.material_emission = stats.material_emission;
         output.stats.world_lights = stats.lights;
         output.stats.light_styles = stats.light_styles;
         output.stats.styled_faces = stats.styled_faces;

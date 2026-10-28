@@ -730,6 +730,8 @@ fn flagged_unknown_cluster_keeps_world_terrain_other_unknown_and_tied_prop_block
     ] {
         let props = ShadowIndex::new(triangles, &mut |_| Ok(())).unwrap();
         let ctx = receivers::Context {
+            emission: None,
+            kind: source_formats::bsp::LightingKind::Ldr,
             lights: &lights,
             shadows: brushes,
             terrain,

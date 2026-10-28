@@ -12,6 +12,7 @@ mod brush_alpha;
 mod bump;
 mod culling;
 mod details;
+pub(crate) mod emission;
 mod falloff;
 mod models;
 mod normals;

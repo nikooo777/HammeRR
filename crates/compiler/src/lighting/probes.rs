@@ -28,6 +28,7 @@ const EXTRA_DIRECTION_WORK: usize = CUBE_AXES.len() * 16;
 const EXTRA_CUBE_WORK: usize = CUBE_AXES.len() * 32;
 
 pub(super) struct Context<'a> {
+    pub emission: Option<&'a super::emission::Prepared>,
     pub brush_textures: Option<&'a super::brush_alpha::Prepared>,
     pub face_sources: &'a [std::sync::Arc<[u32]>],
     pub kind: LightingKind,
@@ -312,7 +313,7 @@ pub(super) fn bake(
                     .world_position(leaf)
                     .map_err(|error| error.to_string())?,
             );
-            let colors = gather(ctx.directions, &mut |direction| {
+            let mut colors = gather(ctx.directions, &mut |direction| {
                 Ok(surfaces
                     .trace(
                         point,
@@ -324,6 +325,28 @@ pub(super) fn bake(
                     )?
                     .map_or(DVec3::ZERO, |hit| hit.color))
             })?;
+            if let Some(emission) = ctx.emission {
+                for (color, normal) in colors.iter_mut().zip(CUBE_AXES) {
+                    *color += emission.gather(
+                        ctx.kind,
+                        super::emission::Sample {
+                            point,
+                            normal,
+                            origin: point,
+                            face: None,
+                            angular: super::ReceiverAngularMode::Normal,
+                        },
+                        super::emission::Context {
+                            shadows: ctx.shadows,
+                            terrain: ctx.terrain,
+                            props: ctx.prop_shadows,
+                            model: None,
+                            skip_owner: None,
+                        },
+                        budget,
+                    )? / 255.0;
+                }
+            }
             for (slot, color) in sample.cube.iter_mut().zip(colors) {
                 *slot = encode_color(color)?;
             }

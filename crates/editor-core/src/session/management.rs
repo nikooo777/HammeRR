@@ -24,6 +24,10 @@ mod water_damping_tests;
 #[path = "management/light_value_binding_tests.rs"]
 mod light_value_binding_tests;
 
+#[cfg(test)]
+#[path = "management/material_emission_tests.rs"]
+mod material_emission_tests;
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ObjectFilter {
     pub query: Option<String>,
@@ -515,6 +519,35 @@ impl Session {
                         "{key} cannot be changed here; use References and rename for entity names"
                     ));
                 }
+                if classname.eq_ignore_ascii_case("worldspawn")
+                    && compiler::is_material_emission_key(key)
+                {
+                    if key != compiler::MATERIAL_EMISSION_FILE_KEY {
+                        return Err(format!(
+                            "World requires one canonical {} key; resolve noncanonical or duplicate keys before editing",
+                            compiler::MATERIAL_EMISSION_FILE_KEY
+                        ));
+                    }
+                    compiler::material_emission_file_field(&entity.properties)?;
+                    match change {
+                        PropertyChange::Set { value, .. } => {
+                            compiler::validate_material_emission_file(value)?;
+                            source_formats::keyvalues::validate_string(value)
+                                .map_err(|error| format!("{key}: {error}"))?;
+                            entity.properties.set(key, value);
+                        }
+                        PropertyChange::Remove { .. } => {
+                            entity.properties.remove(key);
+                        }
+                        _ => {
+                            return Err(
+                                "Emission file is an optional text path; set a value or remove the override"
+                                    .into(),
+                            );
+                        }
+                    }
+                    continue;
+                }
                 if entity.properties.get_all(key).count() > 1 {
                     return Err(format!(
                         "entity:{} has duplicate {key} keys; resolve them before editing",
@@ -663,6 +696,8 @@ impl Session {
         });
         let mut properties = Vec::new();
         for mut field in fields {
+            let material_emission =
+                target == PropertyTarget::World && compiler::is_material_emission_key(&field.key);
             let generated_detail_tint = target == PropertyTarget::World
                 && field
                     .key
@@ -677,11 +712,16 @@ impl Session {
             let mut compatible = true;
             for entity in &entities {
                 let class = self.definitions.class(entity.classname().unwrap_or(""));
-                let property = class.and_then(|class| class.property(&field.key));
+                let property = if material_emission {
+                    None
+                } else {
+                    class.and_then(|class| class.property(&field.key))
+                };
                 if entity.properties.get(&field.key).is_none()
                     && property.is_none()
                     && !water_current
                     && !water_damping
+                    && !material_emission
                     || property.is_some_and(|property| {
                         (!generated_detail_tint
                             && !water_current
@@ -693,7 +733,15 @@ impl Session {
                     compatible = false;
                     break;
                 }
-                let stored = entity.properties.get(&field.key).map(str::to_owned);
+                let stored = if material_emission {
+                    entity
+                        .properties
+                        .iter()
+                        .find(|(name, _)| *name == field.key)
+                        .map(|_| field.value.clone())
+                } else {
+                    entity.properties.get(&field.key).map(str::to_owned)
+                };
                 let default = property.and_then(|property| property.default_value());
                 values.push(PropertyValue {
                     object: if target == PropertyTarget::World {

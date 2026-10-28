@@ -27,6 +27,7 @@ pub(super) struct Channel {
 }
 
 pub(super) struct Context<'a> {
+    pub emission: Option<&'a super::emission::Prepared>,
     pub brush_textures: Option<&'a super::brush_alpha::Prepared>,
     pub face_sources: &'a [std::sync::Arc<[u32]>],
     pub map: &'a Map<'a>,
@@ -105,6 +106,8 @@ fn direct(
     let cluster = cluster(ctx, point, budget)?;
     super::receivers::direct(
         &super::receivers::Context {
+            emission: ctx.emission,
+            kind: ctx.kind,
             lights: ctx.lights,
             shadows: ctx.shadows,
             terrain: ctx.terrain,
@@ -662,6 +665,7 @@ mod tests {
         let terrain = ShadowIndex::new(Vec::new(), &mut |work| budget.consume(work)).unwrap();
         let props = ShadowIndex::new(Vec::new(), &mut |work| budget.consume(work)).unwrap();
         let ctx = Context {
+            emission: None,
             brush_textures: None,
             face_sources: &[],
             map: &map,

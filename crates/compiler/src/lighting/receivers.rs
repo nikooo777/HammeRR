@@ -9,6 +9,8 @@ use crate::{map::Map, tree::Tree, visibility::Visibility};
 pub(super) const STYLE_COUNT: usize = 64;
 
 pub(super) struct Context<'a> {
+    pub emission: Option<&'a super::emission::Prepared>,
+    pub kind: source_formats::bsp::LightingKind,
     pub lights: &'a [Emitter],
     pub shadows: &'a ShadowIndex<Occluder>,
     pub terrain: &'a ShadowIndex<Triangle>,
@@ -175,6 +177,27 @@ pub(super) fn direct_with_reception(
                 }
             }
         }
+    }
+    if let Some(emission) = ctx.emission {
+        budget.clear_emitter();
+        colors[0] += emission.gather(
+            ctx.kind,
+            super::emission::Sample {
+                point: sample.point,
+                normal: sample.normal,
+                origin: sample.origin,
+                face: None,
+                angular: reception.angular,
+            },
+            super::emission::Context {
+                shadows: ctx.shadows,
+                terrain: ctx.terrain,
+                props: ctx.props,
+                model: None,
+                skip_owner: reception.skip_owner,
+            },
+            budget,
+        )?;
     }
     budget.restore(context);
     Ok(colors)

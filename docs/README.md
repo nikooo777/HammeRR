@@ -67,6 +67,7 @@ See [Status](status.md) for supported features and limits.
 ## Compile and play
 
 - [Compile and play](compile-and-play.md)
+- [Material emission](material-emission.md)
 - [Build recipes](build-recipes.md)
 - [Compile regions](compile-regions.md)
 - [Physics](physics.md)

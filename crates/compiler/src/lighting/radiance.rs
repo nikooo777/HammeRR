@@ -41,11 +41,11 @@ struct Radiance {
     alpha: Option<super::brush_alpha::Face>,
 }
 
-struct SourceBoundary {
-    plane: usize,
-    equation: map_core::Plane,
-    sides: Arc<[u32]>,
-    owners: Vec<usize>,
+pub(super) struct SourceBoundary {
+    pub(super) plane: usize,
+    pub(super) equation: map_core::Plane,
+    pub(super) sides: Arc<[u32]>,
+    pub(super) owners: Vec<usize>,
 }
 
 impl SourceBoundary {
@@ -92,6 +92,57 @@ impl SourceBoundary {
         }
         Ok((false, work))
     }
+}
+
+pub(super) fn source_blocked(
+    shadows: &ShadowIndex<Occluder>,
+    start: DVec3,
+    end: DVec3,
+    boundary: Option<&SourceBoundary>,
+    error: f64,
+    budget: &mut Budget<'_>,
+) -> Result<bool, String> {
+    let pending = Cell::new(0usize);
+    let blocker = shadows.nearest(
+        start,
+        end,
+        &mut |work| {
+            budget.consume(
+                work.checked_add(pending.replace(0))
+                    .ok_or("Radiance source certificate work overflow")?,
+            )
+        },
+        &mut |hull| {
+            let Some(interval) = hull.interval(start, end)? else {
+                return Ok(None);
+            };
+            if let Some(boundary) = boundary {
+                let (terminal, work) = boundary.terminal(hull, interval, start, end, error)?;
+                pending.set(
+                    pending
+                        .get()
+                        .checked_add(work)
+                        .ok_or("Radiance source certificate work overflow")?,
+                );
+                if terminal {
+                    return Ok(None);
+                }
+            }
+            if hull
+                .optical
+                .as_ref()
+                .is_none_or(|optical| optical.faces.is_empty())
+            {
+                Ok(Some((interval.entering, ())))
+            } else {
+                Ok(hull
+                    .optical_entry(start, end)?
+                    .map(|(fraction, _)| (fraction, ())))
+            }
+        },
+    );
+    budget.consume(pending.replace(0))?;
+    Ok(blocker?.is_some())
 }
 
 struct Layer {
@@ -661,48 +712,14 @@ impl SurfaceIndex {
         {
             return Ok(None);
         }
-        let pending = Cell::new(0usize);
-        let blocker = shadows.nearest(
+        if source_blocked(
+            shadows,
             point,
             position,
-            &mut |work| {
-                budget.consume(
-                    work.checked_add(pending.replace(0))
-                        .ok_or("Radiance source certificate work overflow")?,
-                )
-            },
-            &mut |hull| {
-                let Some(interval) = hull.interval(point, position)? else {
-                    return Ok(None);
-                };
-                if let Some(boundary) = &radiance.boundary {
-                    let (terminal, work) =
-                        boundary.terminal(hull, interval, point, position, boundary_error)?;
-                    pending.set(
-                        pending
-                            .get()
-                            .checked_add(work)
-                            .ok_or("Radiance source certificate work overflow")?,
-                    );
-                    if terminal {
-                        return Ok(None);
-                    }
-                }
-                if hull
-                    .optical
-                    .as_ref()
-                    .is_none_or(|optical| optical.faces.is_empty())
-                {
-                    Ok(Some((interval.entering, ())))
-                } else {
-                    Ok(hull
-                        .optical_entry(point, position)?
-                        .map(|(fraction, _)| (fraction, ())))
-                }
-            },
-        );
-        budget.consume(pending.replace(0))?;
-        if blocker?.is_some() {
+            radiance.boundary.as_ref(),
+            boundary_error,
+            budget,
+        )? {
             return Ok(None);
         }
         let distance = fraction * super::sky::TRACE_LENGTH;

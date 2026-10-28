@@ -28,7 +28,13 @@ pub struct BrowseMaterialsArgs {
     pub query: Option<String>,
     pub group: Option<String>,
     pub offset: Option<usize>,
+    #[schemars(range(min = 1, max = 200))]
     pub limit: Option<usize>,
+    /// all (default), directory, vpk, unavailable, or an exact ID from sources. Filters winning mounts, not shadowed copies; no stock-content inference.
+    pub source: Option<String>,
+    /// Exclude every maps/... material, including generated patches and cubemap variants. This path filter also excludes authored materials under maps/.
+    #[serde(default)]
+    pub exclude_generated_map_materials: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -63,7 +69,10 @@ pub struct BrowseModelsArgs {
     pub group: Option<String>,
     pub offset: Option<usize>,
     /// 1 to 100, default 60. Listing does not decode model meshes.
+    #[schemars(range(min = 1, max = 100))]
     pub limit: Option<usize>,
+    /// all (default), directory, vpk, unavailable, or an exact ID from sources. Selects the current winning mount; no stock-content inference.
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -182,8 +191,16 @@ pub struct RenderModelArgs {
 pub struct SearchMaterialsArgs {
     /// Case-insensitive substring, e.g. 'brick', 'cs_italy', 'tools/'.
     pub query: String,
-    /// Maximum results (default 50).
+    /// Maximum results from 1 to 200 (default 50).
+    #[schemars(range(min = 1, max = 200))]
     pub limit: Option<usize>,
+    /// Result offset (default 0).
+    pub offset: Option<usize>,
+    /// all (default), directory, vpk, unavailable, or an exact ID from sources. Selects the current winning mount; no stock-content inference.
+    pub source: Option<String>,
+    /// Exclude every maps/... material, including generated patches and cubemap variants. Also excludes authored materials under maps/.
+    #[serde(default)]
+    pub exclude_generated_map_materials: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

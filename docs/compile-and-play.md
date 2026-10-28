@@ -83,6 +83,18 @@ For a basic areaportal:
 `func_areaportalwindow` additionally uses a rendered window brush model and distance-fade settings.
 Unsupported portal shapes or bindings stop the build.
 
+Failed BSP splits report the captured plane and volume bounds. Source candidates
+are listed separately; a shared plane does not identify one brush as the cause.
+Visibility-limit errors include refused work and input geometry counts.
+Repeated unsupported-material warnings show affected brush/side totals and
+bounded source examples.
+
+Materials with `%compilepassbullets` compile as **GRATE** contents while retaining
+their authored drawing and alpha settings. They do not seal the map. Player
+collision and shots follow engine masks; CS:S bullets use grate penetration
+logic. Conflicting special contents reject. Existing texture-shadow limits
+still apply.
+
 ## Lighting
 
 Point and spot lights support color, brightness, falloff and checked directions.

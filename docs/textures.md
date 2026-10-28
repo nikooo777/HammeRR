@@ -18,6 +18,12 @@ Apply materials and control their placement on brush faces.
 **Cancel** preserves the previous choice. Object mode applies the material to complete brushes.
 The browser includes **Used in this map**, **Recently applied** and **Favorites**.
 
+Use **Winning VMT source** to filter by the directory or VPK that supplies each
+material. **Exclude maps/ materials** hides all `maps/` paths, including authored
+ones. A lower-priority source does not reveal a shadowed copy.
+Source labels describe the current VMT lookup. Cached preview pixels do not
+carry physical-source provenance; use **Reload material assets** after changes.
+
 ## Edit face textures
 
 1. Select faces and open **Edit face textures…**.

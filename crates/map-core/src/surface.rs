@@ -557,6 +557,9 @@ pub fn edit_faces(
                 crate::displacement::Operation::VertexMove { vertices, offset } => {
                     crate::displacement::brush::move_vertices(&geometry, info, vertices, *offset)?
                 }
+                crate::displacement::Operation::VertexSet { vertices } => {
+                    crate::displacement::brush::set_vertices(&geometry, info, vertices)?
+                }
             });
         }
         changed += usize::from(*side != before);

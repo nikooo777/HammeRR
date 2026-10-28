@@ -7,6 +7,8 @@ use std::sync::{Condvar, PoisonError, Weak};
 
 mod save_all;
 pub use save_all::SaveAllRequest;
+mod quit;
+pub use quit::{QuitReservation, WorkspaceQuitReview};
 
 pub const DOCUMENT_LIMIT: usize = 2;
 
@@ -306,12 +308,9 @@ impl Workspace {
         if entry.state != WorkspaceDocumentState::Live {
             return Err("The document is closing or closed".into());
         }
-        if membership_busy
-            && entry.visibility == DocumentVisibility::Visible
-            && visibility != DocumentVisibility::Visible
-        {
+        if membership_busy && entry.visibility != visibility {
             return Err(
-                "Wait for the document creation or close before hiding this document".into(),
+                "Wait for the document operation before changing document visibility".into(),
             );
         }
         entry.visibility = visibility;
@@ -354,7 +353,7 @@ impl Workspace {
                     .all(|peer| peer.visibility == DocumentVisibility::Hidden)
             {
                 return Err(
-                    "Show the other document before closing the last visible document".into(),
+                    "The last visible document has hidden peers. Use Quit all… in Open documents (MCP: get_quit_review, quit_all) to review and close every map, or Show the hidden peer first".into(),
                 );
             }
             CloseDisposition::DocumentOnly
@@ -367,6 +366,30 @@ impl Workspace {
             committed: false,
             finished: None,
         })
+    }
+
+    pub fn close_requires_quit_all(&self, selector: &str) -> Result<bool, String> {
+        let state = self
+            .core
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        ensure_available(&state)?;
+        let entry = state
+            .documents
+            .iter()
+            .find(|entry| entry.selector == selector)
+            .ok_or("Unknown or closed document")?;
+        let peers = state
+            .documents
+            .iter()
+            .filter(|peer| peer.selector != selector && peer.state == WorkspaceDocumentState::Live)
+            .collect::<Vec<_>>();
+        Ok(entry.visibility == DocumentVisibility::Visible
+            && !peers.is_empty()
+            && peers
+                .iter()
+                .all(|peer| peer.visibility == DocumentVisibility::Hidden))
     }
 
     pub fn close_admission(&self) {

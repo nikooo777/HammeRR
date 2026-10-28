@@ -32,6 +32,28 @@ Use [Polygon brushes](polygon-brushes.md) for custom outlines.
 Arches also have inset, start-angle and sweep controls.
 Their bounds describe the complete ellipse; a 180° sweep creates half an ellipse.
 
+## Import a block batch
+
+1. Click **Import brush batch…** beside **Brush shapes…**.
+2. Select a JSON file with a `blocks` array.
+3. Inspect the selected brushes. **Undo** removes the complete batch.
+
+```json
+{"blocks":[
+  {"mins":[0,0,0],"maxs":[128,64,16],"material":"brick/brickwall001a","texture_scale":[0.5,0.5],"lightmap_scale":32},
+  {"center":[256,64,32],"size":[64,16,64],"rotation":[0,0,22.5]}
+],"snap":false}
+```
+
+Each block uses either `mins`/`maxs` or `center`/`size`. Rotation uses world X,
+then Y, then Z, about that block's center. Texture placement follows rotation.
+Coordinates stay exact by default; `snap:true` also requires shared **Snap**.
+An invalid block rejects the whole batch.
+
+Limits: 256 blocks, 512 KiB per file, thickness at least 0.125 units, and final
+bounds within ±65536 units. Texture scales must be finite and nonzero;
+lightmap scales are 1–1024 units.
+
 ## Transform handles
 
 1. Select the objects.

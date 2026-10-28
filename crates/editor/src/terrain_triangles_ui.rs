@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, BTreeSet},
+    io::Read,
     rc::Rc,
 };
 
@@ -16,6 +17,9 @@ use crate::{
     runtime::{DocumentAccess, DocumentContinuation},
     session::{Actor, Session},
 };
+use editor_core::session::terrain_vertices::{
+    MAX_HEIGHT_CSV_BYTES, VertexSetFace, VertexSource, parse_height_csv,
+};
 
 #[cfg(test)]
 use crate::runtime::SharedSession;
@@ -26,6 +30,7 @@ struct Target {
     highlight: Option<u64>,
     selected: BTreeMap<FaceId, BTreeSet<usize>>,
     vertices: bool,
+    source: VertexSource,
 }
 
 impl Target {
@@ -125,7 +130,7 @@ fn populate(
                 )
                 .into(),
                 detail: format!(
-                    "World ({:.1}, {:.1}, {:.1})   Blend {:.0} / 255",
+                    "World ({}, {}, {})   Blend {} / 255",
                     p.x, p.y, p.z, grid.mesh.alphas[id]
                 )
                 .into(),
@@ -208,13 +213,100 @@ fn edited(
     window.set_ready(false);
     window.set_message(
         if target.vertices {
-            "Use selection to keep these exact vertices as a brush mask."
+            "Enter world Z and Preview height, import a height CSV, or Use selection to keep a brush mask."
         } else {
             "Preview the selected triangle settings before applying."
         }
         .into(),
     );
     Ok(())
+}
+
+fn height_csv(path: &str) -> Result<Vec<VertexSetFace>, String> {
+    if path.is_empty() {
+        return Err("Choose a terrain height CSV file".into());
+    }
+    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() || metadata.len() > MAX_HEIGHT_CSV_BYTES as u64 {
+        return Err("Choose a regular terrain height CSV file no larger than 512 KiB".into());
+    }
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    if !file
+        .metadata()
+        .map_err(|error| error.to_string())?
+        .is_file()
+    {
+        return Err("Choose a regular terrain height CSV file".into());
+    }
+    let mut text = String::new();
+    file.take(MAX_HEIGHT_CSV_BYTES as u64 + 1)
+        .read_to_string(&mut text)
+        .map_err(|error| error.to_string())?;
+    parse_height_csv(&text)
+}
+
+fn preview_vertices(
+    window: &TerrainTrianglesWindow,
+    session: &mut Session,
+    target: &mut Target,
+    csv: bool,
+) -> Result<usize, String> {
+    target.check(session)?;
+    if !target.vertices {
+        return Err("Choose Vertices before setting absolute terrain heights".into());
+    }
+    if crate::face_edit_ui::foreign_preview(session, target.preview) {
+        return Err(
+            "Another face preview is active. Apply or cancel it before setting heights.".into(),
+        );
+    }
+    let targets = if csv {
+        let targets = height_csv(&window.get_height_csv_path())?;
+        if targets
+            .iter()
+            .any(|target_face| !target.context.faces.contains(&target_face.face))
+        {
+            return Err(
+                "CSV faces must belong to the surfaces selected when this dialog opened".into(),
+            );
+        }
+        targets
+    } else {
+        let z = window
+            .get_absolute_height()
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "Enter a finite world Z within ±65536")?;
+        target
+            .targets()
+            .into_iter()
+            .map(|(face, vertices)| VertexSetFace {
+                face,
+                vertices: vertices
+                    .into_iter()
+                    .map(|vertex| map_core::displacement::VertexSet {
+                        vertex,
+                        value: map_core::displacement::VertexValue::WorldZ(z),
+                    })
+                    .collect(),
+            })
+            .collect()
+    };
+    let count = session.preview_terrain_vertex_set(Actor::User, &targets, target.source)?;
+    target.preview = session.face_preview_token();
+    populate(window, session, target)?;
+    window.set_ready(true);
+    window.set_message(
+        format!(
+            "Preview sets {} vertices on {count} changed surfaces. Apply keeps one Undo step.",
+            targets
+                .iter()
+                .map(|target| target.vertices.len())
+                .sum::<usize>()
+        )
+        .into(),
+    );
+    Ok(count)
 }
 
 fn with_session<R>(
@@ -457,6 +549,32 @@ impl Controller {
                 });
             }
         });
+        window.on_preview_height({
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
+            move || {
+                with_session(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut()
+                        && let Err(error) = preview_vertices(window, session, target, false)
+                    {
+                        window.set_message(error.into());
+                    }
+                });
+            }
+        });
+        window.on_preview_height_csv({
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
+            move || {
+                with_session(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut()
+                        && let Err(error) = preview_vertices(window, session, target, true)
+                    {
+                        window.set_message(error.into());
+                    }
+                });
+            }
+        });
         window.on_select_volume({
             let (window, continuation, target) =
                 (window.as_weak(), access.downgrade(), target.clone());
@@ -543,7 +661,7 @@ impl Controller {
                     let result = target.check(session).and_then(|_| {
                         let token = target
                             .preview
-                            .ok_or("Preview selected triangles before applying")?;
+                            .ok_or("Preview the terrain edit before applying")?;
                         session.check_face_preview_token(Some(token))?;
                         session.commit_face_preview(Actor::User)
                     });
@@ -613,12 +731,15 @@ impl Controller {
         self.window.set_walkable_index(0);
         self.window.set_buildable_index(0);
         self.window.set_kind_index(0);
+        self.window.set_absolute_height(String::new().into());
+        self.window.set_height_csv_path(String::new().into());
         let target = Target {
             context: crate::face_edit_ui::Context::capture(session, faces),
             preview: None,
             highlight: None,
             selected: BTreeMap::new(),
             vertices: false,
+            source: session.terrain_vertex_source(),
         };
         populate(&self.window, session, &target)?;
         *self.target.borrow_mut() = Some(target);

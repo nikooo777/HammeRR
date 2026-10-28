@@ -34,6 +34,15 @@ struct ShowArgs {
     focus: Option<bool>,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct QuitArgs {
+    /// Exact token from get_quit_review for the complete current workspace.
+    review_token: String,
+    /// Explicit consent to discard every reviewed unsaved change and draft.
+    discard_changes: bool,
+}
+
 fn command<T: schemars::JsonSchema>(name: &'static str, description: &'static str) -> Tool {
     let schema =
         serde_json::to_value(schemars::schema_for!(T)).expect("Tool schema serialization failed");
@@ -59,11 +68,13 @@ pub(super) fn tools() -> Result<Vec<Tool>, String> {
                 .clone(),
         );
         if tool.name == close::TOOL_NAME {
-            tool.description = Some("Close the pinned document using its fresh get_map_info.document_close review_token and explicit discard_changes consent. With a live peer, drains and retires only this document and returns an ordinary result while the shared MCP service stays open. Closing the last live document verifies exact terminal output before stopping the shared service and quitting. Accepted cleanup survives caller cancellation. Show a hidden peer before closing the last visible window.".into());
+            tool.description = Some("Close the pinned document using its fresh get_map_info.document_close review_token and explicit discard_changes consent. With a live peer, drains and retires only this document and returns an ordinary result while the shared MCP service stays open. Closing the last live document verifies exact terminal output before stopping the shared service and quitting. Accepted cleanup survives caller cancellation. For the last visible window with hidden peers, use get_quit_review and quit_all to review and close the complete workspace, or show a hidden peer first.".into());
         }
     }
     tools.extend([
         command::<EmptyArgs>("list_documents", "List up to two fixed documents, opaque routing selectors, cached map/work state, visibility and capacity. Read-only; does not poll game or UI state."),
+        command::<EmptyArgs>("get_quit_review", "Inspect the exact complete workspace for Quit all, including hidden documents, identities, unsaved changes, drafts, owned work and active admissions. Returns one combined review_token. Does not close documents. Busy or unavailable workspace documents refuse explicitly."),
+        command::<QuitArgs>("quit_all", "Quit every document using the exact fresh get_quit_review review_token and explicit discard_changes consent. Takes no document selector. Preflight validates every document before freezing workspace membership and all Session/admission gates together. Any changed review, busy admitted request, concurrent operation, missing consent or response reservation failure leaves all maps live. Accepted cleanup survives caller cancellation, cancels/drains owned work and retires all UI hosts. Per-document cleanup failures retain failed entries and source claims. Exact terminal response delivery precedes shared MCP service shutdown and native application quit."),
         command::<EmptyArgs>("save_all_named_maps", "Save all named maps through the same Open documents… action. Takes no arguments or document selector. Freezes up to two admitted document identities before scheduling, then attempts each once using its own Session.save and original source claim. Clean named maps verify their original source identity without writing. Unnamed dirty maps require Save as, pending reviews are preserved and block saving, and stale/busy/closing/source/write errors remain per-document results. Partial results return isError with complete:false/status:not_complete. No path invention, file chooser, focus, window show, rollback across documents or automatic retry."),
         command::<EmptyArgs>("new_document", "Create a second independent untitled document without replacing an existing buffer. Desktop creation is hidden until show_document; headless creation stays headless. Rejects full or busy workspace."),
         command::<OpenArgs>("open_document", "Open an absolute VMF path in a new independent document, without replacing existing buffers. Requires a free workspace slot and path claims. Desktop creation is hidden until show_document."),
@@ -186,7 +197,7 @@ impl ServerHandler for WorkspaceServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(rmcp::model::ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new("hammerr", env!("CARGO_PKG_VERSION")))
-            .with_instructions(format!("{}\nWorkspace: use list_documents to obtain opaque document_id selectors. Every document tool accepts this optional top-level string. Omission is allowed only with exactly one live document. Each call stays pinned to that document; focus never changes routing. new_document/open_document add a second independent buffer; show_document explicitly presents it. save_all_named_maps takes no selector and saves the fixed admitted named-map set with explicit per-document failures; unnamed dirty maps require Save as and pending reviews remain unchanged. Existing new_map/open_map still replace their pinned buffer. Results carry io.hammerr/document metadata without changing content payloads.", crate::mcp::INSTRUCTIONS))
+            .with_instructions(format!("{}\nWorkspace: use list_documents to obtain opaque document_id selectors. Every document tool accepts this optional top-level string. Omission is allowed only with exactly one live document. Each call stays pinned to that document; focus never changes routing. new_document/open_document add a second independent buffer; show_document explicitly presents it. save_all_named_maps takes no selector and saves the fixed admitted named-map set with explicit per-document failures; unnamed dirty maps require Save as and pending reviews remain unchanged. get_quit_review inspects every map, including hidden peers; quit_all takes that combined review_token and explicit discard_changes consent, then closes every reviewed map and exits after terminal output delivery. Both workspace quit tools take no document selector. Existing new_map/open_map still replace their pinned buffer. Results carry io.hammerr/document metadata without changing content payloads.", crate::mcp::INSTRUCTIONS))
     }
 
     async fn call_tool(
@@ -201,6 +212,8 @@ impl ServerHandler for WorkspaceServer {
                 | "new_document"
                 | "open_document"
                 | "show_document"
+                | "get_quit_review"
+                | "quit_all"
         ) {
             let pinned = if request.name == "show_document" {
                 request
@@ -221,10 +234,32 @@ impl ServerHandler for WorkspaceServer {
                 }
                 return Ok(result.into());
             }
+            if request.name == "quit_all" {
+                let args: QuitArgs = parse(request.arguments)?;
+                let receiver =
+                    match self
+                        .0
+                        .quit_all_mcp(&args.review_token, args.discard_changes, &context)
+                    {
+                        Ok(receiver) => receiver,
+                        Err(error) => return crate::mcp::fail(error).map(Into::into),
+                    };
+                return match receiver.await {
+                    Ok(result) => Ok(result.into()),
+                    Err(_) => crate::mcp::fail(
+                        "The accepted Quit all result owner was lost; cleanup remains required",
+                    )
+                    .map(Into::into),
+                };
+            }
             let value = match request.name.as_ref() {
                 "list_documents" => {
                     let _: EmptyArgs = parse(request.arguments)?;
                     self.0.list_documents()
+                }
+                "get_quit_review" => {
+                    let _: EmptyArgs = parse(request.arguments)?;
+                    self.0.quit_review().map(|review| review.inspection())
                 }
                 "save_all_named_maps" => {
                     let _: EmptyArgs = parse(request.arguments)?;

@@ -205,6 +205,9 @@ fn managed_queue_bounds_admission_serializes_fifo_and_preserves_captured_content
     started.recv_timeout(TIMEOUT).unwrap();
     let frozen = lock(b.document.session()).document().vmf().clone();
     let source = std::fs::read(&b.source).unwrap();
+    let previous_output = b"previous B output";
+    std::fs::write(&b.output, previous_output).unwrap();
+    let captured_brushes = Arc::new(Mutex::new(None));
     let second_order = order.clone();
     let second = b.submit(&client, move || second_order.lock().unwrap().push("b"));
     let third_order = order.clone();
@@ -241,7 +244,7 @@ fn managed_queue_bounds_admission_serializes_fifo_and_preserves_captured_content
     );
     assert_eq!(b.token(), token);
     assert!(!a.output.exists());
-    assert!(!b.output.exists());
+    assert_eq!(std::fs::read(&b.output).unwrap(), previous_output);
     edit(b.document.session());
     let newer = lock(b.document.session()).document().vmf().clone();
     let history = lock(b.document.session()).history_snapshot();
@@ -267,11 +270,26 @@ fn managed_queue_bounds_admission_serializes_fifo_and_preserves_captured_content
         .unwrap();
     e.access().cancel_compile(Actor::User, e.token()).unwrap();
     assert!(wait(fifth).is_err());
+    let observed_brushes = captured_brushes.clone();
+    *queue.core.before_completion.lock().unwrap() = Some(Box::new(move |result| {
+        let result = result.as_ref().unwrap();
+        assert!(result.output.bsp.is_some());
+        assert!(!result.published());
+        *observed_brushes.lock().unwrap() = Some(result.output.stats.brushes);
+    }));
     release.send(()).unwrap();
     assert!(wait(first).unwrap().0.published());
-    let second = wait(second).unwrap().0;
-    assert!(second.published());
-    assert_eq!(second.output.stats.brushes, frozen.world.solids.len());
+    let second = wait(second).err().unwrap();
+    assert_eq!(
+        second,
+        "Map, content, runtime or build settings changed during build publication; previous output preserved"
+    );
+    assert_eq!(
+        *captured_brushes.lock().unwrap(),
+        Some(frozen.world.solids.len())
+    );
+    assert_eq!(std::fs::read(&b.output).unwrap(), previous_output);
+    assert!(!b.output.with_extension("lin").exists());
     assert!(wait(third).unwrap().0.published());
     assert_eq!(&*order.lock().unwrap(), &["a", "b", "c"]);
     let state = lock(b.document.session());
@@ -279,6 +297,8 @@ fn managed_queue_bounds_admission_serializes_fifo_and_preserves_captured_content
     assert_eq!(state.history_snapshot(), history);
     assert!(state.document().is_dirty());
     assert_eq!(std::fs::read(&b.source).unwrap(), source);
+    assert_eq!(state.compile_status()["job"]["status"], "failed");
+    assert_eq!(state.compile_status()["job"]["result"]["error"], second);
     assert!(state.compile_status()["job"]["queue"]["position"].is_null());
     drop(state);
     queue.shutdown().unwrap();

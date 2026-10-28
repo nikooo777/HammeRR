@@ -1,9 +1,14 @@
 use super::*;
 use editor_core::runtime::{DocumentAccess, DocumentContinuation};
+use slint::Model;
 
 #[cfg(test)]
 #[path = "materials_alpha_tests.rs"]
 mod alpha_tests;
+
+#[cfg(test)]
+#[path = "materials_provenance_tests.rs"]
+mod provenance_tests;
 
 pub(crate) fn preview_image(preview: &session::MaterialPreview) -> slint::Image {
     preview
@@ -113,6 +118,19 @@ fn refresh_material_window_with_favorites(
             }
             if channel == session::MaterialPreviewChannel::Alpha {
                 detail.push_str("\nAlpha bytes as grayscale; shader opacity is separate.");
+            }
+            detail.push_str("\nPreview physical origin unavailable; it was not captured with the cached pixels.");
+            match session.material_catalog_provenance(&preview.name) {
+                Ok(provenance) => match provenance.source {
+                    Some(source) => detail.push_str(&format!(
+                        "\nCurrent VMT lookup: {} · {}",
+                        source.kind, source.mount
+                    )),
+                    None => detail.push_str("\nCurrent VMT source unavailable"),
+                },
+                Err(error) => {
+                    detail.push_str(&format!("\nCurrent VMT source unavailable: {error}"))
+                }
             }
             window.set_detail(detail.into());
         }
@@ -963,23 +981,34 @@ fn refresh_material_catalog_with_favorites(
 ) {
     window.set_favorites_revision(favorites.serial.to_string().into());
     refresh_favorites_status(window, favorites);
+    let source = window
+        .get_source_ids()
+        .row_data(window.get_source_index().max(0) as usize)
+        .map(|source| source.to_string())
+        .unwrap_or_else(|| "all".into());
+    let filter = editor_core::materials::CatalogFilter {
+        source: Some(source.clone()),
+        exclude_generated_map_materials: window.get_exclude_generated_map_materials(),
+    };
     let loaded = session
-        .material_catalog_with_favorites(
+        .material_catalog_filtered_with_favorites(
             &window.get_filter(),
             &window.get_group(),
             window.get_offset().max(0) as usize,
             36,
+            &filter,
             favorites,
         )
         .and_then(|catalog| {
             let last_page = catalog.total.saturating_sub(1) / 36 * 36;
             if catalog.offset > last_page {
                 window.set_offset(last_page as i32);
-                session.material_catalog_with_favorites(
+                session.material_catalog_filtered_with_favorites(
                     &window.get_filter(),
                     &window.get_group(),
                     last_page,
                     36,
+                    &filter,
                     favorites,
                 )
             } else {
@@ -999,6 +1028,30 @@ fn refresh_material_catalog_with_favorites(
             return;
         }
     };
+    let mut source_ids = vec![
+        "all".into(),
+        "directory".into(),
+        "vpk".into(),
+        "unavailable".into(),
+    ];
+    let mut source_labels = vec![
+        "All sources".into(),
+        "Directories".into(),
+        "VPK archives".into(),
+        "Unavailable".into(),
+    ];
+    for source in &catalog.sources {
+        source_ids.push(slint::SharedString::from(source.id.as_str()));
+        source_labels.push(format!("{} · {}", source.kind, source.mount).into());
+    }
+    window.set_source_index(
+        source_ids
+            .iter()
+            .position(|candidate| candidate.as_str() == source)
+            .unwrap_or(0) as i32,
+    );
+    window.set_source_ids(ModelRc::new(VecModel::from(source_ids)));
+    window.set_source_labels(ModelRc::new(VecModel::from(source_labels)));
     let groups = catalog
         .groups
         .into_iter()
@@ -1031,6 +1084,10 @@ fn refresh_material_catalog_with_favorites(
                 .unwrap_or_default(),
             name: entry.name.into(),
             favorite: entry.favorite,
+            source: entry.provenance.source.as_ref().map_or_else(
+                || "Current VMT source unavailable".into(),
+                |source| format!("Current VMT: {} · {}", source.kind, source.mount).into(),
+            ),
         })
         .collect::<Vec<_>>();
     let rows = tiles
@@ -1059,7 +1116,15 @@ fn bind_material_choice(window: &MaterialWindow, app: &AppWindow, ui: &SharedUi)
                 if !review_material_choice(window, &mut session) {
                     return;
                 }
-                if let Some(target) = ui.borrow().overlay_material_target.clone() {
+                if let Some(target) = ui.borrow().carve_material_target.clone() {
+                    if let Some(carve) = &ui.borrow().carve_window
+                        && let Err(error) =
+                            crate::carve_ui::choose_material(carve, &session, &target, &material)
+                    {
+                        window.set_detail(error.into());
+                        return;
+                    }
+                } else if let Some(target) = ui.borrow().overlay_material_target.clone() {
                     if let Some(controller) = &ui.borrow().overlay
                         && let Err(error) =
                             controller.choose_material(&mut session, &target, &material)
@@ -1203,6 +1268,15 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         None
     };
     ui.borrow_mut().overlay_material_target = overlay_target;
+    let carve_target = if key == "@carve" {
+        ui.borrow()
+            .carve_window
+            .as_ref()
+            .map(|window| crate::carve_ui::material_target(window, &session))
+    } else {
+        None
+    };
+    ui.borrow_mut().carve_material_target = carve_target;
     ui.borrow_mut().material_for_replace = match key {
         "@replace-source" => Some(false),
         "@replace-target" => Some(true),
@@ -1234,6 +1308,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
     let target = if key.is_empty()
         || key == "@faces"
         || key == "@overlay"
+        || key == "@carve"
         || key == "@clip"
         || key == "@primitive"
         || key == "@polygon"
@@ -1259,6 +1334,12 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                     controller.window.get_source().to_string()
                 }
             })
+            .unwrap_or_default()
+    } else if key == "@carve" {
+        ui.borrow()
+            .carve_window
+            .as_ref()
+            .map(|window| window.get_cut_material().to_string())
             .unwrap_or_default()
     } else if key == "@atlas" {
         ui.borrow()

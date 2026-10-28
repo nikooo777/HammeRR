@@ -25,6 +25,7 @@ pub struct Controller {
 #[derive(Default)]
 struct Catalog {
     groups: Vec<String>,
+    sources: Vec<String>,
     offset: usize,
 }
 
@@ -34,7 +35,18 @@ fn refresh_catalog(window: &ModelBrowserWindow, session: &mut Session, state: &m
         .get(window.get_group_index() as usize)
         .map_or("all", String::as_str)
         .to_owned();
-    let result = session.browse_models(&window.get_query(), &group, state.offset, PAGE_SIZE);
+    let source = state
+        .sources
+        .get(window.get_source_index() as usize)
+        .map_or("all", String::as_str)
+        .to_owned();
+    let result = session.browse_models_filtered(
+        &window.get_query(),
+        &group,
+        state.offset,
+        PAGE_SIZE,
+        Some(&source),
+    );
     let report = match result {
         Ok(report) => report,
         Err(error) => {
@@ -69,6 +81,37 @@ fn refresh_catalog(window: &ModelBrowserWindow, session: &mut Session, state: &m
         .position(|candidate| candidate == &group)
         .unwrap_or(0);
     window.set_group_index(index as i32);
+    let mut source_labels = vec![
+        "All sources".into(),
+        "Directories".into(),
+        "VPK archives".into(),
+        "Unavailable".into(),
+    ];
+    state.sources = vec![
+        "all".into(),
+        "directory".into(),
+        "vpk".into(),
+        "unavailable".into(),
+    ];
+    for row in report["sources"].as_array().unwrap() {
+        state.sources.push(row["id"].as_str().unwrap().into());
+        source_labels.push(
+            format!(
+                "{} · {}",
+                row["kind"].as_str().unwrap(),
+                row["mount"].as_str().unwrap()
+            )
+            .into(),
+        );
+    }
+    window.set_source_labels(slint::ModelRc::new(slint::VecModel::from(source_labels)));
+    window.set_source_index(
+        state
+            .sources
+            .iter()
+            .position(|candidate| candidate == &source)
+            .unwrap_or(0) as i32,
+    );
     if state.groups[index] != group {
         state.offset = 0;
         refresh_catalog(window, session, state);
@@ -87,6 +130,16 @@ fn refresh_catalog(window: &ModelBrowserWindow, session: &mut Session, state: &m
                     .unwrap()
                     .trim_start_matches("models/")
                     .into(),
+                source: row["source"]["mount"].as_str().map_or_else(
+                    || "Current MDL source unavailable".into(),
+                    |mount| {
+                        format!(
+                            "Current MDL: {} · {mount}",
+                            row["source"]["kind"].as_str().unwrap()
+                        )
+                        .into()
+                    },
+                ),
             })
             .collect::<Vec<_>>(),
     )));
@@ -129,7 +182,7 @@ fn choice_key(
 }
 
 fn fit_window(window: &ModelBrowserWindow, groups: usize) {
-    let height = (690.0
+    let height = (750.0
         + groups as f32 * 70.0
         + if window.get_show_materials() {
             100.0
@@ -224,6 +277,25 @@ fn present(
             .into(),
     );
     window.set_material_count(asset["materials"].as_array().unwrap().len() as i32);
+    window.set_provenance(asset["sources"].as_array().map_or_else(
+        || "Cached model origins unavailable".into(),
+        |sources| {
+            format!(
+                "Captured at model load; current files unverified\n{}",
+                sources
+                    .iter()
+                    .map(|source| format!(
+                        "{}: {} · {}",
+                        source["path"].as_str().unwrap(),
+                        source["source"]["kind"].as_str().unwrap(),
+                        source["source"]["mount"].as_str().unwrap()
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+            .into()
+        },
+    ));
     window.set_can_apply(true);
     if preview.seen.as_ref() != Some(&key) {
         window.set_has_preview(false);
@@ -272,6 +344,7 @@ fn preview(
             window.set_has_preview(false);
             window.set_geometry("".into());
             window.set_dimensions("".into());
+            window.set_provenance("".into());
             window.set_materials("".into());
             window.set_material_count(0);
             window.set_bodygroups(Default::default());
@@ -310,7 +383,7 @@ impl Controller {
         let window = ModelBrowserWindow::new()?;
         window
             .window()
-            .set_size(slint::LogicalSize::new(960.0, 690.0));
+            .set_size(slint::LogicalSize::new(960.0, 750.0));
         let token = Rc::new(Cell::new(None));
         let catalog = Rc::new(RefCell::new(Catalog::default()));
         let renderer = Rc::new(RefCell::new(Preview::default()));
@@ -427,6 +500,7 @@ impl Controller {
                 callback(&window, &continuation, |window, _| {
                     window.set_can_apply(false);
                     window.set_has_preview(false);
+                    window.set_provenance("".into());
                     window.set_message("Preview the model path before applying it.".into());
                 })
             }
@@ -513,6 +587,7 @@ impl Controller {
         self.token.set(Some(token));
         self.window.set_query("".into());
         self.window.set_group_index(0);
+        self.window.set_source_index(0);
         *self.catalog.borrow_mut() = Catalog::default();
         refresh_catalog(&self.window, session, &mut self.catalog.borrow_mut());
         self.window
@@ -528,6 +603,7 @@ impl Controller {
         self.preview.borrow_mut().seen = None;
         self.window.set_geometry("".into());
         self.window.set_dimensions("".into());
+        self.window.set_provenance("".into());
         self.window.set_materials("".into());
         self.window.set_material_count(0);
         self.window.set_show_materials(false);
@@ -1002,5 +1078,50 @@ mod tests {
         assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
         lock(&shared).undo(Actor::User).unwrap();
         assert_eq!(lock(&shared).document().vmf(), &before);
+    }
+
+    #[test]
+    fn model_browser_source_filter_uses_shared_catalog_without_decoding_or_rendering() {
+        software();
+        let (directory, game) = editor_core::test_assets::model_lighting::game();
+        let mut session = Session::new(Ok(game));
+        let ObjectId::Entity(id) = session
+            .create_entity(
+                Actor::User,
+                "prop_static",
+                Some(DVec3::ZERO),
+                BTreeMap::from([("model".into(), "".into())]),
+            )
+            .unwrap()
+        else {
+            panic!()
+        };
+        let original = session.document().vmf().clone();
+        let history = session.history_snapshot();
+        let shared = Arc::new(Mutex::new(session));
+        let controller = Controller::new(&shared).unwrap();
+        controller.initialize(&mut lock(&shared), id).unwrap();
+        controller.window.set_query("receiver".into());
+        controller.window.invoke_search();
+        assert_eq!(controller.window.get_rows().row_count(), 1);
+        assert_eq!(controller.window.get_source_labels().row_count(), 5);
+        controller.window.set_source_index(2);
+        controller.window.invoke_search();
+        assert_eq!(controller.window.get_rows().row_count(), 0);
+        controller.window.set_source_index(4);
+        controller.window.invoke_search();
+        assert_eq!(controller.window.get_rows().row_count(), 1);
+        assert!(
+            controller
+                .window
+                .get_rows()
+                .row_data(0)
+                .unwrap()
+                .source
+                .contains(directory.path().to_str().unwrap())
+        );
+        assert!(!controller.preview.borrow().renderer.initialized());
+        assert_eq!(lock(&shared).document().vmf(), &original);
+        assert_eq!(lock(&shared).history_snapshot(), history);
     }
 }

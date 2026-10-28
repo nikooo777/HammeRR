@@ -1,5 +1,8 @@
 use super::super::*;
 
+#[cfg(test)]
+mod vertex_set_tests;
+
 #[tool_router(router = terrain_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
@@ -428,7 +431,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect row-major terrain vertex IDs on 1–16 selected/explicit faces. Returns power, grid size and each vertex's row, column, world position, base position and alpha. preview=true reads rendered draft geometry. IDs match get_terrain_grids and native triangle indices; start-corner rotation changes their world placement. No source/history change. UI: Terrain triangles… → Selection type → Vertices · exact brush masks.",
+        description = "Inspect row-major terrain vertex IDs on 1–16 selected/explicit faces. Returns power, grid size and each vertex's row, column, world position, base position and alpha. preview=false (default) also returns source generation/revision for preview_terrain_vertex_set. preview=true reads draft geometry and returns source=null. IDs match get_terrain_grids and native triangle indices; start-corner rotation changes their world placement. No source/history change. UI: Terrain triangles… → Selection type → Vertices · exact positions & brush masks.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_terrain_vertices(
@@ -535,6 +538,59 @@ impl EditorServer {
             )?;
             Ok(
                 json!({"faces_changed":changed,"handle":session.face_preview_handle(),"state":face_state(&session)}),
+            )
+        })
+    }
+
+    #[tool(
+        description = "Preview absolute native terrain samples on 1–16 explicit faces, up to 289 unique vertices per face (4624 total). First inspect get_terrain_vertices(preview=false), then pass its source generation/revision and targets=[{face:{solid,side},vertices:[{vertex,z}|{vertex,position:[x,y,z]}]}]. Values must be finite and within ±65536; z preserves source X/Y. Each sample has exactly one value; duplicates, missing/invalid IDs, malformed caches and stale source guards reject atomically, retaining the previous preview and visible highlight. Explicit targets do not install a highlight or require a mask token. Replaces the shared face preview on success. Writes offsets only, retaining native IDs, base/start corners, alpha, normals/distances, tags, flags and mapping. Unrepresentable exact positions refuse instead of rounding. No automatic edge sewing: supply equal matching border positions to retain seams; mixed-power display/native LOD rules still apply. Inspect get_terrain_vertices(preview=true), then commit/cancel_face_preview using state.preview_token. One Undo step. UI: Terrain triangles… → Vertices → World Z / Preview height, or Preview CSV with solid,side,vertex,z rows (512 KiB maximum)."
+    )]
+    pub(in crate::mcp) fn preview_terrain_vertex_set(
+        &self,
+        Parameters(args): Parameters<TerrainVertexSetArgs>,
+    ) -> ToolResult {
+        run(|| {
+            use crate::session::terrain_vertices::{MAX_SET_FACES, VertexSetFace, VertexSource};
+            use map_core::displacement::{VertexSet, VertexValue};
+
+            if args.targets.is_empty()
+                || args.targets.len() > MAX_SET_FACES
+                || args.targets.iter().any(|target| {
+                    target.vertices.is_empty()
+                        || target.vertices.len() > map_core::displacement::MAX_GRID_VERTICES
+                })
+            {
+                return Err("Set 1–16 terrain faces and 1–289 native vertices per face".into());
+            }
+            let source = VertexSource {
+                generation: parse_token(&args.source.generation)?,
+                revision: parse_token(&args.source.revision)?,
+            };
+            let targets = args
+                .targets
+                .into_iter()
+                .map(|target| VertexSetFace {
+                    face: face_id(&target.face),
+                    vertices: target
+                        .vertices
+                        .into_iter()
+                        .map(|value| match value {
+                            TerrainVertexValue::Position(value) => VertexSet {
+                                vertex: value.vertex,
+                                value: VertexValue::Position(vec3(value.position)),
+                            },
+                            TerrainVertexValue::Height(value) => VertexSet {
+                                vertex: value.vertex,
+                                value: VertexValue::WorldZ(value.z),
+                            },
+                        })
+                        .collect(),
+                })
+                .collect::<Vec<_>>();
+            let mut session = self.session();
+            let changed = session.preview_terrain_vertex_set(Actor::Agent, &targets, source)?;
+            Ok(
+                json!({"faces_changed":changed,"vertex_count":targets.iter().map(|target|target.vertices.len()).sum::<usize>(),"handle":session.face_preview_handle(),"state":face_state(&session)}),
             )
         })
     }

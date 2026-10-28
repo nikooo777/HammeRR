@@ -27,6 +27,7 @@ pub mod atlas_texturing;
 mod baked_build;
 pub mod baked_lightmaps;
 pub mod baked_prop_vertices;
+pub mod brush_batch;
 mod buffer_replacement;
 pub mod compiled_details;
 mod compiled_source_selection;
@@ -79,6 +80,7 @@ mod lighting_preview;
 pub mod linked_path;
 mod management;
 pub mod material_assets;
+mod material_catalog;
 pub mod material_preview;
 pub mod material_search;
 pub mod material_source;
@@ -801,30 +803,14 @@ impl Session {
         limit: usize,
         favorites: &crate::material_favorites::Snapshot,
     ) -> Result<crate::materials::Catalog, String> {
-        if self.material_index.is_none() {
-            self.material_index = Some(self.search_materials("", usize::MAX)?);
-        }
-        let used = self
-            .document
-            .vmf()
-            .solids()
-            .flat_map(|solid| &solid.sides)
-            .map(|side| {
-                crate::material_favorites::canonical_name(&side.material)
-                    .unwrap_or_else(|_| side.material.to_ascii_lowercase())
-            })
-            .collect();
-        let mut catalog = crate::materials::browse(
-            self.material_index.as_ref().unwrap(),
-            &used,
-            &favorites.materials,
-            &self.material_recent,
+        self.material_catalog_filtered_with_favorites(
             query,
             group,
-            (offset, limit),
-        )?;
-        catalog.favorites = favorites.status.clone();
-        Ok(catalog)
+            offset,
+            limit,
+            &crate::materials::CatalogFilter::default(),
+            favorites,
+        )
     }
 
     pub fn face_mode(&self) -> bool {
@@ -1081,6 +1067,9 @@ impl Session {
                 map_core::displacement::Operation::Stroke { .. } => "edit terrain brush stroke",
                 map_core::displacement::Operation::VertexMove { .. } => {
                     "move selected terrain vertices"
+                }
+                map_core::displacement::Operation::VertexSet { .. } => {
+                    "set terrain vertex positions"
                 }
             })
             .unwrap_or("edit face settings");
@@ -3791,14 +3780,13 @@ mod tests {
             .unwrap();
         let result = request.run();
         session.finish_compile(Actor::Agent, &result);
-        assert!(result.unwrap().output.bsp.is_some());
-        assert!(
-            session
-                .begin_launch(Actor::Agent)
-                .err()
-                .unwrap()
-                .contains("map changed")
-        );
+        let result = result.unwrap();
+        assert!(result.output.bsp.is_some());
+        assert!(!result.published());
+        assert!(!directory.path().join("room.bsp").exists());
+        assert!(session.compiled.is_none());
+        assert_eq!(session.compile_status()["job"]["status"], "failed");
+        assert!(session.begin_launch(Actor::Agent).is_err());
         assert!(!session.compiling() && !session.launching());
     }
 
@@ -3816,14 +3804,10 @@ mod tests {
         session.finish_compile(Actor::Agent, &result);
         assert!(session.begin_launch(Actor::Agent).is_err());
         assert!(session.leak().is_none());
-        assert!(
-            session
-                .recent_log()
-                .next()
-                .unwrap()
-                .text
-                .contains("earlier snapshot")
-        );
+        assert!(!result.unwrap().published());
+        assert!(!directory.path().join("room.bsp").exists());
+        assert!(session.compiled.is_none());
+        assert!(session.document().vmf().world.solids.is_empty());
     }
 
     #[test]
@@ -3972,12 +3956,13 @@ mod tests {
             assert_ne!(session.compile_token(), Some(token));
             assert!(session.cancel_compile(actor, token).is_err());
             let result = request.run();
+            assert_eq!(std::fs::read(&path).unwrap(), b"previous BSP");
+            session.finish_compile(actor, &result);
             assert!(
                 session
                     .cancel_compile(actor, session.compile_token().unwrap())
                     .is_err()
             );
-            session.finish_compile(actor, &result);
             let status = session.compile_status();
             assert_eq!(status["job"]["status"], "completed");
             assert_eq!(status["job"]["result"]["success"], true);
@@ -4003,12 +3988,12 @@ mod tests {
         assert!(!session.compile_cancellable());
         session.replace_document(Document::new(room()), None);
         let missing = directory.path().join("missing/room.bsp");
-        let request = session.begin_compile(Actor::Agent, Some(&missing)).unwrap();
-        let result = request.run();
-        assert!(result.is_err());
-        session.finish_compile(Actor::Agent, &result);
-        assert_eq!(session.compile_status()["job"]["status"], "failed");
-        assert!(session.compile_status()["job"]["result"]["error"].is_string());
+        let token = session.compile_token();
+        let status = session.compile_status();
+        assert!(session.begin_compile(Actor::Agent, Some(&missing)).is_err());
+        assert_eq!(session.compile_token(), token);
+        assert!(!missing.exists());
+        assert_eq!(session.compile_status(), status);
         let request = session.begin_compile(Actor::Agent, Some(&path)).unwrap();
         session.shutdown();
         let result = request.run();

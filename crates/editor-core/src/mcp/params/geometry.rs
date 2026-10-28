@@ -32,9 +32,36 @@ pub(in crate::mcp) struct MergeArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "policy", rename_all = "snake_case", deny_unknown_fields)]
+pub(in crate::mcp) enum CutMaterialArgs {
+    Cutter {},
+    Target {},
+    Material { material: String },
+}
+
+impl Default for CutMaterialArgs {
+    fn default() -> Self {
+        Self::Cutter {}
+    }
+}
+
+impl CutMaterialArgs {
+    pub(in crate::mcp) fn into_policy(self) -> map_core::carve::CutMaterialPolicy {
+        match self {
+            Self::Cutter {} => map_core::carve::CutMaterialPolicy::Cutter,
+            Self::Target {} => map_core::carve::CutMaterialPolicy::Target,
+            Self::Material { material } => map_core::carve::CutMaterialPolicy::Material(material),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(in crate::mcp) struct CarveArgs {
     pub(in crate::mcp) cutter: u32,
     pub(in crate::mcp) targets: Vec<u32>,
+    /// Default {policy:"cutter"} copies cutter surface settings. {policy:"target"} copies the unique original target face with the generated face's outward normal, rejecting missing/ambiguous matches. {policy:"material",material:"BRICK/WALL"} changes only material and keeps cutter UVs/lighting/metadata. Nodraw is allowed.
+    #[serde(default)]
+    pub(in crate::mcp) cut_material: CutMaterialArgs,
     pub(in crate::mcp) stamp: String,
 }
 
@@ -42,6 +69,9 @@ pub(in crate::mcp) struct CarveArgs {
 pub(in crate::mcp) struct CarveManyArgs {
     pub(in crate::mcp) cutters: Vec<u32>,
     pub(in crate::mcp) targets: Vec<u32>,
+    /// Cut surface policy shared by every cutter/target. Default cutter; target requires a unique parallel original target face with the generated face's outward normal; material names override only cutter material. Invalid projections reject the whole request without replacing a valid draft.
+    #[serde(default)]
+    pub(in crate::mcp) cut_material: CutMaterialArgs,
     pub(in crate::mcp) stamp: String,
 }
 
@@ -54,10 +84,19 @@ pub struct CreateBlockArgs {
     pub size: Option<[f64; 3]>,
     /// Material for all faces (default dev/dev_measuregeneric01).
     pub material: Option<String>,
+    /// Optional exact world [X,Y,Z] rotation in degrees about the block's center, with texture lock.
+    pub rotation: Option<[f64; 3]>,
+    /// Optional signed, finite nonzero texture [U,V] scales for all six faces.
+    pub texture_scale: Option<[f64; 2]>,
+    /// Optional lightmap scale for all six faces, 1–1024 world units per lighting pixel.
+    #[schemars(range(min = 1, max = 1024))]
+    pub lightmap_scale: Option<u32>,
     /// Snap corners using the shared grid settings; omitted preserves exact coordinates.
     #[serde(default)]
     pub snap: bool,
 }
+
+pub(in crate::mcp) type CreateBlocksArgs = crate::session::brush_batch::Batch;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DrawBlockArgs {

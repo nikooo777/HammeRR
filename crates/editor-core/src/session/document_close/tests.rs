@@ -178,19 +178,37 @@ fn physical_compile_completion_after_early_closing_finishes_without_adoption() {
         Document::new(crate::test_assets::room()),
         Some(directory.path().join("room.vmf")),
     );
+    session.save(Actor::User, None).unwrap();
+    let output = directory.path().join("room.bsp");
+    let previous_output = b"previous output before Close";
+    std::fs::write(&output, previous_output).unwrap();
     let request = session.begin_compile(Actor::User, None).unwrap();
     let shared = Arc::new(std::sync::Mutex::new(session));
     let document = crate::runtime::DocumentHandle::start(shared.clone()).unwrap();
     let review = document.document_close_review().unwrap();
     document.try_commit_reviewed_close(&review, true).unwrap();
     let completed = request.run();
+    assert!(completed.as_ref().unwrap().output.bsp.is_some());
+    assert!(!completed.as_ref().unwrap().published());
     {
         let mut session = crate::runtime::lock(&shared);
         session.finish_compile(Actor::User, &completed);
         assert!(session.compiled.is_none());
         assert!(session.leak.is_none());
         assert!(!session.compiling);
+        assert_eq!(session.compile_status()["job"]["status"], "failed");
+        assert_eq!(
+            session.compile_status()["job"]["result"]["published"],
+            false
+        );
     }
+    let error = completed.as_ref().unwrap().publication_error().unwrap();
+    assert_eq!(
+        error,
+        "Map, content, runtime or build settings changed during build publication; previous output preserved"
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), previous_output);
+    assert!(!output.with_extension("lin").exists());
     document.shutdown().unwrap();
     document.finalize_closed_claims().unwrap();
     let mut peer = Session::new(Err("No content needed".into()));
@@ -199,6 +217,7 @@ fn physical_compile_completion_after_early_closing_finishes_without_adoption() {
         peer.save(Actor::Agent, Some(&directory.path().join(name)))
             .unwrap();
     }
-    assert!(completed.as_ref().unwrap().published());
+    assert!(!completed.as_ref().unwrap().published());
+    assert_eq!(completed.as_ref().unwrap().publication_error(), Some(error));
     drop(completed);
 }

@@ -139,6 +139,10 @@ fn managed_carve_actions_preserve_retained_review_and_peer_through_real_drain() 
         assert!(Instant::now() < deadline);
         std::thread::yield_now();
     }
+    let closing_state = lock(&target.shared).carve_state();
+    assert_eq!(closing_state["preview"], state["preview"]);
+    assert_eq!(closing_state["handle"], state["handle"]);
+    let state = closing_state;
     rejected_actions(&target.window, "the editor is closing");
     assert_eq!(form(&target.window), expected_form);
     assert_eq!(lock(&target.shared).carve_state(), state);
@@ -231,6 +235,10 @@ fn stale_carve_token_cannot_commit_or_discard_foreign_preview_and_failed_close_i
     }
     std::fs::write(&recovery, b"blocked").unwrap();
     let error = fixture.document.shutdown().unwrap_err();
+    let failed_state = lock(&fixture.shared).carve_state();
+    assert_eq!(failed_state["preview"], foreign["preview"]);
+    assert_eq!(failed_state["handle"], foreign["handle"]);
+    let foreign = failed_state;
     rejected_actions(
         &fixture.window,
         &format!("document shutdown failed: {error}"),

@@ -46,6 +46,38 @@ impl CompileSemantics {
     }
 
     pub fn checked_from_material(material: &Material) -> Result<Self, String> {
+        if material.compile_flag("%compilepassbullets") {
+            const CONFLICTS: &[&str] = &[
+                "%compileclip",
+                "%playerclip",
+                "%compileplayerclip",
+                "%compilenpcclip",
+                "%compiletrigger",
+                "%compilenolight",
+                "%compilesky",
+                "%compile2dsky",
+                "%compilehint",
+                "%compileskip",
+                "%compileorigin",
+                "%compileareaportal",
+                "%compileladder",
+                "%compilefog",
+                "%compilewater",
+                "%compileslime",
+                "%compileblocklos",
+                "%compilenonsolid",
+            ];
+            if let Some(conflict) = CONFLICTS.iter().find(|key| material.compile_flag(key)) {
+                return Err(format!(
+                    "Unsupported %compilepassbullets with {conflict}; remove the conflicting compile flag or use separate materials"
+                ));
+            }
+            if material.shader == "water" {
+                return Err(
+                    "Unsupported %compilepassbullets on Water; separate GRATE collision from the liquid material".into(),
+                );
+            }
+        }
         let semantics = Self::from_material(material);
         if semantics.lit()
             && material.get("$bumpmap").is_some()
@@ -66,6 +98,9 @@ impl CompileSemantics {
 
         if flag("%compilenodraw") {
             hide(&mut semantics);
+        }
+        if flag("%compilepassbullets") {
+            semantics.contents = contents::GRATE;
         }
         let mut clip = 0;
         if flag("%compileclip") {
@@ -160,6 +195,7 @@ impl CompileSemantics {
         }
         const HANDLED: &[&str] = &[
             "%compilenodraw",
+            "%compilepassbullets",
             "%compileclip",
             "%compileplayerclip",
             "%compilenpcclip",
@@ -193,6 +229,113 @@ impl CompileSemantics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pass_bullets_preserves_independent_alpha_lighting_and_draw_semantics() {
+        for (parameters, contents, surface, draws) in [
+            ("", contents::GRATE, 0, true),
+            (
+                "$alphatest 1",
+                contents::GRATE | contents::TRANSLUCENT,
+                0,
+                true,
+            ),
+            (
+                "$translucent 1",
+                contents::GRATE | contents::TRANSLUCENT,
+                surf::TRANS,
+                true,
+            ),
+            (
+                "$alpha 0.5 %compiledetail 1",
+                contents::GRATE | contents::TRANSLUCENT | contents::DETAIL,
+                surf::TRANS,
+                true,
+            ),
+            ("$bumpmap primary", contents::GRATE, surf::BUMPLIGHT, true),
+            (
+                "$bumpmap primary $nodiffusebumplighting 1",
+                contents::GRATE,
+                0,
+                true,
+            ),
+            (
+                "%compilenodraw 1 $alphatest 1 %compiledetail 1",
+                contents::GRATE | contents::DETAIL,
+                surf::NODRAW | surf::NOLIGHT,
+                false,
+            ),
+        ] {
+            for fields in [
+                format!("%CompilePassBullets true {parameters}"),
+                format!("{parameters} %compilepassbullets 1"),
+            ] {
+                let material =
+                    Material::parse(&format!("LightmappedGeneric {{ {fields} }}")).unwrap();
+                let semantics = CompileSemantics::checked_from_material(&material).unwrap();
+                assert_eq!(semantics.contents, contents, "{fields}");
+                assert_eq!(semantics.surface, surface, "{fields}");
+                assert_eq!(semantics.draws, draws, "{fields}");
+                assert!(semantics.unsupported_flags.is_empty());
+                assert!(!semantics.hint && !semantics.skip);
+            }
+        }
+        let unlit = Material::parse("UnlitGeneric { %compilepassbullets 1 }").unwrap();
+        let semantics = CompileSemantics::checked_from_material(&unlit).unwrap();
+        assert_eq!(semantics.contents, contents::GRATE);
+        assert_eq!(semantics.surface, surf::NOLIGHT);
+        assert!(semantics.draws);
+    }
+
+    #[test]
+    fn pass_bullets_refuses_conflicting_contents_in_either_parameter_order() {
+        for conflict in [
+            "%compileclip",
+            "%playerclip",
+            "%compileplayerclip",
+            "%compilenpcclip",
+            "%compiletrigger",
+            "%compilenolight",
+            "%compilesky",
+            "%compile2dsky",
+            "%compilehint",
+            "%compileskip",
+            "%compileorigin",
+            "%compileareaportal",
+            "%compileladder",
+            "%compilefog",
+            "%compilewater",
+            "%compileslime",
+            "%compileblocklos",
+            "%compilenonsolid",
+        ] {
+            for fields in [
+                format!("%compilepassbullets 1 {conflict} 1"),
+                format!("{conflict} 1 %compilepassbullets 1"),
+            ] {
+                let material =
+                    Material::parse(&format!("LightmappedGeneric {{ {fields} }}")).unwrap();
+                let error = CompileSemantics::checked_from_material(&material).unwrap_err();
+                assert!(error.contains("%compilepassbullets") && error.contains(conflict));
+            }
+        }
+        let material = Material::parse("Water { %compilepassbullets 1 }").unwrap();
+        assert!(
+            CompileSemantics::checked_from_material(&material)
+                .unwrap_err()
+                .contains("Water")
+        );
+        for value in ["0", "false", "2", "1.0"] {
+            let material = Material::parse(&format!(
+                "LightmappedGeneric {{ %compilepassbullets {value} }}"
+            ))
+            .unwrap();
+            assert_eq!(
+                CompileSemantics::checked_from_material(&material).unwrap(),
+                CompileSemantics::default()
+            );
+        }
+    }
 
     #[test]
     fn slime_keeps_opaque_surface_lighting_and_disables_decals_without_water_flags() {

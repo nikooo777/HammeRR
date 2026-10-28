@@ -57,9 +57,22 @@ impl Session {
         offset: usize,
         limit: usize,
     ) -> Result<Value, String> {
+        self.browse_models_filtered(query, group, offset, limit, None)
+    }
+
+    pub fn browse_models_filtered(
+        &mut self,
+        query: &str,
+        group: &str,
+        offset: usize,
+        limit: usize,
+        source: Option<&str>,
+    ) -> Result<Value, String> {
         if query.len() > 256 || group.len() > 1024 || !(1..=100).contains(&limit) {
             return Err("Use a query up to 256 bytes and a page of 1 to 100 models".into());
         }
+        let sources = crate::materials::catalog_sources(&self.game)?;
+        crate::materials::validate_source_filter(source, &sources)?;
         if self.model_browser.catalog.is_none() {
             self.model_browser.catalog = Some(
                 self.game
@@ -68,6 +81,12 @@ impl Session {
             );
         }
         let names = self.model_browser.catalog.as_ref().unwrap();
+        if names.len() > crate::materials::MAX_CATALOG_ENTRIES {
+            return Err(format!(
+                "Model catalog exceeds {} entries",
+                crate::materials::MAX_CATALOG_ENTRIES
+            ));
+        }
         let used = self
             .document
             .vmf()
@@ -78,10 +97,25 @@ impl Session {
             .collect::<BTreeSet<_>>();
         let query = query.to_ascii_lowercase();
         let words = query.split_whitespace().collect::<Vec<_>>();
-        let matching = names
+        let candidates = names
             .iter()
             .filter(|name| words.iter().all(|word| name.contains(word)))
             .collect::<Vec<_>>();
+        let mut matching = Vec::new();
+        for name in candidates {
+            if !matches!(source, None | Some("all")) {
+                let origin = self
+                    .game
+                    .asset_origin(name)
+                    .map_err(|error| format!("Model catalog source {name}: {error}"))?
+                    .map(crate::materials::provenance)
+                    .unwrap_or_default();
+                if !crate::materials::source_matches(source, &origin) {
+                    continue;
+                }
+            }
+            matching.push(name);
+        }
         let mut folders = BTreeMap::<&str, usize>::new();
         for name in &matching {
             *folders.entry(folder(name)).or_default() += 1;
@@ -108,11 +142,21 @@ impl Session {
                 _ => group.strip_prefix("folder:") == Some(folder(path)),
             })
             .collect::<Vec<_>>();
-        let entries = rows.iter().skip(offset).take(limit).map(|path| {
-            json!({"path":path,"name":path.rsplit('/').next().unwrap_or(path),"folder":folder(path),"used":used.contains(path.as_str())})
-        }).collect::<Vec<_>>();
+        let mut entries = Vec::new();
+        for path in rows.iter().skip(offset).take(limit) {
+            let origin = self
+                .game
+                .asset_origin(path)
+                .map_err(|error| format!("Model catalog source {path}: {error}"))?
+                .map(crate::materials::provenance)
+                .unwrap_or_default();
+            if !crate::materials::source_matches(source, &origin) {
+                return Err("Model source changed during catalog lookup; retry the request".into());
+            }
+            entries.push(json!({"path":path,"name":path.rsplit('/').next().unwrap_or(path),"folder":folder(path),"used":used.contains(path.as_str()),"source_id":origin.source_id,"source":origin.source}));
+        }
         Ok(
-            json!({"groups":groups,"entries":entries,"total":rows.len(),"offset":offset,"limit":limit}),
+            json!({"groups":groups,"entries":entries,"total":rows.len(),"offset":offset,"limit":limit,"sources":sources,"filter":{"source":source},"provenance_scope":"current_winning_mdl; inspect_model reports separately captured model-load origins"}),
         )
     }
 

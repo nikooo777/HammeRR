@@ -185,7 +185,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect an MDL44/48 mesh with VVD4/VTX7 LOD0 geometry, selected skin/body, materials, counts, bounds and named reference-pose attachments. Static meshes and checked reference poses are supported; pose/reference_bones distinguish them. CPU-only and read-only; does not initialize graphics or edit source. Unsupported/missing/malformed assets return a recoverable error. UI: model entity → Model details….",
+        description = "Inspect an MDL44/48 mesh with VVD4/VTX7 LOD0 geometry, selected skin/body, materials, counts, bounds and named reference-pose attachments. sources contains each MDL/VVD/VTX physical origin captured with the cached payload at model load; it never substitutes a newly winning mount and does not assert current filesystem identity. Static meshes and checked reference poses are supported; pose/reference_bones distinguish them. CPU-only and read-only; unsupported assets return a recoverable error. UI: model entity → Model details….",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn inspect_model(
@@ -226,7 +226,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Browse mounted model paths without decoding meshes. Search words match names/folders; groups include all, used and exact folders. Shared with World Model → Browse….",
+        description = "Browse mounted model paths without decoding meshes, in pages of 1 to 100 with at most 256 game mounts. Entries expose the current winning MDL directory/VPK origin and exact source ID. Filter by an advertised source ID, directory, vpk or unavailable; physical mounts do not establish stock content. Search words match names/folders; groups include all, used and exact folders. inspect_model separately reports origins captured with its cached payload. Shared with World Model → Browse….",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn browse_models(
@@ -234,11 +234,12 @@ impl EditorServer {
         Parameters(args): Parameters<BrowseModelsArgs>,
     ) -> ToolResult {
         run(|| {
-            self.session().browse_models(
+            self.session().browse_models_filtered(
                 args.query.as_deref().unwrap_or(""),
                 args.group.as_deref().unwrap_or("all"),
                 args.offset.unwrap_or(0),
                 args.limit.unwrap_or(60),
+                args.source.as_deref(),
             )
         })
     }

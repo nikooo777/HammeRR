@@ -8,6 +8,31 @@ use crate::{BrushGeometry, Document, EditError, ObjectId, Plane, Transaction, cl
 pub const MAX_TARGETS: usize = 16;
 pub const MAX_CUTTERS: usize = 8;
 pub const MAX_FRAGMENTS: usize = 256;
+const TARGET_NORMAL_EPSILON: f64 = 1e-8;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum CutMaterialPolicy {
+    #[default]
+    Cutter,
+    Target,
+    Material(String),
+}
+
+impl CutMaterialPolicy {
+    fn normalized(&self) -> std::result::Result<Self, EditError> {
+        match self {
+            Self::Material(material) => {
+                if material.trim().is_empty() {
+                    return Err(invalid("Cut material must not be empty"));
+                }
+                source_formats::keyvalues::validate_string(material)
+                    .map_err(|error| invalid(error.to_string()))?;
+                Ok(Self::Material(material.trim().to_ascii_uppercase()))
+            }
+            _ => Ok(self.clone()),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Change {
@@ -21,6 +46,8 @@ pub struct Inheritance {
     pub side: u32,
     pub source_solid: u32,
     pub source_side: u32,
+    pub surface_source_solid: u32,
+    pub surface_source_side: u32,
     pub cutter: bool,
 }
 
@@ -28,6 +55,7 @@ pub struct Inheritance {
 pub struct Result {
     pub cutter: u32,
     pub cutters: Vec<u32>,
+    pub cut_material: CutMaterialPolicy,
     pub changes: Vec<Change>,
     pub unchanged: Vec<u32>,
     pub removed: Vec<u32>,
@@ -273,6 +301,46 @@ pub fn carve_many(
     cutters: &[u32],
     targets: &[u32],
 ) -> std::result::Result<Result, EditError> {
+    carve_many_with_material(tx, cutters, targets, &CutMaterialPolicy::Cutter)
+}
+
+pub fn carve_with_material(
+    tx: &mut Transaction,
+    cutter: u32,
+    targets: &[u32],
+    cut_material: &CutMaterialPolicy,
+) -> std::result::Result<Result, EditError> {
+    carve_many_with_material(tx, &[cutter], targets, cut_material)
+}
+
+fn target_surface<'a>(side: &Side, target: &'a Solid) -> std::result::Result<&'a Side, EditError> {
+    let normal = Plane::from_points(side.plane.0).unwrap().normal;
+    let mut matches = target.sides.iter().filter(|source| {
+        let source_normal = Plane::from_points(source.plane.0).unwrap().normal;
+        source_normal.dot(normal) >= 1.0 - TARGET_NORMAL_EPSILON
+    });
+    let source = matches.next().ok_or_else(|| {
+        invalid(format!(
+            "Brush {} has no original face parallel to a generated cut face with the same outward normal; choose cutter or named cut material",
+            target.id
+        ))
+    })?;
+    if matches.next().is_some() {
+        return Err(invalid(format!(
+            "Brush {} has ambiguous original faces for a generated cut face; choose cutter or named cut material",
+            target.id
+        )));
+    }
+    Ok(source)
+}
+
+pub fn carve_many_with_material(
+    tx: &mut Transaction,
+    cutters: &[u32],
+    targets: &[u32],
+    cut_material: &CutMaterialPolicy,
+) -> std::result::Result<Result, EditError> {
+    let cut_material = cut_material.normalized()?;
     let (planned, unchanged) = plan(tx.document(), cutters, targets)?;
     let cutters = cutters
         .iter()
@@ -298,6 +366,7 @@ pub fn carve_many(
     let mut result = Result {
         cutter: cutters[0],
         cutters,
+        cut_material: cut_material.clone(),
         changes: Vec::new(),
         unchanged,
         removed: Vec::new(),
@@ -313,17 +382,54 @@ pub fn carve_many(
             for side in &mut solid.sides {
                 let source_side = side.id;
                 let from_cutter = cutter_sides.contains_key(&source_side);
+                let source_solid = cutter_sides
+                    .get(&source_side)
+                    .copied()
+                    .unwrap_or(part.source);
+                let (surface_source_solid, surface_source_side) = if from_cutter {
+                    let source = match &cut_material {
+                        CutMaterialPolicy::Target => {
+                            let (_, target) = subobject::solid(tx.document(), part.source)?;
+                            target_surface(side, target)?
+                        }
+                        _ => &*side,
+                    };
+                    let surface_source = (
+                        if cut_material == CutMaterialPolicy::Target {
+                            part.source
+                        } else {
+                            source_solid
+                        },
+                        source.id,
+                    );
+                    let plane = side.plane;
+                    let mut surface = source.clone();
+                    surface.plane = plane;
+                    if let CutMaterialPolicy::Material(material) = &cut_material {
+                        surface.material = material.clone();
+                    }
+                    if cut_material != CutMaterialPolicy::Cutter {
+                        crate::surface::update(
+                            &mut surface,
+                            &crate::surface::SurfaceEdit::default(),
+                            &[],
+                        )?;
+                    }
+                    *side = surface;
+                    surface_source
+                } else {
+                    (source_solid, source_side)
+                };
                 if index > 0 || from_cutter {
                     side.id = tx.new_side_id()?;
                 }
                 result.faces.push(Inheritance {
                     solid: solid.id,
                     side: side.id,
-                    source_solid: cutter_sides
-                        .get(&source_side)
-                        .copied()
-                        .unwrap_or(part.source),
+                    source_solid,
                     source_side,
+                    surface_source_solid,
+                    surface_source_side,
                     cutter: from_cutter,
                 });
             }
@@ -804,6 +910,163 @@ mod tests {
         );
         assert_eq!(document.vmf(), &original);
         assert_eq!(document.undo_labels().count(), history);
+    }
+
+    #[test]
+    fn cut_policies_preserve_corresponding_surface_metadata_for_multiple_cutters() {
+        let mut document = Document::empty();
+        let target = block(&mut document, DVec3::ZERO, DVec3::splat(128.0));
+        let first = block(&mut document, DVec3::splat(16.0), DVec3::splat(80.0));
+        let second = block(&mut document, DVec3::splat(48.0), DVec3::splat(112.0));
+        document
+            .edit("mixed surfaces", |tx| {
+                for id in [target, first, second] {
+                    for side in &mut tx.solid_mut(id)?.sides {
+                        side.material = if id == target {
+                            format!("BRICK/FACE_{}", side.id)
+                        } else {
+                            "TOOLS/TOOLSNODRAW".into()
+                        };
+                        let normal = Plane::from_points(side.plane.0).unwrap().normal;
+                        let rotation = glam::DQuat::from_axis_angle(normal, 0.13);
+                        side.u_axis.axis = rotation * side.u_axis.axis;
+                        side.v_axis.axis = rotation * side.v_axis.axis;
+                        side.u_axis.offset = f64::from(side.id);
+                        side.v_axis.scale = -0.75;
+                        side.lightmap_scale = 32;
+                        side.smoothing_groups = Some(7);
+                        side.extra_properties
+                            .set("surface_source", side.id.to_string());
+                        side.extra.push(Node::string("vendor", "surface"));
+                    }
+                }
+                Ok(())
+            })
+            .unwrap();
+        let source = document.vmf().clone();
+        for policy in [
+            CutMaterialPolicy::Cutter,
+            CutMaterialPolicy::Target,
+            CutMaterialPolicy::Material(" brick/new_cut ".into()),
+        ] {
+            let mut draft = document.preview_snapshot();
+            let result = draft
+                .edit("carve surfaces", |tx| {
+                    carve_many_with_material(tx, &[second, first], &[target], &policy)
+                })
+                .unwrap();
+            assert!(result.faces.iter().any(|face| face.cutter));
+            for face in &result.faces {
+                let original = source
+                    .solids()
+                    .find(|solid| solid.id == face.surface_source_solid)
+                    .unwrap()
+                    .sides
+                    .iter()
+                    .find(|side| side.id == face.surface_source_side)
+                    .unwrap();
+                let actual = draft
+                    .solid(face.solid)
+                    .unwrap()
+                    .sides
+                    .iter()
+                    .find(|side| side.id == face.side)
+                    .unwrap();
+                let mut expected = original.clone();
+                expected.id = actual.id;
+                expected.plane = actual.plane;
+                if face.cutter {
+                    assert!([first, second].contains(&face.source_solid));
+                    if policy == CutMaterialPolicy::Target {
+                        assert_eq!(face.surface_source_solid, target);
+                        let original_normal = Plane::from_points(original.plane.0).unwrap().normal;
+                        let actual_normal = Plane::from_points(actual.plane.0).unwrap().normal;
+                        assert!(original_normal.dot(actual_normal) > 1.0 - TARGET_NORMAL_EPSILON);
+                    } else {
+                        assert_eq!(face.surface_source_solid, face.source_solid);
+                        assert_eq!(face.surface_source_side, face.source_side);
+                    }
+                    if matches!(policy, CutMaterialPolicy::Material(_)) {
+                        expected.material = "BRICK/NEW_CUT".into();
+                    }
+                }
+                assert_eq!(actual, &expected);
+            }
+            for id in [first, second] {
+                assert_eq!(draft.solid(id), document.solid(id));
+            }
+            draft.vmf().validate_ids().unwrap();
+            draft.undo().unwrap();
+            assert_eq!(draft.vmf(), &source);
+        }
+    }
+
+    #[test]
+    fn unsupported_target_matching_and_invalid_cut_materials_refuse_entire_batch() {
+        let mut document = Document::empty();
+        let target = block(&mut document, DVec3::ZERO, DVec3::splat(128.0));
+        let first = block(&mut document, DVec3::splat(16.0), DVec3::splat(48.0));
+        let second = block(&mut document, DVec3::splat(64.0), DVec3::splat(96.0));
+        document
+            .edit("oblique cutter", |tx| {
+                crate::transform::transform(
+                    tx,
+                    &[ObjectId::Solid(second)],
+                    crate::transform::Transform {
+                        rotation: DVec3::new(0.0, 0.0, 30.0),
+                        pivot: DVec3::splat(80.0),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        let source = document.vmf().clone();
+        let history = document.undo_labels().count();
+        let error = document
+            .edit("target surfaces", |tx| {
+                carve_many_with_material(
+                    tx,
+                    &[first, second],
+                    &[target],
+                    &CutMaterialPolicy::Target,
+                )
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("no original face parallel"));
+        assert_eq!(document.vmf(), &source);
+        assert_eq!(document.undo_labels().count(), history);
+        for material in [" ", "BRICK/INVALID\"NAME"] {
+            assert!(
+                document
+                    .edit("invalid material", |tx| {
+                        carve_many_with_material(
+                            tx,
+                            &[first, second],
+                            &[target],
+                            &CutMaterialPolicy::Material(material.into()),
+                        )
+                    })
+                    .is_err()
+            );
+            assert_eq!(document.vmf(), &source);
+            assert_eq!(document.undo_labels().count(), history);
+        }
+        document
+            .edit("invalid target projection", |tx| {
+                for side in &mut tx.solid_mut(target)?.sides {
+                    side.v_axis = side.u_axis;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let source = document.vmf().clone();
+        let error = document
+            .edit("collapsed projection", |tx| {
+                carve_with_material(tx, first, &[target], &CutMaterialPolicy::Target)
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("projection collapses"));
+        assert_eq!(document.vmf(), &source);
     }
 
     #[test]

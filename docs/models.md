@@ -9,9 +9,10 @@ Place Source model meshes with their materials, skins and reference poses.
 1. Use **Entity…** to place `prop_static` or `prop_dynamic`.
 2. Click **Browse…** beside **World Model**.
 3. Search by model name or folder.
-4. Select a result to inspect its mesh.
-5. Choose **Skin** and named bodygroups, if available.
-6. Click **Use model**.
+4. Use **Winning source** to filter by the supplying directory or VPK.
+5. Select a result to inspect its mesh.
+6. Choose **Skin** and named bodygroups, if available.
+7. Click **Use model**.
 
 **Cancel** leaves the entity unchanged. **Reference pose** means animation is not playing.
 Use [surface placement](placement.md) to put the model on a floor or slope.
@@ -63,6 +64,9 @@ One unsupported selected material excludes the complete model and reports a reas
 Use **Reload material assets** for changed VMT/VTF files.
 Use **Reload models** for changed geometry or model material directories.
 Reloading geometry ends affected placement and selection reviews; start them again.
+Catalog sources describe current lookups. Model inspection retains the MDL,
+VVD and VTX origins captured when that cached model loaded; it does not verify
+that those files are still current.
 
 ## Limits
 

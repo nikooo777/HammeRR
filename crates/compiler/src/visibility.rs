@@ -50,13 +50,19 @@ enum Work {
     Shared(budget::Lease),
 }
 
-const WORK_LIMIT: &str = "Visibility work limit exceeded; simplify structural geometry or use func_detail for non-sealing detail";
+const WORK_LIMIT: &str = "Visibility work limit exceeded";
+
+fn work_limit(count: usize, remaining: usize) -> String {
+    format!("{WORK_LIMIT}; next charge {count} work units, {remaining} remaining")
+}
 
 impl Work {
     fn consume(&mut self, count: usize) -> Result<(), String> {
         match self {
             Self::Local(remaining) => {
-                *remaining = remaining.checked_sub(count).ok_or(WORK_LIMIT)?
+                *remaining = remaining
+                    .checked_sub(count)
+                    .ok_or_else(|| work_limit(count, *remaining))?
             }
             Self::Shared(remaining) => {
                 remaining.consume(count)?;
@@ -71,15 +77,6 @@ impl Work {
             Self::Shared(remaining) => remaining.remaining(),
         }
     }
-}
-
-pub(crate) fn build(
-    tree: &Tree,
-    portals: &[Portal],
-    control: &Control,
-    mode: VisibilityMode,
-) -> Result<Visibility, String> {
-    build_budgeted(tree, portals, control, mode, MAX_VISIBILITY_WORK)
 }
 
 fn build_budgeted(
@@ -157,18 +154,71 @@ pub(crate) fn build_authored(
     report: &mut crate::Report,
     mode: VisibilityMode,
 ) -> Result<(Visibility, crate::visclusters::Summary), String> {
+    build_authored_budgeted(context, portals, report, mode, MAX_VISIBILITY_WORK)
+}
+
+fn build_authored_budgeted(
+    context: crate::visclusters::Context<'_>,
+    portals: &[Portal],
+    report: &mut crate::Report,
+    mode: VisibilityMode,
+    budget: usize,
+) -> Result<(Visibility, crate::visclusters::Summary), String> {
+    build_authored_inner(context, portals, report, mode, budget).map_err(|error| {
+        if !error.starts_with(WORK_LIMIT) {
+            return error;
+        }
+        let map = context.map;
+        let (structural_brushes, structural_sides, liquid_brushes) = map.entities[0]
+            .brushes
+            .iter()
+            .map(|&index| &map.brushes[index])
+            .filter(|brush| brush.structural())
+            .fold((0, 0, 0), |(brushes, sides, liquid), brush| {
+                (brushes + 1,
+                 sides + brush.sides.iter().filter(|side| !side.bevel).count(),
+                 liquid + usize::from(brush.contents & crate::water::LIQUID_CONTENTS != 0))
+            });
+        let open_leaves = context.tree.preorder().into_iter().filter(|&index| {
+            let node = &context.tree.nodes[index];
+            node.split.is_none() && !node.solid()
+        }).count();
+        let liquid_leaves = context.water.leaves.iter().filter(|&&region| region >= 0).count();
+        format!(
+            "{error}; visibility work limit {budget} units; \
+             captured geometry after flood/hint partitioning: {open_leaves} open world leaves, \
+             {structural_brushes} structural world brush inputs ({structural_sides} non-bevel sides), \
+             {liquid_brushes} structural liquid brushes, {liquid_leaves} liquid leaves in {} liquid regions; \
+             {} portal records before open-leaf filtering; authored viscluster preparation recorded {} work units. \
+             Counts describe input size; per-brush cost attribution is unavailable. \
+             Use func_detail only for non-sealing geometry; liquid leaves are excluded from authored viscluster grouping, \
+             and grouping does not reduce solver cost",
+            context.water.records.len(),
+            portals.len(),
+            map.viscluster_work,
+        )
+    })
+}
+
+fn build_authored_inner(
+    context: crate::visclusters::Context<'_>,
+    portals: &[Portal],
+    report: &mut crate::Report,
+    mode: VisibilityMode,
+    budget: usize,
+) -> Result<(Visibility, crate::visclusters::Summary), String> {
     let crate::visclusters::Context {
         map, tree, control, ..
     } = context;
     if map.visclusters.is_empty() {
-        let visibility = build(tree, portals, control, mode)?;
+        let visibility = build_budgeted(tree, portals, control, mode, budget)?;
         let summary = crate::visclusters::Summary {
             solved_clusters: visibility.count,
             ..Default::default()
         };
         return Ok((visibility, summary));
     }
-    let mut work = Work::Local(MAX_VISIBILITY_WORK);
+    let mut work = Work::Local(budget);
     work.consume(map.viscluster_work)?;
     let mut visibility = build_budgeted(tree, portals, control, mode, work.remaining())?;
     work.consume(visibility.work)?;
@@ -197,7 +247,7 @@ pub(crate) fn build_authored(
         visibility.count = partition.count;
         visibility.sky = vec![0; partition.count];
     }
-    visibility.work = MAX_VISIBILITY_WORK - work.remaining();
+    visibility.work = budget - work.remaining();
     report.diagnostics.push(crate::Diagnostic::info(
         format!("Authored visclusters solved {} leaf clusters and emitted {} clusters ({} helper groups, {} member leaves); coarsening may expand visibility and does not reduce solver cost", partition.summary.solved_clusters, visibility.count, partition.summary.groups, partition.summary.grouped_leaves), None, None,
     ));
@@ -316,16 +366,34 @@ fn solve_workers(
 ) -> Result<Solution, String> {
     control.checkpoint()?;
     let mut work = Work::Local(budget);
+    solve_work(count, portals, control, mode, requested_workers, &mut work).map_err(|error| {
+        if error.starts_with(WORK_LIMIT) {
+            format!("{error}; solver charged {} of {budget} available work units; {count} input leaf clusters, {} directed portals ({} portal pairs), mode {}", budget - work.remaining(), portals.len(), portals.len() / 2, mode.name())
+        } else {
+            error
+        }
+    })
+}
+
+fn solve_work(
+    count: usize,
+    portals: &[DirectedPortal<'_>],
+    control: &Control,
+    mode: VisibilityMode,
+    requested_workers: usize,
+    work: &mut Work,
+) -> Result<Solution, String> {
+    let budget = work.remaining();
     work.consume(
         portals
             .len()
             .checked_mul(portals.len())
-            .ok_or("Visibility work limit exceeded")?,
+            .ok_or_else(|| format!("{WORK_LIMIT}; directed-portal pair count overflow"))?,
     )?;
     work.consume(
         count
             .checked_mul(count)
-            .ok_or("Visibility work limit exceeded")?,
+            .ok_or_else(|| format!("{WORK_LIMIT}; cluster pair count overflow"))?,
     )?;
     let width = count.div_ceil(8);
     let mut rows = vec![vec![0; width]; count];
@@ -348,7 +416,7 @@ fn solve_workers(
         control,
         detailed: refined.is_some(),
     }
-    .build(workers, &mut work)?;
+    .build(workers, work)?;
     let mut fronts = refined.as_ref().map(|_| Vec::with_capacity(portals.len()));
     let mut bounds = refined.as_ref().map(|_| Vec::with_capacity(portals.len()));
     for row in base {
@@ -379,11 +447,11 @@ fn solve_workers(
         workers = workers.max(flow_workers);
         if flow_workers == 1 {
             for (cluster, row) in refined.iter_mut().enumerate() {
-                graph.refine(cluster, row, &mut work)?;
+                graph.refine(cluster, row, work)?;
             }
         } else {
             let remaining = Arc::new(budget::Budget::new(work.remaining(), control.clone()));
-            work = Work::Shared(budget::Lease::new(remaining.clone()));
+            *work = Work::Shared(budget::Lease::new(remaining.clone()));
             graph.parallel(refined, flow_workers, remaining)?;
         }
     }
@@ -419,7 +487,7 @@ fn solve_workers(
     } else {
         0
     };
-    let data = encode_rows(&rows, control, &mut work)?;
+    let data = encode_rows(&rows, control, work)?;
     Ok(Solution {
         data,
         work: budget - work.remaining(),
@@ -922,11 +990,118 @@ mod tests {
 
     #[test]
     fn work_and_output_limits_fail_before_unbounded_work_and_cancellation_is_checked() {
-        assert!(solve(100, &[], &Control::default(), 99, VisibilityMode::Fast).is_err());
+        let error = solve(100, &[], &Control::default(), 99, VisibilityMode::Fast)
+            .err()
+            .unwrap();
+        assert!(
+            error.contains("next charge 10000 work units, 99 remaining"),
+            "{error}"
+        );
+        assert!(
+            error.contains("solver charged 0 of 99 available work units"),
+            "{error}"
+        );
+        assert!(
+            error.contains("100 input leaf clusters, 0 directed portals"),
+            "{error}"
+        );
+        let shared = Arc::new(budget::Budget::new(5, Control::default()));
+        let mut lease = budget::Lease::new(shared);
+        lease.consume(3).unwrap();
+        let error = lease.consume(4).unwrap_err();
+        assert!(
+            error.contains("next charge 4 work units, 2 remaining"),
+            "{error}"
+        );
+        assert_eq!(lease.remaining(), 2);
         let control = Control::default();
         control.cancel().unwrap();
         assert!(solve(1, &[], &control, MAX_VISIBILITY_WORK, VisibilityMode::Fast).is_err());
         let mut data = vec![0; MAX_VISIBILITY_BYTES];
         assert!(store_row(&mut data, &mut HashMap::new(), &[1], 4).is_err());
+    }
+
+    #[test]
+    fn visibility_limit_retains_actual_structural_and_liquid_input_counts() {
+        use map_core::{Document, edit};
+        use source_formats::gamefs::{Mount, MountedPath};
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir(directory.path().join("materials")).unwrap();
+        std::fs::write(
+            directory.path().join("materials/slime.vmt"),
+            "UnlitGeneric { %compileslime 1 }",
+        )
+        .unwrap();
+        let mut game = crate::test_common::empty_game();
+        game.mounts.push(MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(directory.path().to_owned()),
+        });
+        let mut document = Document::new(crate::test_common::room());
+        document
+            .edit("liquid input", |tx| {
+                edit::create_block(
+                    tx,
+                    DVec3::new(-128.0, -128.0, 0.0),
+                    DVec3::new(128.0, 128.0, 64.0),
+                    "slime",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        let control = Control::default();
+        let mut report = crate::Report::default();
+        let mut map = crate::map::Map::load(document.vmf(), &game, &mut report).unwrap();
+        assert!(!report.has_errors(), "{report:?}");
+        let structural = map.entities[0].brushes.clone();
+        let mut tree = Tree::build(&map.brushes, &structural, &mut map.planes).unwrap();
+        let portals = crate::portals::build(&tree, &map.planes).unwrap();
+        let leak = crate::portals::flood_controlled(
+            &mut tree,
+            &map.planes,
+            &portals,
+            map.entities.iter(),
+            &mut report,
+            &control,
+        )
+        .unwrap();
+        assert!(leak.is_none());
+        let areas = crate::areas::build(&mut map, &tree, &portals, &control).unwrap();
+        let water = crate::water::build(&map, &tree, &portals, &mut report, &control).unwrap();
+        assert!(!report.has_errors(), "{report:?}");
+        let wet = water.leaves.iter().filter(|&&region| region >= 0).count();
+        assert!(wet > 0);
+        assert_eq!(water.records.len(), 1);
+        let context = crate::visclusters::Context {
+            map: &map,
+            tree: &tree,
+            areas: &areas,
+            water: &water,
+            control: &control,
+        };
+        let error =
+            build_authored_budgeted(context, &portals, &mut report, VisibilityMode::Fast, 0)
+                .err()
+                .unwrap();
+        assert!(
+            error.contains("solver charged 0 of 0 available work units"),
+            "{error}"
+        );
+        assert!(
+            error.contains("7 structural world brush inputs (42 non-bevel sides)"),
+            "{error}"
+        );
+        assert!(
+            error.contains(&format!(
+                "1 structural liquid brushes, {wet} liquid leaves in 1 liquid regions"
+            )),
+            "{error}"
+        );
+        assert!(
+            error.contains("liquid leaves are excluded from authored viscluster grouping"),
+            "{error}"
+        );
+        assert_eq!(document.vmf(), &before);
     }
 }

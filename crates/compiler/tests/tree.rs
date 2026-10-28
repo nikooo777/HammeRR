@@ -96,13 +96,28 @@ fn crossed_brush_cap_failure_refuses_to_erase_a_strict_interior() {
             let error = tree.unwrap_err();
             assert!(error.contains("split cap"), "{error}");
             assert!(error.contains(&format!("solid:{id}:")), "{error}");
+            assert!(error.contains("split plane:"), "{error}");
+            assert!(error.contains("normal ["), "{error}");
+            assert!(error.contains("volume bounds ["), "{error}");
             let output = compiler::compile(&vmf, &fs);
+            let object = format!("solid:{id}");
             assert!(output.report.has_errors());
             assert!(output.bsp.is_none());
             assert!(output.report.diagnostics.iter().any(|diagnostic| {
                 diagnostic.message.contains("split cap")
                     && diagnostic.message.contains(&format!("solid:{id}:"))
+                    && diagnostic.object.as_deref() == Some(object.as_str())
+                    && diagnostic.position.is_some_and(DVec3::is_finite)
             }));
+            assert_eq!(
+                output
+                    .report
+                    .diagnostics
+                    .iter()
+                    .filter(|diagnostic| diagnostic.level == compiler::Level::Error)
+                    .count(),
+                1
+            );
         } else {
             assert!(split.unwrap().iter().all(Option::is_some));
             let tree = tree.unwrap();
@@ -117,6 +132,59 @@ fn crossed_brush_cap_failure_refuses_to_erase_a_strict_interior() {
         }
         assert_eq!(vmf, before);
     }
+}
+
+#[test]
+fn captured_split_failure_keeps_the_original_instance_owner() {
+    let (directory, fs) = game();
+    let (child, id) = acute_brush_fixture(15999.98);
+    let child_path = directory.path().join("acute_child.vmf");
+    let child_bytes = child.write(&Default::default());
+    std::fs::write(&child_path, &child_bytes).unwrap();
+    let mut source = Document::empty().vmf().clone();
+    let mut helper = source_formats::vmf::Entity::new(40_000, "func_instance");
+    helper.properties.set("file", "acute_child.vmf");
+    helper.properties.set("origin", "0 0 0");
+    source.entities.push(helper);
+    let source_path = directory.path().join("parent.vmf");
+    let source_bytes = source.write(&Default::default());
+    std::fs::write(&source_path, &source_bytes).unwrap();
+    let before = source.clone();
+    let control = compiler::Control::default();
+    let context = compiler::instances::SourceContext::capture(&source_path, &control).unwrap();
+    let output = compiler::compile_with_source_controlled(
+        &source,
+        &fs,
+        compiler::Options::default(),
+        None,
+        Some(&context),
+        &control,
+    );
+    assert!(output.bsp.is_none());
+    let errors = output
+        .report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.level == compiler::Level::Error)
+        .collect::<Vec<_>>();
+    assert_eq!(errors.len(), 1, "{:?}", output.report);
+    let error = errors[0];
+    assert!(error.message.contains("split cap"), "{}", error.message);
+    assert!(
+        error.message.contains("acute_child.vmf"),
+        "{}",
+        error.message
+    );
+    assert!(
+        error.message.contains(&format!("child object {id}")),
+        "{}",
+        error.message
+    );
+    assert_eq!(error.object.as_deref(), Some("entity:40000"));
+    assert!(error.position.is_some_and(DVec3::is_finite));
+    assert_eq!(source, before);
+    assert_eq!(std::fs::read_to_string(source_path).unwrap(), source_bytes);
+    assert_eq!(std::fs::read_to_string(child_path).unwrap(), child_bytes);
 }
 
 #[test]

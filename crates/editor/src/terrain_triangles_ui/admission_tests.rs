@@ -86,6 +86,7 @@ fn fields(controller: &Controller) -> Value {
         "aspect":window.get_aspect(),"preview":target.preview,"highlight":target.highlight,
         "selected":target.selected.iter().map(|(face,ids)|(format!("{face:?}"),ids.iter().copied().collect::<Vec<_>>())).collect::<Vec<_>>(),
         "vertices":target.vertices,"picking":controller.is_picking(),
+        "height":window.get_absolute_height().to_string(),"csv":window.get_height_csv_path().to_string(),
     })
 }
 
@@ -99,6 +100,8 @@ fn rejected_actions(controller: &Controller, error: &str) {
         TerrainTrianglesWindow::invoke_pick_triangle,
         TerrainTrianglesWindow::invoke_frame_selected,
         TerrainTrianglesWindow::invoke_preview_edit,
+        TerrainTrianglesWindow::invoke_preview_height,
+        TerrainTrianglesWindow::invoke_preview_height_csv,
         TerrainTrianglesWindow::invoke_select_volume,
         TerrainTrianglesWindow::invoke_use_selection,
         TerrainTrianglesWindow::invoke_apply,
@@ -127,6 +130,99 @@ fn rejected_actions(controller: &Controller, error: &str) {
     assert_eq!(window.get_message(), error);
     assert!(!window.window().is_visible());
     assert_eq!(fields(controller), expected);
+}
+
+#[test]
+fn absolute_height_controls_and_csv_keep_failed_previews_and_foreign_highlights() {
+    i_slint_backend_testing::init_no_event_loop();
+    let target = fixture();
+    let window = &target.controller.window;
+    window.set_kind_index(1);
+    window.invoke_kind_changed();
+    window.invoke_toggle_triangle(7, true);
+    window.set_absolute_height("-8191.25".into());
+    window.invoke_preview_height();
+    assert!(window.get_ready(), "{}", window.get_message());
+    assert_eq!(
+        lock(&target.shared)
+            .terrain_grids(&[target.face], true)
+            .unwrap()[0]
+            .mesh
+            .positions[7]
+            .z,
+        -8191.25
+    );
+    let valid = state(&lock(&target.shared));
+    window.set_absolute_height("not a height".into());
+    window.invoke_preview_height();
+    assert_eq!(state(&lock(&target.shared)), valid);
+    assert!(window.get_ready());
+    let path = target.directory.path().join("heights.csv");
+    window.set_height_csv_path(path.to_string_lossy().into_owned().into());
+    std::fs::write(
+        &path,
+        format!(
+            "solid,side,vertex,z\n{},{},0,8191.5\n{},{},12,-12.25\n",
+            target.face.solid, target.face.side, target.face.solid, target.face.side
+        ),
+    )
+    .unwrap();
+    lock(&target.shared)
+        .highlight_terrain_vertices(Actor::Agent, &[(target.face, vec![1])])
+        .unwrap();
+    let highlight = lock(&target.shared).terrain_triangle_highlight_json();
+    window.invoke_preview_height_csv();
+    assert!(window.get_ready(), "{}", window.get_message());
+    assert_eq!(
+        lock(&target.shared).terrain_triangle_highlight_json(),
+        highlight
+    );
+    let original = lock(&target.shared).document().vmf().clone();
+    let valid = state(&lock(&target.shared));
+    std::fs::write(
+        &path,
+        format!(
+            "solid,side,vertex,z\n{},{},0,32\n{},{},25,0\n",
+            target.face.solid, target.face.side, target.face.solid, target.face.side
+        ),
+    )
+    .unwrap();
+    window.invoke_preview_height_csv();
+    assert_eq!(state(&lock(&target.shared)), valid);
+    assert!(window.get_ready());
+    let draft = lock(&target.shared)
+        .terrain_grids(&[target.face], true)
+        .unwrap()
+        .remove(0)
+        .mesh;
+    assert_eq!(draft.positions[0].z, 8191.5);
+    assert_eq!(draft.positions[12].z, -12.25);
+    assert_eq!(draft.positions[7].z, 64.0);
+    let history = lock(&target.shared).document().undo_labels().count();
+    window.invoke_apply();
+    assert_eq!(
+        lock(&target.shared).document().undo_labels().count(),
+        history + 1
+    );
+    assert_eq!(
+        lock(&target.shared).terrain_triangle_highlight_json(),
+        highlight
+    );
+    lock(&target.shared).undo(Actor::User).unwrap();
+    assert_eq!(lock(&target.shared).document().vmf(), &original);
+    target
+        .access
+        .with_session(|session| target.controller.initialize(session))
+        .unwrap();
+    window.set_kind_index(1);
+    window.invoke_kind_changed();
+    window.invoke_toggle_triangle(7, true);
+    window.set_absolute_height("12".into());
+    window.invoke_preview_height();
+    let original = lock(&target.shared).document().vmf().clone();
+    window.invoke_cancel();
+    assert!(lock(&target.shared).face_preview_token().is_none());
+    assert_eq!(lock(&target.shared).document().vmf(), &original);
 }
 
 #[test]

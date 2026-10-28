@@ -1,7 +1,7 @@
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
-use super::{Control, WORK_LIMIT};
+use super::{Control, work_limit};
 
 const CREDIT_CHUNK: usize = 4096;
 
@@ -77,7 +77,7 @@ impl Lease {
         while state.free < count {
             self.budget.control.checkpoint()?;
             if state.leases == 0 {
-                return Err(WORK_LIMIT.into());
+                return Err(work_limit(count, state.free));
             }
             state = self
                 .budget

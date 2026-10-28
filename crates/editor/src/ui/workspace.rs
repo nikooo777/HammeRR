@@ -234,6 +234,14 @@ impl Owner {
                 controls::open(&owner, origin);
             }
         });
+        let weak = self.weak.clone();
+        let selector = host.workspace_close.as_ref().unwrap().1.clone();
+        host.window.app().window().on_close_requested(move || {
+            if let Some(owner) = weak.upgrade() {
+                controls::request_close(&owner, &selector);
+            }
+            slint::CloseRequestResponse::KeepWindowShown
+        });
         Ok(())
     }
 

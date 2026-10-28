@@ -38,7 +38,7 @@ See the [tool index and setup](docs/mcp.md).
 | [Brush shapes](docs/brushes.md) | [Hollow rooms](docs/brush-tools.md) |
 | --- | --- |
 | ![Wedges, cylinders, cones, spheres and an arch](docs/images/primitive-gallery.png) | ![A hollow masonry room](docs/images/hollow-room.png) |
-| Build editable geometry from exact dimensions. | Turn solids into rooms with selected openings. |
+| Build exact shapes or import block batches. | Turn solids into rooms with selected openings. |
 
 | [Carved openings](docs/brush-tools.md#carve) | [Clip planes](docs/brush-tools.md#clip) |
 | --- | --- |
@@ -63,7 +63,7 @@ See the [tool index and setup](docs/mcp.md).
 | [Terrain](docs/terrain.md) | [Compiled terrain](docs/terrain.md#compile-split-borders) |
 | --- | --- |
 | ![Sculpted terrain with painted blends](docs/images/terrain-blended.png) | ![Terrain running in CS:S](docs/images/terrain-native.png) |
-| Sculpt, paint, sew and move displacement samples. | Build mixed-grid terrain with lighting and collision. |
+| Set exact heights, sculpt, paint and sew terrain. | Build mixed-grid terrain with lighting and collision. |
 
 | [Lighting preview](docs/lighting-preview.md) | [Baked lighting](docs/compile-and-play.md#lighting) |
 | --- | --- |

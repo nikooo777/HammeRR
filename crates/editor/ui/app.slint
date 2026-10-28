@@ -688,7 +688,7 @@ export component ColorWindow inherits Window {
 }
 
 export struct MaterialGroup { id: string, label: string }
-export struct MaterialTile { name: string, preview: image, favorite: bool }
+export struct MaterialTile { name: string, preview: image, favorite: bool, source: string }
 export struct MaterialTileRow { tiles: [MaterialTile] }
 
 export component MaterialWindow inherits Window {
@@ -701,6 +701,10 @@ export component MaterialWindow inherits Window {
     in-out property <string> group: "all";
     in-out property <int> offset;
     in property <[MaterialGroup]> groups;
+    in property <[string]> source-labels;
+    in property <[string]> source-ids;
+    in-out property <int> source-index;
+    in-out property <bool> exclude-generated-map-materials;
     in property <[MaterialTileRow]> rows;
     in property <int> total;
     in property <string> catalog-label;
@@ -734,6 +738,12 @@ export component MaterialWindow inherits Window {
             spacing: 12px;
             LineEdit { placeholder-text: "Search materials across folders and categories"; text <=> root.filter; edited => { root.offset = 0; root.search(); } }
             HorizontalLayout {
+                spacing: 12px;
+                Text { text: "Winning VMT source"; vertical-alignment: center; }
+                ComboBox { horizontal-stretch: 1; model: root.source-labels; current-index <=> root.source-index; selected => { root.offset = 0; root.search(); } }
+                CheckBox { text: "Exclude maps/ materials"; checked <=> root.exclude-generated-map-materials; toggled => { root.offset = 0; root.search(); } }
+            }
+            HorizontalLayout {
                 spacing: 16px;
                 vertical-stretch: 1;
                 ListView {
@@ -754,7 +764,7 @@ export component MaterialWindow inherits Window {
                             padding-bottom: 8px;
                             for tile in row.tiles: Rectangle {
                                 width: 165px;
-                                height: 170px;
+                                height: 188px;
                                 background: root.material == tile.name ? #344653 : #252a33;
                                 border-radius: 6px;
                                 accessible-role: button;
@@ -765,6 +775,7 @@ export component MaterialWindow inherits Window {
                                     spacing: 6px;
                                     Image { height: 110px; source: tile.preview; image-fit: contain; }
                                     Text { text: (tile.favorite ? "★ " : "") + tile.name; wrap: word-wrap; font-size: 11px; }
+                                    Text { text: tile.source; overflow: elide; font-size: 10px; color: #aab0bb; }
                                 }
                                 TouchArea { clicked => { root.material = tile.name; root.preview-material(); } }
                             }
@@ -2103,6 +2114,7 @@ export component AppWindow inherits Window {
 
     callback new-map();
     callback open-map();
+    callback import-brush-batch();
     callback recent-maps();
     callback save-map();
     callback save-map-as();
@@ -3164,6 +3176,7 @@ export component AppWindow inherits Window {
                         Button { text: "Recovery…"; clicked => { root.recovery(); } }
                     }
                     Button { text: "Brush shapes…"; clicked => { root.brush-shapes(); } }
+                    Button { text: "Import brush batch…"; clicked => { root.import-brush-batch(); } }
                     Button { text: "Draw polygon…"; clicked => { root.draw-polygon(); } }
                     Button { text: "Create linked path…"; clicked => { root.create-linked-path(); } }
                     Button { text: "Design context…"; clicked => { root.design-context(); } }

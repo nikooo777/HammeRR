@@ -3,13 +3,14 @@ use std::collections::BTreeSet;
 use glam::DVec3;
 use source_formats::bsp::contents;
 
-use crate::Control;
 use crate::map::MapBrush;
 use crate::planes::PlaneSet;
 use crate::winding::{ON_EPSILON, Side, Winding};
+use crate::{Control, Diagnostic, Report};
 
 const BOUNDS_PADDING: f64 = 8.0;
 const MAX_TREE_NODES: usize = 65_535;
+const MAX_SPLIT_SOURCES: usize = 4;
 
 mod budget;
 use budget::Budget;
@@ -109,6 +110,7 @@ impl Polyhedron {
 
     pub fn split(&self, index: usize, planes: &PlaneSet) -> Result<[Option<Self>; 2], String> {
         self.split_budgeted(index, planes, &mut Budget::unlimited())
+            .map_err(|error| split_geometry(&error, None, self, index, planes))
     }
 
     fn split_budgeted(
@@ -200,6 +202,132 @@ struct Fragment {
     brush: usize,
     contents: i32,
     shape: Polyhedron,
+}
+
+struct BuildFailure {
+    diagnostics: Vec<Diagnostic>,
+}
+
+impl From<String> for BuildFailure {
+    fn from(message: String) -> Self {
+        Self {
+            diagnostics: vec![Diagnostic::error(message, None, None)],
+        }
+    }
+}
+
+impl From<&str> for BuildFailure {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+
+impl BuildFailure {
+    fn message(&self) -> String {
+        self.diagnostics[0].message.clone()
+    }
+}
+
+fn split_geometry(
+    error: &str,
+    node: Option<usize>,
+    volume: &Polyhedron,
+    plane: usize,
+    planes: &PlaneSet,
+) -> String {
+    let split = planes.get(plane);
+    let (mins, maxs) = volume.bounds();
+    let node = node.map_or_else(String::new, |index| format!("node:{index}; "));
+    format!(
+        "{error}; {node}split plane:{plane} normal {:?} dist {}; volume bounds {:?} to {:?}",
+        split.normal.to_array(),
+        split.dist,
+        mins.to_array(),
+        maxs.to_array(),
+    )
+}
+
+struct SplitContext<'a> {
+    index: usize,
+    volume: &'a Polyhedron,
+    plane: usize,
+    planes: &'a PlaneSet,
+    fragments: &'a [Fragment],
+    brushes: &'a [MapBrush],
+    hints: &'a [crate::hints::Hint],
+}
+
+impl SplitContext<'_> {
+    fn volumes(&self, budget: &mut Budget<'_>) -> Result<[Polyhedron; 2], BuildFailure> {
+        let volumes = self
+            .volume
+            .split_budgeted(self.plane, self.planes, budget)
+            .map_err(|error| self.failure(error, None))?;
+        let [Some(front), Some(back)] = volumes else {
+            return Err(self.failure("BSP split produced a degenerate volume".into(), None));
+        };
+        Ok([front, back])
+    }
+
+    fn failure(&self, message: String, affected: Option<&MapBrush>) -> BuildFailure {
+        let Self {
+            index,
+            volume,
+            plane,
+            planes,
+            fragments,
+            brushes,
+            hints,
+        } = *self;
+        let sources = fragments
+            .iter()
+            .flat_map(|fragment| {
+                let brush = &brushes[fragment.brush];
+                brush.sides.iter().filter_map(move |side| {
+                    (!side.bevel && side.plane & !1 == plane & !1)
+                        .then_some(side.source_id)
+                        .flatten()
+                        .map(|side| (brush.id, side))
+                })
+            })
+            .chain(hints.iter().filter_map(|hint| hint.plane_source(plane)))
+            .collect::<BTreeSet<_>>();
+        let examples = sources
+            .iter()
+            .take(MAX_SPLIT_SOURCES)
+            .map(|(solid, side)| format!("solid:{solid} side:{side}"))
+            .collect::<Vec<_>>();
+        let mut message = split_geometry(&message, Some(index), volume, plane, planes);
+        message.push_str(&format!(
+            "; split-plane source candidates: {} authored sides, showing {} [{}]",
+            sources.len(),
+            examples.len(),
+            examples.join(", "),
+        ));
+        let (mins, maxs) = volume.bounds();
+        let mut position = (mins + maxs) * 0.5;
+        let object = affected.map(|brush| format!("solid:{}", brush.id));
+        if let Some(brush) = affected {
+            message.push_str(&format!(
+                "; affected brush bounds {:?} to {:?}",
+                brush.mins.to_array(),
+                brush.maxs.to_array()
+            ));
+            position = (brush.mins + brush.maxs) * 0.5;
+        }
+        if let Some(object) = &object {
+            message = format!("{object}: {message}");
+        }
+        let mut diagnostics = vec![Diagnostic::error(message, object, Some(position))];
+        let candidates = sources.iter().take(MAX_SPLIT_SOURCES).map(|&(solid, side)| {
+            let message = format!(
+                "Split plane:{plane} source candidate captured side:{side}; this side shares the chosen compiler plane"
+            );
+            Diagnostic::info(message, Some(format!("solid:{solid}")), Some(position))
+        });
+        diagnostics.extend(candidates);
+        BuildFailure { diagnostics }
+    }
 }
 
 fn choose_plane(
@@ -315,7 +443,9 @@ impl Tree {
         planes: &mut PlaneSet,
         control: &Control,
     ) -> Result<Self, String> {
-        Self::build_with_hints(brushes, indices, planes, &[], control).map(|(tree, _)| tree)
+        Self::build_impl(brushes, indices, planes, &[], control, None)
+            .map(|(tree, _)| tree)
+            .map_err(|failure| failure.message())
     }
 
     pub fn build_limited(
@@ -325,7 +455,9 @@ impl Tree {
         control: &Control,
         limits: Limits,
     ) -> Result<Self, String> {
-        Self::build_impl(brushes, indices, planes, &[], control, Some(limits)).map(|(tree, _)| tree)
+        Self::build_impl(brushes, indices, planes, &[], control, Some(limits))
+            .map(|(tree, _)| tree)
+            .map_err(|failure| failure.message())
     }
 
     pub(crate) fn build_with_hints(
@@ -334,8 +466,13 @@ impl Tree {
         planes: &mut PlaneSet,
         hints: &[crate::hints::Hint],
         control: &Control,
+        report: &mut Report,
     ) -> Result<(Self, crate::hints::Priority), String> {
-        Self::build_impl(brushes, indices, planes, hints, control, None)
+        Self::build_impl(brushes, indices, planes, hints, control, None).map_err(|failure| {
+            let message = failure.message();
+            report.diagnostics.extend(failure.diagnostics);
+            message
+        })
     }
 
     fn build_impl(
@@ -345,7 +482,7 @@ impl Tree {
         hints: &[crate::hints::Hint],
         control: &Control,
         limits: Option<Limits>,
-    ) -> Result<(Self, crate::hints::Priority), String> {
+    ) -> Result<(Self, crate::hints::Priority), BuildFailure> {
         control.checkpoint()?;
         let mut budget = Budget::new(limits, control);
         budget.nodes(1)?;
@@ -393,6 +530,7 @@ impl Tree {
             }],
         };
         let mut priority = crate::hints::Priority::default();
+        let source_hints = hints;
         let hints = priority.fragments(hints, &tree.nodes[0].volume, planes, control)?;
         let mut pending = vec![(0, fragments, hints)];
         while let Some((index, fragments, hints)) = pending.pop() {
@@ -423,18 +561,22 @@ impl Tree {
                 priority.record(index, plane, &hints)?;
             }
             let [front_hints, back_hints] = priority.split(hints, plane, planes, control)?;
-            let volumes = tree.nodes[index]
-                .volume
-                .split_budgeted(plane, planes, &mut budget)?;
-            let [Some(front_volume), Some(back_volume)] = volumes else {
-                return Err("BSP split produced a degenerate volume".into());
+            let split = SplitContext {
+                index,
+                volume: &tree.nodes[index].volume,
+                plane,
+                planes,
+                fragments: &fragments,
+                brushes,
+                hints: source_hints,
             };
+            let [front_volume, back_volume] = split.volumes(&mut budget)?;
             let mut halves = [Vec::new(), Vec::new()];
-            for fragment in fragments {
+            for fragment in &fragments {
                 let shapes = fragment
                     .shape
                     .split_budgeted(plane, planes, &mut budget)
-                    .map_err(|error| format!("solid:{}: {error}", brushes[fragment.brush].id))?;
+                    .map_err(|error| split.failure(error, Some(&brushes[fragment.brush])))?;
                 for (half, shape) in halves.iter_mut().zip(shapes) {
                     if let Some(shape) = shape {
                         budget.charge(1, 4)?;
@@ -481,8 +623,18 @@ impl Tree {
             return Err("BSP hint partitioning exceeds the node allocation budget".into());
         }
         let node = &self.nodes[index];
-        let [Some(front), Some(back)] = node.volume.split(plane, planes)? else {
-            return Err("Hint plane produced a degenerate BSP leaf volume".into());
+        let volumes = node
+            .volume
+            .split_budgeted(plane, planes, &mut Budget::unlimited())
+            .map_err(|error| split_geometry(&error, Some(index), &node.volume, plane, planes))?;
+        let [Some(front), Some(back)] = volumes else {
+            return Err(split_geometry(
+                "Hint plane produced a degenerate BSP leaf volume",
+                Some(index),
+                &node.volume,
+                plane,
+                planes,
+            ));
         };
         let children = [self.nodes.len(), self.nodes.len() + 1];
         let contents = node.contents;
@@ -541,7 +693,16 @@ impl Tree {
         while let Some((index, shape)) = pending.pop() {
             if let Some((plane, children)) = self.nodes[index].split {
                 let halves = shape
-                    .split(plane, planes)
+                    .split_budgeted(plane, planes, &mut Budget::unlimited())
+                    .map_err(|error| {
+                        split_geometry(
+                            &error,
+                            Some(index),
+                            &self.nodes[index].volume,
+                            plane,
+                            planes,
+                        )
+                    })
                     .map_err(|error| format!("solid:{}: {error}", brush.id))?;
                 for (child, half) in children.into_iter().zip(halves) {
                     if let Some(half) = half {
@@ -559,6 +720,93 @@ impl Tree {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn near_axial_node_refusal_retains_the_plane_and_multiple_source_candidates() {
+        use map_core::{Document, edit, transform};
+        let mut document = Document::empty();
+        document
+            .edit("near axial sources", |tx| {
+                let mut objects = Vec::new();
+                for _ in 0..2 {
+                    objects.push(edit::create_block(
+                        tx,
+                        DVec3::new(-16_000.0, -16.0, 0.0),
+                        DVec3::new(16_000.0, 16.0, 16.0),
+                        "dev/near_axial",
+                    )?);
+                }
+                transform::transform(
+                    tx,
+                    &objects,
+                    transform::Transform {
+                        rotation: DVec3::new(0.0, 0.0000279, 0.0),
+                        pivot: DVec3::new(-16_000.0, 0.0, 0.0),
+                        ..Default::default()
+                    },
+                )
+            })
+            .unwrap();
+        let before = document.vmf().clone();
+        let game = crate::test_common::empty_game();
+        let mut report = Report::default();
+        let map = crate::map::Map::load(document.vmf(), &game, &mut report).unwrap();
+        assert!(!report.has_errors(), "{report:?}");
+        let brush = &map.brushes[0];
+        let plane = brush
+            .sides
+            .iter()
+            .find(|side| !side.bevel && map.planes.get(side.plane).kind >= 3)
+            .unwrap()
+            .plane;
+        let captured = *map.planes.get(plane);
+        assert!(captured.normal.abs().max_element() > 0.999_999);
+        let axial_deviation = captured.normal.cross(DVec3::Z).length();
+        assert!(axial_deviation > 0.0 && axial_deviation < 0.000_001);
+        let fragments = (0..map.brushes.len())
+            .map(|brush| Fragment {
+                brush,
+                contents: map.brushes[brush].contents,
+                shape: Polyhedron::from_brush(&map.brushes[brush]),
+            })
+            .collect::<Vec<_>>();
+        let context = SplitContext {
+            index: 7,
+            volume: &fragments[0].shape,
+            plane,
+            planes: &map.planes,
+            fragments: &fragments,
+            brushes: &map.brushes,
+            hints: &[],
+        };
+        let failure = context.volumes(&mut Budget::unlimited()).err().unwrap();
+        let primary = &failure.diagnostics[0];
+        assert!(
+            primary.message.contains("degenerate volume"),
+            "{}",
+            primary.message
+        );
+        assert!(primary.message.contains("node:7"));
+        assert!(primary.message.contains(&format!(
+            "normal {:?} dist {}",
+            captured.normal.to_array(),
+            captured.dist
+        )));
+        assert!(
+            primary.message.contains("2 authored sides, showing 2"),
+            "{}",
+            primary.message
+        );
+        assert_eq!(primary.object, None);
+        assert!(primary.position.unwrap().is_finite());
+        assert_eq!(failure.diagnostics.len(), 3);
+        for source in &failure.diagnostics[1..] {
+            assert!(source.object.is_some());
+            assert!(source.message.contains("source candidate captured side:"));
+        }
+        assert_eq!(document.vmf(), &before);
+        assert_eq!(*map.planes.get(plane), captured);
+    }
 
     #[test]
     fn unsupported_bounding_volumes_return_errors() {

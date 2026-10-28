@@ -34,6 +34,7 @@ pub(crate) mod terrain;
 pub use terrain::Terrain;
 
 pub const DEFAULT_LIGHTMAP_SCALE: f64 = 16.0;
+const MAX_UNSUPPORTED_MATERIAL_EXAMPLES: usize = 4;
 pub use map_core::checks::SOURCE_COORDINATE_LIMIT as MAX_COMPILE_COORD;
 
 pub(crate) fn within_compile_bounds(point: DVec3) -> bool {
@@ -109,6 +110,7 @@ impl MapBrush {
             && self.contents
                 & (contents::SOLID
                     | contents::WINDOW
+                    | contents::GRATE
                     | contents::WATER
                     | contents::SLIME
                     | contents::AREAPORTAL)
@@ -232,6 +234,15 @@ pub struct Map<'a> {
     pub(crate) viscluster_attempts: usize,
     pub(crate) viscluster_work: usize,
     brush_side_count: usize,
+    unsupported_materials: HashMap<usize, UnsupportedMaterialDiagnostic>,
+}
+
+struct UnsupportedMaterialDiagnostic {
+    diagnostic: usize,
+    brushes: usize,
+    sides: usize,
+    last_brush: u32,
+    examples: Vec<(u32, u32)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -280,6 +291,7 @@ impl<'a> Map<'a> {
             viscluster_attempts: 0,
             viscluster_work: 0,
             brush_side_count: 0,
+            unsupported_materials: HashMap::new(),
         }
     }
 
@@ -641,20 +653,8 @@ impl<'a> Map<'a> {
             brush_contents |= info.contents;
             solid_sides |= info.contents == contents::SOLID;
             hint |= info.hint;
-            if !info.unsupported_flags.is_empty()
-                && !sides.iter().any(|side: &MapSide| side.material == material)
-            {
-                report.diagnostics.push(Diagnostic::warning(
-                    format!(
-                        "material {} uses unsupported compile flags {}; output may be incomplete",
-                        info.name,
-                        info.unsupported_flags.join(", ")
-                    ),
-                    Some(object.clone()),
-                    Some(world_center),
-                ));
-            }
             let visible = info.draws;
+            self.unsupported_material_warning(material, solid.id, side.id, world_center, report);
             let Some(plane) = support::find_authored(&mut self.planes, &geometry, face, control)?
             else {
                 report.diagnostics.push(Diagnostic::error(
@@ -695,7 +695,23 @@ impl<'a> Map<'a> {
             self.brush_side_count += sides.len();
             return Ok(());
         }
-        if solid_sides && brush_contents & !(contents::SOLID | contents::DETAIL) != 0 {
+        if brush_contents & contents::GRATE != 0 {
+            let special_contents = brush_contents
+                & !(contents::SOLID
+                    | contents::WINDOW
+                    | contents::GRATE
+                    | contents::DETAIL
+                    | contents::TRANSLUCENT);
+            if special_contents != 0 || extra_contents & !contents::DETAIL != 0 {
+                report.diagnostics.push(Diagnostic::error(
+                    "GRATE material cannot share a brush with liquid, clip, origin, ladder, areaportal or other special contents; use separate brushes",
+                    Some(object),
+                    Some(world_center),
+                ));
+                return Ok(());
+            }
+            brush_contents = (brush_contents & !contents::SOLID) | contents::TRANSLUCENT;
+        } else if solid_sides && brush_contents & !(contents::SOLID | contents::DETAIL) != 0 {
             // A mix like nodraw + clip; the special contents win.
             brush_contents &= !contents::SOLID;
             if brush_contents & (contents::WINDOW | contents::TRANSLUCENT) != 0 {
@@ -761,6 +777,67 @@ impl<'a> Map<'a> {
         });
         self.entities[entity].brushes.push(index);
         Ok(())
+    }
+
+    fn unsupported_material_warning(
+        &mut self,
+        material: usize,
+        solid: u32,
+        side: u32,
+        position: DVec3,
+        report: &mut Report,
+    ) {
+        let info = self.materials.get(material);
+        if info.unsupported_flags.is_empty() {
+            return;
+        }
+        let entry = self
+            .unsupported_materials
+            .entry(material)
+            .or_insert_with(|| {
+                let diagnostic = report.diagnostics.len();
+                report.diagnostics.push(Diagnostic::warning(
+                    String::new(),
+                    Some(format!("solid:{solid}")),
+                    Some(position),
+                ));
+                UnsupportedMaterialDiagnostic {
+                    diagnostic,
+                    brushes: 0,
+                    sides: 0,
+                    last_brush: solid,
+                    examples: Vec::new(),
+                }
+            });
+        entry.sides += 1;
+        if entry.brushes == 0 || entry.last_brush != solid {
+            entry.brushes += 1;
+            entry.last_brush = solid;
+            if entry.examples.len() < MAX_UNSUPPORTED_MATERIAL_EXAMPLES {
+                if !entry.examples.is_empty() {
+                    report.diagnostics.push(Diagnostic::info(
+                        format!("Additional source example for material {} with unsupported compile flags: side:{side}", info.name),
+                        Some(format!("solid:{solid}")),
+                        Some(position),
+                    ));
+                }
+                entry.examples.push((solid, side));
+            }
+        }
+        let examples = entry
+            .examples
+            .iter()
+            .map(|(solid, side)| format!("solid:{solid} side:{side}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        report.diagnostics[entry.diagnostic].message = format!(
+            "material {} uses unsupported compile flags {}; output may be incomplete; affected {} source brush occurrences ({} sides), showing {} source examples: {examples}",
+            info.name,
+            info.unsupported_flags.join(", "),
+            entry.brushes,
+            entry.sides,
+            entry.examples.len(),
+        );
     }
 
     fn add_areaportal(
@@ -887,6 +964,94 @@ mod world_preparation_tests {
     use super::*;
     use map_core::{Document, ObjectId, edit};
     use source_formats::gamefs::{Mount, MountedPath};
+
+    #[test]
+    fn repeated_unsupported_material_warnings_count_sources_without_hiding_errors() {
+        let directory = tempfile::tempdir().unwrap();
+        let materials = directory.path().join("materials/future");
+        std::fs::create_dir_all(&materials).unwrap();
+        for (name, flag) in [("a", "%compilefuturea"), ("b", "%compilefutureb")] {
+            std::fs::write(
+                materials.join(format!("{name}.vmt")),
+                format!("UnlitGeneric {{ {flag} 1 }}"),
+            )
+            .unwrap();
+        }
+        let mut game = crate::test_common::empty_game();
+        game.mounts.push(MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(directory.path().to_owned()),
+        });
+        let mut document = Document::empty();
+        document
+            .edit("repeated material sources", |tx| {
+                for index in 0..128 {
+                    let mins = DVec3::new(index as f64 * 8.0, 0.0, 0.0);
+                    let ObjectId::Solid(id) =
+                        edit::create_block(tx, mins, mins + DVec3::splat(8.0), "future/a")?
+                    else {
+                        unreachable!()
+                    };
+                    tx.solid_mut(id)?.sides[0].material = "future/b".into();
+                }
+                edit::create_block(tx, DVec3::splat(-32.0), DVec3::splat(-16.0), "dev/solid")?;
+                Ok(())
+            })
+            .unwrap();
+        let mut source = document.vmf().clone();
+        source.world.solids.last_mut().unwrap().sides[0].plane.0 = [DVec3::ZERO; 3];
+        let before = source.clone();
+        let mut report = Report::default();
+        report
+            .diagnostics
+            .push(Diagnostic::info("Earlier diagnostic", None, None));
+        let map = Map::load(&source, &game, &mut report).unwrap();
+        assert_eq!(map.brushes.len(), 128);
+        assert!(report.has_errors());
+        assert_eq!(report.diagnostics[0].message, "Earlier diagnostic");
+        let warnings = report
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.level == crate::Level::Warning
+                    && diagnostic
+                        .message
+                        .contains("uses unsupported compile flags")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(warnings.len(), 2);
+        for (name, sides) in [("FUTURE/A", 640), ("FUTURE/B", 128)] {
+            let warning = warnings
+                .iter()
+                .find(|diagnostic| diagnostic.message.contains(name))
+                .unwrap();
+            assert!(
+                warning.message.contains(&format!(
+                    "affected 128 source brush occurrences ({sides} sides), showing 4 source examples"
+                )),
+                "{}",
+                warning.message
+            );
+            assert!(warning.object.is_some());
+            assert!(warning.position.is_some_and(DVec3::is_finite));
+        }
+        let examples = report
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic
+                    .message
+                    .starts_with("Additional source example for material")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(examples.len(), 2 * (MAX_UNSUPPORTED_MATERIAL_EXAMPLES - 1));
+        assert!(
+            examples
+                .iter()
+                .all(|diagnostic| diagnostic.object.is_some() && diagnostic.position.is_some())
+        );
+        assert_eq!(source, before);
+    }
 
     #[test]
     fn flat_preparation_preserves_source_owners_and_normal_compile_order() {

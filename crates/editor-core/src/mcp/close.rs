@@ -56,13 +56,13 @@ impl TerminalUi {
     }
 }
 
-struct Output {
+pub(super) struct Output {
     bind: ResultBinder,
     wait: OutputWait,
 }
 
 impl Output {
-    fn reserve(
+    pub(super) fn reserve(
         server: &EditorServer,
         context: &RequestContext<rmcp::RoleServer>,
         attempt: TerminalAttempt,
@@ -90,6 +90,32 @@ impl Output {
                 wait: Box::pin(async move { receipt.wait().await }),
             })
         }
+    }
+
+    pub(super) fn deliver(
+        self,
+        runtime: &tokio::runtime::Runtime,
+        response: oneshot::Sender<CallToolResult>,
+        result: CallToolResult,
+    ) -> Result<(), String> {
+        let result = match (self.bind)(result) {
+            Ok(result) => result,
+            Err(error) => {
+                let _ = response.send(CallToolResult::error(vec![
+                    rmcp::model::ContentBlock::text(bounded_error(&error).to_owned()),
+                ]));
+                return Err(format!("Could not bind terminal response: {error}"));
+            }
+        };
+        let handed_off = response
+            .send(result)
+            .map_err(|_| "The terminal response receiver was dropped".to_owned());
+        let sent = runtime.block_on(async {
+            tokio::time::timeout(OUTPUT_TIMEOUT, self.wait)
+                .await
+                .map_err(|_| "The terminal response output deadline expired".to_owned())?
+        });
+        combine(handed_off, sent)
     }
 }
 
@@ -421,7 +447,7 @@ fn combine(left: Result<(), String>, right: Result<(), String>) -> Result<(), St
     }
 }
 
-fn bounded_error(error: &str) -> &str {
+pub(super) fn bounded_error(error: &str) -> &str {
     let end = error
         .char_indices()
         .map(|(index, _)| index)

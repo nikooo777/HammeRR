@@ -1,4 +1,4 @@
-import { Button, ListView } from "std-widgets.slint";
+import { Button, ListView, ScrollView } from "std-widgets.slint";
 
 export struct OpenDocumentRow {
     selector: string,
@@ -16,10 +16,17 @@ export component OpenDocumentsWindow inherits Window {
     in property <string> summary;
     in property <bool> can-create;
     in property <bool> can-save-all;
+    in property <bool> can-quit-all;
+    in property <bool> quit-review;
+    in property <bool> quit-discard-required;
+    in property <string> quit-description;
     in-out property <bool> busy;
     in-out property <string> message;
     callback new-document();
     callback save-all-named-maps();
+    callback quit-all();
+    callback confirm-quit-all();
+    callback cancel-quit-all();
     callback open-document();
     callback show-document(string);
     callback show-silent(string);
@@ -30,15 +37,27 @@ export component OpenDocumentsWindow inherits Window {
         padding: 20px; spacing: 12px;
         Text { text: "Open documents"; color: #eef1f7; font-size: 23px; font-weight: 600; }
         Text { text: root.summary; color: #c8d1df; wrap: word-wrap; }
-        Text { text: "Two independent maps in this editor. New / Open… in a map window still replace that window's map."; color: #aab8cc; wrap: word-wrap; }
+        if !root.quit-review: Text { text: "Two independent maps in this editor. New / Open… in a map window still replace that window's map."; color: #aab8cc; wrap: word-wrap; }
         HorizontalLayout {
             spacing: 10px;
             Button { text: "New document"; enabled: root.can-create && !root.busy; clicked => { root.new-document(); } }
             Button { text: "Open document…"; enabled: root.can-create && !root.busy; clicked => { root.open-document(); } }
             Button { text: "Save all named maps"; enabled: root.can-save-all && !root.busy; clicked => { root.save-all-named-maps(); } }
+            Button { text: "Quit all…"; enabled: root.can-quit-all && !root.busy && !root.quit-review; clicked => { root.quit-all(); } }
             Button { text: "Refresh"; enabled: !root.busy; clicked => { root.refresh(); } }
         }
-        ListView {
+        if root.quit-review: VerticalLayout {
+            spacing: 10px;
+            Text { text: "Quit every open map and exit the editor?"; color: #eef1f7; font-size: 18px; font-weight: 600; }
+            ScrollView { vertical-stretch: 1; min-height: 90px; Text { text: root.quit-description; color: #e8bd82; wrap: word-wrap; } }
+            Text { text: "This includes hidden maps. Owned game and sound playback will stop, and owned work will be cancelled and drained. Changes after this review require a fresh review."; color: #c8d1df; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: root.quit-discard-required ? "Discard reviewed changes and quit all" : "Quit all reviewed documents"; enabled: !root.busy; clicked => { root.confirm-quit-all(); } }
+                Button { text: "Cancel quit"; enabled: !root.busy; clicked => { root.cancel-quit-all(); } }
+            }
+        }
+        if !root.quit-review: ListView {
             for row in root.rows: VerticalLayout {
                 padding: 10px; spacing: 7px;
                 Text { text: row.title; color: #eef1f7; font-weight: 600; wrap: word-wrap; }
@@ -52,7 +71,7 @@ export component OpenDocumentsWindow inherits Window {
             }
         }
         Text { text: root.message; color: #e8bd82; wrap: word-wrap; }
-        Text { text: "MCP-created documents start hidden. Show a hidden peer before closing the last visible map window. Closing the last document exits the editor."; color: #aab8cc; wrap: word-wrap; font-size: 12px; }
+        if !root.quit-review: Text { text: "MCP-created documents start hidden. Quit all… reviews every map before exiting. Closing the last visible map with hidden peers opens that review; cancelling keeps every map open."; color: #aab8cc; wrap: word-wrap; font-size: 12px; }
         Button { text: "Close list"; clicked => { root.close-list(); } }
     }
 }

@@ -1,5 +1,9 @@
 use super::super::*;
 
+#[cfg(test)]
+#[path = "geometry/carve_material_tests.rs"]
+mod carve_material_tests;
+
 #[tool_router(router = geometry_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
@@ -32,7 +36,7 @@ impl EditorServer {
                 session.document()
             };
             Ok(
-                json!({"preview":args.preview,"objects":ids.iter().map(|&id|summary(document,id)).collect::<Vec<_>>(),"state":session.primitive_state()}),
+                json!({"preview":args.preview,"objects":ids.iter().map(|&id|creation_summary(document,id)).collect::<Vec<_>>(),"state":session.primitive_state()}),
             )
         })
     }
@@ -54,7 +58,7 @@ impl EditorServer {
                 session.document()
             };
             Ok(
-                json!({"preview":args.preview,"objects":ids.iter().map(|&id|summary(doc,id)).collect::<Vec<_>>(),"state":session.primitive_state()}),
+                json!({"preview":args.preview,"objects":ids.iter().map(|&id|creation_summary(doc,id)).collect::<Vec<_>>(),"state":session.primitive_state()}),
             )
         })
     }
@@ -82,7 +86,7 @@ impl EditorServer {
             let mut session = self.session();
             let ids = session.commit_primitive_preview(Actor::Agent, token)?;
             Ok(
-                json!({"objects":ids.iter().map(|&id|summary(session.document(),id)).collect::<Vec<_>>(),"state":session.primitive_state()}),
+                json!({"objects":ids.iter().map(|&id|creation_summary(session.document(),id)).collect::<Vec<_>>(),"state":session.primitive_state()}),
             )
         })
     }
@@ -184,7 +188,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview subtracting one convex cutter brush from explicit target brush IDs, including children of brush entities. Requires the latest stamp from get_carve_preview. The cutter stays unchanged. Disjoint/tangent targets remain unchanged; an entirely disjoint batch rejects. Generated cut faces inherit the corresponding cutter face's material, world UV projection, lighting and unknown metadata. Surviving original faces retain metadata; original IDs remain on the first surviving fragment and later fragments get unique IDs. Preserves owner entities and unrelated objects. Whole world brushes can be removed; empty brush entities, displacements, invalid/thin geometry, 64-face overflow and budgets reject atomically. render_view uses the draft. Apply/cancel require the exact token. Returns handle with kind and decimal-string token, separate from the required stamp. Changed selection and competing geometry previews invalidate it; repeating the current object selection preserves it. Closed or stale reports have handle=null."
+        description = "Preview subtracting one convex cutter brush from explicit target brush IDs, including children of brush entities. Requires the latest stamp from get_carve_preview. The cutter stays unchanged. Disjoint/tangent targets remain unchanged; an entirely disjoint batch rejects. cut_material defaults to {policy:cutter}, preserving cutter material, world UV projection, lighting and unknown metadata. {policy:target} copies the unique original target face with the generated face's outward normal; missing/ambiguous matches reject. {policy:material,material:NAME} overrides cutter material only. Target and named policies reject invalid inherited projections before replacing the draft. source_solid/source_side retain geometry provenance and surface_source_solid/surface_source_side identify the surface-settings donor. Nodraw remains allowed. Surviving original faces retain metadata; original IDs remain on the first surviving fragment and later fragments get unique IDs. Preserves owner entities and unrelated objects. Whole world brushes can be removed; empty brush entities, displacements, invalid/thin geometry, 64-face overflow and budgets reject atomically. render_view uses the draft. Apply/cancel require the exact token. Returns handle with kind and decimal-string token, separate from the required stamp. Changed selection and competing geometry previews invalidate it; repeating the current object selection preserves it. Closed or stale reports have handle=null."
     )]
     pub(in crate::mcp) fn preview_carve(
         &self,
@@ -192,13 +196,18 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            session.preview_carve(args.cutter, &args.targets, &args.stamp)?;
+            session.preview_carve_with_material(
+                args.cutter,
+                &args.targets,
+                &args.cut_material.into_policy(),
+                &args.stamp,
+            )?;
             Ok(session.carve_report())
         })
     }
 
     #[tool(
-        description = "Preview subtracting the combined volume of 1–8 distinct retained convex cutter brushes from 1–16 target brushes. Cutters and targets must be disjoint roles. Inputs normalize to increasing brush IDs, so caller order cannot change fragments or coincident-face inheritance. Requires the latest get_carve_preview.stamp. All cutters stay unchanged; overlapping cutter volume is removed once. preview.result.cutters lists normalized IDs; each generated face reports its actual source_solid/source_side and inherits that cutter's material, world UVs, lighting and unknown metadata. Original faces and owner entities remain. Intermediate and final fragments are bounded at 256 with 64 sides each. Empty brush entities, invalid/displacement/thin geometry, bounds, all-disjoint inputs and budgets reject atomically while preserving the valid draft. render_view shows the same draft. commit_carve/cancel_carve use its token; Apply verifies allocations and records one undo step. Returns handle with kind and decimal-string token, separate from the required stamp. Changed selection and competing geometry previews invalidate it; repeating the current object selection preserves it. Closed or stale reports have handle=null."
+        description = "Preview subtracting the combined volume of 1–8 distinct retained convex cutter brushes from 1–16 target brushes. Cutters and targets must be disjoint roles. Inputs normalize to increasing brush IDs, so caller order cannot change fragments or coincident-face inheritance. Requires the latest get_carve_preview.stamp. All cutters stay unchanged; overlapping cutter volume is removed once. preview.result.cutters lists normalized IDs; each generated face reports its geometric source_solid/source_side and surface_source_solid/surface_source_side donor. cut_material defaults to {policy:cutter}; {policy:target} copies the unique original target face with the generated face's outward normal (missing/ambiguous matches reject), including world UVs, lighting and unknown metadata. {policy:material,material:NAME} replaces only cutter material and preserves cutter projection/metadata. Target and named policies reject invalid inherited projections atomically. Nodraw is allowed. Original faces and owner entities remain. Intermediate and final fragments are bounded at 256 with 64 sides each. Empty brush entities, invalid/displacement/thin geometry, bounds, all-disjoint inputs and budgets reject atomically while preserving the valid draft. render_view shows the same draft. commit_carve/cancel_carve use its token; Apply verifies allocations and records one undo step. Returns handle with kind and decimal-string token, separate from the required stamp. Changed selection and competing geometry previews invalidate it; repeating the current object selection preserves it. Closed or stale reports have handle=null."
     )]
     pub(in crate::mcp) fn preview_carve_many(
         &self,
@@ -206,7 +215,12 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            session.preview_carve_many(&args.cutters, &args.targets, &args.stamp)?;
+            session.preview_carve_many_with_material(
+                &args.cutters,
+                &args.targets,
+                &args.cut_material.into_policy(),
+                &args.stamp,
+            )?;
             Ok(session.carve_report())
         })
     }
@@ -324,13 +338,31 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Create an axis-aligned box brush in the world, given mins+maxs or center+size, and select it."
+        description = "Create a box brush given mins+maxs or center+size and select it. Returns the existing object id, bounds and materials plus all face solid/side IDs and outward normals. Optional rotation and texture/lightmap scales use the shared batch rules (bounds within ±65536 and at least 0.125 units thick)."
     )]
     pub(in crate::mcp) fn create_block(
         &self,
         Parameters(args): Parameters<CreateBlockArgs>,
     ) -> ToolResult {
         run(|| {
+            if args.rotation.is_some()
+                || args.texture_scale.is_some()
+                || args.lightmap_scale.is_some()
+            {
+                let block = crate::session::brush_batch::BlockSpec {
+                    mins: args.mins,
+                    maxs: args.maxs,
+                    center: args.center,
+                    size: args.size,
+                    material: args.material,
+                    rotation: args.rotation,
+                    texture_scale: args.texture_scale,
+                    lightmap_scale: args.lightmap_scale,
+                };
+                let mut session = self.session();
+                let ids = session.create_blocks(Actor::Agent, &[block], args.snap)?;
+                return Ok(creation_summary(session.document(), ids[0]));
+            }
             let (mins, maxs) = match (args.mins, args.maxs, args.center, args.size) {
                 (Some(lo), Some(hi), None, None) => (vec3(lo), vec3(hi)),
                 (None, None, Some(c), Some(s)) => {
@@ -341,7 +373,23 @@ impl EditorServer {
             let material = args.material.as_deref().unwrap_or(DEFAULT_MATERIAL);
             let mut session = self.session();
             let id = session.create_block(Actor::Agent, mins, maxs, material, args.snap)?;
-            Ok(summary(session.document(), id))
+            Ok(creation_summary(session.document(), id))
+        })
+    }
+
+    #[tool(
+        description = "Create 1–256 heterogeneous blocks as one atomic Undo step and select them. Each typed block gives mins+maxs or center+size, optional world rotation about its own center, material, texture [U,V] scales and lightmap scale. Uses the same Session operation as Import brush batch…. Bounds before and after rotation must stay within ±65536, with initial thickness at least 0.125. snap defaults false and applies before rotation. Returns compact object summaries in input order, including stable object IDs and all face solid/side IDs with outward normals. Any invalid block rolls back the entire batch, allocated IDs, history and selection."
+    )]
+    pub(in crate::mcp) fn create_blocks(
+        &self,
+        Parameters(args): Parameters<CreateBlocksArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let ids = session.create_blocks(Actor::Agent, &args.blocks, args.snap)?;
+            Ok(
+                json!({"count":ids.len(),"objects":ids.iter().map(|&id|creation_summary(session.document(),id)).collect::<Vec<_>>()}),
+            )
         })
     }
 
@@ -646,5 +694,123 @@ impl EditorServer {
             session.cancel_clip_drag(parse_token(&args.token)?)?;
             Ok(clip_state(&session))
         })
+    }
+}
+
+fn creation_summary(document: &Document, id: ObjectId) -> Value {
+    let mut result = summary(document, id);
+    if let ObjectId::Solid(solid) = id
+        && let Some(solid) = document.solid(solid)
+    {
+        result["faces"] = json!(solid.sides.iter().map(|side| {
+            json!({"solid":solid.id,"side":side.id,"normal":Plane::from_points(side.plane.0).map(|plane|point(plane.normal))})
+        }).collect::<Vec<_>>());
+    }
+    result
+}
+
+#[cfg(test)]
+mod creation_tests {
+    use super::*;
+
+    fn value(result: ToolResult) -> Value {
+        let result = result.unwrap();
+        assert!(!result.is_error.unwrap_or(false), "{result:?}");
+        serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap()
+    }
+
+    fn assert_faces(session: &Session, object: &Value) {
+        let ObjectId::Solid(solid) = parse_id(object["id"].as_str().unwrap()).unwrap() else {
+            panic!()
+        };
+        let faces = object["faces"].as_array().unwrap();
+        let brush = session.document().solid(solid).unwrap();
+        assert_eq!(faces.len(), brush.sides.len());
+        for (face, side) in faces.iter().zip(&brush.sides) {
+            assert_eq!(face["solid"], solid);
+            assert_eq!(face["side"], side.id);
+            assert_eq!(
+                face["normal"],
+                json!(Plane::from_points(side.plane.0).unwrap().normal.to_array())
+            );
+        }
+    }
+
+    #[test]
+    fn all_creation_tools_return_usable_faces_without_changing_existing_ids() {
+        let shared = Arc::new(Mutex::new(Session::new(Err("no assets".into()))));
+        let server = EditorServer::new(shared.clone(), None);
+        let block = value(
+            server.create_block(Parameters(
+                serde_json::from_value(json!({
+                    "mins":[0,0,0],"maxs":[64,64,16],"texture_scale":[0.5,1],"lightmap_scale":32
+                }))
+                .unwrap(),
+            )),
+        );
+        assert_faces(&lock(&shared), &block);
+        let top = block["faces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|face| face["normal"][2].as_f64().unwrap() > 0.99)
+            .unwrap();
+        lock(&shared)
+            .create_terrain(
+                Actor::Agent,
+                &[map_core::surface::FaceId {
+                    solid: top["solid"].as_u64().unwrap() as u32,
+                    side: top["side"].as_u64().unwrap() as u32,
+                }],
+                2,
+                0,
+            )
+            .unwrap();
+        let primitive = value(
+            server.create_primitive(Parameters(
+                serde_json::from_value(json!({
+                    "shape":"wedge","mins":[128,0,0],"maxs":[192,64,64]
+                }))
+                .unwrap(),
+            )),
+        );
+        let polygon = value(
+            server.create_polygon_brush(Parameters(
+                serde_json::from_value(json!({
+                    "outline":[[256,0],[320,0],[320,64],[256,64]],"base":0,"depth":16,"snap":false
+                }))
+                .unwrap(),
+            )),
+        );
+        for result in [primitive, polygon] {
+            for object in result["objects"].as_array().unwrap() {
+                assert_faces(&lock(&shared), object);
+            }
+        }
+        let history = lock(&shared).document().undo_steps().len();
+        let batch = value(
+            server.create_blocks(Parameters(
+                serde_json::from_value(json!({"blocks":[
+                    {"center":[400,0,0],"size":[64,32,16],"rotation":[0,0,22.5]},
+                    {"mins":[512,0,0],"maxs":[576,64,16],"material":"tools/toolsnodraw"}
+                ]}))
+                .unwrap(),
+            )),
+        );
+        assert_eq!(batch["count"], 2);
+        assert_eq!(lock(&shared).document().undo_steps().len(), history + 1);
+        for object in batch["objects"].as_array().unwrap() {
+            assert_faces(&lock(&shared), object);
+        }
+    }
+
+    #[test]
+    fn batch_schema_exposes_the_runtime_count_bound() {
+        let schema = serde_json::to_value(schemars::schema_for!(CreateBlocksArgs)).unwrap();
+        assert_eq!(schema["properties"]["blocks"]["minItems"], 1);
+        assert_eq!(
+            schema["properties"]["blocks"]["maxItems"],
+            map_core::block_batch::MAX_BLOCKS
+        );
     }
 }

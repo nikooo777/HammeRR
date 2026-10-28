@@ -208,9 +208,27 @@ impl Session {
                     .collect::<BTreeSet<_>>()
             })
             .unwrap_or_default();
-        Ok(
-            json!({"path":asset.path,"static_prop":asset.model.header.is_static_prop(),"pose":if asset.model.header.is_static_prop(){"static"}else{"reference"},"reference_bones":asset.model.reference_bones,"vertices":asset.model.vertices.len(),"triangles":parts.iter().map(|part|part.indices.len()/3).sum::<usize>(),"meshes":parts.len(),"body_parts":asset.model.body_parts,"body":body,"bodygroups":bodygroups(&asset.model,body),"attachments":attachments,"blank":bounds.is_none(),"lod":0,"skins":asset.model.skins.len(),"skin":skin,"materials":materials,"material_error":bindings.as_ref().err(),"local_bounds":bounds,"hull_bounds":[asset.model.header.hull_mins,asset.model.header.hull_maxs],"asset_bytes":asset.memory_bytes(),"limits":{"scene_vertices":MAX_SCENE_VERTICES,"scene_indices":MAX_SCENE_INDICES}}),
-        )
+        let stem = asset.path.strip_suffix(".mdl").unwrap();
+        let source_paths = [
+            asset.path.clone(),
+            format!("{stem}.vvd"),
+            format!("{stem}.dx90.vtx"),
+        ];
+        let sources = asset.source_origins.as_ref().map(|origins| {
+            source_paths
+                .iter()
+                .zip(origins)
+                .map(|(path, origin)| {
+                    let origin = crate::materials::provenance(origin.clone());
+                    json!({"path":path,"source_id":origin.source_id,"source":origin.source})
+                })
+                .collect::<Vec<_>>()
+        });
+        let mut report = json!({"path":asset.path,"static_prop":asset.model.header.is_static_prop(),"pose":if asset.model.header.is_static_prop(){"static"}else{"reference"},"reference_bones":asset.model.reference_bones,"vertices":asset.model.vertices.len(),"triangles":parts.iter().map(|part|part.indices.len()/3).sum::<usize>(),"meshes":parts.len(),"body_parts":asset.model.body_parts,"body":body,"bodygroups":bodygroups(&asset.model,body),"attachments":attachments,"blank":bounds.is_none(),"lod":0,"skins":asset.model.skins.len(),"skin":skin,"materials":materials,"material_error":bindings.as_ref().err(),"local_bounds":bounds,"hull_bounds":[asset.model.header.hull_mins,asset.model.header.hull_maxs],"asset_bytes":asset.memory_bytes(),"limits":{"scene_vertices":MAX_SCENE_VERTICES,"scene_indices":MAX_SCENE_INDICES}});
+        report["sources"] = json!(sources);
+        report["provenance_scope"] =
+            json!("captured_at_model_load; current filesystem has not been revalidated");
+        Ok(report)
     }
 
     pub fn inspect_entity_model(&self, id: u32) -> Result<Value, String> {

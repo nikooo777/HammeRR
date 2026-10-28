@@ -396,6 +396,63 @@ impl DocumentHandle {
         self.commit_close(Some(review), None, discard_changes, || Ok(()))
     }
 
+    #[cfg(any(test, feature = "mcp"))]
+    pub(crate) fn commit_reviewed_close_set<R>(
+        targets: &[(Self, DocumentCloseReview)],
+        discard_changes: bool,
+        reserve: impl FnOnce() -> Result<R, String>,
+    ) -> Result<R, String> {
+        if targets
+            .windows(2)
+            .any(|pair| pair[0].0.id() >= pair[1].0.id())
+        {
+            return Err("Quit all requires distinct documents in stable identity order".into());
+        }
+        let mut shutdowns = Vec::with_capacity(targets.len());
+        for (document, _) in targets {
+            shutdowns.push(document.0.shutdown.try_lock().map_err(|_| {
+                "A document shutdown is busy; wait and review Quit all again".to_owned()
+            })?);
+        }
+        let mut sessions = Vec::with_capacity(targets.len());
+        for (document, _) in targets {
+            sessions.push(
+                document
+                    .session()
+                    .try_lock()
+                    .map_err(|_| "A document is busy; wait and review Quit all again".to_owned())?,
+            );
+        }
+        let mut lifecycles = Vec::with_capacity(targets.len());
+        for (document, _) in targets {
+            lifecycles.push(
+                document
+                    .0
+                    .admission
+                    .lifecycle
+                    .lock()
+                    .expect("Document admission lock poisoned"),
+            );
+        }
+        for (((document, review), session), lifecycle) in
+            targets.iter().zip(&sessions).zip(&lifecycles)
+        {
+            document.ensure_reviewed_close(session, review, discard_changes, lifecycle)?;
+            if review != &document.close_review_for(session) {
+                return Err("Map, draft or activity changed since Quit all was reviewed; review the workspace and try again".into());
+            }
+        }
+        let reserved = reserve()?;
+        for lifecycle in &mut lifecycles {
+            **lifecycle = DocumentLifecycle::Draining;
+        }
+        drop(lifecycles);
+        for session in &mut sessions {
+            session.commit_terminal_closing();
+        }
+        Ok(reserved)
+    }
+
     #[cfg(feature = "mcp")]
     pub(crate) fn commit_close_token<R>(
         &self,
@@ -448,14 +505,29 @@ impl DocumentHandle {
                 &current
             }
         };
-        session.ensure_document_close_review(&review.session, discard_changes)?;
         let mut lifecycle = self
             .0
             .admission
             .lifecycle
             .lock()
             .expect("Document admission lock poisoned");
-        if *lifecycle != DocumentLifecycle::Live {
+        self.ensure_reviewed_close(&session, review, discard_changes, &lifecycle)?;
+        let reserved = reserve()?;
+        *lifecycle = DocumentLifecycle::Draining;
+        drop(lifecycle);
+        session.commit_terminal_closing();
+        Ok(reserved)
+    }
+
+    fn ensure_reviewed_close(
+        &self,
+        session: &crate::session::Session,
+        review: &DocumentCloseReview,
+        discard_changes: bool,
+        lifecycle: &DocumentLifecycle,
+    ) -> Result<(), String> {
+        session.ensure_document_close_review(&review.session, discard_changes)?;
+        if lifecycle != &DocumentLifecycle::Live {
             return Err("The document is already closing or closed".into());
         }
         let activities = self.0.admission.activities(None);
@@ -469,11 +541,7 @@ impl DocumentHandle {
                 "Close is busy with an admitted request or worker: {names}. Wait for it to finish, or cancel it using its normal control, then review Close again"
             ));
         }
-        let reserved = reserve()?;
-        *lifecycle = DocumentLifecycle::Draining;
-        drop(lifecycle);
-        session.commit_terminal_closing();
-        Ok(reserved)
+        Ok(())
     }
 
     #[cfg(feature = "mcp")]

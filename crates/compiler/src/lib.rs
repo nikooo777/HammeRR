@@ -1336,6 +1336,7 @@ fn build(
         &mut map.planes,
         &map.hints,
         control,
+        &mut output.report,
     )?;
     control.advance(Stage::Portals)?;
     let mut portals = portals::build_controlled(&tree, &map.planes, control)?;

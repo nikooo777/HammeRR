@@ -17,6 +17,20 @@ pub mod subdivide;
 pub mod surface;
 pub mod triangles;
 
+pub const MAX_GRID_VERTICES: usize = 289;
+
+#[derive(Debug, Clone, Copy)]
+pub enum VertexValue {
+    Position(DVec3),
+    WorldZ(f64),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct VertexSet {
+    pub vertex: usize,
+    pub value: VertexValue,
+}
+
 #[derive(Debug, Clone)]
 pub enum Operation {
     Resolution(u32),
@@ -47,6 +61,9 @@ pub enum Operation {
     VertexMove {
         vertices: Vec<usize>,
         offset: DVec3,
+    },
+    VertexSet {
+        vertices: Vec<VertexSet>,
     },
 }
 

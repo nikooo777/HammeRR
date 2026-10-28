@@ -11,7 +11,7 @@ use map_core::{
 };
 use sha2::{Digest, Sha256};
 use source_formats::{
-    gamefs::{GameFs, asset_relative},
+    gamefs::{AssetOrigin, GameFs, MountedAsset, asset_relative},
     model::Model,
     vmf::{Entity, parse_vec3},
 };
@@ -38,6 +38,7 @@ pub struct Asset {
     materials: RwLock<Result<Vec<String>, String>>,
     material_bytes: AtomicUsize,
     source_identity: Option<[u8; 32]>,
+    pub source_origins: Option<[AssetOrigin; 3]>,
 }
 
 #[derive(Debug)]
@@ -74,6 +75,7 @@ impl Asset {
             materials: RwLock::new(materials),
             material_bytes,
             source_identity: None,
+            source_origins: None,
         }
     }
 
@@ -97,6 +99,24 @@ impl Asset {
             + 2 * std::mem::size_of::<usize>()
             + self.path.capacity()
             + material_bytes
+            + self
+                .source_origins
+                .as_ref()
+                .map_or(0, |origins| origins.iter().map(origin_bytes).sum::<usize>())
+    }
+}
+
+fn origin_bytes(origin: &AssetOrigin) -> usize {
+    match origin {
+        AssetOrigin::Directory { mount, file } => mount.capacity() + file.capacity(),
+        AssetOrigin::Vpk { index, files } => {
+            index.capacity()
+                + files.capacity() * std::mem::size_of::<std::path::PathBuf>()
+                + files
+                    .iter()
+                    .map(std::path::PathBuf::capacity)
+                    .sum::<usize>()
+        }
     }
 }
 
@@ -127,8 +147,8 @@ pub fn model_path(path: &str) -> Result<String, String> {
     Ok(path)
 }
 
-fn read(fs: &GameFs, path: &str) -> Result<Vec<u8>, String> {
-    fs.read_limited(path, source_formats::mdl::MAX_MODEL_BYTES)
+fn read(fs: &GameFs, path: &str) -> Result<MountedAsset, String> {
+    fs.read_asset_limited(path, source_formats::mdl::MAX_MODEL_BYTES)
         .map_err(|error| format!("{path}: {error}"))?
         .ok_or_else(|| format!("Model asset {path} was not found"))
 }
@@ -145,17 +165,20 @@ pub fn source_identity(mdl: &[u8], vvd: &[u8], vtx: &[u8]) -> [u8; 32] {
 fn load(fs: &GameFs, path: &str, material_bindings: bool) -> Result<Asset, String> {
     let stem = path.strip_suffix(".mdl").unwrap();
     let mdl = read(fs, path)?;
-    source_formats::mdl::ModelHeader::parse(&mdl).map_err(|error| format!("{path}: {error}"))?;
+    source_formats::mdl::ModelHeader::parse(&mdl.data)
+        .map_err(|error| format!("{path}: {error}"))?;
     let vvd = read(fs, &format!("{stem}.vvd"))?;
     let vtx = read(fs, &format!("{stem}.dx90.vtx"))?;
-    let model = Model::parse(&mdl, &vvd, &vtx).map_err(|error| format!("{path}: {error}"))?;
+    let model = Model::parse(&mdl.data, &vvd.data, &vtx.data)
+        .map_err(|error| format!("{path}: {error}"))?;
     let materials = if material_bindings {
         resolve_materials(fs, &model)
     } else {
         Err("Flat editor guide does not request material bindings".into())
     };
     let mut asset = Asset::new(path.into(), model, materials);
-    asset.source_identity = Some(source_identity(&mdl, &vvd, &vtx));
+    asset.source_identity = Some(source_identity(&mdl.data, &vvd.data, &vtx.data));
+    asset.source_origins = Some([mdl.origin, vvd.origin, vtx.origin]);
     Ok(asset)
 }
 

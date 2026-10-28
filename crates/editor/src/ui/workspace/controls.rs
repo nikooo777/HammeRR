@@ -6,6 +6,7 @@ pub(super) struct Controller {
     pub(super) window: OpenDocumentsWindow,
     pub(super) origin: runtime::DocumentId,
     save_results: RefCell<Option<Value>>,
+    quit_review: RefCell<Option<editor_core::startup::WorkspaceQuitReview>>,
 }
 
 pub(super) enum Operation {
@@ -56,6 +57,13 @@ pub(super) fn refresh(owner: &SharedOwner) {
             controller
                 .window
                 .set_can_save_all(report["busy"] != true && !documents.is_empty());
+            controller.window.set_can_quit_all(
+                report["busy"] != true
+                    && !documents.is_empty()
+                    && documents
+                        .iter()
+                        .all(|document| document["lifecycle"] == "live"),
+            );
             let results = controller.save_results.borrow();
             controller.window.set_rows(ModelRc::new(VecModel::from(
                 documents
@@ -206,12 +214,64 @@ pub(super) fn open(owner: &SharedOwner, origin: runtime::DocumentId) {
         window,
         origin,
         save_results: RefCell::new(None),
+        quit_review: RefCell::new(None),
     });
     let weak = Rc::downgrade(&controller);
     let target = Rc::downgrade(owner);
     controller.window.on_save_all_named_maps({
         let (owner, controller) = (target.clone(), weak.clone());
         move || submit(&owner, &controller, Operation::SaveAll)
+    });
+    controller.window.on_quit_all({
+        let (owner, controller) = (target.clone(), weak.clone());
+        move || {
+            if let (Some(owner), Some(controller)) = (owner.upgrade(), controller.upgrade())
+                && current(&owner, &controller)
+            {
+                review_quit(&owner, &controller);
+            }
+        }
+    });
+    controller.window.on_confirm_quit_all({
+        let (owner, controller) = (target.clone(), weak.clone());
+        move || {
+            let (Some(owner), Some(controller)) = (owner.upgrade(), controller.upgrade()) else {
+                return;
+            };
+            if !current(&owner, &controller) {
+                return;
+            }
+            let Some(review) = controller.quit_review.borrow_mut().take() else {
+                return;
+            };
+            let Some(workspace) = owner.borrow().workspace.clone() else {
+                return;
+            };
+            let result = workspace.quit_all_native(&review, review.requires_discard());
+            controller.window.set_quit_review(false);
+            match result {
+                Ok(()) => {
+                    controller.window.set_busy(true);
+                    controller.window.set_message(
+                        "Quit all accepted; stopping owned work and closing every reviewed map…"
+                            .into(),
+                    );
+                }
+                Err(error) => controller.window.set_message(error.into()),
+            }
+        }
+    });
+    controller.window.on_cancel_quit_all({
+        let controller = weak.clone();
+        move || {
+            if let Some(controller) = controller.upgrade() {
+                controller.quit_review.borrow_mut().take();
+                controller.window.set_quit_review(false);
+                controller
+                    .window
+                    .set_message("Quit cancelled; every map remains open".into());
+            }
+        }
     });
     controller.window.on_new_document({
         let (owner, controller) = (target.clone(), weak.clone());
@@ -274,28 +334,7 @@ pub(super) fn open(owner: &SharedOwner, origin: runtime::DocumentId) {
             if !current(&owner, &controller) {
                 return;
             }
-            let host = owner
-                .borrow()
-                .hosts
-                .iter()
-                .find(|(id, _)| id == selector.as_str())
-                .map(|(_, host)| host.clone());
-            let Some(host) = host else {
-                controller
-                    .window
-                    .set_message("This document no longer has an open window".into());
-                return;
-            };
-            let request = {
-                let host = host.borrow();
-                host.window
-                    .app
-                    .as_ref()
-                    .map(|app| (app.clone_strong(), host.window.weak_ui()))
-            };
-            if let Some((app, ui)) = request {
-                request_terminal_close(&app, &ui, &Rc::downgrade(&host));
-            }
+            request_close(&owner, selector.as_str());
         }
     });
     controller.window.on_close_list({
@@ -329,6 +368,79 @@ pub(super) fn open(owner: &SharedOwner, origin: runtime::DocumentId) {
     refresh(owner);
     if let Err(error) = controller.window.show() {
         report_origin(owner, origin, &error.to_string());
+    }
+}
+
+fn review_quit(owner: &SharedOwner, controller: &Rc<Controller>) {
+    let Some(workspace) = owner.borrow().workspace.clone() else {
+        return;
+    };
+    match workspace.quit_review() {
+        Ok(review) => {
+            controller
+                .window
+                .set_quit_description(review.description().into());
+            controller
+                .window
+                .set_quit_discard_required(review.requires_discard());
+            controller.window.set_quit_review(true);
+            controller
+                .window
+                .set_message("Review every listed map before accepting Quit all".into());
+            *controller.quit_review.borrow_mut() = Some(review);
+        }
+        Err(error) => controller.window.set_message(error.into()),
+    }
+}
+
+pub(super) fn request_close(owner: &SharedOwner, selector: &str) {
+    let (workspace, host) = {
+        let state = owner.borrow();
+        (
+            state.workspace.clone(),
+            state
+                .hosts
+                .iter()
+                .find(|(id, _)| id == selector)
+                .map(|(_, host)| host.clone()),
+        )
+    };
+    let (Some(workspace), Some(host)) = (workspace, host) else {
+        return;
+    };
+    match workspace.close_requires_quit_all(selector) {
+        Ok(true) => {
+            let origin = host.borrow().document_id();
+            if owner
+                .borrow()
+                .dialog
+                .as_ref()
+                .is_none_or(|dialog| dialog.origin != origin)
+            {
+                open(owner, origin);
+            }
+            let controller = owner.borrow().dialog.clone();
+            if let Some(controller) = controller {
+                review_quit(owner, &controller);
+            }
+        }
+        Ok(false) => {
+            let request = {
+                let host = host.borrow();
+                host.window
+                    .app
+                    .as_ref()
+                    .map(|app| (app.clone_strong(), host.window.weak_ui()))
+            };
+            if let Some((app, ui)) = request {
+                request_terminal_close(&app, &ui, &Rc::downgrade(&host));
+            }
+        }
+        Err(error) => {
+            if let Some(app) = &host.borrow().window.app {
+                app.set_message(error.into());
+            }
+        }
     }
 }
 

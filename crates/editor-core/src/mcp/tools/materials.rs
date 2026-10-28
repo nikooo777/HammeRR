@@ -612,7 +612,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Browse the same grouped material catalog as the GUI. Groups include all, used, recent, favorites, folder:<path> and category:<label>. Categories are inferred from path names. Returns group counts after search, paged entries, favorite/used flags and favorites persistence/error/limit status. preview_material supplies the matching thumbnail.",
+        description = "Browse the shared material catalog, bounded to 200 entries per page and 256 game mounts. Entries report the current winning VMT directory/VPK origin and exact source ID; source filters select these winners, never shadowed copies. Sources are physical mounts, not a stock-content guarantee. Optionally exclude all maps/... materials (including authored ones). Groups include all, used, recent, favorites, folder:<path> and category:<label>; counts reflect search and source/path filters. Display thumbnails retain their separate cached identity until Reload material assets.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn browse_materials(
@@ -620,11 +620,15 @@ impl EditorServer {
         Parameters(args): Parameters<BrowseMaterialsArgs>,
     ) -> ToolResult {
         run(|| {
-            let catalog = self.session().material_catalog(
+            let catalog = self.session().material_catalog_filtered(
                 args.query.as_deref().unwrap_or(""),
                 args.group.as_deref().unwrap_or("all"),
                 args.offset.unwrap_or(0),
                 args.limit.unwrap_or(36),
+                &crate::materials::CatalogFilter {
+                    source: args.source,
+                    exclude_generated_map_materials: args.exclude_generated_map_materials,
+                },
             )?;
             serde_json::to_value(catalog).map_err(|error| error.to_string())
         })
@@ -697,7 +701,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Search the game's materials by name.",
+        description = "Search the shared material catalog by case-insensitive substring, with bounded pagination, winning source filters and optional exclusion of every maps/... material. Returns compatible material names plus provenance entries, exact physical-mount source IDs, total and paging. VPK or mount names do not establish stock content. Origins describe current VMT winners, not cached display pixels.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn search_materials(
@@ -705,10 +709,26 @@ impl EditorServer {
         Parameters(args): Parameters<SearchMaterialsArgs>,
     ) -> ToolResult {
         run(|| {
-            let names = self
-                .session()
-                .search_materials(&args.query, args.limit.unwrap_or(50))?;
-            Ok(json!({ "materials": names }))
+            let catalog = self.session().material_catalog_filtered(
+                &args.query,
+                "all",
+                args.offset.unwrap_or(0),
+                args.limit.unwrap_or(50),
+                &crate::materials::CatalogFilter {
+                    source: args.source,
+                    exclude_generated_map_materials: args.exclude_generated_map_materials,
+                },
+            )?;
+            let names = catalog
+                .entries
+                .iter()
+                .map(|entry| &entry.name)
+                .collect::<Vec<_>>();
+            Ok(
+                json!({ "materials": names, "entries":catalog.entries, "sources":catalog.sources,
+                "total":catalog.total,"offset":catalog.offset,"filter":catalog.filter,
+                "provenance_scope":catalog.provenance_scope }),
+            )
         })
     }
 
@@ -727,7 +747,7 @@ impl EditorServer {
             Ok(preview) => preview,
             Err(error) => return fail(error),
         };
-        let mut content = vec![ContentBlock::text(json!({"material": preview.name, "width": preview.width, "height": preview.height, "missing": preview.missing, "tool": preview.tool, "channel":preview.channel, "source":preview.source, "alpha_range":preview.alpha_range}).to_string())];
+        let mut content = vec![ContentBlock::text(json!({"material": preview.name, "width": preview.width, "height": preview.height, "missing": preview.missing, "tool": preview.tool, "channel":preview.channel, "source":preview.source, "alpha_range":preview.alpha_range,"physical_origin":null,"physical_origin_status":"unavailable: physical paths were not captured with these display pixels"}).to_string())];
         if let Some(image) = preview.image {
             let mut bytes = Vec::new();
             let mut encoder = png::Encoder::new(Cursor::new(&mut bytes), image.width, image.height);
@@ -758,6 +778,9 @@ mod terrain_snap_tests;
 
 #[cfg(test)]
 mod uv_variation_tests;
+
+#[cfg(test)]
+mod catalog_provenance_tests;
 
 #[cfg(test)]
 #[path = "model_snap_tests.rs"]

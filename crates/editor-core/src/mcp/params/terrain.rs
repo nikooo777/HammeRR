@@ -131,6 +131,55 @@ pub struct TerrainVertexMoveArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct TerrainVertexSource {
+    /// Decimal strings from get_terrain_vertices(preview=false). Required to reject stale native IDs.
+    #[schemars(length(min = 1, max = 20))]
+    pub generation: String,
+    #[schemars(length(min = 1, max = 20))]
+    pub revision: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainVertexPosition {
+    pub vertex: usize,
+    pub position: [f64; 3],
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainVertexHeight {
+    pub vertex: usize,
+    pub z: f64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum TerrainVertexValue {
+    Position(TerrainVertexPosition),
+    Height(TerrainVertexHeight),
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainVertexSetTarget {
+    pub face: FaceRef,
+    /// Unique native row-major IDs, each with either position=[x,y,z] or z. No interpolation or omitted samples.
+    #[schemars(length(min = 1, max = 289))]
+    pub vertices: Vec<TerrainVertexValue>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainVertexSetArgs {
+    pub source: TerrainVertexSource,
+    /// One group per face; at most 4624 samples in the complete request.
+    #[schemars(length(min = 1, max = 16))]
+    pub targets: Vec<TerrainVertexSetTarget>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TerrainVertexMaskArgs {
     pub faces: Option<Vec<FaceRef>>,
     pub token: Option<String>,

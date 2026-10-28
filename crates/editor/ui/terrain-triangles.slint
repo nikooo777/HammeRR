@@ -1,4 +1,4 @@
-import { Button, CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
 
 export struct TerrainTriangleRow {
     id: int,
@@ -9,8 +9,8 @@ export struct TerrainTriangleRow {
 
 export component TerrainTrianglesWindow inherits Window {
     title: "Terrain triangles & vertices";
-    preferred-width: 600px;
-    preferred-height: 800px;
+    preferred-width: 720px;
+    preferred-height: 900px;
     in property <[string]> faces;
     in-out property <int> face-index;
     in property <[TerrainTriangleRow]> triangles;
@@ -22,12 +22,16 @@ export component TerrainTrianglesWindow inherits Window {
     in-out property <int> walkable-index;
     in-out property <int> buildable-index;
     in-out property <int> kind-index;
+    in-out property <string> absolute-height;
+    in-out property <string> height-csv-path;
     callback kind-changed();
     callback face-changed();
     callback toggle-triangle(int, bool);
     callback select-all(bool);
     callback edited();
     callback preview-edit();
+    callback preview-height();
+    callback preview-height-csv();
     callback apply();
     callback cancel();
     callback pick-triangle();
@@ -39,10 +43,10 @@ export component TerrainTrianglesWindow inherits Window {
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
             padding: 20px;
-            spacing: 12px;
+            spacing: 8px;
             Text { text: root.kind-index == 1 ? "Choose terrain vertices" : "Choose terrain triangles"; font-size: 20px; }
             Text { text: "Selection type"; }
-            ComboBox {model: ["Triangles · classifications & brush masks", "Vertices · exact brush masks"]; current-index <=> root.kind-index; enabled: !root.stale; selected => {root.kind-changed();}}
+            ComboBox {model: ["Triangles · classifications & brush masks", "Vertices · exact positions & brush masks"]; current-index <=> root.kind-index; enabled: !root.stale; selected => {root.kind-changed();}}
             Text { text: "Surface"; }
             ComboBox { model: root.faces; current-index <=> root.face-index; enabled: !root.stale; selected => { root.face-changed(); } }
             HorizontalLayout {
@@ -58,7 +62,7 @@ export component TerrainTrianglesWindow inherits Window {
                 Button {text: "Select in volume"; enabled: !root.stale; clicked => {root.select-volume();}}
             }
             ScrollView {
-                min-height: 200px;
+                min-height: 140px;
                 vertical-stretch: 1;
                 VerticalLayout {
                     spacing: 8px;
@@ -76,14 +80,30 @@ export component TerrainTrianglesWindow inherits Window {
                 Text { text: "Buildability"; }
                 ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.buildable-index; enabled: !root.stale; selected => { root.edited(); } }
             }
-            Text { text: root.kind-index == 1 ? "Cyan markers show exact selected vertices. Picking chooses the nearest corner of the visible hit triangle. Use selection retains this brush mask; changing selection type clears this dialog's selection." : "Yellow outlines show selected triangles. Selections stay checked when switching surfaces; Preview applies to all of them. These are engine classifications; collision stays fixed. Removal is not available yet."; wrap: word-wrap; font-size: 12px; color: #b6bac3; }
+            if root.kind-index == 1: VerticalLayout {
+                spacing: 8px;
+                Text { text: "Set checked vertices to world Z · units"; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    LineEdit { text <=> root.absolute-height; placeholder-text: "Absolute world Z"; enabled: !root.stale; }
+                    Button { text: "Preview height"; enabled: !root.stale; clicked => { root.preview-height(); } }
+                }
+                Text { text: "Import heights for native vertex IDs"; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    LineEdit { text <=> root.height-csv-path; placeholder-text: "Height CSV file path"; enabled: !root.stale; }
+                    Button { text: "Preview CSV"; enabled: !root.stale; clicked => { root.preview-height-csv(); } }
+                }
+                Text { text: "CSV header: solid,side,vertex,z. One explicit height per row; selected surfaces only, at most 16 surfaces / 4624 vertices / 512 KiB. CSV rows choose their own subset. Matching border positions retain seams; heights are not sewn automatically."; wrap: word-wrap; font-size: 12px; color: #b6bac3; }
+            }
+            Text { text: root.kind-index == 1 ? "Cyan markers show checked native vertices. Preview height preserves X/Y; Preview CSV sets each row's world Z. Apply commits the last successful preview. Use selection retains this brush mask; changing selection type clears this dialog's selection." : "Yellow outlines show selected triangles. Selections stay checked when switching surfaces; Preview applies to all of them. These are engine classifications; collision stays fixed. Removal is not available yet."; wrap: word-wrap; font-size: 12px; color: #b6bac3; }
             Text { text: root.message; wrap: word-wrap; color: #a7adb8; }
             HorizontalLayout {
                 spacing: 8px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Button { text: "Use selection"; enabled: !root.stale; clicked => { root.use-selection(); } }
                 if root.kind-index == 0: Button { text: "Preview"; enabled: !root.stale; clicked => { root.preview-edit(); } }
-                if root.kind-index == 0: Button { text: "Apply"; enabled: !root.stale && root.ready; clicked => { root.apply(); } }
+                Button { text: "Apply"; enabled: !root.stale && root.ready; clicked => { root.apply(); } }
             }
         }
     }

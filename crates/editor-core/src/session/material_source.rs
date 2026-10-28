@@ -38,7 +38,7 @@ const TEXTURE_PARAMETERS: [&str; 13] = [
     "$lightwarptexture",
 ];
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Origin {
     pub kind: &'static str,
     pub mount: String,
@@ -104,7 +104,7 @@ fn bounded(text: &str, maximum: usize) -> (String, bool) {
     )
 }
 
-fn origin(source: AssetOrigin) -> Origin {
+pub(crate) fn origin(source: AssetOrigin) -> Origin {
     let (kind, mount, file, files) = match source {
         AssetOrigin::Directory { mount, file } => ("directory", mount, Some(file), Vec::new()),
         AssetOrigin::Vpk { index, files } => ("vpk", index, None, files),

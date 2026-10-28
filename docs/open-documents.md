@@ -27,6 +27,16 @@ A dirty unnamed map needs **Save as…** first.
 Pending drafts need Apply or Cancel first.
 Successful saves remain saved even when another map fails.
 
+## Quit all maps
+
+1. Open **Open documents…** and click **Quit all…**.
+2. Review every map, including hidden maps, unsaved changes and pending drafts.
+3. Click **Quit all reviewed documents**. If changes need discarding, click **Discard reviewed changes and quit all** instead.
+
+**Cancel quit** keeps all maps open. Closing the last visible window with hidden
+maps opens this same review. A changed or busy map requires a fresh review.
+Failed cleanup retains that map's claims and reports the error.
+
 ## Limits
 
 - **Show silently** requires Hyprland with Lua window rules. It adds one runtime rule for HammeRR background windows; no configuration file changes. An unavailable rule causes an error before display.
@@ -34,7 +44,7 @@ Successful saves remain saved even when another map fails.
 - Each document retains its own build settings, jobs and recovery state.
 - Conflicting source/output files and aliases cannot be reserved twice.
 - Failed cleanup retains the document's claims and error.
-- Tabs, bulk Quit and workspace restoration are unavailable.
+- Tabs and workspace restoration are unavailable.
 - MCP callers must pass the opaque `document_id` when two maps are open.
 
 See [MCP documents](mcp.md#documents) for routing and Close tokens.

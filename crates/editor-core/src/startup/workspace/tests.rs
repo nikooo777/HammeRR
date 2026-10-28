@@ -406,8 +406,18 @@ fn successful_close_releases_retained_source_bsp_and_lin_with_live_old_handles()
         .begin_compile(Actor::Agent, Some(&bsp))
         .unwrap();
     let result = request.run();
-    assert!(result.as_ref().unwrap().published());
+    assert!(result.as_ref().unwrap().output.bsp.is_some());
+    assert!(!result.as_ref().unwrap().published());
+    assert!(!bsp.exists());
+    assert!(
+        lock(b.session())
+            .save(Actor::Agent, Some(&bsp))
+            .unwrap_err()
+            .contains("conflicts")
+    );
     lock(a.session()).finish_compile(Actor::Agent, &result);
+    assert!(result.as_ref().unwrap().published());
+    assert!(result.as_ref().unwrap().publication_error().is_none());
     drop(result);
     let wall = lock(a.session())
         .document()
@@ -426,9 +436,12 @@ fn successful_close_releases_retained_source_bsp_and_lin_with_live_old_handles()
         .unwrap();
     let result = request.run();
     assert!(result.as_ref().unwrap().output.leak.is_some());
-    lock(a.session()).finish_compile(Actor::Agent, &result);
-    drop(result);
     let lin = leaking.with_extension("lin");
+    assert!(!lin.exists());
+    lock(a.session()).finish_compile(Actor::Agent, &result);
+    assert!(result.as_ref().unwrap().publication_error().is_none());
+    assert!(lin.is_file());
+    drop(result);
     let old_server = crate::mcp::EditorServer::for_document(a.clone(), None);
     let mut close = accept(&workspace, &first);
     a.shutdown().unwrap();

@@ -6,6 +6,106 @@ use serde_json::{Value, json};
 
 use super::{Actor, Session, terrain_triangles::VolumeSelection};
 
+pub const MAX_SET_FACES: usize = 16;
+pub const MAX_SET_VERTICES: usize = MAX_SET_FACES * map_core::displacement::MAX_GRID_VERTICES;
+pub const MAX_HEIGHT_CSV_BYTES: usize = 512 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VertexSource {
+    pub generation: u64,
+    pub revision: u64,
+}
+
+impl VertexSource {
+    pub fn json(self) -> Value {
+        json!({"generation":self.generation.to_string(),"revision":self.revision.to_string()})
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VertexSetFace {
+    pub face: FaceId,
+    pub vertices: Vec<map_core::displacement::VertexSet>,
+}
+
+pub fn parse_height_csv(text: &str) -> Result<Vec<VertexSetFace>, String> {
+    if text.len() > MAX_HEIGHT_CSV_BYTES {
+        return Err("Terrain height CSV exceeds 512 KiB".into());
+    }
+    let mut lines = text.lines();
+    if lines.next().map(str::trim) != Some("solid,side,vertex,z") {
+        return Err("Terrain height CSV must begin with solid,side,vertex,z".into());
+    }
+    let mut faces = BTreeMap::<FaceId, Vec<map_core::displacement::VertexSet>>::new();
+    let mut selected = BTreeSet::new();
+    for (line, row) in lines.enumerate() {
+        if selected.len() == MAX_SET_VERTICES {
+            return Err("Set at most 4624 terrain vertices per preview".into());
+        }
+        let error = || {
+            format!(
+                "Invalid terrain height CSV row {}: expected solid,side,vertex,z with finite Z within ±65536",
+                line + 2
+            )
+        };
+        let mut fields = row.split(',').map(str::trim);
+        let solid = fields
+            .next()
+            .ok_or_else(error)?
+            .parse()
+            .map_err(|_| error())?;
+        let side = fields
+            .next()
+            .ok_or_else(error)?
+            .parse()
+            .map_err(|_| error())?;
+        let vertex = fields
+            .next()
+            .ok_or_else(error)?
+            .parse()
+            .map_err(|_| error())?;
+        let z: f64 = fields
+            .next()
+            .ok_or_else(error)?
+            .parse()
+            .map_err(|_| error())?;
+        if fields.next().is_some()
+            || !z.is_finite()
+            || z.abs() > map_core::primitive::MAX_COORDINATE
+        {
+            return Err(error());
+        }
+        let face = FaceId { solid, side };
+        if !selected.insert((face, vertex)) {
+            return Err(format!(
+                "Terrain height CSV repeats a vertex at row {}",
+                line + 2
+            ));
+        }
+        if (!faces.contains_key(&face) && faces.len() == MAX_SET_FACES)
+            || faces
+                .get(&face)
+                .is_some_and(|vertices| vertices.len() == map_core::displacement::MAX_GRID_VERTICES)
+        {
+            return Err("Set 1–16 terrain faces and at most 289 vertices per face".into());
+        }
+        faces
+            .entry(face)
+            .or_default()
+            .push(map_core::displacement::VertexSet {
+                vertex,
+                value: map_core::displacement::VertexValue::WorldZ(z),
+            });
+    }
+    if selected.is_empty() {
+        return Err("Terrain height CSV must contain at least one vertex row".into());
+    }
+    Ok(faces
+        .into_iter()
+        .map(|(face, vertices)| VertexSetFace { face, vertices })
+        .collect())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VertexRef {
     pub face: FaceId,
@@ -21,6 +121,67 @@ pub struct Hit {
 }
 
 impl Session {
+    pub fn terrain_vertex_source(&self) -> VertexSource {
+        VertexSource {
+            generation: self.document_generation(),
+            revision: self.document.revision(),
+        }
+    }
+
+    pub fn preview_terrain_vertex_set(
+        &mut self,
+        actor: Actor,
+        targets: &[VertexSetFace],
+        source: VertexSource,
+    ) -> Result<usize, String> {
+        if source != self.terrain_vertex_source() {
+            return Err(
+                "Terrain vertex source is stale; inspect the current native vertices again".into(),
+            );
+        }
+        if targets.is_empty() || targets.len() > MAX_SET_FACES {
+            return Err("Set vertices on 1–16 terrain faces".into());
+        }
+        let mut faces = BTreeSet::new();
+        for target in targets {
+            if !faces.insert(target.face) {
+                return Err("Use one absolute vertex group per terrain face".into());
+            }
+            if target.vertices.is_empty()
+                || target.vertices.len() > map_core::displacement::MAX_GRID_VERTICES
+            {
+                return Err("Set 1–289 native vertices per terrain face".into());
+            }
+        }
+        self.terrain_grids(&faces.into_iter().collect::<Vec<_>>(), false)?;
+        let highlight = self
+            .terrain_triangle_highlight
+            .as_ref()
+            .filter(|highlight| !self.terrain_highlight_stale(highlight))
+            .map(|highlight| highlight.token);
+        let edits = targets
+            .iter()
+            .map(|target| {
+                (
+                    target.face,
+                    map_core::surface::SurfaceEdit {
+                        terrain: Some(map_core::displacement::Operation::VertexSet {
+                            vertices: target.vertices.clone(),
+                        }),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let changed = self.preview_or_apply_faces(actor, edits, true)?;
+        self.geometry
+            .face_preview
+            .as_mut()
+            .unwrap()
+            .terrain_mask_token = highlight;
+        Ok(changed)
+    }
+
     pub fn preview_terrain_vertex_move(
         &mut self,
         actor: Actor,
@@ -56,14 +217,16 @@ impl Session {
 
     pub fn terrain_vertices_json(&self, faces: &[FaceId], preview: bool) -> Result<Value, String> {
         let grids = self.terrain_grids(faces, preview)?;
-        Ok(json!({"faces":grids.iter().map(|grid|json!({
+        Ok(
+            json!({"source":if preview {Value::Null} else {self.terrain_vertex_source().json()},"faces":grids.iter().map(|grid|json!({
             "solid":grid.face.solid,"side":grid.face.side,"power":grid.power,"size":grid.mesh.size,
             "vertices":grid.mesh.positions.iter().enumerate().map(|(id,point)|json!({
                 "id":id,"row":id/grid.mesh.size,"column":id%grid.mesh.size,
                 "position":point.to_array(),"base_position":grid.mesh.base_positions[id].to_array(),
                 "alpha":grid.mesh.alphas[id]
             })).collect::<Vec<_>>()
-        })).collect::<Vec<_>>()}))
+        })).collect::<Vec<_>>()}),
+        )
     }
 
     fn terrain_vertex_targets(
@@ -310,6 +473,314 @@ mod tests {
             .unwrap();
         session.select_faces(&[face], SelectMode::Replace).unwrap();
         (session, face)
+    }
+
+    #[test]
+    fn absolute_vertex_batches_are_exact_atomic_and_preserve_highlights_through_commit() {
+        use map_core::displacement::{VertexSet, VertexValue};
+        let (mut session, face) = fixture(4, 3);
+        let ObjectId::Solid(second) = session
+            .create_block(
+                Actor::User,
+                DVec3::new(96.0, 0.0, 0.0),
+                DVec3::new(160.0, 64.0, 16.0),
+                "test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let second = FaceId {
+            solid: second,
+            side: session
+                .document()
+                .solid(second)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id,
+        };
+        session
+            .create_terrain(Actor::User, &[second], 2, 1)
+            .unwrap();
+        let source = session.terrain_vertex_source();
+        let original = session.document().vmf().clone();
+        let history = session.document().undo_labels().count();
+        let before = session
+            .terrain_grids(&[face], false)
+            .unwrap()
+            .remove(0)
+            .mesh;
+        let highlight = session
+            .highlight_terrain_vertices(Actor::User, &[(face, vec![7])])
+            .unwrap();
+        let guides = session.terrain_triangle_highlight_json();
+        let targets = vec![VertexSetFace {
+            face,
+            vertices: before
+                .positions
+                .iter()
+                .enumerate()
+                .map(|(vertex, point)| VertexSet {
+                    vertex,
+                    value: if vertex % 2 == 0 {
+                        VertexValue::WorldZ(vertex as f64 * 17.25 - 2000.0)
+                    } else {
+                        VertexValue::Position(point.with_z(vertex as f64 * 17.25 - 2000.0))
+                    },
+                })
+                .collect(),
+        }];
+        assert_eq!(
+            session.terrain_vertices_json(&[face], false).unwrap()["source"],
+            source.json()
+        );
+        assert!(session.terrain_vertices_json(&[face], true).unwrap()["source"].is_null());
+        assert_eq!(
+            session
+                .preview_terrain_vertex_set(Actor::Agent, &targets, source)
+                .unwrap(),
+            1
+        );
+        let draft = session.terrain_grids(&[face], true).unwrap().remove(0).mesh;
+        for (vertex, point) in draft.positions.iter().enumerate() {
+            assert_eq!(
+                *point,
+                before.positions[vertex].with_z(vertex as f64 * 17.25 - 2000.0)
+            );
+        }
+        let preview = session.face_preview_token();
+        let preview_map = session.render_document().vmf().clone();
+        for invalid in [
+            vec![
+                targets[0].clone(),
+                VertexSetFace {
+                    face: second,
+                    vertices: vec![VertexSet {
+                        vertex: 25,
+                        value: VertexValue::WorldZ(1.0),
+                    }],
+                },
+            ],
+            vec![
+                targets[0].clone(),
+                VertexSetFace {
+                    face: FaceId {
+                        solid: face.solid,
+                        side: u32::MAX,
+                    },
+                    vertices: vec![VertexSet {
+                        vertex: 0,
+                        value: VertexValue::WorldZ(1.0),
+                    }],
+                },
+            ],
+            vec![VertexSetFace {
+                face,
+                vertices: vec![
+                    VertexSet {
+                        vertex: 0,
+                        value: VertexValue::WorldZ(25.0),
+                    },
+                    VertexSet {
+                        vertex: 289,
+                        value: VertexValue::WorldZ(1.0),
+                    },
+                ],
+            }],
+            vec![VertexSetFace {
+                face,
+                vertices: vec![
+                    VertexSet {
+                        vertex: 0,
+                        value: VertexValue::WorldZ(25.0),
+                    },
+                    VertexSet {
+                        vertex: 1,
+                        value: VertexValue::WorldZ(f64::INFINITY),
+                    },
+                ],
+            }],
+            vec![targets[0].clone(), targets[0].clone()],
+            vec![VertexSetFace {
+                face,
+                vertices: vec![targets[0].vertices[0]; 290],
+            }],
+        ] {
+            assert!(
+                session
+                    .preview_terrain_vertex_set(Actor::Agent, &invalid, source)
+                    .is_err()
+            );
+            assert_eq!(session.face_preview_token(), preview);
+            assert_eq!(session.render_document().vmf(), &preview_map);
+            assert_eq!(session.document().vmf(), &original);
+            assert_eq!(session.terrain_triangle_highlight_json(), guides);
+            assert_eq!(session.document().undo_labels().count(), history);
+        }
+        for stale in [
+            VertexSource {
+                generation: source.generation + 1,
+                ..source
+            },
+            VertexSource {
+                revision: source.revision + 1,
+                ..source
+            },
+        ] {
+            assert!(
+                session
+                    .preview_terrain_vertex_set(Actor::Agent, &targets, stale)
+                    .is_err()
+            );
+            assert_eq!(session.face_preview_token(), preview);
+            assert_eq!(session.terrain_triangle_highlight_json(), guides);
+        }
+        session.cancel_face_preview();
+        assert_eq!(session.document().vmf(), &original);
+        assert_eq!(session.terrain_triangle_highlight_json(), guides);
+        session
+            .preview_terrain_vertex_set(Actor::User, &targets, source)
+            .unwrap();
+        session.commit_face_preview(Actor::User).unwrap();
+        assert_eq!(session.document().vmf(), &preview_map);
+        assert_eq!(session.document().undo_labels().count(), history + 1);
+        assert_eq!(
+            session
+                .terrain_vertex_mask(&[face], Some(highlight))
+                .unwrap()
+                .faces[0]
+                .vertices,
+            [7]
+        );
+        assert_eq!(session.terrain_triangle_highlight_json(), guides);
+        assert!(
+            session
+                .preview_terrain_vertex_set(Actor::Agent, &targets, source)
+                .is_err()
+        );
+        session.undo(Actor::User).unwrap();
+        assert_eq!(session.document().vmf(), &original);
+        assert!(
+            session
+                .preview_terrain_vertex_set(Actor::Agent, &targets, source)
+                .is_err()
+        );
+        assert!(
+            session
+                .terrain_vertex_mask(&[face], Some(highlight))
+                .is_err()
+        );
+        session.redo(Actor::User).unwrap();
+        assert_eq!(session.document().vmf(), &preview_map);
+    }
+
+    #[test]
+    fn height_csv_is_strict_bounded_and_preserves_native_sample_identity() {
+        let (mut session, face) = fixture(2, 1);
+        let source = session.terrain_vertex_source();
+        let original = session
+            .terrain_grids(&[face], false)
+            .unwrap()
+            .remove(0)
+            .mesh;
+        let csv = format!(
+            "solid,side,vertex,z\n{},{},7,-12.5\n{},{},0,8191.25\n",
+            face.solid, face.side, face.solid, face.side
+        );
+        let targets = parse_height_csv(&csv).unwrap();
+        session
+            .preview_terrain_vertex_set(Actor::User, &targets, source)
+            .unwrap();
+        let draft = session.terrain_grids(&[face], true).unwrap().remove(0).mesh;
+        assert_eq!(draft.positions[7], original.positions[7].with_z(-12.5));
+        assert_eq!(draft.positions[0], original.positions[0].with_z(8191.25));
+        let preview = session.face_preview_token();
+        for invalid in [
+            "solid,side,vertex,z\n".to_owned(),
+            csv.replace(",7,", ",7.5,"),
+            csv.replace("-12.5", "NaN"),
+            csv.replace("-12.5", "65537"),
+            csv.replace("-12.5", ""),
+            csv.replace("-12.5", "1,2"),
+            csv.replace(",0,", ",7,"),
+            format!("{csv}\n"),
+            "x".repeat(MAX_HEIGHT_CSV_BYTES + 1),
+        ] {
+            assert!(parse_height_csv(&invalid).is_err());
+            assert_eq!(session.face_preview_token(), preview);
+            assert_eq!(session.terrain_grids(&[face], true).unwrap()[0].mesh, draft);
+        }
+    }
+
+    #[test]
+    fn absolute_height_batches_keep_explicit_matching_borders_across_rotated_native_grids() {
+        use map_core::displacement::{VertexSet, VertexValue};
+        let (mut session, first) = fixture(2, 0);
+        let ObjectId::Solid(solid) = session
+            .create_block(
+                Actor::User,
+                DVec3::new(64.0, 0.0, 0.0),
+                DVec3::new(128.0, 64.0, 16.0),
+                "test",
+                false,
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let second = FaceId {
+            solid,
+            side: session
+                .document()
+                .solid(solid)
+                .unwrap()
+                .sides
+                .iter()
+                .find(|side| map_core::Plane::from_points(side.plane.0).unwrap().normal.z > 0.99)
+                .unwrap()
+                .id,
+        };
+        session
+            .create_terrain(Actor::User, &[second], 2, 2)
+            .unwrap();
+        let source = session.terrain_vertex_source();
+        let grids = session.terrain_grids(&[first, second], false).unwrap();
+        let targets = grids
+            .iter()
+            .map(|grid| VertexSetFace {
+                face: grid.face,
+                vertices: grid
+                    .mesh
+                    .positions
+                    .iter()
+                    .enumerate()
+                    .map(|(vertex, point)| VertexSet {
+                        vertex,
+                        value: VertexValue::WorldZ(8192.0 + point.x * 0.25 + point.y * 0.5),
+                    })
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+        session
+            .preview_terrain_vertex_set(Actor::Agent, &targets, source)
+            .unwrap();
+        let raw = session.terrain_grids(&[first, second], true).unwrap();
+        let displayed = session
+            .terrain_surface_grids(&[first, second], true)
+            .unwrap();
+        for (raw, displayed) in raw.iter().zip(&displayed) {
+            assert_eq!(raw.mesh, displayed.mesh);
+        }
+        let mut shared = 0;
+        for point in raw[0].mesh.positions.iter().filter(|point| point.x == 64.0) {
+            assert!(raw[1].mesh.positions.contains(point));
+            shared += 1;
+        }
+        assert_eq!(shared, 5);
     }
 
     #[test]

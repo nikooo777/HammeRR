@@ -75,6 +75,29 @@ For exact movement:
 For dragging, click **Move with handles…** in the same operation.
 Review the displacement before applying. **Undo** restores the previous grid.
 
+## Set exact vertex heights
+
+1. Open **Terrain triangles…** for the selected terrain faces.
+2. Choose **Vertices · exact positions & brush masks** under **Selection type**.
+3. Check the vertices to change.
+4. Enter **Set checked vertices to world Z · units** and click **Preview height**.
+5. Inspect the terrain and **World** coordinates, then click **Apply** or **Cancel**.
+
+X and Y stay fixed. To supply different heights, enter **Height CSV file path**
+and click **Preview CSV**. Use the exact header and native vertex IDs:
+
+```csv
+solid,side,vertex,z
+12,72,0,-12.5
+12,72,7,8191.25
+```
+
+CSV rows choose vertices within the dialog's captured faces; checkboxes do not
+limit them. Edits preserve the viewport highlight. Failed input preserves the
+last valid preview. Supply matching border heights to keep a seam joined.
+Limits: 16 faces, 289 vertices per face, 512 KiB per CSV file, coordinates within
+±65536 units. No interpolation or automatic sewing occurs.
+
 ## Change grid resolution
 
 1. Open **Edit terrain…** and choose **Grid resolution**.

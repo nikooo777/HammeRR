@@ -325,6 +325,83 @@ pub fn move_vertices(
     Ok(result)
 }
 
+pub fn set_vertices(
+    face: &Face,
+    info: &DispInfo,
+    vertices: &[super::VertexSet],
+) -> Result<DispInfo, EditError> {
+    if vertices.is_empty() || vertices.len() > super::MAX_GRID_VERTICES {
+        return Err(invalid("Set 1–289 native vertices per terrain face"));
+    }
+    let mesh = mesh(face, info)?;
+    if mesh.offset_normals_need_remapping(info) {
+        return Err(invalid(
+            "Nonzero or malformed offset normals need remapping before setting vertices",
+        ));
+    }
+    let mut selected = BTreeSet::new();
+    let mut offsets = info
+        .offsets
+        .clone()
+        .unwrap_or_else(|| vec![vec![DVec3::ZERO; mesh.size]; mesh.size]);
+    let elevation = face.plane.normal * info.elevation;
+    let mut expected = Vec::with_capacity(vertices.len());
+    let mut changed = false;
+    for target in vertices {
+        let index = target.vertex;
+        if index >= mesh.positions.len() || !selected.insert(index) {
+            return Err(invalid("Use each valid native terrain vertex ID once"));
+        }
+        let old = mesh.positions[index];
+        let point = match target.value {
+            super::VertexValue::Position(point) => point,
+            super::VertexValue::WorldZ(z) => DVec3::new(old.x, old.y, z),
+        };
+        if !point.is_finite() || point.abs().max_element() > MAX_COORDINATE {
+            return Err(invalid(
+                "Absolute terrain positions must be finite and within ±65536",
+            ));
+        }
+        expected.push((index, point));
+        if point == old {
+            continue;
+        }
+        let row = index / mesh.size;
+        let column = index % mesh.size;
+        let mut base = mesh.base_positions[index];
+        if let (Some(normals), Some(distances)) = (&info.normals, &info.distances) {
+            base += normals[row][column] * distances[row][column];
+        }
+        let value = (point - elevation) - base;
+        offsets[row][column] = match target.value {
+            super::VertexValue::Position(_) => value,
+            super::VertexValue::WorldZ(_) => {
+                DVec3::new(offsets[row][column].x, offsets[row][column].y, value.z)
+            }
+        };
+        if !offsets[row][column].is_finite() {
+            return Err(invalid("Absolute terrain offsets must be finite"));
+        }
+        changed = true;
+    }
+    if !changed {
+        return Ok(info.clone());
+    }
+    let mut result = info.clone();
+    result.offsets = Some(offsets);
+    let rebuilt =
+        DisplacementMesh::build(face, &result).map_err(|error| invalid(&error.to_string()))?;
+    if expected
+        .iter()
+        .any(|&(index, point)| rebuilt.positions[index] != point)
+    {
+        return Err(invalid(
+            "Absolute positions cannot be reconstructed exactly from existing terrain deformation",
+        ));
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -654,5 +731,91 @@ mod tests {
         assert!(move_vertices(&face, &info, &[25], offset).is_err());
         let restored = move_vertices(&face, &moved, &selected, -offset).unwrap();
         assert_eq!(DisplacementMesh::build(&face, &restored).unwrap(), before);
+    }
+
+    #[test]
+    fn absolute_vertex_values_preserve_deformation_and_refuse_inexact_or_corrupt_rows() {
+        use super::super::{VertexSet, VertexValue};
+        let (face, mut info, _) = fixture();
+        info.elevation = 3.25;
+        info.distances.as_mut().unwrap()[2][2] = 17.5;
+        info.flags = Some(14);
+        info.triangle_tags = Some(vec![vec![9; 8]; 4]);
+        let before = DisplacementMesh::build(&face, &info).unwrap();
+        let targets = [
+            VertexSet {
+                vertex: 12,
+                value: VertexValue::WorldZ(-8191.5),
+            },
+            VertexSet {
+                vertex: 7,
+                value: VertexValue::Position(
+                    before.positions[7] + DVec3::new(0.125, -0.5, 2048.25),
+                ),
+            },
+        ];
+        let changed = set_vertices(&face, &info, &targets).unwrap();
+        let mesh = DisplacementMesh::build(&face, &changed).unwrap();
+        assert_eq!(mesh.positions[12], before.positions[12].with_z(-8191.5));
+        assert_eq!(
+            mesh.positions[7],
+            before.positions[7] + DVec3::new(0.125, -0.5, 2048.25)
+        );
+        for (id, point) in mesh.positions.iter().enumerate() {
+            if id != 7 && id != 12 {
+                assert_eq!(*point, before.positions[id]);
+            }
+        }
+        let mut preserved = changed.clone();
+        preserved.offsets = info.offsets.clone();
+        assert_eq!(preserved, info);
+        assert_eq!(set_vertices(&face, &changed, &targets).unwrap(), changed);
+        assert_eq!(
+            set_vertices(
+                &face,
+                &info,
+                &[VertexSet {
+                    vertex: 0,
+                    value: VertexValue::Position(before.positions[0])
+                }]
+            )
+            .unwrap(),
+            info
+        );
+        for invalid in [
+            vec![targets[0], targets[0]],
+            vec![
+                targets[0],
+                VertexSet {
+                    vertex: 25,
+                    value: VertexValue::WorldZ(0.0),
+                },
+            ],
+            vec![
+                targets[0],
+                VertexSet {
+                    vertex: 0,
+                    value: VertexValue::WorldZ(f64::NAN),
+                },
+            ],
+            vec![
+                targets[0],
+                VertexSet {
+                    vertex: 0,
+                    value: VertexValue::Position(DVec3::X * 65537.0),
+                },
+            ],
+            vec![VertexSet {
+                vertex: 0,
+                value: VertexValue::WorldZ(1e-100),
+            }],
+        ] {
+            assert!(set_vertices(&face, &info, &invalid).is_err());
+        }
+        info.offset_normals = Some(vec![vec![DVec3::Z; 5]; 5]);
+        assert!(set_vertices(&face, &info, &targets).is_err());
+        info.offset_normals = None;
+        info.offsets = Some(vec![vec![DVec3::ZERO; 4]; 5]);
+        assert!(set_vertices(&face, &info, &targets).is_err());
     }
 }

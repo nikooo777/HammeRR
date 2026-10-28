@@ -550,6 +550,11 @@ impl GameFs {
         self.read_from_limited(path, Some("game"), maximum)
     }
 
+    pub fn asset_origin(&self, path: &str) -> io::Result<Option<AssetOrigin>> {
+        self.asset_lookup(path, usize::MAX)
+            .map(|(origin, _)| origin)
+    }
+
     pub fn read_asset_limited(
         &self,
         path: &str,
@@ -609,7 +614,7 @@ impl GameFs {
         maximum: usize,
     ) -> io::Result<Option<AssetSourcePaths>> {
         let (found, sources) = self.asset_lookup(path, maximum)?;
-        Ok(found.then_some(sources))
+        Ok(found.map(|_| sources))
     }
 
     /// Returns lookup dependencies even when the asset is absent.
@@ -618,10 +623,14 @@ impl GameFs {
             .map(|(_, sources)| sources)
     }
 
-    fn asset_lookup(&self, path: &str, maximum: usize) -> io::Result<(bool, AssetSourcePaths)> {
+    fn asset_lookup(
+        &self,
+        path: &str,
+        maximum: usize,
+    ) -> io::Result<(Option<AssetOrigin>, AssetSourcePaths)> {
         let path = asset_relative(path)?;
         if path.is_empty() {
-            return Ok((false, AssetSourcePaths::default()));
+            return Ok((None, AssetSourcePaths::default()));
         }
         let mut sources = AssetSourcePaths::default();
         for mounted in self
@@ -633,12 +642,15 @@ impl GameFs {
                 Mount::Pak(pak) => {
                     sources.file(pak.path())?;
                     if let Some(paths) = pak.asset_source_paths_limited(&path, maximum)? {
-                        for file in paths {
-                            sources.file(&file)?;
+                        for file in &paths {
+                            sources.file(file)?;
                         }
-                        true
+                        Some(AssetOrigin::Vpk {
+                            index: pak.path().to_owned(),
+                            files: paths,
+                        })
                     } else {
-                        false
+                        None
                     }
                 }
                 Mount::Directory(root) => {
@@ -648,22 +660,25 @@ impl GameFs {
                             if metadata.is_file() {
                                 check_file_size(metadata.len(), maximum)?;
                                 sources.file(&file)?;
-                                true
+                                Some(AssetOrigin::Directory {
+                                    mount: root.clone(),
+                                    file,
+                                })
                             } else {
-                                false
+                                None
                             }
                         }
-                        None => false,
+                        None => None,
                     }
                 }
             };
-            if found {
+            if found.is_some() {
                 sources.finish();
-                return Ok((true, sources));
+                return Ok((found, sources));
             }
         }
         sources.finish();
-        Ok((false, sources))
+        Ok((None, sources))
     }
 
     pub fn read_from_limited(
@@ -1233,6 +1248,10 @@ mod tests {
             .unwrap();
         assert_eq!(source.data, b"first");
         assert_eq!(
+            game.asset_origin("MATERIALS/TEST.VMT").unwrap(),
+            Some(source.origin.clone())
+        );
+        assert_eq!(
             source.origin,
             AssetOrigin::Directory {
                 mount: first,
@@ -1332,6 +1351,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(asset.data, b"prebody");
+        assert_eq!(
+            game.asset_origin("materials/test.vmt").unwrap(),
+            Some(asset.origin.clone())
+        );
         assert!(matches!(asset.origin, AssetOrigin::Vpk { .. }));
     }
 

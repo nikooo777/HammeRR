@@ -29,11 +29,21 @@ pub struct State {
 }
 
 pub fn result_json(result: &carve::Result) -> Value {
-    json!({"cutter": result.cutter, "cutters":result.cutters,
+    json!({"cutter": result.cutter, "cutters":result.cutters,"cut_material":cut_material_json(&result.cut_material),
         "changes": result.changes.iter().map(|change| json!({"source": change.source, "fragments": change.fragments})).collect::<Vec<_>>(),
         "removed": result.removed, "unchanged": result.unchanged,
         "objects": result.objects.iter().map(|id| match id {ObjectId::Solid(id) => format!("solid:{id}"), ObjectId::Entity(id) => format!("entity:{id}")}).collect::<Vec<_>>(),
-        "faces": result.faces.iter().map(|face| json!({"solid": face.solid, "side": face.side, "source_solid": face.source_solid, "source_side": face.source_side, "cutter": face.cutter})).collect::<Vec<_>>()})
+        "faces": result.faces.iter().map(|face| json!({"solid": face.solid, "side": face.side, "source_solid": face.source_solid, "source_side": face.source_side, "surface_source_solid":face.surface_source_solid,"surface_source_side":face.surface_source_side,"cutter": face.cutter})).collect::<Vec<_>>()})
+}
+
+pub fn cut_material_json(policy: &carve::CutMaterialPolicy) -> Value {
+    match policy {
+        carve::CutMaterialPolicy::Cutter => json!({"policy":"cutter"}),
+        carve::CutMaterialPolicy::Target => json!({"policy":"target"}),
+        carve::CutMaterialPolicy::Material(material) => {
+            json!({"policy":"material","material":material})
+        }
+    }
 }
 
 impl Session {
@@ -86,6 +96,7 @@ impl Session {
     pub fn carve_state(&self) -> Value {
         json!({"handle":self.carve_handle(),"stamp":self.carve_stamp(),"preview": self.geometry.carving.preview.as_ref().map(|preview| json!({"token":preview.token.to_string(),"generation":preview.generation,"revision":preview.revision,"targets":preview.targets,"result":result_json(&preview.result)})),
             "limits":{"cutters":carve::MAX_CUTTERS,"targets":carve::MAX_TARGETS,"fragments":carve::MAX_FRAGMENTS,"sides_per_brush":subobject::MAX_SIDES},
+            "cut_material_policies":{"cutter":"Default. Copy each cutter face's material, world UV projection, lighting and unknown metadata.","target":"Copy the unique original target face with the same outward normal as each generated face; missing or ambiguous parallel faces reject. Preserve that face's world UV projection, lighting and unknown metadata.","material":"Replace only the cutter face's material; keep its world UV projection, lighting and unknown metadata. Nodraw remains allowed."},
             "full_removal_policy":"World brushes may be removed. Empty brush entities reject; delete those owners explicitly."})
     }
 
@@ -132,6 +143,31 @@ impl Session {
         targets: &[u32],
         stamp: &str,
     ) -> Result<(), String> {
+        self.preview_carve_many_with_material(
+            cutters,
+            targets,
+            &carve::CutMaterialPolicy::Cutter,
+            stamp,
+        )
+    }
+
+    pub fn preview_carve_with_material(
+        &mut self,
+        cutter: u32,
+        targets: &[u32],
+        cut_material: &carve::CutMaterialPolicy,
+        stamp: &str,
+    ) -> Result<(), String> {
+        self.preview_carve_many_with_material(&[cutter], targets, cut_material, stamp)
+    }
+
+    pub fn preview_carve_many_with_material(
+        &mut self,
+        cutters: &[u32],
+        targets: &[u32],
+        cut_material: &carve::CutMaterialPolicy,
+        stamp: &str,
+    ) -> Result<(), String> {
         if stamp != self.carve_stamp() {
             return Err(
                 "Map, selection or preview changed; inspect the carving state again".into(),
@@ -140,7 +176,7 @@ impl Session {
         let mut document = self.document.preview_snapshot();
         let result = document
             .edit("preview carve", |tx| {
-                carve::carve_many(tx, cutters, targets)
+                carve::carve_many_with_material(tx, cutters, targets, cut_material)
             })
             .map_err(|error| error.to_string())?;
         let requested = targets
@@ -220,7 +256,12 @@ impl Session {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| error.to_string())?;
         let result = self.edit(actor, "carve brushes", |tx| {
-            let result = carve::carve_many(tx, &expected.cutters, &targets)?;
+            let result = carve::carve_many_with_material(
+                tx,
+                &expected.cutters,
+                &targets,
+                &expected.cut_material,
+            )?;
             if result != expected
                 || solids.iter().any(|solid| {
                     subobject::solid(tx.document(), solid.id)
@@ -283,6 +324,86 @@ mod tests {
             unreachable!()
         };
         (session, target, cutter)
+    }
+
+    #[test]
+    fn cut_material_policies_retain_valid_drafts_on_refusal_and_commit_exactly_for_both_actors() {
+        for actor in [Actor::User, Actor::Agent] {
+            for policy in [
+                carve::CutMaterialPolicy::Target,
+                carve::CutMaterialPolicy::Material(" brick/door_jamb ".into()),
+            ] {
+                let (mut session, target, cutter) = fixture();
+                let ObjectId::Solid(oblique) = session
+                    .create_block(
+                        actor,
+                        DVec3::splat(8.0),
+                        DVec3::splat(24.0),
+                        "tools/toolsnodraw",
+                        false,
+                    )
+                    .unwrap()
+                else {
+                    unreachable!()
+                };
+                session
+                    .edit(actor, "cutter settings", |tx| {
+                        for side in &mut tx.solid_mut(cutter)?.sides {
+                            side.material = "TOOLS/TOOLSNODRAW".into();
+                        }
+                        map_core::transform::transform(
+                            tx,
+                            &[ObjectId::Solid(oblique)],
+                            map_core::transform::Transform {
+                                rotation: DVec3::new(0.0, 0.0, 30.0),
+                                pivot: DVec3::splat(16.0),
+                                ..Default::default()
+                            },
+                        )
+                    })
+                    .unwrap();
+                let original = session.document().vmf().clone();
+                let history = session.document.undo_labels().count();
+                session
+                    .preview_carve_with_material(cutter, &[target], &policy, &session.carve_stamp())
+                    .unwrap();
+                let retained = session.carve_state();
+                let token = session.geometry.carving.preview.as_ref().unwrap().token;
+                let draft = session.render_document().vmf().clone();
+                let selection = session.selected_ids();
+                for invalid in [
+                    carve::CutMaterialPolicy::Material(" ".into()),
+                    carve::CutMaterialPolicy::Target,
+                ] {
+                    assert!(
+                        session
+                            .preview_carve_many_with_material(
+                                &[oblique, cutter],
+                                &[target],
+                                &invalid,
+                                &session.carve_stamp(),
+                            )
+                            .is_err()
+                    );
+                    assert_eq!(session.carve_state(), retained);
+                    assert_eq!(session.render_document().vmf(), &draft);
+                    assert_eq!(session.document().vmf(), &original);
+                    assert_eq!(session.selected_ids(), selection);
+                    assert_eq!(session.document.undo_labels().count(), history);
+                }
+                let result = session.commit_carve(actor, token).unwrap();
+                assert_eq!(
+                    result_json(&result)["cut_material"],
+                    retained["preview"]["result"]["cut_material"]
+                );
+                assert_eq!(session.document().vmf(), &draft);
+                assert_eq!(session.document.undo_labels().count(), history + 1);
+                session.undo(actor).unwrap();
+                assert_eq!(session.document().vmf(), &original);
+                session.redo(actor).unwrap();
+                assert_eq!(session.document().vmf(), &draft);
+            }
+        }
     }
 
     #[test]

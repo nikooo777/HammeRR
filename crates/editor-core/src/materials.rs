@@ -1,6 +1,118 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::Serialize;
+use sha2::{Digest, Sha256};
+use source_formats::gamefs::{AssetOrigin, GameFs, Mount};
+
+use crate::session::material_source;
+
+#[cfg(test)]
+#[path = "materials/provenance_tests.rs"]
+mod provenance_tests;
+
+pub const MAX_CATALOG_ENTRIES: usize = 250_000;
+pub const MAX_CATALOG_SOURCES: usize = 256;
+pub const MAX_QUERY_BYTES: usize = 256;
+pub const MAX_GROUP_BYTES: usize = 1024;
+pub const MAX_MATERIAL_PAGE: usize = 200;
+
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct CatalogFilter {
+    pub source: Option<String>,
+    pub exclude_generated_map_materials: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Source {
+    pub id: String,
+    pub kind: &'static str,
+    pub mount: String,
+    pub paths_truncated: bool,
+}
+
+#[derive(Debug, Default, Clone, Serialize)]
+pub struct Provenance {
+    pub source_id: Option<String>,
+    pub source: Option<material_source::Origin>,
+}
+
+pub(crate) fn source_id(origin: &AssetOrigin) -> String {
+    let (kind, path) = match origin {
+        AssetOrigin::Directory { mount, .. } => (b"directory".as_slice(), mount),
+        AssetOrigin::Vpk { index, .. } => (b"vpk".as_slice(), index),
+    };
+    let mut digest = Sha256::new();
+    digest.update(kind);
+    digest.update([0]);
+    digest.update(path.as_os_str().as_encoded_bytes());
+    format!("source:{:x}", digest.finalize())
+}
+
+pub(crate) fn provenance(origin: AssetOrigin) -> Provenance {
+    Provenance {
+        source_id: Some(source_id(&origin)),
+        source: Some(material_source::origin(origin)),
+    }
+}
+
+pub(crate) fn catalog_sources(game: &GameFs) -> Result<Vec<Source>, String> {
+    let mut sources = Vec::new();
+    for mounted in game
+        .mounts
+        .iter()
+        .filter(|mount| mount.ids.iter().any(|id| id == "game"))
+    {
+        if sources.len() == MAX_CATALOG_SOURCES {
+            return Err(format!(
+                "Asset catalogs support at most {MAX_CATALOG_SOURCES} game mounts"
+            ));
+        }
+        let origin = match &mounted.mount {
+            Mount::Directory(mount) => AssetOrigin::Directory {
+                mount: mount.clone(),
+                file: mount.clone(),
+            },
+            Mount::Pak(pak) => AssetOrigin::Vpk {
+                index: pak.path().to_owned(),
+                files: Vec::new(),
+            },
+        };
+        let id = source_id(&origin);
+        let origin = material_source::origin(origin);
+        sources.push(Source {
+            id,
+            kind: origin.kind,
+            mount: origin.mount,
+            paths_truncated: origin.paths_truncated,
+        });
+    }
+    Ok(sources)
+}
+
+pub(crate) fn validate_source_filter(
+    source: Option<&str>,
+    sources: &[Source],
+) -> Result<(), String> {
+    if source.is_some_and(|source| {
+        !matches!(source, "all" | "directory" | "vpk" | "unavailable")
+            && !sources.iter().any(|candidate| candidate.id == source)
+    }) {
+        return Err("Choose all, directory, vpk, unavailable or an exact ID from sources".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn source_matches(source: Option<&str>, provenance: &Provenance) -> bool {
+    match source {
+        None | Some("all") => true,
+        Some("unavailable") => provenance.source.is_none(),
+        Some("directory" | "vpk") => provenance
+            .source
+            .as_ref()
+            .is_some_and(|origin| Some(origin.kind) == source),
+        Some(id) => provenance.source_id.as_deref() == Some(id),
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Entry {
@@ -9,6 +121,8 @@ pub struct Entry {
     pub category: String,
     pub used: bool,
     pub favorite: bool,
+    #[serde(flatten)]
+    pub provenance: Provenance,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -25,6 +139,9 @@ pub struct Catalog {
     pub total: usize,
     pub offset: usize,
     pub favorites: crate::material_favorites::Status,
+    pub sources: Vec<Source>,
+    pub filter: CatalogFilter,
+    pub provenance_scope: &'static str,
 }
 
 pub fn category(name: &str) -> &'static str {
@@ -78,6 +195,7 @@ pub fn browse(
             category: category(&name).into(),
             used: used.contains(&name),
             favorite: favorites.contains(&name),
+            provenance: Provenance::default(),
             name,
         })
         .collect();
@@ -160,6 +278,9 @@ pub fn browse(
         total,
         offset,
         favorites: crate::material_favorites::Status::session(favorites.len()),
+        sources: Vec::new(),
+        filter: CatalogFilter::default(),
+        provenance_scope: "current_winning_vmt; display previews have independent cached identities",
     })
 }
 

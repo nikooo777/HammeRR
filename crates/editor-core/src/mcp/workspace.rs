@@ -18,6 +18,7 @@ use futures_util::FutureExt;
 use render::GpuContext;
 use rmcp::ServiceExt;
 
+mod quit;
 mod routing;
 pub use routing::WorkspaceServer;
 #[cfg(test)]
@@ -108,6 +109,9 @@ struct Queue {
     commands: VecDeque<Command>,
     completed: VecDeque<CompletedClose>,
     stopping: bool,
+    executing: bool,
+    quitting: bool,
+    quit: Option<quit::Work>,
 }
 
 #[derive(Default)]
@@ -358,7 +362,7 @@ impl Workspace {
         let (send, receive) = oneshot::channel();
         {
             let mut queue = self.0.queue.lock().unwrap_or_else(PoisonError::into_inner);
-            if queue.stopping {
+            if queue.stopping || queue.quitting {
                 return Err("The workspace is closing".into());
             }
             if !queue.commands.is_empty() {
@@ -379,7 +383,7 @@ impl Workspace {
 
     fn enqueue(&self, command: Command) -> Result<(), String> {
         let mut queue = self.0.queue.lock().unwrap_or_else(PoisonError::into_inner);
-        if queue.stopping {
+        if queue.stopping || queue.quitting {
             return Err("The workspace is closing".into());
         }
         if queue.commands.len() >= COMMAND_LIMIT {
@@ -779,7 +783,11 @@ fn run_commands(workspace: &Workspace, runtime: &tokio::runtime::Runtime) {
             .queue
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        while queue.completed.is_empty() && queue.commands.is_empty() && !queue.stopping {
+        while queue.completed.is_empty()
+            && queue.commands.is_empty()
+            && queue.quit.is_none()
+            && !queue.stopping
+        {
             queue = workspace
                 .0
                 .changed
@@ -791,6 +799,11 @@ fn run_commands(workspace: &Workspace, runtime: &tokio::runtime::Runtime) {
             finish_close(workspace, runtime, completed);
             continue;
         }
+        if let Some(work) = queue.quit.take() {
+            drop(queue);
+            quit::finish(workspace, runtime, work);
+            break;
+        }
         if queue.stopping {
             drop(queue);
             break;
@@ -799,30 +812,47 @@ fn run_commands(workspace: &Workspace, runtime: &tokio::runtime::Runtime) {
             .commands
             .pop_front()
             .expect("Workspace command missing");
+        queue.executing = true;
         drop(queue);
         #[cfg(test)]
         if let Some(before_command) = workspace.0.before_command.lock().unwrap().take() {
             before_command();
         }
-        match command {
+        let response = match command {
             Command::New(actor, present, response) => {
-                if !response.is_closed() {
-                    let _ = response.send(create(workspace, runtime, actor, None, present));
+                if response.is_closed() {
+                    None
+                } else {
+                    Some((response, create(workspace, runtime, actor, None, present)))
                 }
             }
             Command::Open(actor, path, present, response) => {
-                if !response.is_closed() {
-                    let _ = response.send(create(workspace, runtime, actor, Some(&path), present));
+                if response.is_closed() {
+                    None
+                } else {
+                    Some((
+                        response,
+                        create(workspace, runtime, actor, Some(&path), present),
+                    ))
                 }
             }
-            Command::SaveAll(request, response) => {
-                let _ = response.send(Ok(request.run()));
-            }
+            Command::SaveAll(request, response) => Some((response, Ok(request.run()))),
             Command::Show(selector, focus, response) => {
-                if !response.is_closed() {
-                    let _ = response.send(show(workspace, runtime, &selector, focus));
+                if response.is_closed() {
+                    None
+                } else {
+                    Some((response, show(workspace, runtime, &selector, focus)))
                 }
             }
+        };
+        workspace
+            .0
+            .queue
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .executing = false;
+        if let Some((response, result)) = response {
+            let _ = response.send(result);
         }
     }
 }

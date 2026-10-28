@@ -26,14 +26,18 @@ Each source needs at least one wall. Open shells need other geometry to seal a p
 2. Open **Carve brushes…**.
 3. Choose **Cutter · shape to subtract** and **Target brushes**.
 4. Enable **Use multiple cutter brushes** for more than one cutter.
-5. Click **Preview carve**.
-6. Inspect removed and unchanged targets.
-7. Click **Apply carve**.
+5. Under **New cut faces**, choose cutter settings, corresponding target settings, or a named material.
+6. For a named material, enter its name or click **Browse materials…**.
+7. Click **Preview carve** and inspect the targets.
+8. Click **Apply carve**.
 
 ![A doorway cut with a box and cylindrical cutter](images/carved-doorway.png)
 
 Cutters remain in the map. Move or delete them afterward.
-New cut faces inherit the cutter's material and texture placement.
+The default copies cutter surface settings. Target mode requires a unique
+original target face parallel to each new face. Named material mode keeps the
+cutter's texture placement and lighting settings. Unsupported matches reject
+the complete preview; use cutter or named material mode for oblique cuts.
 **Discard preview** keeps the source choices. **Cancel** closes the tool.
 
 ## Clip

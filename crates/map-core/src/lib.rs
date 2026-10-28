@@ -1,5 +1,6 @@
 //! Editor-independent map model.
 
+pub mod block_batch;
 pub mod brush;
 pub mod carve;
 pub mod checks;

@@ -160,6 +160,54 @@ Accepted Close stops owned game/audio and drains owned work.
 Closing the final document exits its process after response-output checks.
 Cleanup or transport failures remain errors.
 
+### Quit all documents
+
+1. Call `get_quit_review {}` without a document selector.
+2. Review every returned map, including hidden maps and drafts.
+3. Pass the combined `review_token` and explicit `discard_changes` to `quit_all`.
+
+Use `discard_changes:true` only to discard the reviewed changes. Changed state
+or active requests reject before any map closes. Accepted cleanup continues
+after client disconnection. `complete:false` and `isError:true` report retained
+cleanup failures. Service shutdown follows the local response-output check;
+this does not prove that the remote client read the response.
+
+### Block batches and cut materials
+
+`create_blocks` accepts the [block-batch JSON](brushes.md#import-a-block-batch)
+inline and creates one Undo step. `create_block` also accepts `rotation`,
+`texture_scale` and `lightmap_scale`. Creation results include
+`faces:[{solid,side,normal}]` for direct face edits.
+
+`preview_carve` and `preview_carve_many` accept `cut_material`:
+`{"policy":"cutter"}`, `{"policy":"target"}`, or
+`{"policy":"material","material":"BRICK/WALL"}`.
+The default is cutter settings. Target mode requires unique corresponding
+original target faces. Results keep geometric source IDs and add
+`surface_source_solid`/`surface_source_side` for inherited settings.
+
+### Exact terrain positions
+
+Read `get_terrain_vertices` with `preview:false`, then copy its `source` guard
+into `preview_terrain_vertex_set`. Supply `targets:[{face:{solid,side},vertices}]`;
+each vertex has its native `vertex` ID and exactly one of `z` or
+`position:[x,y,z]`. Preview queries return `source:null` and cannot supply a
+committed-source guard. Explicit targets preserve visible highlights.
+Inspect the preview, then use the existing `commit_face_preview` or
+`cancel_face_preview` with its token. Limits match the [terrain controls](terrain.md#set-exact-vertex-heights).
+
+### Asset source filters
+
+`browse_materials`, `search_materials` and `browse_models` accept `source`:
+`all`, `directory`, `vpk`, `unavailable`, or an exact ID from `sources`.
+Entries include `source_id` and `source`; filters select the current winning
+asset. Material calls also accept `exclude_generated_map_materials:true`,
+which excludes every `maps/` path. Model pages contain 1–100 entries;
+material pages contain 1–200.
+`inspect_model.sources` records the three model-file origins at cache load.
+Material preview pixels have no physical-source provenance; catalog provenance
+describes the current VMT lookup separately.
+
 ## Preview ownership
 
 Tokens identify one specific draft. Snapshots identify the state that was inspected.
@@ -337,6 +385,9 @@ See [Color correction](color-correction.md) for target and resource limits.
 
 `compile_map` waits for the build. `run_map` builds and launches through the same job system.
 Use `cancel_compile` to stop owned build work.
+Compile diagnostics retain shared object/position references. Split failures
+include plane-source candidates; visibility limits include work/input counts;
+repeated material warnings include affected brush/side totals.
 Set `brush_texture_shadows:true` for [brush cutout shadows](brush-texture-shadows.md).
 For an eligible stationary root or child `func_brush`, set `vrad_brush_cast_shadows:"1"` through `set_entity_properties` to cast supported binary cutouts globally. This uses the same **Shadows → Yes** property and lit build option as the UI. Child origins and initial poses lower before containing transforms. Without this request, supported root and child cutouts stay within their own lit receivers. Absent or zero requests do not affect world or other-model lighting.
 Game launches use `-insecure` and private validation uses `sv_lan 1`.
@@ -486,7 +537,7 @@ These groups locate the available operations.
 
 | Area | Tools |
 | --- | --- |
-| Documents and workspace | `list_documents`, `new_document`, `open_document`, `save_all_named_maps`, `show_document` |
+| Documents and workspace | `list_documents`, `new_document`, `open_document`, `save_all_named_maps`, `show_document`, `get_quit_review`, `quit_all` |
 | [Models, sounds and assets](models.md) | `apply_model_choice`, `apply_sound_choice`, `begin_model_choice`, `begin_sound_choice`, `browse_models`, `browse_sounds`, `cancel_model_choice`, `cancel_sound_choice`, `choose_model`, `choose_model_bodygroup`, `choose_sound`, `clear_model_attachment`, `frame_model_attachment`, `get_model_attachment_guide`, `get_model_choice`, `get_sound_choice`, `get_sound_preview`, `inspect_entity_model`, `inspect_model`, `inspect_sound`, `play_sound_preview`, `reload_model_assets`, `reload_sound_assets`, `render_model_preview`, `render_sound_preview`, `set_sound_preview_volume`, `show_model_attachment`, `stop_sound_preview` |
 | [Atlas texturing](atlas-texturing.md) | `inspect_material_atlas`, `preview_atlas_fit`, `list_atlas_regions`, `save_atlas_region`, `choose_atlas_region`, `rename_atlas_region`, `delete_atlas_region` |
 | [Build and play](compile-and-play.md) | `apply_build_recipe`, `apply_compile_region`, `cancel_compile`, `cancel_compile_region`, `compile_map`, `delete_build_recipe`, `frame_compile_region`, `game_log`, `get_build_recipes`, `get_compile_region`, `get_compile_settings`, `get_compile_status`, `get_native_capture_runtime`, `launch_game`, `preview_compile_region`, `reload_build_recipes`, `rename_build_recipe`, `run_map`, `run_map_checks`, `save_build_recipe`, `set_compile_settings`, `set_native_capture_runtime`, `start_compile`, `stop_game` |
@@ -500,7 +551,7 @@ These groups locate the available operations.
 | [Entity placement](entities.md) | `apply_entity_placement`, `begin_entity_placement`, `cancel_entity_placement`, `get_entity_placement`, `pick_entity_placement`, `review_entity_placement` |
 | [Map files](getting-started.md) | `clear_recent_maps`, `close_document`, `find_objects`, `get_map_info`, `get_map_statistics`, `get_objects`, `get_recent_maps`, `new_map`, `open_map`, `open_recent_map`, `redo`, `reload_recent_maps`, `remove_recent_map`, `save_map`, `undo` |
 | [External map comparison](map-comparison.md) | `external_map_comparison`, `get_external_map_comparison` |
-| [Brush geometry and transforms](brushes.md) | `begin_clip_drag`, `cancel_block_preview`, `cancel_carve`, `cancel_clip_drag`, `cancel_clip_preview`, `cancel_hollow`, `cancel_merge`, `cancel_primitive_preview`, `clip_brushes`, `commit_carve`, `commit_clip_preview`, `commit_hollow`, `commit_merge`, `commit_primitive_preview`, `create_block`, `create_polygon_brush`, `create_primitive`, `draw_block`, `finish_clip_drag`, `frame_primitive_preview`, `get_carve_preview`, `get_clip_handles`, `get_clip_preview`, `get_hollow_preview`, `get_merge_preview`, `get_primitive_preview`, `look_inside_hollow`, `pick_clip_point`, `preview_carve`, `preview_carve_many`, `preview_hollow`, `preview_merge`, `set_clip_handle_options`, `set_clip_points`, `set_clip_tool`, `set_spatial_settings`, `update_clip_drag` |
+| [Brush geometry and transforms](brushes.md) | `begin_clip_drag`, `cancel_block_preview`, `cancel_carve`, `cancel_clip_drag`, `cancel_clip_preview`, `cancel_hollow`, `cancel_merge`, `cancel_primitive_preview`, `clip_brushes`, `commit_carve`, `commit_clip_preview`, `commit_hollow`, `commit_merge`, `commit_primitive_preview`, `create_block`, `create_blocks`, `create_polygon_brush`, `create_primitive`, `draw_block`, `finish_clip_drag`, `frame_primitive_preview`, `get_carve_preview`, `get_clip_handles`, `get_clip_preview`, `get_hollow_preview`, `get_merge_preview`, `get_primitive_preview`, `look_inside_hollow`, `pick_clip_point`, `preview_carve`, `preview_carve_many`, `preview_hollow`, `preview_merge`, `set_clip_handle_options`, `set_clip_points`, `set_clip_tool`, `set_spatial_settings`, `update_clip_drag` |
 | [Grid defaults](basics.md) | `get_grid_defaults`, `set_grid_defaults` |
 | [Groups and layers](groups.md) | `add_object_group_selection`, `apply_layer_edit`, `apply_object_group_edit`, `begin_layer_edit`, `begin_object_group_edit`, `cancel_layer_edit`, `cancel_object_group_edit`, `get_layers`, `get_object_groups`, `select_layer_members`, `select_object_group`, `select_object_group_member`, `set_group_selection_bypass`, `set_layer_visibility`, `update_layer_edit`, `update_object_group_edit` |
 | [History](history.md) | `get_history`, `navigate_history` |
@@ -522,7 +573,7 @@ These groups locate the available operations.
 | [Keyboard shortcuts](keyboard-shortcuts.md) | `execute_editor_command`, `find_editor_commands`, `get_keyboard_shortcuts`, `set_keyboard_shortcuts` |
 | [3D sky preview](sky.md) | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |
-| [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
+| [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `preview_terrain_vertex_set`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_pick`, `transform_pivot_grid` |
 | [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `inspect_baked_lightmaps`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_camera`, `set_fog_preview`, `set_view` |
 | [Working region](working-region.md) | `get_editor_visibility`, `get_working_region`, `set_editor_visibility`, `set_working_region` |

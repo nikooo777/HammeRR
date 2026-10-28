@@ -212,11 +212,18 @@ fn two_actual_hosts_keep_peer_edits_and_release_closed_claims_before_reopen_and_
                 .window()
                 .dispatch_event(slint::platform::WindowEvent::CloseRequested);
             if a.lifecycle() != DocumentLifecycle::Live
-                || !app_a.get_message().to_lowercase().contains("show")
+                || !list.get_quit_review()
+                || b.lifecycle() != DocumentLifecycle::Live
+                || !list.get_quit_description().contains("hidden")
             {
                 return Err(
-                    "Last visible host did not refuse Close with a hidden live peer".into(),
+                    "Last visible Close did not offer the complete reviewed Quit all workflow"
+                        .into(),
                 );
+            }
+            list.invoke_cancel_quit_all();
+            if list.get_quit_review() || app_b.window().is_visible() {
+                return Err("Cancelling Quit all changed the hidden peer".into());
             }
             list.invoke_show_document(selector_b.clone().into());
             wait_for(|| {
@@ -627,6 +634,150 @@ fn actual_save_all_button_reports_unnamed_peer_then_saves_two_named_maps_without
     watchdog.join().unwrap();
     let ui_result = owner.borrow_mut().finish(primary);
     let workspace_result = commands.finish(Ok(()));
+    let application_result = application.finish(Ok(()));
+    assert_eq!(result.borrow_mut().take().unwrap(), Ok(()));
+    ui_result.unwrap();
+    workspace_result.unwrap();
+    application_result.unwrap();
+}
+
+#[test]
+#[ignore = "requires a GPU adapter and the software Slint event loop"]
+fn actual_quit_all_review_cancels_rejects_hidden_changes_and_closes_both_hosts() {
+    software(true);
+    let (directory, game) = crate::test_assets::game();
+    let application = crate::test_assets::application(Ok(game), directory.path().join("recovery"));
+    let factory = application.workspace();
+    let a = application.document();
+    let ctx = GpuContext::new().unwrap();
+    let (owner, commands, _, app_a) = attach(&application, ctx);
+    let workspace = commands.workspace();
+    let result = Rc::new(RefCell::new(None));
+    let (flow_owner, flow_result) = (owner.clone(), result.clone());
+    let peer = Rc::new(RefCell::new(None));
+    let flow_peer = peer.clone();
+    let (stop, stopped) = mpsc::sync_channel(1);
+    let watchdog = std::thread::spawn(move || {
+        if stopped.recv_timeout(TIMEOUT * 3).is_err() {
+            let _ = slint::quit_event_loop();
+        }
+    });
+    slint::spawn_local(async move {
+        let flow = async {
+            let created = workspace.new_document(Actor::Agent, false).await?;
+            let selector = created["document_id"]
+                .as_str()
+                .ok_or("Missing peer selector")?;
+            let b = factory.resolve(Some(selector))?.document();
+            *flow_peer.borrow_mut() = Some(b.clone());
+            let app_b = host(&flow_owner, selector)?
+                .borrow()
+                .window
+                .app()
+                .clone_strong();
+            app_a
+                .window()
+                .dispatch_event(slint::platform::WindowEvent::CloseRequested);
+            let controller = flow_owner
+                .borrow()
+                .dialog
+                .as_ref()
+                .ok_or("Native Close did not open the review")?
+                .clone();
+            let list = controller.window.clone_strong();
+            if !list.get_quit_review()
+                || list.get_quit_discard_required()
+                || !list.get_quit_description().contains("hidden")
+                || a.lifecycle() != DocumentLifecycle::Live
+                || b.lifecycle() != DocumentLifecycle::Live
+            {
+                return Err(
+                    "Clean Quit all review omitted a hidden map or accepted without confirmation"
+                        .into(),
+                );
+            }
+            list.invoke_cancel_quit_all();
+            if list.get_quit_review() || app_b.window().is_visible() {
+                return Err("Cancel quit changed the hidden document".into());
+            }
+            lock(a.session()).create_block(
+                Actor::User,
+                DVec3::ZERO,
+                DVec3::splat(16.0),
+                "test/checker",
+                false,
+            )?;
+            lock(b.session()).preview_block(DVec3::ZERO, DVec3::splat(16.0))?;
+            list.window().set_size(slint::PhysicalSize::new(1000, 900));
+            list.window()
+                .take_snapshot()
+                .map_err(|error| error.to_string())?;
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(&list, "Quit all…")
+                .next()
+                .ok_or("Missing discoverable Quit all button")?
+                .invoke_accessible_default_action();
+            if !list.get_quit_review()
+                || !list.get_quit_discard_required()
+                || !list.get_quit_description().contains("block")
+            {
+                return Err("Quit all did not review the hidden pending draft".into());
+            }
+            lock(b.session()).preview_block(DVec3::splat(32.0), DVec3::splat(48.0))?;
+            list.invoke_confirm_quit_all();
+            if list.get_quit_review()
+                || !list.get_message().contains("changed")
+                || a.lifecycle() != DocumentLifecycle::Live
+                || b.lifecycle() != DocumentLifecycle::Live
+                || app_b.window().is_visible()
+            {
+                return Err("Stale Quit all accepted or changed a live host".into());
+            }
+            list.invoke_quit_all();
+            list.window()
+                .take_snapshot()
+                .map_err(|error| error.to_string())?;
+            crate::ui::tests::save_ui_snapshot_at_current_time(
+                list.window(),
+                "quit-all-reviewed-hidden-draft",
+            );
+            crate::ui::tests::assert_dialog_button_visible(
+                &list,
+                "Discard reviewed changes and quit all",
+            );
+            i_slint_backend_testing::ElementHandle::find_by_accessible_label(
+                &list,
+                "Discard reviewed changes and quit all",
+            )
+            .next()
+            .ok_or("Missing explicit discard-and-quit button")?
+            .invoke_accessible_default_action();
+            if !list.get_busy() {
+                return Err("Reviewed Quit all was not accepted".into());
+            }
+            Ok::<(), String>(())
+        }
+        .await;
+        let failed = flow.is_err();
+        *flow_result.borrow_mut() = Some(flow);
+        if failed {
+            let _ = slint::quit_event_loop();
+        }
+    })
+    .unwrap();
+    let primary = slint::run_event_loop_until_quit().map_err(Into::into);
+    let _ = stop.send(());
+    watchdog.join().unwrap();
+    let ui_result = owner.borrow_mut().finish(primary);
+    let workspace_result = commands.finish(Ok(()));
+    assert!(application.workspace().documents().is_empty());
+    assert_eq!(
+        application.document().lifecycle(),
+        DocumentLifecycle::Finished
+    );
+    assert_eq!(
+        peer.borrow().as_ref().unwrap().lifecycle(),
+        DocumentLifecycle::Finished
+    );
     let application_result = application.finish(Ok(()));
     assert_eq!(result.borrow_mut().take().unwrap(), Ok(()));
     ui_result.unwrap();

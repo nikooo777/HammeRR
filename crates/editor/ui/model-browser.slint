@@ -1,17 +1,19 @@
 import {Button, ComboBox, LineEdit, ListView, ScrollView, SpinBox, TextEdit} from "std-widgets.slint";
 
-export struct ModelChoiceRow { path:string, name:string, folder:string }
+export struct ModelChoiceRow { path:string, name:string, folder:string, source:string }
 export struct ModelBodygroupRow { index:int, label:string, choices:[string], selected:int }
 
 export component ModelBrowserWindow inherits Window {
     title:"Choose model — HammeRR";
     preferred-width:960px;
-    preferred-height:min(900px,690px + root.bodygroups.length*58px);
+    preferred-height:min(900px,750px + root.bodygroups.length*58px);
     min-width:800px;
-    min-height:630px;
+    min-height:690px;
     in-out property <string> query;
     in property <[string]> groups;
     in-out property <int> group-index;
+    in property <[string]> source-labels;
+    in-out property <int> source-index;
     in property <[ModelChoiceRow]> rows;
     in-out property <string> path;
     in-out property <int> skin;
@@ -26,6 +28,7 @@ export component ModelBrowserWindow inherits Window {
     in property <string> page-info;
     in property <string> geometry;
     in property <string> dimensions;
+    in property <string> provenance;
     in property <string> materials;
     in property <int> material-count;
     in-out property <bool> show-materials;
@@ -52,17 +55,23 @@ export component ModelBrowserWindow inherits Window {
                 ComboBox {width:300px;model:root.groups;current-index<=>root.group-index;selected=>{root.group-changed();}}
             }
             HorizontalLayout {
+                spacing:10px;
+                Text {text:"Winning source";vertical-alignment:center;}
+                ComboBox {horizontal-stretch:1;model:root.source-labels;current-index<=>root.source-index;selected=>{root.search();}}
+            }
+            HorizontalLayout {
                 spacing:16px;vertical-stretch:1;
                 VerticalLayout {
                     spacing:8px;horizontal-stretch:1;
                     ListView {
                         for row in root.rows:Rectangle {
-                            height:54px;border-radius:5px;
+                            height:72px;border-radius:5px;
                             background:root.path==row.path ? #343b49 : touch.has-hover ? #252b34 : #1d222a;
                             VerticalLayout {
                                 padding:8px;spacing:3px;
                                 Text {text:row.name;color:#e1e4eb;overflow:elide;}
                                 Text {text:row.folder;color:#9aa5b5;font-size:11px;overflow:elide;}
+                                Text {text:row.source;color:#9aa5b5;font-size:10px;overflow:elide;}
                             }
                             touch:=TouchArea {clicked=>{root.choose(row.path);}}
                         }
@@ -101,6 +110,7 @@ export component ModelBrowserWindow inherits Window {
                     }
                     Text {text:root.geometry;wrap:word-wrap;}
                     Text {text:root.dimensions;wrap:word-wrap;color:#b6c0ce;}
+                    if root.provenance != "":TextEdit {text:root.provenance;read-only:true;height:76px;}
                     if root.material-count > 0:Button {text:root.show-materials ? "Hide materials" : "Show materials (\{root.material-count})";clicked=>{root.show-materials=!root.show-materials;root.resize-details();}}
                     if root.show-materials:TextEdit {text:root.materials;read-only:true;height:80px;}
                 }

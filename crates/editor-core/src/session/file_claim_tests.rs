@@ -225,8 +225,17 @@ fn actual_plain_bsp_and_lin_claims_survive_later_failure_and_cancellation() {
     owner.save(Actor::User, Some(&source)).unwrap();
     let bsp = root.path().join("successful.bsp");
     let result = owner.begin_compile(Actor::User, Some(&bsp)).unwrap().run();
-    assert!(result.as_ref().unwrap().published());
+    assert!(result.as_ref().unwrap().output.bsp.is_some());
+    assert!(!result.as_ref().unwrap().published());
+    assert!(!bsp.exists());
+    assert!(
+        peer.save(Actor::Agent, Some(&bsp))
+            .unwrap_err()
+            .contains("conflicts")
+    );
     owner.finish_compile(Actor::User, &result);
+    assert!(result.as_ref().unwrap().published());
+    assert!(result.as_ref().unwrap().publication_error().is_none());
     let bsp_result = result;
     let bsp_bytes = fs::read(&bsp).unwrap();
     let wall = owner.document().vmf().world.solids.last().unwrap().id;
@@ -239,9 +248,16 @@ fn actual_plain_bsp_and_lin_claims_survive_later_failure_and_cancellation() {
         .unwrap()
         .run();
     assert!(result.as_ref().unwrap().output.leak.is_some());
-    owner.finish_compile(Actor::User, &result);
-    let pointfile_result = result;
     let pointfile = leaking.with_extension("lin");
+    assert!(!pointfile.exists());
+    assert!(
+        peer.save(Actor::Agent, Some(&pointfile))
+            .unwrap_err()
+            .contains("conflicts")
+    );
+    owner.finish_compile(Actor::User, &result);
+    assert!(result.as_ref().unwrap().publication_error().is_none());
+    let pointfile_result = result;
     let pointfile_bytes = fs::read(&pointfile).unwrap();
     let status = owner.compile_status();
     assert!(owner.begin_compile(Actor::User, Some(&pointfile)).is_err());
@@ -273,7 +289,7 @@ fn actual_plain_bsp_and_lin_claims_survive_later_failure_and_cancellation() {
         .cancel_compile(Actor::User, owner.compile_token().unwrap())
         .unwrap();
     let result = request.run();
-    assert!(result.is_err());
+    assert!(result.as_ref().err().unwrap().contains("cancelled"));
     owner.finish_compile(Actor::User, &result);
     owner.finish_compile(Actor::User, &Err("injected later worker failure".into()));
     assert!(peer.save(Actor::Agent, Some(&bsp)).is_err());
@@ -284,6 +300,8 @@ fn actual_plain_bsp_and_lin_claims_survive_later_failure_and_cancellation() {
     assert!(peer.begin_compile(Actor::Agent, Some(&alias)).is_err());
     assert_eq!(fs::read(&bsp).unwrap(), bsp_bytes);
     assert_eq!(fs::read(&pointfile).unwrap(), pointfile_bytes);
+    assert!(!cancelled.exists());
+    assert!(!cancelled.with_extension("lin").exists());
     peer.save(Actor::Agent, Some(&cancelled)).unwrap();
     owner.new_map(Actor::User, true).unwrap();
     peer.save(Actor::Agent, Some(&bsp)).unwrap();
@@ -293,7 +311,7 @@ fn actual_plain_bsp_and_lin_claims_survive_later_failure_and_cancellation() {
 }
 
 #[test]
-fn ordinary_output_replaces_an_unowned_symlink_entry_without_writing_its_source_target() {
+fn ordinary_output_rejects_a_symlink_before_job_or_source_changes() {
     let (root, game, _) = crate::test_assets::game_process(false);
     let authority = crate::path_claims::Authority::default();
     let mut source_owner = empty(&authority);
@@ -305,15 +323,32 @@ fn ordinary_output_replaces_an_unowned_symlink_entry_without_writing_its_source_
     let mut compiler = Session::new(Ok(game));
     attach(&mut compiler, &authority);
     compiler.replace_document(Document::new(crate::test_assets::room()), None);
-    let result = compiler
+    let status = compiler.compile_status();
+    let document = compiler.document().vmf().clone();
+    let history = compiler.history_snapshot();
+    let error = compiler
         .begin_compile(Actor::Agent, Some(&output))
-        .unwrap()
-        .run();
-    assert!(result.as_ref().unwrap().published());
-    compiler.finish_compile(Actor::Agent, &result);
-    assert!(!fs::symlink_metadata(&output).unwrap().is_symlink());
+        .err()
+        .unwrap();
+    assert_eq!(
+        error,
+        "Build source or destination must be a bounded regular file"
+    );
+    assert_eq!(compiler.compile_status(), status);
+    assert_eq!(compiler.document().vmf(), &document);
+    assert_eq!(compiler.history_snapshot(), history);
+    assert!(!compiler.compiling());
+    assert!(fs::symlink_metadata(&output).unwrap().is_symlink());
+    assert_eq!(fs::read_link(&output).unwrap(), source);
     assert_eq!(fs::read(&source).unwrap(), bytes);
-    assert!(source_formats::bsp::Bsp::parse(&fs::read(&output).unwrap()).is_ok());
+    assert_eq!(fs::read(&output).unwrap(), bytes);
+    assert!(!output.with_extension("lin").exists());
+    fs::remove_file(&output).unwrap();
+    let mut peer = empty(&authority);
+    peer.save(Actor::Agent, Some(&output)).unwrap();
+    peer.save(Actor::Agent, Some(&output.with_extension("lin")))
+        .unwrap();
+    assert_eq!(fs::read(&source).unwrap(), bytes);
 }
 
 #[test]

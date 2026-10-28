@@ -16,6 +16,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use viewport::{Viewport, key_text};
 
+mod brush_batch;
 mod clipping;
 use clipping::*;
 mod entities;
@@ -152,6 +153,7 @@ struct Ui {
     partition_material_target: Option<components_ui::PartitionMaterialTarget>,
     extrusion_material_target: Option<(Option<u64>, u64)>,
     primitive_material_target: Option<(Option<u64>, u64)>,
+    carve_material_target: Option<String>,
     seen_definitions: u64,
     seen_materials: u64,
 }
@@ -285,6 +287,7 @@ impl Ui {
             partition_material_target: None,
             extrusion_material_target: None,
             primitive_material_target: None,
+            carve_material_target: None,
             seen_definitions: 0,
             seen_materials: 0,
         }
@@ -646,6 +649,9 @@ fn create_document_window(
     let ui = Rc::new(RefCell::new(Ui::for_document(document, ctx)));
 
     root_callback!(app, ui, on_open_map, |app| open_dialog(&app.unwrap(), &ui));
+    root_callback!(app, ui, on_import_brush_batch, |app| {
+        brush_batch::import_dialog(&app.unwrap(), &ui)
+    });
     root_callback!(app, ui, on_recent_maps, |app| {
         let app = app.unwrap();
         if ui.borrow().recent_maps_window.is_none() {
@@ -1035,6 +1041,10 @@ fn create_document_window(
             match CarveWindow::new() {
                 Ok(window) => {
                     carve_ui::bind_with_access(&window, &file_access(&ui));
+                    window.on_choose_material({
+                        let browse = material_browser(app.clone(), Rc::downgrade(&ui));
+                        move || browse("@carve")
+                    });
                     ui.borrow_mut().carve_window = Some(window);
                 }
                 Err(error) => {

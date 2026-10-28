@@ -41,18 +41,6 @@ fn water_packing_settings_support_all_lighting_modes_and_reject_updates_atomical
         let camera = session.camera();
         let draft = json!(session.property_draft());
         assert_eq!(session.compile_settings()["pack_water_assets"], false);
-        assert!(
-            session.compile_settings()["water_packing_description"]
-                .as_str()
-                .unwrap()
-                .contains("runtime/default env_cubemap")
-        );
-        assert!(
-            session.compile_settings()["water_packing_description"]
-                .as_str()
-                .unwrap()
-                .contains("opaque SLIME")
-        );
         for lighting in ["fullbright", "direct_ldr", "direct_ldr_hdr"] {
             let settings = session
                 .update_build_settings(

@@ -19,6 +19,12 @@ pub(crate) struct Hint {
     bounds: (DVec3, DVec3),
 }
 
+impl Hint {
+    pub(crate) fn plane_source(&self, plane: usize) -> Option<(u32, u32)> {
+        (self.plane & !1 == plane & !1).then_some((self.solid, self.side))
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Stats {
     pub splits: usize,
@@ -247,7 +253,15 @@ pub(crate) fn apply(
             if stats.splits >= MAX_HINT_SPLITS {
                 return Err("Hint partitioning exceeds its 16,384-split allocation budget".into());
             }
-            tree.split_leaf(index, hint.plane, &map.planes)?;
+            if let Err(error) = tree.split_leaf(index, hint.plane, &map.planes) {
+                let message = format!("{error}; hint source side:{}", hint.side);
+                report.diagnostics.push(Diagnostic::error(
+                    message.clone(),
+                    Some(format!("solid:{}", hint.solid)),
+                    Some((low + high) * 0.5),
+                ));
+                return Err(message);
+            }
             stats.splits += 1;
         }
         if stats.splits == before && !prioritized.contains(&source) {

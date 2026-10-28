@@ -45,14 +45,22 @@ pub(crate) fn origin_material(
     solid: &Solid,
     control: &Control,
 ) -> Result<bool, String> {
+    let mut origin = false;
+    let mut grate = false;
     for side in &solid.sides {
         control.checkpoint()?;
         let material = materials.load(&side.material)?;
-        if materials.get(material).contents & contents::ORIGIN != 0 {
-            return Ok(true);
-        }
+        let contents = materials.get(material).contents;
+        origin |= contents & contents::ORIGIN != 0;
+        grate |= contents & contents::GRATE != 0;
     }
-    Ok(false)
+    if origin && grate {
+        return Err(format!(
+            "Solid {} mixes GRATE and ORIGIN materials; use separate brushes",
+            solid.id
+        ));
+    }
+    Ok(origin)
 }
 
 pub(crate) fn prepare_origins(

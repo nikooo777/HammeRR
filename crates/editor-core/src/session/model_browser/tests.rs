@@ -1,6 +1,65 @@
 use super::*;
 use map_core::{ObjectId, edit::Transform};
 
+#[test]
+fn model_catalog_does_not_decode_and_cached_inspection_keeps_its_original_sources() {
+    use source_formats::gamefs::{Mount, MountedPath};
+    let (directory, mut game) = crate::test_assets::model_lighting::game();
+    let higher = directory.path().join("override");
+    std::fs::create_dir_all(higher.join("models/test")).unwrap();
+    game.mounts.insert(
+        0,
+        MountedPath {
+            ids: vec!["game".into()],
+            mount: Mount::Directory(higher.clone()),
+        },
+    );
+    let mut session = Session::new(Ok(game));
+    let path = "models/test/receiver.mdl";
+    let original = session.inspect_model(path, 0).unwrap();
+    let source = session.document().vmf().clone();
+    let history = session.history_snapshot();
+    assert_eq!(original["sources"].as_array().unwrap().len(), 3);
+    for captured in original["sources"].as_array().unwrap() {
+        assert_eq!(
+            captured["source"]["mount"],
+            directory.path().to_str().unwrap()
+        );
+    }
+    std::fs::write(higher.join(path), b"deliberately undecodable new winner").unwrap();
+    let catalog = session
+        .browse_models_filtered("receiver", "all", 0, 1, Some("directory"))
+        .unwrap();
+    assert_eq!(catalog["total"], 1);
+    assert_eq!(
+        catalog["entries"][0]["source"]["mount"],
+        higher.to_str().unwrap()
+    );
+    let source_id = catalog["entries"][0]["source_id"].as_str().unwrap();
+    assert_eq!(
+        session
+            .browse_models_filtered("receiver", "all", 0, 1, Some(source_id))
+            .unwrap()["total"],
+        1
+    );
+    let cached = session.inspect_model(path, 0).unwrap();
+    assert_eq!(cached, original);
+    assert_ne!(
+        catalog["entries"][0]["source_id"],
+        cached["sources"][0]["source_id"]
+    );
+    assert!(
+        cached["provenance_scope"]
+            .as_str()
+            .unwrap()
+            .contains("current filesystem has not been revalidated")
+    );
+    assert_eq!(session.document().vmf(), &source);
+    assert_eq!(session.history_snapshot(), history);
+    session.refresh_model_assets(Actor::User);
+    assert!(session.inspect_model(path, 0).is_err());
+}
+
 fn session() -> Option<(Session, u32)> {
     let game = crate::startup::mount_game(None).ok()?;
     let mut session = Session::new(Ok(game));

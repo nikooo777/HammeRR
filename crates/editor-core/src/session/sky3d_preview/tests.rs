@@ -370,7 +370,8 @@ fn shutdown_cancels_owned_worker_and_prevents_publication() {
 }
 
 #[test]
-fn shutdown_preserves_other_owned_review_stamps_with_idle_or_running_sky_preparation() {
+fn shutdown_preserves_other_owned_reviews_while_invalidating_scene_with_idle_or_running_sky_preparation()
+ {
     for preparing in [false, true] {
         let (_directory, mut session, camera, floor, _) = fixture();
         let ObjectId::Solid(floor) = floor else {
@@ -409,13 +410,16 @@ fn shutdown_preserves_other_owned_review_stamps_with_idle_or_running_sky_prepara
         let sky_work = review.inspection()["work"]["sky3d"].clone();
         assert!(review.requires_discard());
         session.shutdown();
-        assert_eq!(session.carve_state(), carve);
+        let mut after = session.carve_state();
+        assert_ne!(after["stamp"], carve["stamp"]);
+        after["stamp"] = carve["stamp"].clone();
+        assert_eq!(after, carve);
         assert_eq!(session.render_document().vmf(), &render);
         assert_eq!(session.document.vmf(), &source);
         assert_eq!(session.history_snapshot(), history);
         assert_eq!(session.selected_ids(), selection);
         assert_eq!(session.camera(), camera);
-        assert_eq!(session.scene_serial(), scene);
+        assert_eq!(session.scene_serial(), scene + 1);
         assert_eq!(session.view_serial(), view);
         assert!(session.ensure_document_close_review(&review, true).is_err());
         if let Some(request) = request {

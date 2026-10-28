@@ -19,6 +19,20 @@ pub(super) fn refresh(window: &CompileWindow, session: &Session) {
         description.push_str(reason);
     }
     window.set_brush_texture_shadows_description(description.into());
+    let colored = &settings["colored_texture_shadowing"];
+    window.set_colored_texture_shadows(settings["colored_texture_shadows"] == true);
+    window.set_colored_texture_shadows_enabled(
+        settings["editable"] == true && colored["available"] == true,
+    );
+    let mut description = colored["description"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    if let Some(reason) = colored["unavailable_reason"].as_str() {
+        description.push(' ');
+        description.push_str(reason);
+    }
+    window.set_colored_texture_shadows_description(description.into());
 }
 
 pub(super) fn bind(
@@ -42,6 +56,27 @@ pub(super) fn bind(
                 window.set_message(match result {
                     Ok(_) if enabled => "Brush texture shadows enabled. Unsupported requested materials stop the build.".into(),
                     Ok(_) => "Brush texture shadows disabled.".into(),
+                    Err(error) => error.into(),
+                });
+            });
+        }
+    });
+    window.on_change_colored_texture_shadows({
+        let (window, target, recipes) = (window.as_weak(), access.downgrade(), recipes.clone());
+        move |enabled| {
+            super::admitted(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                let result = session.update_build_settings(
+                    Actor::User,
+                    BuildSettingsUpdate {
+                        colored_texture_shadows: Some(enabled),
+                        ..Default::default()
+                    },
+                );
+                super::refresh_recipes(&window, &session, &recipes);
+                window.set_message(match result {
+                    Ok(_) if enabled => "Colored texture shadows enabled.".into(),
+                    Ok(_) => "Colored texture shadows disabled.".into(),
                     Err(error) => error.into(),
                 });
             });

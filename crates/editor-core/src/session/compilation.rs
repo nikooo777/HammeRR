@@ -645,6 +645,7 @@ pub struct BuildSettingsUpdate<'a> {
     pub pack_static_prop_assets: Option<bool>,
     pub bake_static_prop_vertices: Option<bool>,
     pub brush_texture_shadows: Option<bool>,
+    pub colored_texture_shadows: Option<bool>,
     pub refine_ambient_probes: Option<bool>,
 }
 
@@ -759,6 +760,33 @@ impl Session {
                 "quality_guarantee":false,"native_pixel_qualification":false}
         });
         settings["brush_texture_shadows"] = self.compilation.options.brush_texture_shadows.into();
+        settings["colored_texture_shadows"] =
+            self.compilation.options.colored_texture_shadows.into();
+        let colored_available = self.compilation.options.lighting.performs_lighting()
+            && self.compilation.options.brush_texture_shadows;
+        settings["colored_texture_shadowing"] = json!({
+            "available":colored_available,
+            "unavailable_reason":if colored_available { None } else { Some("Choose Direct LDR or Direct LDR + HDR and enable Brush texture shadows first.") },
+            "description":"Tint transmitted light with the base color of supported translucent textures. Clear texels stay clear; fully opaque texels block light.",
+            "limits":{
+                "lighting_modes":["direct_ldr","direct_ldr_hdr"],
+                "requires_brush_texture_shadows":true,
+                "material_scope":"existing_admitted_fractional_base_texture_alpha",
+                "casters":["world","func_detail","world_terrain","detail_terrain","brush_model_self","child_brush_model_self","requested_stationary_root_func_brush","requested_stationary_child_func_brush","mdl_requested_fractional_props"],
+                "receivers":["direct","styles","sun","sky","directional_maps","bounces","ambient_probes","detail","prop_vertices","material_emission"],
+                "rgb_decode":"gamma_2_2",
+                "channel_coverage":"round(a+a*(1-a/255)*(1-C))",
+                "combination":"additive_saturated_per_channel_byte_coverage",
+                "hull_plane_ties":"componentwise_maximum",
+                "clear_texels":"untinted_holes","opaque_texels":"fully_blocking",
+                "white_rgb":"scalar_coverage_unchanged","binary_cutouts":"unchanged",
+                "additional_bytes_per_fractional_texel":3,
+                "work_and_live_memory":"existing_shared_checked_lighting_limits",
+                "mip":0,"filter":"nearest","addressing":"vtf_clamp_or_repeat",
+                "assets":"same_original_tracked_vmt_and_vtf",
+                "native_vrad_parity":false,"physical_absorption_model":false
+            }
+        });
         settings["brush_texture_shadowing"] = json!({
             "available":self.compilation.options.lighting.performs_lighting(),
             "unavailable_reason":if self.compilation.options.lighting.performs_lighting() { None } else { Some("Choose Direct LDR or Direct LDR + HDR before enabling brush texture shadows.") },
@@ -802,7 +830,7 @@ impl Session {
                 "material":"plain LightmappedGeneric",
                 "coverage":"binary_or_fractional_base_texture_alpha",
                 "coverage_modes":["binary_alpha_test","fractional_base_texture_alpha"],
-                "combination":"additive_saturated_byte_coverage",
+                "combination":if self.compilation.options.colored_texture_shadows { "additive_saturated_per_channel_byte_coverage" } else { "additive_saturated_byte_coverage" },
                 "hull_boundaries":"entry_and_exit_with_maximum_at_plane_ties",
                 "terrain_crossings":"certified_shared_topology_once",
                 "alpha_modulation":1,
@@ -818,7 +846,8 @@ impl Session {
                 "transform_absolute_max":compiler::MAX_BRUSH_SHADOW_TRANSFORM,
                 "frames":1,"faces":1,"depth":1,
                 "alpha_reference":{"default":0.5,"min":0,"max":1,"zero_uses_default":true},
-                "unsupported":["coloured transmission","alpha modulation","blend-shader terrain opacity","unadmitted model poses","unrequested cutout models without lit receivers","model radiance sources","conditional or animated materials"]
+                "colored_transmission_option":"colored_texture_shadows",
+                "unsupported":["alpha modulation","blend-shader terrain opacity","unadmitted model poses","unrequested cutout models without lit receivers","model radiance sources","conditional or animated materials"]
             }
         });
         settings["pack_water_assets"] = self.compilation.options.pack_water_assets.into();
@@ -915,6 +944,7 @@ impl Session {
             pack_static_prop_assets,
             bake_static_prop_vertices,
             brush_texture_shadows,
+            colored_texture_shadows,
             refine_ambient_probes,
         } = update;
         let bounces = bounces.unwrap_or(self.compilation.options.bounces);
@@ -923,6 +953,8 @@ impl Session {
                 .unwrap_or(self.compilation.options.refine_ambient_probes),
             brush_texture_shadows: brush_texture_shadows
                 .unwrap_or(self.compilation.options.brush_texture_shadows),
+            colored_texture_shadows: colored_texture_shadows
+                .unwrap_or(self.compilation.options.colored_texture_shadows),
             bake_static_prop_vertices: bake_static_prop_vertices
                 .unwrap_or(self.compilation.options.bake_static_prop_vertices),
             pack_sky_assets: pack_sky_assets.unwrap_or(self.compilation.options.pack_sky_assets),
@@ -975,7 +1007,7 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
+                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
                     options.lighting.label(),
                     options.physics.label(),
                     options.visibility.label(),
@@ -984,6 +1016,7 @@ impl Session {
                     options.lighting_work_limit,
                     if options.refine_ambient_probes { "on" } else { "off" },
                     if options.brush_texture_shadows { "on" } else { "off" },
+                    if options.colored_texture_shadows { "on" } else { "off" },
                     if options.bake_static_prop_vertices { "on" } else { "off" },
                     if options.generate_reflections { "on" } else { "off" },
                     if options.pack_sky_assets { "on" } else { "off" },
@@ -1548,6 +1581,7 @@ impl Session {
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.guarded && job.content_epoch != self.content_epoch) || dependency_issue.is_some() || static_prop_source_issue.is_some() || material_source_issue.is_some(),"static_prop_source_issue":static_prop_source_issue,"material_source_issue":material_source_issue,"result":job.result()});
             status["settings"]["lighting_work_limit"] = job.options.lighting_work_limit.into();
             status["settings"]["brush_texture_shadows"] = job.options.brush_texture_shadows.into();
+            status["settings"]["colored_texture_shadows"] = job.options.colored_texture_shadows.into();
             status["settings"]["refine_ambient_probes"] = job.options.refine_ambient_probes.into();
             if let Some(queue) = &job.queue { status["queue"] = queue.snapshot(); }
             if job.instance_dependencies.is_some() { status["instance_dependencies"]=json!({"current":dependency_issue.is_none(),"error":dependency_issue}); }

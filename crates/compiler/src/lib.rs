@@ -189,6 +189,7 @@ pub struct Options {
     pub pack_static_prop_assets: bool,
     pub bake_static_prop_vertices: bool,
     pub brush_texture_shadows: bool,
+    pub colored_texture_shadows: bool,
     pub refine_ambient_probes: bool,
 }
 
@@ -229,6 +230,7 @@ impl Default for Options {
             pack_static_prop_assets: false,
             bake_static_prop_vertices: false,
             brush_texture_shadows: false,
+            colored_texture_shadows: false,
             refine_ambient_probes: false,
         }
     }
@@ -270,6 +272,7 @@ impl Options {
             || self.pack_static_prop_assets
             || self.bake_static_prop_vertices
             || self.brush_texture_shadows
+            || self.colored_texture_shadows
     }
 
     pub fn validate(self) -> Result<Self, String> {
@@ -279,6 +282,13 @@ impl Options {
         {
             return Err(
                 "Ambient probe refinement requires Direct LDR or Direct LDR + HDR lighting and Balanced or Detailed sampling".into(),
+            );
+        }
+        if self.colored_texture_shadows
+            && (!self.lighting.performs_lighting() || !self.brush_texture_shadows)
+        {
+            return Err(
+                "Colored texture shadows requires Brush texture shadows and Direct LDR or Direct LDR + HDR lighting".into(),
             );
         }
         if self.brush_texture_shadows && !self.lighting.performs_lighting() {

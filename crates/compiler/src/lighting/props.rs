@@ -16,6 +16,7 @@ use source_formats::{
 use super::asset_tracking::Tracker;
 use super::bake::{Allocation, Budget};
 use super::shadows::{ShadowIndex, ShadowObject, Triangle};
+use super::transport::Coverage;
 use crate::{Diagnostic, Report, map::MAX_COMPILE_COORD};
 
 const MAX_TRIANGLES: usize = 262_144;
@@ -93,12 +94,16 @@ impl PropTriangle {
         Ok(material.blocks(uv)?.then_some(fraction))
     }
 
-    fn sampled_coverage(&self, start: DVec3, end: DVec3) -> Result<Option<(f64, u8)>, String> {
+    fn sampled_coverage(
+        &self,
+        start: DVec3,
+        end: DVec3,
+    ) -> Result<Option<(f64, Coverage)>, String> {
         let Some((fraction, weights)) = self.triangle.intersection(start, end)? else {
             return Ok(None);
         };
         let Some((material, coordinates)) = &self.alpha else {
-            return Ok(Some((fraction, u8::MAX)));
+            return Ok(Some((fraction, Coverage::OPAQUE)));
         };
         let uv = coordinates
             .iter()
@@ -117,7 +122,7 @@ impl ShadowObject for PropTriangle {
     }
 
     fn work(&self) -> usize {
-        self.triangle.work() + if self.alpha.is_some() { 24 } else { 0 }
+        self.triangle.work() + if self.alpha.is_some() { 30 } else { 0 }
     }
 
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
@@ -137,7 +142,7 @@ impl ShadowIndex<PropTriangle> {
         start: DVec3,
         end: DVec3,
         skip_owner: Option<u32>,
-        coverage: &mut super::transport::Coverage,
+        coverage: &mut Coverage,
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<(), String> {
         if coverage.opaque() {
@@ -145,7 +150,7 @@ impl ShadowIndex<PropTriangle> {
         }
         if !self.has_fractional() {
             if self.blocked_skipping_owner(start, end, skip_owner, consume)? {
-                coverage.add(u8::MAX);
+                coverage.add(Coverage::OPAQUE);
             }
             return Ok(());
         }
@@ -170,7 +175,7 @@ impl ShadowIndex<PropTriangle> {
         end: DVec3,
         fraction: f64,
         skip_owner: Option<u32>,
-        coverage: &mut super::transport::Coverage,
+        coverage: &mut Coverage,
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<(), String> {
         if coverage.opaque() {
@@ -588,6 +593,7 @@ pub(super) fn build(
     vmf: &Vmf,
     mut assets: Assets<'_, '_>,
     generate_reflections: bool,
+    colored: bool,
     report: &mut Report,
     budget: &mut Budget<'_>,
 ) -> Result<Prepared, String> {
@@ -685,12 +691,14 @@ pub(super) fn build(
                                 let loaded = loaded.as_ref().ok_or_else(|| format!(
                                     "{path}: requested texture-shadow material {} was not found", model.materials[material]
                                 ))?;
-                                alpha::prepare(loaded, &mut assets, budget).map_err(|error| {
-                                    format!(
-                                        "{path}: texture-shadow material {}: {error}",
-                                        model.materials[material]
-                                    )
-                                })?
+                                alpha::prepare(loaded, &mut assets, budget, colored).map_err(
+                                    |error| {
+                                        format!(
+                                            "{path}: texture-shadow material {}: {error}",
+                                            model.materials[material]
+                                        )
+                                    },
+                                )?
                             } else {
                                 match loaded {
                                 Some(material) if !needs_material_warning(&material) => {}

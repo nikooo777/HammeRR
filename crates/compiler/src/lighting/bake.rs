@@ -939,7 +939,7 @@ pub(super) fn sky_visibility(
     props: &ShadowIndex<super::props::PropTriangle>,
     model: &Option<ShadowIndex<Occluder>>,
     budget: &mut Budget<'_>,
-) -> Result<f64, String> {
+) -> Result<DVec3, String> {
     super::sky_visibility_skipping_owner(
         direction, origin, shadows, terrain, props, model, None, budget,
     )
@@ -1118,7 +1118,15 @@ fn bake_inner(
     let brush_textures = settings
         .brush_material_sources
         .filter(|_| options.brush_texture_shadows)
-        .map(|sources| super::brush_alpha::prepare(map, settings.fs, sources, budget))
+        .map(|sources| {
+            super::brush_alpha::prepare(
+                map,
+                settings.fs,
+                sources,
+                options.colored_texture_shadows,
+                budget,
+            )
+        })
         .transpose()?;
     if options.brush_texture_shadows && brush_textures.is_none() {
         return Err("Brush texture shadows is missing original material sources".into());
@@ -1284,6 +1292,7 @@ fn bake_inner(
             prop_assets.as_mut(),
         ),
         options.generate_reflections,
+        options.colored_texture_shadows,
         report,
         budget,
     )?;
@@ -1868,7 +1877,7 @@ fn bake_channel(
                             if contribution != DVec3::ZERO {
                                 let visibility =
                                     scene.visibility(origin, light.origin, None, budget)?;
-                                if visibility == 0.0 {
+                                if visibility == DVec3::ZERO {
                                     continue;
                                 }
                                 let contributions = mapped_colors(

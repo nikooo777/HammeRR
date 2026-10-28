@@ -14,6 +14,8 @@ Use static model triangles to block baked light.
 
 Texture shadows require a model compiled with `$casttextureshadows`.
 Flagged models can use supported alpha-tested or translucent texture shadows.
+For RGB transport through admitted fractional prop textures, enable **Brush texture shadows**
+and [**Colored texture shadows**](brush-texture-shadows.md#colored-texture-shadows) in a lit build.
 Unsupported requested texture-shadow effects fail the build.
 Unflagged models cast opaque triangle shadows and report approximation warnings for unevaluated transparency.
 

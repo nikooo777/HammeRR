@@ -2,6 +2,7 @@ use glam::DVec3;
 use std::ops::{ControlFlow, Range};
 
 use super::Occluder;
+use super::transport::Coverage;
 
 const MAX_OCCLUDERS: usize = 65_536;
 const LEAF_SIZE: usize = 4;
@@ -82,7 +83,7 @@ impl ShadowObject for Occluder {
                 let inverse = optical
                     .pose
                     .map_or(0, |pose| if pose.rotation.is_some() { 18 } else { 3 });
-                optical.faces.len() * (32 + inverse)
+                optical.faces.len() * (40 + inverse)
             })
     }
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
@@ -538,7 +539,7 @@ impl ShadowIndex<Occluder> {
         &self,
         start: DVec3,
         end: DVec3,
-        coverage: &mut super::transport::Coverage,
+        coverage: &mut Coverage,
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<(), String> {
         if coverage.opaque() {
@@ -547,7 +548,7 @@ impl ShadowIndex<Occluder> {
         }
         if !self.has_fractional() {
             if self.optical_blocked(start, end, consume)? {
-                coverage.add(u8::MAX);
+                coverage.add(Coverage::OPAQUE);
             }
             return Ok(());
         }
@@ -568,7 +569,7 @@ impl ShadowIndex<Occluder> {
         start: DVec3,
         end: DVec3,
         sky_fraction: f64,
-        coverage: &mut super::transport::Coverage,
+        coverage: &mut Coverage,
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<(), String> {
         if !sky_fraction.is_finite() || sky_fraction <= 0.0 || sky_fraction >= 1.0 {
@@ -613,7 +614,7 @@ impl ShadowIndex<Occluder> {
                         previous.min(boundary.fraction)
                     }));
                 }
-                if boundary.non_sky_coverage == u8::MAX {
+                if boundary.non_sky_coverage.opaque() {
                     opaque = Some(opaque.map_or(boundary.fraction, |previous| {
                         previous.min(boundary.fraction)
                     }));

@@ -9,6 +9,7 @@ use source_formats::{bsp::contents, gamefs::GameFs, vmt};
 use super::{
     bake::{Allocation, Budget},
     props::{Assets, alpha},
+    transport::Coverage,
 };
 use crate::{asset_sources::BuildMaterialSources, map::Map};
 
@@ -23,7 +24,7 @@ impl Face {
         self.material.fractional()
     }
 
-    pub(super) fn coverage(&self, point: DVec3) -> Result<u8, String> {
+    pub(super) fn coverage(&self, point: DVec3) -> Result<Coverage, String> {
         let dimensions = self.material.dimensions();
         let coordinate = |axis: usize| {
             let row = self.projection[axis];
@@ -158,6 +159,7 @@ fn prepare_material(
     map: &Map<'_>,
     materials: &mut BTreeMap<usize, Option<Arc<alpha::Material>>>,
     assets: &mut Assets<'_, '_>,
+    colored: bool,
     budget: &mut Budget<'_>,
 ) -> Result<bool, String> {
     budget.consume(materials.len().checked_ilog2().unwrap_or(0) as usize + 1)?;
@@ -182,7 +184,7 @@ fn prepare_material(
                     .brush_cutout_material(&info.name, budget)
                     .map_err(|error| format!("solid:{solid}: {error}"))?;
                 Some(
-                    alpha::prepare_brush(&material, assets, budget).map_err(|error| {
+                    alpha::prepare_brush(&material, assets, budget, colored).map_err(|error| {
                         format!(
                             "Brush texture shadows solid:{solid} material {}: {error}",
                             info.name
@@ -201,6 +203,7 @@ pub(super) fn prepare(
     map: &Map<'_>,
     fs: &GameFs,
     sources: &BuildMaterialSources,
+    colored: bool,
     budget: &mut Budget<'_>,
 ) -> Result<Prepared, String> {
     budget.consume(0)?;
@@ -221,7 +224,7 @@ pub(super) fn prepare(
         .checked_add(map.terrains.len())
         .ok_or("Brush texture shadows surface count overflow")?;
     let _read_metadata = budget
-        .reserve::<Allocation>(2 * (crate::MAX_BRUSH_SHADOW_MATERIAL_LOOKUPS + 5 * surfaces + 2))?;
+        .reserve::<Allocation>(2 * (crate::MAX_BRUSH_SHADOW_MATERIAL_LOOKUPS + 6 * surfaces + 2))?;
     let hull_bytes = map
         .brushes
         .len()
@@ -256,6 +259,7 @@ pub(super) fn prepare(
                 map,
                 &mut materials,
                 &mut assets,
+                colored,
                 budget,
             )?;
             let model_alpha_side = brush.entity != 0 && alpha;
@@ -281,6 +285,7 @@ pub(super) fn prepare(
             map,
             &mut materials,
             &mut assets,
+            colored,
             budget,
         )?;
     }

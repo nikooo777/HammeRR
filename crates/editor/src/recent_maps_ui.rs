@@ -74,7 +74,7 @@ pub fn refresh(window: &RecentMapsWindow, session: &Session) {
                 .as_str()
                 .unwrap_or("No mounted game");
             selected_detail = Some(format!(
-                "{source}\nGame: {game}\nBuild: {} lighting · {} physics · {} sky · {} visibility · {} bounces · {}° smoothing · brush texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}\n{}",
+                "{source}\nGame: {game}\nBuild: {} lighting · {} physics · {} sky · {} visibility · {} bounces · {}° smoothing · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}\n{}",
                 settings["lighting"].as_str().unwrap_or_default(),
                 settings["physics"].as_str().unwrap_or_default(),
                 settings["sky_quality"].as_str().unwrap_or_default(),
@@ -82,6 +82,11 @@ pub fn refresh(window: &RecentMapsWindow, session: &Session) {
                 settings["bounces"],
                 settings["smoothing_angle"],
                 if settings["brush_texture_shadows"] == true {
+                    "on"
+                } else {
+                    "off"
+                },
+                if settings["colored_texture_shadows"] == true {
                     "on"
                 } else {
                     "off"

@@ -1047,7 +1047,7 @@ impl Prepared {
                 continue;
             }
             let result = (|| {
-                let mut integral = 0.0;
+                let mut integral = DVec3::ZERO;
                 for &triangle in &source.triangles {
                     let mut stack = [Patch {
                         points: [DVec3::ZERO; 3],
@@ -1078,10 +1078,10 @@ impl Prepared {
                         }
                         let (longest, cosine) = edge(patch.points, &sample)?;
                         let mut subdivide = cosine < threshold;
-                        let mut visibility = 0.0;
+                        let mut visibility = DVec3::ZERO;
                         if !subdivide {
-                            let mut minimum = 1.0_f64;
-                            let mut maximum = 0.0_f64;
+                            let mut minimum = DVec3::ONE;
+                            let mut maximum = DVec3::ZERO;
                             for weights in SAMPLE_WEIGHTS {
                                 budget.consume(16)?;
                                 let end = patch
@@ -1137,7 +1137,7 @@ impl Prepared {
                         }
                     }
                 }
-                Ok::<f64, String>(integral)
+                Ok::<DVec3, String>(integral)
             })();
             let integral = result.map_err(|error| {
                 format!(

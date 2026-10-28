@@ -35,7 +35,7 @@ Terrain uses its base-grid texture coordinates. Painted terrain blend values do 
 Coverage adds across brush, terrain, brush-model and requested prop casters, up to full blocking.
 For example, two crossings with alpha 64 and 128 leave 63/255 visibility.
 A brush's separate entry and exit faces each contribute coverage, so two half-opaque faces can block completely.
-Transmitted light keeps its color; the texture's RGB does not tint it.
+With **Colored texture shadows** off, the texture's RGB does not tint transmitted light.
 
 Surface samples stop their origin offset before nearby caster geometry.
 This keeps thin gaps and close layers in the shadow path, even at transparent texels.
@@ -43,6 +43,24 @@ This keeps thin gaps and close layers in the shadow path, even at transparent te
 The setting applies to direct lights and styles, sun and sky, diffuse bounces,
 ambient probes, detail and static-prop vertex lighting, and material-emission transport.
 Enable **Bake static-prop vertex lighting** when those vertex receivers are needed.
+
+## Colored texture shadows
+
+Tint baked light through the supported translucent material's base RGB.
+
+1. Apply the supported partial-transparency material described above.
+2. Open **Build settings…** and choose **Direct LDR** or **Direct LDR + HDR**.
+3. Enable **Brush texture shadows**, then **Colored texture shadows**.
+4. Compile, then inspect the receiver lighting in **Baked surfaces…** or **Play built map**.
+
+| Scalar shadows | Colored shadows |
+| --- | --- |
+| ![Red and blue translucent terrain casts gray shadows](images/texture-shadows-scalar.png) | ![The same terrain casts red and blue baked shadows](images/texture-shadows-colored.png) |
+
+The option defaults off. It uses the same texture coordinates and adds coverage
+separately for red, green and blue. White preserves scalar coverage; clear texels
+stay clear, fully opaque texels stay opaque, and binary cutouts remain binary.
+The existing model requests and direct/indirect receiver scopes still apply.
 
 ## Cast from a stationary root brush model
 
@@ -81,7 +99,10 @@ Texture opacity affects only lit receivers in the same model when the global Sha
 - **Baked surfaces…** displays these plain alpha materials with mip-0 nearest sampling and their checked cutoff or fractional alpha. Translucent display sorts whole batches by depth; intersecting surfaces can sort differently from the game.
 - Without an explicit eligible **Shadows → Yes** request, root and child brush-model texture shadows stay within that model's own lit receivers. A model without an applicable baked receiver scope fails.
 - Requested root and child texture-shadow models require **Brush texture shadows** in a lit mode. Fullbright and unsupported materials fail explicitly, including source-material errors outside the compile region.
-- Only the supported plain `LightmappedGeneric` forms above are admitted. Authored `$alpha` values other than one, colored transmission, additive effects, vertex opacity, blend shaders and special compile contents are unsupported.
+- **Colored texture shadows** requires a lit mode and **Brush texture shadows**. Invalid combinations reject. Disable it before disabling **Brush texture shadows** or switching to **Fullbright**.
+- Colored transport uses HammeRR's additive RGB coverage policy, without native VRAD or physical absorption parity. Tied corner planes can conservatively combine their channel coverage.
+- Colored shadows require ordinary LDR color textures. Normal-map, HDR, procedural and render-target textures are unsupported.
+- Only the supported plain `LightmappedGeneric` forms above are admitted. Authored `$alpha` values other than one, additive effects, vertex opacity, blend shaders and special compile contents are unsupported.
 - Materials need a base texture, frame zero and checked transform values. Animated textures, proxies, conditional blocks and other unsupported parameters reject. The VTF must have one frame, face and depth slice.
 - The original material and its scalar Patch include/edit chain must be unambiguous. Duplicate fields or Patch sections, unquoted conditional selectors and animated blocks stop the build before alpha decoding.
 - Unsupported materials, transforms or required assets stop the build.

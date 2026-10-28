@@ -12,6 +12,8 @@ Save build settings for later use.
 
 **Fast preview** favors quick checks. **Final lighting** selects a lit build.
 Both leave generated reflections disabled.
+Recipes retain **Brush texture shadows** and **Colored texture shadows**.
+Older recipes leave colored transport off.
 
 ## Save a custom recipe
 

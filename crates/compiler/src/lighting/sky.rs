@@ -11,9 +11,9 @@ pub(super) const TRACE_LENGTH: f64 = crate::map::MAX_COMPILE_COORD * 4.0;
 const GOLDEN_ANGLE: f64 = 2.399963229728653;
 const MAX_SUN_SPREAD_ANGLE: f64 = 90.0;
 
-fn checked_visibility(value: f64) -> Result<f64, String> {
-    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
-        return Err("Light visibility must be finite and between zero and one".into());
+fn checked_visibility(value: DVec3) -> Result<DVec3, String> {
+    if !value.is_finite() || value.min_element() < 0.0 || value.max_element() > 1.0 {
+        return Err("Light visibility channels must be finite and between zero and one".into());
     }
     Ok(value)
 }
@@ -235,7 +235,7 @@ impl SkyLight {
         self,
         normal: DVec3,
         directions: &[DVec3],
-        visible: &mut impl FnMut(DVec3) -> Result<f64, String>,
+        visible: &mut impl FnMut(DVec3) -> Result<DVec3, String>,
     ) -> Result<DVec3, String> {
         self.sun_contribution_with_mode_visibility(
             normal,
@@ -250,7 +250,7 @@ impl SkyLight {
         normal: DVec3,
         directions: &[DVec3],
         mode: ReceiverAngularMode,
-        visible: &mut impl FnMut(DVec3) -> Result<f64, String>,
+        visible: &mut impl FnMut(DVec3) -> Result<DVec3, String>,
     ) -> Result<DVec3, String> {
         let color = self.contribution_with_mode(normal, mode)?;
         if color == DVec3::ZERO {
@@ -259,7 +259,7 @@ impl SkyLight {
         if directions.is_empty() {
             return Err("Sun visibility needs at least one direction".into());
         }
-        let mut received = 0.0;
+        let mut received = DVec3::ZERO;
         for &direction in directions {
             received += checked_visibility(visible(direction)?)?;
         }
@@ -318,7 +318,7 @@ impl SkyLight {
         self,
         normal: DVec3,
         directions: &[DVec3],
-        visible: &mut impl FnMut(DVec3) -> Result<f64, String>,
+        visible: &mut impl FnMut(DVec3) -> Result<DVec3, String>,
     ) -> Result<DVec3, String> {
         self.ambient_contribution_with_mode_visibility(
             normal,
@@ -333,13 +333,13 @@ impl SkyLight {
         normal: DVec3,
         directions: &[DVec3],
         mode: ReceiverAngularMode,
-        visible: &mut impl FnMut(DVec3) -> Result<f64, String>,
+        visible: &mut impl FnMut(DVec3) -> Result<DVec3, String>,
     ) -> Result<DVec3, String> {
         let normal = normal
             .try_normalize()
             .ok_or("Sky ambient needs a finite nonzero normal")?;
         let mut total = 0.0;
-        let mut received = 0.0;
+        let mut received = DVec3::ZERO;
         for &direction in directions {
             let weight = mode.ambient_weight(normal, direction);
             if weight == 0.0 {

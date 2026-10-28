@@ -12,6 +12,7 @@ use crate::map::Map;
 
 const OWNERSHIP_WORK: usize = 48;
 const TEXTURE_WORK: usize = 96;
+const COVERAGE_WORK: usize = 8;
 const EDGE_SCRATCH_VERTICES: usize = 17;
 const CONTACT_ROUNDING_OPERATIONS: f64 = 64.0;
 const CONTACT_WORK: usize = 48;
@@ -167,10 +168,10 @@ impl TerrainTriangle {
         Ok(Some(hit))
     }
 
-    fn sampled_coverage(&self, weights: [f64; 3]) -> Result<u8, String> {
+    fn sampled_coverage(&self, weights: [f64; 3]) -> Result<Coverage, String> {
         match &self.topology.patches[usize::from(self.patch)].alpha {
             Some(alpha) => alpha.coverage(self.texture_point(weights)),
-            None => Ok(u8::MAX),
+            None => Ok(Coverage::OPAQUE),
         }
     }
 }
@@ -190,6 +191,7 @@ impl ShadowObject for TerrainTriangle {
             .max()
             .unwrap_or(0) as usize;
         self.triangle.work()
+            + COVERAGE_WORK
             + OWNERSHIP_WORK * (neighbors + 1)
             + if self.topology.patches[usize::from(self.patch)]
                 .alpha
@@ -203,7 +205,7 @@ impl ShadowObject for TerrainTriangle {
 
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
         match self.intersection(start, end)? {
-            Some((_, weights)) => Ok(self.sampled_coverage(weights)? != 0),
+            Some((_, weights)) => Ok(!self.sampled_coverage(weights)?.clear()),
             None => Ok(false),
         }
     }

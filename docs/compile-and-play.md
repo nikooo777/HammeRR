@@ -59,6 +59,7 @@ Unused runtime assets are outside this guard.
 | **Brush smoothing angle** | Smooth ungrouped brush corners from 0° to 90°. |
 | **Sampling quality** | Fast (32 directions), Balanced (128 directions), or Detailed (512 directions). |
 | **Brush texture shadows** | Use supported cutout or translucent brush and terrain textures for light blocking. |
+| **Colored texture shadows** | Tint baked light through admitted fractional textures; requires **Brush texture shadows** and lit mode. Default off. |
 | **Bake static-prop vertex lighting** | Write supported per-vertex prop lighting. |
 | **Generate reflections** | Capture and pack scene cubemaps with private CS:S clients. |
 | **Pack sky assets**, **Pack liquid assets**, **Pack static prop assets** | Pack supported material and model dependencies. |
@@ -139,7 +140,9 @@ Enable **Brush texture shadows** for supported alpha-tested or translucent
 `LightmappedGeneric` materials on world/detail brushes and terrain, plus eligible
 stationary brush models. Base-texture alpha affects direct and indirect lighting,
 sky, ambient probes, detail/prop vertex receivers and material-emission transport.
-Coverage adds across casters up to full blocking; transmission does not tint light.
+Coverage adds across casters up to full blocking. Enable **Colored texture shadows**
+to use base RGB for per-channel coverage through fractional textures; white,
+clear, opaque and binary-cutout behavior stays unchanged.
 Open **Build details… → Baked surfaces…**, then **Prepare** and **Show** to inspect
 the compiled receiver lighting and supported texture opacity.
 See [brush texture shadows](brush-texture-shadows.md) for setup and limits.

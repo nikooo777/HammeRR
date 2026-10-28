@@ -660,18 +660,18 @@ struct HullInterval {
 #[derive(Debug, Clone, Copy)]
 pub(super) struct HullBoundary {
     pub(super) fraction: f64,
-    pub(super) coverage: u8,
-    pub(super) non_sky_coverage: u8,
+    coverage: transport::Coverage,
+    non_sky_coverage: transport::Coverage,
     pub(super) sky: bool,
 }
 
 impl HullBoundary {
-    fn add(&mut self, coverage: u8, sky: bool) {
-        self.coverage = self.coverage.max(coverage);
+    fn add(&mut self, coverage: transport::Coverage, sky: bool) {
+        self.coverage = self.coverage.maximum(coverage);
         if sky {
-            self.sky |= coverage != 0;
+            self.sky |= !coverage.clear();
         } else {
-            self.non_sky_coverage = self.non_sky_coverage.max(coverage);
+            self.non_sky_coverage = self.non_sky_coverage.maximum(coverage);
         }
     }
 }
@@ -773,11 +773,11 @@ impl Occluder {
             .optical_boundaries(start, end)?
             .into_iter()
             .flatten()
-            .find(|boundary| boundary.coverage != 0)
+            .find(|boundary| !boundary.coverage.clear())
             .map(|boundary| {
                 (
                     boundary.fraction,
-                    boundary.sky && boundary.non_sky_coverage == 0,
+                    boundary.sky && boundary.non_sky_coverage.clear(),
                 )
             }))
     }
@@ -795,8 +795,8 @@ impl Occluder {
         if optical.is_none() && interval.entering == 0.0 {
             boundaries[0] = Some(HullBoundary {
                 fraction: 0.0,
-                coverage: u8::MAX,
-                non_sky_coverage: u8::MAX,
+                coverage: transport::Coverage::OPAQUE,
+                non_sky_coverage: transport::Coverage::OPAQUE,
                 sky: false,
             });
         }
@@ -825,12 +825,12 @@ impl Occluder {
                 let local = optical.pose.map_or(world, |pose| pose.local_point(world));
                 face.coverage(local)?
             } else {
-                u8::MAX
+                transport::Coverage::OPAQUE
             };
             let event = boundaries[slot].get_or_insert(HullBoundary {
                 fraction: boundary,
-                coverage: 0,
-                non_sky_coverage: 0,
+                coverage: transport::Coverage::CLEAR,
+                non_sky_coverage: transport::Coverage::CLEAR,
                 sky: false,
             });
             event.add(coverage, self.sky[index]);
@@ -896,7 +896,7 @@ fn sky_visibility_skipping_owner(
     model: &Option<shadows::ShadowIndex<Occluder>>,
     skip_owner: Option<u32>,
     budget: &mut bake::Budget<'_>,
-) -> Result<f64, String> {
+) -> Result<DVec3, String> {
     budget.consume(1)?;
     let end = origin + direction * sky::TRACE_LENGTH;
     if let Some(fraction) =
@@ -910,6 +910,6 @@ fn sky_visibility_skipping_owner(
         }
         .sky_visibility(origin, end, fraction, skip_owner, budget)
     } else {
-        Ok(0.0)
+        Ok(DVec3::ZERO)
     }
 }

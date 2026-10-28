@@ -16,6 +16,8 @@ const LOCAL_FILTER_END: f64 = 40.0;
 const SOURCE_ROUNDING_OPERATIONS: f64 = 64.0;
 const SOURCE_INTERSECTION_WORK: usize = 48;
 const SOURCE_FEATURE_WORK: usize = 64;
+const SOURCE_TRANSPORT_WORK: usize = 24;
+const SOURCE_SAMPLE_WORK: usize = 30;
 
 struct Surface {
     geometry: Geometry,
@@ -794,7 +796,7 @@ pub(super) struct Hit {
     source: usize,
     uv: Option<DVec2>,
     distance: f64,
-    visibility: f64,
+    visibility: DVec3,
 }
 
 struct Crossing {
@@ -805,7 +807,7 @@ struct Crossing {
     front: bool,
     point: DVec3,
     boundary_error: f64,
-    coverage: u8,
+    coverage: Coverage,
     weights: [f64; 3],
 }
 
@@ -867,6 +869,12 @@ fn pending_work(pending: &Cell<usize>, work: usize) -> Result<(), String> {
     Ok(())
 }
 
+fn transport_bytes(amount: DVec3) -> [u8; 3] {
+    amount
+        .to_array()
+        .map(|channel| (channel * f64::from(u8::MAX)).round() as u8)
+}
+
 impl SurfaceIndex {
     fn crossing(
         &self,
@@ -878,12 +886,12 @@ impl SurfaceIndex {
     ) -> Result<Crossing, String> {
         let radiance = &self.radiance[surface.source];
         let coverage = if !radiance.sky && radiance.alpha.is_some() && radiance.boundary.is_some() {
-            0
+            Coverage::CLEAR
         } else if let Some(alpha) = &radiance.alpha {
-            pending_work(pending, 24)?;
+            pending_work(pending, SOURCE_SAMPLE_WORK)?;
             alpha.coverage(surface.geometry.texture_point(weights))?
         } else {
-            u8::MAX
+            Coverage::OPAQUE
         };
         let uv = surface.coordinates.map(|coordinates| {
             coordinates
@@ -937,7 +945,7 @@ impl SurfaceIndex {
         crossing: &Crossing,
         other: Option<&Crossing>,
         budget: &mut Budget<'_>,
-    ) -> Result<Option<u8>, String> {
+    ) -> Result<Option<Coverage>, String> {
         let Some(boundary) = &self.radiance[crossing.source].boundary else {
             return Ok(None);
         };
@@ -992,10 +1000,10 @@ impl SurfaceIndex {
                     (crossing.source, point)
                 };
                 coverage = Some(if let Some(alpha) = &self.radiance[source].alpha {
-                    pending_work(&pending, 24)?;
+                    pending_work(&pending, SOURCE_SAMPLE_WORK)?;
                     alpha.coverage(point)?
                 } else {
-                    u8::MAX
+                    Coverage::OPAQUE
                 });
                 Ok(Visit::Stop)
             },
@@ -1073,18 +1081,20 @@ impl SurfaceIndex {
         Ok(first)
     }
 
-    fn owns_source(
+    fn owned_source_coverage(
         &self,
         shadows: &ShadowIndex<Occluder>,
         start: DVec3,
         end: DVec3,
         crossing: &Crossing,
         budget: &mut Budget<'_>,
-    ) -> Result<bool, String> {
+    ) -> Result<Coverage, String> {
         budget.consume(SOURCE_FEATURE_WORK)?;
         let Some(feature) = self.feature(crossing) else {
-            return Ok(true);
+            return Ok(crossing.coverage);
         };
+        let amounts = transport_bytes(crossing.coverage.amount());
+        let mut owned = amounts;
         let mut previous = None;
         for _ in 0..self.crossings {
             budget.consume(1)?;
@@ -1096,13 +1106,22 @@ impl SurfaceIndex {
             previous = Some(other.ordinal);
             if let Some(coverage) =
                 self.source_event(shadows, start, end, crossing, Some(&other), budget)?
-                && (coverage > crossing.coverage
-                    || (coverage == crossing.coverage && other.ordinal < crossing.ordinal))
             {
-                return Ok(false);
+                budget.consume(SOURCE_TRANSPORT_WORK)?;
+                for (channel, amount) in transport_bytes(coverage.amount()).into_iter().enumerate()
+                {
+                    if amount > amounts[channel]
+                        || (amount == amounts[channel] && other.ordinal < crossing.ordinal)
+                    {
+                        owned[channel] = 0;
+                    }
+                }
+                if owned.iter().all(|&amount| amount == 0) {
+                    break;
+                }
             }
         }
-        Ok(true)
+        Ok(Coverage::from_channels(owned))
     }
 
     pub fn styled_colors(
@@ -1171,7 +1190,7 @@ impl SurfaceIndex {
                 let crossing =
                     self.crossing(surface, fraction, weights, end - point, &pending_alpha)?;
                 let radiance = &self.radiance[surface.source];
-                if crossing.coverage == 0
+                if crossing.coverage.clear()
                     && (radiance.sky || radiance.alpha.is_none() || radiance.boundary.is_none())
                 {
                     return Ok(Visit::Continue(
@@ -1202,7 +1221,7 @@ impl SurfaceIndex {
         let end = point + direction * super::sky::TRACE_LENGTH;
         let mut previous = None;
         let mut tied_fraction = None;
-        let mut tied_remaining = u8::MAX;
+        let mut tied_remaining = [u8::MAX; 3];
         for _ in 0..self.crossings {
             budget.consume(1)?;
             let Some(mut crossing) = self.next_crossing(point, end, previous, budget)? else {
@@ -1217,9 +1236,12 @@ impl SurfaceIndex {
                     continue;
                 };
                 crossing.coverage = coverage;
-                if coverage == 0
-                    || !self.owns_source(scene.shadows, point, end, &crossing, budget)?
-                {
+                if coverage.clear() {
+                    continue;
+                }
+                crossing.coverage =
+                    self.owned_source_coverage(scene.shadows, point, end, &crossing, budget)?;
+                if crossing.coverage.clear() {
                     continue;
                 }
             }
@@ -1250,15 +1272,23 @@ impl SurfaceIndex {
                     )?,
                 )
             };
-            let remaining = (remaining * f64::from(u8::MAX)).round() as u8;
+            budget.consume(SOURCE_TRANSPORT_WORK)?;
+            let remaining = transport_bytes(remaining);
             if tied_fraction != Some(crossing.fraction) {
                 tied_fraction = Some(crossing.fraction);
                 tied_remaining = remaining;
             }
-            let covered = crossing.coverage.min(remaining).min(tied_remaining);
-            tied_remaining -= covered;
-            if covered > 0 && (radiance.sky || crossing.front) {
-                let visibility = f64::from(covered) / f64::from(u8::MAX);
+            let source = transport_bytes(crossing.coverage.amount());
+            let covered = std::array::from_fn(|channel| {
+                source[channel]
+                    .min(remaining[channel])
+                    .min(tied_remaining[channel])
+            });
+            tied_remaining =
+                std::array::from_fn(|channel| tied_remaining[channel] - covered[channel]);
+            let covered = Coverage::from_channels(covered);
+            if !covered.clear() && (radiance.sky || crossing.front) {
+                let visibility = covered.amount();
                 budget.consume(24)?;
                 let distance = fraction * super::sky::TRACE_LENGTH;
                 visitor(
@@ -1275,7 +1305,7 @@ impl SurfaceIndex {
                     budget,
                 )?;
             }
-            if radiance.sky || tied_remaining == 0 {
+            if radiance.sky || tied_remaining.iter().all(|&amount| amount == 0) {
                 break;
             }
         }

@@ -27,6 +27,8 @@ pub struct BuildSettings {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub brush_texture_shadows: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub colored_texture_shadows: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub refine_ambient_probes: bool,
 }
 
@@ -60,6 +62,7 @@ impl BuildSettings {
             pack_static_prop_assets: options.pack_static_prop_assets,
             bake_static_prop_vertices: options.bake_static_prop_vertices,
             brush_texture_shadows: options.brush_texture_shadows,
+            colored_texture_shadows: options.colored_texture_shadows,
             refine_ambient_probes: options.refine_ambient_probes,
         }
     }
@@ -79,6 +82,7 @@ impl BuildSettings {
             pack_static_prop_assets: self.pack_static_prop_assets,
             bake_static_prop_vertices: self.bake_static_prop_vertices,
             brush_texture_shadows: self.brush_texture_shadows,
+            colored_texture_shadows: self.colored_texture_shadows,
             refine_ambient_probes: self.refine_ambient_probes,
         }
         .validate()
@@ -90,6 +94,7 @@ impl BuildSettings {
         let mut settings = serde_json::json!(self);
         settings["lighting_work_limit"] = self.lighting_work_limit.into();
         settings["brush_texture_shadows"] = self.brush_texture_shadows.into();
+        settings["colored_texture_shadows"] = self.colored_texture_shadows.into();
         settings["refine_ambient_probes"] = self.refine_ambient_probes.into();
         settings
     }
@@ -113,6 +118,7 @@ impl BuildSettings {
             pack_static_prop_assets: Some(self.pack_static_prop_assets),
             bake_static_prop_vertices: Some(self.bake_static_prop_vertices),
             brush_texture_shadows: Some(self.brush_texture_shadows),
+            colored_texture_shadows: Some(self.colored_texture_shadows),
             refine_ambient_probes: Some(self.refine_ambient_probes),
         }
     }

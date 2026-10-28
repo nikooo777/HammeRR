@@ -6,20 +6,48 @@ use super::props::PropTriangle;
 use super::shadows::ShadowIndex;
 use super::terrain_shadows::TerrainTriangle;
 
-#[derive(Default)]
-pub(super) struct Coverage(u8);
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Coverage([u8; 3]);
 
 impl Coverage {
-    pub(super) fn add(&mut self, coverage: u8) {
-        self.0 = self.0.saturating_add(coverage);
+    pub(super) const CLEAR: Self = Self::scalar(0);
+    pub(super) const OPAQUE: Self = Self::scalar(u8::MAX);
+
+    pub(super) const fn scalar(coverage: u8) -> Self {
+        Self([coverage; 3])
+    }
+
+    pub(super) const fn from_channels(coverage: [u8; 3]) -> Self {
+        Self(coverage)
+    }
+
+    pub(super) fn add(&mut self, coverage: Self) {
+        self.0 = std::array::from_fn(|axis| self.0[axis].saturating_add(coverage.0[axis]));
+    }
+
+    pub(super) fn maximum(self, coverage: Self) -> Self {
+        Self(std::array::from_fn(|axis| {
+            self.0[axis].max(coverage.0[axis])
+        }))
     }
 
     pub(super) fn opaque(&self) -> bool {
-        self.0 == u8::MAX
+        *self == Self::OPAQUE
     }
 
-    pub(super) fn visibility(&self) -> f64 {
-        f64::from(u8::MAX - self.0) / f64::from(u8::MAX)
+    pub(super) fn clear(&self) -> bool {
+        *self == Self::CLEAR
+    }
+
+    pub(super) fn visibility(&self) -> DVec3 {
+        DVec3::from_array(
+            self.0
+                .map(|value| f64::from(u8::MAX - value) / f64::from(u8::MAX)),
+        )
+    }
+
+    pub(super) fn amount(&self) -> DVec3 {
+        DVec3::from_array(self.0.map(|value| f64::from(value) / f64::from(u8::MAX)))
     }
 }
 
@@ -37,7 +65,7 @@ impl Scene<'_> {
         end: DVec3,
         skip_owner: Option<u32>,
         budget: &mut Budget<'_>,
-    ) -> Result<f64, String> {
+    ) -> Result<DVec3, String> {
         let mut coverage = Coverage::default();
         self.shadows
             .accumulate_coverage(start, end, &mut coverage, &mut |work| budget.consume(work))?;
@@ -59,7 +87,7 @@ impl Scene<'_> {
         boundary: Option<&super::radiance::SourceBoundary>,
         error: f64,
         budget: &mut Budget<'_>,
-    ) -> Result<f64, String> {
+    ) -> Result<DVec3, String> {
         let mut coverage = Coverage::default();
         super::radiance::source_coverage(
             self.shadows,
@@ -93,7 +121,7 @@ impl Scene<'_> {
         skip_owner: Option<u32>,
         mut coverage: Coverage,
         budget: &mut Budget<'_>,
-    ) -> Result<f64, String> {
+    ) -> Result<DVec3, String> {
         if !coverage.opaque() {
             self.terrain
                 .accumulate_coverage(start, end, &mut coverage, &mut |work| budget.consume(work))?;
@@ -114,7 +142,7 @@ impl Scene<'_> {
         fraction: f64,
         skip_owner: Option<u32>,
         budget: &mut Budget<'_>,
-    ) -> Result<f64, String> {
+    ) -> Result<DVec3, String> {
         if !fraction.is_finite() || !(0.0..=1.0).contains(&fraction) {
             return Err("Sky transport endpoint must be finite and within its ray".into());
         }

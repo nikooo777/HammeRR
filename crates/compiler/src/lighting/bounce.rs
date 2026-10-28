@@ -2,7 +2,7 @@ use glam::DVec3;
 use source_formats::bsp::{Bsp, Face, Lighting, LightingKind, RgbExp32, TexInfo};
 
 use super::Occluder;
-use super::bake::{Budget, Plan};
+use super::bake::{Budget, OriginContext, Plan};
 use super::shadows::ShadowIndex;
 use crate::SkyQuality;
 use crate::map::Map;
@@ -184,10 +184,36 @@ pub(super) fn bake(
             .ok_or("Bounce receiver has no direct map")?;
         let mut channels = super::styles::Channels::restore(&source, emitted.len(), budget)?;
         let [width, height] = plan.dimensions();
+        let scene = super::transport::Scene {
+            shadows: ctx.shadows,
+            terrain: ctx.terrain,
+            props: ctx.prop_shadows,
+            model: ctx.model_shadows[plan.model].as_ref(),
+        };
+        let origin_context = OriginContext {
+            map: ctx.map,
+            face_sources: ctx.face_sources,
+            scene: &scene,
+        };
         for t in 0..height {
             for s in 0..width {
                 let (point, normal) = plan.sample(s, t, budget)?;
-                let origin = plan.origin(point, normal);
+                let origin = plan
+                    .origin(&origin_context, [s, t], point, normal, budget)
+                    .map_err(|message| {
+                        let diagnostic = super::bake::channel_failure(
+                            ctx.instances,
+                            ctx.map,
+                            ctx.face_sources,
+                            plan,
+                            point,
+                            std::iter::empty(),
+                            message,
+                        );
+                        let message = diagnostic.message.clone();
+                        ctx.report.diagnostics.push(diagnostic);
+                        message
+                    })?;
                 let normals = plan.shading_normals(normal, budget)?;
                 let mut colors = [[DVec3::ZERO; super::bump::MAPS]; 4];
                 for (map, &normal) in normals.iter().enumerate().take(plan.map_count()) {
@@ -198,12 +224,7 @@ pub(super) fn bake(
                             origin,
                             direction,
                             cone,
-                            &super::transport::Scene {
-                                shadows: ctx.shadows,
-                                terrain: ctx.terrain,
-                                props: ctx.prop_shadows,
-                                model: ctx.model_shadows[plan.model].as_ref(),
-                            },
+                            &scene,
                             None,
                             budget,
                             &mut |hit, budget| {

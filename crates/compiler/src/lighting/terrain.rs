@@ -76,6 +76,7 @@ pub(super) struct TerrainSample {
 }
 
 pub(super) struct TerrainPlan {
+    pub patch: usize,
     pub dimensions: [usize; 2],
     pub samples: Vec<TerrainSample>,
 }
@@ -113,6 +114,7 @@ impl TerrainPlan {
 
     pub(super) fn new(
         terrain: &Terrain,
+        patch: usize,
         positions: &[[f32; 3]],
         normals: Vec<[f64; 3]>,
         dimensions: [usize; 2],
@@ -140,6 +142,7 @@ impl TerrainPlan {
             }
         }
         Ok(Self {
+            patch,
             dimensions,
             samples,
         })

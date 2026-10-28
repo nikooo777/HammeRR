@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use map_core::displacement::neighbors::{self, Span};
 use source_formats::bsp;
 
@@ -13,6 +13,8 @@ use crate::map::Map;
 const OWNERSHIP_WORK: usize = 48;
 const TEXTURE_WORK: usize = 96;
 const EDGE_SCRATCH_VERTICES: usize = 17;
+const CONTACT_ROUNDING_OPERATIONS: f64 = 64.0;
+const CONTACT_WORK: usize = 48;
 
 struct Patch {
     first_vertex: usize,
@@ -39,7 +41,27 @@ pub(super) struct TerrainTriangle {
     patch: u16,
 }
 
+pub(super) struct TerrainContact {
+    topology: Arc<Topology>,
+    groups: [u32; 3],
+    count: usize,
+    point: DVec3,
+    support: DVec3,
+    error: f64,
+}
+
 impl TerrainTriangle {
+    fn contact_matches(&self, contact: &TerrainContact) -> bool {
+        if !Arc::ptr_eq(&self.topology, &contact.topology) {
+            return false;
+        }
+        let groups = self.topology.indices[self.slot as usize]
+            .map(|vertex| self.topology.groups[vertex as usize]);
+        contact.groups[..contact.count]
+            .iter()
+            .all(|group| groups.contains(group))
+    }
+
     pub(super) fn source(&self) -> (usize, usize) {
         let patch = usize::from(self.patch);
         (
@@ -195,6 +217,232 @@ impl ShadowObject for TerrainTriangle {
 }
 
 impl ShadowIndex<TerrainTriangle> {
+    pub(super) fn receiver_contact(
+        &self,
+        patch: usize,
+        uv: [f64; 2],
+        point: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<TerrainContact, String> {
+        if !point.is_finite()
+            || uv
+                .iter()
+                .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+        {
+            return Err("Terrain origin contact needs finite native grid coordinates".into());
+        }
+        let topology = &self
+            .objects()
+            .first()
+            .ok_or("Terrain origin contact has no shadow geometry")?
+            .topology;
+        let source = topology
+            .patches
+            .get(patch)
+            .ok_or("Terrain origin contact references a missing patch")?;
+        let first = source.first_triangle;
+        let last = topology
+            .patches
+            .get(patch + 1)
+            .map_or(topology.indices.len(), |patch| patch.first_triangle);
+        let grid = DVec2::from_array(uv) * (source.size - 1) as f64;
+        for indices in &topology.indices[first..last] {
+            consume(CONTACT_WORK)?;
+            let coordinates = indices.map(|index| {
+                let vertex = index as usize - source.first_vertex;
+                DVec2::new((vertex % source.size) as f64, (vertex / source.size) as f64)
+            });
+            let [a, b, c] = coordinates;
+            let determinant = (b - a).perp_dot(c - a);
+            if !determinant.is_finite() || determinant == 0.0 {
+                return Err("Terrain origin source has invalid native grid topology".into());
+            }
+            let u = (grid - a).perp_dot(c - a) / determinant;
+            let v = (b - a).perp_dot(grid - a) / determinant;
+            let mut weights = [1.0 - u - v, u, v];
+            let rounding =
+                CONTACT_ROUNDING_OPERATIONS * f64::EPSILON * (source.size * source.size) as f64
+                    / determinant.abs();
+            if weights
+                .iter()
+                .any(|&weight| !(-rounding..=1.0 + rounding).contains(&weight))
+            {
+                continue;
+            }
+            weights = weights.map(|weight| {
+                if weight.abs() <= rounding {
+                    0.0
+                } else {
+                    weight.clamp(0.0, 1.0)
+                }
+            });
+            let total = weights.iter().sum::<f64>();
+            if !total.is_finite() || total == 0.0 {
+                return Err("Terrain origin source has invalid native support weights".into());
+            }
+            weights = weights.map(|weight| weight / total);
+            let positions = indices.map(|vertex| topology.positions[vertex as usize]);
+            let support = positions
+                .into_iter()
+                .zip(weights)
+                .map(|(position, weight)| position * weight)
+                .sum::<DVec3>();
+            let mut groups = [0; 3];
+            let mut count = 0;
+            for (vertex, weight) in indices.iter().zip(weights) {
+                if weight != 0.0 {
+                    groups[count] = topology.groups[*vertex as usize];
+                    count += 1;
+                }
+            }
+            let error = support.distance(point) + contact_rounding(positions, point);
+            if !error.is_finite() || count == 0 {
+                return Err("Terrain origin source has invalid native support error".into());
+            }
+            return Ok(TerrainContact {
+                topology: Arc::clone(topology),
+                groups,
+                count,
+                point,
+                support,
+                error,
+            });
+        }
+        Err("Terrain origin sample does not resolve to an active native triangle".into())
+    }
+
+    pub(super) fn contact_required_offset(
+        &self,
+        contact: &TerrainContact,
+        point: DVec3,
+        bias: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<f64, String> {
+        if point != contact.point || !bias.is_finite() || bias.length_squared() == 0.0 {
+            return Err("Terrain origin source contact does not match the receiver".into());
+        }
+        let topology = &contact.topology;
+        if self
+            .objects()
+            .first()
+            .is_none_or(|triangle| !Arc::ptr_eq(&triangle.topology, topology))
+        {
+            return Err("Terrain origin source contact belongs to another shadow index".into());
+        }
+        let group = contact.groups[0] as usize;
+        let range = topology.offsets[group] as usize..topology.offsets[group + 1] as usize;
+        let mut required = 0.0_f64;
+        let mut found = false;
+        for &slot in &topology.incidence[range] {
+            consume(CONTACT_WORK)?;
+            let triangle = &self.objects()[slot as usize];
+            if !triangle.contact_matches(contact) {
+                continue;
+            }
+            found = true;
+            let positions =
+                topology.indices[slot as usize].map(|vertex| topology.positions[vertex as usize]);
+            let [a, b, c] = positions;
+            let normal = (b - a).cross(c - a).normalize();
+            let distance = normal.dot(point - a);
+            let direction = normal.dot(bias);
+            let rounding = contact_rounding(positions, point);
+            if !normal.is_finite() || !distance.is_finite() || !direction.is_finite() {
+                return Err("Terrain origin source-plane arithmetic must be finite".into());
+            }
+            if distance.abs() > contact.error + rounding {
+                return Err(
+                    "Terrain origin contact exceeds its measured native support error".into(),
+                );
+            }
+            if direction == 0.0 {
+                if point != contact.support && distance != 0.0 {
+                    return Err(
+                        "Terrain origin tangent cannot correct its native source support error"
+                            .into(),
+                    );
+                }
+                continue;
+            }
+            required = required
+                .max(((rounding - distance * direction.signum()) / direction.abs()).max(0.0));
+        }
+        if !found || !required.is_finite() {
+            return Err("Terrain origin has no finite certified source clearance".into());
+        }
+        Ok(required.next_up())
+    }
+
+    pub(super) fn geometric_clearance(
+        &self,
+        start: DVec3,
+        full_end: DVec3,
+        contact: Option<&TerrainContact>,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<Option<f64>, String> {
+        if contact.is_some_and(|contact| contact.point != start) {
+            return Err("Terrain origin clearance does not match its source contact".into());
+        }
+        Ok(self
+            .nearest(start, full_end, consume, &mut |triangle| {
+                if contact.is_some_and(|contact| triangle.contact_matches(contact)) {
+                    return Ok(None);
+                }
+                Ok(triangle
+                    .triangle
+                    .topological_intersection(start, full_end, 0.0)?
+                    .map(|(fraction, _)| (fraction, ())))
+            })?
+            .map(|(fraction, ())| fraction))
+    }
+
+    pub(super) fn contact_origin_clear(
+        &self,
+        contact: &TerrainContact,
+        origin: DVec3,
+        bias: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        if !origin.is_finite() || !bias.is_finite() || bias.length_squared() == 0.0 {
+            return Err("Terrain origin proof needs a finite point and nonzero direction".into());
+        }
+        let topology = &contact.topology;
+        if self
+            .objects()
+            .first()
+            .is_none_or(|triangle| !Arc::ptr_eq(&triangle.topology, topology))
+        {
+            return Err("Terrain origin proof belongs to another shadow index".into());
+        }
+        let group = contact.groups[0] as usize;
+        let range = topology.offsets[group] as usize..topology.offsets[group + 1] as usize;
+        let mut found = false;
+        for &slot in &topology.incidence[range] {
+            consume(CONTACT_WORK)?;
+            if !self.objects()[slot as usize].contact_matches(contact) {
+                continue;
+            }
+            found = true;
+            let positions =
+                topology.indices[slot as usize].map(|vertex| topology.positions[vertex as usize]);
+            let [a, b, c] = positions;
+            let normal = (b - a).cross(c - a).normalize();
+            let direction = normal.dot(bias);
+            let distance = normal.dot(origin - a);
+            if !normal.is_finite() || !direction.is_finite() || !distance.is_finite() {
+                return Err("Terrain origin proof arithmetic must be finite".into());
+            }
+            if direction == 0.0 {
+                if contact.point != contact.support && normal.dot(contact.point - a) != 0.0 {
+                    return Ok(false);
+                }
+            } else if distance * direction.signum() <= contact_rounding(positions, origin) {
+                return Ok(false);
+            }
+        }
+        Ok(found)
+    }
+
     pub(super) fn accumulate_coverage(
         &self,
         start: DVec3,
@@ -246,6 +494,16 @@ impl ShadowIndex<TerrainTriangle> {
         })?;
         Ok(())
     }
+}
+
+fn contact_rounding(positions: [DVec3; 3], point: DVec3) -> f64 {
+    let scale = positions
+        .into_iter()
+        .map(|position| position.abs().element_sum())
+        .sum::<f64>()
+        + point.abs().element_sum()
+        + 1.0;
+    scale * (CONTACT_ROUNDING_OPERATIONS * f64::EPSILON)
 }
 
 fn counts(map: &Map<'_>) -> Result<(usize, usize), String> {

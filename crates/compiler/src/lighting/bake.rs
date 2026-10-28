@@ -67,6 +67,7 @@ pub(crate) struct BakeStats {
 pub(super) struct Plan {
     pub face: usize,
     pub model: usize,
+    entity: usize,
     pose: Pose,
     surface: Surface,
     bump: Option<super::bump::Basis>,
@@ -77,10 +78,19 @@ enum Surface {
         frame: LuxelFrame,
         normal: DVec3,
         world_normal: DVec3,
+        source_plane: usize,
+        source_equation: Plane,
+        source_error: f64,
         points: Vec<DVec3>,
         normals: Option<std::sync::Arc<super::normals::Field>>,
     },
     Terrain(TerrainPlan),
+}
+
+pub(super) struct OriginContext<'a> {
+    pub map: &'a Map<'a>,
+    pub face_sources: &'a [std::sync::Arc<[u32]>],
+    pub scene: &'a Scene<'a>,
 }
 
 impl Plan {
@@ -194,12 +204,48 @@ impl Plan {
             }
         }
     }
-    pub(super) fn origin(&self, point: DVec3, normal: DVec3) -> DVec3 {
-        let bias = match &self.surface {
-            Surface::Plane { world_normal, .. } => *world_normal,
-            Surface::Terrain(_) => normal,
+    pub(super) fn origin(
+        &self,
+        ctx: &OriginContext<'_>,
+        sample: [usize; 2],
+        point: DVec3,
+        normal: DVec3,
+        budget: &mut Budget<'_>,
+    ) -> Result<DVec3, String> {
+        let (source, bias) = match &self.surface {
+            Surface::Plane {
+                world_normal,
+                source_plane,
+                source_equation,
+                source_error,
+                ..
+            } => {
+                budget.consume(if self.pose.rotation.is_some() { 24 } else { 4 })?;
+                (
+                    super::sample_origins::Source::Plane {
+                        plane: *source_plane,
+                        equation: self.pose.plane(*source_equation),
+                        sides: &ctx.face_sources[self.face],
+                        owners: &ctx.map.entities[self.entity].brushes,
+                        error: *source_error,
+                    },
+                    *world_normal,
+                )
+            }
+            Surface::Terrain(plan) => {
+                budget.consume(4)?;
+                (
+                    super::sample_origins::Source::Terrain {
+                        patch: plan.patch,
+                        uv: std::array::from_fn(|axis| {
+                            sample[axis] as f64 / (plan.dimensions[axis] - 1) as f64
+                        }),
+                    },
+                    normal,
+                )
+            }
         };
-        point + bias * SAMPLE_BIAS
+        super::sample_origins::origin(ctx.scene, &source, point, bias, SAMPLE_BIAS, budget)
     }
 }
 
@@ -780,6 +826,7 @@ fn plans(
                 budget.plan_lightmap_samples(dimensions[0] * dimensions[1])?;
                 let terrain = TerrainPlan::new(
                     terrain,
+                    face.dispinfo as usize,
                     &terrain_fields.positions[face.dispinfo as usize],
                     std::mem::take(&mut terrain_fields.normals[face.dispinfo as usize]),
                     dimensions,
@@ -799,6 +846,7 @@ fn plans(
                 plans.push(Plan {
                     face: index,
                     model,
+                    entity: scope.entity,
                     pose: scope.pose,
                     surface: Surface::Terrain(terrain),
                     bump,
@@ -837,15 +885,42 @@ fn plans(
                 return Err("Direct lighting face has invalid corners".into());
             }
             let normal = plane.normal.normalize();
+            let authored = map.planes.get(face.plane as usize);
+            let source_equation = Plane {
+                normal: authored.normal,
+                dist: authored.dist,
+            };
+            budget.consume(points.len() + 5)?;
+            let mut source_error = points
+                .iter()
+                .map(|&point| source_equation.distance_to(point).abs())
+                .fold(0.0_f64, f64::max);
+            let [width, height] = frame.dimensions();
+            for (s, t) in [
+                (0, 0),
+                (width - 1, 0),
+                (0, height - 1),
+                (width - 1, height - 1),
+            ] {
+                let error = source_equation.distance_to(frame.position(s, t)?).abs();
+                source_error = source_error.max(error);
+            }
+            if !source_error.is_finite() {
+                return Err("Lighting sample source support must be finite".into());
+            }
             budget.plan_lightmap_samples(frame.sample_count())?;
             plans.push(Plan {
                 face: index,
                 model,
+                entity: scope.entity,
                 pose: scope.pose,
                 surface: Surface::Plane {
                     frame,
                     normal,
                     world_normal: normal,
+                    source_plane: face.plane as usize,
+                    source_equation,
+                    source_error,
                     points,
                     normals: normals.fields.remove(&index),
                 },
@@ -1656,11 +1731,31 @@ fn bake_channel(
             props: prop_shadows,
             model: model_shadows[plan.model].as_ref(),
         };
+        let origin_context = OriginContext {
+            map,
+            face_sources,
+            scene: &scene,
+        };
         for t in 0..height {
             for s in 0..width {
                 budget.phase(LightingPhase::Direct);
                 let (point, normal) = plan.sample(s, t, budget)?;
-                let origin = plan.origin(point, normal);
+                let origin = plan
+                    .origin(&origin_context, [s, t], point, normal, budget)
+                    .map_err(|message| {
+                        let diagnostic = channel_failure(
+                            instances,
+                            map,
+                            face_sources,
+                            plan,
+                            point,
+                            std::iter::empty(),
+                            message,
+                        );
+                        let message = diagnostic.message.clone();
+                        report.diagnostics.push(diagnostic);
+                        message
+                    })?;
                 let normals = plan.shading_normals(normal, budget)?;
                 let mut color = [[DVec3::ZERO; super::bump::MAPS]; 4];
                 let mut add_channel =

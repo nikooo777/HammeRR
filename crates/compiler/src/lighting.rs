@@ -28,6 +28,7 @@ pub use prop_vertices::load_prop_vertex_material;
 mod props;
 mod radiance;
 mod receivers;
+mod sample_origins;
 mod shadows;
 mod sky;
 pub(crate) mod styles;

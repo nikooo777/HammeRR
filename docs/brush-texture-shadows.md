@@ -37,6 +37,9 @@ For example, two crossings with alpha 64 and 128 leave 63/255 visibility.
 A brush's separate entry and exit faces each contribute coverage, so two half-opaque faces can block completely.
 Transmitted light keeps its color; the texture's RGB does not tint it.
 
+Surface samples stop their origin offset before nearby caster geometry.
+This keeps thin gaps and close layers in the shadow path, even at transparent texels.
+
 The setting applies to direct lights and styles, sun and sky, diffuse bounces,
 ambient probes, detail and static-prop vertex lighting, and material-emission transport.
 Enable **Bake static-prop vertex lighting** when those vertex receivers are needed.

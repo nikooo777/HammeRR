@@ -67,6 +67,17 @@ impl PropTriangle {
         self.triangle.point_contact(point)
     }
 
+    pub(super) fn geometric_fraction(
+        &self,
+        start: DVec3,
+        end: DVec3,
+    ) -> Result<Option<f64>, String> {
+        Ok(self
+            .triangle
+            .topological_intersection(start, end, 0.0)?
+            .map(|(fraction, _)| fraction))
+    }
+
     fn fraction(&self, start: DVec3, end: DVec3) -> Result<Option<f64>, String> {
         let Some((fraction, weights)) = self.triangle.intersection(start, end)? else {
             return Ok(None);

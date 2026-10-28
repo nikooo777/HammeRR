@@ -853,7 +853,7 @@ fn selection_outlines_classify_model_brackets_without_replacing_meshes_with_help
         &std::collections::HashSet::from([ObjectId::Entity(7)]),
         &Default::default(),
         &[],
-        &[instance],
+        std::slice::from_ref(&instance),
     );
     assert_eq!(mesh.stats.model_entities, 1);
     assert_eq!(mesh.vertices.len(), 4);
@@ -862,6 +862,36 @@ fn selection_outlines_classify_model_brackets_without_replacing_meshes_with_help
     assert_eq!(mesh.selection_outline_ranges.len(), 1);
     assert_eq!(mesh.selection_outline_ranges[0], 0..48);
     assert!(mesh.guide_line_ranges().is_empty());
+    let ray = Ray {
+        origin: DVec3::new(0., 0., 64.),
+        direction: DVec3::NEG_Z,
+    };
+    let hit = instance.pick(&ray);
+    assert!(hit.is_some());
+    let mut replaced = instance;
+    replaced.draw_surface = false;
+    let outlines = crate::SceneMesh::build_with_models(
+        &vmf,
+        &fs,
+        &mut crate::MaterialLibrary::default(),
+        &std::collections::HashSet::from([ObjectId::Entity(7)]),
+        &Default::default(),
+        &[],
+        &[replaced.clone()],
+    );
+    assert!(outlines.vertices.is_empty() && outlines.indices.is_empty());
+    assert!(outlines.wire_lines.is_empty());
+    assert_eq!(outlines.lines, mesh.lines);
+    assert_eq!(
+        outlines.selection_outline_ranges,
+        mesh.selection_outline_ranges
+    );
+    let (mins, maxs) = replaced.bounds();
+    assert_eq!(
+        (outlines.mins, outlines.maxs),
+        (mins.as_vec3(), maxs.as_vec3())
+    );
+    assert_eq!(replaced.pick(&ray), hit);
 }
 
 #[test]

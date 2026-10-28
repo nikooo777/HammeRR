@@ -359,8 +359,9 @@ fn invalid_material_or_sample_ranges_preserve_scene_and_region_filters_leave_ful
         normal_transform: [[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]; 2],
         color: [1.0; 3],
         detail_alpha_mask: false,
-        directional: true,
-        unlit: false,
+        lighting: materials::MaterialLighting::Lightmap { directional: true },
+        coverage: materials::Coverage::Opaque,
+        nocull: false,
     };
     let material = [Some(Arc::new(material))];
     let mut invalid = scene

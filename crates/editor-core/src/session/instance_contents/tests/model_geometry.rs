@@ -126,6 +126,19 @@ fn repeated_nested_models_match_literal_root_geometry_skin_materials_and_owner_s
             .unwrap();
         assert_eq!(rows[0]["child_entity"], rows[1]["child_entity"]);
         assert_ne!(rows[0]["occurrence"], rows[1]["occurrence"]);
+        let source = &preview.model_sources[0];
+        let exact = compiler::entity_origins::Origin::Instance {
+            instance: source.owner,
+            file: source.occurrence.steps().last().unwrap().file.clone(),
+            entity: source.child,
+            expanded_entity: u32::MAX,
+            occurrence: source.occurrence.clone(),
+        };
+        assert!(source.matches(&exact));
+        assert!(!preview.model_sources[1].matches(&exact));
+        assert!(!source.matches(&compiler::entity_origins::Origin::Root {
+            entity: source.owner
+        }));
         assert!(
             preview
                 .models

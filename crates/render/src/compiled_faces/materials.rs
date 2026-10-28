@@ -6,6 +6,7 @@ mod normals;
 pub use normals::{validate_directional_inputs, validate_directional_inputs_controlled};
 
 pub const POLICY: &str = "Exact compiled static diffuse closure, PAK first and guarded original assets only when absent; base mip, linear repeat filtering; LDR diffuse sRGB to linear, HDR diffuse linear; finite static colour modulation; genuine UnlitGeneric without a lightmap retains final diffuse geometry without fabricated samples. Directional tangent normals use normalized squared positive compiler-basis projections; SSBump RGB directly weights the three directional maps. No native appearance, overbright upload or adaptation parity.";
+pub const PROP_POLICY: &str = "Compiler-admitted selected-skin VertexLitGeneric and strict cutout closure; absent optional base texture means white, declared missing textures refuse. Base mip and linear repeat filtering; material alpha supplies default 0.5 cutout coverage independently of VHV alpha. Decoded vertex radiance interpolates before diffuse and shared EV, safe Reinhard and one sRGB output; no VHV style decomposition. Double-sided editor inspection retains final triangles in diagnostic views; FACE luxel density and smoothing groups do not apply. Native culling, composed cutout appearance, gamma and adaptation parity are not established.";
 
 pub type Transform = [[f32; 3]; 2];
 pub const GPU_MATERIAL_OVERHEAD: usize = 176;
@@ -21,6 +22,19 @@ pub enum Kind {
 pub enum NormalEncoding {
     Tangent,
     SsBump,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MaterialLighting {
+    Unlit,
+    Lightmap { directional: bool },
+    Vertex,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Coverage {
+    Opaque,
+    AlphaTest,
 }
 
 #[derive(Debug)]
@@ -52,8 +66,9 @@ pub struct Material {
     pub normal_transform: [Transform; 2],
     pub color: [f32; 3],
     pub detail_alpha_mask: bool,
-    pub directional: bool,
-    pub unlit: bool,
+    pub lighting: MaterialLighting,
+    pub coverage: Coverage,
+    pub nocull: bool,
 }
 
 impl Material {
@@ -99,6 +114,64 @@ pub fn load(
         budget.decoded_bytes = initial;
     }
     result.map_err(|error| format!("Baked material {name}: {error}"))
+}
+
+/// The resolved material must have passed the compiler's static-prop receiver admission.
+pub fn load_static_prop_resolved(
+    name: &str,
+    material: &vmt::Material,
+    pak: &PakArchive,
+    read: &mut dyn FnMut(&str) -> io::Result<Option<Vec<u8>>>,
+    control: &mut dyn FnMut() -> Result<(), String>,
+    budget: &mut Budget,
+) -> Result<Material, String> {
+    let initial = budget.decoded_bytes;
+    let result = load_static_prop_inner(name, material, pak, read, control, budget);
+    if result.is_err() {
+        budget.decoded_bytes = initial;
+    }
+    result.map_err(|error| format!("Baked prop material {name}: {error}"))
+}
+
+fn load_static_prop_inner(
+    name: &str,
+    material: &vmt::Material,
+    pak: &PakArchive,
+    read: &mut dyn FnMut(&str) -> io::Result<Option<Vec<u8>>>,
+    control: &mut dyn FnMut() -> Result<(), String>,
+    budget: &mut Budget,
+) -> Result<Material, String> {
+    control()?;
+    source_formats::gamefs::asset_relative(name).map_err(|error| error.to_string())?;
+    if material.shader != "vertexlitgeneric" || !material.blocks.is_empty() {
+        return Err("Compiled prop diffuse requires admitted plain VertexLitGeneric".into());
+    }
+    let diffuse = match material.get("$basetexture") {
+        Some(texture) => Some(load_texture(texture, false, false, pak, read, control, budget)?.0),
+        None => None,
+    };
+    let transform = transform(material.get("$basetexturetransform"))?;
+    control()?;
+    Ok(Material {
+        name: name.to_ascii_lowercase(),
+        kind: Kind::Single,
+        diffuse: [diffuse, None],
+        normals: [None, None],
+        diffuse_transform: [transform; 2],
+        normal_transform: [transform; 2],
+        color: [1.0; 3],
+        detail_alpha_mask: false,
+        lighting: MaterialLighting::Vertex,
+        coverage: if material.get("$alphatest") == Some("1") {
+            Coverage::AlphaTest
+        } else {
+            Coverage::Opaque
+        },
+        nocull: material
+            .get("$nocull")
+            .and_then(|value| value.trim().parse::<f64>().ok())
+            == Some(1.0),
+    })
 }
 
 fn load_inner(
@@ -211,14 +284,19 @@ fn load_inner(
         normal_transform,
         color,
         detail_alpha_mask: flag(&material, "$detail_alpha_mask_base_texture")?,
-        directional,
-        unlit,
+        lighting: if unlit {
+            MaterialLighting::Unlit
+        } else {
+            MaterialLighting::Lightmap { directional }
+        },
+        coverage: Coverage::Opaque,
+        nocull: false,
     };
     validate_directional_inputs_controlled(&material, control)?;
     Ok(material)
 }
 
-fn read_asset(
+pub fn read_asset(
     path: &str,
     pak: &PakArchive,
     read: &mut dyn FnMut(&str) -> io::Result<Option<Vec<u8>>>,
@@ -809,7 +887,7 @@ mod tests {
             &mut budget(),
         )
         .unwrap();
-        assert!(unlit.unlit && !unlit.directional);
+        assert_eq!(unlit.lighting, MaterialLighting::Unlit);
         assert_eq!(unlit.color, [0.5, 1.0, 2.0]);
         assert_eq!(unlit.diffuse[0].as_ref().unwrap().pixels[0][2], 1.0);
         for (name, lightmapped, message) in [
@@ -828,6 +906,70 @@ mod tests {
             )
             .unwrap_err();
             assert!(error.contains(message), "{name}: {error}");
+        }
+    }
+
+    #[test]
+    fn compiled_prop_diffuse_keeps_white_defaults_coverage_and_declared_asset_failures_distinct() {
+        let pak = PakArchive {
+            entries: vec![entry("materials/mask.vtf", texture(0, &[128, 64, 255, 32]))],
+        };
+        let mut budget = budget();
+        let plain = vmt::Material::parse(
+            r#"VertexLitGeneric { $nocull 1 $basetexturetransform "scale 2 3 translate .25 .5" }"#,
+        )
+        .unwrap();
+        let white = load_static_prop_resolved(
+            "white",
+            &plain,
+            &pak,
+            &mut absent_reader,
+            &mut current,
+            &mut budget,
+        )
+        .unwrap();
+        assert_eq!(white.lighting, MaterialLighting::Vertex);
+        assert!(white.diffuse[0].is_none());
+        assert_eq!(white.coverage, Coverage::Opaque);
+        assert!(white.nocull);
+        assert_eq!(
+            white.diffuse_transform[0],
+            [[2.0, 0.0, -0.25], [0.0, 3.0, -0.5]]
+        );
+        assert_eq!(budget.decoded_bytes, 0);
+        let cutout =
+            vmt::Material::parse("VertexLitGeneric { $basetexture mask $alphatest 1 }").unwrap();
+        let cutout = load_static_prop_resolved(
+            "mask",
+            &cutout,
+            &pak,
+            &mut absent_reader,
+            &mut current,
+            &mut budget,
+        )
+        .unwrap();
+        assert_eq!(cutout.coverage, Coverage::AlphaTest);
+        let pixel = cutout.diffuse[0].as_ref().unwrap().pixels[0];
+        assert!((pixel[0] - 0.2158605).abs() < 1e-6);
+        assert_eq!(pixel[3], 32.0 / 255.0);
+        let previous = budget.decoded_bytes;
+        for source in [
+            "VertexLitGeneric { $basetexture missing }",
+            "VertexLitGeneric { $basetexture mask $basetexturetransform \"scale 0 1\" }",
+        ] {
+            let material = vmt::Material::parse(source).unwrap();
+            assert!(
+                load_static_prop_resolved(
+                    "invalid",
+                    &material,
+                    &pak,
+                    &mut absent_reader,
+                    &mut current,
+                    &mut budget,
+                )
+                .is_err()
+            );
+            assert_eq!(budget.decoded_bytes, previous);
         }
     }
 

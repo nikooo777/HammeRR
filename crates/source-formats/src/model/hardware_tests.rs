@@ -63,6 +63,7 @@ fn hardware_mapping_retains_declared_order_duplicates_and_unused_vertices() {
             group: 0,
             part: 0,
             vertices: 0..6,
+            triangle_indices: vec![1, 3, 0],
         }]
     );
     assert_eq!(model.skins, [vec![0], vec![1]]);
@@ -70,6 +71,24 @@ fn hardware_mapping_retains_declared_order_duplicates_and_unused_vertices() {
     let ordinary = Model::parse(&files[0], &files[1], &files[2]).unwrap();
     assert_eq!(ordinary.parts[0].indices, model.parts[0].indices);
     assert_eq!(ordinary.vertices, model.vertices);
+
+    let [mdl, vvd, mut vtx] = files;
+    vtx.resize(392, 0);
+    for (offset, value) in [(81, 8), (85, 276), (93, 292), (365, 8), (373, 6)] {
+        put_int(&mut vtx, offset, value);
+    }
+    for (index, vertex) in [1u16, 3, 0, 2, 3, 4, 4, 5].into_iter().enumerate() {
+        vtx[349 + index * 2..351 + index * 2].copy_from_slice(&vertex.to_le_bytes());
+    }
+    vtx[383] = 2;
+    let (model, layout) = parse(&[mdl.clone(), vvd.clone(), vtx.clone()]).unwrap();
+    assert_eq!(layout.vertices, [2, 0, 2, 1, 3, 3]);
+    assert_eq!(layout.sections[0].triangle_indices, [1, 3, 0, 3, 2, 4]);
+    assert_eq!(model.parts[0].indices, [0, 1, 2, 1, 2, 3]);
+    assert_eq!(
+        Model::parse(&mdl, &vvd, &vtx).unwrap().parts[0].indices,
+        model.parts[0].indices
+    );
 }
 
 fn two_model_two_lod_fixture() -> [Vec<u8>; 3] {
@@ -151,14 +170,21 @@ fn two_model_two_lod_fixture() -> [Vec<u8>; 3] {
         }
         vtx[group + 24] = 2;
         for vertex in 0..3 {
-            let value = if vertex == 0 {
-                original
-            } else {
-                (vertex - 1) as u16
+            let value = match original {
+                0 => vertex as u16,
+                1 => [1, 0, 2][vertex],
+                _ if vertex == 0 => original,
+                _ => (vertex - 1) as u16,
             };
             vtx[data + 4 + vertex * 9..data + 6 + vertex * 9].copy_from_slice(&value.to_le_bytes());
+            let local = match group {
+                400 => [0u16, 1, 2],
+                425 => [2, 0, 1],
+                450 => [1, 2, 0],
+                _ => [2, 1, 0],
+            };
             vtx[data + 27 + vertex * 2..data + 29 + vertex * 2]
-                .copy_from_slice(&(vertex as u16).to_le_bytes());
+                .copy_from_slice(&local[vertex].to_le_bytes());
         }
         vtx[data + 51] = 1;
     }
@@ -201,6 +227,23 @@ fn hardware_sections_keep_every_model_and_lod_in_lod_first_order() {
         .map(|section| layout.vertices[section.vertices.start])
         .collect::<Vec<_>>();
     assert_eq!(first, [2, 7, 1, 4]);
+    let triangles = layout
+        .sections
+        .iter()
+        .map(|section| section.triangle_indices.as_slice())
+        .collect::<Vec<_>>();
+    let expected: [&[u32]; 4] = [&[0, 1, 2], &[1, 2, 0], &[2, 0, 1], &[2, 1, 0]];
+    assert_eq!(triangles, expected);
+    for section in &layout.sections {
+        let roots = section
+            .triangle_indices
+            .iter()
+            .map(|&local| layout.vertices[section.vertices.start + local as usize])
+            .collect::<Vec<_>>();
+        if section.lod == 0 {
+            assert_eq!(roots, model.parts[section.part].indices);
+        }
+    }
     let mut files = files;
     files[0][377] = 1;
     let (_, layout) = parse(&files).unwrap();
@@ -298,6 +341,9 @@ fn hardware_group_limits_are_global_even_when_tables_share_their_payload() {
     assert_eq!(layout.vertices, [0, 1, 2, 3, 0, 1, 2, 3]);
     assert_eq!(layout.sections[0].group, 0);
     assert_eq!(layout.sections[1].group, 1);
+    for section in &layout.sections {
+        assert_eq!(section.triangle_indices, [0, 1, 2, 0, 2, 3]);
+    }
     for limits in [
         HardwareLimits {
             vertices: 7,
@@ -352,6 +398,26 @@ fn hardware_rejects_bad_correspondence_offsets_and_unsupported_paths() {
 #[test]
 fn hardware_limits_and_caller_rejection_stop_before_growth() {
     let files = reordered_fixture();
+    let mut charged = HardwareCharge::default();
+    let (_, layout) = Model::parse_with_hardware(
+        &files[0],
+        &files[1],
+        &files[2],
+        HardwareLimits::default(),
+        &mut |charge| {
+            charged.bytes += charge.bytes;
+            charged.work += charge.work;
+            Ok(())
+        },
+    )
+    .unwrap();
+    let topology_bytes =
+        layout.sections[0].triangle_indices.capacity() * std::mem::size_of::<u32>();
+    let layout_bytes = std::mem::size_of::<HardwareLayout>()
+        + layout.sections.capacity() * std::mem::size_of::<HardwareSection>()
+        + layout.vertices.capacity() * std::mem::size_of::<u32>()
+        + topology_bytes;
+    assert_eq!(layout.memory_bytes(), layout_bytes);
     for limits in [
         HardwareLimits {
             vertices: 5,
@@ -367,6 +433,10 @@ fn hardware_limits_and_caller_rejection_stop_before_growth() {
         },
         HardwareLimits {
             bytes: 1,
+            ..HardwareLimits::default()
+        },
+        HardwareLimits {
+            bytes: charged.bytes - topology_bytes,
             ..HardwareLimits::default()
         },
         HardwareLimits {

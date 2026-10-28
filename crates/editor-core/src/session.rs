@@ -2850,7 +2850,7 @@ impl Session {
             selected_faces
         };
         let overlays = self.partition_face_overlays();
-        let references = self.instance_contents_preview(view.instance_contents);
+        let mut references = self.instance_contents_preview(view.instance_contents);
         let document = self.geometry.document(&self.document);
         let selected = if self.geometry.components.selection.is_empty()
             && self.component_picking().is_none()
@@ -2869,13 +2869,32 @@ impl Session {
         let model_guides = self.fgd_model_guides(document, &evaluation, view.entity_model_guides);
         let mut lighting = lighting_preview::prepare(document.vmf(), &evaluation.objects, view);
         let baked_surfaces = self.baked_surfaces_visible();
+        let root_models = baked_surfaces.then(|| {
+            let mut models = evaluation.models.instances.clone();
+            for instance in &mut models {
+                instance.draw_surface = !self.baked_static_prop_replaces(|origin| {
+                    matches!(origin, compiler::entity_origins::Origin::Root { entity }
+                        if instance.id == map_core::ObjectId::Entity(*entity))
+                });
+            }
+            models
+        });
+        for (instance, source) in references.models.iter_mut().zip(&references.model_sources) {
+            instance.draw_surface =
+                !self.baked_static_prop_replaces(|origin| source.matches(origin));
+        }
         let mut mesh = SceneMesh::build_with_reference_models_and_surfaces_filtered(
             document.vmf(),
             &self.game,
             &mut self.materials,
             (&selected, &selected_faces),
             &overlays,
-            (&evaluation.models.instances, &evaluation.helpers),
+            (
+                root_models
+                    .as_deref()
+                    .unwrap_or(&evaluation.models.instances),
+                &evaluation.helpers,
+            ),
             (&icons, &model_guides),
             skybox,
             view.tool_textures,

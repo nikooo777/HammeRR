@@ -59,6 +59,13 @@ fn baked_surface_workflow(controller: &Controller, shared: &SharedSession) {
         false
     );
     let camera = lock(shared).camera();
+    window.set_record_index(1);
+    window.invoke_choose_record_kind(1);
+    assert!(!window.get_can_frame());
+    assert_eq!(lock(shared).camera(), camera);
+    assert_eq!(lock(shared).baked_surfaces_options_report(), options);
+    window.set_record_index(0);
+    window.invoke_choose_record_kind(0);
     window.invoke_choose_face(0);
     assert!(window.get_can_frame());
     window.invoke_frame_face();
@@ -68,6 +75,27 @@ fn baked_surface_workflow(controller: &Controller, shared: &SharedSession) {
     window.invoke_clear_surfaces();
     assert!(!window.get_has_token());
     assert_eq!(window.get_exposure_ev(), 0.0);
+    window.set_compiled_static_props(true);
+    window.set_draw_lod(1);
+    window.invoke_prepare_surfaces();
+    let started = Instant::now();
+    loop {
+        let report = lock(shared).inspect_baked_surfaces(None, 0, 1).unwrap();
+        if report["worker_active"] == false {
+            assert_eq!(report["status"], "unavailable", "{report}");
+            assert_eq!(report["complete"], false);
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    controller.refresh_visible(&lock(shared));
+    window.invoke_hide_surfaces();
+    assert!(window.get_compiled_static_props());
+    assert_eq!(window.get_draw_lod(), 1);
+    window.invoke_clear_surfaces();
+    assert!(!window.get_compiled_static_props());
+    assert_eq!(window.get_draw_lod(), 0);
     window.invoke_close_dialog();
     assert!(!window.window().is_visible());
 }

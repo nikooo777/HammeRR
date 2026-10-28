@@ -126,6 +126,10 @@ pub struct ValidatedPropLighting {
 }
 
 impl ValidatedPropLighting {
+    pub fn archive(&self) -> &PakArchive {
+        &self.archive
+    }
+
     pub fn manifest(&self) -> Option<&PropLightingManifest> {
         self.manifest.as_ref()
     }

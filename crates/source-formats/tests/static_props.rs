@@ -45,6 +45,7 @@ fn inactive_lighting_origin_bytes_remain_opaque_but_active_values_must_be_finite
     let mut props = fixture(6);
     props.props[0].flags &= !2;
     props.props[0].lighting_origin = [f32::from_bits(0x7fc01234), f32::INFINITY, 0.0];
+    assert!(props.props[0].transform().is_ok());
     let bytes = props.to_bytes(4).unwrap();
     assert_eq!(
         StaticProps::parse(6, &bytes, 4)
@@ -55,6 +56,46 @@ fn inactive_lighting_origin_bytes_remain_opaque_but_active_values_must_be_finite
     );
     props.props[0].flags |= 2;
     assert!(props.to_bytes(4).is_err());
+}
+
+#[test]
+fn static_prop_placement_preserves_native_pitch_yaw_roll_and_origin() {
+    let prop = StaticProp {
+        origin: [4.0, 5.0, 6.0],
+        angles: [30.0, 90.0, 90.0],
+        flags: 2,
+        lighting_origin: [100.0, 200.0, 300.0],
+        ..Default::default()
+    };
+    let transform = prop.transform().unwrap();
+    let point = transform.transform_point3(glam::DVec3::new(2.0, 4.0, 8.0));
+    assert!(point.abs_diff_eq(
+        glam::DVec3::new(12.0, 8.732050807568877, 8.464101615137753),
+        1e-12
+    ));
+    for (local, world) in [
+        (
+            glam::DVec3::X,
+            glam::DVec3::new(0.0, 0.8660254037844386, -0.5),
+        ),
+        (
+            glam::DVec3::Y,
+            glam::DVec3::new(0.0, 0.5, 0.8660254037844386),
+        ),
+        (glam::DVec3::Z, glam::DVec3::X),
+    ] {
+        assert!(transform.transform_vector3(local).abs_diff_eq(world, 1e-12));
+    }
+    for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        for axis in 0..3 {
+            let mut invalid = prop.clone();
+            invalid.origin[axis] = value;
+            assert!(invalid.transform().is_err());
+            let mut invalid = prop.clone();
+            invalid.angles[axis] = value;
+            assert!(invalid.transform().is_err());
+        }
+    }
 }
 
 #[test]

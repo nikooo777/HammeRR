@@ -1,9 +1,9 @@
-import { Button, ComboBox, ScrollView, Slider, StandardTableView } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, ScrollView, Slider, StandardTableView } from "std-widgets.slint";
 
 export component BakedSurfacesWindow inherits Window {
     title: "Baked surfaces - HammeRR";
     preferred-width: 780px;
-    preferred-height: 760px;
+    preferred-height: 840px;
     min-width: 680px;
     min-height: 650px;
     in property <string> state;
@@ -25,6 +25,9 @@ export component BakedSurfacesWindow inherits Window {
     in property <[string]> style-options;
     in-out property <int> style-index;
     in-out property <float> style-gain;
+    in-out property <bool> compiled-static-props;
+    in-out property <int> draw-lod;
+    in-out property <int> record-index;
     callback prepare-surfaces();
     callback cancel-preparation();
     callback clear-surfaces();
@@ -35,6 +38,7 @@ export component BakedSurfacesWindow inherits Window {
     callback refresh-inspection();
     callback page-faces(int);
     callback choose-face(int);
+    callback choose-record-kind(int);
     callback frame-face();
     callback close-dialog();
     forward-focus: keys;
@@ -52,6 +56,13 @@ export component BakedSurfacesWindow inherits Window {
                 Text { text: root.state; vertical-alignment: center; color: #ffcb80; }
             }
             Text { text: root.summary; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                CheckBox { text: "Compiled static props"; checked <=> root.compiled-static-props; enabled: !root.worker-active; }
+                Text { text: "Draw LOD"; vertical-alignment: center; }
+                ComboBox { model: ["0", "1", "2", "3", "4", "5", "6", "7"]; current-index <=> root.draw-lod; enabled: !root.worker-active && root.compiled-static-props; }
+                Text { text: "Changing these options requires Prepare."; wrap: word-wrap; color: #bac2ce; horizontal-stretch: 1; }
+            }
             HorizontalLayout {
                 spacing: 8px;
                 Button { text: "Prepare"; enabled: !root.worker-active; clicked => { root.prepare-surfaces(); } }
@@ -87,19 +98,25 @@ export component BakedSurfacesWindow inherits Window {
                 Text { text: "\{round(root.style-gain * 100) / 100}"; width: 50px; vertical-alignment: center; }
                 Button { text: "Apply lighting"; enabled: root.has-token && !root.worker-active; clicked => { root.apply-lighting(); } }
             }
-            Text { text: "Automatic directional materials. Style 0 defaults to 1; other styles default to 0. Apply lighting changes channel, exposure and gains together."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "Styles affect faces: style 0 defaults to 1, others to 0. Static props have fixed baked weight 1. Channel and exposure apply to both."; wrap: word-wrap; color: #bac2ce; }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Record kind"; vertical-alignment: center; }
+                records := ComboBox { model: ["Faces", "Static props"]; current-index <=> root.record-index; selected => { root.choose-record-kind(records.current-index); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
             StandardTableView {
                 rows: root.face-rows;
                 columns: [
-                    { title: "Face", width: 72px },
+                    { title: "Record", width: 72px },
                     { title: "Receiver", width: 150px },
-                    { title: "Material", min-width: 240px, horizontal-stretch: 1 },
+                    { title: "Material / model", min-width: 240px, horizontal-stretch: 1 },
                 ];
                 current-row <=> root.current-row;
                 current-row-changed(row) => { root.choose-face(row); }
                 sort-ascending(column) => { self.columns[column].sort-order = SortOrder.unsorted; }
                 sort-descending(column) => { self.columns[column].sort-order = SortOrder.unsorted; }
-                accessible-label: "Baked surfaces in native face order";
+                accessible-label: "Baked surfaces in native record order";
                 min-height: 130px;
                 vertical-stretch: 1;
             }
@@ -109,7 +126,7 @@ export component BakedSurfacesWindow inherits Window {
                 Button { text: "Next"; enabled: root.next; clicked => { root.page-faces(1); } }
                 Text { text: root.page; vertical-alignment: center; }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: "Frame face"; enabled: root.can-frame; clicked => { root.frame-face(); } }
+                Button { text: root.record-index == 0 ? "Frame face" : "Frame static prop"; enabled: root.can-frame; clicked => { root.frame-face(); } }
             }
             Text { text: root.face-summary; wrap: word-wrap; color: #bac2ce; }
             ScrollView {

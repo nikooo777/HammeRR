@@ -30,12 +30,28 @@ impl Prop {
 
 pub(super) struct Geometry {
     pub instances: Vec<Instance>,
+    pub sources: Vec<ModelSource>,
     pub bounds: BTreeMap<u32, [DVec3; 2]>,
     pub vertices: usize,
     pub indices: usize,
     pub lines: usize,
     pub cpu_bytes: usize,
     pub gpu_bytes: usize,
+}
+
+#[derive(Clone)]
+pub(in crate::session) struct ModelSource {
+    pub owner: u32,
+    pub child: u32,
+    pub occurrence: Arc<OccurrencePath>,
+}
+
+impl ModelSource {
+    pub(in crate::session) fn matches(&self, origin: &compiler::entity_origins::Origin) -> bool {
+        matches!(origin, compiler::entity_origins::Origin::Instance { instance, file, entity, occurrence, .. }
+            if self.owner == *instance && self.child == *entity && self.occurrence == *occurrence
+                && self.occurrence.steps().last().is_some_and(|step|step.file == *file))
+    }
 }
 
 pub(super) struct Cached {
@@ -183,6 +199,7 @@ impl Session {
             .sum::<usize>();
         let mut geometry = Geometry {
             instances: Vec::new(),
+            sources: Vec::new(),
             bounds: BTreeMap::new(),
             vertices: 0,
             indices: 0,
@@ -199,9 +216,14 @@ impl Session {
                 .count(),
             instances::MAX_OBJECTS,
         )?;
+        let source_count = geometry.instances.capacity();
+        reserve(&mut geometry.sources, source_count, instances::MAX_OBJECTS)?;
         geometry.cpu_bytes = geometry
             .cpu_bytes
             .checked_add(geometry.instances.capacity() * size_of::<Instance>() * 2)
+            .and_then(|bytes| {
+                bytes.checked_add(geometry.sources.capacity() * size_of::<ModelSource>() * 2)
+            })
             .ok_or("Instance model allocation size overflow")?;
         if geometry.cpu_bytes > references::MAX_CPU_BYTES {
             return Err("Instance model allocation exceeds the 64 MiB CPU budget".into());
@@ -296,6 +318,11 @@ impl Session {
                 .or_insert([low, high]);
             let mut instance = instance;
             instance.id = ObjectId::Entity(prop.owner);
+            geometry.sources.push(ModelSource {
+                owner: prop.owner,
+                child: prop.child,
+                occurrence: prop.occurrence.clone(),
+            });
             geometry.instances.push(instance);
         }
         if let Some(guard) = &ready.dependencies {

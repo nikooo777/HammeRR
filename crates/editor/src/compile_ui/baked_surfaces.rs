@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use editor_core::session::baked_surfaces::MAX_ROWS;
+use editor_core::session::baked_surfaces::{FrameTarget, MAX_ROWS, PreparationOptions, RecordKind};
 use render::LightingChannel;
 use render::compiled_faces::{LightingSettings, StyleGain};
 use serde_json::Value;
@@ -25,6 +25,7 @@ struct State {
     selected_style: Option<u8>,
     faces: Vec<FaceTarget>,
     selected_face: Option<usize>,
+    record_kind: RecordKind,
 }
 
 struct FaceTarget {
@@ -45,6 +46,7 @@ enum Action {
     ApplyLighting,
     Style(i32),
     Face(i32),
+    RecordKind(i32),
     Frame,
 }
 
@@ -66,6 +68,14 @@ fn read_lighting(value: &Value) -> Result<LightingSettings, String> {
 fn show_lighting(window: &BakedSurfacesWindow, settings: &LightingSettings) {
     window.set_channel_index(i32::from(settings.channel == LightingChannel::Hdr));
     window.set_exposure_ev(settings.exposure_ev as f32);
+}
+
+fn show_preparation(window: &BakedSurfacesWindow, report: &Value) -> Result<(), String> {
+    let options: PreparationOptions = serde_json::from_value(report["preparation_options"].clone())
+        .map_err(|error| format!("Invalid baked surface preparation options: {error}"))?;
+    window.set_compiled_static_props(options.compiled_static_props);
+    window.set_draw_lod(i32::from(options.draw_lod));
+    Ok(())
 }
 
 fn show_style(window: &BakedSurfacesWindow, state: &State) {
@@ -154,7 +164,10 @@ fn clear_faces(window: &BakedSurfacesWindow, state: &mut State) {
     window.set_previous(false);
     window.set_next(false);
     window.set_page("".into());
-    window.set_face_summary("Choose a compiled face to frame. Regions include whole faces; authored hiding is independent.".into());
+    window.set_face_summary(
+        "Choose a compiled record to frame its mesh bounds. Regions include whole faces and props."
+            .into(),
+    );
 }
 
 fn present(
@@ -189,16 +202,23 @@ fn present(
         .into(),
     );
     show_lighting(window, &state.lighting);
+    show_preparation(window, &report)?;
     show_style(window, state);
     show_state(window, &report);
     window.set_summary(
         if let Some(total) = report["page"]["total"].as_u64() {
             format!(
-                "{total} final surfaces · build {}",
+                "{total} final {} · build {}",
+                if state.record_kind == RecordKind::Faces {
+                    "faces"
+                } else {
+                    "static props"
+                },
                 report["build"]["status"].as_str().unwrap_or("unavailable")
             )
         } else {
-            "Prepare a successful lit build to view final world, terrain and brush surfaces.".into()
+            "Prepare a successful lit build to view final surfaces and optional static props."
+                .into()
         }
         .into(),
     );
@@ -234,13 +254,32 @@ fn present(
         .into_iter()
         .flatten()
         .map(|row| {
-            let face = row["face"].as_u64().ok_or("Missing native face ordinal")? as usize;
+            let key = if state.record_kind == RecordKind::Faces {
+                "face"
+            } else {
+                "prop"
+            };
+            let face = row[key].as_u64().ok_or("Missing native record ordinal")? as usize;
             let receiver = row["receiver"].as_str().unwrap_or("unavailable");
-            let material = row["material"].as_str().unwrap_or("unavailable");
+            let material = row[if state.record_kind == RecordKind::Faces {
+                "material"
+            } else {
+                "model"
+            }]
+            .as_str()
+            .unwrap_or("unavailable");
             state.faces.push(FaceTarget {
                 face,
                 can_frame: row["frame_available"].as_bool().unwrap_or(false),
-                summary: format!("Face {face} · {} · {material}", receiver.replace('_', " ")),
+                summary: format!(
+                    "{} {face} · {} · {material}",
+                    if state.record_kind == RecordKind::Faces {
+                        "Face"
+                    } else {
+                        "Static prop"
+                    },
+                    receiver.replace('_', " ")
+                ),
             });
             Ok(slint::ModelRc::new(slint::VecModel::from(vec![
                 slint::language::StandardListViewItem::from(face.to_string().as_str()),
@@ -273,7 +312,12 @@ fn present(
             .into(),
     );
     let mut messages = Vec::new();
-    for reason in ["prepare_unavailable_reason", "suppression_reason", "error"] {
+    for reason in [
+        "prepare_unavailable_reason",
+        "record_unavailable_reason",
+        "suppression_reason",
+        "error",
+    ] {
         if let Some(reason) = report[reason].as_str() {
             messages.push(reason.to_owned());
         }
@@ -328,7 +372,15 @@ fn perform(
             return Ok(());
         }
         Action::Prepare => {
-            let request = lock(shared).begin_baked_surfaces(Actor::User)?;
+            let draw_lod =
+                u8::try_from(window.get_draw_lod()).map_err(|_| "Choose Draw LOD 0–7")?;
+            let request = lock(shared).begin_baked_surfaces_with_options(
+                Actor::User,
+                PreparationOptions {
+                    compiled_static_props: window.get_compiled_static_props(),
+                    draw_lod,
+                },
+            )?;
             let token = request.token();
             state.borrow_mut().token = Some(token);
             state.borrow_mut().offset = 0;
@@ -382,11 +434,18 @@ fn perform(
             let face = state
                 .selected_face
                 .and_then(|index| state.faces.get(index))
-                .ok_or("Choose a compiled face to frame")?;
-            session.frame_baked_surface(
+                .ok_or("Choose a compiled record to frame")?;
+            let target = match state.record_kind {
+                RecordKind::Faces => FrameTarget::Face(face.face),
+                RecordKind::StaticProps => FrameTarget::StaticProp(
+                    u32::try_from(face.face)
+                        .map_err(|_| "Static-prop ordinal exceeds its native range")?,
+                ),
+            };
+            session.frame_baked_surface_record(
                 Actor::User,
                 token.ok_or("Prepare baked surfaces first")?,
-                face.face,
+                target,
                 window.get_aspect(),
             )?;
         }
@@ -394,10 +453,18 @@ fn perform(
             offset = if direction < 0 {
                 offset.saturating_sub(MAX_ROWS)
             } else {
-                state.borrow().next_offset.ok_or("No next face page")?
+                state.borrow().next_offset.ok_or("No next record page")?
             };
         }
         Action::Style(_) | Action::Face(_) => unreachable!(),
+        Action::RecordKind(index) => {
+            state.borrow_mut().record_kind = match index {
+                0 => RecordKind::Faces,
+                1 => RecordKind::StaticProps,
+                _ => return Err("Choose Faces or Static props".into()),
+            };
+            offset = 0;
+        }
         Action::Prepare | Action::Inspect => {}
     }
     let token =
@@ -406,7 +473,12 @@ fn perform(
         } else {
             token
         };
-    let report = session.inspect_baked_surfaces(token, offset, MAX_ROWS)?;
+    let report = session.inspect_baked_surface_records(
+        token,
+        state.borrow().record_kind,
+        offset,
+        MAX_ROWS,
+    )?;
     state.borrow_mut().offset = offset;
     present(
         window,
@@ -483,6 +555,7 @@ pub(super) fn bind(
     window.on_refresh_inspection(move || callback(0));
     window.on_choose_style(handler(&window, access, &state, Action::Style));
     window.on_choose_face(handler(&window, access, &state, Action::Face));
+    window.on_choose_record_kind(handler(&window, access, &state, Action::RecordKind));
     window.on_page_faces(handler(&window, access, &state, Action::Page));
     let callback = handler(&window, access, &state, |_| Action::Frame);
     window.on_frame_face(move || callback(0));
@@ -530,6 +603,9 @@ impl Form {
         self.window.set_has_token(state.token.is_some());
         self.window.set_style_options(slint::ModelRc::default());
         show_lighting(&self.window, &state.lighting);
+        if let Err(error) = show_preparation(&self.window, &observation) {
+            self.window.set_message(error.into());
+        }
         show_style(&self.window, &state);
         show_state(&self.window, &observation);
         self.window.set_summary(

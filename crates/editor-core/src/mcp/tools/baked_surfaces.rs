@@ -1,11 +1,12 @@
 use super::super::*;
-use crate::session::baked_surfaces::MAX_ROWS;
+use crate::session::baked_surfaces::{FrameTarget, MAX_ROWS, PreparationOptions, RecordKind};
 use render::compiled_faces::{LightingSettings, StyleGain};
 
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InspectBakedSurfacesArgs {
     token: Option<String>,
+    record_kind: Option<RecordKind>,
     offset: Option<usize>,
     #[schemars(range(min = 1, max = MAX_ROWS))]
     limit: Option<usize>,
@@ -17,6 +18,9 @@ pub struct InspectBakedSurfacesArgs {
 pub enum SetBakedSurfacesArgs {
     Prepare {
         background: Option<bool>,
+        compiled_static_props: Option<bool>,
+        #[schemars(range(min = 0, max = 7))]
+        draw_lod: Option<u8>,
     },
     Cancel {
         token: String,
@@ -40,7 +44,9 @@ pub enum SetBakedSurfacesArgs {
     },
     Frame {
         token: String,
-        face: usize,
+        record_kind: Option<RecordKind>,
+        face: Option<usize>,
+        prop: Option<u32>,
         #[schemars(range(min = 0.01, max = 100))]
         aspect: Option<f32>,
     },
@@ -49,15 +55,16 @@ pub enum SetBakedSurfacesArgs {
 #[tool_router(router = baked_surfaces_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect the Baked surfaces viewport layer through the same Session operation as Build settings… / Build details… → Baked surfaces… → Inspect. Available before the first build; reports preparation availability and its refusal reason. Reads the retained successful owned BSP with exact independent LDR/HDR FACE and LIGHTING tables. Returns preparation token, loading/prepared/ready/stale/cancelled/unavailable/context-suppressed state, build/source/output and display-asset freshness, automatic material-directional reconstruction policy, effective stored-ID gains, exposure and bounded native-face pages. limit is 1–64; nonzero pages require the returned opaque token. Rows identify final world/detail, displacement and initial-pose brush-model surfaces, material and framing availability. Face ordinals belong to this preparation and selected channel; no authored picking or source identity is inferred. Does not initialize graphics, prepare assets, change options, select, frame or edit."
+        description = "Inspect Baked surfaces through Build settings… / Build details… → Baked surfaces… → Inspect and the shared Session operation. Available before the first build; reports preparation availability, token, loading/prepared/ready/stale/cancelled/unavailable/context-suppressed state, exact owned build/output/source and display-asset freshness, shared channel/exposure, FACE stored-ID gains and preparation options. record_kind defaults faces; static_props pages expose prepared native prop ordinals, selected hardware Draw LOD, available LODs and transformed mesh bounds. limit is 1–64; nonzero pages require the returned opaque token. Native ordinals belong to this preparation, never authored picking identities. Static VHV weight is fixed at1 with no style decomposition; FACE density and smoothing are inapplicable. inspect_baked_prop_vertices retains exact stored BGRA/section inspection. Does not prepare, initialize graphics, change options, select, frame or edit."
     )]
     pub(in crate::mcp) fn inspect_baked_surfaces(
         &self,
         Parameters(args): Parameters<InspectBakedSurfacesArgs>,
     ) -> ToolResult {
         run(|| {
-            self.session().inspect_baked_surfaces(
+            self.session().inspect_baked_surface_records(
                 args.token.as_deref().map(parse_token).transpose()?,
+                args.record_kind.unwrap_or_default(),
                 args.offset.unwrap_or(0),
                 args.limit.unwrap_or(MAX_ROWS),
             )
@@ -65,15 +72,25 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Manage Baked surfaces through the shared Session lifecycle. prepare requires a current successful owned lit build, resets lighting options and starts one cancellable preparation; optional background defaults false. cancel/clear/show/hide require the returned opaque token. Hide retains preparation and options; Clear cancels work and releases the layer. lighting requires token plus the complete atomic channel (ldr/hdr), exposure_ev (-8..8) and style_gains [{style,gain}] request. Gains address distinct stored style IDs 0–63 and are finite 0–2. Omitted style0 defaults to unity; explicit style0 is allowed; omitted nonzero styles are off. An absent selected channel or style refuses without changing valid options; there is no channel substitution. Directional normal-map reconstruction is automatic from actual compiled material and face data; exact map1–3 inspection remains in inspect_baked_lightmaps. The viewport linearly samples decoded RGBExp32/255 maps at native luxel centers, reconstructs admitted directional materials, sums weighted styles, multiplies compiled linear diffuse/blend and 2^EV, then applies Reinhard and one sRGB output conversion. No editor lights are added and no native appearance/adaptation parity is claimed. Show validates exact original build/output/source identities and separate guarded display assets before enabling the complete layer; unsupported inputs refuse explicitly. Editing tools and drafts suppress the compiled layer outside Objects mode. Working region intersects whole final-face bounds; authored-ID hiding is independent. frame requires token and selected-channel native face ordinal from inspection, optionally aspect (default1, finite0.01–100); it frames final world/detail, displacement or initial-pose brush geometry through the same checked Session operation. Only explicit frame changes the camera; map, history, authored selection and picking remain unchanged."
+        description = "Manage Baked surfaces through the shared Session lifecycle. prepare requires a current successful owned lit build; background defaults false, compiled_static_props defaults false and draw_lod defaults0 (explicit0–7). Compiled static props require exact published VHV/model/material inputs and the requested hardware LOD on every receiver; missing inputs/LODs fail the complete preparation without substitution. Changing Draw LOD requires Prepare. Prepare resets lighting settings; Clear cancels/releases and resets all options. Hide retains preparation/settings. cancel/clear/show/hide require the opaque token. lighting atomically sets channel ldr/hdr, exposure_ev -8..8 and style_gains [{style,gain}], distinct stored FACE IDs0–63 with finite gains0–2. FACE style0 defaults1, omitted other styles0; VHV has fixed static weight1 and no style decomposition. Channel/EV apply to both receiver kinds. VHV RGB decodes per hardware vertex as pow(2*byte/255,2.2_f32) before interpolation, then resolved diffuse/coverage, EV, Reinhard and one sRGB output; alpha coverage comes from materials. No native appearance/adaptation parity is claimed. Show validates original build/output/source identities and independent display assets. Working regions include whole final faces/props; only exact sealed source occurrences lose replaced authored draw surfaces, preserving authored picking/helpers/outlines and opted-out siblings. frame requires exactly face or prop from inspection; optional record_kind faces/static_props must match. It uses transformed mesh bounds and optional aspect (default1, finite0.01–100). Only Frame changes the camera."
     )]
     pub(in crate::mcp) fn set_baked_surfaces(
         &self,
         Parameters(args): Parameters<SetBakedSurfacesArgs>,
     ) -> ToolResult {
         run(|| match args {
-            SetBakedSurfacesArgs::Prepare { background } => {
-                let request = self.session().begin_baked_surfaces(Actor::Agent)?;
+            SetBakedSurfacesArgs::Prepare {
+                background,
+                compiled_static_props,
+                draw_lod,
+            } => {
+                let request = self.session().begin_baked_surfaces_with_options(
+                    Actor::Agent,
+                    PreparationOptions {
+                        compiled_static_props: compiled_static_props.unwrap_or(false),
+                        draw_lod: draw_lod.unwrap_or(0),
+                    },
+                )?;
                 let token = request.token();
                 if !background.unwrap_or(false) {
                     let prepared = request.run();
@@ -125,14 +142,31 @@ impl EditorServer {
             ),
             SetBakedSurfacesArgs::Frame {
                 token,
+                record_kind,
                 face,
+                prop,
                 aspect,
-            } => self.session().frame_baked_surface(
-                Actor::Agent,
-                parse_token(&token)?,
-                face,
-                aspect.unwrap_or(1.0),
-            ),
+            } => {
+                let kind = record_kind.unwrap_or(if prop.is_some() {
+                    RecordKind::StaticProps
+                } else {
+                    RecordKind::Faces
+                });
+                let target = match (kind, face, prop) {
+                    (RecordKind::Faces, Some(face), None) => FrameTarget::Face(face),
+                    (RecordKind::StaticProps, None, Some(prop)) => FrameTarget::StaticProp(prop),
+                    _ => return Err(
+                        "Frame requires exactly one matching native face or static-prop ordinal"
+                            .into(),
+                    ),
+                };
+                self.session().frame_baked_surface_record(
+                    Actor::Agent,
+                    parse_token(&token)?,
+                    target,
+                    aspect.unwrap_or(1.0),
+                )
+            }
         })
     }
 }

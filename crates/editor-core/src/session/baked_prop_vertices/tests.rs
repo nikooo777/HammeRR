@@ -47,6 +47,260 @@ fn token(report: &Value) -> String {
     report["build"]["token"].as_str().unwrap().to_owned()
 }
 
+fn prepared_surfaces(session: &mut Session, draw_lod: u8) -> (u64, Value) {
+    let request = session
+        .begin_baked_surfaces_with_options(
+            Actor::Agent,
+            crate::session::baked_surfaces::PreparationOptions {
+                compiled_static_props: true,
+                draw_lod,
+            },
+        )
+        .unwrap();
+    let token = request.token();
+    let report = session
+        .finish_baked_surfaces(Actor::Agent, request.run())
+        .unwrap();
+    (token, report)
+}
+
+fn surface_prop_rows(session: &mut Session, token: u64) -> Value {
+    session
+        .inspect_baked_surface_records(
+            Some(token),
+            crate::session::baked_surfaces::RecordKind::StaticProps,
+            0,
+            64,
+        )
+        .unwrap()
+}
+
+fn assert_compiled_surface_workflow(session: &mut Session) {
+    use crate::session::baked_surfaces::{FrameTarget, PreparationOptions};
+    use render::compiled_faces::{LightingSettings, StyleGain};
+
+    let preserved = (
+        session.document().vmf().clone(),
+        session.history_snapshot(),
+        session.selected_ids(),
+        session.camera(),
+    );
+    let (token, prepared) = prepared_surfaces(session, 1);
+    assert_eq!(prepared["status"], "prepared", "{prepared}");
+    let rows = surface_prop_rows(session, token);
+    assert_eq!(
+        rows["page"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["prop"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    assert_eq!(
+        rows["page"]["rows"][0]["bounds"],
+        json!([[-24., -24., 32.], [24., 24., 32.]])
+    );
+    let ldr = rows["page"]["rows"][0]["sample"].clone();
+    session
+        .set_baked_surfaces_visible(Actor::Agent, token, true)
+        .unwrap();
+    let before = session.build_scene();
+    let baked: Vec<_> = before
+        .vertices
+        .iter()
+        .filter(|vertex| vertex.lighting_receiver & 15 == 5)
+        .map(|vertex| (vertex.position, vertex.baked_irradiance))
+        .collect();
+    assert!(!baked.is_empty());
+    let opted_out = session
+        .model_instances(session.document())
+        .instances
+        .into_iter()
+        .find(|instance| instance.id == map_core::ObjectId::Entity(9100))
+        .unwrap();
+    for vertex in &opted_out.asset.model.vertices {
+        let position = opted_out.point(vertex.position).as_vec3().to_array();
+        assert!(
+            before
+                .vertices
+                .iter()
+                .any(|vertex| vertex.position == position && vertex.lighting_receiver == 0)
+        );
+    }
+    for instance in session.model_instances(session.document()).instances {
+        if instance.id == opted_out.id {
+            continue;
+        }
+        for vertex in &instance.asset.model.vertices {
+            let position = instance.point(vertex.position).as_vec3().to_array();
+            assert!(
+                !before
+                    .vertices
+                    .iter()
+                    .any(|vertex| vertex.position == position && vertex.lighting_receiver == 0)
+            );
+        }
+    }
+    let styles = LightingSettings {
+        style_gains: vec![StyleGain { style: 0, gain: 0. }],
+        ..LightingSettings::default()
+    };
+    session
+        .set_baked_surfaces_options(Actor::Agent, token, styles.clone())
+        .unwrap();
+    let zero_style = session.build_scene();
+    assert_eq!(
+        zero_style
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.lighting_receiver & 15 == 5)
+            .map(|vertex| (vertex.position, vertex.baked_irradiance))
+            .collect::<Vec<_>>(),
+        baked
+    );
+    let hdr = LightingSettings {
+        channel: render::LightingChannel::Hdr,
+        exposure_ev: 1.,
+        ..styles
+    };
+    session
+        .set_baked_surfaces_options(Actor::Agent, token, hdr)
+        .unwrap();
+    let hdr_rows = surface_prop_rows(session, token);
+    let hdr_sample = &hdr_rows["page"]["rows"][0]["sample"];
+    assert_ne!(hdr_sample["bgra"], ldr["bgra"]);
+    for channel in 0..3 {
+        assert_eq!(
+            hdr_sample["exposed"][channel].as_f64().unwrap(),
+            hdr_sample["pre_ev"][channel].as_f64().unwrap() * 2.
+        );
+    }
+    let options = session.baked_surfaces_observation();
+    session
+        .set_baked_surfaces_visible(Actor::Agent, token, false)
+        .unwrap();
+    assert_eq!(
+        session.baked_surfaces_observation()["lighting_options"],
+        options["lighting_options"]
+    );
+    assert_eq!(
+        session.baked_surfaces_observation()["preparation_options"],
+        options["preparation_options"]
+    );
+    session
+        .set_baked_surfaces_visible(Actor::Agent, token, true)
+        .unwrap();
+    let view = session.view();
+    let guard = session.baked_surfaces_render_guard(view).unwrap();
+    session
+        .verify_baked_surfaces_render(guard.as_ref(), view)
+        .unwrap();
+    let framed = session
+        .frame_baked_surface_record(Actor::Agent, token, FrameTarget::StaticProp(1), 1.5)
+        .unwrap();
+    assert_eq!(framed["bounds"], rows["page"]["rows"][0]["bounds"]);
+    session.set_camera(preserved.3);
+    assert_eq!(
+        (
+            session.document().vmf().clone(),
+            session.history_snapshot(),
+            session.selected_ids(),
+            session.camera()
+        ),
+        preserved
+    );
+    let before_invalid = session.baked_surfaces_observation();
+    assert!(
+        session
+            .begin_baked_surfaces_with_options(
+                Actor::Agent,
+                PreparationOptions {
+                    compiled_static_props: true,
+                    draw_lod: 8
+                }
+            )
+            .is_err()
+    );
+    assert_eq!(session.baked_surfaces_observation(), before_invalid);
+    let (_, unavailable) = prepared_surfaces(session, 7);
+    assert_eq!(unavailable["status"], "unavailable", "{unavailable}");
+    assert!(
+        unavailable["error"]
+            .as_str()
+            .unwrap()
+            .contains("draw LOD 7")
+    );
+    assert_eq!(unavailable["complete"], false);
+    let (token, current) = prepared_surfaces(session, 0);
+    assert_eq!(current["status"], "prepared", "{current}");
+    session.clear_baked_surfaces(Actor::Agent, token).unwrap();
+    assert_eq!(
+        session.baked_surfaces_observation()["preparation_options"],
+        json!(PreparationOptions::default())
+    );
+}
+
+fn assert_nested_compiled_surfaces_preserve_opted_out_siblings(session: &mut Session) {
+    let view = session.view();
+    session.set_view(render::ViewOptions {
+        instance_contents: true,
+        ..view
+    });
+    let request = session
+        .begin_instance_contents_refresh(Actor::Agent)
+        .unwrap();
+    let refreshed = session
+        .finish_instance_contents_refresh(Actor::Agent, request.run())
+        .unwrap();
+    assert_eq!(refreshed["state"], "ready", "{refreshed}");
+    let ordinary = session.build_scene();
+    let (token, prepared) = prepared_surfaces(session, 0);
+    assert_eq!(prepared["status"], "prepared", "{prepared}");
+    session
+        .set_baked_surfaces_visible(Actor::Agent, token, true)
+        .unwrap();
+    let preview = session.instance_contents_preview(true);
+    let mut replaced = 0;
+    let mut authored = 0;
+    for (instance, source) in preview.models.iter().zip(&preview.model_sources) {
+        let compiled = session.baked_static_prop_replaces(|origin| source.matches(origin));
+        assert_eq!(compiled, instance.origin.z == 32.);
+        if compiled {
+            replaced += 1;
+        } else {
+            authored += 1;
+        }
+    }
+    assert_eq!((replaced, authored), (4, 4));
+    let shown = session.build_scene();
+    for (instance, source) in preview.models.iter().zip(&preview.model_sources) {
+        let compiled = session.baked_static_prop_replaces(|origin| source.matches(origin));
+        for vertex in &instance.asset.model.vertices {
+            let position = instance.point(vertex.position).as_vec3().to_array();
+            assert_eq!(
+                shown
+                    .vertices
+                    .iter()
+                    .any(|vertex| vertex.position == position && vertex.lighting_receiver == 0),
+                !compiled
+            );
+        }
+    }
+    assert!(
+        shown
+            .vertices
+            .iter()
+            .any(|vertex| vertex.lighting_receiver & 15 == 5 && vertex.position[2] == 32.)
+    );
+    assert_eq!(
+        shown.selection_outline_ranges,
+        ordinary.selection_outline_ranges
+    );
+    session.clear_baked_surfaces(Actor::Agent, token).unwrap();
+    session.set_view(view);
+}
+
 #[test]
 fn actual_publication_pages_native_holes_all_lods_duplicates_and_exact_bytes() {
     let (_directory, mut session, _source) = compiled(true);
@@ -159,6 +413,7 @@ fn actual_publication_pages_native_holes_all_lods_duplicates_and_exact_bytes() {
     assert_eq!(session.document().vmf(), &vmf);
     assert_eq!(session.history_snapshot(), history);
     assert_eq!(session.camera(), camera);
+    assert_compiled_surface_workflow(&mut session);
     session.compiled.as_mut().unwrap().static_prop_origins =
         Err("Captured source metadata is unavailable".into());
     let missing = session
@@ -303,6 +558,7 @@ fn repeated_nested_prop_addresses_survive_child_edits_without_changing_native_by
     let source_camera = session.camera();
     let source_map = session.document().vmf().clone();
     let source_history = session.history_snapshot();
+    assert_nested_compiled_surfaces_preserve_opted_out_siblings(&mut session);
     let face = map_core::surface::FaceId {
         solid: source_map.world.solids[0].id,
         side: source_map.world.solids[0].sides[0].id,

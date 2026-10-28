@@ -21,6 +21,8 @@ pub(super) struct RetainedBuild {
     pub(super) token: u64,
     pub(super) output: compiler::FileIdentity,
     pub(super) origins: Arc<compiler::face_origins::FaceOrigins>,
+    pub(super) static_prop_origins: Option<Arc<compiler::static_prop_origins::StaticPropOrigins>>,
+    pub(super) prop_lighting_guard: Option<compiler::asset_sources::AssetSourceGuard>,
     source: Option<compiler::FileIdentity>,
     dependencies: Option<compiler::instances::DependencyGuard>,
     assets: Vec<compiler::asset_sources::AssetSourceGuard>,
@@ -50,6 +52,8 @@ impl RetainedBuild {
                 .map_err(Clone::clone)?
                 .clone(),
             origins: build.face_origins.as_ref().map_err(Clone::clone)?.clone(),
+            static_prop_origins: build.static_prop_origins.as_ref().ok().cloned(),
+            prop_lighting_guard: build.prop_lighting_guard.clone(),
             source: build
                 .lightmap_identity
                 .source

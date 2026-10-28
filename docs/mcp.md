@@ -420,6 +420,12 @@ For [baked surfaces](baked-surfaces.md), call `set_baked_surfaces` with
 face pages with `inspect_baked_surfaces`. Pass its `token` to `show`, `hide`,
 `clear`, `cancel`, `frame` and nonzero inspection pages. Frame also needs the
 selected channel's `face` ordinal; optional `aspect` is finite 0.01–100.
+Set `compiled_static_props:true` and `draw_lod:0` through `7` on Prepare to
+include generated static-prop vertex lighting. Defaults are false and 0.
+An unavailable LOD or required input fails preparation without substitution.
+Use `record_kind:"static_props"` on inspection and `prop` instead of `face`
+on Frame. Change LOD through a new preparation. Prop ordinals identify this
+preparation; exact stored colours remain in `inspect_baked_prop_vertices`.
 
 Send channel, exposure and stored-ID gains as one atomic update:
 
@@ -427,10 +433,11 @@ Send channel, exposure and stored-ID gains as one atomic update:
 {"action":"lighting","token":"…","channel":"hdr","exposure_ev":1,"style_gains":[{"style":0,"gain":0.5},{"style":2,"gain":1}]}
 ```
 
-Gains are finite 0–2 for distinct available stored IDs 0–63. Omitted style 0
+Gains affect faces and are finite 0–2 for distinct available stored IDs 0–63. Omitted style 0
 means 1; other omitted IDs mean 0. EV is −8 to +8. An absent channel or style
 refuses without changing the previous options. Prepare and Clear reset options;
-Hide retains them. `render_view.baked_surfaces` reports the actual layer state,
+Hide retains them. Static props keep baked weight 1; channel and EV apply to both.
+`render_view.baked_surfaces` reports the actual layer state,
 sampling and material policy. The layer uses current owned output and separately
 guarded display assets; editing contexts can suppress it. Authored picking,
 hiding and history remain separate from native face ordinals.

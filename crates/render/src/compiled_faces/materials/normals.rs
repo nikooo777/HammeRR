@@ -1,6 +1,6 @@
 use glam::{DVec2, DVec3};
 
-use super::{Material, NormalEncoding, NormalTexture};
+use super::{Material, MaterialLighting, NormalEncoding, NormalTexture};
 
 const MAX_PROOF_STEPS: usize = 1_048_576;
 const MAX_POLYGON_VERTICES: usize = 64;
@@ -42,12 +42,14 @@ pub fn validate_directional_inputs_controlled(
 ) -> Result<(), String> {
     check()?;
     let Some(primary) = &material.normals[0] else {
-        if material.directional || material.normals[1].is_some() {
+        if material.lighting == (MaterialLighting::Lightmap { directional: true })
+            || material.normals[1].is_some()
+        {
             return Err("Directional material requires its actual primary normal input".into());
         }
         return Ok(());
     };
-    if !material.directional || material.unlit {
+    if material.lighting != (MaterialLighting::Lightmap { directional: true }) {
         return Err("Normal reconstruction requires a lit directional material".into());
     }
     for normal in material.normals.iter().flatten() {
@@ -238,7 +240,7 @@ fn certify(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiled_faces::materials::{Kind, Texture};
+    use crate::compiled_faces::materials::{Coverage, Kind, Texture};
     use std::sync::Arc;
 
     fn material(first: Vec<[f32; 4]>, second: Option<Vec<[f32; 4]>>) -> Material {
@@ -259,8 +261,9 @@ mod tests {
             normal_transform: [[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]; 2],
             color: [1.0; 3],
             detail_alpha_mask: false,
-            directional: true,
-            unlit: false,
+            lighting: MaterialLighting::Lightmap { directional: true },
+            coverage: Coverage::Opaque,
+            nocull: false,
         }
     }
 

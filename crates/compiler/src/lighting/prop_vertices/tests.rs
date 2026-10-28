@@ -120,10 +120,29 @@ fn model_transform_rotates_normals_and_keeps_the_world_sample_at_the_vertex() {
         angles: [0.0, 90.0, 0.0],
         ..Default::default()
     };
-    let sample = sample(&vertex, &Placement::new(&prop)).unwrap();
-    assert!(sample.point.abs_diff_eq(DVec3::new(4.0, 6.0, 6.0), 1e-12));
-    assert!(sample.normal.abs_diff_eq(DVec3::Y, 1e-12));
-    assert!(sample.origin.abs_diff_eq(DVec3::new(4.0, 6.0, 6.0), 1e-12));
+    let sampled = sample(&vertex, &prop.transform().unwrap()).unwrap();
+    assert!(sampled.point.abs_diff_eq(DVec3::new(4.0, 6.0, 6.0), 1e-12));
+    assert!(sampled.normal.abs_diff_eq(DVec3::Y, 1e-12));
+    assert!(sampled.origin.abs_diff_eq(DVec3::new(4.0, 6.0, 6.0), 1e-12));
+    let prop = StaticProp {
+        angles: [30.0, 90.0, 90.0],
+        flags: 2,
+        lighting_origin: [100.0, 200.0, 300.0],
+        ..prop
+    };
+    let vertex = Vertex {
+        position: [2.0, 4.0, 8.0],
+        ..vertex
+    };
+    let sample = sample(&vertex, &prop.transform().unwrap()).unwrap();
+    let point = DVec3::new(12.0, 8.732050807568877, 8.464101615137753);
+    assert!(sample.point.abs_diff_eq(point, 1e-12));
+    assert!(sample.origin.abs_diff_eq(point, 1e-12));
+    assert!(
+        sample
+            .normal
+            .abs_diff_eq(DVec3::new(0.0, 0.8660254037844386, -0.5), 1e-12)
+    );
 }
 
 #[test]

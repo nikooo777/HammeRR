@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io;
 
-use glam::{DQuat, DVec3, EulerRot};
+use glam::{DAffine3, DVec3};
 use source_formats::{
     bsp::{Bsp, LightingKind, StaticProp},
     gamefs::{GameFs, asset_relative},
@@ -21,6 +21,7 @@ use crate::{Control, Diagnostic, PropVertexLightingStats, Report};
 use crate::{tree::Tree, visibility::Visibility};
 
 mod assets;
+pub use assets::load_prop_vertex_material;
 mod color;
 mod indirect;
 #[cfg(test)]
@@ -372,25 +373,10 @@ pub(super) fn prepare(
     }))
 }
 
-struct Placement {
-    origin: DVec3,
-    rotation: DQuat,
-}
-
-impl Placement {
-    fn new(prop: &StaticProp) -> Self {
-        let angles = prop.angles.map(|value| f64::from(value).to_radians());
-        Self {
-            origin: DVec3::from_array(prop.origin.map(f64::from)),
-            rotation: DQuat::from_euler(EulerRot::ZYX, angles[1], angles[0], angles[2]),
-        }
-    }
-}
-
-fn sample(vertex: &Vertex, placement: &Placement) -> Result<receivers::Sample, String> {
-    let point =
-        placement.origin + placement.rotation * DVec3::from_array(vertex.position.map(f64::from));
-    let normal = (placement.rotation * DVec3::from_array(vertex.normal.map(f64::from)))
+fn sample(vertex: &Vertex, placement: &DAffine3) -> Result<receivers::Sample, String> {
+    let point = placement.transform_point3(DVec3::from_array(vertex.position.map(f64::from)));
+    let normal = placement
+        .transform_vector3(DVec3::from_array(vertex.normal.map(f64::from)))
         .try_normalize()
         .ok_or("Baked prop vertex normal is invalid")?;
     if !point.is_finite() || point.abs().max_element() > MAX_COMPILE_COORD {
@@ -505,7 +491,10 @@ pub(super) fn bake_channel(
             super::ReceiverAngularMode::IgnoreNormals => sphere_cone,
         };
         let data = &prepared.models[receiver.model];
-        let placement = Placement::new(&receiver.prop);
+        let placement = receiver
+            .prop
+            .transform()
+            .map_err(|error| error.to_string())?;
         let _cache = budget.reserve::<Option<vhv::Bgra8>>(data.model.vertices.len())?;
         let _meshes = budget.reserve::<vhv::Mesh>(data.layout.sections.len())?;
         let _colors = budget.reserve::<vhv::Bgra8>(data.layout.vertices.len())?;

@@ -6,6 +6,7 @@ use source_formats::vtf::{ImageFormat, Vtf};
 use wgpu::util::DeviceExt;
 
 use crate::camera::Camera;
+use crate::compiled_faces::materials::MaterialLighting;
 use crate::materials::{MaterialId, MaterialInfo, MaterialLibrary};
 use crate::scene::{Batch, LineVertex, SceneMesh, Vertex};
 
@@ -444,6 +445,7 @@ pub struct Renderer {
     translucent_pipeline: wgpu::RenderPipeline,
     baked_surface_pipeline: wgpu::RenderPipeline,
     unlit_surface_pipeline: wgpu::RenderPipeline,
+    vertex_surface_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     sky_layout: wgpu::BindGroupLayout,
@@ -701,7 +703,7 @@ impl Renderer {
             ],
             immediate_size: 0,
         });
-        let baked_pipeline = |label, entry_point, layout: &wgpu::PipelineLayout| {
+        let baked_pipeline = |label, entry_point, layout: &wgpu::PipelineLayout, cull_mode| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(layout),
@@ -718,7 +720,7 @@ impl Renderer {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 front_face: wgpu::FrontFace::Cw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
@@ -739,18 +741,33 @@ impl Renderer {
             cache: None,
         })
         };
-        let baked_surface_pipeline = baked_pipeline("baked surfaces", "fs_baked", &baked_layout);
+        let baked_surface_pipeline = baked_pipeline(
+            "baked surfaces",
+            "fs_baked",
+            &baked_layout,
+            Some(wgpu::Face::Back),
+        );
         let unlit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("compiled unlit surfaces"),
             bind_group_layouts: &[
                 Some(&globals_layout),
                 Some(&baked_faces.material_layout),
-                Some(&baked_faces.unlit_layout),
+                Some(&baked_faces.settings_layout),
             ],
             immediate_size: 0,
         });
-        let unlit_surface_pipeline =
-            baked_pipeline("compiled unlit surfaces", "fs_baked_unlit", &unlit_layout);
+        let unlit_surface_pipeline = baked_pipeline(
+            "compiled unlit surfaces",
+            "fs_baked_unlit",
+            &unlit_layout,
+            Some(wgpu::Face::Back),
+        );
+        let vertex_surface_pipeline = baked_pipeline(
+            "compiled prop vertex surfaces",
+            "fs_baked_vertex",
+            &unlit_layout,
+            None,
+        );
 
         let icon_shader = device.create_shader_module(wgpu::include_wgsl!("icons.wgsl"));
         let icon_pipeline = |label, blend| {
@@ -874,6 +891,7 @@ impl Renderer {
             translucent_pipeline,
             baked_surface_pipeline,
             unlit_surface_pipeline,
+            vertex_surface_pipeline,
             line_pipeline,
             sky_pipeline,
             sky_layout,
@@ -1533,19 +1551,20 @@ impl Renderer {
                         let material = scene.baked_face_materials[draw.batch.material]
                             .as_ref()
                             .expect("validated baked surface material");
-                        pass.set_pipeline(if material.unlit {
-                            &self.unlit_surface_pipeline
-                        } else {
-                            &self.baked_surface_pipeline
+                        pass.set_pipeline(match material.lighting {
+                            MaterialLighting::Unlit => &self.unlit_surface_pipeline,
+                            MaterialLighting::Lightmap { .. } => &self.baked_surface_pipeline,
+                            MaterialLighting::Vertex => &self.vertex_surface_pipeline,
                         });
                         pass.set_bind_group(1, &material.binding, &[]);
-                        let lighting = if material.unlit {
-                            &lighting.unlit_binding
-                        } else {
-                            lighting
+                        let lighting = match material.lighting {
+                            MaterialLighting::Unlit | MaterialLighting::Vertex => {
+                                &lighting.settings_binding
+                            }
+                            MaterialLighting::Lightmap { .. } => lighting
                                 .lighting_binding
                                 .as_ref()
-                                .expect("validated baked surface samples")
+                                .expect("validated baked surface samples"),
                         };
                         pass.set_bind_group(2, lighting, &[]);
                         let batch = draw.batch;
@@ -1992,6 +2011,147 @@ fn checkerboard_texture(ctx: &GpuContext) -> wgpu::Texture {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "requires offscreen GPU; run the compiled prop vertex acceptance gate explicitly"]
+    fn compiled_prop_pixels_interpolate_decoded_vertex_light_before_shared_exposure() {
+        use super::*;
+        use crate::compiled_faces::materials::{Coverage, Kind, Material, Texture};
+        use crate::compiled_faces::{BAKED_PROP_RECEIVER, LightingData};
+        use std::sync::Arc;
+
+        let encoded: [[u8; 3]; 3] = [[0, 128, 32], [239, 16, 255], [64, 239, 128]];
+        let vertices = [[-24.0, -24.0, 0.0], [24.0, -24.0, 0.0], [-24.0, 24.0, 0.0]]
+            .into_iter()
+            .zip(encoded)
+            .map(|(position, color)| Vertex {
+                position,
+                normal: [0.0, 0.0, 1.0],
+                uv: [0.0; 2],
+                color: [255; 4],
+                lightmap: [0.0; 3],
+                smoothing: 0,
+                opacity: 1.0,
+                texture_alpha: 0,
+                tangent: [0.0; 4],
+                lighting_receiver: BAKED_PROP_RECEIVER,
+                baked_irradiance: color.map(|byte| (2.0 * f32::from(byte) / 255.0).powf(2.2_f32)),
+            })
+            .collect();
+        let material = Arc::new(Material {
+            name: "literal/compiled-prop".into(),
+            kind: Kind::Single,
+            diffuse: [
+                Some(Arc::new(Texture {
+                    width: 1,
+                    height: 1,
+                    pixels: vec![[0.25, 0.5, 0.75, 1.0]],
+                })),
+                None,
+            ],
+            normals: [None, None],
+            diffuse_transform: [[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]; 2],
+            normal_transform: [[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]; 2],
+            color: [1.0; 3],
+            detail_alpha_mask: false,
+            lighting: MaterialLighting::Vertex,
+            coverage: Coverage::Opaque,
+            nocull: false,
+        });
+        let mut mesh = SceneMesh {
+            baked_faces: None,
+            baked_face_materials: vec![Some(material)],
+            baked_face_batches: 0..1,
+            baked_face_visible_surfaces: 1,
+            detail_billboards: vec![],
+            detail_parts: vec![],
+            reference_lines: vec![],
+            reference_selection_ranges: vec![],
+            lighting: Default::default(),
+            normal_maps: Default::default(),
+            issues: Default::default(),
+            skybox: None,
+            sky3d: None,
+            icons: vec![],
+            vertices,
+            indices: vec![0, 1, 2],
+            batches: vec![Batch {
+                material: 0,
+                first_index: 0,
+                index_count: 3,
+                rope: false,
+                model_translucent: false,
+            }],
+            lines: vec![],
+            selection_outline_ranges: vec![],
+            leak_lines: vec![],
+            wire_lines: vec![],
+            tool_wire_lines: vec![],
+            rope_lines: vec![],
+            mins: glam::Vec3::new(-24.0, -24.0, 0.0),
+            maxs: glam::Vec3::new(24.0, 24.0, 0.0),
+            stats: Default::default(),
+        };
+        let ctx = GpuContext::new().unwrap();
+        let mut renderer = Renderer::new(&ctx);
+        let library = MaterialLibrary::default();
+        let camera = Camera::planar(crate::camera::Projection::Top, glam::Vec3::ZERO, 64.0);
+        let options = ViewOptions {
+            grid_visible: false,
+            ..Default::default()
+        };
+        let weights = [1.0 / 3.0, 16.5 / 48.0, 15.5 / 48.0];
+        let display = |radiance: f64| {
+            let linear = radiance / (1.0 + radiance);
+            let srgb = if linear <= 0.0031308 {
+                linear * 12.92
+            } else {
+                1.055 * linear.powf(1.0 / 2.4) - 0.055
+            };
+            (srgb * 255.0).round() as u8
+        };
+        for exposure_ev in [0.0_f32, 2.0] {
+            mesh.baked_faces = Some(Arc::new(LightingData {
+                samples: vec![],
+                faces: vec![],
+                exposure_ev,
+                channel: crate::LightingChannel::Ldr,
+                effective_style_gains: vec![],
+            }));
+            let gpu = renderer.upload(&ctx, &mesh, &library).unwrap();
+            let pixels = renderer
+                .render_to_rgba_checked(&ctx, &gpu, &camera, &options, 64, 64)
+                .unwrap();
+            let actual = &pixels[(40 * 64 + 24) * 4..][..4];
+            let exposure = 2.0_f64.powf(f64::from(exposure_ev));
+            for (channel, diffuse) in [0.25, 0.5, 0.75].into_iter().enumerate() {
+                let light: f64 = encoded
+                    .iter()
+                    .zip(weights)
+                    .map(|(color, weight)| {
+                        (2.0 * f64::from(color[channel]) / 255.0).powf(f64::from(2.2_f32)) * weight
+                    })
+                    .sum();
+                let expected = display(light * diffuse * exposure);
+                assert!(
+                    actual[channel].abs_diff(expected) <= 1,
+                    "{exposure_ev} EV: {actual:?}, channel {channel}, expected {expected}"
+                );
+                if channel == 0 {
+                    let encoded_mean: f64 = encoded
+                        .iter()
+                        .zip(weights)
+                        .map(|(color, weight)| f64::from(color[channel]) * weight)
+                        .sum();
+                    let wrong = display(
+                        (2.0 * encoded_mean / 255.0).powf(f64::from(2.2_f32)) * diffuse * exposure,
+                    );
+                    assert!(actual[channel].abs_diff(wrong) > 20);
+                }
+            }
+            assert_eq!(actual[3], 255);
+        }
+    }
+
     #[test]
     fn surface_shading_uniforms_preserve_modes_and_exclude_editor_materials() {
         use super::*;

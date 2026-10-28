@@ -388,6 +388,7 @@ impl Library {
 #[derive(Clone)]
 pub struct Instance {
     pub id: ObjectId,
+    pub draw_surface: bool,
     pub asset: Arc<Asset>,
     pub origin: DVec3,
     pub rotation: DQuat,
@@ -490,6 +491,7 @@ impl Instance {
         let radians = angles.map(|angle| angle.rem_euclid(360.0).to_radians());
         Self {
             id: ObjectId::Entity(0),
+            draw_surface: true,
             asset,
             origin,
             rotation: DQuat::from_euler(EulerRot::ZYX, radians.y, radians.x, radians.z),
@@ -596,6 +598,7 @@ impl Instance {
         let angles = angles.map(|value| value.rem_euclid(360.0).to_radians());
         let instance = Self {
             id: ObjectId::Entity(entity.id),
+            draw_surface: true,
             asset,
             origin,
             rotation: DQuat::from_euler(EulerRot::ZYX, angles.y, angles.x, angles.z),

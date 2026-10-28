@@ -173,6 +173,7 @@ pub struct Presentation {
     pub owners: BTreeSet<u32>,
     pub report: Value,
     pub models: Vec<render::models::Instance>,
+    pub(in crate::session) model_sources: Vec<models::ModelSource>,
 }
 
 fn bounded(value: &str) -> String {
@@ -1321,6 +1322,20 @@ impl Session {
             .unwrap_or_default();
         Presentation {
             mesh: ready.map(|ready| ready.mesh.clone()),
+            model_sources: self
+                .cached_instance_models()
+                .as_ref()
+                .and_then(|cached| cached.result.as_ref().ok())
+                .filter(|_| ready.is_some())
+                .map(|geometry| {
+                    geometry
+                        .sources
+                        .iter()
+                        .filter(|source| owners.contains(&source.owner))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default(),
             models: self
                 .cached_instance_models()
                 .as_ref()

@@ -24,6 +24,7 @@ pub use progress::{
     LightingPhaseProgress, LightingProgress, MAX_LIGHTING_CONTRIBUTORS,
 };
 mod prop_vertices;
+pub use prop_vertices::load_prop_vertex_material;
 mod props;
 mod radiance;
 mod receivers;

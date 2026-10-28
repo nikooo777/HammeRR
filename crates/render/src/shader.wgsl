@@ -393,6 +393,20 @@ fn fs_baked_unlit(in: VertexOut) -> @location(0) vec4<f32> {
     return vec4<f32>(baked_fog(in, color), 1.0);
 }
 
+@fragment
+fn fs_baked_vertex(in: VertexOut) -> @location(0) vec4<f32> {
+    if (baked_material.options.w & 4u) != 0u {
+        let coverage = baked_texture(base_texture, baked_uv(in.uv, baked_material.diffuse_transform[0])).a;
+        if coverage < 0.5 { discard; }
+    }
+    if globals.surface_view.x != 0u {
+        return vec4<f32>(vec3<f32>(0.65) * in.color.rgb, 1.0);
+    }
+    let diffuse = baked_diffuse(in);
+    let color = baked_tonemap(diffuse, in.color.rgb * baked_material.color.rgb, in.baked_irradiance, vec3<f32>(1.0), 1.0);
+    return vec4<f32>(baked_fog(in, color), 1.0);
+}
+
 struct LineOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) color: vec4<f32>,

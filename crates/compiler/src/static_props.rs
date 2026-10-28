@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use glam::{DQuat, DVec3, EulerRot};
+#[cfg(test)]
+use glam::EulerRot;
+use glam::{DQuat, DVec3};
 use source_formats::bsp::{self, Bsp, Leaf, Model, Node, Plane, StaticProp, StaticProps, contents};
 use source_formats::gamefs::{GameFs, asset_relative};
 use source_formats::mdl::ModelHeader;
@@ -447,12 +449,11 @@ pub(crate) fn bake(
                     ));
                 }
             }
-            let angles = DVec3::from_array(prop.angles.map(f64::from)).map(f64::to_radians);
-            let rotation = DQuat::from_euler(EulerRot::ZYX, angles.y, angles.x, angles.z);
+            let transform = prop.transform().map_err(|error| error.to_string())?;
             let leaves = space.prop_leaves(
                 asset.header,
-                DVec3::from_array(prop.origin.map(f64::from)),
-                rotation,
+                transform.translation,
+                DQuat::from_mat3(&transform.matrix3),
                 control,
             )?;
             if props.leaves.len() + leaves.len() > bsp::MAX_STATIC_PROP_LEAVES {

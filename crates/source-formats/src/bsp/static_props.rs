@@ -50,6 +50,28 @@ impl Default for StaticProp {
     }
 }
 
+impl StaticProp {
+    pub fn transform(&self) -> io::Result<glam::DAffine3> {
+        if self
+            .origin
+            .into_iter()
+            .chain(self.angles)
+            .any(|value| !value.is_finite())
+        {
+            return Err(invalid("static-prop placement must be finite"));
+        }
+        let angles = self.angles.map(|value| f64::from(value).to_radians());
+        let rotation =
+            glam::DQuat::from_euler(glam::EulerRot::ZYX, angles[1], angles[0], angles[2]);
+        let origin = glam::DVec3::from_array(self.origin.map(f64::from));
+        let transform = glam::DAffine3::from_rotation_translation(rotation, origin);
+        if !transform.is_finite() {
+            return Err(invalid("static-prop transform must be finite"));
+        }
+        Ok(transform)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct StaticProps {
     pub version: u16,

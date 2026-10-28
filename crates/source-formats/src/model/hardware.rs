@@ -42,6 +42,8 @@ pub struct HardwareSection {
     pub group: usize,
     pub part: usize,
     pub vertices: Range<usize>,
+    /// Triangle-list indices into this section's hardware vertex range.
+    pub triangle_indices: Vec<u32>,
 }
 
 #[derive(Debug)]
@@ -60,6 +62,11 @@ impl HardwareLayout {
         std::mem::size_of::<Self>()
             + self.sections.capacity() * std::mem::size_of::<HardwareSection>()
             + self.vertices.capacity() * std::mem::size_of::<u32>()
+            + self
+                .sections
+                .iter()
+                .map(|section| section.triangle_indices.capacity() * std::mem::size_of::<u32>())
+                .sum::<usize>()
     }
 }
 

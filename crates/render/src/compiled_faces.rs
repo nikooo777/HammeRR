@@ -12,6 +12,7 @@ use crate::{LightingChannel, SceneMesh};
 
 mod decode;
 pub mod materials;
+pub mod props;
 mod settings;
 #[cfg(test)]
 mod tests;
@@ -21,6 +22,7 @@ pub use settings::{LightingSettings, StyleGain};
 pub const MAX_CPU_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_GPU_BYTES: usize = 256 * 1024 * 1024;
 pub const BAKED_FACE_RECEIVER: u32 = 4;
+pub const BAKED_PROP_RECEIVER: u32 = 5;
 const RECEIVER_SHIFT: u32 = 4;
 const GPU_FACE_BYTES: usize = 32;
 const GPU_PARAMS_BYTES: usize = 16;
@@ -388,9 +390,16 @@ impl Scene {
                     .get(part.material)
                     .and_then(Option::as_ref)
                     .is_none_or(|material| {
-                        material.unlit
-                            != (channel.surfaces[part.surface].source
-                                == LightingSource::UnlitMaterial)
+                        let surface = &channel.surfaces[part.surface];
+                        material.lighting
+                            != match surface.source {
+                                LightingSource::UnlitMaterial => materials::MaterialLighting::Unlit,
+                                LightingSource::BakedLightmap => {
+                                    materials::MaterialLighting::Lightmap {
+                                        directional: surface.maps == 4,
+                                    }
+                                }
+                            }
                     })
             })
         {

@@ -8,10 +8,12 @@ use wgpu::util::DeviceExt;
 
 use super::GpuContext;
 use crate::compiled_faces::materials::{
-    Kind, Material, NormalEncoding, Texture, validate_directional_inputs,
+    Coverage, Kind, Material, MaterialLighting, NormalEncoding, Texture,
+    validate_directional_inputs,
 };
 use crate::compiled_faces::{
-    BAKED_FACE_RECEIVER, LightingData, MAX_EXPOSURE_EV, MAX_GPU_BYTES, MIN_EXPOSURE_EV,
+    BAKED_FACE_RECEIVER, BAKED_PROP_RECEIVER, LightingData, MAX_EXPOSURE_EV, MAX_GPU_BYTES,
+    MIN_EXPOSURE_EV,
 };
 
 const RETIRE_TIMEOUT: Duration = Duration::from_secs(1);
@@ -57,7 +59,7 @@ impl Drop for Reservation {
 pub(super) struct Resources {
     source: Arc<LightingData>,
     pub lighting_binding: Option<wgpu::BindGroup>,
-    pub unlit_binding: wgpu::BindGroup,
+    pub settings_binding: wgpu::BindGroup,
     _reservation: Reservation,
 }
 
@@ -73,14 +75,14 @@ struct MaterialParams {
 pub(super) struct MaterialResources {
     source: Arc<Material>,
     pub binding: wgpu::BindGroup,
-    pub unlit: bool,
+    pub lighting: MaterialLighting,
     _reservation: Reservation,
 }
 
 pub(super) struct State {
     pub layout: wgpu::BindGroupLayout,
     pub material_layout: wgpu::BindGroupLayout,
-    pub unlit_layout: wgpu::BindGroupLayout,
+    pub settings_layout: wgpu::BindGroupLayout,
     resources: HashMap<usize, Weak<Resources>>,
     materials: HashMap<usize, Weak<MaterialResources>>,
     geometries: Vec<Weak<Reservation>>,
@@ -128,6 +130,29 @@ impl State {
         {
             return Err("Baked surface aggregate geometry, lighting and material payload exceeds GPU limits".into());
         }
+        for vertex in &mesh.vertices {
+            if vertex.lighting_receiver & RECEIVER_MASK == BAKED_PROP_RECEIVER
+                && (vertex
+                    .position
+                    .iter()
+                    .chain(&vertex.normal)
+                    .chain(&vertex.uv)
+                    .chain(&vertex.lightmap)
+                    .chain(&vertex.tangent)
+                    .any(|value| !value.is_finite())
+                    || vertex
+                        .baked_irradiance
+                        .iter()
+                        .any(|value| !value.is_finite() || *value < 0.0)
+                    || !vertex.opacity.is_finite()
+                    || !(0.0..=1.0).contains(&vertex.opacity))
+            {
+                return Err(
+                    "Compiled prop hardware vertex contains invalid geometry or linear radiance"
+                        .into(),
+                );
+            }
+        }
         for batch in &mesh.batches[mesh.baked_face_batches.clone()] {
             let material = mesh
                 .baked_face_materials
@@ -156,9 +181,7 @@ impl State {
                     || receivers[0] != receivers[1]
                     || receivers[0] != receivers[2]
                 {
-                    return Err(
-                        "Baked surface triangle crosses distinct face lighting receivers".into(),
-                    );
+                    return Err("Baked surface triangle crosses distinct lighting receivers".into());
                 }
             }
             for &index in indices {
@@ -166,18 +189,48 @@ impl State {
                     .vertices
                     .get(index as usize)
                     .ok_or("Baked surface vertex index is outside geometry")?;
-                let face = source
-                    .faces
-                    .get((vertex.lighting_receiver >> RECEIVER_SHIFT) as usize)
-                    .ok_or("Baked surface vertex references an absent lightmap")?;
-                if vertex.lighting_receiver & RECEIVER_MASK != BAKED_FACE_RECEIVER
-                    || material.directional != (face.map_count == 4)
-                    || material.unlit != (face.map_count == 0)
-                    || vertex
-                        .lightmap
-                        .iter()
-                        .chain(&vertex.uv)
-                        .any(|value| !value.is_finite())
+                let directional = match material.lighting {
+                    MaterialLighting::Vertex => {
+                        if vertex.lighting_receiver & RECEIVER_MASK != BAKED_PROP_RECEIVER
+                            || vertex
+                                .baked_irradiance
+                                .iter()
+                                .any(|value| !value.is_finite() || *value < 0.0)
+                        {
+                            return Err(
+                                "Compiled prop vertex has invalid receiver or linear radiance"
+                                    .into(),
+                            );
+                        }
+                        false
+                    }
+                    lighting => {
+                        let face = source
+                            .faces
+                            .get((vertex.lighting_receiver >> RECEIVER_SHIFT) as usize)
+                            .ok_or("Baked surface vertex references an absent lightmap")?;
+                        let expected = if face.map_count == 0 {
+                            MaterialLighting::Unlit
+                        } else {
+                            MaterialLighting::Lightmap {
+                                directional: face.map_count == 4,
+                            }
+                        };
+                        if vertex.lighting_receiver & RECEIVER_MASK != BAKED_FACE_RECEIVER
+                            || lighting != expected
+                        {
+                            return Err(
+                                "Baked surface vertex has an invalid face material binding".into(),
+                            );
+                        }
+                        face.map_count == 4
+                    }
+                };
+                if vertex
+                    .lightmap
+                    .iter()
+                    .chain(&vertex.uv)
+                    .any(|value| !value.is_finite())
                     || !vertex.opacity.is_finite()
                     || !(0.0..=1.0).contains(&vertex.opacity)
                     || vertex
@@ -186,7 +239,7 @@ impl State {
                         .chain(&vertex.normal)
                         .chain(&vertex.tangent)
                         .any(|value| !value.is_finite())
-                    || face.map_count == 4 && vertex.tangent[3].abs() != 1.0
+                    || directional && vertex.tangent[3].abs() != 1.0
                 {
                     return Err("Baked surface vertex has invalid receiver, tangent or directional material binding".into());
                 }
@@ -234,14 +287,14 @@ impl State {
                 super::uniform_entry(6, wgpu::ShaderStages::FRAGMENT),
             ],
         });
-        let unlit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("compiled unlit surface settings"),
+        let settings_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("compiled surface settings"),
             entries: &[super::uniform_entry(2, wgpu::ShaderStages::FRAGMENT)],
         });
         Self {
             layout,
             material_layout,
-            unlit_layout,
+            settings_layout,
             resources: HashMap::new(),
             materials: HashMap::new(),
             geometries: Vec::new(),
@@ -296,31 +349,25 @@ impl State {
         let allocation = ctx.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let internal = ctx.device.push_error_scope(wgpu::ErrorFilter::Internal);
         let validation = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let (lighting_binding, unlit_binding) = binding(
+        let (lighting_binding, settings_binding) = binding(
             &ctx.device,
             &self.layout,
-            &self.unlit_layout,
+            &self.settings_layout,
             &source.samples,
             &faces,
             [2f32.powf(source.exposure_ev), 0.0, 0.0, 0.0],
         );
         self.uploaded += bytes;
-        let submission = ctx.queue.submit([]);
-        let completion = ctx.device.poll(wgpu::PollType::Wait {
-            submission_index: Some(submission),
-            timeout: Some(RETIRE_TIMEOUT),
-        });
         let validation = pollster::block_on(validation.pop());
         let internal = pollster::block_on(internal.pop());
         let allocation = pollster::block_on(allocation.pop());
         if let Some(error) = validation.or(internal).or(allocation) {
             return Err(format!("Baked surface GPU preparation failed: {error}"));
         }
-        completion.map_err(|error| format!("Baked surface GPU upload failed: {error}"))?;
         let resources = Arc::new(Resources {
             source: source.clone(),
             lighting_binding,
-            unlit_binding,
+            settings_binding,
             _reservation: reservation,
         });
         self.resources.insert(id, Arc::downgrade(&resources));
@@ -346,11 +393,6 @@ impl State {
         let validation = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let group = material_binding(ctx, &self.material_layout, source);
         self.uploaded += bytes;
-        let submission = ctx.queue.submit([]);
-        let completion = ctx.device.poll(wgpu::PollType::Wait {
-            submission_index: Some(submission),
-            timeout: Some(RETIRE_TIMEOUT),
-        });
         let validation = pollster::block_on(validation.pop());
         let internal = pollster::block_on(internal.pop());
         let allocation = pollster::block_on(allocation.pop());
@@ -359,11 +401,10 @@ impl State {
                 "Baked surface material GPU preparation failed: {error}"
             ));
         }
-        completion.map_err(|error| format!("Baked surface material GPU upload failed: {error}"))?;
         let resources = Arc::new(MaterialResources {
             source: source.clone(),
             binding: group,
-            unlit: source.unlit,
+            lighting: source.lighting,
             _reservation: reservation,
         });
         self.materials.insert(id, Arc::downgrade(&resources));
@@ -408,9 +449,6 @@ impl State {
 }
 
 fn validate(ctx: &GpuContext, source: &LightingData) -> Result<usize, String> {
-    if source.faces.is_empty() {
-        return Err("Compiled surface lighting requires nonempty faces".into());
-    }
     if source.faces.iter().all(|face| face.map_count == 0) && !source.samples.is_empty() {
         return Err("Unlit compiled surfaces unexpectedly contain baked samples".into());
     }
@@ -531,7 +569,7 @@ fn geometry_bytes(mesh: &crate::scene::SceneMesh) -> Result<usize, String> {
 fn binding(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
-    unlit_layout: &wgpu::BindGroupLayout,
+    settings_layout: &wgpu::BindGroupLayout,
     samples: &[[f32; 4]],
     faces: &[Face],
     params: [f32; 4],
@@ -548,9 +586,9 @@ fn binding(
         bytemuck::bytes_of(&params),
         wgpu::BufferUsages::UNIFORM,
     );
-    let unlit = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("compiled unlit surface settings"),
-        layout: unlit_layout,
+    let settings = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("compiled surface settings"),
+        layout: settings_layout,
         entries: &[wgpu::BindGroupEntry {
             binding: 2,
             resource: params.as_entire_binding(),
@@ -586,10 +624,22 @@ fn binding(
             ],
         })
     });
-    (lighting, unlit)
+    (lighting, settings)
 }
 
 fn validate_material(ctx: &GpuContext, source: &Material) -> Result<usize, String> {
+    if source.lighting != MaterialLighting::Vertex && source.coverage != Coverage::Opaque
+        || source.lighting == MaterialLighting::Vertex
+            && (source.kind != Kind::Single
+                || source.diffuse[1].is_some()
+                || source.normals.iter().any(Option::is_some)
+                || source.detail_alpha_mask)
+        || source.coverage == Coverage::AlphaTest && source.diffuse[0].is_none()
+    {
+        return Err(
+            "Compiled surface material has incompatible lighting or coverage inputs".into(),
+        );
+    }
     let mut bytes = size_of::<MaterialParams>() + size_of::<[f32; 4]>();
     let maximum = ctx.device.limits().max_texture_dimension_2d;
     for texture in source.diffuse.iter().flatten().chain(
@@ -704,7 +754,9 @@ fn material_binding(
             },
             encoding(0),
             encoding(1),
-            u32::from(source.detail_alpha_mask) | (u32::from(source.diffuse[1].is_some()) << 1),
+            u32::from(source.detail_alpha_mask)
+                | (u32::from(source.diffuse[1].is_some()) << 1)
+                | (u32::from(source.coverage == Coverage::AlphaTest) << 2),
         ],
         color: [source.color[0], source.color[1], source.color[2], 0.0],
         diffuse_transform: transform(&source.diffuse_transform),

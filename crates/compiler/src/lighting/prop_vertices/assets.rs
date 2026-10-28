@@ -8,6 +8,7 @@ use crate::prop_lighting_assets::SourceAsset;
 use crate::static_prop_assets::{MaterialDependency, material_dependency};
 
 const MAX_MATERIAL_BYTES: usize = 64 * 1024;
+type MaterialReader<'a> = dyn FnMut(&str, bool) -> io::Result<Option<Vec<u8>>> + 'a;
 
 pub(super) struct Assets<'a> {
     tracker: Tracker<'a>,
@@ -20,19 +21,15 @@ struct CutoutProof {
 }
 
 impl CutoutProof {
-    fn observe(&mut self, path: &str, bytes: &[u8], budget: &mut Budget<'_>) -> io::Result<()> {
+    fn observe_source(&mut self, path: &str, bytes: &[u8]) {
         if self.failure.is_some() {
-            return Ok(());
+            return;
         }
-        budget
-            .consume(bytes.len().div_ceil(64) + 1)
-            .map_err(io::Error::other)?;
         match material_dependency(path, bytes) {
             Ok(MaterialDependency::Texture(_)) => self.terminal = true,
             Ok(_) => {}
             Err(error) => self.failure = Some(error),
         }
-        Ok(())
     }
 
     fn validate(self, material: &Material) -> Result<(), String> {
@@ -47,6 +44,59 @@ impl CutoutProof {
         }
         Ok(())
     }
+}
+
+pub fn load_prop_vertex_material(
+    path: &str,
+    read: &mut dyn FnMut(&str) -> io::Result<Option<Vec<u8>>>,
+) -> Result<Option<Material>, String> {
+    load_material_observed(path, &mut |path, _| read(path))
+}
+
+fn load_material_observed(
+    path: &str,
+    read: &mut MaterialReader<'_>,
+) -> Result<Option<Material>, String> {
+    let mut cutout = CutoutProof::default();
+    let material = Material::load_with_reader(path, &mut |path| {
+        if !path.starts_with("materials/") || !path.ends_with(".vmt") {
+            return Err(io::Error::other(
+                "Static-prop material includes must name materials/*.vmt",
+            ));
+        }
+        let data = read(path, cutout.failure.is_none())?;
+        if let Some(data) = &data {
+            if data.len() > MAX_MATERIAL_BYTES {
+                return Err(io::Error::other(
+                    "Static-prop material exceeds its byte budget",
+                ));
+            }
+            let text = std::str::from_utf8(data).map_err(io::Error::other)?;
+            let raw = Material::parse(text).map_err(io::Error::other)?;
+            if raw.shader == "patch"
+                && (raw.params.iter().any(|(key, _)| key != "include")
+                    || raw.blocks.iter().any(|block| {
+                        !matches!(
+                            block.key.to_ascii_lowercase().as_str(),
+                            "insert" | "replace"
+                        )
+                    }))
+            {
+                return Err(io::Error::other(
+                    "Baked prop materials require plain Patch include/insert/replace semantics",
+                ));
+            }
+            cutout.observe_source(path, data);
+        }
+        Ok(data)
+    })
+    .map_err(|error| format!("Static-prop vertex material {path}: {error}"))?;
+    if let Some(material) = &material {
+        cutout
+            .validate(material)
+            .map_err(|error| format!("{path}: {error}"))?;
+    }
+    Ok(material)
 }
 
 impl<'a> Assets<'a> {
@@ -76,27 +126,22 @@ impl<'a> Assets<'a> {
             source_formats::model::material_candidates(name, &model.material_directories)
         {
             let path = format!("materials/{candidate}.vmt");
-            let mut cutout = CutoutProof::default();
-            let material = Material::load_with_reader(&path, &mut |path| {
-                if !path.starts_with("materials/") || !path.ends_with(".vmt") {
-                    return Err(io::Error::other("Static-prop material includes must name materials/*.vmt"));
-                }
-                let data = self.tracker.read(path, MAX_MATERIAL_BYTES, budget).map_err(io::Error::other)?;
-                if let Some(data) = &data {
-                    let text = std::str::from_utf8(data).map_err(io::Error::other)?;
-                    let raw = Material::parse(text).map_err(io::Error::other)?;
-                    if raw.shader == "patch" && (raw.params.iter().any(|(key, _)| key != "include")
-                        || raw.blocks.iter().any(|block| !matches!(block.key.to_ascii_lowercase().as_str(), "insert" | "replace"))) {
-                        return Err(io::Error::other("Baked prop materials require plain Patch include/insert/replace semantics"));
-                    }
-                    cutout.observe(path, data, budget)?;
+            let material = load_material_observed(&path, &mut |path, charge| {
+                let data = self
+                    .tracker
+                    .read(path, MAX_MATERIAL_BYTES, budget)
+                    .map_err(io::Error::other)?;
+                if let Some(data) = &data
+                    && charge
+                {
+                    budget
+                        .consume(data.len().div_ceil(64) + 1)
+                        .map_err(io::Error::other)?;
                 }
                 Ok(data)
-            }).map_err(|error| format!("Static-prop vertex material {path}: {error}"))?;
-            if let Some(material) = material {
-                return cutout
-                    .validate(&material)
-                    .map_err(|error| format!("{path}: {error}"));
+            })?;
+            if material.is_some() {
+                return Ok(());
             }
         }
         Err(format!("Static-prop vertex material {name} was not found"))
@@ -144,21 +189,14 @@ mod tests {
     const TERMINAL: &str = "VertexLitGeneric { $basetexture test/mask $alphatest 1 }";
 
     fn resolve(sources: &[(&str, &str)]) -> Result<Material, String> {
-        let control = Control::default();
-        let mut budget = Budget::new(&control);
-        let mut proof = CutoutProof::default();
-        let material = Material::load_with_reader(ROOT, &mut |path| {
+        load_prop_vertex_material(ROOT, &mut |path| {
             assert!(path.ends_with(".vmt"));
             let Some((_, text)) = sources.iter().find(|(candidate, _)| *candidate == path) else {
                 return Ok(None);
             };
-            proof.observe(path, text.as_bytes(), &mut budget)?;
             Ok(Some(text.as_bytes().to_vec()))
-        })
-        .map_err(|error| error.to_string())?
-        .ok_or("missing root")?;
-        proof.validate(&material)?;
-        Ok(material)
+        })?
+        .ok_or_else(|| "missing root".into())
     }
 
     #[test]
@@ -361,18 +399,29 @@ mod tests {
     fn cutout_proof_charges_work_and_observes_cancellation_before_parsing() {
         let control = Control::default();
         let mut budget = Budget::new(&control);
-        let mut proof = CutoutProof::default();
-        proof
-            .observe(ROOT, TERMINAL.as_bytes(), &mut budget)
-            .unwrap();
+        load_material_observed(ROOT, &mut |_path: &str, charge| {
+            if charge {
+                budget
+                    .consume(TERMINAL.len().div_ceil(64) + 1)
+                    .map_err(io::Error::other)?;
+            }
+            Ok(Some(TERMINAL.as_bytes().to_vec()))
+        })
+        .unwrap();
         assert_eq!(budget.work(), TERMINAL.len().div_ceil(64) + 1);
         control.cancel().unwrap();
         assert!(
-            CutoutProof::default()
-                .observe(ROOT, TERMINAL.as_bytes(), &mut budget)
-                .unwrap_err()
-                .to_string()
-                .contains("cancelled")
+            load_material_observed(ROOT, &mut |_path: &str, charge| {
+                if charge {
+                    budget
+                        .consume(TERMINAL.len().div_ceil(64) + 1)
+                        .map_err(io::Error::other)?;
+                }
+                Ok(Some(TERMINAL.as_bytes().to_vec()))
+            })
+            .unwrap_err()
+            .to_string()
+            .contains("cancelled")
         );
     }
 }

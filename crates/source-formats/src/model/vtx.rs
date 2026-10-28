@@ -45,7 +45,7 @@ impl Traversal<'_, '_, '_> {
         lod: usize,
         mut output: Option<&mut Vec<u32>>,
         hardware: &mut Option<HardwareLayout>,
-    ) -> io::Result<std::ops::Range<usize>> {
+    ) -> io::Result<(std::ops::Range<usize>, Vec<u32>)> {
         let vertices = self.reader.table(base, 0, 4, 9, MAX_VERTICES)?;
         let indices = self.reader.table(base, 8, 12, 2, MAX_INDICES)?;
         let strips = self.reader.table(base, 16, 20, 27, MAX_GROUPS)?;
@@ -75,6 +75,7 @@ impl Traversal<'_, '_, '_> {
                 }
             }
         }
+        let mut local_triangles = Vec::new();
         for strip in 0..strips.len {
             self.budget.checkpoint(strip)?;
             let strip = strips.at(strip)?;
@@ -111,21 +112,26 @@ impl Traversal<'_, '_, '_> {
                 count.saturating_sub(2)
             };
             self.consume(triangle_count)?;
-            let Some(output) = output.as_deref_mut() else {
+            if output.is_none() && !self.budget.enabled() {
                 continue;
-            };
+            }
             let triangle_indices = triangle_count
                 .checked_mul(3)
                 .ok_or_else(|| invalid("VTX triangle index count overflow"))?;
-            if self
-                .total_indices
-                .checked_add(triangle_indices)
-                .is_none_or(|n| n > MAX_INDICES)
+            if output.is_some()
+                && self
+                    .total_indices
+                    .checked_add(triangle_indices)
+                    .is_none_or(|n| n > MAX_INDICES)
             {
                 return Err(invalid("VTX triangles exceed their resource limit"));
             }
             if self.budget.enabled() {
-                self.budget.reserve(output, triangle_indices)?;
+                self.budget
+                    .reserve(&mut local_triangles, triangle_indices)?;
+                if let Some(output) = output.as_deref_mut() {
+                    self.budget.reserve(output, triangle_indices)?;
+                }
             }
             for triangle in 0..triangle_count {
                 self.budget.checkpoint(triangle)?;
@@ -133,28 +139,37 @@ impl Traversal<'_, '_, '_> {
                 let mut corners = [0; 3];
                 for (offset, corner) in corners.iter_mut().enumerate() {
                     let index = usize::from(self.reader.short(indices.at(start + offset)?)?);
-                    *corner = *mapped
-                        .get(index)
-                        .ok_or_else(|| invalid("VTX index is outside its group vertices"))?;
+                    if index >= mapped.len() {
+                        return Err(invalid("VTX index is outside its group vertices"));
+                    }
+                    *corner = index as u32;
                 }
                 if mode == 2 && triangle % 2 != 0 {
                     corners.swap(0, 1);
                 }
-                if corners[0] == corners[1] || corners[1] == corners[2] || corners[2] == corners[0]
+                let root_corners = corners.map(|index| mapped[index as usize]);
+                if root_corners[0] == root_corners[1]
+                    || root_corners[1] == root_corners[2]
+                    || root_corners[2] == root_corners[0]
                 {
                     continue;
                 }
-                output.extend(corners);
-                self.total_indices += 3;
+                if self.budget.enabled() {
+                    local_triangles.extend(corners);
+                }
+                if let Some(output) = output.as_deref_mut() {
+                    output.extend(root_corners);
+                    self.total_indices += 3;
+                }
             }
         }
         let Some(hardware) = hardware else {
-            return Ok(0..0);
+            return Ok((0..0, local_triangles));
         };
         let first = hardware.vertices.len();
         self.budget.reserve(&mut hardware.vertices, mapped.len())?;
         hardware.vertices.extend(mapped);
-        Ok(first..hardware.vertices.len())
+        Ok((first..hardware.vertices.len(), local_triangles))
     }
 }
 
@@ -273,7 +288,7 @@ pub fn parse(
                     let groups = traversal.reader.table(mesh_base, 0, 4, 25, MAX_GROUPS)?;
                     let mut output = Vec::new();
                     for group in 0..groups.len {
-                        let vertices = traversal.group(
+                        let (vertices, triangle_indices) = traversal.group(
                             groups.at(group)?,
                             mesh,
                             lod,
@@ -290,6 +305,7 @@ pub fn parse(
                                 group,
                                 part: first + index,
                                 vertices,
+                                triangle_indices,
                             });
                         }
                     }

@@ -888,6 +888,15 @@ impl Builder<'_> {
         selected: bool,
         material_override: Option<MaterialId>,
     ) {
+        if !instance.draw_surface {
+            let (mins, maxs) = instance.bounds();
+            self.helper_bounds.extend([mins.as_vec3(), maxs.as_vec3()]);
+            if selected {
+                self.add_model_outline(instance);
+            }
+            self.stats.model_entities += 1;
+            return;
+        }
         let first = self.vertices.len() as u32;
         let model = &instance.asset.model;
         for vertex in &model.vertices {
@@ -975,22 +984,7 @@ impl Builder<'_> {
             }
         }
         if selected {
-            let (mins, maxs) = instance.bounds();
-            for x in [mins.x, maxs.x] {
-                for y in [mins.y, maxs.y] {
-                    for z in [mins.z, maxs.z] {
-                        let corner = DVec3::new(x, y, z);
-                        let sign = (mins + maxs) * 0.5 - corner;
-                        for axis in DVec3::AXES {
-                            self.selection_line(
-                                corner.as_vec3(),
-                                (corner + axis * sign.dot(axis).signum() * 4.0).as_vec3(),
-                                SELECTED_EDGE,
-                            );
-                        }
-                    }
-                }
-            }
+            self.add_model_outline(instance);
         }
         if let Some(lighting) = lighting {
             lighting.finish(
@@ -1000,6 +994,25 @@ impl Builder<'_> {
             );
         }
         self.stats.model_entities += 1;
+    }
+
+    fn add_model_outline(&mut self, instance: &crate::models::Instance) {
+        let (mins, maxs) = instance.bounds();
+        for x in [mins.x, maxs.x] {
+            for y in [mins.y, maxs.y] {
+                for z in [mins.z, maxs.z] {
+                    let corner = DVec3::new(x, y, z);
+                    let sign = (mins + maxs) * 0.5 - corner;
+                    for axis in DVec3::AXES {
+                        self.selection_line(
+                            corner.as_vec3(),
+                            (corner + axis * sign.dot(axis).signum() * 4.0).as_vec3(),
+                            SELECTED_EDGE,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn add_light(&mut self, entity: &Entity, selected: bool) -> bool {

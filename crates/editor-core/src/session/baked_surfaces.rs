@@ -5,6 +5,7 @@ use render::{
     LightingChannel, SceneMesh, ViewOptions,
     compiled_faces::{LightingData, LightingSettings, Scene},
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use source_formats::{bsp::Bsp, gamefs::GameFs};
 
@@ -14,6 +15,7 @@ use super::{
 };
 
 mod assets;
+mod props;
 
 pub const MAX_ROWS: usize = 64;
 pub const MAX_METADATA_BYTES: usize = 32 * 1024 * 1024;
@@ -23,6 +25,44 @@ const SOURCE_MODE: baked_build::SourceVerification =
     };
 const DISPLAY_POLICY: &str = "Selected final BSP FACE and LIGHTING channel, without substitution. Stored style 0 defaults to unity; other omitted stored IDs default to zero. Linear RGBExp32/255 maps use face-isolated bilinear sampling at native luxel centers and static material directional reconstruction. Resolved compiled diffuse/blend and static tint multiply linear lighting times 2^EV, then one Reinhard transform and one sRGB output. No editor lighting or native appearance/adaptation parity.";
 const VIEW_POLICY: &str = "The compiled surface layer replaces authored brush and terrain draw surfaces. Working regions include whole final faces whose initial-pose world AABB intersects the region, without clipping triangles. Authored hiding is independent of this immutable compiled layer; no contributor-derived surface subsets are inferred. Authored selection outlines, picking, entities and helpers remain authored; native FACE ordinals are not authored identities.";
+const PROP_POLICY: &str = "Final static-prop geometry uses the exact selected hardware draw LOD and native placement/skin. VHV RGB is decoded per hardware vertex as pow(2*byte/255,2.2_f32) before interpolation. Shared channel and exposure apply; static weight is fixed at 1 and FACE style gains do not affect VHV. Material coverage is independent of VHV alpha. Inspection is double-sided and does not claim native appearance/adaptation parity.";
+
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
+pub struct PreparationOptions {
+    #[serde(default)]
+    pub compiled_static_props: bool,
+    #[serde(default)]
+    #[schemars(range(min = 0, max = 7))]
+    pub draw_lod: u8,
+}
+
+impl PreparationOptions {
+    fn validate(self) -> Result<(), String> {
+        if self.draw_lod > 7 {
+            return Err("Draw LOD must be 0–7; prepare again to change it".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordKind {
+    #[default]
+    Faces,
+    StaticProps,
+}
+
+#[derive(Clone, Copy)]
+pub enum FrameTarget {
+    Face(usize),
+    StaticProp(u32),
+}
 
 struct Pending {
     token: u64,
@@ -41,6 +81,7 @@ pub(super) struct State {
     status: &'static str,
     error: Option<String>,
     options: LightingSettings,
+    preparation: PreparationOptions,
 }
 
 struct Ready {
@@ -48,11 +89,31 @@ struct Ready {
     scene: Scene,
     assets: assets::Prepared,
     lighting: Option<Arc<LightingData>>,
+    props: Option<props::Prepared>,
+    preparation: PreparationOptions,
 }
 
 impl Ready {
-    fn lighting_capacity(&self, options: &LightingSettings) -> Result<(), String> {
+    fn verify_assets(&self, control: &Control) -> Result<(), String> {
+        self.assets.verify(control)?;
+        if let Some(props) = &self.props {
+            props.verify(control)?;
+        }
+        Ok(())
+    }
+
+    fn validate_settings(&self, options: &LightingSettings) -> Result<(), String> {
         self.scene.validate_settings(options)?;
+        if let Some(props) = &self.props {
+            props
+                .scene
+                .validate_settings(options, self.preparation.draw_lod)?;
+        }
+        Ok(())
+    }
+
+    fn lighting_capacity(&self, options: &LightingSettings) -> Result<(), String> {
+        self.validate_settings(options)?;
         let old = self
             .lighting
             .as_ref()
@@ -60,12 +121,33 @@ impl Ready {
             .transpose()?
             .unwrap_or(0);
         let new = self.scene.lighting_cpu_bytes(options.channel)?;
+        let props = self
+            .props
+            .as_ref()
+            .map(|props| {
+                props
+                    .scene
+                    .retained_bytes()
+                    .checked_add(props.bytes)
+                    .and_then(|bytes| {
+                        bytes.checked_add(
+                            props
+                                .scene
+                                .mesh_bytes(options.channel, self.preparation.draw_lod)
+                                .ok()?,
+                        )
+                    })
+                    .ok_or("Compiled static-prop working size overflow")
+            })
+            .transpose()?
+            .unwrap_or(0);
         let bytes = self
             .scene
             .retained_bytes()
             .checked_add(self.assets.bytes)
             .and_then(|bytes| bytes.checked_add(old))
             .and_then(|bytes| bytes.checked_add(new));
+        let bytes = bytes.and_then(|bytes| bytes.checked_add(props));
         if bytes.is_none_or(|bytes| bytes > render::compiled_faces::MAX_CPU_BYTES) {
             return Err(
                 "Atomic baked surface lighting replacement exceeds the 256 MiB CPU working budget"
@@ -82,6 +164,7 @@ pub struct Request {
     game: Arc<GameFs>,
     control: Control,
     worker: Ticket,
+    options: PreparationOptions,
 }
 
 pub struct Preparation {
@@ -96,12 +179,16 @@ struct Decoded {
     scene: Scene,
     assets: assets::Prepared,
     lighting: Option<Arc<LightingData>>,
+    props: Option<props::Prepared>,
+    preparation: PreparationOptions,
 }
 
 pub struct RenderGuard {
     token: u64,
     build: Arc<baked_build::RetainedBuild>,
     assets: compiler::asset_sources::AssetSourceGuard,
+    prop_assets: Option<compiler::asset_sources::AssetSourceGuard>,
+    preparation: PreparationOptions,
     options: LightingSettings,
     scene_key: render::SceneKey,
 }
@@ -113,7 +200,7 @@ impl Request {
 
     pub fn run(self) -> Preparation {
         let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            decode(&self.build, &self.game, &self.control)
+            decode(&self.build, &self.game, self.options, &self.control)
         }))
         .unwrap_or_else(|_| Err("Baked surface preparation panicked".into()));
         Preparation {
@@ -129,8 +216,10 @@ impl Request {
 fn decode(
     build: &baked_build::RetainedBuild,
     game: &GameFs,
+    options: PreparationOptions,
     control: &Control,
 ) -> Result<Decoded, String> {
+    options.validate()?;
     build.verify(control, MAX_METADATA_BYTES)?;
     let bytes = baked_build::read_owned_bytes_controlled(&build.output, control)?;
     baked_build::decoded_bsp_bound(&bytes)?;
@@ -178,6 +267,32 @@ fn decode(
         .map(|lighting| lighting.cpu_byte_len())
         .transpose()?
         .unwrap_or(0);
+    let other_cpu_bytes = scene
+        .retained_bytes()
+        .checked_add(assets.bytes)
+        .and_then(|bytes| bytes.checked_add(lighting_bytes))
+        .ok_or("Baked surface working size overflow")?;
+    let props = if options.compiled_static_props {
+        let prepared = props::prepare(
+            &bsp,
+            game,
+            build.prop_lighting_guard.as_ref().ok_or(
+                "Compile static-prop vertex lighting before preparing compiled static props",
+            )?,
+            build
+                .static_prop_origins
+                .as_ref()
+                .ok_or("Compiled static-prop source associations are unavailable; compile again")?,
+            other_cpu_bytes,
+            control,
+        )?;
+        prepared
+            .scene
+            .validate_settings(&LightingSettings::default(), options.draw_lod)?;
+        Some(prepared)
+    } else {
+        None
+    };
     if scene
         .retained_bytes()
         .checked_add(assets.bytes)
@@ -188,15 +303,29 @@ fn decode(
     }
     build.verify(control, MAX_METADATA_BYTES)?;
     assets.verify(control)?;
+    if let Some(props) = &props {
+        props.verify(control)?;
+    }
     Ok(Decoded {
         scene,
         assets,
         lighting,
+        props,
+        preparation: options,
     })
 }
 
 impl Session {
     pub fn begin_baked_surfaces(&mut self, actor: Actor) -> Result<Request, String> {
+        self.begin_baked_surfaces_with_options(actor, PreparationOptions::default())
+    }
+
+    pub fn begin_baked_surfaces_with_options(
+        &mut self,
+        actor: Actor,
+        options: PreparationOptions,
+    ) -> Result<Request, String> {
+        options.validate()?;
         self.ensure_not_closing()?;
         if self.baked_surfaces.worker.busy() {
             return Err("Wait for the baked surface worker to finish".into());
@@ -220,6 +349,7 @@ impl Session {
             .begin()
             .ok_or("Baked surface worker is busy")?;
         self.reset_baked_surfaces();
+        self.baked_surfaces.preparation = options;
         let token = self.baked_surfaces.serial;
         self.baked_surfaces.status = "loading";
         self.baked_surfaces.pending = Some(Pending {
@@ -234,6 +364,7 @@ impl Session {
             game: self.game.clone(),
             control,
             worker,
+            options,
         })
     }
 
@@ -275,6 +406,9 @@ impl Session {
                         .build
                         .verify(&prepared.control, MAX_METADATA_BYTES)?;
                     decoded.assets.verify(&prepared.control)?;
+                    if let Some(props) = &decoded.props {
+                        props.verify(&prepared.control)?;
+                    }
                     Ok(decoded)
                 })
                 .map_err(|error| ("unavailable", error))
@@ -286,6 +420,8 @@ impl Session {
                     scene: decoded.scene,
                     assets: decoded.assets,
                     lighting: decoded.lighting,
+                    props: decoded.props,
+                    preparation: decoded.preparation,
                 });
                 self.baked_surfaces.status = "prepared";
                 self.baked_surfaces.error = None;
@@ -364,6 +500,7 @@ impl Session {
         self.baked_surfaces.requested = false;
         self.baked_surfaces.displayed = false;
         self.baked_surfaces.options = LightingSettings::default();
+        self.baked_surfaces.preparation = PreparationOptions::default();
         self.baked_surfaces.status = "not_loaded";
         self.baked_surfaces.error = None;
         self.scene_serial += 1;
@@ -391,7 +528,7 @@ impl Session {
                 build["current"] = json!(false);
                 build["status"] = json!("unavailable");
             }
-            match ready.assets.verify(control) {
+            match ready.verify_assets(control) {
                 Ok(()) => assets["status"] = json!("current"),
                 Err(error) => {
                     assets["status"] = json!("stale");
@@ -443,7 +580,7 @@ impl Session {
     pub fn baked_surfaces_observation(&self) -> Value {
         json!({"token":self.baked_surface_token(),"status":if self.baked_surfaces.status.is_empty(){"not_loaded"}else{self.baked_surfaces.status},
             "worker_active":self.baked_surfaces.worker.busy(),"requested":self.baked_surfaces.requested,"displayed":self.baked_surfaces.displayed,
-            "complete":self.baked_surfaces.ready.is_some(),"error":self.baked_surfaces.error,"lighting_options":self.baked_surfaces.options,
+            "complete":self.baked_surfaces.ready.is_some(),"error":self.baked_surfaces.error,"lighting_options":self.baked_surfaces.options,"preparation_options":self.baked_surfaces.preparation,
             "context_ready":self.baked_surface_context_ready(),"build":self.compiled_world_light_observation()})
     }
 
@@ -453,11 +590,12 @@ impl Session {
         json!({"settings":options,"channel":options.channel,"exposure_ev":options.exposure_ev,"style_gains":options.style_gains,
             "available_styles":ready.and_then(|ready|ready.scene.available_styles(options.channel).ok()),
             "effective_style_gains":ready.and_then(|ready|ready.lighting.as_ref()).map(|lighting|&lighting.effective_style_gains),
-            "channels":([LightingChannel::Ldr,LightingChannel::Hdr].map(|channel|json!({"channel":channel,"available":ready.is_some_and(|ready|ready.scene.available_styles(channel).is_ok())}))),
-            "available":ready.is_some_and(|ready|ready.lighting.is_some()),"unavailable_reason":ready.and_then(|ready|ready.scene.validate_settings(options).err()),
+            "channels":([LightingChannel::Ldr,LightingChannel::Hdr].map(|channel|json!({"channel":channel,"available":ready.is_some_and(|ready|ready.scene.available_styles(channel).is_ok() && ready.props.as_ref().is_none_or(|props|props.scene.available_channels().contains(&channel)))}))),
+            "available":ready.is_some_and(|ready|ready.lighting.is_some()),"unavailable_reason":ready.and_then(|ready|ready.validate_settings(options).err()),
             "reconstruction":"auto_material_directional","sampling":"face_isolated_bilinear_native_luxel_centers",
             "material":render::compiled_faces::materials::POLICY,
-            "style_zero_policy":"implicit_unity_unless_explicit_gain","display_policy":DISPLAY_POLICY})
+            "style_zero_policy":"implicit_unity_unless_explicit_gain","styles_apply_to":"faces","display_policy":DISPLAY_POLICY,
+            "static_props":{"enabled":self.baked_surfaces.preparation.compiled_static_props,"draw_lod":self.baked_surfaces.preparation.draw_lod,"static_weight":1,"style_decomposition":false,"policy":PROP_POLICY}})
     }
 
     pub fn baked_surfaces_render_report(&self, view: ViewOptions) -> Value {
@@ -478,6 +616,16 @@ impl Session {
         offset: usize,
         limit: usize,
     ) -> Result<Value, String> {
+        self.inspect_baked_surface_records(token, RecordKind::Faces, offset, limit)
+    }
+
+    pub fn inspect_baked_surface_records(
+        &mut self,
+        token: Option<u64>,
+        record_kind: RecordKind,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Value, String> {
         if !(1..=MAX_ROWS).contains(&limit) || offset.checked_add(limit).is_none() {
             return Err("Baked surface page must have 1–64 rows without overflow".into());
         }
@@ -489,19 +637,29 @@ impl Session {
         self.preflight_baked_surfaces();
         let (build, assets, current) = self.baked_surface_current(&Control::default())?;
         let ready = self.baked_surfaces.ready.as_ref();
-        let surfaces = ready.and_then(|ready| {
-            ready
-                .scene
-                .surfaces(self.baked_surfaces.options.channel)
-                .ok()
-        });
-        let total = surfaces.map(<[_]>::len);
+        let surfaces = ready
+            .filter(|ready| {
+                ready
+                    .scene
+                    .available_channels()
+                    .contains(&self.baked_surfaces.options.channel)
+            })
+            .map(|ready| ready.scene.surfaces(self.baked_surfaces.options.channel))
+            .transpose()?;
+        let prop_scene = ready
+            .and_then(|ready| ready.props.as_ref())
+            .map(|props| &props.scene);
+        let total = match record_kind {
+            RecordKind::Faces => surfaces.map(<[_]>::len),
+            RecordKind::StaticProps => prop_scene.map(|scene| scene.props().len()),
+        };
         if offset > total.unwrap_or(0) {
             return Err(
-                "Baked surface page offset exceeds the selected retained face table".into(),
+                "Baked surface page offset exceeds the selected retained record table".into(),
             );
         }
-        let rows = surfaces.unwrap_or_default().iter().skip(offset).take(limit).map(|surface| {
+        let rows = if record_kind == RecordKind::Faces {
+            surfaces.unwrap_or_default().iter().skip(offset).take(limit).map(|surface| {
             let material = ready.and_then(|ready|ready.scene.materials().get(surface.material));
             let mut origins = [0usize;4];
             if let Some(contributors) = ready.and_then(|ready|ready.build.origins.contributors(surface.ordinal)) {
@@ -515,13 +673,26 @@ impl Session {
                     origins[index]+=1;
                 }
             }
-            json!({"face":surface.ordinal,"model":surface.model,"material":material.map(|material|material.name.as_str()),
+            json!({"record_kind":"faces","face":surface.ordinal,"model":surface.model,"material":material.map(|material|material.name.as_str()),
                 "receiver":if surface.terrain{"terrain"}else if surface.model==0{"world_detail"}else{"brush_model"},
                 "bounds":[surface.mins,surface.maxs],"vertices":surface.vertices,"triangles":surface.triangles,
                 "lightmap_dimensions":surface.dimensions,"maps":surface.maps,"styles":surface.styles,"frame_available":current,
                 "missing_surface_samples":surface.missing_surface_samples,"in_working_region":self.baked_surface_in_region(surface),
                 "authored_identity":null,"source_contributors":{"root":origins[0],"instance":origins[1],"generated_region":origins[2],"unresolved":origins[3]},"source_policy":"many_to_many_contributors_without_authored_footprint_or_vertex_correspondence"})
-        }).collect::<Vec<_>>();
+        }).collect::<Vec<_>>()
+        } else {
+            prop_scene.map(|scene| scene.props().iter().skip(offset).take(limit).map(|prop| {
+                let bounds = scene.bounds(self.baked_surfaces.preparation.draw_lod, Some(prop.ordinal), |_|true)?;
+                let sample = scene.draw_lod_sample(prop.ordinal, self.baked_surfaces.preparation.draw_lod, &self.baked_surfaces.options)?;
+                Ok(json!({"record_kind":"static_props","prop":prop.ordinal,"model":prop.model_name,"receiver":"static_prop",
+                    "bounds":bounds,"draw_lod":self.baked_surfaces.preparation.draw_lod,"available_lods":prop.lods,"frame_available":current && bounds.is_some(),
+                    "skin":prop.skin,"origin":prop.origin,"angles":prop.angles,"all_lod_vertices":prop.vertices,"all_lod_triangles":prop.triangles,
+                    "sample":sample,"sample_scope":"first_hardware_vertex_of_selected_draw_lod",
+                    "in_working_region":self.baked_prop_in_region(prop),"authored_identity":null,"static_weight":1,"style_decomposition":false,
+                    "lighting_channel":self.baked_surfaces.options.channel,"lighting_policy":PROP_POLICY,
+                    "face_density":null,"face_smoothing":null,"raw_colors":"inspect_baked_prop_vertices retains exact stored BGRA bytes and sections"}))
+            }).collect::<Result<Vec<_>,String>>()).transpose()?.unwrap_or_default()
+        };
         let status = if ready.is_some() && !current {
             "stale"
         } else if self.baked_surfaces.requested && !self.baked_surface_context_ready() {
@@ -533,13 +704,15 @@ impl Session {
         };
         let mut report = json!({"status":status,"token":self.baked_surface_token(),"build":build,"preview_assets":assets,"current":current,
             "requested":self.baked_surfaces.requested,"displayed":self.baked_surfaces.displayed,"worker_active":self.baked_surfaces.worker.busy(),
-            "complete":ready.is_some(),"error":self.baked_surfaces.error,"lighting_options":self.baked_surfaces.options,"lighting":self.baked_surfaces_options_report(),
+            "complete":ready.is_some(),"error":self.baked_surfaces.error,"lighting_options":self.baked_surfaces.options,"preparation_options":self.baked_surfaces.preparation,"lighting":self.baked_surfaces_options_report(),
             "prepare_available":build["current"]==true && !self.baked_surfaces.worker.busy(),"prepare_unavailable_reason":if self.baked_surfaces.worker.busy(){Some("Wait for the baked surface worker")}else if build["current"]!=true{Some("Compile a current successful owned build first")}else{None},
             "suppression_reason":if self.baked_surface_context_ready(){None}else{Some("Use Objects mode and finish editing tools/drafts")},
-            "page":{"offset":offset,"limit":limit,"total":total,"returned":rows.len(),"next_offset":total.filter(|total|offset+rows.len()<*total).map(|_|offset+rows.len()),"rows":rows},
+            "record_kind":record_kind,"page":{"record_kind":record_kind,"offset":offset,"limit":limit,"total":total,"returned":rows.len(),"next_offset":total.filter(|total|offset+rows.len()<*total).map(|_|offset+rows.len()),"rows":rows},
+            "record_unavailable_reason":if record_kind == RecordKind::StaticProps && prop_scene.is_none(){Some("Prepare with Compiled static props enabled to inspect static props")}else{None},
             "counts":surfaces.map(|surfaces|json!({"faces":surfaces.len(),"world_detail":surfaces.iter().filter(|surface|surface.model==0&&!surface.terrain).count(),"terrain":surfaces.iter().filter(|surface|surface.terrain).count(),"brush_model":surfaces.iter().filter(|surface|surface.model!=0&&!surface.terrain).count()})),
-            "retained_geometry_bytes":ready.map(|ready|ready.scene.retained_bytes()),"preview_resources_bytes":ready.map(|ready|ready.assets.bytes),
+            "retained_geometry_bytes":ready.map(|ready|ready.scene.retained_bytes()+ready.props.as_ref().map_or(0,|props|props.scene.retained_bytes())),"preview_resources_bytes":ready.map(|ready|ready.assets.bytes+ready.props.as_ref().map_or(0,|props|props.bytes)),
             "region_faces":surfaces.map(|surfaces|surfaces.iter().filter(|surface|self.baked_surface_in_region(surface)).count()),
+            "static_props":{"total":prop_scene.map(|scene|scene.props().len()),"region_props":prop_scene.map(|scene|scene.props().iter().filter(|prop|self.baked_prop_in_region(prop)).count()),"policy":PROP_POLICY},
             "view_policy":VIEW_POLICY,"working_region":self.working_region_summary(),
             "limits":{"rows":MAX_ROWS,"bsp_bytes":baked_build::MAX_BSP_BYTES,"metadata_bytes":MAX_METADATA_BYTES,"preview_source_bytes":assets::MAX_ASSET_BYTES,"decoded_texture_bytes":assets::MAX_DECODED_BYTES,"asset_file_bytes":assets::MAX_ASSET_FILE_BYTES,"cpu_scene_bytes":render::compiled_faces::MAX_CPU_BYTES,"gpu_scene_bytes":render::compiled_faces::MAX_GPU_BYTES,"active_workers":1}});
         let (build, assets, current) = self.baked_surface_current(&Control::default())?;
@@ -560,6 +733,7 @@ impl Session {
                     "counts",
                     "retained_geometry_bytes",
                     "preview_resources_bytes",
+                    "static_props",
                 ] {
                     report[field] = Value::Null;
                 }
@@ -596,7 +770,7 @@ impl Session {
             return Err("Baked surface settings require the current owned build and unchanged preview assets".into());
         }
         ready.build.verify(&control, MAX_METADATA_BYTES)?;
-        ready.assets.verify(&control)?;
+        ready.verify_assets(&control)?;
         let ready = self
             .baked_surfaces
             .ready
@@ -634,14 +808,12 @@ impl Session {
                 .ready
                 .as_ref()
                 .ok_or("Prepare baked surfaces first")?;
-            ready
-                .scene
-                .validate_settings(&self.baked_surfaces.options)?;
+            ready.validate_settings(&self.baked_surfaces.options)?;
             if ready.lighting.is_none() {
                 return Err("Choose an available baked surface channel first".into());
             }
             ready.build.verify(&control, MAX_METADATA_BYTES)?;
-            ready.assets.verify(&control)?;
+            ready.verify_assets(&control)?;
         }
         self.baked_surfaces.requested = visible;
         self.baked_surfaces.displayed = visible;
@@ -667,6 +839,16 @@ impl Session {
         face: usize,
         aspect: f32,
     ) -> Result<Value, String> {
+        self.frame_baked_surface_record(actor, token, FrameTarget::Face(face), aspect)
+    }
+
+    pub fn frame_baked_surface_record(
+        &mut self,
+        actor: Actor,
+        token: u64,
+        target: FrameTarget,
+        aspect: f32,
+    ) -> Result<Value, String> {
         self.ensure_not_closing()?;
         self.check_baked_surface_token(token)?;
         inspection_framing::validate_aspect(aspect)?;
@@ -682,27 +864,69 @@ impl Session {
             .ready
             .as_ref()
             .ok_or("Prepare baked surfaces first")?;
-        let surface = ready
-            .scene
-            .surfaces(self.baked_surfaces.options.channel)?
-            .iter()
-            .find(|surface| surface.ordinal == face)
-            .ok_or("Baked surface FACE ordinal is unavailable in this channel")?;
-        let mins = glam::Vec3::from_array(surface.mins);
-        let maxs = glam::Vec3::from_array(surface.maxs);
+        let (bounds, kind, ordinal) = match target {
+            FrameTarget::Face(face) => {
+                let surface = ready
+                    .scene
+                    .surfaces(self.baked_surfaces.options.channel)?
+                    .iter()
+                    .find(|surface| surface.ordinal == face)
+                    .ok_or("Baked surface FACE ordinal is unavailable in this channel")?;
+                ([surface.mins, surface.maxs], RecordKind::Faces, face)
+            }
+            FrameTarget::StaticProp(prop) => {
+                let props = ready
+                    .props
+                    .as_ref()
+                    .ok_or("Prepare with Compiled static props enabled first")?;
+                let bounds = props
+                    .scene
+                    .bounds(ready.preparation.draw_lod, Some(prop), |_| true)?
+                    .ok_or("Baked static-prop ordinal has no prepared mesh bounds")?;
+                (bounds, RecordKind::StaticProps, prop as usize)
+            }
+        };
+        let mins = glam::Vec3::from_array(bounds[0]);
+        let maxs = glam::Vec3::from_array(bounds[1]);
         let camera = self.inspection_frame_camera(mins, maxs, aspect, "Baked surface")?;
-        let bounds = [surface.mins, surface.maxs];
         ready.build.verify(&control, MAX_METADATA_BYTES)?;
-        ready.assets.verify(&control)?;
+        ready.verify_assets(&control)?;
         self.set_camera(camera);
-        self.log(actor, format!("Frame baked surface FACE {face}"));
-        Ok(
-            json!({"token":token.to_string(),"face":face,"channel":self.baked_surfaces.options.channel,"bounds":bounds,"camera":{"position":camera.position.to_array(),"yaw_degrees":camera.yaw_degrees,"pitch_degrees":camera.pitch_degrees}}),
-        )
+        self.log(actor, format!("Frame baked surface {kind:?} {ordinal}"));
+        let mut report = json!({"token":token.to_string(),"record_kind":kind,"channel":self.baked_surfaces.options.channel,"bounds":bounds,"camera":{"position":camera.position.to_array(),"yaw_degrees":camera.yaw_degrees,"pitch_degrees":camera.pitch_degrees}});
+        report[if kind == RecordKind::Faces {
+            "face"
+        } else {
+            "prop"
+        }] = json!(ordinal);
+        Ok(report)
     }
 
     pub(super) fn baked_surfaces_visible(&self) -> bool {
         self.baked_surfaces.displayed
+    }
+
+    pub(super) fn baked_static_prop_replaces(
+        &self,
+        matches: impl Fn(&compiler::entity_origins::Origin) -> bool,
+    ) -> bool {
+        self.baked_surfaces_visible()
+            && self
+                .baked_surfaces
+                .ready
+                .as_ref()
+                .and_then(|ready| ready.props.as_ref())
+                .is_some_and(|props| {
+                    props.replacements.iter().any(|(ordinal, origin)| {
+                        matches(origin)
+                            && props
+                                .scene
+                                .props()
+                                .iter()
+                                .find(|prop| prop.ordinal == *ordinal)
+                                .is_some_and(|prop| self.baked_prop_in_region(prop))
+                    })
+                })
     }
 
     pub fn baked_surfaces_render_guard(
@@ -719,11 +943,13 @@ impl Session {
             .ok_or("Prepared baked surfaces were retired")?;
         let control = Control::default();
         ready.build.verify_metadata(&control, MAX_METADATA_BYTES)?;
-        ready.assets.verify(&control)?;
+        ready.verify_assets(&control)?;
         Ok(Some(RenderGuard {
             token: self.baked_surfaces.serial,
             build: ready.build.clone(),
             assets: ready.assets.guard.clone(),
+            prop_assets: ready.props.as_ref().map(|props| props.guard.clone()),
+            preparation: self.baked_surfaces.preparation,
             options: self.baked_surfaces.options.clone(),
             scene_key: self.render_scene_key(view),
         }))
@@ -744,9 +970,15 @@ impl Session {
                 .assets
                 .verify_original_metadata(&control, MAX_METADATA_BYTES)
                 .map_err(|error| error.to_string())?;
+            if let Some(assets) = &guard.prop_assets {
+                assets
+                    .verify_original_metadata(&control, MAX_METADATA_BYTES)
+                    .map_err(|error| error.to_string())?;
+            }
             if self.baked_surfaces.serial != guard.token
                 || self.render_scene_key(view) != guard.scene_key
                 || self.baked_surfaces.options != guard.options
+                || self.baked_surfaces.preparation != guard.preparation
                 || !self.baked_surfaces_visible()
                 || !self.baked_surface_context_ready()
                 || !self.baked_surface_current(&control)?.2
@@ -767,13 +999,21 @@ impl Session {
     }
 
     fn baked_surface_in_region(&self, surface: &render::compiled_faces::SurfaceInfo) -> bool {
+        self.baked_bounds_in_region(surface.mins, surface.maxs)
+    }
+
+    fn baked_prop_in_region(&self, prop: &render::compiled_faces::props::PropInfo) -> bool {
+        self.baked_bounds_in_region(prop.mins, prop.maxs)
+    }
+
+    fn baked_bounds_in_region(&self, mins: [f32; 3], maxs: [f32; 3]) -> bool {
         self.working_region
             .enabled
             .then_some(self.working_region.bounds)
             .flatten()
             .is_none_or(|region| {
-                let mins = glam::DVec3::from_array(surface.mins.map(f64::from));
-                let maxs = glam::DVec3::from_array(surface.maxs.map(f64::from));
+                let mins = glam::DVec3::from_array(mins.map(f64::from));
+                let maxs = glam::DVec3::from_array(maxs.map(f64::from));
                 mins.cmple(region[1]).all() && maxs.cmpge(region[0]).all()
             })
     }
@@ -788,12 +1028,46 @@ impl Session {
             .lighting
             .as_ref()
             .ok_or("Baked surface lighting is unavailable")?;
-        let result = ready.scene.append_prepared_filtered(
-            mesh,
-            &ready.assets.materials,
-            lighting.clone(),
-            |surface| self.baked_surface_in_region(surface),
-        );
+        if ready.props.is_some() {
+            ready.lighting_capacity(&self.baked_surfaces.options)?;
+        }
+        let result = ready
+            .scene
+            .append_prepared_filtered(mesh, &ready.assets.materials, lighting.clone(), |surface| {
+                self.baked_surface_in_region(surface)
+            })
+            .and_then(|()| {
+                if let Some(props) = &ready.props {
+                    let decoded = props
+                        .materials
+                        .iter()
+                        .flatten()
+                        .try_fold(0usize, |bytes, material| {
+                            bytes.checked_add(material.decoded_bytes())
+                        })
+                        .ok_or("Compiled prop material byte size overflow")?;
+                    let metadata = props
+                        .bytes
+                        .checked_sub(decoded)
+                        .ok_or("Compiled prop retained material size is inconsistent")?;
+                    let extra = ready
+                        .scene
+                        .retained_bytes()
+                        .checked_add(ready.assets.bytes)
+                        .and_then(|bytes| bytes.checked_add(lighting.cpu_byte_len().ok()?))
+                        .and_then(|bytes| bytes.checked_add(metadata))
+                        .ok_or("Baked surface retained working size overflow")?;
+                    props.scene.append_prepared_filtered(
+                        mesh,
+                        &props.materials,
+                        &self.baked_surfaces.options,
+                        ready.preparation.draw_lod,
+                        extra,
+                        |prop| self.baked_prop_in_region(prop),
+                    )?;
+                }
+                Ok(())
+            });
         if let Err(error) = &result {
             self.baked_surfaces.requested = false;
             self.baked_surfaces.displayed = false;

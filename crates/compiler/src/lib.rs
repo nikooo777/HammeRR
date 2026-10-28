@@ -79,6 +79,7 @@ pub use lighting::emission::{
     MATERIAL_EMISSION_FILE_KEY, MAX_MATERIAL_EMISSION_FILE_PATH_BYTES, MaterialEmissionStats,
     is_material_emission_key, material_emission_file_field, validate_material_emission_file,
 };
+pub use lighting::load_prop_vertex_material;
 pub use physics::current::{
     MAX_WATER_CURRENT_SPEED, MAX_WATER_CURRENT_VALUE_BYTES, WATER_CURRENT_COMPONENTS,
     WATER_CURRENT_VELOCITY_KEY, validate_water_current_velocity,

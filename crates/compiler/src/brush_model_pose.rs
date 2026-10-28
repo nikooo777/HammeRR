@@ -1,4 +1,5 @@
 use glam::{DMat3, DVec3};
+use map_core::Plane;
 
 pub(crate) const MAX_INITIAL_POSE_BYTES: usize = 128;
 const MAX_NATIVE_POSE_BYTES: usize = MAX_INITIAL_POSE_BYTES - 1;
@@ -31,6 +32,14 @@ impl Pose {
         match self.rotation {
             Some(rotation) => rotation * local,
             None => local,
+        }
+    }
+
+    pub(crate) fn plane(self, local: Plane) -> Plane {
+        let normal = self.normal(local.normal);
+        Plane {
+            normal,
+            dist: local.dist + normal.dot(self.offset),
         }
     }
 

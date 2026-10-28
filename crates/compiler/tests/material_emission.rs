@@ -4,12 +4,16 @@ mod static_prop_model;
 
 use std::path::Path;
 
-use compiler::{Control, LightingMode, Options, OutputLease, WriteReservation};
-use glam::DVec3;
+use compiler::instances::SourceContext;
+use compiler::{Control, LightingMode, Options, OutputLease, SkyQuality, WriteReservation};
+use glam::{DMat3, DVec3};
 use map_core::{BrushGeometry, Document, ObjectId, Plane, edit};
-use source_formats::bsp::{self, Bsp, LeafAmbient, LightingKind, Model, TexInfo};
+use source_formats::bsp::{self, Bsp, LeafAmbient, LightingKind, Model, RgbExp32, TexInfo};
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
-use source_formats::vmf::{DispInfo, Vmf};
+use source_formats::keyvalues::Node;
+use source_formats::vmf::{DispInfo, Entity, Vmf, format_vec3};
+
+const SHADOWS: &str = "vrad_brush_cast_shadows";
 
 struct Fixture {
     directory: tempfile::TempDir,
@@ -25,10 +29,12 @@ fn fixture(receivers: bool) -> Fixture {
     for folder in [
         "game/materials/dev",
         "game/materials/test",
+        "game/materials/tools",
         "game/materials/models/test",
         "game/materials/models/detl",
         "game/models/props",
         "game/scripts",
+        "maps",
         "outputs",
     ] {
         std::fs::create_dir_all(directory.path().join(folder)).unwrap();
@@ -41,6 +47,15 @@ fn fixture(receivers: bool) -> Fixture {
         (
             "test/emitter",
             "LightmappedGeneric { %notooltexture 1 $reflectivity \"[0 0 0]\" }",
+        ),
+        (
+            "test/opaque",
+            "UnlitGeneric { %notooltexture 1 $reflectivity \"[0 0 0]\" }",
+        ),
+        ("test/pivot", "UnlitGeneric { %compileorigin 1 }"),
+        (
+            "tools/toolsblack",
+            "UnlitGeneric { %notooltexture 1 $color \"[0 0 0]\" $reflectivity \"[0 0 0]\" }",
         ),
         (
             "models/test/one",
@@ -240,6 +255,184 @@ fn energy(bsp: &Bsp, kind: LightingKind, model: Option<usize>, terrain: bool) ->
     sum
 }
 
+fn interior_source(fixture: &Fixture) -> Document {
+    let mut source = fixture.source.clone();
+    for side in source
+        .world
+        .solids
+        .iter_mut()
+        .flat_map(|solid| &mut solid.sides)
+    {
+        if side.material == "test/emitter" {
+            side.material = "dev/dev_measuregeneric01".into();
+        }
+    }
+    Document::new(source)
+}
+
+fn unlit_emitter(fixture: &Fixture) {
+    std::fs::write(
+        fixture
+            .directory
+            .path()
+            .join("game/materials/test/emitter.vmt"),
+        "UnlitGeneric { %notooltexture 1 $reflectivity \"[0 0 0]\" }",
+    )
+    .unwrap();
+}
+
+fn emitter(document: &mut Document, mins: DVec3, maxs: DVec3, pivot: DVec3, angles: &str) -> u32 {
+    document
+        .edit("interior emission source", |tx| {
+            let ObjectId::Solid(id) = edit::create_block(tx, mins, maxs, "test/opaque")? else {
+                unreachable!()
+            };
+            for side in &mut tx.solid_mut(id)?.sides {
+                side.lightmap_scale = 128;
+                if Plane::from_points(side.plane.0).unwrap().normal == DVec3::NEG_Z {
+                    side.material = "test/emitter".into();
+                }
+            }
+            let ObjectId::Entity(id) = edit::tie_to_entity(
+                tx,
+                &[id],
+                "func_brush",
+                &[
+                    ("origin".into(), format_vec3(pivot)),
+                    ("angles".into(), angles.into()),
+                    ("spawnflags".into(), "2".into()),
+                    ("Solidity".into(), "0".into()),
+                    ("StartDisabled".into(), "0".into()),
+                    (SHADOWS.into(), "1".into()),
+                ],
+            )?
+            else {
+                unreachable!()
+            };
+            Ok(id)
+        })
+        .unwrap()
+}
+
+fn black_light(document: &mut Document) {
+    document
+        .edit("authored black light", |tx| {
+            edit::create_entity(
+                tx,
+                "light",
+                Some(DVec3::Z * 128.0),
+                &[
+                    ("_light".into(), "0 0 0 0".into()),
+                    ("_lightHDR".into(), "0 0 0 0".into()),
+                ],
+                Vec::new(),
+            )
+        })
+        .unwrap();
+}
+
+fn floor_sample(bsp: &Bsp, kind: LightingKind, target: DVec3) -> RgbExp32 {
+    let model = bsp.records::<Model>().unwrap()[0];
+    let faces = bsp.lighting_faces(kind).unwrap();
+    let planes = bsp.records::<bsp::Plane>().unwrap();
+    let infos = bsp.records::<TexInfo>().unwrap();
+    let vertices = bsp.vertices().unwrap();
+    let edges = bsp.records::<bsp::Edge>().unwrap();
+    let surfedges = bsp.surfedges().unwrap();
+    let lighting = bsp.lighting(kind).unwrap().unwrap();
+    'faces: for face in
+        &faces[model.first_face as usize..(model.first_face + model.face_count) as usize]
+    {
+        let plane = planes[face.plane as usize];
+        let normal = DVec3::from_array(plane.normal.map(f64::from));
+        if normal != DVec3::Z || plane.dist != 0.0 {
+            continue;
+        }
+        let mut signs = [false; 2];
+        for &edge in &surfedges
+            [face.first_edge as usize..face.first_edge as usize + face.edge_count as usize]
+        {
+            let pair = edges[edge.unsigned_abs() as usize].0;
+            let a =
+                DVec3::from_array(vertices[pair[usize::from(edge < 0)] as usize].map(f64::from));
+            let b =
+                DVec3::from_array(vertices[pair[usize::from(edge >= 0)] as usize].map(f64::from));
+            let cross = (b - a).cross(target - a).z;
+            signs[0] |= cross > 1e-6;
+            signs[1] |= cross < -1e-6;
+            if signs == [true; 2] {
+                continue 'faces;
+            }
+        }
+        let info = &infos[face.texinfo as usize];
+        let frame = compiler::lighting::LuxelFrame::new(
+            Plane { normal, dist: 0.0 },
+            info,
+            face.lightmap_mins,
+            face.lightmap_size,
+        )
+        .unwrap();
+        let [width, height] = frame.dimensions();
+        for t in 0..height {
+            for s in 0..width {
+                if frame.position(s, t).unwrap().distance(target) < 1e-6 {
+                    return lighting
+                        .face(face, info)
+                        .unwrap()
+                        .unwrap()
+                        .samples(0, 0)
+                        .unwrap()[t * width + s];
+                }
+            }
+        }
+    }
+    panic!("missing fixed floor sample {target:?}")
+}
+
+fn assert_floor_emission_matches(actual: &Bsp, expected: &Bsp) {
+    for (kind, channel) in [(LightingKind::Ldr, 0), (LightingKind::Hdr, 2)] {
+        for x in [-128.0, 0.0, 128.0] {
+            for y in [-128.0, 0.0, 128.0] {
+                let target = DVec3::new(x, y, 0.0);
+                let actual = floor_sample(actual, kind, target);
+                let expected = floor_sample(expected, kind, target);
+                assert!(actual.rgb[channel] > 0 && expected.rgb[channel] > 0);
+                for other in (0..3).filter(|&other| other != channel) {
+                    assert_eq!(actual.rgb[other], 0);
+                    assert_eq!(expected.rgb[other], 0);
+                }
+                let native_step = 2.0_f64.powi(i32::from(actual.exponent.max(expected.exponent)));
+                assert!(
+                    (actual.linear()[channel] - expected.linear()[channel]).abs() <= native_step,
+                    "{kind:?} {target:?}: {actual:?} != {expected:?}"
+                );
+            }
+        }
+    }
+}
+
+fn instance(source: &mut Vmf, file: &str, origin: &str, angles: &str) {
+    let id = source
+        .object_ids()
+        .chain(source.side_ids())
+        .max()
+        .unwrap_or(0)
+        + 1;
+    let mut entity = Entity::new(id, "func_instance");
+    for (key, value) in [("file", file), ("origin", origin), ("angles", angles)] {
+        entity.properties.set(key, value);
+    }
+    source.entities.push(entity);
+}
+
+fn stationary_options() -> Options {
+    Options {
+        lighting: LightingMode::DirectLdrHdr,
+        sky_quality: SkyQuality::Fast,
+        ..options(0, false)
+    }
+}
+
 #[test]
 fn emission_only_ldr_reaches_real_receivers_and_probes_without_worldlights() {
     let fixture = fixture(true);
@@ -347,20 +540,7 @@ fn hdr_channels_require_a_real_native_source_and_keep_authored_records() {
             .any(|item| item.message.contains("real authored"))
     );
     let mut document = Document::new(fixture.source.clone());
-    document
-        .edit("authored black light", |tx| {
-            edit::create_entity(
-                tx,
-                "light",
-                Some(DVec3::Z * 128.0),
-                &[
-                    ("_light".into(), "0 0 0 0".into()),
-                    ("_lightHDR".into(), "0 0 0 0".into()),
-                ],
-                Vec::new(),
-            )
-        })
-        .unwrap();
+    black_light(&mut document);
     let mut off = document.vmf().clone();
     off.world
         .properties
@@ -441,4 +621,340 @@ fn original_emission_file_guards_publication_and_work_refusal() {
     .unwrap();
     let failed = compiler::compile_with_options(&invalid, &fixture.game, options(0, false));
     assert!(failed.report.has_errors() && failed.bsp.is_none());
+}
+
+#[test]
+fn rotated_unlit_stationary_source_matches_independent_world_geometry_and_actual_area() {
+    let fixture = fixture(false);
+    unlit_emitter(&fixture);
+    let mut document = interior_source(&fixture);
+    black_light(&mut document);
+    let pivot = DVec3::new(5.5, -7.25, 160.125);
+    let id = emitter(
+        &mut document,
+        DVec3::new(-64.0, -48.0, 176.0),
+        DVec3::new(64.0, 48.0, 184.0),
+        pivot,
+        "20 35 10",
+    );
+    let mut literal = document.vmf().clone();
+    let index = literal
+        .entities
+        .iter()
+        .position(|item| item.id == id)
+        .unwrap();
+    let mut source = literal.entities.remove(index);
+    let rotation = DMat3::from_cols_array(&[
+        0.7697511313200572,
+        0.5389855446957562,
+        -0.3420201433256687,
+        -0.5162121193659353,
+        0.8407726623973335,
+        0.16317591116653482,
+        0.37551064385876115,
+        0.050950100827363065,
+        0.9254165783983234,
+    ]);
+    for point in source
+        .solids
+        .iter_mut()
+        .flat_map(|solid| &mut solid.sides)
+        .flat_map(|side| &mut side.plane.0)
+    {
+        *point = pivot + rotation * (*point - pivot);
+    }
+    literal.world.solids.extend(source.solids);
+    let actual = compile(&fixture, document.vmf(), stationary_options());
+    let expected = compile(&fixture, &literal, stationary_options());
+    assert_eq!(actual.stats.lit_brush_models, 0);
+    assert_eq!(actual.stats.brush_shadow_models, 1);
+    assert_floor_emission_matches(actual.bsp.as_ref().unwrap(), expected.bsp.as_ref().unwrap());
+    let declared_area = 128.0 * 96.0;
+    let native_resolution = 256.0 * f64::from(f32::EPSILON);
+    let area_error =
+        4.0 * (128.0 + 96.0) * native_resolution + 8.0 * native_resolution * native_resolution;
+    for output in [&actual, &expected] {
+        let stats = output.stats.material_emission.as_ref().unwrap();
+        assert_eq!(
+            (
+                stats.matched_sides,
+                stats.source_faces,
+                stats.source_triangles
+            ),
+            (1, 1, 2)
+        );
+        assert!(
+            (stats.source_area - declared_area).abs() <= area_error,
+            "{} != {declared_area}",
+            stats.source_area
+        );
+        assert!(stats.channel_rays.into_iter().all(|count| count > 0));
+        assert_eq!(stats.channel_flux[0][1..], [0.0; 2]);
+        assert_eq!(stats.channel_flux[1][..2], [0.0; 2]);
+        assert!(
+            (stats.channel_flux[0][0] / std::f64::consts::PI - declared_area).abs() <= area_error
+        );
+        assert!(
+            (stats.channel_flux[1][2] / (2.0 * std::f64::consts::PI) - declared_area).abs()
+                <= area_error
+        );
+    }
+    for (source, output) in [(document.vmf(), &actual), (&literal, &expected)] {
+        let mut off = source.clone();
+        off.world
+            .properties
+            .remove(compiler::MATERIAL_EMISSION_FILE_KEY);
+        let baseline = compile(&fixture, &off, stationary_options());
+        let enabled = output.bsp.as_ref().unwrap();
+        let disabled = baseline.bsp.as_ref().unwrap();
+        for (kind, lump) in [
+            (LightingKind::Ldr, bsp::lump::WORLDLIGHTS),
+            (LightingKind::Hdr, bsp::lump::WORLDLIGHTS_HDR),
+        ] {
+            assert_eq!(enabled.lumps[lump].data, disabled.lumps[lump].data);
+            let lights = enabled.world_lights(kind).unwrap();
+            assert_eq!(lights.len(), 1);
+            assert_eq!(lights[0].kind, bsp::world_light_kind::POINT);
+            assert_eq!(lights[0].origin, [0.0, 0.0, 128.0]);
+            assert_eq!(lights[0].intensity, [0.0; 3]);
+            assert_eq!(lights[0].style, 0);
+        }
+    }
+}
+
+#[test]
+fn stationary_source_keeps_compound_solids_and_distinct_nearby_hulls_in_occlusion() {
+    let fixture = fixture(false);
+    unlit_emitter(&fixture);
+    let mut document = interior_source(&fixture);
+    black_light(&mut document);
+    let id = emitter(
+        &mut document,
+        DVec3::new(-64.0, -64.0, 176.0),
+        DVec3::new(64.0, 64.0, 184.0),
+        DVec3::new(5.5, -7.25, 160.125),
+        "0 0 0",
+    );
+    let clear = compile(&fixture, document.vmf(), stationary_options());
+    for same_model in [true, false] {
+        let mut blocked = Document::new(document.vmf().clone());
+        blocked
+            .edit("emission blocker", |tx| {
+                let (bottom, top) = if same_model {
+                    (128.0, 136.0)
+                } else {
+                    (175.0, 175.999)
+                };
+                let solid = edit::block_solid(
+                    tx,
+                    DVec3::new(-80.0, -80.0, bottom),
+                    DVec3::new(80.0, 80.0, top),
+                    "test/opaque",
+                )?;
+                if same_model {
+                    tx.entity_mut(id)?.solids.push(solid);
+                } else {
+                    edit::create_entity(
+                        tx,
+                        "func_brush",
+                        Some(DVec3::ZERO),
+                        &[(SHADOWS.into(), "1".into())],
+                        vec![solid],
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let output = compile(&fixture, blocked.vmf(), stationary_options());
+        assert_eq!(
+            output.stats.brush_shadow_models,
+            if same_model { 1 } else { 2 }
+        );
+        assert_eq!(
+            output.stats.material_emission.as_ref().unwrap().source_area,
+            128.0 * 128.0
+        );
+        for (kind, channel) in [(LightingKind::Ldr, 0), (LightingKind::Hdr, 2)] {
+            assert!(floor_sample(clear.bsp.as_ref().unwrap(), kind, DVec3::ZERO).rgb[channel] > 0);
+            assert_eq!(
+                floor_sample(output.bsp.as_ref().unwrap(), kind, DVec3::ZERO).linear(),
+                [0.0; 3],
+                "same_model={same_model} {kind:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn nested_child_emission_consumes_origin_pose_once_and_retains_the_original_source() {
+    let fixture = fixture(false);
+    unlit_emitter(&fixture);
+    let mut leaf = Document::empty();
+    let source_id = emitter(
+        &mut leaf,
+        DVec3::new(-48.0, -64.0, 96.0),
+        DVec3::new(48.0, 64.0, 104.0),
+        DVec3::splat(999.0),
+        "0 90 0",
+    );
+    leaf.edit("effective source pivot", |tx| {
+        let pivot = edit::block_solid(
+            tx,
+            DVec3::new(8.0, 0.0, -8.0),
+            DVec3::new(24.0, 16.0, 8.0),
+            "test/pivot",
+        )?;
+        tx.entity_mut(source_id)?.solids.push(pivot);
+        Ok(())
+    })
+    .unwrap();
+    let leaf_path = fixture.directory.path().join("maps/source.vmf");
+    std::fs::write(&leaf_path, leaf.vmf().write(&Default::default())).unwrap();
+    let mut middle = Document::empty().into_vmf();
+    instance(&mut middle, "source.vmf", "12 -20 16", "0 0 90");
+    std::fs::write(
+        fixture.directory.path().join("maps/middle.vmf"),
+        middle.write(&Default::default()),
+    )
+    .unwrap();
+    let mut document = interior_source(&fixture);
+    black_light(&mut document);
+    let mut source = document.vmf().clone();
+    instance(&mut source, "middle.vmf", "-32 48 128", "0 0 -90");
+    let root = fixture.directory.path().join("maps/parent.vmf");
+    std::fs::write(&root, source.write(&Default::default())).unwrap();
+    let context = SourceContext::capture(&root, &Control::default()).unwrap();
+    let output = compiler::compile_with_source_controlled(
+        &source,
+        &fixture.game,
+        stationary_options(),
+        None,
+        Some(&context),
+        &Control::default(),
+    );
+    assert!(!output.report.has_errors(), "{:?}", output.report);
+    let actual = output.bsp.as_ref().unwrap();
+    let stats = output.stats.instances.as_ref().unwrap();
+    assert_eq!((stats.brush_models, stats.consumed_origin_brushes), (1, 1));
+    assert_eq!(output.stats.brush_shadow_models, 1);
+    let id = emitter(
+        &mut document,
+        DVec3::new(-60.0, 8.0, 244.0),
+        DVec3::new(68.0, 104.0, 252.0),
+        DVec3::ZERO,
+        "0 0 0",
+    );
+    document
+        .edit("literal world source", |tx| edit::move_to_world(tx, id))
+        .unwrap();
+    let expected = compile(&fixture, document.vmf(), stationary_options());
+    assert_floor_emission_matches(actual, expected.bsp.as_ref().unwrap());
+    assert_eq!(
+        output.stats.material_emission.as_ref().unwrap().source_area,
+        128.0 * 96.0
+    );
+    let destination = fixture.directory.path().join("outputs/previous-child.bsp");
+    std::fs::write(&destination, b"previous BSP").unwrap();
+    std::fs::write(destination.with_extension("lin"), b"previous LIN").unwrap();
+    let publication = output
+        .prepare_write_controlled(&destination, &Control::default())
+        .unwrap()
+        .unwrap();
+    drop(output);
+    leaf.edit("changed original source", |tx| {
+        tx.entity_mut(source_id)?.properties.set("angles", "0 91 0");
+        Ok(())
+    })
+    .unwrap();
+    std::fs::write(&leaf_path, leaf.vmf().write(&Default::default())).unwrap();
+    assert!(publication.commit(&Control::default()).is_err());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+    assert_eq!(
+        std::fs::read(destination.with_extension("lin")).unwrap(),
+        b"previous LIN"
+    );
+}
+
+#[test]
+fn unsupported_stationary_emission_requests_refuse_before_cordon_omission() {
+    let fixture = fixture(false);
+    let mut document = interior_source(&fixture);
+    let id = emitter(
+        &mut document,
+        DVec3::new(512.0, -32.0, 64.0),
+        DVec3::new(576.0, 32.0, 80.0),
+        DVec3::new(544.0, 0.0, 72.0),
+        "0 0 0",
+    );
+    let mut source = document.into_vmf();
+    source.cordon = Some(Node::block(
+        "cordon",
+        vec![
+            Node::string("active", "1"),
+            Node::string("mins", "-128 -128 4"),
+            Node::string("maxs", "128 128 252"),
+        ],
+    ));
+    let accepted = compile(&fixture, &source, Options::default());
+    assert_eq!(
+        accepted
+            .stats
+            .material_emission
+            .as_ref()
+            .unwrap()
+            .matched_sides,
+        1
+    );
+    assert_eq!(accepted.stats.brush_shadow_models, 0);
+    assert!(accepted.stats.compile_region.is_some());
+    let destination = fixture.directory.path().join("outputs/refused.bsp");
+    std::fs::write(&destination, b"previous BSP").unwrap();
+    std::fs::write(destination.with_extension("lin"), b"previous LIN").unwrap();
+    for (key, value) in [
+        (SHADOWS, ""),
+        (SHADOWS, "0"),
+        (SHADOWS, "2"),
+        ("classname", "func_wall"),
+        ("classname", "func_door"),
+        ("parentname", "mover"),
+        ("StartDisabled", "1"),
+        ("angles", "NaN 0 0"),
+    ] {
+        let mut invalid = source.clone();
+        let entity = invalid
+            .entities
+            .iter_mut()
+            .find(|item| item.id == id)
+            .unwrap();
+        if value.is_empty() {
+            entity.properties.remove(key);
+        } else {
+            entity.properties.set(key, value);
+        }
+        let before = invalid.clone();
+        let output = compiler::compile_with_options(&invalid, &fixture.game, Options::default());
+        assert_eq!(invalid, before);
+        assert!(
+            output.report.has_errors() && output.bsp.is_none() && output.leak.is_none(),
+            "{key}={value}: {:?}",
+            output.report
+        );
+        assert!(output.stats.compile_region.is_none());
+        assert!(
+            output
+                .report
+                .diagnostics
+                .iter()
+                .any(|item| item.message.contains("Brush global shadows:")
+                    || item.message.contains("Shadows Yes")),
+            "{key}={value}: {:?}",
+            output.report
+        );
+        assert!(!output.write(&destination).unwrap());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+        assert_eq!(
+            std::fs::read(destination.with_extension("lin")).unwrap(),
+            b"previous LIN"
+        );
+    }
 }

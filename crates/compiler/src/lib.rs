@@ -1131,6 +1131,7 @@ fn build(
     );
     let emission_input = lighting::emission::preflight(
         prepared_instances,
+        &caster_requests,
         fs,
         material_sources
             .as_ref()

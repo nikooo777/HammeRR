@@ -653,11 +653,10 @@ fn posed_occluders(
                 if pose.rotation.is_some() {
                     budget.consume(1)?;
                 }
-                let normal = pose.normal(plane.normal);
-                Ok(Plane {
-                    normal,
-                    dist: plane.dist + normal.dot(pose.offset),
-                })
+                Ok(pose.plane(Plane {
+                    normal: plane.normal,
+                    dist: plane.dist,
+                }))
             })
             .collect::<Result<Vec<_>, String>>()?;
         let sky = brush
@@ -1327,6 +1326,7 @@ fn bake_inner(
                 input,
                 map,
                 bsp,
+                &scopes,
                 settings.face_sources,
                 settings.instances,
                 budget,

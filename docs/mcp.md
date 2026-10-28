@@ -562,6 +562,11 @@ power and sampling work under `stats.material_emission`. Empty source counts
 do not establish illumination. See [Material emission](material-emission.md)
 for source, sampling and native HDR limits.
 
+An eligible stationary `func_brush` can emit from its initial pose. Set its
+finite `origin` and `vrad_brush_cast_shadows:"1"` through `set_entity_properties`,
+then use the same World emission file. Supported child poses are assembled
+once. Moving or unrequested model sources reject.
+
 ## Tool reference
 
 The server publishes the complete parameter schema for every tool.

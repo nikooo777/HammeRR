@@ -4,9 +4,9 @@ use std::f64::consts::PI;
 use std::sync::Arc;
 
 use glam::DVec3;
-use source_formats::bsp::{self, Bsp, Edge, LightingKind, Model, TexInfo, surf};
+use source_formats::bsp::{self, Bsp, Edge, LightingKind, TexInfo, surf};
 use source_formats::gamefs::{GameFs, asset_relative};
-use source_formats::vmf::{Properties, Solid};
+use source_formats::vmf::{Entity, Properties, Solid};
 
 use super::bake::{Allocation, Budget};
 use super::radiance::{SourceBoundary, source_blocked};
@@ -109,10 +109,22 @@ struct Declaration {
     channels: [Option<DVec3>; 2],
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceOwner {
+    World,
+    Model(u32),
+}
+
+#[derive(Clone, Copy)]
+struct AdmittedSide {
+    declaration: usize,
+    owner: SourceOwner,
+}
+
 pub(crate) struct Input<'a> {
     pub(super) budget: Budget<'a>,
     declarations: BTreeMap<String, Declaration>,
-    sides: BTreeMap<u32, usize>,
+    sides: BTreeMap<u32, AdmittedSide>,
     sources: BuildMaterialSources,
     stats: MaterialEmissionStats,
     _allocation: Allocation,
@@ -231,6 +243,7 @@ fn maximum_angle(quality: SkyQuality) -> f64 {
 
 pub(crate) fn preflight<'a>(
     instances: &crate::instances::Prepared<'_>,
+    caster_requests: &[&Entity],
     fs: &GameFs,
     sources: &BuildMaterialSources,
     options: Options,
@@ -256,25 +269,49 @@ pub(crate) fn preflight<'a>(
         budget.reserve_bytes(crate::materials::MAX_GEOMETRY_MATERIAL_ALLOCATION_BYTES)?;
     let mut materials = Materials::with_build_sources(fs, Requirements::GeometrySemantics, sources);
     let mut assets = super::props::Assets::for_brushes(fs, sources);
+    let _caster_allocation = budget.reserve_bytes(
+        caster_requests
+            .len()
+            .checked_mul(128)
+            .ok_or("Emission caster lookup allocation overflow")?,
+    )?;
+    let mut casters = BTreeSet::new();
+    for entity in caster_requests {
+        budget.consume(1)?;
+        casters.insert(entity.id);
+    }
     let mut checked = BTreeSet::new();
     let mut sides = BTreeMap::new();
-    for (solid, supported) in vmf.world.solids.iter().map(|solid| (solid, true)).chain(
-        vmf.entities
-            .iter()
-            .filter(|entity| !entity.hidden)
-            .flat_map(|entity| {
-                let supported = entity
-                    .classname()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("func_detail"));
-                entity.solids.iter().map(move |solid| (solid, supported))
-            }),
-    ) {
+    for (solid, owner) in vmf
+        .world
+        .solids
+        .iter()
+        .map(|solid| (solid, Some(SourceOwner::World)))
+        .chain(
+            vmf.entities
+                .iter()
+                .filter(|entity| !entity.hidden)
+                .flat_map(|entity| {
+                    let owner = if entity
+                        .classname()
+                        .is_some_and(|name| name.eq_ignore_ascii_case("func_detail"))
+                    {
+                        Some(SourceOwner::World)
+                    } else if casters.contains(&entity.id) {
+                        Some(SourceOwner::Model(entity.id))
+                    } else {
+                        None
+                    };
+                    entity.solids.iter().map(move |solid| (solid, owner))
+                }),
+        )
+    {
         if solid.hidden {
             continue;
         }
         admit_solid(
             solid,
-            supported,
+            owner,
             options,
             &declarations,
             &mut materials,
@@ -302,7 +339,7 @@ pub(crate) fn preflight<'a>(
         native_policy: "indexed_ambient_only_no_emission_worldlights",
     };
     report.diagnostics.push(Diagnostic::info(format!(
-        "Material emission: {} declarations match {} original world/detail sides; {}. Uniform radiance uses actual finite source area, sampled segment shadows and indexed model ambient only; no native emission world lights or shader glow",
+        "Material emission: {} declarations match {} original world/detail or stationary Shadows Yes brush-model sides; {}. Uniform radiance uses actual finite source area, sampled segment shadows and indexed model ambient only; no native emission world lights or shader glow",
         declarations.len(), sides.len(), if options.lighting.performs_lighting() { "baking requested" } else { "not baked in Fullbright" }
     ), None, None));
     budget.consume(0)?;
@@ -319,13 +356,13 @@ pub(crate) fn preflight<'a>(
 #[allow(clippy::too_many_arguments)]
 fn admit_solid(
     solid: &Solid,
-    supported: bool,
+    owner: Option<SourceOwner>,
     options: Options,
     declarations: &BTreeMap<String, Declaration>,
     materials: &mut Materials<'_>,
     assets: &mut super::props::Assets<'_, '_>,
     checked: &mut BTreeSet<usize>,
-    sides: &mut BTreeMap<u32, usize>,
+    sides: &mut BTreeMap<u32, AdmittedSide>,
     budget: &mut Budget<'_>,
     instances: &crate::instances::Prepared<'_>,
 ) -> Result<(), String> {
@@ -342,9 +379,9 @@ fn admit_solid(
             continue;
         };
         let result = (|| {
-            if !supported || terrain {
-                return Err("Emission sources require ordinary flat world/detail brushes; terrain and brush-model sources are unavailable".into());
-            }
+            let Some(owner) = owner.filter(|_| !terrain) else {
+                return Err("Emission sources require ordinary flat world/detail brushes or admitted stationary func_brush models with Shadows Yes; terrain, unrequested and moving model sources are unavailable".into());
+            };
             if options.lighting.performs_lighting()
                 && (declaration.channels[0].is_none()
                     || (options.lighting == crate::LightingMode::DirectLdrHdr
@@ -381,7 +418,16 @@ fn admit_solid(
             if sides.len() == MAX_SOURCE_SIDES {
                 return Err("Emission exceeds 65536 matched original sides".into());
             }
-            if sides.insert(side.id, declaration.id).is_some() {
+            if sides
+                .insert(
+                    side.id,
+                    AdmittedSide {
+                        declaration: declaration.id,
+                        owner,
+                    },
+                )
+                .is_some()
+            {
                 return Err("Emission original side identity is ambiguous".into());
             }
             Ok::<(), String>(())
@@ -428,7 +474,7 @@ impl<'a> Input<'a> {
 
 pub(super) struct Declarations {
     declarations: BTreeMap<String, Declaration>,
-    sides: BTreeMap<u32, usize>,
+    sides: BTreeMap<u32, AdmittedSide>,
     sources: BuildMaterialSources,
     stats: MaterialEmissionStats,
     _allocation: Allocation,
@@ -476,6 +522,7 @@ pub(super) fn prepare(
     declarations: &Declarations,
     map: &Map<'_>,
     bsp: &Bsp,
+    scopes: &[super::models::Scope],
     face_sources: &[Arc<[u32]>],
     instances: &crate::instances::Prepared<'_>,
     budget: &mut Budget<'_>,
@@ -496,7 +543,6 @@ pub(super) fn prepare(
         bsp::lump::VERTEXES,
         bsp::lump::EDGES,
         bsp::lump::SURFEDGES,
-        bsp::lump::MODELS,
     ]
     .into_iter()
     .try_fold(0usize, |bytes, index| {
@@ -514,12 +560,6 @@ pub(super) fn prepare(
     let vertices = bsp.vertices().map_err(|error| error.to_string())?;
     let edges = bsp.records::<Edge>().map_err(|error| error.to_string())?;
     let surfedges = bsp.surfedges().map_err(|error| error.to_string())?;
-    let world = bsp
-        .records::<Model>()
-        .map_err(|error| error.to_string())?
-        .first()
-        .copied()
-        .ok_or("Emission needs the emitted world model")?;
     if face_sources.len() != faces.len() {
         return Err("Emission face contributors disagree with emitted geometry".into());
     }
@@ -534,27 +574,47 @@ pub(super) fn prepare(
             + map.brushes.len() * 128,
     )?;
     let mut owners = BTreeMap::new();
-    for &owner in &map.entities[0].brushes {
-        for side in &map.brushes[owner].sides {
+    for scope in scopes {
+        budget.consume(1)?;
+        let entity = &map.entities[scope.entity];
+        let source_owner = if scope.entity == 0 {
+            SourceOwner::World
+        } else {
+            SourceOwner::Model(entity.id)
+        };
+        for &owner in &entity.brushes {
             budget.consume(1)?;
-            if !side.bevel
-                && let Some(id) = side.source_id
-                && declarations.sides.contains_key(&id)
-                && owners.insert(id, (owner, side)).is_some()
-            {
-                return Err("Emission original side ownership is ambiguous".into());
+            for side in &map.brushes[owner].sides {
+                budget.consume(1)?;
+                let Some(id) = side.source_id.filter(|_| !side.bevel) else {
+                    continue;
+                };
+                let Some(admitted) = declarations.sides.get(&id) else {
+                    continue;
+                };
+                if admitted.owner != source_owner
+                    || (scope.entity != 0
+                        && !crate::brush_shadow_casters::enabled(&entity.properties))
+                {
+                    return Err(
+                        "Emission source lost its admitted world or stationary global-caster scope"
+                            .into(),
+                    );
+                }
+                if owners.insert(id, (owner, side, scope.entity)).is_some() {
+                    return Err("Emission original side ownership is ambiguous".into());
+                }
             }
         }
     }
     let mut sources = Vec::new();
     let mut stats = declarations.stats.clone();
-    for (index, face) in faces
+    for (scope, index) in scopes
         .iter()
-        .enumerate()
-        .skip(world.first_face as usize)
-        .take(world.face_count as usize)
+        .flat_map(|scope| scope.faces.clone().map(move |index| (scope, index)))
     {
         budget.consume(1)?;
+        let face = &faces[index];
         let info = &infos[face.texinfo as usize];
         let material = map.materials.get(map.texdata[info.texdata as usize]);
         let name = material_name(&material.name).unwrap_or_else(|_| material.name.clone());
@@ -572,15 +632,20 @@ pub(super) fn prepare(
                     "Emission sources require one original contributor per emitted face".into(),
                 );
             };
-            let &(owner, side) = owners
+            let &(owner, side, entity) = owners
                 .get(id)
-                .ok_or("Emission source has no original world brush owner")?;
+                .ok_or("Emission source has no admitted original brush owner")?;
+            if entity != scope.entity {
+                return Err("Emission face disagrees with its original model scope".into());
+            }
             let original_name = material_name(&map.materials.get(side.material).name)?;
             let declaration = declarations
                 .declarations
                 .get(&original_name)
                 .ok_or("Emission source material changed from its original contributor")?;
-            if declarations.sides.get(id) != Some(&declaration.id) || face.dispinfo >= 0 {
+            if declarations.sides.get(id).map(|side| side.declaration) != Some(declaration.id)
+                || face.dispinfo >= 0
+            {
                 return Err("Emission face lost its admitted original source".into());
             }
             if side.plane != usize::from(face.plane) || face.side != (face.plane & 1) as u8 {
@@ -593,20 +658,33 @@ pub(super) fn prepare(
                     "Emission source owner is missing from the ordinary solid shadow scope".into(),
                 );
             }
-            let plane = map.planes.get(side.plane);
+            let local_plane = map.planes.get(side.plane);
+            let plane = scope.pose.plane(map_core::Plane {
+                normal: local_plane.normal,
+                dist: local_plane.dist,
+            });
             budget.consume(face.edge_count as usize)?;
             let points = surfedges
                 [face.first_edge as usize..face.first_edge as usize + face.edge_count as usize]
                 .iter()
                 .map(|edge| {
                     let vertices_on_edge = edges[edge.unsigned_abs() as usize].0;
-                    DVec3::from_array(
+                    let point = DVec3::from_array(
                         vertices[vertices_on_edge[usize::from(*edge < 0)] as usize].map(f64::from),
-                    )
+                    );
+                    if scope.entity == 0 {
+                        point
+                    } else {
+                        scope.pose.point(point)
+                    }
                 })
                 .collect::<Vec<_>>();
-            if points.len() < 3 {
-                return Err("Emission source needs at least three native vertices".into());
+            if points.len() < 3
+                || points.iter().any(|point| {
+                    !point.is_finite() || point.abs().max_element() > crate::map::MAX_COMPILE_COORD
+                })
+            {
+                return Err("Emission source needs at least three finite native vertices within Source coordinate bounds".into());
             }
             let mut triangles = Vec::with_capacity(points.len() - 2);
             let mut face_area = 0.0;
@@ -651,10 +729,7 @@ pub(super) fn prepare(
                     .map(|value| value.unwrap_or(DVec3::ZERO)),
                 boundary: SourceBoundary {
                     plane: side.plane,
-                    equation: map_core::Plane {
-                        normal: plane.normal,
-                        dist: plane.dist,
-                    },
+                    equation: plane,
                     sides: Arc::from([*id]),
                     owners: vec![owner],
                 },
@@ -868,9 +943,6 @@ impl Prepared {
                         let mut subdivide = cosine < threshold;
                         let mut visibility = 0.0;
                         if !subdivide {
-                            if source.boundary.equation.distance_to(sample.origin) <= 0.0 {
-                                return Err("Emission shadow origin must be in front of the original source plane; contact or crossed sample bias is unsupported".into());
-                            }
                             let mut minimum = 1.0_f64;
                             let mut maximum = 0.0_f64;
                             for weights in SAMPLE_WEIGHTS {
@@ -1168,6 +1240,7 @@ mod tests {
         let sources = BuildMaterialSources::default();
         let input = preflight(
             &instances,
+            &[],
             &game,
             &sources,
             Options::default(),
@@ -1258,6 +1331,54 @@ mod tests {
                 .gather(
                     LightingKind::Ldr,
                     receiver(DVec3::Z * 16.0),
+                    Context {
+                        shadows: &shadows,
+                        terrain: &terrain,
+                        props: &props,
+                        model: None,
+                        skip_owner: None,
+                    },
+                    &mut budget,
+                )
+                .unwrap();
+            if blocked {
+                assert_eq!(color, DVec3::ZERO);
+            } else {
+                assert!(color.min_element() > 0.0);
+            }
+        }
+        for (z, blocked) in [(0.00001, false), (-0.00001, true)] {
+            let source = emitter([-8.0, -8.0, 8.0, 8.0], z, SkyQuality::Fast, &budget);
+            let biased = Sample {
+                point: DVec3::new(32.0, 0.0, 0.00002),
+                origin: DVec3::new(31.5, 0.0, -0.000001),
+                normal: DVec3::new(-1.0, 0.0, -0.000042),
+                face: None,
+                angular: ReceiverAngularMode::Normal,
+            };
+            let endpoint = DVec3::Z * z;
+            assert_eq!(
+                own.interval(biased.origin, endpoint).unwrap().is_some(),
+                blocked
+            );
+            let shadows =
+                ShadowIndex::new(vec![own.clone()], &mut |work| budget.consume(work)).unwrap();
+            assert_eq!(
+                source_blocked(
+                    &shadows,
+                    biased.origin,
+                    endpoint,
+                    Some(&source.sources[0].boundary),
+                    z.abs(),
+                    &mut budget,
+                )
+                .unwrap(),
+                blocked
+            );
+            let color = source
+                .gather(
+                    LightingKind::Ldr,
+                    biased,
                     Context {
                         shadows: &shadows,
                         terrain: &terrain,

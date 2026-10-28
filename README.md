@@ -67,8 +67,8 @@ See the [tool index and setup](docs/mcp.md).
 
 | [Lighting preview](docs/lighting-preview.md) | [Baked lighting](docs/compile-and-play.md#lighting) |
 | --- | --- |
-| ![HDR authored lighting on brick and concrete](docs/images/authored-lighting-hdr.png) | ![A white panel casts red baked light onto a surface and a prop in CS:S](docs/images/material-emission-native.png) |
-| Inspect unshadowed LDR/HDR point, spot and sun lighting. | Bake LDR/HDR, area emission, shadows and bounces. |
+| ![HDR authored lighting on brick and concrete](docs/images/authored-lighting-hdr.png) | ![A two-colour panel casts textured baked light in CS:S](docs/images/texture-emission-native.png) |
+| Inspect unshadowed LDR/HDR point, spot and sun lighting. | Bake LDR/HDR, textured area emission, shadows and bounces. |
 
 | [Models](docs/models.md) | [Surface placement](docs/placement.md) |
 | --- | --- |

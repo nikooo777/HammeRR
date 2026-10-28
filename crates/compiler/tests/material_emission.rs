@@ -11,7 +11,7 @@ use map_core::{BrushGeometry, Document, ObjectId, Plane, edit};
 use source_formats::bsp::{self, Bsp, LeafAmbient, LightingKind, Model, RgbExp32, TexInfo};
 use source_formats::gamefs::{GameFs, Mount, MountedPath};
 use source_formats::keyvalues::Node;
-use source_formats::vmf::{DispInfo, Entity, Vmf, format_vec3};
+use source_formats::vmf::{DispInfo, Entity, UvAxis, Vmf, format_vec3};
 
 const SHADOWS: &str = "vrad_brush_cast_shadows";
 
@@ -430,6 +430,379 @@ fn stationary_options() -> Options {
         lighting: LightingMode::DirectLdrHdr,
         sky_quality: SkyQuality::Fast,
         ..options(0, false)
+    }
+}
+
+fn emission_texture(fixture: &Fixture, pixels: [[u8; 4]; 4], flags: u32) -> Vec<u8> {
+    let mut bytes = vec![0_u8; 80];
+    bytes[..4].copy_from_slice(b"VTF\0");
+    for (offset, value) in [
+        (4, 7_u32),
+        (8, 2),
+        (12, 80),
+        (20, flags | source_formats::vtf::FLAG_NOMIP),
+    ] {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    for (offset, value) in [(16, 2_u16), (18, 2), (24, 1), (63, 1)] {
+        bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes[36..40].copy_from_slice(&1.0_f32.to_le_bytes());
+    bytes[56] = 1;
+    bytes[57..61].copy_from_slice(&(-1_i32).to_le_bytes());
+    for pixel in pixels {
+        bytes.extend_from_slice(&pixel);
+    }
+    std::fs::write(
+        fixture
+            .directory
+            .path()
+            .join("game/materials/test/emission.vtf"),
+        &bytes,
+    )
+    .unwrap();
+    std::fs::write(
+        fixture
+            .directory
+            .path()
+            .join("game/materials/test/emitter.vmt"),
+        "UnlitGeneric { %notooltexture 1 $basetexture test/emission $reflectivity \"[0 0 0]\" }",
+    )
+    .unwrap();
+    bytes
+}
+
+fn emission_uv(source: &mut Vmf, u: UvAxis) {
+    for side in source
+        .world
+        .solids
+        .iter_mut()
+        .chain(
+            source
+                .entities
+                .iter_mut()
+                .flat_map(|entity| &mut entity.solids),
+        )
+        .flat_map(|solid| &mut solid.sides)
+        .filter(|side| side.material == "test/emitter")
+    {
+        side.u_axis = u;
+        side.v_axis = UvAxis {
+            axis: DVec3::Y,
+            offset: 1.0,
+            scale: 48.0,
+        };
+    }
+}
+
+fn assert_emission_flux(output: &compiler::Output, red_area: f64, blue_area: f64) {
+    let stats = output.stats.material_emission.as_ref().unwrap();
+    assert_eq!(stats.source_area, 128.0 * 96.0);
+    assert_eq!((stats.source_faces, stats.source_triangles), (1, 2));
+    assert_eq!(
+        (stats.textured_materials, stats.textured_source_faces),
+        (1, 1)
+    );
+    assert_eq!(stats.texture_rectangles, 2);
+    let expected = [
+        [
+            std::f64::consts::PI * red_area * 0.2195197180748679,
+            0.0,
+            0.0,
+        ],
+        [0.0, 0.0, std::f64::consts::PI * blue_area * 2.0],
+    ];
+    for (actual, expected) in stats
+        .channel_flux
+        .iter()
+        .flatten()
+        .zip(expected.iter().flatten())
+    {
+        let rounding = 128.0 * f64::EPSILON * expected.abs().max(1.0);
+        assert!(
+            (actual - expected).abs() <= rounding,
+            "{actual} != {expected}"
+        );
+    }
+}
+
+#[test]
+fn texture_emission_integrates_exact_color_areas_and_keeps_native_uv_phase() {
+    let fixture = fixture(false);
+    let pixels = [
+        [128, 0, 0, 255],
+        [0, 0, 255, 255],
+        [128, 0, 0, 255],
+        [0, 0, 255, 255],
+    ];
+    emission_texture(&fixture, pixels, 0);
+    std::fs::write(
+        fixture.directory.path().join("game/scripts/emission.rad"),
+        "ldr: texture: test/emitter 255 0 0 255\nhdr: texture: test/emitter 0 0 255 510\n",
+    )
+    .unwrap();
+    let mut document = interior_source(&fixture);
+    black_light(&mut document);
+    let id = emitter(
+        &mut document,
+        DVec3::new(-64.0, -48.0, 176.0),
+        DVec3::new(64.0, 48.0, 184.0),
+        DVec3::new(16.0, -8.0, 160.0),
+        "0 0 0",
+    );
+    let mut source = document.into_vmf();
+    emission_uv(
+        &mut source,
+        UvAxis {
+            axis: DVec3::X,
+            offset: 1.0,
+            scale: 64.0,
+        },
+    );
+    let mut world = Document::new(source.clone());
+    world
+        .edit("world textured source", |tx| edit::move_to_world(tx, id))
+        .unwrap();
+    let world = compile(&fixture, world.vmf(), stationary_options());
+    let mut posed = source.clone();
+    posed
+        .entities
+        .iter_mut()
+        .find(|entity| entity.id == id)
+        .unwrap()
+        .properties
+        .set("angles", "0 90 0");
+    let posed = compile(&fixture, &posed, stationary_options());
+    for (output, axis) in [(&world, DVec3::X), (&posed, DVec3::Y)] {
+        assert_emission_flux(output, 64.0 * 96.0, 64.0 * 96.0);
+        let bsp = output.bsp.as_ref().unwrap();
+        for (kind, channel) in [(LightingKind::Ldr, 0), (LightingKind::Hdr, 2)] {
+            let low = floor_sample(bsp, kind, axis * -128.0);
+            let high = floor_sample(bsp, kind, axis * 128.0);
+            if kind == LightingKind::Ldr {
+                assert!(low.linear()[channel] > high.linear()[channel]);
+            } else {
+                assert!(high.linear()[channel] > low.linear()[channel]);
+            }
+            assert!(low.rgb[channel] > 0 && high.rgb[channel] > 0);
+            for other in (0..3).filter(|&other| other != channel) {
+                assert_eq!((low.rgb[other], high.rgb[other]), (0, 0));
+            }
+        }
+    }
+    for (name, axis, scale, offset, flags, red_area) in [
+        ("negative repeat", DVec3::X, 64.0, -0.5, 0, 64.0 * 96.0),
+        ("partial repeat", DVec3::X, 128.0, 0.25, 0, 96.0 * 96.0),
+        ("lower clamp", DVec3::X, 64.0, -0.5, 0x0c, 128.0 * 96.0),
+        ("upper clamp", DVec3::X, 64.0, 2.5, 0x0c, 0.0),
+        ("constant edge", DVec3::Z, 128.0, -0.375, 0, 0.0),
+    ] {
+        emission_texture(&fixture, pixels, flags);
+        let mut source = source.clone();
+        emission_uv(
+            &mut source,
+            UvAxis {
+                axis,
+                offset,
+                scale,
+            },
+        );
+        let output = compiler::compile_with_options(&source, &fixture.game, stationary_options());
+        assert!(!output.report.has_errors(), "{name}: {:?}", output.report);
+        assert!(output.bsp.is_some(), "{name}");
+        assert_emission_flux(&output, red_area, 128.0 * 96.0 - red_area);
+    }
+}
+
+#[test]
+fn constant_white_texture_is_bit_exact_uniform_emission_and_black_is_valid_zero() {
+    let fixture = fixture(true);
+    emission_texture(&fixture, [[255; 4]; 4], 0);
+    let mut document = Document::new(fixture.source.clone());
+    black_light(&mut document);
+    let mut source = document.into_vmf();
+    emission_uv(
+        &mut source,
+        UvAxis {
+            axis: DVec3::X,
+            offset: 1.0,
+            scale: 256.0,
+        },
+    );
+    for side in source
+        .world
+        .solids
+        .iter_mut()
+        .flat_map(|solid| &mut solid.sides)
+    {
+        if side.material == "test/emitter" {
+            side.v_axis.scale = 256.0;
+        }
+    }
+    let settings = Options {
+        bake_static_prop_vertices: true,
+        ..stationary_options()
+    };
+    let uniform = compile(&fixture, &source, settings);
+    std::fs::write(
+        fixture.directory.path().join("game/scripts/emission.rad"),
+        "ldr: texture: test/emitter 255 0 0 255\nhdr: texture: test/emitter 0 0 255 510\n",
+    )
+    .unwrap();
+    let white = compile(&fixture, &source, settings);
+    let uniform_stats = uniform.stats.material_emission.as_ref().unwrap();
+    let white_stats = white.stats.material_emission.as_ref().unwrap();
+    assert_eq!(uniform_stats.channel_flux, white_stats.channel_flux);
+    assert_eq!(uniform_stats.source_area, white_stats.source_area);
+    assert_eq!(white_stats.texture_rectangles, 1);
+    assert_eq!(
+        white_stats.integration_triangles,
+        uniform_stats.source_triangles
+    );
+    let mut off = source.clone();
+    off.world
+        .properties
+        .remove(compiler::MATERIAL_EMISSION_FILE_KEY);
+    let off = compile(&fixture, &off, settings);
+    emission_texture(&fixture, [[0, 0, 0, 255]; 4], 0);
+    let black = compile(&fixture, &source, settings);
+    let black_stats = black.stats.material_emission.as_ref().unwrap();
+    assert_eq!(black_stats.source_area, uniform_stats.source_area);
+    assert_eq!(black_stats.channel_flux, [[0.0; 3]; 2]);
+    assert_eq!(
+        (black_stats.source_faces, black_stats.textured_source_faces),
+        (1, 1)
+    );
+    for (actual, expected) in [(&white, &uniform), (&black, &off)] {
+        let actual = actual.bsp.as_ref().unwrap();
+        let expected = expected.bsp.as_ref().unwrap();
+        for lump in [
+            bsp::lump::LIGHTING,
+            bsp::lump::LIGHTING_HDR,
+            bsp::lump::LEAF_AMBIENT_INDEX,
+            bsp::lump::LEAF_AMBIENT_INDEX_HDR,
+            bsp::lump::LEAF_AMBIENT_LIGHTING,
+            bsp::lump::LEAF_AMBIENT_LIGHTING_HDR,
+            bsp::lump::WORLDLIGHTS,
+            bsp::lump::WORLDLIGHTS_HDR,
+        ] {
+            assert_eq!(
+                actual.lumps[lump].data, expected.lumps[lump].data,
+                "lump {lump}"
+            );
+        }
+        assert_eq!(
+            actual.detail_props().unwrap(),
+            expected.detail_props().unwrap()
+        );
+        let actual = actual.pak_data(bsp::PakLimits::default()).unwrap();
+        let expected = expected.pak_data(bsp::PakLimits::default()).unwrap();
+        let actual = actual
+            .entries
+            .iter()
+            .filter(|entry| entry.name.ends_with(".vhv"));
+        let expected = expected
+            .entries
+            .iter()
+            .filter(|entry| entry.name.ends_with(".vhv"));
+        let actual = actual
+            .map(|entry| (&entry.name, &entry.data))
+            .collect::<Vec<_>>();
+        let expected = expected
+            .map(|entry| (&entry.name, &entry.data))
+            .collect::<Vec<_>>();
+        assert!(!actual.is_empty());
+        assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn texture_assets_refuse_before_cordon_and_retain_original_publication_guards() {
+    let fixture = fixture(false);
+    let bytes = emission_texture(&fixture, [[255; 4]; 4], 0);
+    std::fs::write(
+        fixture.directory.path().join("game/scripts/emission.rad"),
+        "texture: test/emitter 255 255 255 255\n",
+    )
+    .unwrap();
+    let mut document = interior_source(&fixture);
+    emitter(
+        &mut document,
+        DVec3::new(512.0, -32.0, 64.0),
+        DVec3::new(576.0, 32.0, 80.0),
+        DVec3::new(544.0, 0.0, 72.0),
+        "0 0 0",
+    );
+    let mut source = document.into_vmf();
+    source.cordon = Some(Node::block(
+        "cordon",
+        vec![
+            Node::string("active", "1"),
+            Node::string("mins", "-128 -128 4"),
+            Node::string("maxs", "128 128 252"),
+        ],
+    ));
+    let accepted = compile(&fixture, &source, Options::default());
+    assert!(accepted.stats.compile_region.is_some());
+    assert_eq!(
+        accepted
+            .stats
+            .material_emission
+            .as_ref()
+            .unwrap()
+            .matched_sides,
+        1
+    );
+    let destination = fixture.directory.path().join("outputs/texture-refused.bsp");
+    std::fs::write(&destination, b"previous BSP").unwrap();
+    std::fs::write(destination.with_extension("lin"), b"previous LIN").unwrap();
+    let publication = accepted
+        .prepare_write_controlled(&destination, &Control::default())
+        .unwrap()
+        .unwrap();
+    drop(accepted);
+    let texture = fixture
+        .directory
+        .path()
+        .join("game/materials/test/emission.vtf");
+    let mut changed = bytes.clone();
+    changed[80] ^= 1;
+    std::fs::write(&texture, changed).unwrap();
+    assert!(publication.commit(&Control::default()).is_err());
+    assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+    assert_eq!(
+        std::fs::read(destination.with_extension("lin")).unwrap(),
+        b"previous LIN"
+    );
+    let mut animated = bytes.clone();
+    animated[24..26].copy_from_slice(&2_u16.to_le_bytes());
+    animated.extend_from_slice(&bytes[80..]);
+    let mut hdr = bytes[..80].to_vec();
+    hdr[52..56].copy_from_slice(&24_u32.to_le_bytes());
+    hdr.extend_from_slice(&[0; 32]);
+    for (name, replacement) in [
+        ("missing", None),
+        ("animated", Some(animated)),
+        ("HDR", Some(hdr)),
+    ] {
+        if let Some(replacement) = replacement {
+            std::fs::write(&texture, replacement).unwrap();
+        } else {
+            std::fs::remove_file(&texture).unwrap();
+        }
+        let output = compiler::compile_with_options(&source, &fixture.game, Options::default());
+        assert!(
+            output.report.has_errors() && output.bsp.is_none() && output.leak.is_none(),
+            "{name}: {:?}",
+            output.report
+        );
+        assert!(output.stats.compile_region.is_none(), "{name}");
+        assert!(!output.write(&destination).unwrap(), "{name}");
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous BSP");
+        assert_eq!(
+            std::fs::read(destination.with_extension("lin")).unwrap(),
+            b"previous LIN"
+        );
     }
 }
 

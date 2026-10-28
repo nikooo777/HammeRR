@@ -231,7 +231,7 @@ fn field(entity: &Entity, class: Option<&Class>, key: String, stored_value: Opti
     if material_emission {
         result.label = "Emission file".into();
         result.description = format!(
-            "Mounted relative path, up to {} ASCII bytes. Blank turns emission off. Compile to bake light from the declared world/detail materials. Fullbright does not bake emission.",
+            "Mounted relative path, up to {} ASCII bytes. Blank turns emission off. Compile to bake uniform or texture-driven light from declared world/detail and eligible stationary brush materials. Fullbright does not bake emission.",
             compiler::MAX_MATERIAL_EMISSION_FILE_PATH_BYTES
         );
         result.advanced = false;

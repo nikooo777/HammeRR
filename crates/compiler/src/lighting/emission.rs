@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use source_formats::bsp::{self, Bsp, Edge, LightingKind, TexInfo, surf};
 use source_formats::gamefs::{GameFs, asset_relative};
 use source_formats::vmf::{Entity, Properties, Solid};
@@ -15,6 +15,8 @@ use super::{Occluder, ReceiverAngularMode};
 use crate::asset_sources::BuildMaterialSources;
 use crate::materials::{Materials, Requirements};
 use crate::{Control, Diagnostic, Options, Report, SkyQuality, map::Map};
+
+mod texture;
 
 pub const MATERIAL_EMISSION_FILE_KEY: &str = "_hammerr_emission_file";
 pub const MAX_MATERIAL_EMISSION_FILE_PATH_BYTES: usize = 1024;
@@ -43,6 +45,11 @@ pub struct MaterialEmissionStats {
     pub matched_sides: usize,
     pub source_faces: usize,
     pub source_triangles: usize,
+    pub textured_materials: usize,
+    pub decoded_texture_texels: usize,
+    pub texture_rectangles: usize,
+    pub textured_source_faces: usize,
+    pub integration_triangles: usize,
     pub source_area: f64,
     pub channel_flux: [[f64; 3]; 2],
     pub maximum_cell_angle_degrees: f64,
@@ -107,6 +114,7 @@ pub(crate) fn file(properties: &Properties) -> Result<Option<&str>, String> {
 struct Declaration {
     id: usize,
     channels: [Option<DVec3>; 2],
+    textured: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -125,6 +133,7 @@ pub(crate) struct Input<'a> {
     pub(super) budget: Budget<'a>,
     declarations: BTreeMap<String, Declaration>,
     sides: BTreeMap<u32, AdmittedSide>,
+    textures: BTreeMap<usize, texture::Texture>,
     sources: BuildMaterialSources,
     stats: MaterialEmissionStats,
     _allocation: Allocation,
@@ -163,6 +172,10 @@ fn decimal(value: &str) -> Result<f64, String> {
     Ok(value)
 }
 
+fn rgb_to_linear(value: DVec3) -> DVec3 {
+    value.map(|value| (value / LIGHTMAP_SCALE).powf(2.2))
+}
+
 fn parse(text: &str, budget: &mut Budget<'_>) -> Result<BTreeMap<String, Declaration>, String> {
     if !text.is_ascii() {
         return Err("Material emission file must be ASCII".into());
@@ -199,6 +212,14 @@ fn parse(text: &str, budget: &mut Budget<'_>) -> Result<BTreeMap<String, Declara
                 ),
                 _ => ([true; 2], first),
             };
+            let (textured, name) = if name == "texture:" {
+                (
+                    true,
+                    values.next().ok_or("Missing texture emission material")?,
+                )
+            } else {
+                (false, name)
+            };
             let name = material_name(name)?;
             let mut numbers = [0.0; 4];
             for number in &mut numbers {
@@ -209,13 +230,19 @@ fn parse(text: &str, budget: &mut Budget<'_>) -> Result<BTreeMap<String, Declara
                     "Emission requires exactly R G B brightness, with RGB between 0 and 255".into(),
                 );
             }
-            let radiance = DVec3::new(numbers[0], numbers[1], numbers[2])
-                .map(|value| (value / LIGHTMAP_SCALE).powf(2.2))
+            let radiance = rgb_to_linear(DVec3::new(numbers[0], numbers[1], numbers[2]))
                 * (numbers[3] / LIGHTMAP_SCALE);
             if !radiance.is_finite() {
                 return Err("Material emission radiance overflow".into());
             }
             let declaration = declarations.entry(name.clone()).or_default();
+            if declaration.channels.iter().any(Option::is_some) && declaration.textured != textured
+            {
+                return Err(format!(
+                    "Material {name} mixes uniform and texture emission modes"
+                ));
+            }
+            declaration.textured = textured;
             for (index, enabled) in channels.into_iter().enumerate() {
                 if enabled && declaration.channels[index].replace(radiance).is_some() {
                     return Err(format!(
@@ -282,6 +309,7 @@ pub(crate) fn preflight<'a>(
     }
     let mut checked = BTreeSet::new();
     let mut sides = BTreeMap::new();
+    let mut textures = BTreeMap::new();
     for (solid, owner) in vmf
         .world
         .solids
@@ -318,8 +346,11 @@ pub(crate) fn preflight<'a>(
             &mut assets,
             &mut checked,
             &mut sides,
+            &mut textures,
             &mut budget,
             instances,
+            fs,
+            sources,
         )?;
     }
     let angle = maximum_angle(options.sky_quality);
@@ -330,6 +361,11 @@ pub(crate) fn preflight<'a>(
         matched_sides: sides.len(),
         source_faces: 0,
         source_triangles: 0,
+        textured_materials: textures.len(),
+        decoded_texture_texels: textures.values().map(texture::Texture::texels).sum(),
+        texture_rectangles: textures.values().map(texture::Texture::rectangles).sum(),
+        textured_source_faces: 0,
+        integration_triangles: 0,
         source_area: 0.0,
         channel_flux: [[0.0; 3]; 2],
         maximum_cell_angle_degrees: angle,
@@ -339,14 +375,15 @@ pub(crate) fn preflight<'a>(
         native_policy: "indexed_ambient_only_no_emission_worldlights",
     };
     report.diagnostics.push(Diagnostic::info(format!(
-        "Material emission: {} declarations match {} original world/detail or stationary Shadows Yes brush-model sides; {}. Uniform radiance uses actual finite source area, sampled segment shadows and indexed model ambient only; no native emission world lights or shader glow",
-        declarations.len(), sides.len(), if options.lighting.performs_lighting() { "baking requested" } else { "not baked in Fullbright" }
+        "Material emission: {} declarations match {} original world/detail or stationary Shadows Yes brush-model sides, {} textured materials; {}. Radiance uses actual finite source area, nearest mip0 base-texture RGB where requested, sampled segment shadows and indexed model ambient only; no native emission world lights or shader glow",
+        declarations.len(), sides.len(), textures.len(), if options.lighting.performs_lighting() { "baking requested" } else { "not baked in Fullbright" }
     ), None, None));
     budget.consume(0)?;
     Ok(Some(Input {
         budget,
         declarations,
         sides,
+        textures,
         sources: sources.clone(),
         stats,
         _allocation: allocation,
@@ -363,8 +400,11 @@ fn admit_solid(
     assets: &mut super::props::Assets<'_, '_>,
     checked: &mut BTreeSet<usize>,
     sides: &mut BTreeMap<u32, AdmittedSide>,
+    textures: &mut BTreeMap<usize, texture::Texture>,
     budget: &mut Budget<'_>,
     instances: &crate::instances::Prepared<'_>,
+    fs: &GameFs,
+    sources: &BuildMaterialSources,
 ) -> Result<(), String> {
     let terrain = solid.sides.iter().any(|side| side.displacement.is_some());
     for side in &solid.sides {
@@ -413,7 +453,11 @@ fn admit_solid(
                         * 128
                         * (source_formats::vmt::MAX_PATCH_DEPTH + 1),
                 )?;
-                assets.brush_opaque_material(&name, budget)?;
+                let material = assets.brush_opaque_material(&name, budget)?;
+                if declaration.textured {
+                    let texture = texture::load(&material, fs, sources, budget)?;
+                    textures.insert(declaration.id, texture);
+                }
             }
             if sides.len() == MAX_SOURCE_SIDES {
                 return Err("Emission exceeds 65536 matched original sides".into());
@@ -464,6 +508,7 @@ impl<'a> Input<'a> {
             Declarations {
                 declarations: self.declarations,
                 sides: self.sides,
+                textures: self.textures,
                 sources: self.sources,
                 stats: self.stats,
                 _allocation: self._allocation,
@@ -475,6 +520,7 @@ impl<'a> Input<'a> {
 pub(super) struct Declarations {
     declarations: BTreeMap<String, Declaration>,
     sides: BTreeMap<u32, AdmittedSide>,
+    textures: BTreeMap<usize, texture::Texture>,
     sources: BuildMaterialSources,
     stats: MaterialEmissionStats,
     _allocation: Allocation,
@@ -564,7 +610,7 @@ pub(super) fn prepare(
         return Err("Emission face contributors disagree with emitted geometry".into());
     }
     let source_side_count = declarations.sides.len();
-    let allocation = budget.reserve_bytes(
+    let mut allocation = budget.reserve_bytes(
         source_side_count
             .checked_mul(128)
             .ok_or("Emission source-side allocation overflow")?
@@ -609,6 +655,7 @@ pub(super) fn prepare(
     }
     let mut sources = Vec::new();
     let mut stats = declarations.stats.clone();
+    let mut texture_work = texture::Counters::default();
     for (scope, index) in scopes
         .iter()
         .flat_map(|scope| scope.faces.clone().map(move |index| (scope, index)))
@@ -663,6 +710,26 @@ pub(super) fn prepare(
                 normal: local_plane.normal,
                 dist: local_plane.dist,
             });
+            let texture = if declaration.textured {
+                Some(
+                    declarations
+                        .textures
+                        .get(&declaration.id)
+                        .ok_or("Emission source lost its original decoded base texture")?,
+                )
+            } else {
+                None
+            };
+            let _face_allocation = budget.reserve_bytes(
+                face.edge_count as usize
+                    * (size_of::<DVec3>()
+                        + if texture.is_some() {
+                            2 * size_of::<DVec2>() + 2 * size_of::<[DVec2; 3]>()
+                        } else {
+                            0
+                        }),
+            )?;
+            let mut texture_points = Vec::new();
             budget.consume(face.edge_count as usize)?;
             let points = surfedges
                 [face.first_edge as usize..face.first_edge as usize + face.edge_count as usize]
@@ -672,6 +739,15 @@ pub(super) fn prepare(
                     let point = DVec3::from_array(
                         vertices[vertices_on_edge[usize::from(*edge < 0)] as usize].map(f64::from),
                     );
+                    if texture.is_some() {
+                        texture_points.push(DVec2::from_array(info.texture_vecs.map(|axis| {
+                            point.dot(DVec3::new(
+                                f64::from(axis[0]),
+                                f64::from(axis[1]),
+                                f64::from(axis[2]),
+                            )) + f64::from(axis[3])
+                        })));
+                    }
                     if scope.entity == 0 {
                         point
                     } else {
@@ -687,8 +763,9 @@ pub(super) fn prepare(
                 return Err("Emission source needs at least three finite native vertices within Source coordinate bounds".into());
             }
             let mut triangles = Vec::with_capacity(points.len() - 2);
+            let mut texture_triangles = Vec::new();
             let mut face_area = 0.0;
-            for pair in points[1..].windows(2) {
+            for (corner, pair) in points[1..].windows(2).enumerate() {
                 budget.consume(1)?;
                 let cross = (pair[1] - points[0]).cross(pair[0] - points[0]);
                 let area = cross.length() * 0.5;
@@ -705,6 +782,13 @@ pub(super) fn prepare(
                 stats.source_area += area;
                 face_area += area;
                 triangles.push([points[0], pair[1], pair[0]]);
+                if texture.is_some() {
+                    texture_triangles.push([
+                        texture_points[0],
+                        texture_points[corner + 2],
+                        texture_points[corner + 1],
+                    ]);
+                }
             }
             if triangles.is_empty() {
                 return Err("Emission source has no positive native area".into());
@@ -712,34 +796,79 @@ pub(super) fn prepare(
             if !stats.source_area.is_finite() {
                 return Err("Emission source area overflow".into());
             }
-            for (channel, radiance) in declaration.channels.into_iter().enumerate() {
-                let flux = DVec3::from_array(stats.channel_flux[channel])
-                    + radiance.unwrap_or(DVec3::ZERO) * (PI * face_area);
-                if !flux.is_finite() {
-                    return Err("Material emission source power overflows finite RGB flux".into());
-                }
-                stats.channel_flux[channel] = flux.to_array();
+            let fragments = if let Some(texture) = texture {
+                stats.textured_source_faces += 1;
+                texture::partition(
+                    texture,
+                    triangles,
+                    &texture_triangles,
+                    &mut texture_work,
+                    budget,
+                    &mut allocation,
+                )?
+            } else {
+                texture_work.triangles(triangles.len())?;
+                BTreeMap::from([([255; 3], triangles)])
+            };
+            let location = source_location(instances, map.brushes[owner].id, *id);
+            if declaration.textured {
+                allocation.grow(
+                    budget,
+                    fragments.len() * (size_of::<Source>() * 2 + location.len() + 128),
+                )?;
             }
-            sources.push(Source {
-                location: source_location(instances, map.brushes[owner].id, *id),
-                face: index,
-                triangles,
-                radiance: declaration
-                    .channels
-                    .map(|value| value.unwrap_or(DVec3::ZERO)),
-                boundary: SourceBoundary {
-                    plane: side.plane,
-                    equation: plane,
-                    sides: Arc::from([*id]),
-                    owners: vec![owner],
-                },
-            });
+            for (rgb, triangles) in fragments {
+                let radiance = declaration.channels.map(|value| {
+                    let value = value.unwrap_or(DVec3::ZERO);
+                    if declaration.textured {
+                        value * rgb_to_linear(DVec3::from_array(rgb.map(f64::from)))
+                    } else {
+                        value
+                    }
+                });
+                let area = if texture.is_some_and(|texture| texture.rectangles() != 1) {
+                    let mut area = 0.0;
+                    for triangle in &triangles {
+                        budget.consume(1)?;
+                        area += (triangle[1] - triangle[0])
+                            .cross(triangle[2] - triangle[0])
+                            .length()
+                            * 0.5;
+                    }
+                    area
+                } else {
+                    face_area
+                };
+                for (channel, radiance) in radiance.into_iter().enumerate() {
+                    let flux =
+                        DVec3::from_array(stats.channel_flux[channel]) + radiance * (PI * area);
+                    if !flux.is_finite() {
+                        return Err(
+                            "Material emission source power overflows finite RGB flux".into()
+                        );
+                    }
+                    stats.channel_flux[channel] = flux.to_array();
+                }
+                sources.push(Source {
+                    location: location.clone(),
+                    face: index,
+                    triangles,
+                    radiance,
+                    boundary: SourceBoundary {
+                        plane: side.plane,
+                        equation: plane,
+                        sides: Arc::from([*id]),
+                        owners: vec![owner],
+                    },
+                });
+            }
+            stats.source_faces += 1;
             Ok::<(), String>(())
         })();
         result
             .map_err(|error| format!("Material emission face:{index} material {name}: {error}"))?;
     }
-    stats.source_faces = sources.len();
+    stats.integration_triangles = texture_work.triangles;
     budget.consume(0)?;
     Ok(Prepared {
         sources,
@@ -1116,6 +1245,11 @@ mod tests {
                 matched_sides: 1,
                 source_faces: 1,
                 source_triangles: 2,
+                textured_materials: 0,
+                decoded_texture_texels: 0,
+                texture_rectangles: 0,
+                textured_source_faces: 0,
+                integration_triangles: 2,
                 source_area: (bounds[2] - bounds[0]) * (bounds[3] - bounds[1]),
                 channel_flux: [[0.0; 3]; 2],
                 maximum_cell_angle_degrees: angle,
@@ -1202,6 +1336,32 @@ mod tests {
             .0
             .push(("_Hammerr_emission_file".into(), "other.rad".into()));
         assert!(file(&properties).is_err());
+    }
+
+    #[test]
+    fn texture_declarations_require_one_mode_across_channels() {
+        let control = Control::default();
+        let mut budget = Budget::new(&control);
+        let both = parse("texture: test/panel 255 255 255 255", &mut budget).unwrap();
+        assert!(both["test/panel"].textured);
+        assert_eq!(both["test/panel"].channels, [Some(DVec3::ONE); 2]);
+        let paired = parse(
+            "ldr: texture: test/panel 255 0 0 510\nhdr: texture: test/panel 0 0 255 1020",
+            &mut budget,
+        )
+        .unwrap();
+        assert_eq!(
+            paired["test/panel"].channels,
+            [Some(DVec3::X * 2.0), Some(DVec3::Z * 4.0)]
+        );
+        for value in [
+            "ldr: texture: test/panel 255 0 0 255\nhdr: test/panel 0 0 255 255",
+            "ldr: test/panel 255 0 0 255\nhdr: texture: test/panel 0 0 255 255",
+            "texture:",
+            "ldr: texture: test/panel 255 0 0 255\ntexture: test/panel 0 0 255 255",
+        ] {
+            assert!(parse(value, &mut budget).is_err(), "{value}");
+        }
     }
 
     #[test]

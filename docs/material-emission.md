@@ -23,8 +23,9 @@ Blank text or **Remove override** turns emission off. **Fullbright** checks the
 file and sources but does not bake emission. Unused records are allowed;
 no rendered source faces means no emission is baked.
 
-Brightness is uniform per surface area. Doubling area or brightness doubles
-emitted power. Texture size, UV scale and source reflectivity do not set power.
+Uniform records set brightness per surface area. Doubling area or brightness
+doubles emitted power. Texture size, UV scale and source reflectivity do not
+set power for uniform records.
 RGB values are 0–255; brightness must be finite and nonnegative.
 
 Use separate records for different channels:
@@ -36,6 +37,26 @@ hdr: lights/panel 128 192 255 510
 
 An unprefixed record supplies both channels. Blank lines and whole-line `//`
 comments are accepted. Duplicate material/channel assignments reject.
+
+## Use texture colours
+
+1. Give the source a static opaque **LightmappedGeneric** or **UnlitGeneric**
+   material with an explicit `$basetexture`.
+2. Add `texture:` before its material name:
+
+   ```text
+   texture: lights/panel 255 255 255 255
+   ```
+
+3. Use the [face material controls](textures.md#edit-face-textures) to set UV scale and shift,
+   then compile. These set the colour pattern and can change emitted power.
+
+Each nearest mip0 texel multiplies the record colour. Both use the 2.2 RGB
+conversion. VTF repeat and clamp flags apply. Black texels emit no light;
+texture alpha and reflectivity do not set emission. This samples base RGB,
+not the complete shader. Use one mode per material across LDR and HDR records.
+
+![A red and blue panel casts two-colour baked light onto a floor in CS:S](images/texture-emission-native.png)
 
 ## Use a stationary brush source
 
@@ -72,6 +93,12 @@ for the shared admission rules.
   mounted and relative. Includes, traversal, implicit file searches and
   child-owned emission files are unavailable. Root declarations apply to
   supported assembled child world/detail and stationary brush-model faces.
+- Texture sources require one static RGB frame, face and depth. HDR/data images,
+  animation, conditional blocks, alternate base textures, seamless projection
+  and texture transforms reject. No asset substitution or downsampling occurs.
+- Texture limits: 4,096 pixels per edge, 64 MiB + 4,096 encoded bytes and
+  65,536 constant-colour rectangles per image; 262,144 integration triangles
+  per build. UV, work and memory bounds also apply.
 - VRAD numeric brightness parity is unavailable.
 
 See [MCP emission](mcp.md#material-emission) for the shared property workflow.

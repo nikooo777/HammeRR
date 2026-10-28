@@ -562,6 +562,13 @@ power and sampling work under `stats.material_emission`. Empty source counts
 do not establish illumination. See [Material emission](material-emission.md)
 for source, sampling and native HDR limits.
 
+Use `[ldr:|hdr:] texture: material R G B brightness` for nearest mip0
+base-RGB emission. The same file and property operations apply. Results include
+`textured_materials`, `decoded_texture_texels`, `texture_rectangles`,
+`textured_source_faces` and `integration_triangles`. Original source counts and
+area remain separate from the clipped integration pieces. Texture failures
+reject; no average colour or substitute asset is used.
+
 An eligible stationary `func_brush` can emit from its initial pose. Set its
 finite `origin` and `vrad_brush_cast_shadows:"1"` through `set_entity_properties`,
 then use the same World emission file. Supported child poses are assembled

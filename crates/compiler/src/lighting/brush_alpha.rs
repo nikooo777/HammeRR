@@ -19,7 +19,11 @@ pub(super) struct Face {
 }
 
 impl Face {
-    pub(super) fn covered(&self, point: DVec3) -> Result<bool, String> {
+    pub(super) fn fractional(&self) -> bool {
+        self.material.fractional()
+    }
+
+    pub(super) fn coverage(&self, point: DVec3) -> Result<u8, String> {
         let dimensions = self.material.dimensions();
         let coordinate = |axis: usize| {
             let row = self.projection[axis];
@@ -28,7 +32,7 @@ impl Face {
                 / dimensions[axis] as f64
         };
         self.material
-            .blocks(DVec2::new(coordinate(0), coordinate(1)))
+            .coverage(DVec2::new(coordinate(0), coordinate(1)))
             .map_err(|error| format!("Brush texture shadows: {error}"))
     }
 }
@@ -148,6 +152,51 @@ fn requested(material: &vmt::Material) -> Result<bool, String> {
     Ok(requested)
 }
 
+fn prepare_material(
+    index: usize,
+    solid: u32,
+    map: &Map<'_>,
+    materials: &mut BTreeMap<usize, Option<Arc<alpha::Material>>>,
+    assets: &mut Assets<'_, '_>,
+    budget: &mut Budget<'_>,
+) -> Result<bool, String> {
+    budget.consume(materials.len().checked_ilog2().unwrap_or(0) as usize + 1)?;
+    match materials.entry(index) {
+        Entry::Occupied(entry) => Ok(entry.get().is_some()),
+        Entry::Vacant(entry) => {
+            let info = map.materials.get(index);
+            let _parsed_material = budget.reserve_bytes(
+                crate::MAX_BRUSH_SHADOW_MATERIAL_BYTES * 128 * (vmt::MAX_PATCH_DEPTH + 1),
+            )?;
+            let material = assets
+                .brush_material(&info.name, budget)
+                .map_err(|error| format!("solid:{solid}: {error}"))?;
+            budget.consume(material.params.len() + 1)?;
+            let alpha = if requested(&material)
+                .map_err(|error| format!("solid:{solid} material {}: {error}", info.name))?
+            {
+                drop(material);
+                let _raw_material =
+                    budget.reserve_bytes(crate::MAX_BRUSH_SHADOW_MATERIAL_BYTES * 128)?;
+                let material = assets
+                    .brush_cutout_material(&info.name, budget)
+                    .map_err(|error| format!("solid:{solid}: {error}"))?;
+                Some(
+                    alpha::prepare_brush(&material, assets, budget).map_err(|error| {
+                        format!(
+                            "Brush texture shadows solid:{solid} material {}: {error}",
+                            info.name
+                        )
+                    })?,
+                )
+            } else {
+                None
+            };
+            Ok(entry.insert(alpha).is_some())
+        }
+    }
+}
+
 pub(super) fn prepare(
     map: &Map<'_>,
     fs: &GameFs,
@@ -168,15 +217,18 @@ pub(super) fn prepare(
     if sides > crate::MAX_BRUSH_SHADOW_SIDES {
         return Err("Brush texture shadows exceeds 65,536 boundary sides".into());
     }
+    let surfaces = sides
+        .checked_add(map.terrains.len())
+        .ok_or("Brush texture shadows surface count overflow")?;
     let _read_metadata = budget
-        .reserve::<Allocation>(2 * (crate::MAX_BRUSH_SHADOW_MATERIAL_LOOKUPS + 5 * sides + 2))?;
+        .reserve::<Allocation>(2 * (crate::MAX_BRUSH_SHADOW_MATERIAL_LOOKUPS + 5 * surfaces + 2))?;
     let hull_bytes = map
         .brushes
         .len()
         .checked_mul(size_of::<super::OpticalHull>())
         .ok_or("Brush texture shadows hull allocation overflow")?;
     let allocation = budget.reserve_bytes(
-        sides
+        surfaces
             .checked_mul(
                 size_of::<Option<Face>>()
                     + 4 * size_of::<(usize, Option<Arc<alpha::Material>>)>()
@@ -185,7 +237,7 @@ pub(super) fn prepare(
             .and_then(|bytes| bytes.checked_add(hull_bytes))
             .ok_or("Brush texture shadows boundary allocation overflow")?,
     )?;
-    budget.consume(sides)?;
+    budget.consume(surfaces)?;
     let mut materials = BTreeMap::new();
     let mut model_alpha = false;
     let mut global_alpha = BTreeSet::new();
@@ -198,39 +250,15 @@ pub(super) fn prepare(
             .iter()
             .filter(|side| !side.bevel && side.visible)
         {
-            let info = map.materials.get(side.material);
-            budget.consume(materials.len().checked_ilog2().unwrap_or(0) as usize + 1)?;
-            if let Entry::Vacant(entry) = materials.entry(side.material) {
-                let _parsed_material = budget.reserve_bytes(
-                    crate::MAX_BRUSH_SHADOW_MATERIAL_BYTES * 128 * (vmt::MAX_PATCH_DEPTH + 1),
-                )?;
-                let material = assets
-                    .brush_material(&info.name, budget)
-                    .map_err(|error| format!("solid:{}: {error}", brush.id))?;
-                budget.consume(material.params.len() + 1)?;
-                let alpha = if requested(&material).map_err(|error| {
-                    format!("solid:{} material {}: {error}", brush.id, info.name)
-                })? {
-                    drop(material);
-                    let _raw_material =
-                        budget.reserve_bytes(crate::MAX_BRUSH_SHADOW_MATERIAL_BYTES * 128)?;
-                    let material = assets
-                        .brush_cutout_material(&info.name, budget)
-                        .map_err(|error| format!("solid:{}: {error}", brush.id))?;
-                    Some(
-                        alpha::prepare_brush(&material, &mut assets, budget).map_err(|error| {
-                            format!(
-                                "Brush texture shadows solid:{} material {}: {error}",
-                                brush.id, info.name
-                            )
-                        })?,
-                    )
-                } else {
-                    None
-                };
-                entry.insert(alpha);
-            }
-            let model_alpha_side = brush.entity != 0 && materials[&side.material].is_some();
+            let alpha = prepare_material(
+                side.material,
+                brush.id,
+                map,
+                &mut materials,
+                &mut assets,
+                budget,
+            )?;
+            let model_alpha_side = brush.entity != 0 && alpha;
             model_alpha |= model_alpha_side;
             brush_alpha |= model_alpha_side;
         }
@@ -245,6 +273,16 @@ pub(super) fn prepare(
                 }
             }
         }
+    }
+    for terrain in &map.terrains {
+        prepare_material(
+            terrain.material,
+            terrain.solid,
+            map,
+            &mut materials,
+            &mut assets,
+            budget,
+        )?;
     }
     let mut allocations = assets.into_allocations();
     allocations.extend(global_allocations);

@@ -32,6 +32,10 @@ The preview reads compiled diffuse textures, static tint and supported blend and
 normal inputs. It uses the owned BSP's packed assets first, then the guarded
 original sources. An editor image does not replace a compiled texture.
 Terrain texture coordinates follow the base quad, including sideways deformation.
+Supported plain `LightmappedGeneric` cutout and translucent materials use mip-0
+nearest clamp/repeat sampling. Cutouts use the checked alpha-test reference;
+translucent surfaces use base-texture alpha with depth-ordered blending.
+Painted terrain blend values do not control opacity.
 
 Lightmapped surfaces use face-local bilinear samples. Tangent normals use normalized squared projections onto the compiler's three-
 vector basis. SSBump inputs supply direct coefficients. Native shader weighting
@@ -53,6 +57,7 @@ prepare again. Other objects still cast shadows on the prop.
 - The layer needs the current session's successful lit build. Recompile and prepare after source, asset or build-setting changes.
 - Missing selected channels, malformed inputs and unsupported material effects stop the complete preparation. Channels are never substituted.
 - Supported static shaders are `LightmappedGeneric`, `WorldVertexTransition`, `WorldTwoTextureBlend` and `UnlitGeneric`. Proxies and animated effects are unavailable.
+- Face alpha requires the [supported plain material forms](brush-texture-shadows.md#material-opacity). Alpha modulation, combined cutout/translucent modes and alpha normal/blend effects reject. Translucent display sorts whole batches; intersecting surfaces can sort differently from the game.
 - Normal inputs include ordinary RGB/BGR, DXT, SSBump, signed vector formats and supported 16-bit float/UNORM formats. Undefined or uncertifiable filtered directional responses refuse explicitly.
 - Editing tools, drafts and Faces mode suppress the layer. Working regions include whole final faces and props that intersect the region; they do not clip triangles.
 - Authored hiding, selection, picking and Undo stay separate. Face ordinals identify this preparation and channel.

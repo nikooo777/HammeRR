@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, io};
 
 use source_formats::{
-    bsp::contents,
+    bsp::{contents, surf},
     gamefs::GameFs,
     keyvalues,
     vmf::{Entity, Vmf},
@@ -232,11 +232,11 @@ pub(crate) fn validate_material_with_reader(
     Ok(material)
 }
 
-pub(crate) fn binary_cutout(info: &MaterialInfo) -> bool {
+pub(crate) fn texture_alpha(info: &MaterialInfo) -> bool {
     info.found
         && info.draws
         && info.contents == (contents::WINDOW | contents::TRANSLUCENT)
-        && info.surface == 0
+        && info.surface & !surf::TRANS == 0
         && !info.hint
         && !info.skip
         && info.unsupported_flags.is_empty()
@@ -298,10 +298,10 @@ pub(crate) fn validate(
                     control.checkpoint()?;
                     let index = materials.load(&side.material)?;
                     let info = materials.get(index);
-                    let cutout = brush_texture_shadows && binary_cutout(info);
+                    let cutout = brush_texture_shadows && texture_alpha(info);
                     if !instances::brush_models::ordinary(info) && !cutout {
                         return Err(format!(
-                            "{} requires ordinary SOLID contents, or a supported binary cutout with brush texture shadows enabled, without origin, liquid or special surface semantics",
+                            "{} requires ordinary SOLID contents, or supported alpha-tested or translucent LightmappedGeneric with brush texture shadows enabled, without origin, liquid or special surface semantics",
                             side.material
                         ));
                     }

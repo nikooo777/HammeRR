@@ -32,6 +32,8 @@ mod shadows;
 mod sky;
 pub(crate) mod styles;
 mod terrain;
+mod terrain_shadows;
+mod transport;
 pub(crate) use bake::{Settings, bake};
 
 const PROJECTION_EPSILON: f64 = 1e-10;
@@ -654,6 +656,25 @@ struct HullInterval {
     sky: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct HullBoundary {
+    pub(super) fraction: f64,
+    pub(super) coverage: u8,
+    pub(super) non_sky_coverage: u8,
+    pub(super) sky: bool,
+}
+
+impl HullBoundary {
+    fn add(&mut self, coverage: u8, sky: bool) {
+        self.coverage = self.coverage.max(coverage);
+        if sky {
+            self.sky |= coverage != 0;
+        } else {
+            self.non_sky_coverage = self.non_sky_coverage.max(coverage);
+        }
+    }
+}
+
 impl Occluder {
     pub fn new(planes: Vec<Plane>, mins: DVec3, maxs: DVec3) -> Result<Self, String> {
         if planes.len() < 4
@@ -747,16 +768,37 @@ impl Occluder {
     }
 
     fn optical_entry(&self, start: DVec3, end: DVec3) -> Result<Option<(f64, bool)>, String> {
-        let Some(optical) = &self.optical else {
-            return self.entry(start, end);
-        };
-        if optical.faces.is_empty() {
-            return self.entry(start, end);
-        }
+        Ok(self
+            .optical_boundaries(start, end)?
+            .into_iter()
+            .flatten()
+            .find(|boundary| boundary.coverage != 0)
+            .map(|boundary| {
+                (
+                    boundary.fraction,
+                    boundary.sky && boundary.non_sky_coverage == 0,
+                )
+            }))
+    }
+
+    pub(super) fn optical_boundaries(
+        &self,
+        start: DVec3,
+        end: DVec3,
+    ) -> Result<[Option<HullBoundary>; 2], String> {
         let Some(interval) = self.interval(start, end)? else {
-            return Ok(None);
+            return Ok([None; 2]);
         };
-        let mut first: Option<(f64, bool)> = None;
+        let optical = self.optical.as_ref().filter(|hull| !hull.faces.is_empty());
+        let mut boundaries = [None; 2];
+        if optical.is_none() && interval.entering == 0.0 {
+            boundaries[0] = Some(HullBoundary {
+                fraction: 0.0,
+                coverage: u8::MAX,
+                non_sky_coverage: u8::MAX,
+                sky: false,
+            });
+        }
         for (index, plane) in self.planes.iter().enumerate() {
             let a = plane.distance_to(start);
             let b = plane.distance_to(end);
@@ -764,10 +806,10 @@ impl Occluder {
                 continue;
             }
             let fraction = a / (a - b);
-            let boundary = if a > 0.0 {
-                interval.entering
+            let (slot, boundary) = if a > 0.0 {
+                (0, interval.entering)
             } else {
-                interval.leaving
+                (1, interval.leaving)
             };
             if (fraction - boundary).abs() > shadows::TRIANGLE_EPSILON
                 || fraction <= 0.0
@@ -775,25 +817,24 @@ impl Occluder {
             {
                 continue;
             }
-            if let Some(face) = &optical.faces[index] {
+            let coverage = if let Some(optical) = optical
+                && let Some(face) = &optical.faces[index]
+            {
                 let world = start.lerp(end, fraction);
                 let local = optical.pose.map_or(world, |pose| pose.local_point(world));
-                if !face.covered(local)? {
-                    continue;
-                }
-            }
-            let sky = self.sky[index];
-            first = match first {
-                Some((previous, visible))
-                    if (fraction - previous).abs() <= shadows::TRIANGLE_EPSILON =>
-                {
-                    Some((previous.min(fraction), visible && sky))
-                }
-                Some((previous, _)) if previous < fraction => first,
-                _ => Some((fraction, sky)),
+                face.coverage(local)?
+            } else {
+                u8::MAX
             };
+            let event = boundaries[slot].get_or_insert(HullBoundary {
+                fraction: boundary,
+                coverage: 0,
+                non_sky_coverage: 0,
+                sky: false,
+            });
+            event.add(coverage, self.sky[index]);
         }
-        Ok(first)
+        Ok(boundaries)
     }
 
     fn interval(&self, start: DVec3, end: DVec3) -> Result<Option<HullInterval>, String> {
@@ -849,7 +890,7 @@ fn sky_visibility_skipping_owner(
     direction: DVec3,
     origin: DVec3,
     shadows: &shadows::ShadowIndex<Occluder>,
-    terrain: &shadows::ShadowIndex<shadows::Triangle>,
+    terrain: &shadows::ShadowIndex<terrain_shadows::TerrainTriangle>,
     props: &shadows::ShadowIndex<props::PropTriangle>,
     model: &Option<shadows::ShadowIndex<Occluder>>,
     skip_owner: Option<u32>,
@@ -860,16 +901,13 @@ fn sky_visibility_skipping_owner(
     if let Some(fraction) =
         shadows.optical_sky_fraction(origin, end, &mut |work| budget.consume(work))?
     {
-        let hit = origin.lerp(end, fraction) + direction * sky::SKY_HIT_BIAS;
-        if terrain.blocked(origin, hit, &mut |work| budget.consume(work))? {
-            return Ok(0.0);
+        transport::Scene {
+            shadows,
+            terrain,
+            props,
+            model: model.as_ref(),
         }
-        let visibility = props
-            .visibility_skipping_owner(origin, hit, skip_owner, &mut |work| budget.consume(work))?;
-        if visibility == 0.0 || bake::model_blocked(model, origin, hit, budget)? {
-            return Ok(0.0);
-        }
-        Ok(visibility)
+        .sky_visibility(origin, end, fraction, skip_owner, budget)
     } else {
         Ok(0.0)
     }

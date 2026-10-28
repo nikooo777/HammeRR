@@ -8,7 +8,6 @@ use super::{
 use crate::map::MapEntity;
 
 pub(super) const TRACE_LENGTH: f64 = crate::map::MAX_COMPILE_COORD * 4.0;
-pub(super) const SKY_HIT_BIAS: f64 = 0.0001;
 const GOLDEN_ANGLE: f64 = 2.399963229728653;
 const MAX_SUN_SPREAD_ANGLE: f64 = 90.0;
 

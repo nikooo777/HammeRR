@@ -376,7 +376,7 @@ fn validate_solid_materials(
             if brush_texture_shadows {
                 crate::brush_shadow_casters::request(entity)?;
             }
-            if brush_texture_shadows && crate::brush_shadow_casters::binary_cutout(info) {
+            if brush_texture_shadows && crate::brush_shadow_casters::texture_alpha(info) {
                 if checked_cutouts.insert(index) {
                     crate::brush_shadow_casters::validate_material(
                         &side.material.trim().replace('\\', "/").to_ascii_lowercase(),
@@ -388,7 +388,7 @@ fn validate_solid_materials(
                 continue;
             }
             return Err(format!(
-                "{} requires ordinary SOLID contents without origin, liquid or special surface semantics",
+                "{} requires ordinary SOLID contents or supported static LightmappedGeneric texture alpha with Brush texture shadows enabled, without origin, liquid or special surface semantics",
                 side.material,
             ));
         }

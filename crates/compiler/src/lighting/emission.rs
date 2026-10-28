@@ -9,8 +9,10 @@ use source_formats::gamefs::{GameFs, asset_relative};
 use source_formats::vmf::{Entity, Properties, Solid};
 
 use super::bake::{Allocation, Budget};
-use super::radiance::{SourceBoundary, source_blocked};
-use super::shadows::{ShadowIndex, Triangle};
+use super::radiance::SourceBoundary;
+use super::shadows::ShadowIndex;
+use super::terrain_shadows::TerrainTriangle;
+use super::transport::Scene;
 use super::{Occluder, ReceiverAngularMode};
 use crate::asset_sources::BuildMaterialSources;
 use crate::materials::{Materials, Requirements};
@@ -550,7 +552,7 @@ struct Patch {
 
 pub(super) struct Context<'a> {
     pub shadows: &'a ShadowIndex<Occluder>,
-    pub terrain: &'a ShadowIndex<Triangle>,
+    pub terrain: &'a ShadowIndex<TerrainTriangle>,
     pub props: &'a ShadowIndex<super::props::PropTriangle>,
     pub model: Option<&'a ShadowIndex<Occluder>>,
     pub skip_owner: Option<u32>,
@@ -1031,6 +1033,12 @@ impl Prepared {
         let angle = self.stats.maximum_cell_angle_degrees.to_radians();
         let threshold = angle.cos();
         let boundary_threshold = (angle / BOUNDARY_REFINEMENT).cos();
+        let scene = Scene {
+            shadows: context.shadows,
+            terrain: context.terrain,
+            props: context.props,
+            model: context.model,
+        };
         let mut total = DVec3::ZERO;
         let mut visited = 0usize;
         for source in &self.sources {
@@ -1097,42 +1105,14 @@ impl Prepared {
                                         .checked_add(1)
                                         .ok_or("Emission ray count overflow")?,
                                 );
-                                let blocked = source_blocked(
-                                    context.shadows,
+                                let value = scene.visibility_to_source(
                                     sample.origin,
                                     end,
+                                    context.skip_owner,
                                     Some(&source.boundary),
                                     error,
                                     budget,
-                                )? || context
-                                    .model
-                                    .map(|model| {
-                                        source_blocked(
-                                            model,
-                                            sample.origin,
-                                            end,
-                                            Some(&source.boundary),
-                                            error,
-                                            budget,
-                                        )
-                                    })
-                                    .transpose()?
-                                    .unwrap_or(false)
-                                    || context.terrain.blocked(
-                                        sample.origin,
-                                        end,
-                                        &mut |work| budget.consume(work),
-                                    )?;
-                                let value = if blocked {
-                                    0.0
-                                } else {
-                                    context.props.visibility_skipping_owner(
-                                        sample.origin,
-                                        end,
-                                        context.skip_owner,
-                                        &mut |work| budget.consume(work),
-                                    )?
-                                };
+                                )?;
                                 minimum = minimum.min(value);
                                 maximum = maximum.max(value);
                                 visibility += value / SAMPLE_WEIGHTS.len() as f64;

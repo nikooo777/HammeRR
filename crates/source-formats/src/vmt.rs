@@ -168,6 +168,24 @@ impl Material {
             .map(|(_, v)| v.as_str())
     }
 
+    pub fn alpha_test_reference(&self) -> Result<f64, String> {
+        let Some(value) = self.get("$alphatestreference") else {
+            return Ok(if self.shader == "unlitgeneric" {
+                0.7
+            } else {
+                0.5
+            });
+        };
+        let reference = value
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "invalid $alphatestreference")?;
+        if !reference.is_finite() || !(0.0..=1.0).contains(&reference) {
+            return Err("$alphatestreference must be finite and between zero and one".into());
+        }
+        Ok(if reference == 0.0 { 0.5 } else { reference })
+    }
+
     fn flag(&self, key: &str) -> bool {
         self.get(key)
             .and_then(|v| v.trim().parse::<f64>().ok())

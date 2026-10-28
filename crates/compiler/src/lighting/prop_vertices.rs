@@ -546,19 +546,27 @@ pub(super) fn bake_channel(
                                         &directions,
                                         ctx.direct.ambient_directions,
                                         &mut |direction| {
-                                            let hit = indirect
-                                                .surfaces
-                                                .trace_skipping_owner(
-                                                    point,
-                                                    direction,
-                                                    cone,
-                                                    ctx.direct.shadows,
-                                                    ctx.direct.props,
-                                                    skipped_owner,
-                                                    budget,
-                                                )?
-                                                .filter(|hit| !hit.sky && hit.front);
-                                            Ok(hit.map_or(DVec3::ZERO, |hit| hit.color * 255.0))
+                                            let mut total = DVec3::ZERO;
+                                            indirect.surfaces.trace(
+                                                point,
+                                                direction,
+                                                cone,
+                                                &super::transport::Scene {
+                                                    shadows: ctx.direct.shadows,
+                                                    terrain: ctx.direct.terrain,
+                                                    props: ctx.direct.props,
+                                                    model: None,
+                                                },
+                                                skipped_owner,
+                                                budget,
+                                                &mut |hit, _| {
+                                                    if !hit.sky && hit.front {
+                                                        total += hit.color * 255.0;
+                                                    }
+                                                    Ok(())
+                                                },
+                                            )?;
+                                            Ok(total)
                                         },
                                     )?;
                                 }

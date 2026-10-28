@@ -444,6 +444,7 @@ pub struct Renderer {
     opaque_pipeline: wgpu::RenderPipeline,
     translucent_pipeline: wgpu::RenderPipeline,
     baked_surface_pipeline: wgpu::RenderPipeline,
+    baked_translucent_surface_pipeline: wgpu::RenderPipeline,
     unlit_surface_pipeline: wgpu::RenderPipeline,
     vertex_surface_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
@@ -703,7 +704,11 @@ impl Renderer {
             ],
             immediate_size: 0,
         });
-        let baked_pipeline = |label, entry_point, layout: &wgpu::PipelineLayout, cull_mode| {
+        let baked_pipeline = |label,
+                              entry_point,
+                              layout: &wgpu::PipelineLayout,
+                              cull_mode,
+                              translucent: bool| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(layout),
@@ -725,7 +730,7 @@ impl Renderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
+                depth_write_enabled: Some(!translucent),
                 depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
                 stencil: Default::default(),
                 bias: Default::default(),
@@ -735,7 +740,7 @@ impl Renderer {
                 module: &shader,
                 entry_point: Some(entry_point),
                 compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState { format: COLOR_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+                targets: &[Some(wgpu::ColorTargetState { format: COLOR_FORMAT, blend: translucent.then_some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
             }),
             multiview_mask: None,
             cache: None,
@@ -746,6 +751,14 @@ impl Renderer {
             "fs_baked",
             &baked_layout,
             Some(wgpu::Face::Back),
+            false,
+        );
+        let baked_translucent_surface_pipeline = baked_pipeline(
+            "translucent baked surfaces",
+            "fs_baked",
+            &baked_layout,
+            Some(wgpu::Face::Back),
+            true,
         );
         let unlit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("compiled unlit surfaces"),
@@ -761,12 +774,14 @@ impl Renderer {
             "fs_baked_unlit",
             &unlit_layout,
             Some(wgpu::Face::Back),
+            false,
         );
         let vertex_surface_pipeline = baked_pipeline(
             "compiled prop vertex surfaces",
             "fs_baked_vertex",
             &unlit_layout,
             None,
+            false,
         );
 
         let icon_shader = device.create_shader_module(wgpu::include_wgsl!("icons.wgsl"));
@@ -890,6 +905,7 @@ impl Renderer {
             opaque_pipeline,
             translucent_pipeline,
             baked_surface_pipeline,
+            baked_translucent_surface_pipeline,
             unlit_surface_pipeline,
             vertex_surface_pipeline,
             line_pipeline,
@@ -1553,6 +1569,9 @@ impl Renderer {
                             .expect("validated baked surface material");
                         pass.set_pipeline(match material.lighting {
                             MaterialLighting::Unlit => &self.unlit_surface_pipeline,
+                            MaterialLighting::Lightmap { .. } if draw.batch.model_translucent => {
+                                &self.baked_translucent_surface_pipeline
+                            }
                             MaterialLighting::Lightmap { .. } => &self.baked_surface_pipeline,
                             MaterialLighting::Vertex => &self.vertex_surface_pipeline,
                         });

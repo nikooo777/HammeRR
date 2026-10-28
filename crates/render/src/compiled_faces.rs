@@ -515,7 +515,9 @@ impl Scene {
                 first_index,
                 index_count: part.index_count,
                 rope: false,
-                model_translucent: false,
+                model_translucent: materials[part.material]
+                    .as_ref()
+                    .is_some_and(|material| material.coverage == materials::Coverage::Translucent),
             });
             mesh.mins = mesh.mins.min(Vec3::from_array(surface.mins));
             mesh.maxs = mesh.maxs.max(Vec3::from_array(surface.maxs));

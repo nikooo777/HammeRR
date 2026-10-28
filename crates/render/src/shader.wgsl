@@ -256,6 +256,12 @@ struct BakedMaterial {
     normal_transform: array<array<vec4<f32>, 2>, 2>,
 }
 
+const BAKED_ALPHA_TEST: u32 = 4u;
+const BAKED_TRANSLUCENT: u32 = 8u;
+const BAKED_NEAREST_BASE: u32 = 16u;
+const BAKED_CLAMP_S: u32 = 32u;
+const BAKED_CLAMP_T: u32 = 64u;
+
 @group(1) @binding(5) var second_normal_texture: texture_2d<f32>;
 @group(1) @binding(6) var<uniform> baked_material: BakedMaterial;
 @group(2) @binding(0) var<storage, read> baked_samples: array<vec4<f32>>;
@@ -281,6 +287,26 @@ fn baked_texture(image: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
     let c = textureLoad(image, repeat_pixel(first + vec2<i32>(0, 1), dimensions), 0);
     let d = textureLoad(image, repeat_pixel(first + vec2<i32>(1, 1), dimensions), 0);
     return mix(mix(a, b, fraction.x), mix(c, d, fraction.x), fraction.y);
+}
+
+fn baked_base(in: VertexOut) -> vec4<f32> {
+    let uv = baked_uv(in.uv, baked_material.diffuse_transform[0]);
+    if (baked_material.options.w & BAKED_NEAREST_BASE) != 0u {
+        let dimensions = vec2<i32>(textureDimensions(base_texture));
+        let clamped = vec2<bool>((baked_material.options.w & BAKED_CLAMP_S) != 0u,
+            (baked_material.options.w & BAKED_CLAMP_T) != 0u);
+        let coordinate = select(fract(uv), clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), clamped);
+        let pixel = min(vec2<i32>(floor(coordinate * vec2<f32>(dimensions))), dimensions - vec2<i32>(1));
+        return textureLoad(base_texture, pixel, 0);
+    }
+    return baked_texture(base_texture, uv);
+}
+
+fn baked_coverage(alpha: f32) -> f32 {
+    if (baked_material.options.w & BAKED_ALPHA_TEST) != 0u && alpha < baked_material.color.a {
+        discard;
+    }
+    return select(1.0, alpha, (baked_material.options.w & BAKED_TRANSLUCENT) != 0u);
 }
 
 fn baked_map(face: BakedFace, map: u32, uv: vec2<f32>) -> vec3<f32> {
@@ -333,8 +359,7 @@ fn baked_tonemap(diffuse: vec3<f32>, tint: vec3<f32>, light: vec3<f32>, scale: v
     return select(vec3<f32>(0.0), mapped, positive);
 }
 
-fn baked_diffuse(in: VertexOut) -> vec3<f32> {
-    let first = baked_texture(base_texture, baked_uv(in.uv, baked_material.diffuse_transform[0]));
+fn baked_diffuse(in: VertexOut, first: vec4<f32>) -> vec3<f32> {
     var diffuse = first.rgb;
     if baked_material.options.x == 1u && (baked_material.options.w & 2u) != 0u {
         let second = baked_texture(blend_texture, baked_uv(in.uv, baked_material.diffuse_transform[1]));
@@ -364,7 +389,9 @@ fn baked_fog(in: VertexOut, input: vec3<f32>) -> vec3<f32> {
 fn fs_baked(in: VertexOut) -> @location(0) vec4<f32> {
     let surface_overlay = surface_diagnostic(in, max(fwidth(in.lightmap.xy), vec2<f32>(0.00001)));
     if surface_overlay.a > 0.0 { return surface_overlay; }
-    let diffuse = baked_diffuse(in);
+    let first = baked_base(in);
+    let alpha = baked_coverage(first.a);
+    let diffuse = baked_diffuse(in, first);
     let face = baked_faces[in.lighting_receiver >> 4u];
     var light = baked_map(face, 0u, in.lightmap.xy);
     var scale = vec3<f32>(1.0);
@@ -381,30 +408,30 @@ fn fs_baked(in: VertexOut) -> @location(0) vec4<f32> {
         light = (a / divisor) * normalized_weights.x + (b / divisor) * normalized_weights.y + (c / divisor) * normalized_weights.z;
     }
     let color = baked_tonemap(diffuse, in.color.rgb * baked_material.color.rgb, light, scale, weight_scale);
-    return vec4<f32>(baked_fog(in, color), 1.0);
+    return vec4<f32>(baked_fog(in, color), alpha);
 }
 
 @fragment
 fn fs_baked_unlit(in: VertexOut) -> @location(0) vec4<f32> {
     let surface_overlay = surface_diagnostic(in, max(fwidth(in.lightmap.xy), vec2<f32>(0.00001)));
     if surface_overlay.a > 0.0 { return surface_overlay; }
-    let diffuse = baked_diffuse(in);
+    let first = baked_base(in);
+    let alpha = baked_coverage(first.a);
+    let diffuse = baked_diffuse(in, first);
     let color = baked_tonemap(diffuse, in.color.rgb * baked_material.color.rgb, vec3<f32>(1.0), vec3<f32>(1.0), 1.0);
-    return vec4<f32>(baked_fog(in, color), 1.0);
+    return vec4<f32>(baked_fog(in, color), alpha);
 }
 
 @fragment
 fn fs_baked_vertex(in: VertexOut) -> @location(0) vec4<f32> {
-    if (baked_material.options.w & 4u) != 0u {
-        let coverage = baked_texture(base_texture, baked_uv(in.uv, baked_material.diffuse_transform[0])).a;
-        if coverage < 0.5 { discard; }
-    }
+    let first = baked_base(in);
+    let alpha = baked_coverage(first.a);
     if globals.surface_view.x != 0u {
         return vec4<f32>(vec3<f32>(0.65) * in.color.rgb, 1.0);
     }
-    let diffuse = baked_diffuse(in);
+    let diffuse = baked_diffuse(in, first);
     let color = baked_tonemap(diffuse, in.color.rgb * baked_material.color.rgb, in.baked_irradiance, vec3<f32>(1.0), 1.0);
-    return vec4<f32>(baked_fog(in, color), 1.0);
+    return vec4<f32>(baked_fog(in, color), alpha);
 }
 
 struct LineOut {

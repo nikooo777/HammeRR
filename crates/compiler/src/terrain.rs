@@ -9,6 +9,7 @@ use source_formats::vmf::Solid;
 use super::{Map, support};
 use crate::emit::stored_vertex;
 use crate::faces::Face;
+use crate::materials::MaterialInfo;
 use crate::tree::Tree;
 use crate::winding::Winding;
 use crate::{Control, Diagnostic, Report};
@@ -30,11 +31,50 @@ pub(crate) struct NeighborStats {
 #[path = "terrain/neighbors.rs"]
 mod neighbors;
 
+pub(super) struct MaterialPolicy {
+    sources: crate::asset_sources::BuildMaterialSources,
+    checked: std::collections::BTreeSet<usize>,
+}
+
+impl MaterialPolicy {
+    pub(super) fn new(sources: &crate::asset_sources::BuildMaterialSources) -> Self {
+        Self {
+            sources: sources.clone(),
+            checked: std::collections::BTreeSet::new(),
+        }
+    }
+
+    fn validate(
+        &mut self,
+        material: usize,
+        info: &MaterialInfo,
+        control: &Control,
+    ) -> Result<(), String> {
+        if !crate::brush_shadow_casters::texture_alpha(info) {
+            return Err(format!(
+                "Terrain material {} requires visible ordinary SOLID contents or supported static LightmappedGeneric texture alpha with Brush texture shadows enabled",
+                info.name,
+            ));
+        }
+        if !self.checked.contains(&material) {
+            crate::brush_shadow_casters::validate_material(
+                &info.name.to_ascii_lowercase(),
+                &self.sources,
+                control,
+                true,
+            )?;
+            self.checked.insert(material);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub struct Terrain {
     pub solid: u32,
     pub side: u32,
     pub plane: usize,
+    pub material: usize,
     pub texinfo: usize,
     pub smoothing_groups: u32,
     pub smoothing_angle: Option<f64>,
@@ -108,11 +148,19 @@ impl Map<'_> {
             let (base, mesh) = checked_mesh(face, disp)?;
             let material = self.materials.load(&side.material)?;
             let material_info = self.materials.get(material);
-            map_core::displacement::native::validate_material(
+            let material_validation = map_core::displacement::native::validate_material(
                 material_info.draws,
                 material_info.contents,
                 material_info.surface,
-            )?;
+            );
+            if let Err(error) = material_validation {
+                let Some(policy) = &mut self.terrain_materials else {
+                    return Err(error);
+                };
+                policy
+                    .validate(material, material_info, control)
+                    .map_err(|error| format!("side:{}: {error}", side.id))?;
+            }
             let terrain_contents = material_info.contents | extra_contents;
             let plane = support::find_authored(&mut self.planes, geometry, face, control)?
                 .ok_or("Cannot preserve displacement base plane support")?;
@@ -141,6 +189,7 @@ impl Map<'_> {
                 solid: solid.id,
                 side: side.id,
                 plane,
+                material,
                 texinfo,
                 smoothing_groups: side.smoothing_groups.unwrap_or(0),
                 smoothing_angle,

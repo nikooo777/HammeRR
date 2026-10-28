@@ -227,6 +227,7 @@ pub struct Map<'a> {
     pub(crate) occluders: Vec<occluders::Definition>,
     occluder_csg: occluders::CsgBudget,
     pub terrains: Vec<Terrain>,
+    terrain_materials: Option<terrain::MaterialPolicy>,
     pub(crate) area_portals: Vec<crate::areas::PortalBrush>,
     pub(crate) overlays: crate::overlays::Plan,
     pub(crate) hints: Vec<crate::hints::Hint>,
@@ -284,6 +285,7 @@ impl<'a> Map<'a> {
             occluders: Vec::new(),
             occluder_csg: occluders::CsgBudget::default(),
             terrains: Vec::new(),
+            terrain_materials: None,
             area_portals: Vec::new(),
             overlays: crate::overlays::Plan::default(),
             hints: Vec::new(),
@@ -401,7 +403,7 @@ impl<'a> Map<'a> {
         report: &mut Report,
         control: &Control,
     ) -> Result<Self, String> {
-        Self::load_inner(vmf, fs, report, control, None, None)
+        Self::load_inner(vmf, fs, report, control, None, None, false)
     }
 
     pub(crate) fn load_with_prop_sources_controlled(
@@ -411,7 +413,7 @@ impl<'a> Map<'a> {
         report: &mut Report,
         control: &Control,
     ) -> Result<Self, String> {
-        Self::load_inner(vmf, fs, report, control, Some(mode), None)
+        Self::load_inner(vmf, fs, report, control, Some(mode), None, false)
     }
 
     pub(crate) fn load_with_material_sources_controlled(
@@ -421,6 +423,7 @@ impl<'a> Map<'a> {
         control: &Control,
         prop_sources: Option<PropSourceMode>,
         material_sources: &crate::asset_sources::BuildMaterialSources,
+        brush_texture_shadows: bool,
     ) -> Result<Self, String> {
         Self::load_inner(
             vmf,
@@ -429,6 +432,7 @@ impl<'a> Map<'a> {
             control,
             prop_sources,
             Some(material_sources),
+            brush_texture_shadows,
         )
     }
 
@@ -439,11 +443,15 @@ impl<'a> Map<'a> {
         control: &Control,
         prop_sources: Option<PropSourceMode>,
         material_sources: Option<&crate::asset_sources::BuildMaterialSources>,
+        brush_texture_shadows: bool,
     ) -> Result<Self, String> {
         control.checkpoint()?;
         let mut map = Self::empty(fs, Requirements::Compile);
         if let Some(sources) = material_sources {
             map.materials = Materials::with_build_sources(fs, Requirements::Compile, sources);
+            if brush_texture_shadows {
+                map.terrain_materials = Some(terrain::MaterialPolicy::new(sources));
+            }
         }
         if let Some(mode) = prop_sources {
             map.materials.track_prop_lighting_sources(mode)?;

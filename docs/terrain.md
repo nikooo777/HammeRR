@@ -13,6 +13,8 @@ Create, sculpt and paint displacement surfaces. Compile them with lighting and c
 5. Use **Browse materials…** to change the surface material.
 
 Terrain is a sheet. Its parent volume does not seal the map or become a solid collision box.
+For cutout or partial-transparency terrain, enable [Brush texture shadows](brush-texture-shadows.md)
+in a lit build. Texture opacity does not remove collision triangles.
 Use ordinary world brushes to seal playable areas.
 
 ## Sculpt heights

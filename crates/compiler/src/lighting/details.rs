@@ -7,7 +7,8 @@ use source_formats::bsp::{
 use super::bake::{Budget, Emitter};
 use super::culling::Candidates;
 use super::receivers::STYLE_COUNT;
-use super::shadows::{ShadowIndex, Triangle};
+use super::shadows::ShadowIndex;
+use super::terrain_shadows::TerrainTriangle;
 use super::{Occluder, encode_color};
 use crate::detail_props::Tint;
 use crate::map::{MAX_COMPILE_COORD, Map};
@@ -40,7 +41,7 @@ pub(super) struct Context<'a> {
     pub lighting_tints: &'a [Tint],
     pub lights: &'a [Emitter],
     pub shadows: &'a ShadowIndex<Occluder>,
-    pub terrain: &'a ShadowIndex<Triangle>,
+    pub terrain: &'a ShadowIndex<TerrainTriangle>,
     pub props: &'a ShadowIndex<super::props::PropTriangle>,
     pub directions: &'a [DVec3],
     pub sun_directions: &'a [DVec3],
@@ -133,23 +134,31 @@ fn ambient(
     point: DVec3,
     cone: f64,
     directions: &[DVec3],
-    shadows: &ShadowIndex<Occluder>,
-    props: &ShadowIndex<super::props::PropTriangle>,
+    scene: &super::transport::Scene<'_>,
     budget: &mut Budget<'_>,
 ) -> Result<[DVec3; STYLE_COUNT], String> {
     let mut colors = [DVec3::ZERO; STYLE_COUNT];
     for &direction in directions {
         budget.consume(1)?;
-        if let Some(hit) = surfaces.trace(point, direction, cone, shadows, props, budget)? {
-            for (style, value) in surfaces.styled_colors(&hit, cone, budget)? {
-                if style != 255 {
-                    let slot = colors
-                        .get_mut(usize::from(style))
-                        .ok_or("Detail lighting style exceeds native range 1–63")?;
-                    *slot += value;
+        surfaces.trace(
+            point,
+            direction,
+            cone,
+            scene,
+            None,
+            budget,
+            &mut |hit, budget| {
+                for (style, value) in surfaces.styled_colors(hit, cone, budget)? {
+                    if style != 255 {
+                        let slot = colors
+                            .get_mut(usize::from(style))
+                            .ok_or("Detail lighting style exceeds native range 1–63")?;
+                        *slot += value;
+                    }
                 }
-            }
-        }
+                Ok(())
+            },
+        )?;
     }
     Ok(colors)
 }
@@ -195,6 +204,7 @@ pub(super) fn bake(
         ctx.sky_radiance,
         ctx.face_sources,
         ctx.brush_textures,
+        ctx.terrain,
         budget,
     )?;
     if ctx.directions.is_empty() {
@@ -229,8 +239,12 @@ pub(super) fn bake(
             point,
             cone,
             ctx.directions,
-            ctx.shadows,
-            ctx.props,
+            &super::transport::Scene {
+                shadows: ctx.shadows,
+                terrain: ctx.terrain,
+                props: ctx.props,
+                model: None,
+            },
             budget,
         )?;
         budget.consume(STYLE_COUNT)?;

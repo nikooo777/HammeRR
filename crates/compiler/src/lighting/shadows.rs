@@ -76,7 +76,7 @@ impl ShadowObject for Occluder {
         (self.mins, self.maxs)
     }
     fn work(&self) -> usize {
-        self.plane_count()
+        self.plane_count() * 2
             + 1
             + self.optical.as_ref().map_or(0, |optical| {
                 let inverse = optical
@@ -87,6 +87,15 @@ impl ShadowObject for Occluder {
     }
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
         self.intersects(start, end)
+    }
+    fn fractional(&self) -> bool {
+        self.optical.as_ref().is_some_and(|optical| {
+            optical
+                .faces
+                .iter()
+                .flatten()
+                .any(super::brush_alpha::Face::fractional)
+        })
     }
 }
 
@@ -162,12 +171,74 @@ impl Triangle {
         self.intersection_with_endpoints(start, end, TRIANGLE_EPSILON)
     }
 
-    pub(super) fn source_intersection(
+    pub(super) fn topological_intersection(
         &self,
         start: DVec3,
         end: DVec3,
+        endpoint: f64,
     ) -> Result<Option<(f64, [f64; 3])>, String> {
-        self.intersection_with_endpoints(start, end, 0.0)
+        let [a, b, c] = self.points;
+        let delta = end - start;
+        let edges = [b - a, c - a];
+        let determinant = edges[0].dot(delta.cross(edges[1]));
+        let scale = edges[0].length() * edges[1].length() * delta.length();
+        if !delta.is_finite() || !determinant.is_finite() || !scale.is_finite() {
+            return Err("Shadow ray arithmetic must be finite".into());
+        }
+        if scale == 0.0 || determinant.abs() <= scale * 1e-12 {
+            return Ok(None);
+        }
+        let extent = delta.abs();
+        let axis = if extent.x >= extent.y && extent.x >= extent.z {
+            0
+        } else if extent.y >= extent.z {
+            1
+        } else {
+            2
+        };
+        let mut x = (axis + 1) % 3;
+        let mut y = (axis + 2) % 3;
+        if delta[axis] < 0.0 {
+            std::mem::swap(&mut x, &mut y);
+        }
+        let shear = [delta[x] / delta[axis], delta[y] / delta[axis]];
+        let projected = self.points.map(|point| {
+            let relative = point - start;
+            [
+                relative[x] - shear[0] * relative[axis],
+                relative[y] - shear[1] * relative[axis],
+                relative[axis] / delta[axis],
+            ]
+        });
+        let weights: [f64; 3] = std::array::from_fn(|corner| {
+            let a = projected[(corner + 1) % 3];
+            let b = projected[(corner + 2) % 3];
+            a[0] * b[1] - a[1] * b[0]
+        });
+        if projected.iter().flatten().any(|value| !value.is_finite())
+            || weights.iter().any(|value| !value.is_finite())
+        {
+            return Err("Terrain shadow edge arithmetic must be finite".into());
+        }
+        if weights.iter().any(|&weight| weight < 0.0) && weights.iter().any(|&weight| weight > 0.0)
+        {
+            return Ok(None);
+        }
+        let total = weights.iter().sum::<f64>();
+        if total == 0.0 {
+            return Ok(None);
+        }
+        let fraction = weights
+            .into_iter()
+            .zip(projected)
+            .map(|(weight, point)| weight * point[2])
+            .sum::<f64>()
+            / total;
+        if !total.is_finite() || !fraction.is_finite() {
+            return Err("Terrain shadow crossing arithmetic must be finite".into());
+        }
+        Ok((fraction > endpoint && fraction < 1.0 - endpoint)
+            .then_some((fraction, weights.map(|weight| weight / total))))
     }
 
     fn intersection_with_endpoints(
@@ -350,6 +421,10 @@ impl<T: ShadowObject> ShadowIndex<T> {
         self.fractional
     }
 
+    pub(super) fn objects(&self) -> &[T] {
+        &self.hulls
+    }
+
     pub(super) fn visit(
         &self,
         start: DVec3,
@@ -459,44 +534,96 @@ impl ShadowIndex<Occluder> {
         })
     }
 
+    pub(super) fn accumulate_coverage(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        coverage: &mut super::transport::Coverage,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<(), String> {
+        if coverage.opaque() {
+            consume(0)?;
+            return Ok(());
+        }
+        if !self.has_fractional() {
+            if self.optical_blocked(start, end, consume)? {
+                coverage.add(u8::MAX);
+            }
+            return Ok(());
+        }
+        self.visit(start, end, consume, &mut |hull| {
+            for boundary in hull.optical_boundaries(start, end)?.into_iter().flatten() {
+                coverage.add(boundary.coverage);
+                if coverage.opaque() {
+                    return Ok(Visit::Stop);
+                }
+            }
+            Ok(Visit::Continue(1.0))
+        })?;
+        Ok(())
+    }
+
+    pub(super) fn accumulate_sky_coverage(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        sky_fraction: f64,
+        coverage: &mut super::transport::Coverage,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<(), String> {
+        if !sky_fraction.is_finite() || sky_fraction <= 0.0 || sky_fraction >= 1.0 {
+            return Err("Sky endpoint fraction must be finite and inside its ray".into());
+        }
+        if coverage.opaque() {
+            consume(0)?;
+            return Ok(());
+        }
+        self.visit(start, end, consume, &mut |hull| {
+            for boundary in hull.optical_boundaries(start, end)?.into_iter().flatten() {
+                if boundary.fraction > sky_fraction + TRIANGLE_EPSILON {
+                    continue;
+                }
+                let value = if (boundary.fraction - sky_fraction).abs() <= TRIANGLE_EPSILON {
+                    boundary.non_sky_coverage
+                } else {
+                    boundary.coverage
+                };
+                coverage.add(value);
+                if coverage.opaque() {
+                    return Ok(Visit::Stop);
+                }
+            }
+            Ok(Visit::Continue(sky_fraction))
+        })?;
+        Ok(())
+    }
+
     pub(super) fn optical_sky_fraction(
         &self,
         start: DVec3,
         end: DVec3,
         consume: &mut impl FnMut(usize) -> Result<(), String>,
     ) -> Result<Option<f64>, String> {
-        self.sky_fraction_with(start, end, consume, true)
-    }
-
-    fn sky_fraction_with(
-        &self,
-        start: DVec3,
-        end: DVec3,
-        consume: &mut impl FnMut(usize) -> Result<(), String>,
-        optical: bool,
-    ) -> Result<Option<f64>, String> {
-        let mut first: Option<(f64, bool)> = None;
+        let mut sky: Option<f64> = None;
+        let mut opaque: Option<f64> = None;
         self.visit(start, end, consume, &mut |hull| {
-            let entry = if optical {
-                hull.optical_entry(start, end)?
-            } else {
-                hull.entry(start, end)?
-            };
-            if let Some((fraction, sky)) = entry {
-                first = match first {
-                    Some((previous, visible))
-                        if (fraction - previous).abs() <= TRIANGLE_EPSILON =>
-                    {
-                        Some((previous.min(fraction), visible && sky))
-                    }
-                    Some((previous, _)) if previous < fraction => first,
-                    _ => Some((fraction, sky)),
-                };
+            for boundary in hull.optical_boundaries(start, end)?.into_iter().flatten() {
+                if boundary.sky {
+                    sky = Some(sky.map_or(boundary.fraction, |previous| {
+                        previous.min(boundary.fraction)
+                    }));
+                }
+                if boundary.non_sky_coverage == u8::MAX {
+                    opaque = Some(opaque.map_or(boundary.fraction, |previous| {
+                        previous.min(boundary.fraction)
+                    }));
+                }
             }
             Ok(Visit::Continue(
-                first.as_ref().map_or(1.0, |(fraction, _)| *fraction),
+                sky.into_iter().chain(opaque).fold(1.0, f64::min),
             ))
         })?;
-        Ok(first.and_then(|(fraction, sky)| sky.then_some(fraction)))
+        Ok(sky
+            .filter(|fraction| opaque.is_none_or(|blocker| blocker > *fraction + TRIANGLE_EPSILON)))
     }
 }

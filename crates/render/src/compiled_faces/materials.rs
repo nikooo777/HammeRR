@@ -5,11 +5,17 @@ use source_formats::{bsp::PakArchive, vmt, vtf::ImageFormat};
 mod normals;
 pub use normals::{validate_directional_inputs, validate_directional_inputs_controlled};
 
-pub const POLICY: &str = "Exact compiled static diffuse closure, PAK first and guarded original assets only when absent; base mip, linear repeat filtering; LDR diffuse sRGB to linear, HDR diffuse linear; finite static colour modulation; genuine UnlitGeneric without a lightmap retains final diffuse geometry without fabricated samples. Directional tangent normals use normalized squared positive compiler-basis projections; SSBump RGB directly weights the three directional maps. No native appearance, overbright upload or adaptation parity.";
+pub const POLICY: &str = "Exact compiled static diffuse closure, PAK first and guarded original assets only when absent; base mip, linear repeat filtering for ordinary materials and mip0 nearest clamp/repeat for supported plain LightmappedGeneric alpha materials. Cutouts use the checked alpha-test reference; fractional base alpha uses ordered alpha blending without depth writes. Terrain paint alpha is not opacity. LDR diffuse sRGB to linear, HDR diffuse linear; finite static colour modulation; genuine UnlitGeneric without a lightmap retains final diffuse geometry without fabricated samples. Directional tangent normals use normalized squared positive compiler-basis projections; SSBump RGB directly weights the three directional maps. No native appearance, overbright upload or adaptation parity.";
 pub const PROP_POLICY: &str = "Compiler-admitted selected-skin VertexLitGeneric and strict cutout closure; absent optional base texture means white, declared missing textures refuse. Base mip and linear repeat filtering; material alpha supplies default 0.5 cutout coverage independently of VHV alpha. Decoded vertex radiance interpolates before diffuse and shared EV, safe Reinhard and one sRGB output; no VHV style decomposition. Double-sided editor inspection retains final triangles in diagnostic views; FACE luxel density and smoothing groups do not apply. Native culling, composed cutout appearance, gamma and adaptation parity are not established.";
 
 pub type Transform = [[f32; 3]; 2];
 pub const GPU_MATERIAL_OVERHEAD: usize = 176;
+
+enum TextureMode {
+    Diffuse,
+    Alpha,
+    Normal { ssbump: bool },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -35,6 +41,7 @@ pub enum MaterialLighting {
 pub enum Coverage {
     Opaque,
     AlphaTest,
+    Translucent,
 }
 
 #[derive(Debug)]
@@ -42,6 +49,7 @@ pub struct Texture {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<[f32; 4]>,
+    pub clamp: [bool; 2],
 }
 
 impl Texture {
@@ -68,6 +76,7 @@ pub struct Material {
     pub detail_alpha_mask: bool,
     pub lighting: MaterialLighting,
     pub coverage: Coverage,
+    pub alpha_test_reference: f32,
     pub nocull: bool,
 }
 
@@ -147,7 +156,9 @@ fn load_static_prop_inner(
         return Err("Compiled prop diffuse requires admitted plain VertexLitGeneric".into());
     }
     let diffuse = match material.get("$basetexture") {
-        Some(texture) => Some(load_texture(texture, false, false, pak, read, control, budget)?.0),
+        Some(texture) => {
+            Some(load_texture(texture, TextureMode::Diffuse, pak, read, control, budget)?.0)
+        }
         None => None,
     };
     let transform = transform(material.get("$basetexturetransform"))?;
@@ -167,6 +178,7 @@ fn load_static_prop_inner(
         } else {
             Coverage::Opaque
         },
+        alpha_test_reference: 0.5,
         nocull: material
             .get("$nocull")
             .and_then(|value| value.trim().parse::<f64>().ok())
@@ -208,7 +220,7 @@ fn load_inner(
             ));
         }
     };
-    validate_parameters(&material, kind)?;
+    let (coverage, alpha_test_reference) = validate_parameters(&material, kind)?;
     if unlit && (lightmapped || directional) || !unlit && !lightmapped {
         return Err(
             "Compiled lightmap availability and resolved unlit/lit material policy disagree".into(),
@@ -226,19 +238,35 @@ fn load_inner(
         .primary_base_texture()?
         .ok_or("Static lit material requires an actual diffuse texture")?;
     let mut diffuse = [None, None];
-    diffuse[0] = Some(load_texture(primary, false, false, pak, read, control, budget)?.0);
+    diffuse[0] = Some(
+        load_texture(
+            primary,
+            if coverage == Coverage::Opaque {
+                TextureMode::Diffuse
+            } else {
+                TextureMode::Alpha
+            },
+            pak,
+            read,
+            control,
+            budget,
+        )?
+        .0,
+    );
     let base_transform = transform(material.get("$basetexturetransform"))?;
     let mut diffuse_transform = [base_transform; 2];
     if kind == Kind::VertexTransition {
         if let Some(secondary) = material.get("$basetexture2") {
-            diffuse[1] = Some(load_texture(secondary, false, false, pak, read, control, budget)?.0);
+            diffuse[1] =
+                Some(load_texture(secondary, TextureMode::Diffuse, pak, read, control, budget)?.0);
         } else if material.shader == "worldvertextransition" {
             return Err("WorldVertexTransition requires $basetexture2".into());
         }
     } else if kind == Kind::TwoTextureBlend
         && let Some(detail) = material.get("$detail")
     {
-        diffuse[1] = Some(load_texture(detail, false, false, pak, read, control, budget)?.0);
+        diffuse[1] =
+            Some(load_texture(detail, TextureMode::Diffuse, pak, read, control, budget)?.0);
         let scale = scalar(&material, "$detailscale", 4.0)?;
         if scale == 0.0 {
             return Err("WorldTwoTextureBlend requires nonzero $detailscale".into());
@@ -257,11 +285,24 @@ fn load_inner(
     let ssbump = flag(&material, "$ssbump")?;
     if directional {
         let primary = primary_normal.ok_or("Directional material requires $bumpmap")?;
-        let (texture, encoding) = load_texture(primary, true, ssbump, pak, read, control, budget)?;
+        let (texture, encoding) = load_texture(
+            primary,
+            TextureMode::Normal { ssbump },
+            pak,
+            read,
+            control,
+            budget,
+        )?;
         normals[0] = Some(NormalTexture { texture, encoding });
         if let Some(secondary) = material.get("$bumpmap2") {
-            let (texture, encoding) =
-                load_texture(secondary, true, ssbump, pak, read, control, budget)?;
+            let (texture, encoding) = load_texture(
+                secondary,
+                TextureMode::Normal { ssbump },
+                pak,
+                read,
+                control,
+                budget,
+            )?;
             if Some(encoding) != normals[0].as_ref().map(|normal| normal.encoding) {
                 return Err("Primary and secondary normals require the same encoding".into());
             }
@@ -289,7 +330,8 @@ fn load_inner(
         } else {
             MaterialLighting::Lightmap { directional }
         },
-        coverage: Coverage::Opaque,
+        coverage,
+        alpha_test_reference,
         nocull: false,
     };
     validate_directional_inputs_controlled(&material, control)?;
@@ -397,12 +439,18 @@ fn color(material: &vmt::Material, key: &str) -> Result<[f32; 3], String> {
     Ok(values)
 }
 
-fn validate_parameters(material: &vmt::Material, kind: Kind) -> Result<(), String> {
+fn validate_parameters(material: &vmt::Material, kind: Kind) -> Result<(Coverage, f32), String> {
     if !material.blocks.is_empty() {
         return Err(
             "Proxies, conditional fallbacks and nested effect blocks are outside the static matrix"
                 .into(),
         );
+    }
+    if ["$alphatest", "$translucent"]
+        .iter()
+        .any(|key| material.get(key).is_some_and(|value| value.trim() != "0"))
+    {
+        return alpha_parameters(material, kind);
     }
     for (key, value) in &material.params {
         if material.shader == "unlitgeneric"
@@ -464,18 +512,80 @@ fn validate_parameters(material: &vmt::Material, kind: Kind) -> Result<(), Strin
     {
         return Err("Detail alpha masking requires an actual $detail texture".into());
     }
-    Ok(())
+    Ok((Coverage::Opaque, 0.5))
+}
+
+fn alpha_value(material: &vmt::Material, key: &str, default: f64) -> Result<f64, String> {
+    let value = material
+        .get(key)
+        .map(|value| value.trim().parse::<f64>())
+        .transpose()
+        .map_err(|_| format!("Invalid static alpha material parameter {key}"))?
+        .unwrap_or(default);
+    if !value.is_finite() {
+        return Err(format!(
+            "Static alpha material parameter {key} must be finite"
+        ));
+    }
+    Ok(value)
+}
+
+fn alpha_parameters(material: &vmt::Material, kind: Kind) -> Result<(Coverage, f32), String> {
+    if material.shader != "lightmappedgeneric" || kind != Kind::Single {
+        return Err("Compiled face alpha requires plain single-texture LightmappedGeneric".into());
+    }
+    for (key, _) in &material.params {
+        if !matches!(
+            key.as_str(),
+            "$basetexture"
+                | "$basetexturetransform"
+                | "$alphatest"
+                | "$alphatestreference"
+                | "$translucent"
+                | "$alpha"
+                | "$frame"
+                | "$surfaceprop"
+                | "$surfaceprop2"
+                | "%keywords"
+                | "%tooltexture"
+        ) {
+            return Err(format!("Unsupported static alpha material parameter {key}"));
+        }
+    }
+    let alpha_test = alpha_value(material, "$alphatest", 0.0)?;
+    let translucent = alpha_value(material, "$translucent", 0.0)?;
+    if alpha_value(material, "$alpha", 1.0)? != 1.0 || alpha_value(material, "$frame", 0.0)? != 0.0
+    {
+        return Err("Compiled face alpha requires alpha one and frame zero".into());
+    }
+    match (alpha_test, translucent) {
+        (1.0, 0.0) => {
+            let reference = material.alpha_test_reference()?;
+            let minimum = (0..=u8::MAX)
+                .find(|&alpha| f64::from(alpha) / f64::from(u8::MAX) >= reference)
+                .ok_or("Static alpha-test reference has no passing alpha byte")?;
+            Ok((Coverage::AlphaTest, f32::from(minimum) / f32::from(u8::MAX)))
+        }
+        (0.0, 1.0) if material.get("$alphatestreference").is_none() => {
+            Ok((Coverage::Translucent, 0.5))
+        }
+        _ => Err("Compiled face alpha requires alphatest one or translucent one, without combined modes or a translucent alpha-test reference".into()),
+    }
 }
 
 fn load_texture(
     name: &str,
-    normal: bool,
-    ssbump: bool,
+    mode: TextureMode,
     pak: &PakArchive,
     read: &mut dyn FnMut(&str) -> io::Result<Option<Vec<u8>>>,
     control: &mut dyn FnMut() -> Result<(), String>,
     budget: &mut Budget,
 ) -> Result<(Arc<Texture>, NormalEncoding), String> {
+    let (normal, ssbump, alpha) = match mode {
+        TextureMode::Diffuse => (false, false, false),
+        TextureMode::Alpha => (false, false, true),
+        TextureMode::Normal { ssbump } => (true, ssbump, false),
+    };
     if name.trim().is_empty() {
         return Err("A declared static texture path is blank".into());
     }
@@ -488,8 +598,19 @@ fn load_texture(
     let texture =
         source_formats::vtf::Vtf::parse(bytes).map_err(|error| format!("{path}: {error}"))?;
     crate::normal_maps::validate_static_texture(&texture, budget.max_texture_axis)?;
+    if alpha {
+        texture
+            .validate_native_mips()
+            .map_err(|error| format!("{path}: {error}"))?;
+    }
     const UNSUPPORTED_FLAGS: u32 = 0x2201_c80d;
-    if texture.flags & UNSUPPORTED_FLAGS != 0 || normal && texture.flags & 0x40 != 0 {
+    const ALPHA_ADDRESS_FLAGS: u32 = 0x0000_000d;
+    let unsupported = if alpha {
+        UNSUPPORTED_FLAGS & !ALPHA_ADDRESS_FLAGS
+    } else {
+        UNSUPPORTED_FLAGS
+    };
+    if texture.flags & unsupported != 0 || normal && texture.flags & 0x40 != 0 {
         return Err(format!(
             "{path}: clamp, point, border, procedural, environment, render-target or sRGB-normal texture flags are outside the static matrix"
         ));
@@ -531,11 +652,29 @@ fn load_texture(
         ));
     }
     control()?;
-    let pixels = if normal {
+    let mut pixels = if normal {
         decode_normals(&texture, encoding)?
     } else {
         decode_diffuse(&texture)?
     };
+    if alpha {
+        let image = texture
+            .decode_rgba8(0, 0, 0)
+            .map_err(|error| error.to_string())?;
+        if image.pixels.len() != count * 4 {
+            return Err(format!("{path}: decoded alpha dimensions disagree"));
+        }
+        for (index, (pixel, rgba)) in pixels
+            .iter_mut()
+            .zip(image.pixels.as_chunks::<4>().0)
+            .enumerate()
+        {
+            if index % 1024 == 0 {
+                control()?;
+            }
+            pixel[3] = f32::from(rgba[3]) / f32::from(u8::MAX);
+        }
+    }
     if pixels.len() != count {
         return Err(format!("{path}: decoded texture dimensions disagree"));
     }
@@ -555,6 +694,7 @@ fn load_texture(
             width: texture.width,
             height: texture.height,
             pixels,
+            clamp: [texture.flags & 0x4 != 0, texture.flags & 0x8 != 0],
         }),
         encoding,
     ))

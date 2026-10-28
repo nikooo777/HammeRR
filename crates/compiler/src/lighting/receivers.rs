@@ -2,7 +2,9 @@ use glam::DVec3;
 
 use super::bake::{Budget, Emitter};
 use super::culling::Candidates;
-use super::shadows::{ShadowIndex, Triangle};
+use super::shadows::ShadowIndex;
+use super::terrain_shadows::TerrainTriangle;
+use super::transport::Scene;
 use super::{Occluder, ReceiverAngularMode};
 use crate::{map::Map, tree::Tree, visibility::Visibility};
 
@@ -13,7 +15,7 @@ pub(super) struct Context<'a> {
     pub kind: source_formats::bsp::LightingKind,
     pub lights: &'a [Emitter],
     pub shadows: &'a ShadowIndex<Occluder>,
-    pub terrain: &'a ShadowIndex<Triangle>,
+    pub terrain: &'a ShadowIndex<TerrainTriangle>,
     pub props: &'a ShadowIndex<super::props::PropTriangle>,
     pub sun_directions: &'a [DVec3],
     pub ambient_directions: &'a [DVec3],
@@ -105,6 +107,12 @@ pub(super) fn direct_with_reception(
 ) -> Result<[DVec3; STYLE_COUNT], String> {
     let context = budget.context();
     let mut colors = [DVec3::ZERO; STYLE_COUNT];
+    let scene = Scene {
+        shadows: ctx.shadows,
+        terrain: ctx.terrain,
+        props: ctx.props,
+        model: None,
+    };
     for &candidate in candidates.for_cluster(cluster, ctx.lights, budget)? {
         let light = &ctx.lights[candidate];
         budget.emitter(light);
@@ -116,23 +124,12 @@ pub(super) fn direct_with_reception(
             Emitter::Point(light) => {
                 let value =
                     light.contribution_with_mode(sample.point, sample.normal, reception.angular)?;
-                if value != DVec3::ZERO
-                    && !ctx
-                        .shadows
-                        .optical_blocked(sample.origin, light.origin, &mut |work| {
-                            budget.consume(work)
-                        })?
-                    && !ctx
-                        .terrain
-                        .blocked(sample.origin, light.origin, &mut |work| {
-                            budget.consume(work)
-                        })?
-                {
-                    let visibility = ctx.props.visibility_skipping_owner(
+                if value != DVec3::ZERO {
+                    let visibility = scene.visibility(
                         sample.origin,
                         light.origin,
                         reception.skip_owner,
-                        &mut |work| budget.consume(work),
+                        budget,
                     )?;
                     colors[usize::from(light.style)] += value * visibility;
                 }

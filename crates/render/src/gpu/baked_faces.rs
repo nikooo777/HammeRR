@@ -20,6 +20,11 @@ const RETIRE_TIMEOUT: Duration = Duration::from_secs(1);
 const PARAM_BYTES: usize = size_of::<[f32; 4]>();
 const RECEIVER_SHIFT: u32 = 4;
 const RECEIVER_MASK: u32 = (1 << RECEIVER_SHIFT) - 1;
+const ALPHA_TEST: u32 = 1 << 2;
+const TRANSLUCENT: u32 = 1 << 3;
+const NEAREST_BASE: u32 = 1 << 4;
+const CLAMP_S: u32 = 1 << 5;
+const CLAMP_T: u32 = 1 << 6;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -159,6 +164,9 @@ impl State {
                 .get(batch.material)
                 .and_then(Option::as_ref)
                 .ok_or("Baked surface batch references an absent compiled material")?;
+            if batch.model_translucent != (material.coverage == Coverage::Translucent) {
+                return Err("Baked surface batch opacity disagrees with its material".into());
+            }
             let end = batch
                 .first_index
                 .checked_add(batch.index_count)
@@ -628,13 +636,36 @@ fn binding(
 }
 
 fn validate_material(ctx: &GpuContext, source: &Material) -> Result<usize, String> {
-    if source.lighting != MaterialLighting::Vertex && source.coverage != Coverage::Opaque
+    let face_alpha = source.coverage != Coverage::Opaque
+        && source.lighting == (MaterialLighting::Lightmap { directional: false });
+    if source.coverage != Coverage::Opaque
+        && (source.kind != Kind::Single
+            || source.diffuse[0].is_none()
+            || source.diffuse[1].is_some()
+            || source.normals.iter().any(Option::is_some)
+            || source.detail_alpha_mask
+            || !(face_alpha
+                || source.lighting == MaterialLighting::Vertex
+                    && source.coverage == Coverage::AlphaTest))
         || source.lighting == MaterialLighting::Vertex
             && (source.kind != Kind::Single
                 || source.diffuse[1].is_some()
                 || source.normals.iter().any(Option::is_some)
                 || source.detail_alpha_mask)
-        || source.coverage == Coverage::AlphaTest && source.diffuse[0].is_none()
+        || !source.alpha_test_reference.is_finite()
+        || !(0.0..=1.0).contains(&source.alpha_test_reference)
+        || source.lighting == MaterialLighting::Vertex && source.alpha_test_reference != 0.5
+        || !face_alpha
+            && source
+                .diffuse
+                .iter()
+                .flatten()
+                .any(|texture| texture.clamp.iter().any(|&clamp| clamp))
+        || source
+            .normals
+            .iter()
+            .flatten()
+            .any(|normal| normal.texture.clamp.iter().any(|&clamp| clamp))
     {
         return Err(
             "Compiled surface material has incompatible lighting or coverage inputs".into(),
@@ -719,6 +750,7 @@ fn material_binding(
             width: 1,
             height: 1,
             pixels: vec![[1.0; 4]],
+            clamp: [false; 2],
         },
     );
     let diffuse = source
@@ -756,9 +788,23 @@ fn material_binding(
             encoding(1),
             u32::from(source.detail_alpha_mask)
                 | (u32::from(source.diffuse[1].is_some()) << 1)
-                | (u32::from(source.coverage == Coverage::AlphaTest) << 2),
+                | (u32::from(source.coverage == Coverage::AlphaTest) * ALPHA_TEST)
+                | (u32::from(source.coverage == Coverage::Translucent) * TRANSLUCENT)
+                | (u32::from(
+                    source.coverage != Coverage::Opaque
+                        && source.lighting != MaterialLighting::Vertex,
+                ) * NEAREST_BASE)
+                | source.diffuse[0].as_ref().map_or(0, |texture| {
+                    (u32::from(texture.clamp[0]) * CLAMP_S)
+                        | (u32::from(texture.clamp[1]) * CLAMP_T)
+                }),
         ],
-        color: [source.color[0], source.color[1], source.color[2], 0.0],
+        color: [
+            source.color[0],
+            source.color[1],
+            source.color[2],
+            source.alpha_test_reference,
+        ],
         diffuse_transform: transform(&source.diffuse_transform),
         normal_transform: transform(&source.normal_transform),
     };

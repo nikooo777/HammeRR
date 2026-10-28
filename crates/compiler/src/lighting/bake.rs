@@ -6,9 +6,11 @@ use source_formats::bsp::{
 };
 
 use super::progress::Contributor;
-use super::shadows::{ShadowIndex, ShadowObject, Triangle};
+use super::shadows::{ShadowIndex, Triangle};
 use super::sky::SkyLight;
 use super::terrain::TerrainPlan;
+use super::terrain_shadows::TerrainTriangle;
+use super::transport::Scene;
 use super::{
     LightingChannel, LightingContributor, LightingPhase, LightingProgress, LuxelFrame,
     MAX_LIGHTING_CONTRIBUTORS, Occluder, PointLight,
@@ -721,7 +723,7 @@ fn global_casters(
             }
             brush_shadow_models += 1;
         }
-        report.diagnostics.push(Diagnostic::info(format!("Brush global shadows: {brush_shadow_models} stationary brush models cast into global baked lighting; supported binary cutouts use brush texture shadows, world occupancy and model radiance sources are unchanged"), None, None));
+        report.diagnostics.push(Diagnostic::info(format!("Brush global shadows: {brush_shadow_models} stationary brush models cast into global baked lighting; supported alpha-tested or translucent texture shadows use brush texture shadows, world occupancy and model radiance sources are unchanged"), None, None));
     }
     Ok((brush_shadow_models, allocation))
 }
@@ -854,32 +856,11 @@ fn plans(
     Ok(plans)
 }
 
-fn terrain_shadows(map: &Map, budget: &mut Budget<'_>) -> Result<ShadowIndex<Triangle>, String> {
-    let mut triangles = Vec::new();
-    for terrain in &map.terrains {
-        budget.consume(terrain.vertices.len())?;
-        let points = terrain.native_positions()?;
-        for indices in &terrain.indices {
-            budget.consume(1)?;
-            if triangles.len() == Triangle::MAX_OBJECTS {
-                return Err(format!(
-                    "Direct LDR exceeds its {} terrain-shadow triangle limit",
-                    Triangle::MAX_OBJECTS
-                ));
-            }
-            triangles.push(Triangle::new(
-                indices.map(|index| DVec3::from_array(points[index].map(f64::from))),
-            )?);
-        }
-    }
-    ShadowIndex::new(triangles, &mut |amount| budget.consume(amount))
-}
-
 pub(super) fn sky_visibility(
     direction: DVec3,
     origin: DVec3,
     shadows: &ShadowIndex<Occluder>,
-    terrain: &ShadowIndex<Triangle>,
+    terrain: &ShadowIndex<TerrainTriangle>,
     props: &ShadowIndex<super::props::PropTriangle>,
     model: &Option<ShadowIndex<Occluder>>,
     budget: &mut Budget<'_>,
@@ -887,18 +868,6 @@ pub(super) fn sky_visibility(
     super::sky_visibility_skipping_owner(
         direction, origin, shadows, terrain, props, model, None, budget,
     )
-}
-
-pub(super) fn model_blocked(
-    model: &Option<ShadowIndex<Occluder>>,
-    start: DVec3,
-    end: DVec3,
-    budget: &mut Budget<'_>,
-) -> Result<bool, String> {
-    match model {
-        Some(model) => model.optical_blocked(start, end, &mut |amount| budget.consume(amount)),
-        None => Ok(false),
-    }
 }
 
 fn mapped_colors(
@@ -991,13 +960,11 @@ fn shared_geometry_allocation(
         bytes = bytes
             .checked_add(terrain.vertices.len() * 8 * size_of::<DVec3>())
             .and_then(|bytes| bytes.checked_add(terrain.indices.len() * 2 * size_of::<Triangle>()))
-            .and_then(|bytes| {
-                ShadowIndex::<Triangle>::allocation_bytes(terrain.indices.len())
-                    .ok()
-                    .and_then(|shadow| bytes.checked_add(shadow))
-            })
             .ok_or("Lighting terrain allocation size overflow")?;
     }
+    bytes = bytes
+        .checked_add(super::terrain_shadows::allocation_bytes(map)?)
+        .ok_or("Lighting terrain allocation size overflow")?;
     for index in [
         bsp::lump::PLANES,
         bsp::lump::TEXINFO,
@@ -1163,7 +1130,7 @@ fn bake_inner(
     }
     if let Some(textures) = &brush_textures {
         textures.qualify_models(map, &scopes, &has_receivers, budget)?;
-        report.diagnostics.push(Diagnostic::info("Brush texture shadows samples binary alpha-test world/detail boundaries, admitted initial-pose root/child same-model self shadows and explicitly requested stationary root or child global casters; geometry, occupancy and model radiance sources remain unchanged", None, None));
+        report.diagnostics.push(Diagnostic::info("Brush texture shadows samples binary alpha-test and fractional base-alpha world/detail brush and terrain boundaries, admitted initial-pose root/child same-model self shadows and explicitly requested stationary root or child global casters; geometry and occupancy remain unchanged", None, None));
     }
     for plan in &mut plans {
         let scope = &scopes[plan.model];
@@ -1213,9 +1180,9 @@ fn bake_inner(
     } else {
         "self shadows and explicitly requested stationary global casters"
     };
-    report.diagnostics.push(Diagnostic::info(format!("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed opaque brush/terrain shadows; up to four style-preserving diffuse world-light bounces are supported; brush entities receive pivot-aware direct and bounced maps with {model_shadow_scope}; reflected model sources and prop lightmaps remain unfinished"), None, None));
+    report.diagnostics.push(Diagnostic::info(format!("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed brush/terrain shadows; up to four style-preserving diffuse world-light bounces are supported; brush entities receive pivot-aware direct and bounced maps with {model_shadow_scope}; reflected model sources and prop lightmaps remain unfinished"), None, None));
     let shadows = ShadowIndex::new(visibility_hulls, &mut |amount| budget.consume(amount))?;
-    let terrain_shadows = terrain_shadows(map, budget)?;
+    let terrain_shadows = super::terrain_shadows::build(map, brush_textures.as_ref(), budget)?;
     budget.phase(LightingPhase::PropShadows);
     let mut prop_assets = if options.bake_static_prop_vertices {
         Some(super::asset_tracking::Tracker::new(
@@ -1453,7 +1420,7 @@ struct ChannelContext<'a> {
     geometry: &'a [Face],
     infos: &'a [TexInfo],
     shadows: &'a ShadowIndex<Occluder>,
-    terrain_shadows: &'a ShadowIndex<Triangle>,
+    terrain_shadows: &'a ShadowIndex<TerrainTriangle>,
     model_shadows: &'a [Option<ShadowIndex<Occluder>>],
     prop_shadows: &'a ShadowIndex<super::props::PropTriangle>,
     prop_bounds: &'a ShadowIndex<super::props::ProbeBounds>,
@@ -1683,6 +1650,12 @@ fn bake_channel(
             budget,
         )?;
         let [width, height] = plan.dimensions();
+        let scene = Scene {
+            shadows,
+            terrain: terrain_shadows,
+            props: prop_shadows,
+            model: model_shadows[plan.model].as_ref(),
+        };
         for t in 0..height {
             for s in 0..width {
                 budget.phase(LightingPhase::Direct);
@@ -1797,32 +1770,10 @@ fn bake_channel(
                     match light {
                         Emitter::Point(light) => {
                             let contribution = light.contribution(point, normal)?;
-                            if contribution != DVec3::ZERO
-                                && !shadows.optical_blocked(
-                                    origin,
-                                    light.origin,
-                                    &mut |amount| budget.consume(amount),
-                                )?
-                                && !terrain_shadows.blocked(
-                                    origin,
-                                    light.origin,
-                                    &mut |amount| budget.consume(amount),
-                                )?
-                            {
-                                let visibility = prop_shadows.visibility_skipping_owner(
-                                    origin,
-                                    light.origin,
-                                    None,
-                                    &mut |amount| budget.consume(amount),
-                                )?;
-                                if visibility == 0.0
-                                    || model_blocked(
-                                        &model_shadows[plan.model],
-                                        origin,
-                                        light.origin,
-                                        budget,
-                                    )?
-                                {
+                            if contribution != DVec3::ZERO {
+                                let visibility =
+                                    scene.visibility(origin, light.origin, None, budget)?;
+                                if visibility == 0.0 {
                                     continue;
                                 }
                                 let contributions = mapped_colors(
@@ -1982,6 +1933,7 @@ fn bake_channel(
                     faces: &mut faces,
                     infos,
                     shadows,
+                    terrain: terrain_shadows,
                     model_shadows,
                     prop_shadows,
                     quality: sky_quality,

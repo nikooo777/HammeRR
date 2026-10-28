@@ -58,7 +58,7 @@ Unused runtime assets are outside this guard.
 | **Indirect light** | Direct only, or one to four diffuse bounces. |
 | **Brush smoothing angle** | Smooth ungrouped brush corners from 0° to 90°. |
 | **Sampling quality** | Fast (32 directions), Balanced (128 directions), or Detailed (512 directions). |
-| **Brush texture shadows** | Use supported alpha-tested brush textures for light blocking. |
+| **Brush texture shadows** | Use supported cutout or translucent brush and terrain textures for light blocking. |
 | **Bake static-prop vertex lighting** | Write supported per-vertex prop lighting. |
 | **Generate reflections** | Capture and pack scene cubemaps with private CS:S clients. |
 | **Pack sky assets**, **Pack liquid assets**, **Pack static prop assets** | Pack supported material and model dependencies. |
@@ -135,7 +135,13 @@ See [exposure controllers](hdr-exposure.md), [sky assets](sky.md) and [reflectio
 
 ### Brush texture shadows
 
-Enable **Brush texture shadows** for supported alpha-tested brush materials.
+Enable **Brush texture shadows** for supported alpha-tested or translucent
+`LightmappedGeneric` materials on world/detail brushes and terrain, plus eligible
+stationary brush models. Base-texture alpha affects direct and indirect lighting,
+sky, ambient probes, detail/prop vertex receivers and material-emission transport.
+Coverage adds across casters up to full blocking; transmission does not tint light.
+Open **Build details… → Baked surfaces…**, then **Prepare** and **Show** to inspect
+the compiled receiver lighting and supported texture opacity.
 See [brush texture shadows](brush-texture-shadows.md) for setup and limits.
 See [prop mesh shadows](prop-shadows.md) for static models.
 
@@ -166,6 +172,8 @@ Unsupported model classes, parenting or initial poses fail explicitly.
 Supported powers 2–4 compile with baked lighting, native neighbors, LOD snapping and optional physics.
 Full and exact half-edge links can connect mixed grid sizes.
 Terrain sheets do not seal the map. Holes and runtime brush-model terrain remain unsupported.
+Supported texture opacity uses **Brush texture shadows**; painted terrain blend
+values do not control opacity or remove collision geometry.
 See [terrain](terrain.md).
 
 ## Water

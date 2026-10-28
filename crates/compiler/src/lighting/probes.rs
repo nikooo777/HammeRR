@@ -4,7 +4,8 @@ use source_formats::bsp::{
 };
 
 use super::bake::Budget;
-use super::shadows::{ShadowIndex, Triangle};
+use super::shadows::ShadowIndex;
+use super::terrain_shadows::TerrainTriangle;
 use super::{Occluder, encode_color};
 use crate::map::Map;
 use crate::tree::Tree;
@@ -38,7 +39,7 @@ pub(super) struct Context<'a> {
     pub prop_shadows: &'a ShadowIndex<super::props::PropTriangle>,
     pub prop_bounds: &'a ShadowIndex<super::props::ProbeBounds>,
     pub shadows: &'a ShadowIndex<Occluder>,
-    pub terrain: &'a ShadowIndex<Triangle>,
+    pub terrain: &'a ShadowIndex<TerrainTriangle>,
     pub directions: &'a [DVec3],
     pub quality: crate::SkyQuality,
     pub sky_radiance: DVec3,
@@ -145,8 +146,8 @@ fn candidates(
                 &mut |work| budget.consume(work),
                 &mut |triangle| {
                     Ok(triangle
-                        .fraction(point, above)?
-                        .map(|fraction| (fraction, ())))
+                        .intersection(point, above)?
+                        .map(|(fraction, _)| (fraction, ())))
                 },
             )?
             .is_some()
@@ -246,6 +247,7 @@ pub(super) fn bake(
         ctx.sky_radiance,
         ctx.face_sources,
         ctx.brush_textures,
+        ctx.terrain,
         budget,
     )?;
     let cone = (1.0 - 2.0 / ctx.directions.len() as f64).acos().tan();
@@ -314,16 +316,25 @@ pub(super) fn bake(
                     .map_err(|error| error.to_string())?,
             );
             let mut colors = gather(ctx.directions, &mut |direction| {
-                Ok(surfaces
-                    .trace(
-                        point,
-                        direction,
-                        cone,
-                        ctx.shadows,
-                        ctx.prop_shadows,
-                        budget,
-                    )?
-                    .map_or(DVec3::ZERO, |hit| hit.color))
+                let mut total = DVec3::ZERO;
+                surfaces.trace(
+                    point,
+                    direction,
+                    cone,
+                    &super::transport::Scene {
+                        shadows: ctx.shadows,
+                        terrain: ctx.terrain,
+                        props: ctx.prop_shadows,
+                        model: None,
+                    },
+                    None,
+                    budget,
+                    &mut |hit, _| {
+                        total += hit.color;
+                        Ok(())
+                    },
+                )?;
+                Ok(total)
             })?;
             if let Some(emission) = ctx.emission {
                 for (color, normal) in colors.iter_mut().zip(CUBE_AXES) {

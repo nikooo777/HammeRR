@@ -669,7 +669,7 @@ pub struct ReloadBuildRecipesArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompileSettingsArgs {
-    /// Binary alpha-test shadows from plain LightmappedGeneric world/func_detail faces and same-model lit receivers at their admitted initial baked pose; default false. Requires direct_ldr or direct_ldr_hdr. Model cutouts do not cast global shadows; opaque func_brush Shadows Yes requests use the separate entity property. Models do not supply reflected radiance. Independent of native model-requested prop texture shadows. Unsupported requested materials/scopes, fractional transparency and terrain alpha casters reject compilation without replacing prior output.
+    /// Static binary or fractional base-alpha shadows from supported world/detail brushes, terrain and admitted brush models. Default off; requires Direct LDR or Direct LDR + HDR. Eligible stationary root/child func_brush Shadows Yes requests cast globally; other models affect only their lit receivers. Unsupported materials/scopes, coloured transmission, alpha modulation and blend-shader opacity fail explicitly. Model radiance sources remain unsupported.
     pub brush_texture_shadows: Option<bool>,
     /// Default-off final-slot ambient probe refinement. Requires lit mode and Balanced or Detailed sampling; at most twice the candidate gathers, unchanged probe counts/spacing, independent LDR/HDR choices. No general quality or native-pixel guarantee.
     pub refine_ambient_probes: Option<bool>,

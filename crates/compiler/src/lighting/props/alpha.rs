@@ -49,7 +49,7 @@ impl Material {
             )
         };
         if !uv.is_finite() {
-            return Err("Static-prop texture-shadow coordinates must be finite".into());
+            return Err("Texture-shadow coordinates must be finite".into());
         }
         let texel: [usize; 2] = std::array::from_fn(|axis| {
             let coordinate = if self.texture.clamp[axis] {
@@ -139,7 +139,7 @@ pub(in crate::lighting) fn prepare_brush(
     budget: &mut Budget<'_>,
 ) -> Result<Arc<Material>, String> {
     prepare_for(material, assets, budget, true)?
-        .ok_or_else(|| "Brush texture shadows requires $alphatest 1".into())
+        .ok_or_else(|| "Brush texture shadows requires $alphatest 1 or $translucent 1".into())
 }
 
 fn prepare_for(
@@ -171,18 +171,18 @@ struct Parameters {
 }
 
 pub(in crate::lighting) fn validate_brush(material: &vmt::Material) -> Result<(), String> {
-    parameters(material, true)?
-        .ok_or_else(|| "Brush texture shadows requires $alphatest 1".to_string())?;
+    parameters(material, true)?.ok_or_else(|| {
+        "Brush texture shadows requires $alphatest 1 or $translucent 1".to_string()
+    })?;
     Ok(())
 }
 
 fn parameters(material: &vmt::Material, brush: bool) -> Result<Option<Parameters>, String> {
     if brush {
-        if material.shader != "lightmappedgeneric"
-            || scalar(material, "$alphatest", 0.0)? != 1.0
-            || scalar(material, "$translucent", 0.0)? != 0.0
-        {
-            return Err("Brush texture shadows supports only binary $alphatest 1 LightmappedGeneric; fractional translucency is unsupported".into());
+        if material.shader != "lightmappedgeneric" {
+            return Err(
+                "Brush texture shadows supports only LightmappedGeneric alpha materials".into(),
+            );
         }
         for (key, _) in &material.params {
             if !matches!(
@@ -227,6 +227,9 @@ fn parameters(material: &vmt::Material, brush: bool) -> Result<Option<Parameters
     }
     if fractional && material.get("$alphatestreference").is_some() {
         return Err("$alphatestreference is unsupported for $translucent texture shadows".into());
+    }
+    if brush && !fractional && alpha_test != 1.0 {
+        return Err("Brush texture shadows requires $alphatest 1 or $translucent 1".into());
     }
     for key in ["$additive", "$vertexalpha", "$distancealpha"] {
         if scalar(material, key, 0.0)? != 0.0 {
@@ -322,16 +325,7 @@ fn parameters(material: &vmt::Material, brush: bool) -> Result<Option<Parameters
     if scalar(material, "$frame", 0.0)? != 0.0 {
         return Err("nonzero $frame is unsupported for texture shadows".into());
     }
-    let default_reference = if material.shader == "unlitgeneric" {
-        0.7
-    } else {
-        0.5
-    };
-    let reference = scalar(material, "$alphatestreference", default_reference)?;
-    if !(0.0..=1.0).contains(&reference) {
-        return Err("$alphatestreference must be between zero and one".into());
-    }
-    let reference = if reference == 0.0 { 0.5 } else { reference };
+    let reference = material.alpha_test_reference()?;
     let transform = transform(material.get("$basetexturetransform"))?;
     let path = material
         .get("$basetexture")
@@ -379,9 +373,7 @@ fn prepare_texture(
             }
             let pixels = vtf.width as usize * vtf.height as usize;
             if pixels > MAX_ALPHA_BYTES - assets.alpha_bytes {
-                return Err(
-                    "Static-prop texture shadows exceed the 64 MiB decoded alpha limit".into(),
-                );
+                return Err("Texture shadows exceed the 64 MiB decoded alpha limit".into());
             }
             let (alpha_allocation, _rgba_allocation) = texture_allocations(pixels, budget)?;
             budget.consume(pixels * 2)?;

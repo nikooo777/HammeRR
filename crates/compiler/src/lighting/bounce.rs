@@ -22,6 +22,7 @@ pub(super) struct Context<'a> {
     pub infos: &'a [TexInfo],
     pub prop_shadows: &'a ShadowIndex<super::props::PropTriangle>,
     pub shadows: &'a ShadowIndex<Occluder>,
+    pub terrain: &'a ShadowIndex<super::terrain_shadows::TerrainTriangle>,
     pub model_shadows: &'a [Option<ShadowIndex<Occluder>>],
     pub quality: SkyQuality,
     pub measured_sources: bool,
@@ -138,6 +139,7 @@ pub(super) fn bake(
         ctx.kind,
         ctx.face_sources,
         ctx.brush_textures,
+        ctx.terrain,
         budget,
     )?;
     let _directions = budget.reserve::<DVec3>(ctx.quality.directions())?;
@@ -191,26 +193,24 @@ pub(super) fn bake(
                 for (map, &normal) in normals.iter().enumerate().take(plan.map_count()) {
                     let bounce = gather(normal, &directions, &mut |direction| {
                         stats.rays += 1;
-                        let hit = surfaces
-                            .trace(
-                                origin,
-                                direction,
-                                cone,
-                                ctx.shadows,
-                                ctx.prop_shadows,
-                                budget,
-                            )?
-                            .filter(|hit| !hit.sky && hit.front);
-                        match hit {
-                            Some(hit)
-                                if !super::bake::model_blocked(
-                                    &ctx.model_shadows[plan.model],
-                                    origin,
-                                    hit.point,
-                                    budget,
-                                )? =>
-                            {
-                                let styles = surfaces.styled_colors(&hit, cone, budget)?;
+                        let mut total = DVec3::ZERO;
+                        surfaces.trace(
+                            origin,
+                            direction,
+                            cone,
+                            &super::transport::Scene {
+                                shadows: ctx.shadows,
+                                terrain: ctx.terrain,
+                                props: ctx.prop_shadows,
+                                model: ctx.model_shadows[plan.model].as_ref(),
+                            },
+                            None,
+                            budget,
+                            &mut |hit, budget| {
+                                if hit.sky || !hit.front {
+                                    return Ok(());
+                                }
+                                let styles = surfaces.styled_colors(hit, cone, budget)?;
                                 for &(style, color) in
                                     styles.iter().skip(1).filter(|(style, _)| *style != 255)
                                 {
@@ -238,10 +238,11 @@ pub(super) fn bake(
                                             message
                                         })?;
                                 }
-                                Ok(hit.color * LIGHTMAP_SCALE)
-                            }
-                            _ => Ok(DVec3::ZERO),
-                        }
+                                total += hit.color * LIGHTMAP_SCALE;
+                                Ok(())
+                            },
+                        )?;
+                        Ok(total)
                     })?;
                     let mut contribution = [DVec3::ZERO; super::bump::MAPS];
                     contribution[map] = bounce;

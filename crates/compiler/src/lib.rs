@@ -1195,6 +1195,7 @@ fn build(
             control,
             prop_sources,
             sources,
+            options.brush_texture_shadows,
         )?
     } else if let Some(mode) = prop_sources {
         map::Map::load_with_prop_sources_controlled(vmf, fs, mode, &mut output.report, control)?

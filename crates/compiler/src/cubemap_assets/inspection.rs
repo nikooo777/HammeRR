@@ -121,10 +121,13 @@ pub fn inspect_root_cubemap_bindings(
         &mut report,
     )
     .map_err(|error| error.message)?;
-    let materials = instances
-        .material_sources
-        .clone()
-        .unwrap_or_else(BuildMaterialSources::without_retained_payloads);
+    let materials = instances.material_sources.clone().unwrap_or_else(|| {
+        if query.brush_texture_shadows {
+            BuildMaterialSources::with_retained_material_text()
+        } else {
+            BuildMaterialSources::without_retained_payloads()
+        }
+    });
     if instances.has_brush_models() {
         instances
             .validate_brush_model_materials(fs, &materials, control, query.brush_texture_shadows)
@@ -176,6 +179,7 @@ pub fn inspect_root_cubemap_bindings(
         control,
         None,
         &materials,
+        query.brush_texture_shadows,
     )?;
     if report.has_errors() {
         instances.annotate(&mut report);

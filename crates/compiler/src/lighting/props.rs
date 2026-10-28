@@ -82,19 +82,19 @@ impl PropTriangle {
         Ok(material.blocks(uv)?.then_some(fraction))
     }
 
-    fn coverage(&self, start: DVec3, end: DVec3) -> Result<u8, String> {
-        let Some((_, weights)) = self.triangle.intersection(start, end)? else {
-            return Ok(0);
+    fn sampled_coverage(&self, start: DVec3, end: DVec3) -> Result<Option<(f64, u8)>, String> {
+        let Some((fraction, weights)) = self.triangle.intersection(start, end)? else {
+            return Ok(None);
         };
         let Some((material, coordinates)) = &self.alpha else {
-            return Ok(255);
+            return Ok(Some((fraction, u8::MAX)));
         };
         let uv = coordinates
             .iter()
             .zip(weights)
             .map(|(point, weight)| *point * weight)
             .sum();
-        material.coverage(uv)
+        Ok(Some((fraction, material.coverage(uv)?)))
     }
 }
 
@@ -121,34 +121,64 @@ impl ShadowObject for PropTriangle {
 }
 
 impl ShadowIndex<PropTriangle> {
-    pub(super) fn visibility_skipping_owner(
+    pub(super) fn accumulate_coverage(
         &self,
         start: DVec3,
         end: DVec3,
         skip_owner: Option<u32>,
+        coverage: &mut super::transport::Coverage,
         consume: &mut impl FnMut(usize) -> Result<(), String>,
-    ) -> Result<f64, String> {
-        if !self.has_fractional() {
-            return Ok(
-                if self.blocked_skipping_owner(start, end, skip_owner, consume)? {
-                    0.0
-                } else {
-                    1.0
-                },
-            );
+    ) -> Result<(), String> {
+        if coverage.opaque() {
+            return Ok(());
         }
-        let mut coverage = 0_u8;
-        self.visit(start, end, consume, &mut |triangle| {
-            if skip_owner.is_none() || triangle.owner != skip_owner {
-                coverage = coverage.saturating_add(triangle.coverage(start, end)?);
+        if !self.has_fractional() {
+            if self.blocked_skipping_owner(start, end, skip_owner, consume)? {
+                coverage.add(u8::MAX);
             }
-            Ok(if coverage == 255 {
+            return Ok(());
+        }
+        self.visit(start, end, consume, &mut |triangle| {
+            if (skip_owner.is_none() || triangle.owner != skip_owner)
+                && let Some((_, value)) = triangle.sampled_coverage(start, end)?
+            {
+                coverage.add(value);
+            }
+            Ok(if coverage.opaque() {
                 super::shadows::Visit::Stop
             } else {
                 super::shadows::Visit::Continue(1.0)
             })
         })?;
-        Ok(f64::from(255 - coverage) / 255.0)
+        Ok(())
+    }
+
+    pub(super) fn accumulate_sky_coverage(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        fraction: f64,
+        skip_owner: Option<u32>,
+        coverage: &mut super::transport::Coverage,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<(), String> {
+        if coverage.opaque() {
+            return Ok(());
+        }
+        self.visit(start, end, consume, &mut |triangle| {
+            if (skip_owner.is_none() || triangle.owner != skip_owner)
+                && let Some((hit, value)) = triangle.sampled_coverage(start, end)?
+                && hit <= fraction + super::shadows::TRIANGLE_EPSILON
+            {
+                coverage.add(value);
+            }
+            Ok(if coverage.opaque() {
+                super::shadows::Visit::Stop
+            } else {
+                super::shadows::Visit::Continue(fraction)
+            })
+        })?;
+        Ok(())
     }
 
     pub(super) fn blocked_skipping_owner(

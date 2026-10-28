@@ -108,6 +108,6 @@ See the [tool index and setup](docs/mcp.md).
 | [Baked surfaces](docs/baked-surfaces.md) | [Map comparison](docs/map-comparison.md) |
 | --- | --- |
 | ![Baked light on final arches, terrain and brush-model stairs](docs/images/baked-surfaces.png) | ![Changed objects selected after an external-map comparison](docs/images/external-map-comparison.png) |
-| View final brushes, terrain and brush models with baked lighting. | Compare stored objects and select or frame current matches. |
+| View final brushes, terrain, brush models and static props with baked lighting. | Compare stored objects and select or frame current matches. |
 
 Counter-Strike: Source and its assets are not included.

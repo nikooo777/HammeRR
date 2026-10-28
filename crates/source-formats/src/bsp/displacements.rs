@@ -89,6 +89,25 @@ impl Default for DisplacementInfo {
 }
 
 impl DisplacementInfo {
+    pub fn start_oriented_quad(self, quad: [[f32; 3]; 4]) -> io::Result<[[f32; 3]; 4]> {
+        let points = quad.map(|point| DVec3::from_array(point.map(f64::from)));
+        if points.iter().any(|point| !point.is_finite()) {
+            return Err(invalid("displacement base quad must be finite"));
+        }
+        let start = DVec3::from_array(self.start.map(f64::from));
+        if !start.is_finite() {
+            return Err(invalid("displacement start must be finite"));
+        }
+        let first = (0..4)
+            .min_by(|&a, &b| {
+                points[a]
+                    .distance_squared(start)
+                    .total_cmp(&points[b].distance_squared(start))
+            })
+            .unwrap();
+        Ok(std::array::from_fn(|offset| quad[(first + offset) % 4]))
+    }
+
     pub fn flags(self) -> Option<u32> {
         (self.min_tessellation < 0).then_some(self.min_tessellation as u32 & i32::MAX as u32)
     }
@@ -353,22 +372,9 @@ impl Displacements {
             .ok_or_else(|| invalid("displacement index is invalid"))?;
         let size = info.grid_size()?;
         let vertices = &self.vertices[range(info.vertex_start, size * size, self.vertices.len())?];
-        let quad = quad.map(|point| DVec3::from_array(point.map(f64::from)));
-        if quad.iter().any(|point| !point.is_finite()) {
-            return Err(invalid("displacement base quad must be finite"));
-        }
-        let start = DVec3::from_array(info.start.map(f64::from));
-        if !start.is_finite() {
-            return Err(invalid("displacement start must be finite"));
-        }
-        let first = (0..4)
-            .min_by(|&a, &b| {
-                quad[a]
-                    .distance_squared(start)
-                    .total_cmp(&quad[b].distance_squared(start))
-            })
-            .unwrap();
-        let [a, b, c, d] = [0, 1, 2, 3].map(|offset| quad[(first + offset) % 4]);
+        let [a, b, c, d] = info
+            .start_oriented_quad(quad)?
+            .map(|point| DVec3::from_array(point.map(f64::from)));
         let mut result = Vec::with_capacity(size * size);
         for row in 0..size {
             let t = row as f64 / (size - 1) as f64;

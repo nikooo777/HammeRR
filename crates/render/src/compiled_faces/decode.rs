@@ -192,6 +192,26 @@ impl Channel {
                 .map_or((&winding.positions, &winding.normals), |terrain| {
                     (&terrain.positions, &terrain.normals)
                 });
+            let terrain_texture = terrain
+                .as_ref()
+                .map(|terrain| -> Result<_, String> {
+                    let quad = winding
+                        .positions
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| "Baked displacement base face must be a quad")?;
+                    let corners = terrain.info.start_oriented_quad(quad).map_err(message)?;
+                    Ok((
+                        terrain.grid_uvs.as_slice(),
+                        corners.map(|point| {
+                            glam::DVec2::from_array(project(
+                                plan.info.texture_vecs,
+                                DVec3::from_array(point.map(f64::from)),
+                            ))
+                        }),
+                    ))
+                })
+                .transpose()?;
             if points.len() != plan.vertices || normals.len() != points.len() {
                 return Err("Baked surface vertex or normal ranges changed during decoding".into());
             }
@@ -217,7 +237,15 @@ impl Channel {
                             .into(),
                     );
                 }
-                let projected = project(plan.info.texture_vecs, local_point);
+                let projected = if let Some((grid, corners)) = &terrain_texture {
+                    let [s, t] = grid[index].map(f64::from);
+                    corners[0]
+                        .lerp(corners[1], t)
+                        .lerp(corners[3].lerp(corners[2], t), s)
+                        .to_array()
+                } else {
+                    project(plan.info.texture_vecs, local_point)
+                };
                 let uv: [f64; 2] = std::array::from_fn(|axis| {
                     projected[axis] / f64::from(materials[plan.material].dimensions[axis])
                 });

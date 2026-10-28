@@ -241,10 +241,21 @@ fn terrain_uses_start_oriented_grid_allowed_topology_and_retained_surface_sample
         info.allowed_vertices[0] &= !(1 << 1);
         let size = info.grid_size().unwrap();
         let center = size * (size / 2) + size / 2;
+        let lateral = center + size;
         let vertices = (0..size * size)
             .map(|index| DisplacementVertex {
-                direction: [0.0, 0.0, 1.0],
-                distance: if index == center { 8.0 } else { 0.0 },
+                direction: if index == lateral {
+                    [1.0, 0.0, 0.0]
+                } else {
+                    [0.0, 0.0, 1.0]
+                },
+                distance: if index == center {
+                    8.0
+                } else if index == lateral {
+                    1.0
+                } else {
+                    0.0
+                },
                 alpha: if index == center { 128.25 } else { 0.0 },
             })
             .collect();
@@ -295,6 +306,11 @@ fn terrain_uses_start_oriented_grid_allowed_topology_and_retained_surface_sample
         assert_eq!(channel.vertices[0].position, [32.0, 16.0, 0.0]);
         assert_eq!(channel.vertices[0].lightmap[..2], [0.0; 2]);
         assert_eq!(channel.vertices[center].position, [16.0, 8.0, 8.0]);
+        assert_eq!(channel.vertices[lateral].position[0], 17.0);
+        assert_eq!(
+            channel.vertices[lateral].uv,
+            [0.625, [0.03125, -0.03125, -0.0625][power as usize - 2]]
+        );
         assert_eq!(channel.vertices[center].lightmap[..2], [2.0, 2.0]);
         assert!(channel.vertices[center].lightmap[2] > 0.0);
         assert_eq!(channel.vertices[center].color[3], 128);

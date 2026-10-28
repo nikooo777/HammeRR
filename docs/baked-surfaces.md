@@ -28,6 +28,7 @@ density and smoothing groups.
 The preview reads compiled diffuse textures, static tint and supported blend and
 normal inputs. It uses the owned BSP's packed assets first, then the guarded
 original sources. An editor image does not replace a compiled texture.
+Terrain texture coordinates follow the base quad, including sideways deformation.
 
 Lightmapped surfaces use face-local bilinear samples. Tangent normals use normalized squared projections onto the compiler's three-
 vector basis. SSBump inputs supply direct coefficients. Native shader weighting

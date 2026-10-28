@@ -1,5 +1,6 @@
 use super::sky::SkyLight;
 use super::{MIN_LIGHT_DISTANCE, PointLight};
+use source_formats::bsp::LightingKind;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Sun {
@@ -19,9 +20,26 @@ impl Sun {
         entity: &crate::map::MapEntity,
         targets: &map_core::light::Targets<'_>,
     ) -> Result<Self, String> {
-        Ok(Self {
-            light: SkyLight::direct_from_entity(entity, targets)?,
-        })
+        Self::from_entity_kind(entity, targets, LightingKind::Ldr, false)
+    }
+
+    pub fn from_entity_kind(
+        entity: &crate::map::MapEntity,
+        targets: &map_core::light::Targets<'_>,
+        kind: LightingKind,
+        sky_ambient: bool,
+    ) -> Result<Self, String> {
+        let light = if sky_ambient {
+            let channel = match kind {
+                LightingKind::Ldr => "LDR",
+                LightingKind::Hdr => "HDR",
+            };
+            SkyLight::from_entity_kind(entity, targets, kind)
+                .map_err(|error| format!("Sun with {channel} sky ambient: {error}"))?
+        } else {
+            SkyLight::direct_from_entity(entity, targets, kind)?
+        };
+        Ok(Self { light })
     }
 
     pub fn contribution(self, normal: glam::DVec3) -> Result<glam::DVec3, String> {
@@ -32,10 +50,7 @@ impl Sun {
         entity: &crate::map::MapEntity,
         targets: &map_core::light::Targets<'_>,
     ) -> Result<Self, String> {
-        Ok(Self {
-            light: SkyLight::from_entity(entity, targets)
-                .map_err(|error| format!("Sun with LDR sky ambient: {error}"))?,
-        })
+        Self::from_entity_kind(entity, targets, LightingKind::Ldr, true)
     }
 
     pub fn preview_parameters(self) -> Result<SunParameters, String> {
@@ -192,6 +207,119 @@ mod tests {
     use super::*;
     use glam::DVec3;
     use source_formats::bsp::{Bsp, LightingKind};
+
+    #[test]
+    fn hdr_sun_preview_reuses_channel_inheritance_gains_and_optional_ambient() {
+        let mut entity = crate::map::MapEntity {
+            id: 10,
+            classname: "light_environment".into(),
+            origin: None,
+            brushes: Vec::new(),
+            properties: vec![
+                ("_light".into(), "255 0 0 200 0 0 255 600".into()),
+                ("pitch".into(), "-90".into()),
+                ("_ambient".into(), "255 0 0 40 0 255 0 80".into()),
+                ("_lightscaleHDR".into(), "2".into()),
+                ("_AmbientScaleHDR".into(), "3".into()),
+            ],
+        };
+        let targets = Default::default();
+        let ldr = Sun::from_entity_with_sky_ambient(&entity, &targets)
+            .unwrap()
+            .preview_parameters()
+            .unwrap();
+        assert_eq!(ldr.intensity, [200.0, 0.0, 0.0]);
+        assert_eq!(ldr.ambient, [40.0, 0.0, 0.0]);
+        for sentinel in [None, Some("-1 -1 -1 1")] {
+            entity
+                .properties
+                .retain(|(key, _)| key != "_lightHDR" && key != "_ambientHDR");
+            if let Some(sentinel) = sentinel {
+                entity.properties.extend([
+                    ("_lightHDR".into(), sentinel.into()),
+                    ("_ambientHDR".into(), sentinel.into()),
+                ]);
+            }
+            let hdr = Sun::from_entity_kind(&entity, &targets, LightingKind::Hdr, true)
+                .unwrap()
+                .preview_parameters()
+                .unwrap();
+            assert_eq!(hdr.intensity, [0.0, 0.0, 1200.0]);
+            assert_eq!(hdr.ambient, [0.0, 240.0, 0.0]);
+            assert_eq!(hdr.contribution_bound, 1200.0);
+        }
+        entity
+            .properties
+            .retain(|(key, _)| !matches!(key.as_str(), "_ambient" | "_ambientHDR"));
+        let default_ambient = Sun::from_entity_kind(&entity, &targets, LightingKind::Hdr, true)
+            .unwrap()
+            .preview_parameters()
+            .unwrap();
+        assert_eq!(default_ambient.ambient, [0.0, 0.0, 1800.0]);
+        assert_eq!(default_ambient.contribution_bound, 3000.0);
+        entity
+            .properties
+            .push(("_ambientHDR".into(), "malformed".into()));
+        let direct = Sun::from_entity_kind(&entity, &targets, LightingKind::Hdr, false)
+            .unwrap()
+            .preview_parameters()
+            .unwrap();
+        assert_eq!(direct.intensity, [0.0, 0.0, 1200.0]);
+        assert_eq!(direct.ambient, [0.0; 3]);
+        assert!(
+            Sun::from_entity_kind(&entity, &targets, LightingKind::Hdr, true)
+                .unwrap_err()
+                .contains("_ambientHDR")
+        );
+        entity
+            .properties
+            .iter_mut()
+            .find(|(key, _)| key == "_AmbientScaleHDR")
+            .unwrap()
+            .1 = "malformed".into();
+        assert!(Sun::from_entity_kind(&entity, &targets, LightingKind::Hdr, false).is_ok());
+        assert!(
+            Sun::from_entity_kind(&entity, &targets, LightingKind::Hdr, true)
+                .unwrap_err()
+                .contains("_AmbientScaleHDR")
+        );
+        entity.properties.retain(|(key, _)| key != "_lightHDR");
+        entity
+            .properties
+            .push(("_lightHDR".into(), "0 255 0 400".into()));
+        assert_eq!(
+            Sun::from_entity_kind(&entity, &targets, LightingKind::Hdr, false)
+                .unwrap()
+                .preview_parameters()
+                .unwrap()
+                .intensity,
+            [0.0, 800.0, 0.0]
+        );
+        entity.properties.last_mut().unwrap().1 = "255 255 255 0".into();
+        assert_eq!(
+            Sun::from_entity_kind(&entity, &targets, LightingKind::Hdr, false)
+                .unwrap()
+                .preview_parameters()
+                .unwrap()
+                .intensity,
+            [0.0; 3]
+        );
+        entity.properties.last_mut().unwrap().1 = "malformed".into();
+        assert!(
+            Sun::from_entity_kind(&entity, &targets, LightingKind::Hdr, false)
+                .unwrap_err()
+                .contains("_lightHDR")
+        );
+        assert!(Sun::from_entity(&entity, &targets).is_ok());
+        entity.properties.last_mut().unwrap().1 = "0 0 255 1000000000000".into();
+        assert!(
+            Sun::from_entity_kind(&entity, &targets, LightingKind::Hdr, false)
+                .unwrap()
+                .preview_parameters()
+                .unwrap_err()
+                .contains("headroom")
+        );
+    }
 
     #[test]
     fn optional_ldr_sky_ambient_reuses_literals_defaults_and_per_channel_headroom() {

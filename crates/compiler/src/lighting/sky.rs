@@ -194,8 +194,9 @@ impl SkyLight {
     pub(super) fn direct_from_entity(
         entity: &MapEntity,
         targets: &map_core::light::Targets<'_>,
+        kind: LightingKind,
     ) -> Result<Self, String> {
-        let (_, point, spread) = sun_source(entity, LightingKind::Ldr, false)?;
+        let (_, point, spread) = sun_source(entity, kind, false)?;
         let point = point.ok_or("Sun has an unresolved light-value parameter")?;
         let spread = spread.ok_or("Sun has an unresolved light-value parameter")?;
         let origin = point.origin;

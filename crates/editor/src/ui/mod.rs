@@ -321,6 +321,13 @@ fn refresh_view_controls(app: &AppWindow, session: &Session) {
     app.set_normal_maps(session.view().normal_maps);
     app.set_surface_shading(session.view().surface_shading);
     app.set_lighting_preview(session.view().lighting_preview);
+    app.set_lighting_channel(
+        if session.view().lighting_channel == render::LightingChannel::Hdr {
+            1
+        } else {
+            0
+        },
+    );
     app.set_lighting_sky_ambient(session.view().lighting_sky_ambient);
     app.set_lighting_quality(
         if session.view().lighting_quality == render::lighting::Quality::Fast {
@@ -430,6 +437,11 @@ fn apply_view_controls(app: AppWindow, shared: &SharedSession) {
     let mut view = match session.resolve_view_update(editor_core::session::ViewUpdate {
         instance_contents: Some(app.get_instance_contents()),
         lighting_preview: Some(app.get_lighting_preview()),
+        lighting_channel: Some(if app.get_lighting_channel() == 1 {
+            "hdr"
+        } else {
+            "ldr"
+        }),
         lighting_sky_ambient: Some(app.get_lighting_sky_ambient()),
         lighting_quality: Some(if app.get_lighting_quality() == 0 {
             "fast"

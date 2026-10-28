@@ -281,7 +281,7 @@ pub struct FacePreviewArgs {
 }
 
 pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
-    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"surface_shading":view.surface_shading,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"selection_tint":view.selection_tint,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_channel":view.lighting_channel.name(),"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"surface_shading":view.surface_shading,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"selection_tint":view.selection_tint,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
@@ -385,9 +385,11 @@ pub struct BeginSurfacePlacementPickArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SetViewArgs {
     pub instance_contents: Option<bool>,
-    /// Unshadowed authored constant point/spot/direct LDR sun preview; defaults off. One visible sun; optional LDR sky ambient, no HDR overrides/bounce/shadows/sky visibility.
+    /// Unshadowed authored constant point/spot/direct sun preview; defaults off. One visible sun; optional sky ambient, no bounce/shadows/sky visibility.
     pub lighting_preview: Option<bool>,
-    /// Include the admitted sun's unshadowed LDR sky ambient; defaults off. No sky visibility or occlusion.
+    /// Authored source channel: ldr (default) or hdr; independent of sky_channel and build/game channels.
+    pub lighting_channel: Option<String>,
+    /// Include the admitted sun's selected-channel unshadowed sky ambient; defaults off. No sky visibility or occlusion.
     pub lighting_sky_ambient: Option<bool>,
     /// fast interpolates vertex lighting; detail evaluates fragments (default) and supports normal maps.
     pub lighting_quality: Option<String>,
@@ -430,9 +432,11 @@ pub struct SetViewArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct RenderArgs {
     pub instance_contents: Option<bool>,
-    /// Unshadowed authored constant point/spot/direct LDR sun preview; defaults off. One visible sun; optional LDR sky ambient, no HDR overrides/bounce/shadows/sky visibility.
+    /// Unshadowed authored constant point/spot/direct sun preview; defaults off. One visible sun; optional sky ambient, no bounce/shadows/sky visibility.
     pub lighting_preview: Option<bool>,
-    /// Include the admitted sun's unshadowed LDR sky ambient; defaults off. No sky visibility or occlusion.
+    /// Authored source channel: ldr (default) or hdr; independent of sky_channel and build/game channels.
+    pub lighting_channel: Option<String>,
+    /// Include the admitted sun's selected-channel unshadowed sky ambient; defaults off. No sky visibility or occlusion.
     pub lighting_sky_ambient: Option<bool>,
     /// fast interpolates vertex lighting; detail evaluates fragments (default) and supports normal maps.
     pub lighting_quality: Option<String>,
@@ -552,6 +556,7 @@ macro_rules! view_update {
                 crate::session::ViewUpdate {
                     instance_contents: self.instance_contents,
                     lighting_preview: self.lighting_preview,
+                    lighting_channel: self.lighting_channel.as_deref(),
                     lighting_sky_ambient: self.lighting_sky_ambient,
                     lighting_quality: self.lighting_quality.as_deref(),
                     lighting_exposure_ev: self.lighting_exposure_ev,

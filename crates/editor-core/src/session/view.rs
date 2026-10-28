@@ -5,6 +5,7 @@ use render::ViewOptions;
 pub struct ViewUpdate<'a> {
     pub instance_contents: Option<bool>,
     pub lighting_preview: Option<bool>,
+    pub lighting_channel: Option<&'a str>,
     pub lighting_sky_ambient: Option<bool>,
     pub lighting_quality: Option<&'a str>,
     pub lighting_exposure_ev: Option<f64>,
@@ -84,6 +85,9 @@ impl Session {
         }
         if let Some(value) = update.lighting_preview {
             view.lighting_preview = value;
+        }
+        if let Some(value) = update.lighting_channel {
+            view.lighting_channel = render::LightingChannel::parse(value)?;
         }
         if let Some(value) = update.lighting_sky_ambient {
             view.lighting_sky_ambient = value;

@@ -58,6 +58,166 @@ fn enable(session: &mut Session) {
 }
 
 #[test]
+fn lighting_channel_selects_point_spot_sun_and_ambient_without_changing_shared_temporary_state() {
+    let (_directory, mut session, _) = fixture();
+    add(
+        &mut session,
+        "light",
+        Some(DVec3::Z * 32.0),
+        &[
+            ("_light", "255 0 0 20"),
+            ("_lightHDR", "0 0 255 400"),
+            ("_lightscaleHDR", "2"),
+        ],
+    );
+    add(
+        &mut session,
+        "light_spot",
+        Some(DVec3::Z * 48.0),
+        &[
+            ("_light", "255 0 0 30 0 255 0 300"),
+            ("_lightHDR", "-1 -1 -1 1"),
+            ("_lightscaleHDR", "2"),
+            ("pitch", "-90"),
+        ],
+    );
+    add(
+        &mut session,
+        "light_environment",
+        None,
+        &[
+            ("_light", "255 0 0 40"),
+            ("_lightHDR", "0 0 255 500"),
+            ("_lightscaleHDR", "2"),
+            ("pitch", "-90"),
+            ("_ambient", "255 0 0 10"),
+            ("_ambientHDR", "0 255 0 60"),
+            ("_AmbientScaleHDR", "3"),
+        ],
+    );
+    enable(&mut session);
+    let ldr = session.build_scene();
+    assert_eq!(ldr.lighting.report.channel, render::LightingChannel::Ldr);
+    for (light, red) in ldr.lighting.lights.iter().zip([20.0, 30.0, 40.0]) {
+        assert_eq!(light.intensity_cap[..3], [red, 0.0, 0.0]);
+    }
+    let accepted = session.view();
+    let view = session
+        .resolve_view_update(ViewUpdate {
+            lighting_channel: Some("hdr"),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_ne!(
+        session.render_scene_key(view),
+        session.render_scene_key(accepted)
+    );
+    let view = ViewOptions {
+        lighting_sky_ambient: true,
+        ..view
+    };
+    let hdr = session.build_scene_for_view(view);
+    assert_eq!(hdr.lighting.report.channel, render::LightingChannel::Hdr);
+    assert_eq!(hdr.lighting.report.admitted_lights, 3);
+    assert_eq!(
+        hdr.lighting.report.admitted_receivers,
+        ldr.lighting.report.admitted_receivers
+    );
+    assert_eq!(hdr.lighting.lights[0].intensity_cap[..3], [0.0, 0.0, 800.0]);
+    assert_eq!(hdr.lighting.lights[1].intensity_cap[..3], [0.0, 600.0, 0.0]);
+    assert_eq!(
+        hdr.lighting.lights[2].intensity_cap[..3],
+        [0.0, 0.0, 1000.0]
+    );
+    assert_eq!(hdr.lighting.lights[2].origin_radius, [0.0, 180.0, 0.0, 0.0]);
+    assert_eq!(session.view(), accepted);
+    session.set_view(view);
+    let state = session.lighting_preview_state();
+    assert_eq!(state["channel"], "hdr");
+    assert_eq!(state["report"]["channel"], "hdr");
+    let disabled = session
+        .resolve_view_update(ViewUpdate {
+            lighting_preview: Some(false),
+            ..Default::default()
+        })
+        .unwrap();
+    session.set_view(disabled);
+    let state = session.lighting_preview_state();
+    assert_eq!(state["channel"], "hdr");
+    assert_eq!(state["report"]["channel"], "hdr");
+    assert!(state["summary"].as_str().unwrap().contains("HDR"));
+}
+
+#[test]
+fn malformed_selected_hdr_excludes_sources_without_substituting_valid_ldr() {
+    let (_directory, mut session, _) = fixture();
+    enable(&mut session);
+    for class in ["light", "light_spot", "light_environment"] {
+        add(
+            &mut session,
+            class,
+            Some(DVec3::Z * 32.0),
+            &[
+                ("_light", "255 0 0 20"),
+                ("_lightHDR", "malformed"),
+                ("pitch", "-90"),
+            ],
+        );
+    }
+    assert_eq!(session.build_scene().lighting.report.admitted_lights, 3);
+    let hdr = session
+        .resolve_view_update(ViewUpdate {
+            lighting_channel: Some("hdr"),
+            ..Default::default()
+        })
+        .unwrap();
+    let invalid = session.build_scene_for_view(hdr);
+    assert!(invalid.lighting.lights.is_empty());
+    assert_eq!(invalid.lighting.report.admitted_lights, 0);
+    assert_eq!(invalid.lighting.report.excluded_lights, 3);
+    assert!(
+        invalid
+            .lighting
+            .report
+            .diagnostics
+            .iter()
+            .all(|row| row.entity.is_some() && row.reason.contains("_lightHDR"))
+    );
+    let sun = session.document().vmf().entities.last().unwrap().id;
+    session
+        .set_entity_properties(
+            Actor::User,
+            sun,
+            &[
+                ("_lightHDR".into(), Some("0 0 255 600".into())),
+                ("_ambientHDR".into(), Some("malformed".into())),
+            ],
+        )
+        .unwrap();
+    assert_eq!(
+        session
+            .build_scene_for_view(hdr)
+            .lighting
+            .report
+            .admitted_suns,
+        1
+    );
+    let ambient = session.build_scene_for_view(ViewOptions {
+        lighting_sky_ambient: true,
+        ..hdr
+    });
+    assert_eq!(ambient.lighting.report.admitted_suns, 0);
+    assert!(
+        ambient
+            .lighting
+            .report
+            .diagnostics
+            .iter()
+            .any(|row| row.entity == Some(sun) && row.reason.contains("_ambientHDR"))
+    );
+}
+
+#[test]
 fn unresolved_template_lights_have_explicit_diagnostics_without_hiding_valid_lamps() {
     let (_directory, mut session, _) = fixture();
     let valid = add(
@@ -328,9 +488,10 @@ fn authored_lighting_tracks_owned_transform_cancel_apply_and_undo_without_view_e
         mesh.lighting.lights[0].origin_radius[..3],
         [36.0, 0.0, 32.0]
     );
-    for quality in ["fast", "detail"] {
+    for (quality, channel) in [("fast", "hdr"), ("detail", "ldr")] {
         let view = session
             .resolve_view_update(ViewUpdate {
+                lighting_channel: Some(channel),
                 lighting_quality: Some(quality),
                 lighting_sky_ambient: Some(quality == "fast"),
                 lighting_exposure_ev: Some(2.0),

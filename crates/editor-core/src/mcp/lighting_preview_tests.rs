@@ -57,22 +57,35 @@ fn authored_lighting_mcp_is_lazy_strict_and_temporary_overrides_preserve_shared_
     let shared = Arc::new(Mutex::new(session));
     let server = EditorServer::new(shared.clone(), None);
     assert_eq!(value(server.get_lighting_preview())["enabled"], false);
+    assert_eq!(value(server.get_lighting_preview())["channel"], "ldr");
     assert_eq!(value(server.get_lighting_preview())["sky_ambient"], false);
+    assert_eq!(
+        value(server.get_view()),
+        value(server.get_map_info())["view"]
+    );
     for args in [
         json!({"lighting_preview":1}),
         json!({"lighting_preview":"true"}),
         json!({"lighting_sky_ambient":1}),
         json!({"lighting_sky_ambient":"true"}),
         json!({"lighting_quality":true}),
+        json!({"lighting_channel":true}),
         json!({"lighting_exposure_ev":"1"}),
     ] {
         assert!(serde_json::from_value::<SetViewArgs>(args.clone()).is_err());
         assert!(serde_json::from_value::<RenderArgs>(args).is_err());
     }
-    let enabled = value(server.set_view(Parameters(serde_json::from_value(json!({"lighting_preview":true,"lighting_sky_ambient":true,"lighting_quality":"detail","lighting_exposure_ev":2})).unwrap())));
+    let enabled = value(server.set_view(Parameters(serde_json::from_value(json!({"lighting_preview":true,"lighting_channel":"hdr","lighting_sky_ambient":true,"lighting_quality":"detail","lighting_exposure_ev":2})).unwrap())));
     assert_eq!(enabled["lighting_preview"], true);
+    assert_eq!(enabled["lighting_channel"], "hdr");
     assert_eq!(enabled["lighting_sky_ambient"], true);
     let report = value(server.get_lighting_preview());
+    assert_eq!(report["channel"], "hdr");
+    assert_eq!(report["report"]["channel"], "hdr");
+    assert_eq!(
+        value(server.get_view()),
+        value(server.get_map_info())["view"]
+    );
     assert_eq!(report["report"]["admitted_lights"], 2);
     assert_eq!(report["report"]["admitted_suns"], 1);
     assert_eq!(report["report"]["sky_ambient"], true);
@@ -84,15 +97,19 @@ fn authored_lighting_mcp_is_lazy_strict_and_temporary_overrides_preserve_shared_
     );
     let accepted = lock(&shared).view();
     let direct_args: RenderArgs =
-        serde_json::from_value(json!({"lighting_sky_ambient":false})).unwrap();
+        serde_json::from_value(json!({"lighting_channel":"ldr","lighting_sky_ambient":false}))
+            .unwrap();
     let direct = lock(&shared)
         .resolve_view_update(direct_args.view_update())
         .unwrap();
     assert!(!direct.lighting_sky_ambient);
+    assert_eq!(direct.lighting_channel, render::LightingChannel::Ldr);
     assert_ne!(direct.scene_key(0), accepted.scene_key(0));
     assert_eq!(lock(&shared).view(), accepted);
     for args in [
         json!({"lighting_quality":"invalid"}),
+        json!({"lighting_channel":"invalid","sky_exposure_ev":3}),
+        json!({"lighting_channel":"ldr","lighting_exposure_ev":9}),
         json!({"lighting_exposure_ev":9}),
         json!({"lighting_quality":"fast","normal_maps":true}),
     ] {
@@ -125,6 +142,14 @@ fn authored_lighting_mcp_is_lazy_strict_and_temporary_overrides_preserve_shared_
     assert!(!temporary.lighting_preview);
     assert_ne!(temporary.scene_key(0), accepted.scene_key(0));
     assert_eq!(lock(&shared).view(), accepted);
+    let disabled = value(server.set_view(Parameters(
+        serde_json::from_value(json!({"lighting_preview":false})).unwrap(),
+    )));
+    assert_eq!(disabled["lighting_channel"], "hdr");
+    let report = value(server.get_lighting_preview());
+    assert_eq!(report["enabled"], false);
+    assert_eq!(report["channel"], "hdr");
+    assert_eq!(report["report"]["channel"], "hdr");
     let session = lock(&shared);
     assert_eq!(session.document().vmf(), &source);
     assert_eq!(session.render_document().vmf(), &preview);

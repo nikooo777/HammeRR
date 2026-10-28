@@ -10,28 +10,7 @@ use source_formats::vtf::Vtf;
 mod hdr;
 pub use hdr::{hdr_mip_bytes, validate_hdr_texture};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Channel {
-    #[default]
-    Ldr,
-    Hdr,
-}
-impl Channel {
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Ldr => "ldr",
-            Self::Hdr => "hdr",
-        }
-    }
-    pub fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "ldr" => Ok(Self::Ldr),
-            "hdr" => Ok(Self::Hdr),
-            _ => Err("Sky channel must be ldr or hdr".into()),
-        }
-    }
-}
+pub use crate::LightingChannel as Channel;
 
 pub const HDR_POLICY: &str = "HammeRR sky-only preview: linear RGBA16F RGB, or RGBA16 UNORM RGB ×16; finite nonnegative radiance, opaque output; exposure 2^EV and per-channel Reinhard x/(1+x), then one sRGB target encoding. No game hardware mode, native tonemap/exposure adaptation, baked lighting, fog or material tint. Six direct static Sky materials only; no compressed HDR, Patch or LDR substitution. Source bounds: 128 lookups, 64 MiB aggregate, 1 MiB VMT, 16 MiB VTF, 4096 pixels/axis. One cached HDR family, 64 MiB encoded and 64 MiB GPU texture bytes per set (replacement can briefly retain old and new sets); temporary CPU source+parse copies at most 128 MiB plus one 16 MiB conversion buffer.";
 

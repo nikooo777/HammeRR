@@ -2052,6 +2052,7 @@ export component AppWindow inherits Window {
     in-out property <bool> show-tools: true;
     in-out property <bool> sky-preview: false;
     in-out property <bool> lighting-preview: false;
+    in-out property <int> lighting-channel: 0;
     in-out property <bool> lighting-sky-ambient: false;
     in-out property <int> lighting-quality: 1;
     in-out property <string> lighting-exposure-ev: "0";
@@ -2819,10 +2820,16 @@ export component AppWindow inherits Window {
                         checked <=> root.lighting-preview;
                         toggled => { root.options-changed(); }
                     }
+                    Text { text: "Lighting channel"; color: #bac2ce; }
+                    ComboBox {
+                        model: ["LDR", "HDR"];
+                        current-index <=> root.lighting-channel;
+                        selected => { root.options-changed(); }
+                    }
                     if root.lighting-preview: VerticalLayout {
                         spacing: 8px;
                         CheckBox {
-                            text: "Include LDR sky ambient";
+                            text: "Include sky ambient";
                             checked <=> root.lighting-sky-ambient;
                             toggled => { root.options-changed(); }
                         }
@@ -2840,7 +2847,7 @@ export component AppWindow inherits Window {
                                 accepted => { root.options-changed(); }
                             }
                         }
-                        Text { text: root.lighting-status + "\nLDR sun · optional sky ambient · no shadows or bounce · editor display"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
+                        Text { text: root.lighting-status + "\nOptional sky ambient · no shadows or bounce · editor display"; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
                     }
                     if root.lighting-error != "": Text { text: root.lighting-error; color: #f0b377; wrap: word-wrap; font-size: 12px; }
                     CheckBox {

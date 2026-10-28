@@ -5,6 +5,7 @@ use compiler::lighting::preview::{MAX_CONTRIBUTION, Parameters, Sun, SunParamete
 use map_core::ObjectId;
 use render::lighting::{Light, MAX_LIGHTS, MAX_SUNS, Preview, Report};
 use render::{SurfaceView, ViewOptions};
+use source_formats::bsp::LightingKind;
 use source_formats::vmf::{Entity, Vmf};
 
 use super::Session;
@@ -125,6 +126,7 @@ pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions)
     let mut preview = Preview {
         report: Report {
             requested: view.lighting_preview,
+            channel: view.lighting_channel,
             active: view.lighting_preview && view.surface == SurfaceView::Textured,
             sky_ambient: view.lighting_sky_ambient,
             ..Default::default()
@@ -172,6 +174,10 @@ pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions)
     }
     let mut valid = 0;
     let mut headroom = 0.0;
+    let kind = match view.lighting_channel {
+        render::LightingChannel::Ldr => LightingKind::Ldr,
+        render::LightingChannel::Hdr => LightingKind::Hdr,
+    };
     for entity in entities {
         let class = entity.classname().unwrap_or_default().to_ascii_lowercase();
         if class != "light" && !class.starts_with("light_") {
@@ -201,16 +207,13 @@ pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions)
                     origin: entity.origin(),
                 };
                 if is_sun {
-                    let light = if view.lighting_sky_ambient {
-                        Sun::from_entity_with_sky_ambient(&source, &targets)
-                    } else {
-                        Sun::from_entity(&source, &targets)
-                    };
+                    let light =
+                        Sun::from_entity_kind(&source, &targets, kind, view.lighting_sky_ambient);
                     light
                         .and_then(Sun::preview_parameters)
                         .map(|parameters| (pack_sun(parameters), parameters.contribution_bound))
                 } else {
-                    PointLight::from_entity(&source, -1)
+                    PointLight::from_entity_kind(&source, -1, kind)
                         .and_then(|light| {
                             if class == "light_spot" {
                                 light.with_spotlight(&source, &targets)
@@ -270,7 +273,7 @@ impl Session {
         let report = self.build_scene_for_view(view).lighting.report;
         let source = report.source.clone();
         serde_json::json!({
-            "enabled":view.lighting_preview, "sky_ambient":view.lighting_sky_ambient, "quality":view.lighting_quality.name(), "exposure_ev":view.lighting_exposure_ev,
+            "enabled":view.lighting_preview, "channel":view.lighting_channel.name(), "sky_ambient":view.lighting_sky_ambient, "quality":view.lighting_quality.name(), "exposure_ev":view.lighting_exposure_ev,
             "summary":report.summary(), "report":report,
             "source":source,"source_scope":"current render document and visible working region; includes pending geometry previews",
             "limits":{"lights":MAX_LIGHTS,"suns":MAX_SUNS,"diagnostics":render::lighting::MAX_DIAGNOSTICS,"summed_linear_headroom":MAX_CONTRIBUTION,"exposure_ev":[-8,8],"receiver_counts":render::lighting::RECEIVER_COUNTS,"policy":render::lighting::POLICY}

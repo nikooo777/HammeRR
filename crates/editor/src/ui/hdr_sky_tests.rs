@@ -125,39 +125,94 @@ fn authored_lighting_controls_validate_combined_view_and_keep_owned_drafts() {
         .unwrap();
     let source = session.document().vmf().clone();
     let token = session.property_draft().unwrap().token;
+    let history = session.history_snapshot();
+    let camera = session.camera();
     let shared = std::sync::Arc::new(std::sync::Mutex::new(session));
     let app = AppWindow::new().unwrap();
     bind_view_controls(&app, shared.clone());
     refresh_view_controls(&app, &lock(&shared));
     assert!(!app.get_lighting_preview());
+    assert_eq!(app.get_lighting_channel(), 0);
     assert!(!app.get_lighting_sky_ambient());
     assert_eq!(app.get_lighting_quality(), 1);
     app.set_lighting_preview(true);
+    app.set_lighting_channel(1);
     app.set_lighting_sky_ambient(true);
     app.set_lighting_exposure_ev("2".into());
+    app.set_sky_channel(1);
+    app.set_sky_exposure_ev("-1".into());
     app.invoke_options_changed();
     assert!(lock(&shared).view().lighting_preview);
+    assert_eq!(
+        lock(&shared).view().lighting_channel,
+        render::LightingChannel::Hdr
+    );
     assert!(lock(&shared).view().lighting_sky_ambient);
     assert_eq!(lock(&shared).view().lighting_exposure_ev, 2.0);
     app.set_normal_maps(true);
     app.invoke_options_changed();
     let accepted = lock(&shared).view();
+    app.set_lighting_channel(0);
     app.set_lighting_quality(0);
     app.invoke_options_changed();
     assert_eq!(lock(&shared).view(), accepted);
+    assert_eq!(app.get_lighting_channel(), 1);
     assert_eq!(app.get_lighting_quality(), 1);
     assert!(app.get_lighting_error().contains("choose Detail"));
+    app.set_lighting_channel(0);
     app.set_lighting_exposure_ev("NaN".into());
     app.invoke_options_changed();
     assert_eq!(lock(&shared).view(), accepted);
+    assert_eq!(app.get_lighting_channel(), 1);
     assert_eq!(app.get_lighting_exposure_ev().as_str(), "2");
+    app.set_lighting_channel(0);
+    app.set_lighting_exposure_ev("3".into());
+    app.set_sky_exposure_ev("9".into());
+    app.invoke_options_changed();
+    assert_eq!(lock(&shared).view(), accepted);
+    assert_eq!(app.get_lighting_channel(), 1);
+    assert_eq!(app.get_lighting_exposure_ev().as_str(), "2");
+    assert_eq!(app.get_sky_channel(), 1);
+    assert_eq!(app.get_sky_exposure_ev().as_str(), "-1");
+    assert!(app.get_sky_preview_error().contains("finite and between"));
+    app.set_lighting_channel(0);
+    app.invoke_options_changed();
+    {
+        let session = lock(&shared);
+        assert_eq!(
+            session.view().lighting_channel,
+            render::LightingChannel::Ldr
+        );
+        assert_eq!(session.view().lighting_exposure_ev, 2.0);
+        assert_eq!(session.view().sky_channel, render::sky::Channel::Hdr);
+        assert_eq!(session.view().sky_exposure_ev, -1.0);
+    }
+    assert!(app.get_lighting_error().is_empty());
+    assert!(app.get_sky_preview_error().is_empty());
+    app.set_lighting_preview(false);
+    app.invoke_options_changed();
+    {
+        let mut session = lock(&shared);
+        let view = session
+            .resolve_view_update(editor_core::session::ViewUpdate {
+                lighting_channel: Some("hdr"),
+                ..Default::default()
+            })
+            .unwrap();
+        session.set_view(view);
+        refresh_view_controls(&app, &session);
+    }
+    assert!(!app.get_lighting_preview());
+    assert_eq!(app.get_lighting_channel(), 1);
+    app.set_lighting_preview(true);
+    app.invoke_options_changed();
     app.show().unwrap();
     app.window().set_size(slint::PhysicalSize::new(1600, 1000));
     super::tests::scroll_inspector_to_control(&app, "Unshadowed authored lighting");
-    super::tests::scroll_inspector_to_control(&app, "Include LDR sky ambient");
+    super::tests::scroll_inspector_to_control(&app, "Include sky ambient");
     let ambient = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
         &app,
-        "Include LDR sky ambient",
+        "Include sky ambient",
     )
     .next()
     .unwrap();
@@ -172,4 +227,6 @@ fn authored_lighting_controls_validate_combined_view_and_keep_owned_drafts() {
     assert!(!lock(&shared).view().lighting_preview);
     assert_eq!(lock(&shared).document().vmf(), &source);
     assert_eq!(lock(&shared).property_draft().unwrap().token, token);
+    assert_eq!(lock(&shared).history_snapshot(), history);
+    assert_eq!(lock(&shared).camera(), camera);
 }

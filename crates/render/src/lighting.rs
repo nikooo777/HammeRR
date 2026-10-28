@@ -29,7 +29,7 @@ pub fn limits() -> Limits {
 
 pub const RECEIVER_COUNTS: &str = "flat brush polygons counted separately from admitted/excluded terrain surfaces and drawn triangles; outline-only terrain has zero drawn triangles; separate authored model instance/part/drawn-triangle counts; resource guides and helpers excluded by category";
 
-pub const POLICY: &str = "Unshadowed authored LDR point/spot and direct-sun diffuse preview. At most 32 constant unnamed style-0 lights including one light_environment; this is an editor budget, not an engine limit. Optional unshadowed LDR sky ambient defaults off and uses the admitted sun's compiler _ambient or half-sun default as a constant contribution. Direct and ambient share the same slot and per-channel radiance budget. No HDR light overrides, bounce, sky visibility, occlusion, shadows, penumbrae, animation or native brightness/tone-map parity. Sun uses direction without point attenuation; spread does not add illumination. Malformed requested ambient excludes the entire sun; disabled ambient ignores its fields. Every conflicting visible sun is excluded. Sun sources follow the same current-render-document and visible-working-region filtering as point/spot lights, unlike compiler cordons; sky-camera miniatures retain separate fixed shading. Opaque flat LightmappedGeneric brush polygons and single-base world/func_detail terrain with checked sewn LOD normals; terrain excludes bump/normal, blend and detail declarations. Authored selected MDL meshes require whole-instance opaque single-base VertexLitGeneric admission, Normal render mode and checked transformed normals; bump/normal, proxies and unsupported material declarations are excluded; excluded surfaces retain their ordinary display. Fast interpolates vertex lighting and can miss small pools on large faces; Detail evaluates each fragment and composes with supported normal maps. Linear base × tint × compiler contribution / 255, exposure 2^EV, per-channel Reinhard, then one sRGB target conversion. Zero admitted lights make supported receivers black. Reload material assets refreshes cached base display and receiver policy together.";
+pub const POLICY: &str = "Unshadowed authored LDR or HDR point/spot and direct-sun diffuse preview; the explicit lighting channel is independent of skybox channel/exposure and defaults to LDR. At most 32 constant unnamed style-0 lights including one light_environment; this is an editor budget, not an engine limit. Optional unshadowed sky ambient defaults off and uses the selected channel's compiler ambient or half-sun default as a constant contribution. HDR uses compiler HDR overrides, gains and absent/negative-RGB inheritance; malformed requested HDR excludes the source without LDR substitution. Direct and ambient share the same slot and per-channel radiance budget. No baked lighting or material emission, bounce, sky visibility, occlusion, shadows, penumbrae, animation or native brightness/tone-map parity. Sun uses direction without point attenuation; spread does not add illumination. Malformed requested ambient excludes the entire sun; disabled ambient ignores its fields. Every conflicting visible sun is excluded. Sun sources follow the same current-render-document and visible-working-region filtering as point/spot lights, unlike compiler cordons; sky-camera miniatures retain separate fixed shading. Opaque flat LightmappedGeneric brush polygons and single-base world/func_detail terrain with checked sewn LOD normals; terrain excludes bump/normal, blend and detail declarations. Authored selected MDL meshes require whole-instance opaque single-base VertexLitGeneric admission, Normal render mode and checked transformed normals; bump/normal, proxies and unsupported material declarations are excluded; excluded surfaces retain their ordinary display. Fast interpolates vertex lighting and can miss small pools on large faces; Detail evaluates each fragment and composes with supported normal maps. Linear base × tint × compiler contribution / 255, exposure 2^EV, per-channel Reinhard, then one sRGB target conversion. Zero admitted lights make supported receivers black. Reload material assets refreshes cached base display and receiver policy together.";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -76,6 +76,7 @@ pub struct Diagnostic {
 pub struct Report {
     pub source: Option<Source>,
     pub requested: bool,
+    pub channel: crate::LightingChannel,
     pub active: bool,
     pub sky_ambient: bool,
     pub admitted_lights: usize,
@@ -202,13 +203,14 @@ impl Report {
         )
     }
     pub fn summary(&self) -> String {
+        let channel = self.channel.name().to_ascii_uppercase();
         if !self.requested {
-            return "Authored lighting preview is off".into();
+            return format!("Authored lighting preview is off · {channel} channel selected");
         }
         let sky_ambient = if self.sky_ambient { "enabled" } else { "off" };
         if let Some(reason) = &self.unavailable {
             return format!(
-                "Unshadowed lighting unavailable: {reason}\n{} admitted / {} excluded lights ({} admitted / {} excluded direct LDR suns; sky ambient {sky_ambient}) · {} admitted / {} excluded brush receiver polygons · {} · {}; ordinary display retained",
+                "Unshadowed {channel} lighting unavailable: {reason}\n{} admitted / {} excluded lights ({} admitted / {} excluded direct suns; sky ambient {sky_ambient}) · {} admitted / {} excluded brush receiver polygons · {} · {}; ordinary display retained",
                 self.admitted_lights,
                 self.excluded_lights,
                 self.admitted_suns,
@@ -220,10 +222,12 @@ impl Report {
             );
         }
         if !self.active {
-            return "Unshadowed lighting requires Textured view; no light admission".into();
+            return format!(
+                "Unshadowed {channel} lighting requires Textured view; no light admission"
+            );
         }
         let mut text = format!(
-            "Unshadowed lighting · {} admitted / {} excluded lights ({} admitted / {} excluded direct LDR suns; sky ambient {sky_ambient}) · {} admitted / {} excluded brush receiver polygons · {} · {}",
+            "Unshadowed {channel} lighting · {} admitted / {} excluded lights ({} admitted / {} excluded direct suns; sky ambient {sky_ambient}) · {} admitted / {} excluded brush receiver polygons · {} · {}",
             self.admitted_lights,
             self.excluded_lights,
             self.admitted_suns,

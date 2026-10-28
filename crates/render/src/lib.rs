@@ -1,6 +1,7 @@
 //! wgpu renderer for Source maps, independent of the editor UI.
 
 pub mod camera;
+mod channel;
 pub mod color_correction;
 pub mod compiled_details;
 pub mod fog;
@@ -19,6 +20,7 @@ pub mod sky;
 pub mod sky3d;
 
 pub use camera::{Camera, Projection};
+pub use channel::LightingChannel;
 pub use gpu::{
     AreaGuide, COLOR_FORMAT, ClipGuide, GpuContext, GpuScene, PaintGuide, RenderTarget, Renderer,
     SceneKey, SurfaceView, ViewOptions,

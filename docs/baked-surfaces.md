@@ -21,7 +21,10 @@ A failed update keeps the previous settings. **Prepare** and **Clear** reset the
 The viewport surface modes show final geometry, including wireframe, lightmap
 density and smoothing groups.
 
-![Baked lighting on arches, a terrain ramp and brush-model stairs](images/baked-surfaces.png)
+![Baked lighting on arches, terrain, brush-model stairs and static props](images/baked-surfaces.png)
+
+You can also prepare and show [final compiled details](compiled-details.md).
+The two layers keep separate lighting controls.
 
 ## Materials and view
 
@@ -40,6 +43,10 @@ Static props use the final model pose, selected skin and exact hardware vertex
 colours for each LOD. Colours decode before triangle interpolation.
 Supported `VertexLitGeneric` materials include the compiler's cutout cases.
 An absent optional base texture uses white; a declared missing texture fails.
+
+Fine shadows need enough model vertices. To omit a prop's own vertex shadows,
+set **Disable Self-Shadowing with vertex lighting** to **Yes**, then compile and
+prepare again. Other objects still cast shadows on the prop.
 
 ## Limits
 

@@ -4,6 +4,7 @@
 
 Show the final models, cards and cross/tri shapes from a successful build.
 The layer includes material-scattered details and uses their native BSP placements.
+Show [Baked surfaces](baked-surfaces.md) at the same time to include compiled brushes, terrain and static props. Lighting controls remain separate.
 
 1. Click **Compile**.
 2. Open **Build details… → Compiled details…**. You can also use **Build settings… → Compiled details…**.

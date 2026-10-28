@@ -441,6 +441,7 @@ Hide retains them. Static props keep baked weight 1; channel and EV apply to bot
 sampling and material policy. The layer uses current owned output and separately
 guarded display assets; editing contexts can suppress it. Authored picking,
 hiding and history remain separate from native face ordinals.
+Baked surfaces and compiled details can be shown together. Keep their preparation tokens and lighting settings separate.
 
 For [final detail placements](compiled-details.md), call `set_compiled_details`
 with `action:"prepare"`. Set `background:true` to read the owned BSP in a worker.

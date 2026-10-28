@@ -126,7 +126,7 @@ impl LightingMode {
                 "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with directional normal-map lightmaps, shadows, scoped world/model brush smoothing and model ambient. Up to four style-preserving diffuse bounces reach world, terrain and brush entities. Prop lightmaps remain unfinished."
             }
             Self::DirectLdrHdr => {
-                "Bakes separate LDR and HDR lightmaps, world lights and model ambient, selecting each channel's authored light inputs. Sampling, diffuse bounces and brush smoothing apply to both channels within one shared work limit. Empty HDR lighting, world-light or ambient data cannot activate native HDR. Runtime HDR depends on the game and hardware; Generate reflections captures both LDR and HDR cubemaps when enabled. HDR viewport, exposure authoring and prop lightmaps remain unfinished."
+                "Bakes separate LDR and HDR lightmaps, world lights and model ambient, selecting each channel's authored light inputs. Sampling, diffuse bounces and brush smoothing apply to both channels within one shared work limit. Empty HDR lighting, world-light or ambient data cannot activate native HDR. Runtime HDR depends on the game and hardware; Generate reflections captures both LDR and HDR cubemaps when enabled. HDR preview and exposure controls are available. Prop lightmaps remain unfinished."
             }
         }
     }

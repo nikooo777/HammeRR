@@ -1,10 +1,119 @@
-use glam::{DMat3, DVec3};
+use glam::{DMat3, DMat4, DVec3};
 use map_core::Plane;
+use source_formats::bsp::{Bsp, MAX_LIGHTING_FACES, Model, lump};
+use source_formats::keyvalues::{FlatBlockLimits, parse_flat_blocks_controlled};
 
 pub(crate) const MAX_INITIAL_POSE_BYTES: usize = 128;
 const MAX_NATIVE_POSE_BYTES: usize = MAX_INITIAL_POSE_BYTES - 1;
 const MAX_INITIAL_KEY_BYTES: usize = 2047;
 const MAX_INITIAL_ANGLE: f64 = 360.0;
+const MAX_INITIAL_ENTITIES_BYTES: usize = 16 * 1024 * 1024;
+const MAX_INITIAL_ENTITY_PAIRS: usize = 262_144;
+
+pub fn initial_brush_model_transforms(bsp: &Bsp) -> Result<Vec<DMat4>, String> {
+    initial_brush_model_transforms_controlled(bsp, &mut || Ok(()))
+}
+
+pub fn initial_brush_model_transforms_controlled(
+    bsp: &Bsp,
+    check: &mut dyn FnMut() -> std::io::Result<()>,
+) -> Result<Vec<DMat4>, String> {
+    check().map_err(|error| error.to_string())?;
+    let model_lump = bsp.lump(lump::MODELS);
+    if model_lump.version != 0
+        || model_lump.fourcc != [0; 4]
+        || model_lump.data.len() / size_of::<Model>() > MAX_LIGHTING_FACES
+    {
+        return Err("Unsupported compiled model metadata or count".into());
+    }
+    let models = bsp.records::<Model>().map_err(|error| error.to_string())?;
+    let world = models.first().ok_or("Compiled Model0 is unavailable")?;
+    if world.origin != [0.0; 3] {
+        return Err("Compiled Model0 has a nonzero or invalid origin".into());
+    }
+    let entity_lump = bsp.lump(lump::ENTITIES);
+    if entity_lump.version != 0
+        || entity_lump.fourcc != [0; 4]
+        || entity_lump.data.len() > MAX_INITIAL_ENTITIES_BYTES
+    {
+        return Err("Unsupported compiled entity metadata or size".into());
+    }
+    let entities = parse_flat_blocks_controlled(
+        bsp.entities().map_err(|error| error.to_string())?,
+        FlatBlockLimits {
+            max_bytes: MAX_INITIAL_ENTITIES_BYTES,
+            max_blocks: MAX_LIGHTING_FACES,
+            max_pairs: MAX_INITIAL_ENTITY_PAIRS,
+        },
+        check,
+    )
+    .map_err(|error| error.to_string())?;
+    let mut transforms = vec![None; models.len()];
+    transforms[0] = Some(DMat4::IDENTITY);
+    for properties in entities {
+        check().map_err(|error| error.to_string())?;
+        let fields = properties
+            .iter()
+            .filter(|(key, _)| pose_key(key).is_ok_and(|base| base.eq_ignore_ascii_case("model")))
+            .collect::<Vec<_>>();
+        if !fields.iter().any(|(_, value)| value.starts_with('*')) {
+            continue;
+        }
+        if fields.len() != 1 {
+            return Err("Compiled brush model has duplicate or ambiguous model fields".into());
+        }
+        let (key, value) = fields[0];
+        if pose_key(key)?.len() != key.len() {
+            return Err("Compiled brush model requires an unaliased model field".into());
+        }
+        let ordinal = value
+            .strip_prefix('*')
+            .filter(|ordinal| {
+                !ordinal.is_empty() && ordinal.bytes().all(|byte| byte.is_ascii_digit())
+            })
+            .ok_or("Compiled brush model binding is malformed")?
+            .parse::<usize>()
+            .map_err(|_| "Compiled brush model binding is out of range")?;
+        if ordinal == 0 || ordinal >= models.len() {
+            return Err("Compiled brush model binding is out of range".into());
+        }
+        if transforms[ordinal].is_some() {
+            return Err("Compiled brush model is bound to more than one entity".into());
+        }
+        let mut classname = None;
+        for (key, value) in &properties {
+            let base = pose_key(key)?;
+            if base.eq_ignore_ascii_case("classname") {
+                if base.len() != key.len() || classname.is_some() {
+                    return Err("Compiled brush model has ambiguous classname fields".into());
+                }
+                classname = Some(value.as_str());
+            }
+        }
+        let classname = classname.ok_or("Compiled brush model classname is missing")?;
+        let pose = Pose {
+            offset: initial_offset(&properties)?,
+            rotation: initial_rotation(classname, &properties)?,
+        };
+        let model = &models[ordinal];
+        pose.bounds(
+            DVec3::from_array(model.mins.map(f64::from)),
+            DVec3::from_array(model.maxs.map(f64::from)),
+        )?;
+        let mut transform = pose.rotation.map_or(DMat4::IDENTITY, DMat4::from_mat3);
+        transform.w_axis = pose.offset.extend(1.0);
+        transforms[ordinal] = Some(transform);
+    }
+    transforms
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, transform)| {
+            transform.ok_or_else(|| {
+                format!("Compiled brush model *{ordinal} has no emitted entity binding")
+            })
+        })
+        .collect()
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Pose {
@@ -288,6 +397,26 @@ mod tests {
         )
     }
 
+    fn compiled_models(entries: &[(&str, &str)]) -> Bsp {
+        let mut bsp = Bsp::new();
+        bsp.set_records(&[
+            Model::default(),
+            Model {
+                mins: [-1.0, -2.0, -3.0],
+                maxs: [4.0, 5.0, 6.0],
+                origin: [999.0, 998.0, 997.0],
+                ..Model::default()
+            },
+        ]);
+        let mut text = "{\n\"classname\" \"worldspawn\"\n}\n{\n".to_owned();
+        for (key, value) in properties(entries) {
+            text.push_str(&format!("\"{key}\" \"{value}\"\n"));
+        }
+        text.push_str("}\n");
+        bsp.set_entities(&text);
+        bsp
+    }
+
     #[test]
     fn source_axes_and_mixed_rotation_match_independent_literal_matrices() {
         let cases = [
@@ -324,6 +453,18 @@ mod tests {
                 expected * (point + normal * 0.25) + offset,
             );
             assert!((pose.normal(normal).length() - 1.0).abs() < 2e-15);
+            let bsp = compiled_models(&[
+                ("model", "*1"),
+                ("origin", "101.5 -67.25 32.125"),
+                ("angles", angles),
+            ]);
+            let transforms = initial_brush_model_transforms(&bsp).unwrap();
+            assert_eq!(transforms[0], DMat4::IDENTITY);
+            assert_vector(
+                transforms[1].transform_point3(point),
+                expected * point + offset,
+            );
+            assert_vector(transforms[1].transform_vector3(normal), expected * normal);
         }
     }
 
@@ -393,6 +534,22 @@ mod tests {
         let mut fields = properties(&[("ANGLES", "1 2 3"), ("ParentName", "")]);
         fields[0].1 = "FUNC_BRUSH".into();
         assert!(initial_rotation("FUNC_BRUSH", &fields).unwrap().is_some());
+        for angles in [None, Some("0 0 0")] {
+            let mut entries = vec![
+                ("model", "*1"),
+                ("origin", "101.500001 -67.250001 32.125001"),
+            ];
+            if let Some(angles) = angles {
+                entries.push(("angles", angles));
+            }
+            let transforms = initial_brush_model_transforms(&compiled_models(&entries)).unwrap();
+            let local = DVec3::new(2.5, -7.5, 1.25);
+            assert_vector(
+                transforms[1].transform_point3(local),
+                local + DVec3::new(101.5, -67.25, 32.125),
+            );
+            assert_vector(transforms[1].transform_vector3(local), local);
+        }
     }
 
     #[test]
@@ -454,6 +611,40 @@ mod tests {
             )
             .unwrap()
             .is_none()
+        );
+        for entries in [
+            vec![],
+            vec![("model", "*0")],
+            vec![("model", "*2")],
+            vec![("model", "*x")],
+            vec![("model", "*-1")],
+            vec![("model", "*1 trailing")],
+            vec![("model#1", "*1")],
+            vec![("model ", "*1")],
+            vec![("model", "*1"), ("MODEL", "*1")],
+            vec![("model", "*1"), ("origin", "NaN 0 0")],
+            vec![("model", "*1"), ("angles", "0 0")],
+            vec![("model", "*1"), ("classname", "func_brush")],
+        ] {
+            assert!(
+                initial_brush_model_transforms(&compiled_models(&entries)).is_err(),
+                "{entries:?}"
+            );
+        }
+        let mut duplicate = compiled_models(&[("model", "*1")]);
+        let text = duplicate.entities().unwrap().to_owned()
+            + "{\n\"classname\" \"func_brush\"\n\"model\" \"*1\"\n}\n";
+        duplicate.set_entities(&text);
+        assert!(initial_brush_model_transforms(&duplicate).is_err());
+        let mut cancelled = || {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "cancelled",
+            ))
+        };
+        assert_eq!(
+            initial_brush_model_transforms_controlled(&duplicate, &mut cancelled).unwrap_err(),
+            "cancelled"
         );
     }
 

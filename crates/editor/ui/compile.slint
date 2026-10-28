@@ -89,6 +89,7 @@ export component CompileWindow inherits Window {
     callback cancel-build();
     callback play-build();
     callback inspect-baked-lightmaps();
+    callback inspect-baked-surfaces();
     callback inspect-baked-prop-vertices();
     callback inspect-compiled-lights();
     callback inspect-visibility();
@@ -242,6 +243,7 @@ export component CompileWindow inherits Window {
             spacing: 8px;
             Button { text: "Inspect baked lightmaps…"; clicked => { root.inspect-baked-lightmaps(); } }
             Button { text: "Inspect baked prop vertices…"; clicked => { root.inspect-baked-prop-vertices(); } }
+            Button { text: "Baked surfaces…"; clicked => { root.inspect-baked-surfaces(); } }
             Rectangle { horizontal-stretch: 1; }
         }
         HorizontalLayout {

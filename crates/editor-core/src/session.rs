@@ -27,6 +27,7 @@ pub mod atlas_texturing;
 mod baked_build;
 pub mod baked_lightmaps;
 pub mod baked_prop_vertices;
+pub mod baked_surfaces;
 pub mod brush_batch;
 mod buffer_replacement;
 pub mod compiled_details;
@@ -382,6 +383,7 @@ pub struct Session {
     compiled: Option<CompiledMap>,
     compiled_visibility: compiled_visibility::State,
     compiled_details: compiled_details::State,
+    baked_surfaces: baked_surfaces::State,
     compiled_prop_leaf_bounds: baked_prop_vertices::leaf_bounds::State,
     leak: Option<(Snapshot, compiler::Leak)>,
     game_run: Option<game::Run>,
@@ -715,6 +717,7 @@ impl Session {
             compiled: None,
             compiled_visibility: compiled_visibility::State::default(),
             compiled_details: compiled_details::State::default(),
+            baked_surfaces: baked_surfaces::State::default(),
             compiled_prop_leaf_bounds: baked_prop_vertices::leaf_bounds::State::default(),
             leak: None,
             game_run: None,
@@ -1556,6 +1559,7 @@ impl Session {
         self.clear_external_comparison();
         self.reset_instance_contents();
         self.reset_compiled_details();
+        self.reset_baked_surfaces();
         self.reset_sky3d_preview();
         self.native_capture.invalidate();
         self.groups.draft = None;
@@ -2532,6 +2536,7 @@ impl Session {
         self.shutdown_definitions_load();
         self.reset_instance_contents();
         self.reset_compiled_details();
+        self.reset_baked_surfaces();
         self.shutdown_sky3d_preview();
         self.shutdown_instance_extraction();
         self.clear_external_comparison();
@@ -2554,7 +2559,8 @@ impl Session {
     }
 
     pub(crate) fn instance_workers_busy(&self) -> bool {
-        self.compiled_details.worker.busy()
+        self.baked_surfaces.worker.busy()
+            || self.compiled_details.worker.busy()
             || self.instance_contents.worker.busy()
             || self.instance_extraction.worker.busy()
             || self.external_comparison.worker.busy()
@@ -2713,6 +2719,7 @@ impl Session {
     pub fn build_scene_for_view(&mut self, view: ViewOptions) -> SceneMesh {
         self.preflight_compiled_visibility();
         self.preflight_compiled_details();
+        self.preflight_baked_surfaces();
         self.preflight_compiled_prop_leaf_bounds();
         let sky3d = self.sky3d_preview_scene();
         let skybox = self.skybox_preview_for(view);
@@ -2861,7 +2868,8 @@ impl Session {
         );
         let model_guides = self.fgd_model_guides(document, &evaluation, view.entity_model_guides);
         let mut lighting = lighting_preview::prepare(document.vmf(), &evaluation.objects, view);
-        let mut mesh = SceneMesh::build_with_reference_models_filtered(
+        let baked_surfaces = self.baked_surfaces_visible();
+        let mut mesh = SceneMesh::build_with_reference_models_and_surfaces_filtered(
             document.vmf(),
             &self.game,
             &mut self.materials,
@@ -2875,6 +2883,7 @@ impl Session {
             view.normal_maps && view.surface == render::SurfaceView::Textured,
             view.lighting_preview && view.surface == render::SurfaceView::Textured,
             &references.models,
+            !baked_surfaces,
             |id| evaluation.objects.contains(&id),
         );
         mesh.normal_maps.requested = view.normal_maps;
@@ -2911,13 +2920,17 @@ impl Session {
         mesh.lighting = lighting;
         let mut report = references.report;
         if let Some(reference_mesh) = references.mesh
-            && let Err(error) = mesh.append_references(
-                &reference_mesh,
-                &mut self.materials,
-                &references.owners,
-                &selected,
-                view.selection_tint,
-            )
+            && let Err(error) = if baked_surfaces {
+                mesh.append_reference_outlines(&reference_mesh, &references.owners, &selected)
+            } else {
+                mesh.append_references(
+                    &reference_mesh,
+                    &mut self.materials,
+                    &references.owners,
+                    &selected,
+                    view.selection_tint,
+                )
+            }
         {
             report["displayed"] = serde_json::json!(false);
             report["status"] = serde_json::json!("failed");
@@ -2950,6 +2963,9 @@ impl Session {
         self.append_compile_region_guide(&mut mesh);
         self.append_compiled_visibility_guide(&mut mesh);
         self.append_compiled_details(&mut mesh);
+        if baked_surfaces && self.append_baked_surfaces(&mut mesh).is_err() {
+            return self.build_scene_for_view(view);
+        }
         self.append_compiled_prop_leaf_bounds(&mut mesh);
         self.append_overlay_guide(&mut mesh);
         self.append_component_guides(&mut mesh);

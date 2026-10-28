@@ -4,6 +4,7 @@ pub mod camera;
 mod channel;
 pub mod color_correction;
 pub mod compiled_details;
+pub mod compiled_faces;
 pub mod fog;
 pub mod gpu;
 mod grid;

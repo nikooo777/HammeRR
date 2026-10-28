@@ -79,6 +79,7 @@ See [Status](status.md) for supported features and limits.
 - [Cubemap faces](cubemap-faces.md)
 - [HDR exposure](hdr-exposure.md)
 - [Baked lightmaps](baked-lightmaps.md)
+- [Baked surfaces](baked-surfaces.md)
 - [Baked prop vertices](baked-prop-vertices.md)
 - [Compiled lights](compiled-lights.md)
 - [Visibility inspection](visibility.md)

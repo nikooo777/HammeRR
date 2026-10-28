@@ -13,7 +13,7 @@ pub(in crate::mcp) struct FrameCompiledFaceArgs {
 #[tool_router(router = compiled_face_framing_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Frame one compiled flat world/detail face from the current successful owned BSP. Require build_token, explicit channel ldr/hdr and zero-based face index from inspect_baked_lightmaps; optional aspect defaults to 1 and must be finite 0.01–100. Bounds come from that channel's actual Model0 face/surfedge/edge/vertex records. Multiple or unavailable authored contributors do not prevent valid compiled geometry framing. Terrain, model-local faces, stale/replaced/malformed output and active viewport work refuse before camera mutation. Preserves projection, map, selection, history, settings and ordinary drafts. Returns build, channel, face, framed_bounds, aspect and camera. UI: Baked lightmaps → Inspect face → Frame face."
+        description = "Frame one compiled world/detail, terrain or initial-pose brush-model face from the current successful owned BSP. Require build_token, explicit channel ldr/hdr and zero-based face index from inspect_baked_lightmaps; optional aspect defaults to 1 and must be finite 0.01–100. Bounds come from that channel's actual final geometry and emitted model origin/angles binding. Multiple or unavailable authored contributors do not prevent valid compiled geometry framing. Stale/replaced/malformed output, invalid model bindings and active viewport work refuse before camera mutation. Preserves projection, map, selection, history, settings and ordinary drafts. Returns build, channel, face, framed_bounds, aspect and camera. UI: Baked lightmaps → Inspect face → Frame face."
     )]
     pub(in crate::mcp) fn frame_compiled_face(
         &self,

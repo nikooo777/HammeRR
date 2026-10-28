@@ -406,6 +406,7 @@ fn prepare_scene_refresh(
     session.poll_color_correction();
     session.preflight_compiled_visibility();
     session.preflight_compiled_details();
+    session.preflight_baked_surfaces();
     session.preflight_compiled_prop_leaf_bounds();
     let view = session.view();
     let next = session.render_scene_key(view);
@@ -2956,8 +2957,15 @@ fn create_document_window(
                                 ));
                             }
                         }
+                        let uploaded = ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
+                        if let Err(error) = uploaded {
+                            app.set_frame(slint::Image::default());
+                            if !preview_error.is_empty() {
+                                preview_error.push('\n');
+                            }
+                            preview_error.push_str(&format!("Viewport unavailable: {error}"));
+                        }
                         app.set_preview_error(preview_error.into());
-                        ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
                         if let Some(controller) = &ui.volume
                             && controller.window.window().is_visible()
                         {
@@ -3497,6 +3505,10 @@ fn create_document_window(
                         .render(&ui.ctx, size, scale, &mut lock(&ui.session))
                 {
                     app.set_frame(frame);
+                }
+                if let Some(error) = ui.viewport.baked_surfaces_error() {
+                    app.set_frame(slint::Image::default());
+                    app.set_preview_error(format!("Viewport unavailable: {error}").into());
                 }
                 app.set_sky3d_render_error(ui.viewport.sky3d_error().unwrap_or_default().into());
                 app.set_color_correction_error(

@@ -522,7 +522,7 @@ fn opacity_pixels(
         &[],
         &instances,
     );
-    let scene = renderer.upload(context, &mesh, materials);
+    let scene = renderer.upload(context, &mesh, materials).unwrap();
     renderer.render_to_rgba(
         context,
         &scene,

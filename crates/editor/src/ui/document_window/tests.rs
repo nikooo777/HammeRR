@@ -942,7 +942,9 @@ fn owned_document_retirement_hides_nested_windows_stops_timers_and_preserves_pee
         let mut ui = local_ui.borrow_mut();
         let mut session = lock(&target.shared);
         let mesh = session.build_scene();
-        ui.viewport.set_scene(&ctx, &mesh, session.materials());
+        ui.viewport
+            .set_scene(&ctx, &mesh, session.materials())
+            .unwrap();
         let image = ui
             .viewport
             .render(&ctx, (320, 240), 1.0, &mut session)

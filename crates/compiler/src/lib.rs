@@ -62,6 +62,9 @@ use source_formats::bsp::{self, Bsp};
 use source_formats::gamefs::GameFs;
 use source_formats::vmf::Vmf;
 
+pub use brush_model_pose::{
+    initial_brush_model_transforms, initial_brush_model_transforms_controlled,
+};
 pub use control::{Control, Stage};
 pub use cordons::RegionSummary;
 pub use cubemap_assets::{CompileContext, CubemapAssetManifest, CubemapAssetPhase};

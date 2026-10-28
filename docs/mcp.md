@@ -415,6 +415,26 @@ See [Compile and play](compile-and-play.md).
 `get_cubemap_bindings` lists root-authored faces with sample choices from the complete assembled map. Child choices use `helper:null` and a source-qualified `helper_source` occurrence.
 Use `set_cubemap_bindings` to preview and apply root-face bindings to root helpers. Save maps with visible references first. Changed referenced files or consumed materials invalidate drafts. Inspection follows `brush_texture_shadows`; `state.brush_texture_shadows` reports its value. Changing it invalidates reports and drafts, including when restored. Refresh and preview again.
 
+For [baked surfaces](baked-surfaces.md), call `set_baked_surfaces` with
+`action:"prepare"`; set `background:true` for a worker. Read readiness and bounded
+face pages with `inspect_baked_surfaces`. Pass its `token` to `show`, `hide`,
+`clear`, `cancel`, `frame` and nonzero inspection pages. Frame also needs the
+selected channel's `face` ordinal; optional `aspect` is finite 0.01–100.
+
+Send channel, exposure and stored-ID gains as one atomic update:
+
+```json
+{"action":"lighting","token":"…","channel":"hdr","exposure_ev":1,"style_gains":[{"style":0,"gain":0.5},{"style":2,"gain":1}]}
+```
+
+Gains are finite 0–2 for distinct available stored IDs 0–63. Omitted style 0
+means 1; other omitted IDs mean 0. EV is −8 to +8. An absent channel or style
+refuses without changing the previous options. Prepare and Clear reset options;
+Hide retains them. `render_view.baked_surfaces` reports the actual layer state,
+sampling and material policy. The layer uses current owned output and separately
+guarded display assets; editing contexts can suppress it. Authored picking,
+hiding and history remain separate from native face ordinals.
+
 For [final detail placements](compiled-details.md), call `set_compiled_details`
 with `action:"prepare"`. Set `background:true` to read the owned BSP in a worker.
 Use `inspect_compiled_details` to check readiness and page native records.
@@ -501,9 +521,10 @@ Valid editor-only atlas catalogs can stay in child maps. Their metadata is check
 
 Use `frame_compiled_face` with the current `build_token`, explicit `channel`,
 native `face` ordinal and optional `aspect` from `0.01` through `100`.
-It frames flat Model0 world/detail geometry using the owned BSP vertices.
-It preserves projection, selection, history and drafts. Stale output, terrain,
-model-local faces, invalid geometry and active viewport work refuse atomically.
+It frames final world/detail, terrain and initial-pose brush-model geometry
+using the owned BSP vertices and emitted model binding. It preserves projection,
+selection, history and drafts. Stale output, invalid geometry and active viewport
+work refuse atomically.
 Several authored contributors do not prevent valid native face framing.
 
 Use `set_compiled_prop_leaf_bounds` with `build_token` and native `prop` to show
@@ -640,7 +661,7 @@ These groups locate the available operations.
 | [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `preview_terrain_vertex_set`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_pick`, `transform_pivot_grid` |
-| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `get_view`, `inspect_baked_lightmaps`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_camera`, `set_fog_preview`, `set_view` |
+| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `get_view`, `inspect_baked_lightmaps`, `inspect_baked_surfaces`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_baked_surfaces`, `set_camera`, `set_fog_preview`, `set_view` |
 | [Working region](working-region.md) | `get_editor_visibility`, `get_working_region`, `set_editor_visibility`, `set_working_region` |
 | [Prop leaf bounds](baked-prop-vertices.md) | `get_compiled_prop_leaf_bounds`, `set_compiled_prop_leaf_bounds` |
 | [Compiled visibility](visibility.md) | `frame_compiled_visibility`, `inspect_compiled_visibility`, `set_compiled_visibility_overlay` |

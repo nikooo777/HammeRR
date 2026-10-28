@@ -52,6 +52,7 @@ struct FrameMetadata {
     rope_preview: Value,
     material_reload: Value,
     compiled_details: Value,
+    baked_surfaces: Value,
 }
 
 impl FrameMetadata {
@@ -63,6 +64,7 @@ impl FrameMetadata {
             rope_preview: session.rope_preview_report(view.rope_preview),
             material_reload: json!(session.material_reload_report()),
             compiled_details: json!({"state":session.compiled_details_observation(),"lighting":session.compiled_details_lighting_report()}),
+            baked_surfaces: session.baked_surfaces_render_report(view),
         }
     }
 }
@@ -84,6 +86,7 @@ impl RenderedView {
             rope_preview,
             material_reload,
             compiled_details,
+            baked_surfaces,
         } = self.metadata;
         color_correction["applied"] =
             json!(color_correction["enabled"] == true && color_correction["ready"] == true);
@@ -105,7 +108,7 @@ impl RenderedView {
             .as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        let mut info = json!({ "compiled_details":compiled_details, "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "preview_issues_omitted": self.issues.omitted, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":self.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
+        let mut info = json!({ "baked_surfaces":baked_surfaces,"compiled_details":compiled_details, "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "preview_issues_omitted": self.issues.omitted, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":self.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
         if !include_details {
             omit_render_catalogues(&mut info);
         }
@@ -215,32 +218,40 @@ impl EditorServer {
             .renderer
             .as_mut()
             .expect("renderer was initialized");
-        let (metadata, color_correction) = {
+        let (metadata, color_correction, baked_surfaces_guard) = {
             let mut session = self.session();
             let color_correction = session.color_correction_for_render()?;
             renderer.set_color_correction(color_correction.clone());
             session.preflight_instance_contents();
             session.preflight_compiled_visibility();
             session.preflight_compiled_details();
+            session.preflight_baked_surfaces();
             session.preflight_compiled_prop_leaf_bounds();
             *sky3d_preview = session.sky3d_preview_state_for(view, *camera);
             let key = session.render_scene_key(view);
             if scene.as_ref().is_none_or(|(previous, _)| *previous != key) {
                 let mesh = session.build_scene_for_view(view);
+                let uploaded = if mesh.baked_faces.is_some() {
+                    renderer.upload(ctx, &mesh, session.materials())?
+                } else {
+                    renderer.upload_replacing(
+                        ctx,
+                        scene.take().map(|(_, scene)| scene),
+                        &mesh,
+                        session.materials(),
+                    )?
+                };
                 *issues = mesh.issues.clone();
                 *normal_maps = mesh.normal_maps.clone();
                 *lighting = mesh.lighting.report.clone();
                 *sprite_guides = session.sprite_guide_preview_state(view);
                 *instance_contents = session.instance_contents_rendered_report();
-                let previous = scene.take().map(|(_, scene)| scene);
-                *scene = Some((
-                    key,
-                    renderer.upload_replacing(ctx, previous, &mesh, session.materials()),
-                ));
+                *scene = Some((session.render_scene_key(view), uploaded));
             }
             (
                 FrameMetadata::capture(&mut session, view, *camera),
                 color_correction,
+                session.baked_surfaces_render_guard(view)?,
             )
         };
         let gpu_scene = &scene.as_ref().expect("scene was just built").1;
@@ -248,6 +259,8 @@ impl EditorServer {
             renderer.render_to_rgba_checked(ctx, gpu_scene, camera, &view, size.0, size.1)?;
         self.session()
             .verify_color_correction_render(color_correction.as_ref())?;
+        self.session()
+            .verify_baked_surfaces_render(baked_surfaces_guard.as_ref(), view)?;
         let mut png = Vec::new();
         let mut encoder = png::Encoder::new(Cursor::new(&mut png), size.0, size.1);
         encoder.set_color(png::ColorType::Rgba);

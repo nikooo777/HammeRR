@@ -337,7 +337,7 @@ fn render(
     materials: &MaterialLibrary,
     options: crate::ViewOptions,
 ) -> Vec<u8> {
-    let gpu = renderer.upload(context, scene, materials);
+    let gpu = renderer.upload(context, scene, materials).unwrap();
     renderer.render_to_rgba(
         context,
         &gpu,

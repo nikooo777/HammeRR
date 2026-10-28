@@ -221,7 +221,7 @@ fn reference_gpu_preserves_disabled_pixels_wireframe_holes_and_ordinary_depth() 
         selection_outlines: false,
         ..Default::default()
     };
-    let uploaded = renderer.upload(&context, &mesh, &materials);
+    let uploaded = renderer.upload(&context, &mesh, &materials).unwrap();
     let baseline = renderer.render_to_rgba(&context, &uploaded, &camera, &off, 65, 65);
     mesh.append_references(
         &layer(),
@@ -231,7 +231,7 @@ fn reference_gpu_preserves_disabled_pixels_wireframe_holes_and_ordinary_depth() 
         true,
     )
     .unwrap();
-    let uploaded = renderer.upload(&context, &mesh, &materials);
+    let uploaded = renderer.upload(&context, &mesh, &materials).unwrap();
     assert_eq!(
         renderer.render_to_rgba(&context, &uploaded, &camera, &off, 65, 65),
         baseline
@@ -285,7 +285,7 @@ fn reference_gpu_preserves_disabled_pixels_wireframe_holes_and_ordinary_depth() 
     .unwrap();
     let mut materials = MaterialLibrary::flat(["root".into()]);
     let mut mesh = scene(&root, &mut materials);
-    let root_only = renderer.upload(&context, &mesh, &materials);
+    let root_only = renderer.upload(&context, &mesh, &materials).unwrap();
     let root_pixels = renderer.render_to_rgba(&context, &root_only, &camera, &off, 65, 65);
     mesh.append_references(
         &layer(),
@@ -295,7 +295,7 @@ fn reference_gpu_preserves_disabled_pixels_wireframe_holes_and_ordinary_depth() 
         true,
     )
     .unwrap();
-    let uploaded = renderer.upload(&context, &mesh, &materials);
+    let uploaded = renderer.upload(&context, &mesh, &materials).unwrap();
     let both = renderer.render_to_rgba(&context, &uploaded, &camera, &on, 65, 65);
     assert_eq!(both[center..center + 4], root_pixels[center..center + 4]);
     let outside = (32 * 65 + 48) * 4;

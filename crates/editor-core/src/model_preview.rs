@@ -63,7 +63,7 @@ impl PreviewRenderer {
             }
             let (context, renderer) = self.gpu.as_mut().unwrap();
             renderer.clear_materials();
-            let scene = renderer.upload(context, mesh, materials);
+            let scene = renderer.upload(context, mesh, materials)?;
             Ok(renderer.render_to_rgba(context, &scene, camera, view, width, height))
         }))
         .unwrap_or_else(|_| {

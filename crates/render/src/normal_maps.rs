@@ -15,6 +15,35 @@ const MAX_MATERIAL_BYTES: usize = 64 * 1024;
 const MAX_TEXTURE_BYTES: usize = 16 * 1024 * 1024;
 const SSBUMP_FLAG: u32 = 0x0800_0000;
 const UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x2201_c84d;
+
+pub(crate) fn ordinary_ldr_format(format: ImageFormat) -> bool {
+    matches!(
+        format,
+        ImageFormat::Rgb888
+            | ImageFormat::Bgr888
+            | ImageFormat::Rgba8888
+            | ImageFormat::Bgra8888
+            | ImageFormat::Dxt1
+            | ImageFormat::Dxt3
+            | ImageFormat::Dxt5
+    )
+}
+
+pub(crate) fn validate_static_texture(texture: &Vtf, maximum_axis: u32) -> Result<(), String> {
+    if texture.width > maximum_axis
+        || texture.height > maximum_axis
+        || texture.frames != 1
+        || texture.faces != 1
+        || texture.depth != 1
+        || texture.authored_frames == 0
+        || texture.authored_depth == Some(0)
+    {
+        return Err(format!(
+            "Static texture requires one frame, face and depth slice with axes 1–{maximum_axis}"
+        ));
+    }
+    Ok(())
+}
 pub const LIMITS: &str = "Flat LightmappedGeneric brush polygons only; terrain, models, sprites, icons and helpers are excluded. Static single-frame/face/depth RGB/BGR/RGBA/BGRA8888 or DXT1/3/5 tangent-space normals, axes 1–1024. RGB is linear, alpha is ignored; normal images repeat with linear filtering at their base mip. Clamp/border/point-sample, sRGB, procedural and render-target VTF flags are unsupported. RGB normal Z must be at least 128, preventing degenerate interpolated normals; signed/swizzled, HDR and SSBump textures are unsupported. One bump map; no proxies, fallback blocks, detail/second normals, animated frames or base display overrides. Base texture transform must be identity. Bump transform supports positive axis scale and translation with zero rotation. Authored face UV rotation and signed scales define the tangent frame. Fixed editor directional shading, or admitted unshadowed authored lights in Detail quality; no specular or native game parity. 128 cached admissions and 64 MiB decoded bytes; reload materials clears successes/failures. Disabled and non-Textured views perform no normal admission.";
 
 #[derive(Serialize)]
@@ -225,30 +254,10 @@ fn load(
         .ok_or("Normal texture was not found")?;
     report.texture_source = Some(asset.origin.into());
     let texture = Vtf::parse(asset.data).map_err(|error| error.to_string())?;
-    if texture.width > MAX_AXIS
-        || texture.height > MAX_AXIS
-        || texture.frames != 1
-        || texture.faces != 1
-        || texture.depth != 1
-        || texture.authored_frames == 0
-        || texture.authored_depth == Some(0)
-    {
-        return Err(
-            "Normal preview requires a static single-frame/face/depth VTF with axes 1–1024".into(),
-        );
-    }
-    if texture.flags & SSBUMP_FLAG != 0
-        || !matches!(
-            texture.format,
-            ImageFormat::Rgb888
-                | ImageFormat::Bgr888
-                | ImageFormat::Rgba8888
-                | ImageFormat::Bgra8888
-                | ImageFormat::Dxt1
-                | ImageFormat::Dxt3
-                | ImageFormat::Dxt5
-        )
-    {
+    validate_static_texture(&texture, MAX_AXIS).map_err(|_| {
+        "Normal preview requires a static single-frame/face/depth VTF with axes 1–1024".to_owned()
+    })?;
+    if texture.flags & SSBUMP_FLAG != 0 || !ordinary_ldr_format(texture.format) {
         return Err("Normal preview requires ordinary RGB tangent-space LDR normals; signed/swizzled, SSBump and HDR encodings are unsupported".into());
     }
     if texture.flags & UNSUPPORTED_TEXTURE_FLAGS != 0 {

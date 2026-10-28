@@ -162,15 +162,9 @@ fn vs_main(v: VertexIn) -> VertexOut {
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    var texel = textureSample(base_texture, texture_sampler, in.uv);
-    let second = textureSample(blend_texture, texture_sampler, in.uv);
-    let uv_dx = dpdx(in.uv);
-    let uv_dy = dpdy(in.uv);
-    let grid_width = max(fwidth(in.lightmap.xy), vec2<f32>(0.00001));
+fn surface_diagnostic(in: VertexOut, grid_width: vec2<f32>) -> vec4<f32> {
     if globals.surface_view.x == 3u && in.lightmap.z != 0.0 {
-        let shade = select(0.55 + 0.45 * clamp(dot(normalize(in.normal), globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0), 1.0, in.lighting_receiver == BAKED_DETAIL_RECEIVER || in.lighting_receiver == BAKED_RADIANCE_RECEIVER);
+        let shade = select(0.55 + 0.45 * clamp(dot(normalize(in.normal), globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0), 1.0, in.lighting_receiver == BAKED_DETAIL_RECEIVER || in.lighting_receiver == BAKED_RADIANCE_RECEIVER || (in.lighting_receiver & 15u) == 4u);
         return vec4<f32>(vec3<f32>(0.65) * in.color.rgb * shade, 1.0);
     }
     if (globals.surface_view.x == 1u || globals.surface_view.x == 2u) && in.lightmap.z != 0.0 {
@@ -192,6 +186,18 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let fade = 1.0 - smoothstep(0.5, 1.5, max(grid_width.x, grid_width.y));
         return vec4<f32>(base * (1.0 - 0.65 * line * fade), 1.0);
     }
+    return vec4<f32>(0.0);
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    var texel = textureSample(base_texture, texture_sampler, in.uv);
+    let second = textureSample(blend_texture, texture_sampler, in.uv);
+    let uv_dx = dpdx(in.uv);
+    let uv_dy = dpdy(in.uv);
+    let grid_width = max(fwidth(in.lightmap.xy), vec2<f32>(0.00001));
+    let surface_overlay = surface_diagnostic(in, grid_width);
+    if surface_overlay.a > 0.0 { return surface_overlay; }
     if material.flags.y > 0.5 {
         texel = mix(texel, second, in.color.a);
     }
@@ -236,6 +242,155 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         color = mix(color, globals.fog_color.rgb, factor * factor);
     }
     return vec4<f32>(color, alpha);
+}
+
+struct BakedFace {
+    dimensions: vec4<u32>,
+    map_offsets: vec4<u32>,
+}
+
+struct BakedMaterial {
+    options: vec4<u32>,
+    color: vec4<f32>,
+    diffuse_transform: array<array<vec4<f32>, 2>, 2>,
+    normal_transform: array<array<vec4<f32>, 2>, 2>,
+}
+
+@group(1) @binding(5) var second_normal_texture: texture_2d<f32>;
+@group(1) @binding(6) var<uniform> baked_material: BakedMaterial;
+@group(2) @binding(0) var<storage, read> baked_samples: array<vec4<f32>>;
+@group(2) @binding(1) var<storage, read> baked_faces: array<BakedFace>;
+@group(2) @binding(2) var<uniform> baked_settings: vec4<f32>;
+
+fn baked_uv(uv: vec2<f32>, rows: array<vec4<f32>, 2>) -> vec2<f32> {
+    let point = vec3<f32>(uv, 1.0);
+    return vec2<f32>(dot(rows[0].xyz, point), dot(rows[1].xyz, point));
+}
+
+fn repeat_pixel(pixel: vec2<i32>, dimensions: vec2<i32>) -> vec2<i32> {
+    return ((pixel % dimensions) + dimensions) % dimensions;
+}
+
+fn baked_texture(image: texture_2d<f32>, uv: vec2<f32>) -> vec4<f32> {
+    let dimensions = vec2<i32>(textureDimensions(image));
+    let position = fract(uv) * vec2<f32>(dimensions) - 0.5;
+    let first = vec2<i32>(floor(position));
+    let fraction = fract(position);
+    let a = textureLoad(image, repeat_pixel(first, dimensions), 0);
+    let b = textureLoad(image, repeat_pixel(first + vec2<i32>(1, 0), dimensions), 0);
+    let c = textureLoad(image, repeat_pixel(first + vec2<i32>(0, 1), dimensions), 0);
+    let d = textureLoad(image, repeat_pixel(first + vec2<i32>(1, 1), dimensions), 0);
+    return mix(mix(a, b, fraction.x), mix(c, d, fraction.x), fraction.y);
+}
+
+fn baked_map(face: BakedFace, map: u32, uv: vec2<f32>) -> vec3<f32> {
+    let last = face.dimensions.xy - vec2<u32>(1u);
+    let position = clamp(uv, vec2<f32>(0.0), vec2<f32>(last));
+    let first = vec2<u32>(floor(position));
+    let second = min(first + vec2<u32>(1u), last);
+    let fraction = fract(position);
+    let offset = face.map_offsets[map];
+    let a = baked_samples[offset + first.y * face.dimensions.x + first.x].xyz;
+    let b = baked_samples[offset + first.y * face.dimensions.x + second.x].xyz;
+    let c = baked_samples[offset + second.y * face.dimensions.x + first.x].xyz;
+    let d = baked_samples[offset + second.y * face.dimensions.x + second.x].xyz;
+    return mix(mix(a, b, fraction.x), mix(c, d, fraction.x), fraction.y);
+}
+
+fn baked_weights(in: VertexOut) -> vec3<f32> {
+    var sampled = baked_texture(normal_texture, baked_uv(in.uv, baked_material.normal_transform[0])).xyz;
+    if baked_material.options.x == 1u && baked_material.options.z != 0u {
+        let second = baked_texture(second_normal_texture, baked_uv(in.uv, baked_material.normal_transform[1])).xyz;
+        sampled = mix(sampled, second, clamp(in.opacity, 0.0, 1.0));
+    }
+    if baked_material.options.y == 2u { return sampled; }
+    let maximum = max(max(abs(sampled.x), abs(sampled.y)), abs(sampled.z));
+    let tangent_normal = normalize(sampled / maximum);
+    let n = normalize(in.normal);
+    let tangent = normalize(in.tangent.xyz - n * dot(in.tangent.xyz, n));
+    let bitangent = cross(n, tangent) * in.tangent.w;
+    let mapped = tangent * tangent_normal.x + bitangent * tangent_normal.y + n * tangent_normal.z;
+    let b1 = tangent * sqrt(2.0 / 3.0) + n * sqrt(1.0 / 3.0);
+    let b2 = tangent * -sqrt(1.0 / 6.0) + bitangent * sqrt(1.0 / 2.0) + n * sqrt(1.0 / 3.0);
+    let b3 = tangent * -sqrt(1.0 / 6.0) - bitangent * sqrt(1.0 / 2.0) + n * sqrt(1.0 / 3.0);
+    let projected = max(vec3<f32>(dot(mapped, b1), dot(mapped, b2), dot(mapped, b3)), vec3<f32>(0.0));
+    let squared = projected * projected;
+    return squared / dot(squared, vec3<f32>(1.0));
+}
+
+fn baked_tonemap(diffuse: vec3<f32>, tint: vec3<f32>, light: vec3<f32>, scale: vec3<f32>, weight_scale: f32) -> vec3<f32> {
+    let logarithm = log2(select(vec3<f32>(1.0), diffuse, diffuse > vec3<f32>(0.0)))
+        + log2(select(vec3<f32>(1.0), tint, tint > vec3<f32>(0.0)))
+        + log2(select(vec3<f32>(1.0), light, light > vec3<f32>(0.0)))
+        + log2(select(vec3<f32>(1.0), scale, scale > vec3<f32>(0.0)))
+        + vec3<f32>(log2(select(1.0, weight_scale, weight_scale > 0.0)) + log2(baked_settings.x));
+    let positive = vec3<bool>(diffuse.x > 0.0 && tint.x > 0.0 && light.x > 0.0 && scale.x > 0.0 && weight_scale > 0.0,
+        diffuse.y > 0.0 && tint.y > 0.0 && light.y > 0.0 && scale.y > 0.0 && weight_scale > 0.0,
+        diffuse.z > 0.0 && tint.z > 0.0 && light.z > 0.0 && scale.z > 0.0 && weight_scale > 0.0);
+    let small = exp2(-abs(logarithm));
+    let denominator = vec3<f32>(1.0) + small;
+    let mapped = select(small / denominator, vec3<f32>(1.0) / denominator, logarithm >= vec3<f32>(0.0));
+    return select(vec3<f32>(0.0), mapped, positive);
+}
+
+fn baked_diffuse(in: VertexOut) -> vec3<f32> {
+    let first = baked_texture(base_texture, baked_uv(in.uv, baked_material.diffuse_transform[0]));
+    var diffuse = first.rgb;
+    if baked_material.options.x == 1u && (baked_material.options.w & 2u) != 0u {
+        let second = baked_texture(blend_texture, baked_uv(in.uv, baked_material.diffuse_transform[1]));
+        diffuse = mix(first.rgb, second.rgb, clamp(in.opacity, 0.0, 1.0));
+    }
+    if baked_material.options.x == 2u {
+        let detail = baked_texture(blend_texture, baked_uv(in.uv, baked_material.diffuse_transform[1]));
+        diffuse = mix(first.rgb, detail.rgb, detail.a);
+        if (baked_material.options.w & 1u) != 0u {
+            diffuse = clamp(clamp(first.rgb * 2.0, vec3<f32>(0.0), vec3<f32>(1.0)) * detail.a + vec3<f32>(1.0 - detail.a), vec3<f32>(0.0), vec3<f32>(1.0)) * detail.rgb;
+        }
+    }
+    return diffuse;
+}
+
+fn baked_fog(in: VertexOut, input: vec3<f32>) -> vec3<f32> {
+    var color = input;
+    if globals.fog_color.a > 0.0 {
+        let depth = dot(in.world_position - globals.eye.xyz, globals.forward.xyz);
+        let factor = clamp((depth - globals.fog_range.x) * globals.fog_range.y, 0.0, globals.fog_color.a);
+        color = mix(color, globals.fog_color.rgb, factor * factor);
+    }
+    return color;
+}
+
+@fragment
+fn fs_baked(in: VertexOut) -> @location(0) vec4<f32> {
+    let surface_overlay = surface_diagnostic(in, max(fwidth(in.lightmap.xy), vec2<f32>(0.00001)));
+    if surface_overlay.a > 0.0 { return surface_overlay; }
+    let diffuse = baked_diffuse(in);
+    let face = baked_faces[in.lighting_receiver >> 4u];
+    var light = baked_map(face, 0u, in.lightmap.xy);
+    var scale = vec3<f32>(1.0);
+    var weight_scale = 1.0;
+    if face.dimensions.z == 4u {
+        let a = baked_map(face, 1u, in.lightmap.xy);
+        let b = baked_map(face, 2u, in.lightmap.xy);
+        let c = baked_map(face, 3u, in.lightmap.xy);
+        scale = max(a, max(b, c));
+        let weights = baked_weights(in);
+        weight_scale = max(weights.x, max(weights.y, weights.z));
+        let divisor = select(vec3<f32>(1.0), scale, scale > vec3<f32>(0.0));
+        let normalized_weights = weights / select(1.0, weight_scale, weight_scale > 0.0);
+        light = (a / divisor) * normalized_weights.x + (b / divisor) * normalized_weights.y + (c / divisor) * normalized_weights.z;
+    }
+    let color = baked_tonemap(diffuse, in.color.rgb * baked_material.color.rgb, light, scale, weight_scale);
+    return vec4<f32>(baked_fog(in, color), 1.0);
+}
+
+@fragment
+fn fs_baked_unlit(in: VertexOut) -> @location(0) vec4<f32> {
+    let surface_overlay = surface_diagnostic(in, max(fwidth(in.lightmap.xy), vec2<f32>(0.00001)));
+    if surface_overlay.a > 0.0 { return surface_overlay; }
+    let diffuse = baked_diffuse(in);
+    let color = baked_tonemap(diffuse, in.color.rgb * baked_material.color.rgb, vec3<f32>(1.0), vec3<f32>(1.0), 1.0);
+    return vec4<f32>(baked_fog(in, color), 1.0);
 }
 
 struct LineOut {

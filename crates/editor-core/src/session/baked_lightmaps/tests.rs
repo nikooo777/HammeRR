@@ -609,8 +609,8 @@ fn compiled_face_framing_refuses_invalid_geometry_and_active_work_atomically() {
         (malformed_edge, "out-of-range edge"),
         (disconnected_edge, "connected"),
         (nonplanar, "flat plane"),
-        (terrain, "Terrain"),
-        (model_local, "model-local"),
+        (terrain, "displacement"),
+        (model_local, "model"),
     ] {
         bsp.write(&output).unwrap();
         install_build_with_bsp(&mut session, &output, &source, &bsp);
@@ -631,6 +631,235 @@ fn compiled_face_framing_refuses_invalid_geometry_and_active_work_atomically() {
             preserved
         );
     }
+}
+
+#[test]
+fn baked_surfaces_preserve_atomic_options_hidden_settings_and_retire_late_or_stale_work() {
+    use crate::session::{PropertyTarget, compilation::BuildSettingsUpdate, working_region};
+    use render::compiled_faces::{LightingSettings, StyleGain};
+
+    let (directory, game) = crate::test_assets::game();
+    let maps = directory.path().join("maps");
+    std::fs::create_dir(&maps).unwrap();
+    let source = maps.join("surfaces.vmf");
+    let mut vmf = crate::test_assets::room();
+    for side in vmf
+        .world
+        .solids
+        .iter_mut()
+        .flat_map(|solid| &mut solid.sides)
+    {
+        side.material = "test/checker".into();
+    }
+    std::fs::write(&source, vmf.write(&Default::default())).unwrap();
+    let mut session = Session::new(Ok(game));
+    session.open(Actor::Agent, &source, false).unwrap();
+    session
+        .update_build_settings(
+            Actor::Agent,
+            BuildSettingsUpdate {
+                lighting: Some("direct_ldr_hdr"),
+                physics: Some("none"),
+                generate_reflections: Some(false),
+                pack_sky_assets: Some(false),
+                pack_water_assets: Some(false),
+                pack_static_prop_assets: Some(false),
+                bake_static_prop_vertices: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let compiled = session.begin_compile(Actor::Agent, None).unwrap().run();
+    session.finish_compile(Actor::Agent, &compiled);
+    assert!(compiled.as_ref().unwrap().published());
+    let preserved = (
+        session.document().vmf().clone(),
+        session.history_snapshot(),
+        session.selected_ids(),
+        session.camera(),
+    );
+    let state = super::super::baked_build::build_state_controlled(
+        &session,
+        super::super::baked_build::SourceVerification::OriginalMetadata {
+            maximum_bytes: super::super::baked_surfaces::MAX_METADATA_BYTES,
+        },
+        &compiler::Control::default(),
+    )
+    .unwrap();
+    assert_eq!(state["current"], true, "{state}");
+    let request = session.begin_baked_surfaces(Actor::Agent).unwrap();
+    let token = request.token();
+    assert!(session.begin_baked_surfaces(Actor::User).is_err());
+    let prepared = session
+        .finish_baked_surfaces(Actor::Agent, request.run())
+        .unwrap();
+    assert_eq!(prepared["status"], "prepared", "{prepared}");
+    assert_eq!(prepared["complete"], true);
+    assert!(prepared["page"]["total"].as_u64().unwrap() > 0);
+    session
+        .set_baked_surfaces_visible(Actor::Agent, token, true)
+        .unwrap();
+    let shown = session.build_scene();
+    assert!(shown.baked_faces.is_some());
+    assert!(shown.baked_face_visible_surfaces > 0);
+    assert!(
+        shown
+            .vertices
+            .iter()
+            .filter(|vertex| vertex.lighting_receiver & 15 == 4)
+            .count()
+            > 0
+    );
+    for surface in render::SurfaceView::ALL {
+        let view = render::ViewOptions {
+            surface,
+            ..session.view()
+        };
+        let mesh = session.build_scene_for_view(view);
+        assert!(mesh.baked_faces.is_some(), "{surface:?}");
+        assert_eq!(session.baked_surfaces_render_report(view)["applied"], true);
+    }
+    let options = LightingSettings {
+        channel: render::LightingChannel::Hdr,
+        exposure_ev: 1.5,
+        style_gains: vec![StyleGain {
+            style: 0,
+            gain: 0.25,
+        }],
+    };
+    session
+        .set_baked_surfaces_visible(Actor::User, token, false)
+        .unwrap();
+    session
+        .set_baked_surfaces_options(Actor::Agent, token, options.clone())
+        .unwrap();
+    let before = session.baked_surfaces_observation();
+    for invalid in [
+        LightingSettings {
+            exposure_ev: f64::NAN,
+            ..options.clone()
+        },
+        LightingSettings {
+            style_gains: vec![
+                StyleGain {
+                    style: 0,
+                    gain: 1.0
+                };
+                2
+            ],
+            ..options.clone()
+        },
+        LightingSettings {
+            style_gains: vec![StyleGain {
+                style: 63,
+                gain: 1.0,
+            }],
+            ..options.clone()
+        },
+    ] {
+        assert!(
+            session
+                .set_baked_surfaces_options(Actor::User, token, invalid)
+                .is_err()
+        );
+        assert_eq!(session.baked_surfaces_observation(), before);
+    }
+    session
+        .set_baked_surfaces_visible(Actor::User, token, true)
+        .unwrap();
+    assert_eq!(
+        session.baked_surfaces_observation()["lighting_options"],
+        json!(options)
+    );
+    session.begin_property_edit(PropertyTarget::World).unwrap();
+    session.preflight_baked_surfaces();
+    assert_eq!(session.baked_surfaces_observation()["displayed"], false);
+    session
+        .cancel_property_edit(session.property_draft().unwrap().token)
+        .unwrap();
+    session.preflight_baked_surfaces();
+    assert_eq!(session.baked_surfaces_observation()["displayed"], true);
+    session
+        .set_working_region(
+            Actor::User,
+            working_region::Action::Set {
+                bounds: [glam::DVec3::splat(-1.0), glam::DVec3::splat(1.0)],
+                enabled: true,
+            },
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    let region = session.build_scene();
+    assert!(region.baked_faces.is_some());
+    assert!(region.baked_face_visible_surfaces < shown.baked_face_visible_surfaces);
+    session
+        .set_working_region(
+            Actor::User,
+            working_region::Action::Clear,
+            &session.working_region_stamp(),
+        )
+        .unwrap();
+    assert_eq!(
+        (
+            session.document().vmf().clone(),
+            session.history_snapshot(),
+            session.selected_ids(),
+            session.camera()
+        ),
+        preserved
+    );
+    let face = prepared["page"]["rows"][0]["face"].as_u64().unwrap() as usize;
+    assert!(
+        session
+            .frame_baked_surface(Actor::Agent, token, face, 1.5)
+            .is_ok()
+    );
+    session.set_camera(preserved.3);
+    let request = session.begin_baked_surfaces(Actor::Agent).unwrap();
+    let hidden = session
+        .set_baked_surfaces_visible(Actor::User, request.token(), false)
+        .unwrap();
+    assert_eq!(hidden["status"], "loading");
+    assert_eq!(hidden["complete"], false);
+    session
+        .cancel_baked_surfaces(Actor::Agent, request.token())
+        .unwrap();
+    let hidden = session
+        .set_baked_surfaces_visible(Actor::User, request.token(), false)
+        .unwrap();
+    assert_eq!(hidden["status"], "cancelling");
+    let cancelled = session
+        .finish_baked_surfaces(Actor::Agent, request.run())
+        .unwrap();
+    assert_eq!(cancelled["status"], "cancelled");
+    assert_eq!(cancelled["complete"], false);
+    let request = session.begin_baked_surfaces(Actor::Agent).unwrap();
+    session
+        .clear_baked_surfaces(Actor::Agent, request.token())
+        .unwrap();
+    assert!(
+        session
+            .finish_baked_surfaces(Actor::Agent, request.run())
+            .is_err()
+    );
+    let request = session.begin_baked_surfaces(Actor::Agent).unwrap();
+    let token = request.token();
+    session
+        .finish_baked_surfaces(Actor::Agent, request.run())
+        .unwrap();
+    session
+        .set_baked_surfaces_visible(Actor::User, token, true)
+        .unwrap();
+    std::fs::write(source.with_extension("bsp"), b"replaced owned output").unwrap();
+    let retired = session.inspect_baked_surfaces(Some(token), 0, 64).unwrap();
+    assert_eq!(retired["status"], "unavailable");
+    assert_eq!(retired["displayed"], false);
+    assert!(retired["page"]["total"].is_null());
+    assert!(
+        session
+            .set_baked_surfaces_visible(Actor::User, token, true)
+            .is_err()
+    );
 }
 
 #[test]

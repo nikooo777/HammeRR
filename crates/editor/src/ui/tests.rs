@@ -3643,6 +3643,15 @@ pub(crate) fn compile_controls_share_cancel_status_and_guard_replaced_jobs() {
     assert!(controller.window.window().is_visible());
     assert!(lock(&shared).compile_status()["job"].is_null());
     assert!(!controller.window.get_cancellable());
+    controller.window.invoke_inspect_baked_surfaces();
+    let surfaces = controller.baked_surfaces_window();
+    assert!(surfaces.window().is_visible());
+    assert!(!surfaces.get_has_token());
+    surfaces.invoke_prepare_surfaces();
+    assert!(!surfaces.get_has_token());
+    assert!(!surfaces.get_message().is_empty());
+    surfaces.invoke_close_dialog();
+    assert!(!surfaces.window().is_visible());
     assert_eq!(controller.window.get_lighting_choice(), 0);
     assert_eq!(controller.window.get_selected_lighting(), "Fullbright");
     assert_eq!(

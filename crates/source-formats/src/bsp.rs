@@ -18,10 +18,12 @@ mod areas;
 pub use areas::{AreaData, MAX_AREA_PORTALS, MAX_AREAS, MAX_CLIP_PORTAL_VERTICES};
 mod detail_props;
 mod displacements;
+mod face_geometry;
 pub use detail_props::{
     DETAIL_PROP_NAME_BYTES, DetailProp, DetailPropLighting, DetailProps, DetailSprite,
     MAX_DETAIL_PROP_BYTES, MAX_DETAIL_PROP_LIGHTING, MAX_DETAIL_PROP_MODELS, MAX_DETAIL_PROPS,
 };
+pub use face_geometry::{FaceGeometry, FaceTerrain, FaceWinding, checked_model_face_range};
 mod lighting;
 mod overlays;
 pub use overlays::{MAX_OVERLAY_FACES, MAX_OVERLAYS, Overlay, OverlayData, OverlayFade};

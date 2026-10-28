@@ -9,6 +9,7 @@ use crate::camera::Camera;
 use crate::materials::{MaterialId, MaterialInfo, MaterialLibrary};
 use crate::scene::{Batch, LineVertex, SceneMesh, Vertex};
 
+mod baked_faces;
 mod color_correction;
 mod miniature;
 
@@ -352,6 +353,7 @@ impl ViewOptions {
 
 #[derive(Debug, Clone, Copy)]
 struct DrawBatch {
+    baked_surface: bool,
     reference: bool,
     batch: Batch,
     center: glam::Vec3,
@@ -394,6 +396,9 @@ struct IconDraw {
 
 /// Geometry uploaded by a [`Renderer`]; draw it with the same renderer.
 pub struct GpuScene {
+    baked_faces: Option<std::sync::Arc<baked_faces::Resources>>,
+    baked_face_materials: Vec<Option<std::sync::Arc<baked_faces::MaterialResources>>>,
+    _baked_geometry_reservation: Option<std::sync::Arc<baked_faces::Reservation>>,
     detail_billboards: Vec<crate::compiled_details::Billboard>,
     detail_billboard_lines: Option<wgpu::Buffer>,
     sky3d: Option<std::sync::Arc<miniature::Miniature>>,
@@ -418,6 +423,7 @@ pub struct GpuScene {
 }
 
 pub struct Renderer {
+    baked_faces: baked_faces::State,
     color_correction: color_correction::State,
     color_correction_preview: Option<crate::color_correction::Preview>,
     last_color_correction_error: Option<String>,
@@ -436,6 +442,8 @@ pub struct Renderer {
     icon_bindings: std::collections::HashMap<u64, wgpu::BindGroup>,
     opaque_pipeline: wgpu::RenderPipeline,
     translucent_pipeline: wgpu::RenderPipeline,
+    baked_surface_pipeline: wgpu::RenderPipeline,
+    unlit_surface_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     sky_layout: wgpu::BindGroupLayout,
@@ -493,6 +501,7 @@ impl Renderer {
                 resource: globals.as_entire_binding(),
             }],
         });
+        let baked_faces = baked_faces::State::new(device);
 
         let texture_entry = |binding| wgpu::BindGroupLayoutEntry {
             binding,
@@ -683,6 +692,65 @@ impl Renderer {
             &layout,
             &shader,
         );
+        let baked_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("baked surfaces"),
+            bind_group_layouts: &[
+                Some(&globals_layout),
+                Some(&baked_faces.material_layout),
+                Some(&baked_faces.layout),
+            ],
+            immediate_size: 0,
+        });
+        let baked_pipeline = |label, entry_point, layout: &wgpu::PipelineLayout| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Unorm8x4, 4 => Float32x3, 5 => Uint32, 6 => Float32, 7 => Uint32, 8 => Float32x4, 9 => Uint32, 10 => Float32x3],
+                })],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Cw,
+                cull_mode: Some(wgpu::Face::Back),
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some(entry_point),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format: COLOR_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+        };
+        let baked_surface_pipeline = baked_pipeline("baked surfaces", "fs_baked", &baked_layout);
+        let unlit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("compiled unlit surfaces"),
+            bind_group_layouts: &[
+                Some(&globals_layout),
+                Some(&baked_faces.material_layout),
+                Some(&baked_faces.unlit_layout),
+            ],
+            immediate_size: 0,
+        });
+        let unlit_surface_pipeline =
+            baked_pipeline("compiled unlit surfaces", "fs_baked_unlit", &unlit_layout);
 
         let icon_shader = device.create_shader_module(wgpu::include_wgsl!("icons.wgsl"));
         let icon_pipeline = |label, blend| {
@@ -785,6 +853,7 @@ impl Renderer {
         });
 
         Self {
+            baked_faces,
             color_correction: color_correction::State::default(),
             color_correction_preview: None,
             last_color_correction_error: None,
@@ -803,6 +872,8 @@ impl Renderer {
             icon_bindings: std::collections::HashMap::new(),
             opaque_pipeline,
             translucent_pipeline,
+            baked_surface_pipeline,
+            unlit_surface_pipeline,
             line_pipeline,
             sky_pipeline,
             sky_layout,
@@ -828,7 +899,7 @@ impl Renderer {
         previous: Option<GpuScene>,
         mesh: &SceneMesh,
         library: &MaterialLibrary,
-    ) -> GpuScene {
+    ) -> Result<GpuScene, String> {
         let reuse = previous
             .as_ref()
             .and_then(|scene| scene.sky3d.as_ref())
@@ -846,7 +917,27 @@ impl Renderer {
         ctx: &GpuContext,
         mesh: &SceneMesh,
         library: &MaterialLibrary,
-    ) -> GpuScene {
+    ) -> Result<GpuScene, String> {
+        self.baked_faces.validate(ctx, mesh)?;
+        let baked_geometry_reservation = self.baked_faces.reserve_geometry(ctx, mesh)?;
+        let baked_faces = mesh
+            .baked_faces
+            .as_ref()
+            .map(|source| self.baked_faces.upload(ctx, source))
+            .transpose()?;
+        let baked_face_materials = mesh
+            .baked_face_materials
+            .iter()
+            .map(|source| {
+                source
+                    .as_ref()
+                    .map(|source| self.baked_faces.upload_material(ctx, source))
+                    .transpose()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let allocation = ctx.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let internal = ctx.device.push_error_scope(wgpu::ErrorFilter::Internal);
+        let validation = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
         if self.material_generation != Some(library.generation()) {
             self.clear_materials();
             self.material_generation = Some(library.generation());
@@ -860,21 +951,17 @@ impl Renderer {
             })
         };
         // Zero-sized buffers can't be bound, so empty maps get a dummy one.
-        let non_empty = |bytes: &[u8]| {
-            if bytes.is_empty() {
-                vec![0; 16]
-            } else {
-                bytes.to_vec()
-            }
-        };
+        fn non_empty(bytes: &[u8]) -> &[u8] {
+            if bytes.is_empty() { &[0; 16] } else { bytes }
+        }
         let vertices = buffer(
             "map vertices",
-            &non_empty(bytemuck::cast_slice(&mesh.vertices)),
+            non_empty(bytemuck::cast_slice(&mesh.vertices)),
             wgpu::BufferUsages::VERTEX,
         );
         let indices = buffer(
             "map indices",
-            &non_empty(bytemuck::cast_slice(&mesh.indices)),
+            non_empty(bytemuck::cast_slice(&mesh.indices)),
             wgpu::BufferUsages::INDEX,
         );
         let lines = (!mesh.lines.is_empty()).then(|| {
@@ -911,9 +998,12 @@ impl Renderer {
         let wire_lines = wire_buffer("brush wireframes", &mesh.wire_lines);
         let tool_wire_lines = wire_buffer("tool brush wireframes", &mesh.tool_wire_lines);
         let rope_lines = wire_buffer("rope selection", &mesh.rope_lines);
-        for &batch in &mesh.batches {
-            self.ensure_material(ctx, library, batch.material);
-            let info = library.get(batch.material);
+        for (batch_index, &batch) in mesh.batches.iter().enumerate() {
+            let baked_surface = mesh.baked_face_batches.contains(&batch_index);
+            if !baked_surface {
+                self.ensure_material(ctx, library, batch.material);
+            }
+            let info = (!baked_surface).then(|| library.get(batch.material));
             let range =
                 batch.first_index as usize..batch.first_index as usize + batch.index_count as usize;
             let (mins, maxs) = mesh.indices[range]
@@ -923,15 +1013,16 @@ impl Renderer {
                     (mins.min(point), maxs.max(point))
                 });
             let draw = DrawBatch {
-                reference: info.reference,
+                baked_surface,
+                reference: info.is_some_and(|info| info.reference),
                 batch,
                 center: (mins + maxs) * 0.5,
-                tool: info.tool,
-                sky: info.sky,
-                sky3d_eligible: info.sky3d_eligible,
-                helper: batch.material == MaterialLibrary::EDITOR,
+                tool: info.is_some_and(|info| info.tool),
+                sky: info.is_some_and(|info| info.sky),
+                sky3d_eligible: info.is_some_and(|info| info.sky3d_eligible),
+                helper: !baked_surface && batch.material == MaterialLibrary::EDITOR,
             };
-            if info.translucent || batch.model_translucent {
+            if info.is_some_and(|info| info.translucent) || batch.model_translucent {
                 translucent.push(draw);
             } else {
                 opaque.push(draw);
@@ -1014,7 +1105,10 @@ impl Renderer {
                 mapped_at_creation: false,
             })
         });
-        GpuScene {
+        let scene = GpuScene {
+            baked_faces,
+            baked_face_materials,
+            _baked_geometry_reservation: baked_geometry_reservation,
             detail_billboards: mesh.detail_billboards.clone(),
             detail_billboard_lines,
             sky3d,
@@ -1039,7 +1133,14 @@ impl Renderer {
             wire_lines,
             tool_wire_lines,
             rope_lines,
+        };
+        let validation = pollster::block_on(validation.pop());
+        let internal = pollster::block_on(internal.pop());
+        let allocation = pollster::block_on(allocation.pop());
+        if let Some(error) = validation.or(internal).or(allocation) {
+            return Err(format!("Scene GPU preparation failed: {error}"));
         }
+        Ok(scene)
     }
 
     fn sky_bind_group(
@@ -1422,6 +1523,37 @@ impl Renderer {
                         && !(draw.sky && options.sky_preview)
                         && !(draw.sky3d_eligible && options.sky3d_preview)
                     {
+                        continue;
+                    }
+                    if draw.baked_surface {
+                        let lighting = scene
+                            .baked_faces
+                            .as_ref()
+                            .expect("validated baked surface lighting");
+                        let material = scene.baked_face_materials[draw.batch.material]
+                            .as_ref()
+                            .expect("validated baked surface material");
+                        pass.set_pipeline(if material.unlit {
+                            &self.unlit_surface_pipeline
+                        } else {
+                            &self.baked_surface_pipeline
+                        });
+                        pass.set_bind_group(1, &material.binding, &[]);
+                        let lighting = if material.unlit {
+                            &lighting.unlit_binding
+                        } else {
+                            lighting
+                                .lighting_binding
+                                .as_ref()
+                                .expect("validated baked surface samples")
+                        };
+                        pass.set_bind_group(2, lighting, &[]);
+                        let batch = draw.batch;
+                        pass.draw_indexed(
+                            batch.first_index..batch.first_index + batch.index_count,
+                            0,
+                            0..1,
+                        );
                         continue;
                     }
                     let Some(Some(material)) = self.materials.get(draw.batch.material) else {
@@ -1901,6 +2033,7 @@ mod tests {
     fn transparent_model_order_tracks_render_camera_and_keeps_normal_order() {
         use super::*;
         let batch = |center, model_translucent| DrawBatch {
+            baked_surface: false,
             reference: false,
             batch: Batch {
                 material: 0,

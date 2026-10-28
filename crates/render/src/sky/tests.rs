@@ -271,7 +271,7 @@ fn rendered_six_face_directions_translation_depth_and_fallback() {
         &mut library,
         &Default::default(),
     );
-    let scene = renderer.upload(&ctx, &mesh, &library);
+    let scene = renderer.upload(&ctx, &mesh, &library).unwrap();
     let options = ViewOptions {
         sky_preview: true,
         grid_visible: false,
@@ -328,7 +328,7 @@ fn rendered_six_face_directions_translation_depth_and_fallback() {
         &mut library,
         &Default::default(),
     );
-    let scene = renderer.upload(&ctx, &mesh, &library);
+    let scene = renderer.upload(&ctx, &mesh, &library).unwrap();
     assert_eq!(
         baseline,
         renderer.render_to_rgba(&ctx, &scene, &camera, &options, 65, 65)
@@ -350,7 +350,7 @@ fn rendered_six_face_directions_translation_depth_and_fallback() {
         &mut library,
         &Default::default(),
     );
-    let scene = renderer.upload(&ctx, &mesh, &library);
+    let scene = renderer.upload(&ctx, &mesh, &library).unwrap();
     assert_ne!(
         baseline,
         renderer.render_to_rgba(&ctx, &scene, &camera, &options, 65, 65)
@@ -362,7 +362,7 @@ fn rendered_six_face_directions_translation_depth_and_fallback() {
     let complete_scene = scene;
     let mut unavailable = mesh;
     unavailable.skybox = Some(std::sync::Arc::new(Skybox::load(&fixture.fs, "missing")));
-    let scene = renderer.upload(&ctx, &unavailable, &library);
+    let scene = renderer.upload(&ctx, &unavailable, &library).unwrap();
     assert_eq!(
         renderer.render_to_rgba(&ctx, &scene, &camera, &disabled, 65, 65),
         renderer.render_to_rgba(&ctx, &scene, &camera, &options, 65, 65)
@@ -480,7 +480,7 @@ fn rendered_sky_uv_corners_follow_sdk_skybox_orientation() {
         &mut library,
         &Default::default(),
     );
-    let scene = renderer.upload(&ctx, &mesh, &library);
+    let scene = renderer.upload(&ctx, &mesh, &library).unwrap();
     let options = ViewOptions {
         sky_preview: true,
         grid_visible: false,
@@ -523,7 +523,7 @@ fn rendered_sky_uv_corners_follow_sdk_skybox_orientation() {
         &mut library,
         &Default::default(),
     );
-    let scene = renderer.upload(&ctx, &mesh, &library);
+    let scene = renderer.upload(&ctx, &mesh, &library).unwrap();
     let camera = Camera::looking_at(Vec3::ZERO, Vec3::X);
     let pixels = renderer.render_to_rgba(&ctx, &scene, &camera, &options, 65, 65);
     for ((x, y), expected) in [(8, 8), (56, 8), (8, 56), (56, 56)]

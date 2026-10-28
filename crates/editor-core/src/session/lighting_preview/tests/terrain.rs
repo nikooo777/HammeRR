@@ -485,7 +485,7 @@ fn terrain_authored_lighting_gpu_matches_compiler_fast_detail_and_independent_no
             .sum::<DVec3>()
             .normalize();
         assert!(normal.distance(DVec3::Z) > 0.1);
-        let uploaded = renderer.upload(&context, &baseline, &materials);
+        let uploaded = renderer.upload(&context, &baseline, &materials).unwrap();
         let ordinary = renderer.render_to_rgba(&context, &uploaded, &camera, &off, 65, 65);
         for (origin, fields, spot) in [
             (
@@ -534,7 +534,7 @@ fn terrain_authored_lighting_gpu_matches_compiler_fast_detail_and_independent_no
                 } else {
                     light.contribution(point, normal).unwrap()
                 };
-                let uploaded = renderer.upload(&context, &mesh, &materials);
+                let uploaded = renderer.upload(&context, &mesh, &materials).unwrap();
                 let pixels = renderer.render_to_rgba(
                     &context,
                     &uploaded,
@@ -562,7 +562,7 @@ fn terrain_authored_lighting_gpu_matches_compiler_fast_detail_and_independent_no
                     );
                 }
             }
-            let uploaded = renderer.upload(&context, &mesh, &materials);
+            let uploaded = renderer.upload(&context, &mesh, &materials).unwrap();
             assert_eq!(
                 renderer.render_to_rgba(&context, &uploaded, &camera, &off, 65, 65),
                 ordinary

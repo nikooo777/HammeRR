@@ -272,7 +272,9 @@ fn model_authored_lighting_gpu_matches_compiler_fast_detail_scaled_world_normals
             ..session.view()
         };
         let baseline = session.build_scene_for_view(off);
-        let uploaded = renderer.upload(&context, &baseline, session.materials());
+        let uploaded = renderer
+            .upload(&context, &baseline, session.materials())
+            .unwrap();
         let ordinary = renderer.render_to_rgba(&context, &uploaded, &camera, &off, 65, 65);
         for exposure in [0., 2.] {
             for quality in [
@@ -294,7 +296,9 @@ fn model_authored_lighting_gpu_matches_compiler_fast_detail_scaled_world_normals
                         .filter(|vertex| vertex.lighting_receiver != 0)
                         .all(|vertex| vertex.color == [64, 128, 255, 0])
                 );
-                let uploaded = renderer.upload(&context, &mesh, session.materials());
+                let uploaded = renderer
+                    .upload(&context, &mesh, session.materials())
+                    .unwrap();
                 let pixels = renderer.render_to_rgba(&context, &uploaded, &camera, &view, 65, 65);
                 let contribution = if quality == render::lighting::Quality::Fast {
                     (light.contribution(points[0], normals[0]).unwrap()
@@ -322,7 +326,7 @@ fn model_authored_lighting_gpu_matches_compiler_fast_detail_scaled_world_normals
         ] {
             let view = ViewOptions { surface, ..off };
             let a = session.build_scene_for_view(view);
-            let ua = renderer.upload(&context, &a, session.materials());
+            let ua = renderer.upload(&context, &a, session.materials()).unwrap();
             let pa = renderer.render_to_rgba(&context, &ua, &camera, &view, 65, 65);
             let view = ViewOptions {
                 lighting_preview: true,
@@ -330,7 +334,7 @@ fn model_authored_lighting_gpu_matches_compiler_fast_detail_scaled_world_normals
             };
             let b = session.build_scene_for_view(view);
             assert_eq!(b.lighting.report.models, Default::default());
-            let ub = renderer.upload(&context, &b, session.materials());
+            let ub = renderer.upload(&context, &b, session.materials()).unwrap();
             assert_eq!(
                 pa,
                 renderer.render_to_rgba(&context, &ub, &camera, &view, 65, 65)

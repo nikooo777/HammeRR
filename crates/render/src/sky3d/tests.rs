@@ -537,7 +537,7 @@ fn miniature_composites_only_sky_retains_depth_and_excludes_sky2d() {
         &Default::default(),
     );
     mesh.sky3d = Some(miniature.clone());
-    let scene = renderer.upload(&ctx, &mesh, &library);
+    let scene = renderer.upload(&ctx, &mesh, &library).unwrap();
     let main = crate::Camera::looking_at(Vec3::ZERO, Vec3::X);
     let options = ViewOptions {
         sky_preview: true,
@@ -592,12 +592,14 @@ fn miniature_composites_only_sky_retains_depth_and_excludes_sky2d() {
             &Default::default(),
         );
         patterned.sky3d = Some(plain);
-        let plain_gpu = renderer.upload(&ctx, &patterned, &library);
+        let plain_gpu = renderer.upload(&ctx, &patterned, &library).unwrap();
         let plain_pixels = renderer
             .render_to_rgba_checked(&ctx, &plain_gpu, &main, &options, 65, 65)
             .unwrap();
         patterned.sky3d = Some(shifted);
-        let shifted_gpu = renderer.upload_replacing(&ctx, Some(plain_gpu), &patterned, &library);
+        let shifted_gpu = renderer
+            .upload_replacing(&ctx, Some(plain_gpu), &patterned, &library)
+            .unwrap();
         let shifted_pixels = renderer
             .render_to_rgba_checked(&ctx, &shifted_gpu, &main, &options, 65, 65)
             .unwrap();
@@ -644,7 +646,7 @@ fn miniature_composites_only_sky_retains_depth_and_excludes_sky2d() {
         &Default::default(),
     );
     mesh.sky3d = Some(miniature.clone());
-    let scene = renderer.upload(&ctx, &mesh, &library);
+    let scene = renderer.upload(&ctx, &mesh, &library).unwrap();
     assert_eq!(
         baseline,
         renderer.render_to_rgba(&ctx, &scene, &main, &options, 65, 65)
@@ -665,7 +667,7 @@ fn miniature_composites_only_sky_retains_depth_and_excludes_sky2d() {
     )]);
     let mut mesh = SceneMesh::build(document.vmf(), &fixture.fs, &mut library, &selected);
     mesh.sky3d = Some(miniature);
-    let scene = renderer.upload(&ctx, &mesh, &library);
+    let scene = renderer.upload(&ctx, &mesh, &library).unwrap();
     let foreground = renderer.render_to_rgba(
         &ctx,
         &scene,
@@ -750,15 +752,19 @@ fn replacing_large_gpu_scenes_preserves_reuse_and_releases_old_admission() {
         &Default::default(),
     );
     mesh.sky3d = Some(first.clone());
-    let old = renderer.upload(&ctx, &mesh, &library);
+    let old = renderer.upload(&ctx, &mesh, &library).unwrap();
     assert!(old.sky3d_error().is_none());
-    let other_view = renderer.upload(&ctx, &mesh, &library);
+    let other_view = renderer.upload(&ctx, &mesh, &library).unwrap();
     assert!(other_view.sky3d_error().is_none());
-    let same = renderer.upload_replacing(&ctx, Some(old), &mesh, &library);
+    let same = renderer
+        .upload_replacing(&ctx, Some(old), &mesh, &library)
+        .unwrap();
     assert!(same.sky3d_error().is_none());
     assert!(!completed.load(Ordering::Relaxed));
     mesh.sky3d = Some(second);
-    let rejected = renderer.upload_replacing(&ctx, Some(same), &mesh, &library);
+    let rejected = renderer
+        .upload_replacing(&ctx, Some(same), &mesh, &library)
+        .unwrap();
     assert!(rejected.sky3d_error().unwrap().contains("retained GPU"));
     let options = crate::ViewOptions {
         sky3d_preview: true,
@@ -771,10 +777,14 @@ fn replacing_large_gpu_scenes_preserves_reuse_and_releases_old_admission() {
             .is_err()
     );
     drop(other_view);
-    let admitted = renderer.upload_replacing(&ctx, Some(rejected), &mesh, &library);
+    let admitted = renderer
+        .upload_replacing(&ctx, Some(rejected), &mesh, &library)
+        .unwrap();
     assert!(admitted.sky3d_error().is_none());
     assert!(completed.load(Ordering::Relaxed));
     mesh.sky3d = Some(first);
-    let replacement = renderer.upload_replacing(&ctx, Some(admitted), &mesh, &library);
+    let replacement = renderer
+        .upload_replacing(&ctx, Some(admitted), &mesh, &library)
+        .unwrap();
     assert!(replacement.sky3d_error().is_none());
 }

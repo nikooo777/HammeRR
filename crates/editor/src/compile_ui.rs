@@ -11,6 +11,7 @@ use crate::session::{Actor, Session};
 mod admission_tests;
 mod baked_lightmaps;
 mod baked_prop_vertices;
+mod baked_surfaces;
 mod brush_texture_shadows;
 mod capture;
 mod compiled_details;
@@ -36,6 +37,7 @@ pub struct Controller {
     capture: capture::Form,
     baked_lightmaps: baked_lightmaps::Form,
     baked_prop_vertices: baked_prop_vertices::Form,
+    baked_surfaces: baked_surfaces::Form,
     compiled_lights: compiled_lights::Form,
     compiled_details: compiled_details::Form,
     compiled_visibility: compiled_visibility::Form,
@@ -437,9 +439,15 @@ impl Controller {
         self.baked_lightmaps.window()
     }
 
+    #[cfg(test)]
+    pub(crate) fn baked_surfaces_window(&self) -> &crate::BakedSurfacesWindow {
+        self.baked_surfaces.window()
+    }
+
     pub(crate) fn hide_windows(&self, errors: &mut Vec<String>) {
         self.baked_lightmaps.hide_window(errors);
         self.baked_prop_vertices.hide_window(errors);
+        self.baked_surfaces.hide_window(errors);
         self.compiled_lights.hide_window(errors);
         self.compiled_details.hide_window(errors);
         self.compiled_visibility.hide_window(errors);
@@ -466,6 +474,7 @@ impl Controller {
         static_prop_packing::bind(&window, &access, &recipes);
         let baked_lightmaps = baked_lightmaps::bind(&window, &access)?;
         let baked_prop_vertices = baked_prop_vertices::bind(&window, &access)?;
+        let baked_surfaces = baked_surfaces::bind(&window, &access)?;
         let compiled_lights = compiled_lights::bind(&window, &access)?;
         let compiled_details = compiled_details::bind(&window, &access)?;
         let compiled_visibility = compiled_visibility::bind(&window, &access)?;
@@ -824,6 +833,7 @@ impl Controller {
             capture,
             baked_lightmaps,
             baked_prop_vertices,
+            baked_surfaces,
             compiled_lights,
             compiled_details,
             compiled_visibility,
@@ -835,6 +845,7 @@ impl Controller {
         self.compiled_lights.set_aspect(aspect);
         self.compiled_visibility.set_aspect(aspect);
         self.baked_prop_vertices.set_aspect(aspect);
+        self.baked_surfaces.set_aspect(aspect);
     }
 
     pub(crate) fn refresh_visible(&self, session: &Session) {
@@ -846,6 +857,7 @@ impl Controller {
         } else {
             self.compiled_lights.refresh(session);
             self.compiled_details.refresh(session);
+            self.baked_surfaces.refresh(session);
             self.compiled_visibility.refresh(session);
         }
     }
@@ -855,6 +867,7 @@ impl Controller {
         self.capture.refresh(&self.window, session);
         self.baked_lightmaps.refresh(session);
         self.baked_prop_vertices.refresh(session);
+        self.baked_surfaces.refresh(session);
         self.compiled_lights.refresh(session);
         self.compiled_details.refresh(session);
         self.compiled_visibility.refresh(session);
@@ -1404,6 +1417,7 @@ impl Controller {
             || self.baked_lightmaps.is_visible()
             || self.baked_prop_vertices.is_visible()
             || self.compiled_lights.is_visible()
+            || self.baked_surfaces.is_visible()
             || self.compiled_details.is_visible()
             || self.compiled_visibility.is_visible()
     }

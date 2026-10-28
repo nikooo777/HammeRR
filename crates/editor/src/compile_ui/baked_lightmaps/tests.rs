@@ -1,7 +1,76 @@
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use super::*;
 use crate::compile_ui::Controller;
+
+fn baked_surface_workflow(controller: &Controller, shared: &SharedSession) {
+    controller.window.invoke_inspect_baked_surfaces();
+    let window = controller.baked_surfaces.window();
+    assert!(window.window().is_visible());
+    window.invoke_prepare_surfaces();
+    let started = Instant::now();
+    loop {
+        let report = lock(shared).inspect_baked_surfaces(None, 0, 1).unwrap();
+        if report["worker_active"] == false {
+            assert!(report["page"]["total"].as_u64().unwrap() > 0);
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "Surface preparation did not drain"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    controller.refresh_visible(&lock(shared));
+    window.invoke_refresh_inspection();
+    let report = lock(shared).inspect_baked_surfaces(None, 0, 64).unwrap();
+    let style = report["lighting"]["available_styles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|style| style == 0)
+        .unwrap();
+    window.invoke_choose_style(style as i32);
+    window.set_style_gain(0.5);
+    window.set_exposure_ev(0.5);
+    window.invoke_apply_lighting();
+    let options = lock(shared).baked_surfaces_options_report();
+    assert_eq!(options["exposure_ev"], 0.5);
+    assert_eq!(
+        options["style_gains"],
+        serde_json::json!([{"style":0,"gain":0.5}])
+    );
+    window.set_channel_index(99);
+    window.set_exposure_ev(2.0);
+    window.invoke_apply_lighting();
+    assert_eq!(window.get_channel_index(), 0);
+    assert_eq!(window.get_exposure_ev(), 0.5);
+    assert_eq!(lock(shared).baked_surfaces_options_report(), options);
+    window.invoke_show_surfaces();
+    assert_eq!(
+        lock(shared).inspect_baked_surfaces(None, 0, 1).unwrap()["displayed"],
+        true
+    );
+    window.invoke_hide_surfaces();
+    assert_eq!(lock(shared).baked_surfaces_options_report(), options);
+    assert_eq!(
+        lock(shared).inspect_baked_surfaces(None, 0, 1).unwrap()["displayed"],
+        false
+    );
+    let camera = lock(shared).camera();
+    window.invoke_choose_face(0);
+    assert!(window.get_can_frame());
+    window.invoke_frame_face();
+    assert_ne!(lock(shared).camera(), camera);
+    assert_eq!(lock(shared).camera().projection, camera.projection);
+    lock(shared).set_camera(camera);
+    window.invoke_clear_surfaces();
+    assert!(!window.get_has_token());
+    assert_eq!(window.get_exposure_ev(), 0.0);
+    window.invoke_close_dialog();
+    assert!(!window.window().is_visible());
+}
 
 #[test]
 fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
@@ -14,6 +83,8 @@ fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
     )))
     .unwrap();
     let (directory, game) = crate::test_assets::game();
+    let maps = directory.path().join("maps");
+    std::fs::create_dir(&maps).unwrap();
     let mut vmf = crate::test_assets::room();
     for solid in &mut vmf.world.solids {
         for side in &mut solid.sides {
@@ -32,7 +103,7 @@ fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
         })
         .unwrap();
     std::fs::write(
-        directory.path().join("child.vmf"),
+        maps.join("child.vmf"),
         child.vmf().write(&Default::default()),
     )
     .unwrap();
@@ -44,8 +115,8 @@ fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
     light.properties.set("_light", "255 160 60 600");
     light.properties.set("_lightHDR", "80 160 255 1200");
     vmf.entities.push(light);
-    let source = directory.path().join("lightmaps.vmf");
-    let output = directory.path().join("lightmaps.bsp");
+    let source = maps.join("lightmaps.vmf");
+    let output = maps.join("lightmaps.bsp");
     std::fs::write(&source, vmf.write(&Default::default())).unwrap();
     let mut session = Session::new(Ok(game));
     session
@@ -82,6 +153,7 @@ fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
     assert!(window.get_can_frame());
     controller.set_aspect(1.7);
     assert_eq!(window.get_aspect(), 1.7);
+    baked_surface_workflow(&controller, &shared);
     window.invoke_frame_face();
     assert!(
         window

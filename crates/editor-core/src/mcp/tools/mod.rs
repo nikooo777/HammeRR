@@ -1,5 +1,6 @@
 mod assets;
 mod atlas;
+pub(super) mod baked_surfaces;
 mod build;
 mod checks;
 mod clipboard;

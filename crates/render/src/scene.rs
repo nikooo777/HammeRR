@@ -62,6 +62,7 @@ pub struct Vertex {
     pub color: [u8; 4],
     pub lightmap: [f32; 3],
     pub smoothing: u32,
+    /// Baked FACE receivers use this slot for the native terrain blend fraction.
     pub opacity: f32,
     pub texture_alpha: u32,
     pub tangent: [f32; 4],
@@ -98,6 +99,11 @@ pub struct SceneStats {
 
 #[derive(Debug)]
 pub struct SceneMesh {
+    pub baked_faces: Option<std::sync::Arc<crate::compiled_faces::LightingData>>,
+    pub baked_face_materials:
+        Vec<Option<std::sync::Arc<crate::compiled_faces::materials::Material>>>,
+    pub baked_face_batches: std::ops::Range<usize>,
+    pub baked_face_visible_surfaces: usize,
     pub detail_billboards: Vec<crate::compiled_details::Billboard>,
     pub detail_parts: Vec<crate::compiled_details::Part>,
     pub reference_lines: Vec<LineVertex>,
@@ -208,6 +214,7 @@ pub struct FaceOverlay {
 }
 
 struct Builder<'a> {
+    authored_surfaces: bool,
     issues: SceneIssues,
     tool_textures: bool,
     selection_tint: bool,
@@ -338,12 +345,32 @@ impl Builder<'_> {
                     solid: solid.id,
                     side: side.id,
                 });
+            let material = self.material(&side.material);
+            if !self.authored_surfaces && !self.library.get(material).sky {
+                if selected {
+                    let id = FaceId {
+                        solid: solid.id,
+                        side: side.id,
+                    };
+                    if let Some(displacement) = self.displacements.get(&id) {
+                        let outline = displacement
+                            .mesh
+                            .outline()
+                            .into_iter()
+                            .map(|index| displacement.mesh.positions[index].as_vec3())
+                            .collect::<Vec<_>>();
+                        self.selection_loop(outline);
+                    } else {
+                        self.selection_loop(face.vertices.iter().map(|point| point.as_vec3()));
+                    }
+                }
+                continue;
+            }
             let tint = if selected && self.selection_tint {
                 SELECTED_TINT
             } else {
                 [255; 3]
             };
-            let material = self.material(&side.material);
             let info = self.library.get(material);
             let tool = info.tool;
             let size = DVec3::new(f64::from(info.width), f64::from(info.height), 1.0);
@@ -1099,6 +1126,67 @@ fn light_direction(entity: &Entity, targets: &map_core::light::Targets<'_>) -> V
 }
 
 impl SceneMesh {
+    pub fn append_reference_outlines(
+        &mut self,
+        mesh: &crate::references::Mesh,
+        owners: &BTreeSet<u32>,
+        selected: &HashSet<ObjectId>,
+    ) -> Result<(), String> {
+        let selected_brushes = mesh
+            .brushes
+            .iter()
+            .filter(|brush| {
+                owners.contains(&brush.owner) && selected.contains(&ObjectId::Entity(brush.owner))
+            })
+            .collect::<Vec<_>>();
+        let mut count = 0usize;
+        for brush in &selected_brushes {
+            if brush.edges.start > brush.edges.end
+                || brush.edges.end as usize > mesh.edges.len()
+                || brush.edges.len() % 2 != 0
+            {
+                return Err("Reference selection edge range is invalid".into());
+            }
+            count = count
+                .checked_add(brush.edges.len())
+                .ok_or("Reference selection edge count overflow")?;
+        }
+        if !self.reference_lines.is_empty()
+            || count > crate::references::MAX_LINES
+            || self
+                .reference_lines
+                .len()
+                .checked_add(count)
+                .is_none_or(|count| count > u32::MAX as usize)
+        {
+            return Err(
+                "Reference selection exceeds its line budget or was already appended".into(),
+            );
+        }
+        self.reference_lines
+            .try_reserve_exact(count)
+            .map_err(|error| format!("Reference selection lines unavailable: {error}"))?;
+        self.reference_selection_ranges
+            .try_reserve_exact(selected_brushes.len())
+            .map_err(|error| format!("Reference selection ranges unavailable: {error}"))?;
+        for brush in selected_brushes {
+            let first = self.reference_lines.len() as u32;
+            self.reference_lines.extend(
+                mesh.edges[brush.edges.start as usize..brush.edges.end as usize]
+                    .iter()
+                    .map(|line| LineVertex {
+                        position: line.position,
+                        color: [255, 167, 94, 255],
+                    }),
+            );
+            let end = self.reference_lines.len() as u32;
+            if end > first {
+                self.reference_selection_ranges.push(first..end);
+            }
+        }
+        Ok(())
+    }
+
     /// Builds the visible geometry, loading new materials into `library`.
     /// Objects in `selected` are tinted and outlined.
     pub fn build(
@@ -1369,6 +1457,49 @@ impl SceneMesh {
         reference_models: &[crate::models::Instance],
         include: impl Fn(ObjectId) -> bool,
     ) -> Self {
+        Self::build_with_reference_models_and_surfaces_filtered(
+            vmf,
+            fs,
+            library,
+            selection,
+            overlays,
+            entities,
+            guides,
+            skybox,
+            tool_textures,
+            selection_tint,
+            normal_maps,
+            lighting,
+            reference_models,
+            true,
+            include,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_with_reference_models_and_surfaces_filtered(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selection: (&HashSet<ObjectId>, &HashSet<FaceId>),
+        overlays: &[FaceOverlay],
+        entities: (
+            &[crate::models::Instance],
+            &BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
+        ),
+        guides: (
+            &BTreeMap<u32, crate::icons::Instance>,
+            &[crate::models::Instance],
+        ),
+        skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
+        tool_textures: bool,
+        selection_tint: bool,
+        normal_maps: bool,
+        lighting: bool,
+        reference_models: &[crate::models::Instance],
+        authored_surfaces: bool,
+        include: impl Fn(ObjectId) -> bool,
+    ) -> Self {
         let (icons, model_guides) = guides;
         let (models, helpers) = entities;
         let (selected, selected_faces) = selection;
@@ -1378,6 +1509,7 @@ impl SceneMesh {
             issues.push(SceneIssue::Terrain(issue));
         }
         let mut builder = Builder {
+            authored_surfaces,
             issues,
             tool_textures,
             selection_tint,
@@ -1514,6 +1646,10 @@ impl SceneMesh {
         }
         stats.missing_materials = missing_materials.len();
         let mut mesh = Self {
+            baked_faces: None,
+            baked_face_materials: Vec::new(),
+            baked_face_batches: 0..0,
+            baked_face_visible_surfaces: 0,
             detail_billboards: Vec::new(),
             detail_parts: Vec::new(),
             reference_lines: Vec::new(),

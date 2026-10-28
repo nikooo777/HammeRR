@@ -65,6 +65,124 @@ fn selection_outlines_separate_selected_edges_from_appended_guides_without_reord
     assert_eq!(face_mesh.selection_outline_ranges.len(), 1);
     assert_eq!(face_mesh.selection_outline_ranges[0], 0..8);
     assert!(face_mesh.guide_line_ranges().is_empty());
+
+    let mut vmf = document.vmf().clone();
+    let mut light = Entity::new(100, "light");
+    light.properties.set("origin", "256 0 0");
+    vmf.entities.push(light);
+    let mut replaced = SceneMesh::build_with_reference_models_and_surfaces_filtered(
+        &vmf,
+        &game(),
+        &mut MaterialLibrary::default(),
+        (&HashSet::from([object]), &HashSet::new()),
+        &[],
+        (&[], &BTreeMap::new()),
+        (&BTreeMap::new(), &[]),
+        None,
+        true,
+        true,
+        false,
+        false,
+        &[],
+        false,
+        |_| true,
+    );
+    assert!(!replaced.vertices.is_empty());
+    assert!(
+        replaced
+            .vertices
+            .iter()
+            .all(|vertex| vertex.position[0] > 240.0)
+    );
+    assert_eq!(
+        lines_in(&replaced, &replaced.selection_outline_ranges).len(),
+        48
+    );
+    assert!(replaced.wire_lines.is_empty());
+    let reference = crate::references::Mesh {
+        edges: vec![
+            LineVertex {
+                position: [0.0; 3],
+                color: [0; 4]
+            };
+            4
+        ],
+        brushes: vec![
+            crate::references::Brush {
+                owner: 42,
+                vertices: 0..0,
+                indices: 0..0,
+                edges: 0..2,
+            },
+            crate::references::Brush {
+                owner: 43,
+                vertices: 0..0,
+                indices: 0..0,
+                edges: 2..4,
+            },
+        ],
+        ..Default::default()
+    };
+    let geometry = (replaced.vertices.len(), replaced.indices.len());
+    replaced
+        .append_reference_outlines(
+            &reference,
+            &BTreeSet::from([42, 43]),
+            &HashSet::from([ObjectId::Entity(42)]),
+        )
+        .unwrap();
+    assert_eq!((replaced.vertices.len(), replaced.indices.len()), geometry);
+    assert_eq!(
+        replaced.reference_selection_ranges.as_slice(),
+        std::slice::from_ref(&(0..2))
+    );
+    assert_eq!(replaced.reference_lines.len(), 2);
+    let directory = tempfile::tempdir().unwrap();
+    let materials = directory.path().join("materials/test");
+    std::fs::create_dir_all(&materials).unwrap();
+    std::fs::write(materials.join("sky.vmt"), "UnlitGeneric { %compilesky 1 }").unwrap();
+    let fs = GameFs {
+        game_dir: directory.path().to_owned(),
+        base_dir: directory.path().to_owned(),
+        mounts: vec![source_formats::gamefs::MountedPath {
+            ids: vec!["game".into()],
+            mount: source_formats::gamefs::Mount::Directory(directory.path().to_owned()),
+        }],
+    };
+    vmf.world.solids[0].sides[0].material = "test/sky".into();
+    let mut library = MaterialLibrary::default();
+    let sky = SceneMesh::build_with_reference_models_and_surfaces_filtered(
+        &vmf,
+        &fs,
+        &mut library,
+        (&HashSet::from([object]), &HashSet::new()),
+        &[],
+        (&[], &BTreeMap::new()),
+        (&BTreeMap::new(), &[]),
+        None,
+        true,
+        true,
+        false,
+        false,
+        &[],
+        false,
+        |_| true,
+    );
+    let sky_batches = sky
+        .batches
+        .iter()
+        .filter(|batch| library.get(batch.material).sky)
+        .collect::<Vec<_>>();
+    assert_eq!(sky_batches.len(), 1);
+    assert!(library.get(sky_batches[0].material).sky3d_eligible);
+    assert_eq!(sky_batches[0].index_count, 6);
+    assert_eq!(lines_in(&sky, &sky.selection_outline_ranges).len(), 48);
+    assert!(
+        sky.batches
+            .iter()
+            .all(|batch| batch.material == MaterialLibrary::EDITOR
+                || library.get(batch.material).sky)
+    );
 }
 
 #[test]

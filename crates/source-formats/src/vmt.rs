@@ -89,7 +89,8 @@ impl Material {
         read: &mut dyn FnMut(&str) -> io::Result<Option<Vec<u8>>>,
     ) -> Result<Option<Self>, Error> {
         let mut edits = PatchEdits::default();
-        let Some(mut material) = Self::load_depth(&normalize(path), 0, read, &mut edits)? else {
+        let Some(mut material) = Self::load_depth(&asset_relative(path)?, 0, read, &mut edits)?
+        else {
             return Ok(None);
         };
         material.apply(&edits.insert, false);
@@ -139,7 +140,7 @@ impl Material {
             }
             include.to_owned()
         };
-        let base = Self::load_depth(&normalize(&include), depth + 1, read, edits)?
+        let base = Self::load_depth(&asset_relative(&include)?, depth + 1, read, edits)?
             .ok_or(Error::MissingInclude(include))?;
         Ok(Some(base))
     }

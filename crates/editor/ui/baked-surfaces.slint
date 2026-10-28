@@ -1,0 +1,128 @@
+import { Button, ComboBox, ScrollView, Slider, StandardTableView } from "std-widgets.slint";
+
+export component BakedSurfacesWindow inherits Window {
+    title: "Baked surfaces - HammeRR";
+    preferred-width: 780px;
+    preferred-height: 760px;
+    min-width: 680px;
+    min-height: 650px;
+    in property <string> state;
+    in property <string> summary;
+    in property <string> channels;
+    in property <string> page;
+    in property <string> message;
+    in property <string> face-summary;
+    in property <bool> worker-active;
+    in property <bool> has-token;
+    in property <bool> previous;
+    in property <bool> next;
+    in property <bool> can-frame;
+    in property <float> aspect: 1;
+    in property <[[StandardListViewItem]]> face-rows;
+    in-out property <int> current-row: -1;
+    in-out property <int> channel-index;
+    in-out property <float> exposure-ev;
+    in property <[string]> style-options;
+    in-out property <int> style-index;
+    in-out property <float> style-gain;
+    callback prepare-surfaces();
+    callback cancel-preparation();
+    callback clear-surfaces();
+    callback show-surfaces();
+    callback hide-surfaces();
+    callback choose-style(int);
+    callback apply-lighting();
+    callback refresh-inspection();
+    callback page-faces(int);
+    callback choose-face(int);
+    callback frame-face();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); return accept; }
+            return reject;
+        }
+        VerticalLayout {
+            padding: 20px;
+            spacing: 10px;
+            HorizontalLayout {
+                Text { text: "Baked surfaces"; font-size: 24px; font-weight: 600; }
+                Rectangle { horizontal-stretch: 1; }
+                Text { text: root.state; vertical-alignment: center; color: #ffcb80; }
+            }
+            Text { text: root.summary; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Prepare"; enabled: !root.worker-active; clicked => { root.prepare-surfaces(); } }
+                Button { text: "Cancel preparation"; enabled: root.worker-active && root.has-token; clicked => { root.cancel-preparation(); } }
+                Button { text: "Inspect"; clicked => { root.refresh-inspection(); } }
+                Button { text: "Show"; enabled: root.has-token && !root.worker-active; clicked => { root.show-surfaces(); } }
+                Button { text: "Hide"; enabled: root.has-token; clicked => { root.hide-surfaces(); } }
+                Button { text: "Clear"; enabled: root.has-token; clicked => { root.clear-surfaces(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Channel"; vertical-alignment: center; }
+                ComboBox { model: ["LDR", "HDR"]; current-index <=> root.channel-index; enabled: root.has-token && !root.worker-active; }
+                Text { text: root.channels; wrap: word-wrap; horizontal-stretch: 1; color: #bac2ce; }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Text { text: "Exposure (EV)"; vertical-alignment: center; width: 100px; }
+                Slider { minimum: -8; maximum: 8; value <=> root.exposure-ev; enabled: root.has-token && !root.worker-active; horizontal-stretch: 1; }
+                Text { text: "\{round(root.exposure-ev * 100) / 100}"; width: 50px; vertical-alignment: center; }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                styles := ComboBox {
+                    model: root.style-options;
+                    current-index <=> root.style-index;
+                    enabled: root.has-token && !root.worker-active && root.style-options.length > 0;
+                    selected => { root.choose-style(styles.current-index); }
+                }
+                Text { text: "Gain"; vertical-alignment: center; }
+                Slider { minimum: 0; maximum: 2; value <=> root.style-gain; enabled: root.has-token && !root.worker-active && root.style-options.length > 0; horizontal-stretch: 1; }
+                Text { text: "\{round(root.style-gain * 100) / 100}"; width: 50px; vertical-alignment: center; }
+                Button { text: "Apply lighting"; enabled: root.has-token && !root.worker-active; clicked => { root.apply-lighting(); } }
+            }
+            Text { text: "Automatic directional materials. Style 0 defaults to 1; other styles default to 0. Apply lighting changes channel, exposure and gains together."; wrap: word-wrap; color: #bac2ce; }
+            StandardTableView {
+                rows: root.face-rows;
+                columns: [
+                    { title: "Face", width: 72px },
+                    { title: "Receiver", width: 150px },
+                    { title: "Material", min-width: 240px, horizontal-stretch: 1 },
+                ];
+                current-row <=> root.current-row;
+                current-row-changed(row) => { root.choose-face(row); }
+                sort-ascending(column) => { self.columns[column].sort-order = SortOrder.unsorted; }
+                sort-descending(column) => { self.columns[column].sort-order = SortOrder.unsorted; }
+                accessible-label: "Baked surfaces in native face order";
+                min-height: 130px;
+                vertical-stretch: 1;
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                Button { text: "Previous"; enabled: root.previous; clicked => { root.page-faces(-1); } }
+                Button { text: "Next"; enabled: root.next; clicked => { root.page-faces(1); } }
+                Text { text: root.page; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Frame face"; enabled: root.can-frame; clicked => { root.frame-face(); } }
+            }
+            Text { text: root.face-summary; wrap: word-wrap; color: #bac2ce; }
+            ScrollView {
+                content-width: self.width;
+                min-height: 40px;
+                preferred-height: 58px;
+                max-height: 90px;
+                Text { text: root.message; wrap: word-wrap; color: #ffcb80; }
+            }
+            HorizontalLayout {
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+            }
+        }
+    }
+}

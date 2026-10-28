@@ -64,7 +64,7 @@ fn render_icons(
     materials: &crate::MaterialLibrary,
     camera: &crate::Camera,
 ) -> Vec<u8> {
-    let gpu = renderer.upload(context, mesh, materials);
+    let gpu = renderer.upload(context, mesh, materials).unwrap();
     renderer.render_to_rgba(
         context,
         &gpu,
@@ -137,7 +137,7 @@ fn additive_sprite_rgb_matches_independent_blend_reference_and_mixed_camera_orde
         },
     ];
     let a = 128.0 / 255.0;
-    let gpu = renderer.upload(&context, &mesh, &materials);
+    let gpu = renderer.upload(&context, &mesh, &materials).unwrap();
     for (camera, far_additive) in [(&top, true), (&bottom, false)] {
         let pixels = renderer.render_to_rgba(&context, &gpu, camera, &options, 65, 65);
         for (channel, (source, background)) in [128, 64, 32]

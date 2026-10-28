@@ -347,7 +347,7 @@ fn two_actual_hosts_keep_peer_edits_and_release_closed_claims_before_reopen_and_
                 let mut ui = ui.borrow_mut();
                 let mut session = lock(b.session());
                 let mesh = session.build_scene();
-                ui.viewport.set_scene(&ctx, &mesh, session.materials());
+                ui.viewport.set_scene(&ctx, &mesh, session.materials())?;
                 let frame = ui
                     .viewport
                     .render(&ctx, (160, 120), 1.0, &mut session)

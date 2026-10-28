@@ -73,7 +73,8 @@ fn child_callbacks_work_then_release_ui_session_and_cached_resources() {
         let mesh = session.build_scene();
         ui.borrow_mut()
             .viewport
-            .set_scene(&ctx, &mesh, session.materials());
+            .set_scene(&ctx, &mesh, session.materials())
+            .unwrap();
     }
 
     show_surface_window(&app, &ui);

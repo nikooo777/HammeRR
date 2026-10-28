@@ -105,9 +105,9 @@ See the [tool index and setup](docs/mcp.md).
 | ![Complete native static-prop leaf bounds](docs/images/prop-leaf-bounds.png) | ![Final details use baked HDR style colours](docs/images/compiled-detail-radiance.png) |
 | Show every compiled leaf bound assigned to a static prop. | Preview final models and cards with baked LDR/HDR styles. |
 
-| [Map comparison](docs/map-comparison.md) |
-| --- |
-| ![Changed objects selected after an external-map comparison](docs/images/external-map-comparison.png) |
-| Compare stored objects and select or frame current matches. |
+| [Baked surfaces](docs/baked-surfaces.md) | [Map comparison](docs/map-comparison.md) |
+| --- | --- |
+| ![Baked light on final arches, terrain and brush-model stairs](docs/images/baked-surfaces.png) | ![Changed objects selected after an external-map comparison](docs/images/external-map-comparison.png) |
+| View final brushes, terrain and brush models with baked lighting. | Compare stored objects and select or frame current matches. |
 
 Counter-Strike: Source and its assets are not included.

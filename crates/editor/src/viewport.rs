@@ -38,6 +38,8 @@ pub struct Viewport {
     last_mouse: Option<(f32, f32)>,
     left_press: Option<(f32, f32)>,
     dirty: bool,
+    scene_error: Option<String>,
+    baked_surfaces_error: Option<String>,
     color_correction_error: Option<String>,
 }
 
@@ -56,16 +58,36 @@ impl Viewport {
             last_mouse: None,
             left_press: None,
             dirty: true,
+            scene_error: None,
+            baked_surfaces_error: None,
             color_correction_error: None,
         }
     }
 
-    pub fn set_scene(&mut self, ctx: &GpuContext, mesh: &SceneMesh, library: &MaterialLibrary) {
-        self.scene = Some(
+    pub fn set_scene(
+        &mut self,
+        ctx: &GpuContext,
+        mesh: &SceneMesh,
+        library: &MaterialLibrary,
+    ) -> Result<(), String> {
+        self.baked_surfaces_error = None;
+        let uploaded = if mesh.baked_faces.is_some() {
+            self.renderer.upload(ctx, mesh, library)
+        } else {
             self.renderer
-                .upload_replacing(ctx, self.scene.take(), mesh, library),
-        );
+                .upload_replacing(ctx, self.scene.take(), mesh, library)
+        };
+        let scene = match uploaded {
+            Ok(scene) => scene,
+            Err(error) => {
+                self.scene_error = Some(error.clone());
+                return Err(error);
+            }
+        };
+        self.scene = Some(scene);
+        self.scene_error = None;
         self.dirty = true;
+        Ok(())
     }
 
     pub fn redraw(&mut self) {
@@ -78,6 +100,10 @@ impl Viewport {
 
     pub fn color_correction_error(&self) -> Option<&str> {
         self.color_correction_error.as_deref()
+    }
+
+    pub fn baked_surfaces_error(&self) -> Option<&str> {
+        self.baked_surfaces_error.as_deref()
     }
 
     pub fn looking(&self) -> bool {
@@ -215,12 +241,23 @@ impl Viewport {
         pixel_ratio: f32,
         session: &mut editor_core::session::Session,
     ) -> Option<slint::Image> {
+        if self.scene_error.is_some() {
+            return None;
+        }
         let size = (size.0.max(1), size.1.max(1));
         let resized = self.targets[0].as_ref().is_none_or(|t| t.size() != size);
         if !self.dirty && !resized && self.pixel_ratio == pixel_ratio {
             return None;
         }
         let scene = self.scene.as_ref()?;
+        self.baked_surfaces_error = None;
+        let guard = match session.baked_surfaces_render_guard(self.options) {
+            Ok(guard) => guard,
+            Err(error) => {
+                self.baked_surfaces_error = Some(error);
+                return None;
+            }
+        };
         self.color_correction_error = None;
         let preview = match session.color_correction_for_render() {
             Ok(preview) => preview,
@@ -251,6 +288,10 @@ impl Viewport {
             self.renderer
                 .render(ctx, scene, &self.camera, &options, &target.view, size);
             self.color_correction_error = Some(error);
+        }
+        if let Err(error) = session.verify_baked_surfaces_render(guard.as_ref(), self.options) {
+            self.baked_surfaces_error = Some(error);
+            return None;
         }
         self.next_target ^= 1;
         self.pixel_ratio = pixel_ratio;

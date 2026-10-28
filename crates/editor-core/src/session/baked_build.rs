@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 use source_formats::bsp::{Bsp, LUMP_COUNT};
@@ -14,6 +15,101 @@ pub(super) struct BuildIdentity {
     pub(super) token: u64,
     pub(super) output: Result<compiler::FileIdentity, String>,
     pub(super) source: Result<Option<compiler::FileIdentity>, String>,
+}
+
+pub(super) struct RetainedBuild {
+    pub(super) token: u64,
+    pub(super) output: compiler::FileIdentity,
+    pub(super) origins: Arc<compiler::face_origins::FaceOrigins>,
+    source: Option<compiler::FileIdentity>,
+    dependencies: Option<compiler::instances::DependencyGuard>,
+    assets: Vec<compiler::asset_sources::AssetSourceGuard>,
+}
+
+impl RetainedBuild {
+    pub(super) fn capture(build: &super::CompiledMap) -> Result<Arc<Self>, String> {
+        let assets = build
+            .static_prop_sources
+            .as_ref()
+            .map(|sources| sources.guard.clone())
+            .into_iter()
+            .chain(build.prop_lighting_guard.clone())
+            .chain(
+                build
+                    .material_sources
+                    .as_ref()
+                    .map(|sources| sources.guard.clone()),
+            )
+            .collect();
+        Ok(Arc::new(Self {
+            token: build.lightmap_identity.token,
+            output: build
+                .lightmap_identity
+                .output
+                .as_ref()
+                .map_err(Clone::clone)?
+                .clone(),
+            origins: build.face_origins.as_ref().map_err(Clone::clone)?.clone(),
+            source: build
+                .lightmap_identity
+                .source
+                .as_ref()
+                .map_err(Clone::clone)?
+                .clone(),
+            dependencies: build.instance_dependencies.clone(),
+            assets,
+        }))
+    }
+
+    pub(super) fn verify(
+        &self,
+        control: &compiler::Control,
+        maximum_metadata_bytes: usize,
+    ) -> Result<(), String> {
+        control.checkpoint()?;
+        for guard in &self.assets {
+            guard
+                .verify_original_metadata(control, maximum_metadata_bytes)
+                .map_err(|error| error.to_string())?;
+        }
+        if let Some(dependencies) = &self.dependencies {
+            dependencies
+                .verify(control)
+                .map_err(|error| error.to_string())?;
+        } else if let Some(source) = &self.source {
+            source.verify(control).map_err(|error| error.to_string())?;
+        }
+        self.output
+            .verify(control)
+            .map_err(|error| error.to_string())?;
+        control.checkpoint()
+    }
+
+    pub(super) fn verify_metadata(
+        &self,
+        control: &compiler::Control,
+        maximum_metadata_bytes: usize,
+    ) -> Result<(), String> {
+        control.checkpoint()?;
+        for guard in &self.assets {
+            guard
+                .verify_original_metadata(control, maximum_metadata_bytes)
+                .map_err(|error| error.to_string())?;
+        }
+        if let Some(dependencies) = &self.dependencies {
+            dependencies
+                .verify_metadata()
+                .map_err(|error| error.to_string())?;
+        } else if let Some(source) = &self.source {
+            source
+                .verify_metadata()
+                .map_err(|error| error.to_string())?;
+        }
+        self.output
+            .verify_metadata()
+            .map_err(|error| error.to_string())?;
+        control.checkpoint()
+    }
 }
 
 pub(super) fn capture_output_identity(

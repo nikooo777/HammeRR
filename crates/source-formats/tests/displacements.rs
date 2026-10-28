@@ -1,6 +1,7 @@
 use source_formats::bsp::{
     self, Bsp, DisplacementCorner, DisplacementInfo, DisplacementLightmapSample,
     DisplacementNeighbor, DisplacementTriangle, DisplacementVertex, Displacements, Edge, Face,
+    FaceGeometry, LightingKind, Model, Plane,
 };
 
 fn fixture() -> (Bsp, Displacements) {
@@ -50,6 +51,46 @@ fn fixture() -> (Bsp, Displacements) {
     (bsp, data)
 }
 
+fn final_geometry_fixture(power: i32) -> Bsp {
+    let (mut bsp, mut data) = fixture();
+    let info = DisplacementInfo {
+        power,
+        start: [16.0, 16.0, 0.0],
+        ..Default::default()
+    };
+    let size = info.grid_size().unwrap();
+    data.infos = vec![info];
+    data.vertices = vec![DisplacementVertex::default(); info.vertex_count().unwrap()];
+    data.vertices[size * (size / 2) + size / 2] = DisplacementVertex {
+        direction: [0.0, 0.0, 1.0],
+        distance: 8.0,
+        alpha: 127.5,
+    };
+    data.triangles = vec![DisplacementTriangle::default(); info.triangle_count().unwrap()];
+    bsp.set_records(&[Face {
+        edge_count: 4,
+        dispinfo: 0,
+        area: 256.0,
+        light_offset: -1,
+        ..Default::default()
+    }]);
+    bsp.set_records(&[Plane {
+        normal: [0.0, 0.0, 1.0],
+        ..Default::default()
+    }]);
+    bsp.set_records(&[
+        Model::default(),
+        Model {
+            face_count: 1,
+            ..Default::default()
+        },
+    ]);
+    bsp.set_values(bsp::lump::VERTNORMALS, &[[0.0_f32, 0.0, 1.0]]);
+    bsp.set_values(bsp::lump::VERTNORMALINDICES, &[0_u16; 4]);
+    bsp.set_displacements(&data).unwrap();
+    bsp
+}
+
 #[test]
 fn native_displacement_layout_padding_inactive_neighbors_and_mesh_positions_round_trip() {
     assert_eq!(size_of::<DisplacementInfo>(), 176);
@@ -96,6 +137,45 @@ fn native_displacement_layout_padding_inactive_neighbors_and_mesh_positions_roun
         assert_eq!(
             info.triangle_count().unwrap(),
             2 * (1 << power) * (1 << power)
+        );
+        let mut bsp = final_geometry_fixture(power);
+        let geometry = FaceGeometry::new(&bsp, LightingKind::Ldr).unwrap();
+        let winding = geometry.face(0).unwrap();
+        assert_eq!(winding.model, 1);
+        assert_eq!(winding.positions[0], [0.0, 0.0, 0.0]);
+        assert_eq!(winding.normals, vec![[0.0, 0.0, 1.0]; 4]);
+        let terrain = geometry.terrain(0).unwrap().unwrap();
+        let size = info.grid_size().unwrap();
+        let middle = size * (size / 2) + size / 2;
+        assert_eq!(terrain.positions[0], [16.0, 16.0, 0.0]);
+        assert_eq!(terrain.positions[middle], [8.0, 8.0, 8.0]);
+        assert_eq!(terrain.positions[size * size - 1], [0.0, 0.0, 0.0]);
+        assert_eq!(terrain.grid_uvs[0], [0.0, 0.0]);
+        assert_eq!(terrain.grid_uvs[middle], [0.5, 0.5]);
+        assert_eq!(terrain.grid_uvs[size * size - 1], [1.0, 1.0]);
+        assert_eq!(terrain.alphas[middle], 127.5);
+        assert_eq!(terrain.triangles.len(), info.triangle_count().unwrap());
+        assert_eq!(
+            geometry.positions(0).unwrap(),
+            (1, terrain.positions.clone())
+        );
+        for normal in &terrain.normals {
+            assert!((normal.iter().map(|value| value * value).sum::<f32>() - 1.0).abs() < 1e-6);
+        }
+        let mut data = bsp.displacements().unwrap().unwrap();
+        data.infos[0].allowed_vertices[0] &= !(1 << 1);
+        bsp.set_displacements(&data).unwrap();
+        let terrain = FaceGeometry::new(&bsp, LightingKind::Ldr)
+            .unwrap()
+            .terrain(0)
+            .unwrap()
+            .unwrap();
+        assert!(terrain.triangles.len() < info.triangle_count().unwrap());
+        assert!(
+            terrain
+                .triangles
+                .iter()
+                .all(|triangle| !triangle.contains(&1))
         );
     }
 }
@@ -197,6 +277,110 @@ fn unsupported_displacement_lumps_and_broken_base_quad_references_reject() {
         invalid.set_values(bsp::lump::SURFEDGES, &[edge, 2, 3, 4]);
         assert!(invalid.displacement_quad(0).is_err());
     }
+    let mut bsp = final_geometry_fixture(2);
+    let ldr = bsp.lighting_faces(LightingKind::Ldr).unwrap();
+    bsp.set_lighting_faces(LightingKind::Hdr, &ldr).unwrap();
+    assert!(FaceGeometry::new(&bsp, LightingKind::Hdr).is_ok());
+    for plane in [0, 1] {
+        let mut oriented = bsp.clone();
+        let mut faces = ldr.clone();
+        faces[0].plane = plane;
+        faces[0].side = 1;
+        oriented
+            .set_lighting_faces(LightingKind::Ldr, &faces)
+            .unwrap();
+        oriented.set_records(&[
+            Plane {
+                normal: [0.0, 0.0, 1.0],
+                ..Default::default()
+            },
+            Plane {
+                normal: [0.0, 0.0, -1.0],
+                ..Default::default()
+            },
+        ]);
+        oriented.set_values(bsp::lump::SURFEDGES, &[-4_i32, -3, -2, -1]);
+        oriented.set_values(
+            bsp::lump::VERTNORMALS,
+            &[[0.0_f32, 0.0, 1.0], [0.0, 0.0, -1.0]],
+        );
+        oriented.set_values(bsp::lump::VERTNORMALINDICES, &[1_u16; 4]);
+        let winding = FaceGeometry::new(&oriented, LightingKind::Ldr)
+            .unwrap()
+            .face(0)
+            .unwrap();
+        assert_eq!(winding.normal, [0.0, 0.0, -1.0]);
+        assert_eq!(winding.normals, vec![[0.0, 0.0, -1.0]; 4]);
+    }
+    for change in [0, 1, 2] {
+        let mut faces = ldr.clone();
+        match change {
+            0 => faces[0].lightmap_size[0] += 1,
+            1 => faces[0].first_edge += 1,
+            _ => faces[0].dispinfo = -1,
+        }
+        let mut invalid = bsp.clone();
+        invalid
+            .set_lighting_faces(LightingKind::Hdr, &faces)
+            .unwrap();
+        assert!(FaceGeometry::new(&invalid, LightingKind::Hdr).is_err());
+    }
+    bsp.lumps[bsp::lump::VERTNORMALS].data.clear();
+    bsp.lumps[bsp::lump::VERTNORMALINDICES].data.clear();
+    let geometry = FaceGeometry::new(&bsp, LightingKind::Ldr).unwrap();
+    assert!(geometry.positions(0).is_ok());
+    assert!(geometry.face(0).is_err());
+    let mut faces = ldr;
+    faces[0].dispinfo = -1;
+    bsp.set_lighting_faces(LightingKind::Ldr, &faces).unwrap();
+    for index in [
+        bsp::lump::DISPINFO,
+        bsp::lump::DISP_VERTS,
+        bsp::lump::DISP_TRIS,
+    ] {
+        bsp.lumps[index].data.clear();
+    }
+    assert!(
+        FaceGeometry::new(&bsp, LightingKind::Ldr)
+            .unwrap()
+            .positions(0)
+            .is_ok()
+    );
+    for edges in [[1_i32, 2, 4, 3], [1, 2, 3, 1], [i32::MIN, 2, 3, 4]] {
+        let mut invalid = bsp.clone();
+        invalid.set_values(bsp::lump::SURFEDGES, &edges);
+        assert!(
+            FaceGeometry::new(&invalid, LightingKind::Ldr)
+                .unwrap()
+                .positions(0)
+                .is_err()
+        );
+    }
+    let mut invalid = bsp.clone();
+    invalid.set_records(&[
+        Model {
+            face_count: 1,
+            ..Default::default()
+        },
+        Model {
+            face_count: 1,
+            ..Default::default()
+        },
+    ]);
+    assert!(FaceGeometry::new(&invalid, LightingKind::Ldr).is_err());
+    let mut cancelled = || {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "cancelled",
+        ))
+    };
+    assert_eq!(
+        FaceGeometry::new_controlled(&bsp, LightingKind::Ldr, &mut cancelled)
+            .err()
+            .unwrap()
+            .kind(),
+        std::io::ErrorKind::Interrupted
+    );
 }
 
 #[test]

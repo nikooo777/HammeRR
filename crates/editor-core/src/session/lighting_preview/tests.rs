@@ -952,7 +952,7 @@ fn rendered(
     materials: &render::MaterialLibrary,
     view: ViewOptions,
 ) -> Vec<u8> {
-    let scene = renderer.upload(context, mesh, materials);
+    let scene = renderer.upload(context, mesh, materials).unwrap();
     renderer.render_to_rgba(
         context,
         &scene,

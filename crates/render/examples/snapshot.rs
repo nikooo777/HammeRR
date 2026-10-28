@@ -84,7 +84,9 @@ fn main() {
     let ctx = GpuContext::new().expect("GPU");
     eprintln!("adapter: {:?}", ctx.adapter.get_info().name);
     let mut renderer = Renderer::new(&ctx);
-    let scene = renderer.upload(&ctx, &mesh, &library);
+    let scene = renderer
+        .upload(&ctx, &mesh, &library)
+        .expect("scene upload");
     let uploaded = start.elapsed();
     let pixels = renderer.render_to_rgba(&ctx, &scene, &camera, &options, WIDTH, HEIGHT);
     eprintln!(

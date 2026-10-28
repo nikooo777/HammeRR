@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::compile_ui::Controller;
-use crate::ui::tests::{assert_dialog_button_visible, save_ui_snapshot};
+use crate::ui::tests::{assert_dialog_button_visible, assert_ui_renders};
 
 #[test]
 fn prop_vertex_lighting_controls_share_real_callbacks_recipes_recent_maps_and_active_job_guards() {
@@ -110,7 +110,7 @@ fn prop_vertex_lighting_controls_share_real_callbacks_recipes_recent_maps_and_ac
         compiler::LightingMode::DirectLdrHdr
     );
     assert!(controller.window.get_bake_static_prop_vertices());
-    save_ui_snapshot(controller.window.window(), "build-prop-vertex-lighting");
+    assert_ui_renders(controller.window.window(), "build-prop-vertex-lighting");
     let request = lock(&shared).begin_compile(Actor::User, None).unwrap();
     controller.refresh(&lock(&shared));
     assert!(!controller.window.get_prop_vertex_lighting_enabled());

@@ -957,7 +957,7 @@ mod tests {
         assert!(!controller.window.get_has_thumbnail());
         assert_eq!(lock(&shared).render_document().vmf(), &rendered);
         assert_eq!(lock(&shared).clipboard_report(), clipboard);
-        crate::ui::tests::save_ui_snapshot(
+        crate::ui::tests::assert_ui_renders(
             controller.window.window(),
             "prefab-textured-thumbnail-error",
         );
@@ -981,7 +981,7 @@ mod tests {
         assert_eq!(lock(&shared).render_document().vmf(), &rendered);
         assert_eq!(lock(&shared).clipboard_report(), clipboard);
         assert_eq!(lock(&shared).history_snapshot(), history);
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "prefab-thumbnail-failure");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "prefab-thumbnail-failure");
     }
 
     #[test]
@@ -1031,7 +1031,7 @@ mod tests {
                 .len()
                 > 3
         );
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "prefab-thumbnail");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "prefab-thumbnail");
         controller.window.invoke_render_thumbnail();
         assert!(controller.window.get_has_thumbnail());
         let refreshed = lock(&shared)
@@ -1054,7 +1054,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_ne!(textured.image.pixels, first.image.pixels);
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "prefab-textured-thumbnail");
+        crate::ui::tests::assert_ui_renders(
+            controller.window.window(),
+            "prefab-textured-thumbnail",
+        );
         let texture = assets.path().join("materials/test/checker.vtf");
         let original_texture = std::fs::read(&texture).unwrap();
         let mut changed = original_texture.clone();
@@ -1130,7 +1133,7 @@ mod tests {
         controller.window.invoke_begin_rename();
         assert_eq!(controller.window.get_prefab_name(), "Alpha assembly");
         controller.window.set_prefab_name("Renamed assembly".into());
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "prefab-rename");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "prefab-rename");
         controller.window.invoke_cancel();
         assert!(directory.path().join("Alpha assembly.vmf").exists());
         assert!(!directory.path().join("Renamed assembly.vmf").exists());
@@ -1237,11 +1240,11 @@ mod tests {
                     .abs_diff_eq(glam::DVec3::from_array(expected), 1e-8)
             );
         }
-        crate::ui::tests::save_ui_snapshot(
+        crate::ui::tests::assert_ui_renders(
             controller.window.window(),
             "prefab-transformed-placement",
         );
-        crate::ui::tests::save_ui_snapshot(
+        crate::ui::tests::assert_ui_renders(
             controller.paste.window.window(),
             "prefab-transformed-paste",
         );
@@ -1342,7 +1345,7 @@ mod tests {
         assert_eq!(lock(&shared).document().vmf().world.solids.len(), 2);
         assert_eq!(lock(&shared).document().vmf().entities.len(), 4);
         controller.refresh(&lock(&shared));
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "prefab-library");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "prefab-library");
         controller.window.invoke_begin_delete();
         controller.window.invoke_cancel();
         assert!(directory.path().join("Corridor light cluster.vmf").exists());

@@ -450,7 +450,7 @@ mod tests {
         controller.window.set_scale_x("1".into());
         controller.window.invoke_preview();
         controller.window.show().unwrap();
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "repeat-array");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "repeat-array");
         controller.window.set_space_index(0);
         controller.window.invoke_apply();
         assert_eq!(lock(&shared).document().vmf(), &before);
@@ -546,7 +546,7 @@ mod tests {
         assert_eq!(controller.window.get_scale_x(), "1.1");
         assert!(controller.window.get_ready());
         controller.window.show().unwrap();
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "repeat-array-scale");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "repeat-array-scale");
         controller.window.set_scale_x("1.2".into());
         controller.window.invoke_apply();
         assert_eq!(lock(&shared).document().vmf(), &scale_before);

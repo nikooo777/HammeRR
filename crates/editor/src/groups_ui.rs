@@ -679,7 +679,7 @@ mod tests {
         controller.window.invoke_choose(inner.to_string().into());
         controller.window.invoke_begin_ungroup();
         assert!(controller.window.get_ready());
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "object-groups");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "object-groups");
         controller.window.invoke_apply();
         assert_eq!(lock(&shared).document().vmf().world.groups.len(), 1);
         lock(&shared).undo(Actor::Agent).unwrap();

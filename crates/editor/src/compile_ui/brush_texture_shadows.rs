@@ -55,7 +55,7 @@ mod tests {
 
     use super::*;
     use crate::compile_ui::Controller;
-    use crate::ui::tests::{assert_dialog_button_visible, save_ui_snapshot};
+    use crate::ui::tests::{assert_dialog_button_visible, assert_ui_renders};
 
     #[test]
     fn brush_texture_shadows_use_real_controls_recipes_and_frozen_jobs() {
@@ -102,7 +102,7 @@ mod tests {
         controller.window.invoke_change_brush_texture_shadows(false);
         controller.window.invoke_apply_recipe();
         assert!(controller.window.get_brush_texture_shadows());
-        save_ui_snapshot(controller.window.window(), "build-brush-texture-shadows");
+        assert_ui_renders(controller.window.window(), "build-brush-texture-shadows");
         let request = lock(&shared).begin_compile(Actor::User, None).unwrap();
         controller.refresh(&lock(&shared));
         assert!(!controller.window.get_brush_texture_shadows_enabled());

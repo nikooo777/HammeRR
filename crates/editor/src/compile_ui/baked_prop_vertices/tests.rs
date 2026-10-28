@@ -184,7 +184,7 @@ fn baked_prop_vertices_controls_inspect_real_pages_channels_disabled_props_and_s
     assert!(!window.get_diagnostics().is_empty());
     window.invoke_inspect_prop(1);
     assert_eq!(window.get_vertex_rows().row_count(), 256);
-    crate::ui::tests::save_ui_snapshot(window.window(), "baked-prop-vertices");
+    crate::ui::tests::assert_ui_renders(window.window(), "baked-prop-vertices");
     {
         let mut session = lock(&shared);
         session

@@ -474,8 +474,8 @@ mod tests {
         controller.window.invoke_frame_attachment();
         assert_ne!(lock(&shared).camera(), camera);
         controller.window.show().unwrap();
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "model-details");
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "model-attachments");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "model-details");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "model-attachments");
         lock(&shared)
             .preview_snap_to_grid(Actor::User, &[ObjectId::Entity(id)])
             .unwrap();

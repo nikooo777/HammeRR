@@ -72,7 +72,7 @@ fn software_instance_collapse_callbacks_preview_cancel_apply_and_undo_the_shared
         .window
         .window()
         .set_size(slint::PhysicalSize::new(800, 950));
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "instance-collapse-review");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "instance-collapse-review");
     controller.window.invoke_cancel();
     assert_eq!(lock(&shared).render_document().vmf(), &source);
     let retained = lock(&shared)
@@ -103,7 +103,7 @@ fn software_instance_collapse_callbacks_preview_cancel_apply_and_undo_the_shared
             .get_contents()
             .contains("Selected leading references")
     );
-    crate::ui::tests::save_ui_snapshot(
+    crate::ui::tests::assert_ui_renders(
         controller.window.window(),
         "instance-collapse-selected-review",
     );
@@ -192,7 +192,7 @@ fn software_instance_reference_callbacks_share_creation_edits_and_expire_picker_
         .window
         .window()
         .set_size(slint::PhysicalSize::new(760, 690));
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "instance-reference");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "instance-reference");
     let token = controller.token.get().unwrap();
     let generation = controller.generation.get();
     let edits = controller.edits.get();

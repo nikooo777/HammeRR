@@ -58,7 +58,7 @@ fn sprite_name_browse_callbacks_preserve_cancel_and_commit_full_virtual_identity
     refresh_material_catalog(&window, &mut lock(&shared));
     refresh_material_window(&window, &mut lock(&shared));
     window.show().unwrap();
-    crate::ui::tests::save_ui_snapshot(window.window(), "sprite-name-material-picker");
+    crate::ui::tests::assert_ui_renders(window.window(), "sprite-name-material-picker");
     assert_eq!(window.get_material(), "sprites/glow01");
     assert!(window.get_available());
     assert_ne!(window.get_preview().size().width, 0);

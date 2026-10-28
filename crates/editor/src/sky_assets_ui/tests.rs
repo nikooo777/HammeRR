@@ -144,7 +144,7 @@ fn world_sky_inspection_button_refresh_and_close_preserve_applied_map_and_pendin
     assert_eq!(window.get_report().matches("Patch source:").count(), 1);
     assert!(window.get_report().contains("fixture_base.vmt"));
     assert!(!window.get_report().contains("fixturert.vmt"));
-    crate::ui::tests::save_ui_snapshot(window.window(), "sky-assets");
+    crate::ui::tests::assert_ui_renders(window.window(), "sky-assets");
     for label in ["Refresh sky assets", "Close"] {
         crate::ui::tests::assert_dialog_button_visible(window, label);
     }

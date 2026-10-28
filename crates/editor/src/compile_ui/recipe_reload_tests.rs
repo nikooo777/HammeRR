@@ -73,7 +73,7 @@ fn reload_recipe_callback_repairs_storage_and_preserves_owned_review_and_options
             .contains("could not reload")
     );
     assert_eq!(controller.window.get_selected_recipe(), "Newer revision");
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-recipes-reload");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "build-recipes-reload");
     std::fs::write(&path, valid).unwrap();
     controller.window.invoke_reload_recipes();
     assert!(controller.window.get_custom_recipes_enabled());

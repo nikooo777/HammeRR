@@ -208,7 +208,7 @@ fn linked_path_window_edits_orders_reviews_and_applies_owned_preview_once() {
         "{}",
         controller.window.get_message()
     );
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "linked-path");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "linked-path");
     for label in [
         "Add point",
         "Remove",
@@ -365,7 +365,7 @@ fn linked_path_window_edits_orders_reviews_and_applies_owned_preview_once() {
             .is_empty()
     );
     assert_eq!(lock(&shared).document().vmf(), &before);
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "linked-path-existing");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "linked-path-existing");
     crate::ui::tests::assert_dialog_button_visible(&controller.window, "Load selected path");
     controller.window.invoke_apply();
     assert_eq!(lock(&shared).document().vmf(), &expected);

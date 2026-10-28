@@ -129,5 +129,5 @@ fn solid_class_picker_and_shared_tie_operation_accept_visclusters() {
             delta_x: 0.0,
             delta_y: -10000.0,
         });
-    super::tests::save_ui_snapshot(controller.window.window(), "build-visclusters");
+    super::tests::assert_ui_renders(controller.window.window(), "build-visclusters");
 }

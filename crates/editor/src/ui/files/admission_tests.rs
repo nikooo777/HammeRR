@@ -288,6 +288,6 @@ fn two_toolbar_rows_keep_controls_reachable_and_invoke_save_as() {
             .invoke_accessible_default_action();
     }
     assert_eq!(saves.get(), 2);
-    crate::ui::tests::save_ui_snapshot(app.window(), "save-as-controls");
+    crate::ui::tests::assert_ui_renders(app.window(), "save-as-controls");
     app.hide().unwrap();
 }

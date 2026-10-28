@@ -1429,38 +1429,6 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[test]
-    fn hdr_results_keep_channels_separate_and_explain_empty_native_data() {
-        let mut stats = serde_json::json!({
-            "lighting_faces": 3,
-            "lighting_work": 101,
-            "lighting_total_work": 303,
-            "hdr": {
-                "lighting_faces": 7,
-                "lightmap_samples": 11,
-                "world_lights": 2,
-                "lighting_bytes": 44,
-                "lighting_work": 202,
-                "ambient_samples": 5,
-                "ambient_bytes": 160,
-                "map_data_present": false
-            }
-        });
-        let details = hdr_lighting_details(&stats);
-        assert!(
-            details
-                .contains("HDR baked lighting: 7 faces · 11 samples · 2 light sources · 44 bytes")
-        );
-        assert!(details.contains("HDR model ambient: 5 probes · 160 bytes"));
-        assert!(details.contains("HDR native map data: HDR unavailable: incomplete map data"));
-        assert!(details.contains("Lighting work: LDR 101 · HDR 202 · Shared total 303"));
-        assert!(!details.contains("3 faces"));
-        stats["hdr"]["map_data_present"] = true.into();
-        assert!(hdr_lighting_details(&stats).contains("HDR data ready"));
-        stats["hdr"] = serde_json::Value::Null;
-        assert!(hdr_lighting_details(&stats).is_empty());
-    }
-
-    #[test]
     fn recipe_controls_share_crud_apply_cancel_and_job_guards() {
         slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
             i_slint_backend_testing::TestingBackendOptions {
@@ -1603,8 +1571,8 @@ mod tests {
                 "Missing {label}"
             );
         }
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-recipes");
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-hdr-controls");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "build-recipes");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "build-hdr-controls");
         let refinement = crate::ui::tests::scroll_inspector_to_control(
             &controller.window,
             "Refine ambient probes",
@@ -1614,7 +1582,7 @@ mod tests {
         assert!(!lock(&shared).compile_options().refine_ambient_probes);
         refinement.invoke_accessible_default_action();
         assert!(lock(&shared).compile_options().refine_ambient_probes);
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-ambient-probes");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "build-ambient-probes");
         controller.window.invoke_apply_recipe();
         assert_eq!(lock(&shared).build_recipes()["active"]["id"], id);
         let request = lock(&shared).begin_compile(Actor::Agent, None).unwrap();

@@ -64,7 +64,7 @@ fn bound_selection_filter_controls_share_the_session_without_pruning_and_reject_
     for label in ["World brushes", "Brush entities", "Point entities & models"] {
         crate::ui::tests::assert_dialog_button_visible(&app, label);
     }
-    crate::ui::tests::save_ui_snapshot(app.window(), "selection-filters");
+    crate::ui::tests::assert_ui_renders(app.window(), "selection-filters");
     document.shutdown().unwrap();
     let before = lock(&shared).selection_filter_state();
     app.set_pick_world_brushes(false);

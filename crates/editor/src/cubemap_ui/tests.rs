@@ -91,7 +91,7 @@ fn cubemap_window_keeps_cached_inspection_and_requires_current_owned_review() {
     assert_eq!(state["draft"]["report"]["assignments"][0]["manual"], false);
     assert!(controller.window.get_ready());
     assert!(controller.window.window().is_visible());
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "cubemap-faces");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "cubemap-faces");
     for label in [
         "Bind selected faces",
         "Clear all manual bindings",

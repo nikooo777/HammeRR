@@ -73,7 +73,7 @@ fn software_favorite_reload_and_shared_poll_preserve_selection_preview_and_weak_
     window
         .window()
         .set_size(slint::PhysicalSize::new(1180, 760));
-    crate::ui::tests::save_ui_snapshot(window.window(), "material-favorites-reload");
+    crate::ui::tests::assert_ui_renders(window.window(), "material-favorites-reload");
     crate::ui::tests::assert_dialog_button_visible(&window, "Reload favorites");
     let before = lock(&shared).material_favorites_serial();
     drop(owner);

@@ -152,7 +152,7 @@ fn command_search_retains_hidden_edits_through_save_clear_reload_and_cancel() {
     controller.window.set_search("clip".into());
     controller.window.invoke_filter_commands();
     assert!(controller.window.get_can_save());
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "keyboard-shortcuts-search");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "keyboard-shortcuts-search");
     controller.window.invoke_cancel();
     assert!(!controller.window.window().is_visible());
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
@@ -415,7 +415,7 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     controller.window.set_primary_shift(false);
     controller.window.invoke_edited();
     assert!(controller.window.get_can_save());
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "selection-mode-shortcuts");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "selection-mode-shortcuts");
     let visible_commands = [
         "Select tool",
         "Move handles",
@@ -492,7 +492,7 @@ fn shortcut_controls_save_atomically_report_conflicts_and_preserve_text_field_ed
     assert_commands_visible();
     assert_eq!(controller.window.get_selected_label(), "Clip mode");
     assert_eq!(controller.window.get_primary_key(), 0);
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "keyboard-shortcuts");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "keyboard-shortcuts");
     controller.window.invoke_choose("undo".into());
     controller.window.set_primary_key(key_index("F7"));
     controller.window.invoke_edited();

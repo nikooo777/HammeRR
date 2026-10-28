@@ -268,7 +268,7 @@ fn software_controls_share_visibility_reports_frame_clear_and_preserve_parent() 
         .window
         .window()
         .set_size(slint::PhysicalSize::new(850, 690));
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "instance-contents");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "instance-contents");
     controller.window.invoke_frame_contents();
     assert_ne!(lock(&shared).camera(), camera);
     lock(&shared).set_camera(camera);
@@ -398,13 +398,13 @@ fn software_terrain_counts_and_provenance_match_build_details_and_preserve_paren
             delta_x: 0.0,
             delta_y: -10_000.0,
         });
-    crate::ui::tests::save_ui_snapshot(build.window.window(), "build-instance-terrain");
+    crate::ui::tests::assert_ui_renders(build.window.window(), "build-instance-terrain");
     contents.window.show().unwrap();
     contents
         .window
         .window()
         .set_size(slint::PhysicalSize::new(850, 690));
-    crate::ui::tests::save_ui_snapshot(contents.window.window(), "instance-contents-terrain");
+    crate::ui::tests::assert_ui_renders(contents.window.window(), "instance-contents-terrain");
     let session = lock(&shared);
     assert_eq!(session.document().vmf(), &source);
     assert_eq!(session.history_snapshot(), history);

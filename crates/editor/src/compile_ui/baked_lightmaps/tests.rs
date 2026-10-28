@@ -266,7 +266,7 @@ fn baked_lightmap_controls_inspect_successful_build_and_clear_changed_output() {
             .contains("entity:9100 → child.vmf")
     );
     assert_eq!(lock(&shared).selected_faces(), original_selection);
-    crate::ui::tests::save_ui_snapshot(window.window(), "baked-lightmaps");
+    crate::ui::tests::assert_ui_renders(window.window(), "baked-lightmaps");
     window.set_style_index(3);
     window.invoke_query_changed();
     assert!(!window.get_has_preview());

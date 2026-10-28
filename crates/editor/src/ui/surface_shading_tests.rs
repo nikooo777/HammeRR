@@ -114,5 +114,5 @@ fn viewport_image_covers_allocated_bounds_at_scale_1_25_without_a_bottom_strip()
             "row {y}"
         );
     }
-    super::tests::save_ui_snapshot(app.window(), "viewport-scale-1-25");
+    super::tests::assert_ui_renders(app.window(), "viewport-scale-1-25");
 }

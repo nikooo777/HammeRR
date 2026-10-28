@@ -352,17 +352,20 @@ mod tests {
             controller.refresh(&lock(&shared));
         }
         controller.window.show().unwrap();
-        crate::ui::tests::save_ui_snapshot(
+        crate::ui::tests::assert_ui_renders(
             controller.window.window(),
             "build-hdr-reflection-controls",
         );
         controller.window.invoke_change_lighting(1);
         controller.refresh(&lock(&shared));
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-reflection-controls");
+        crate::ui::tests::assert_ui_renders(
+            controller.window.window(),
+            "build-reflection-controls",
+        );
         let runtime = lock(&shared).native_capture_runtime();
         controller.window.invoke_begin_capture_edit();
         assert!(controller.window.get_capture_editing());
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-reflection-runtime");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "build-reflection-runtime");
         controller
             .window
             .set_capture_engine_root("/missing/hammerr-capture-install".into());

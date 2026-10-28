@@ -61,7 +61,7 @@ fn water_damping_number_callbacks_preserve_raw_text_and_stage_cancel_apply_remov
     window.set_filter("Water".into());
     refresh_properties(&window, &lock(&shared));
     window.show().unwrap();
-    crate::ui::tests::save_ui_snapshot(window.window(), "water-pressure-world-settings");
+    crate::ui::tests::assert_ui_renders(window.window(), "water-pressure-world-settings");
     window.set_filter("Liquid pressure damping".into());
     window.invoke_edit(key.into(), raw.into());
     window.invoke_apply();

@@ -102,7 +102,7 @@ fn direct_vector_dialog_keeps_mixed_values_and_commits_only_the_reviewed_preview
     refresh_surface_dialog(&window, &mut session, &target);
     window.window().set_size(slint::PhysicalSize::new(760, 900));
     window.show().unwrap();
-    super::super::tests::save_ui_snapshot(window.window(), "uv-vectors");
+    super::super::tests::assert_ui_renders(window.window(), "uv-vectors");
     for label in ["Cancel", "Preview textures", "Apply textures"] {
         super::super::tests::assert_dialog_button_visible(&window, label);
     }

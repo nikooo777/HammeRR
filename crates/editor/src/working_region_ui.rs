@@ -254,7 +254,7 @@ mod tests {
                 .get_summary()
                 .contains("Working region active")
         );
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "working-region");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "working-region");
         let stamp = lock(&shared).working_region_stamp();
         controller.window.set_min_x("nan".into());
         controller.window.invoke_apply();
@@ -308,7 +308,7 @@ mod tests {
         bind_clear(&app, shared.clone());
         app.set_working_region_active(true);
         app.show().unwrap();
-        crate::ui::tests::save_ui_snapshot(app.window(), "working-region-status");
+        crate::ui::tests::assert_ui_renders(app.window(), "working-region-status");
         crate::ui::tests::assert_dialog_button_visible(&app, "Clear working region");
         i_slint_backend_testing::ElementHandle::find_by_accessible_label(
             &app,

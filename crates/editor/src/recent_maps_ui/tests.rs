@@ -104,7 +104,7 @@ fn reload_saved_list_callback_recovers_a_conflict_and_preserves_the_owned_review
     assert!(!window.get_writable());
     assert!(window.get_warning().contains("Reload saved list"));
     assert_eq!(std::fs::read(&path).unwrap(), saved);
-    crate::ui::tests::save_ui_snapshot(window.window(), "recent-map-conflicts");
+    crate::ui::tests::assert_ui_renders(window.window(), "recent-map-conflicts");
     window.invoke_refresh();
     assert!(window.get_writable());
     assert!(window.get_warning().is_empty());

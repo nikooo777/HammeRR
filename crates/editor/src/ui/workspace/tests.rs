@@ -207,7 +207,7 @@ fn two_actual_hosts_keep_peer_edits_and_release_closed_claims_before_reopen_and_
             if list.get_rows().row_count() != 2 || list.get_can_create() {
                 return Err("Actual document list did not reflect the two-host cap".into());
             }
-            crate::ui::tests::save_ui_snapshot_at_current_time(list.window(), "open-documents");
+            crate::ui::tests::assert_ui_renders_at_current_time(list.window(), "open-documents");
             app_a
                 .window()
                 .dispatch_event(slint::platform::WindowEvent::CloseRequested);
@@ -578,7 +578,7 @@ fn actual_save_all_button_reports_unnamed_peer_then_saves_two_named_maps_without
             {
                 return Err("Save all showed or changed the unnamed peer".into());
             }
-            crate::ui::tests::save_ui_snapshot_at_current_time(
+            crate::ui::tests::assert_ui_renders_at_current_time(
                 list.window(),
                 "save-all-named-maps",
             );
@@ -736,7 +736,7 @@ fn actual_quit_all_review_cancels_rejects_hidden_changes_and_closes_both_hosts()
             list.window()
                 .take_snapshot()
                 .map_err(|error| error.to_string())?;
-            crate::ui::tests::save_ui_snapshot_at_current_time(
+            crate::ui::tests::assert_ui_renders_at_current_time(
                 list.window(),
                 "quit-all-reviewed-hidden-draft",
             );

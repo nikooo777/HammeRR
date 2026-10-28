@@ -38,7 +38,7 @@ fn grid_defaults_window_saves_applies_retries_and_resets_through_shared_session_
     window.invoke_save();
     assert!(window.get_message().contains("saved"));
     assert!(window.get_defaults().contains("0.25 units"));
-    crate::ui::tests::save_ui_snapshot(window.window(), "grid-defaults");
+    crate::ui::tests::assert_ui_renders(window.window(), "grid-defaults");
     for label in [
         "Save current as defaults",
         "Apply saved defaults",
@@ -85,7 +85,7 @@ fn grid_defaults_window_saves_applies_retries_and_resets_through_shared_session_
         .unwrap(),
         b"bad preferences"
     );
-    crate::ui::tests::save_ui_snapshot(window.window(), "grid-defaults-error");
+    crate::ui::tests::assert_ui_renders(window.window(), "grid-defaults-error");
     window.invoke_reset();
     assert!(window.get_ready());
     assert_eq!(lock(&shared).spatial().grid_size, 0.25);

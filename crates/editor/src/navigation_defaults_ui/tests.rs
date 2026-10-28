@@ -66,7 +66,7 @@ fn speed_input_wheel_routing_and_defaults_callbacks_preserve_owned_preview() {
     ] {
         crate::ui::tests::assert_dialog_button_visible(window, label);
     }
-    crate::ui::tests::save_ui_snapshot(window.window(), "navigation-defaults");
+    crate::ui::tests::assert_ui_renders(window.window(), "navigation-defaults");
     window.invoke_save();
     assert_eq!(window.get_saved(), "1975.25 units/s");
     lock(&shared).set_fly_speed(600.0).unwrap();

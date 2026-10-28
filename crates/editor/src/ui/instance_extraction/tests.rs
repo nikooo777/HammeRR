@@ -48,7 +48,7 @@ fn software_instance_extraction_callbacks_prepare_review_extract_cancel_and_undo
         .window
         .window()
         .set_size(slint::PhysicalSize::new(760, 650));
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "instance-extraction");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "instance-extraction");
     assert!(
         controller
             .window

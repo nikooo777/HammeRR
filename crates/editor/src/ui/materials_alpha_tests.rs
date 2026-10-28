@@ -52,7 +52,7 @@ fn material_browser_color_alpha_callbacks_retain_source_drafts_and_explicit_fail
     {
         assert_eq!(*alpha, [color[3], color[3], color[3], 255]);
     }
-    crate::ui::tests::save_ui_snapshot(window.window(), "material-alpha-preview");
+    crate::ui::tests::assert_ui_renders(window.window(), "material-alpha-preview");
     crate::ui::tests::assert_dialog_button_visible(&window, "Color");
     crate::ui::tests::assert_dialog_button_visible(&window, "Alpha");
     i_slint_backend_testing::ElementHandle::find_by_accessible_label(&window, "Color")

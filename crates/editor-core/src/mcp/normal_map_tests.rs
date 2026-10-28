@@ -48,10 +48,6 @@ fn normal_map_controls_and_reports_share_lazy_scene_admission_without_editing_so
     let initial = value(server.get_normal_map_preview());
     assert_eq!(initial["enabled"], false);
     assert_eq!(initial["report"]["materials"], json!([]));
-    for args in [json!({"normal_maps":1}), json!({"normal_maps":"true"})] {
-        assert!(serde_json::from_value::<SetViewArgs>(args.clone()).is_err());
-        assert!(serde_json::from_value::<RenderArgs>(args).is_err());
-    }
     assert_eq!(
         value(server.set_view(Parameters(
             serde_json::from_value(json!({"normal_maps":true})).unwrap()

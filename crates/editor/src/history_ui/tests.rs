@@ -66,7 +66,7 @@ fn history_window_inspects_cancels_navigates_guards_and_reopens_with_software_re
     assert!(window.get_can_navigate());
     assert!(window.get_message().contains("undo 1 transaction"));
     assert!(window.get_detail().contains("added entity:"));
-    crate::ui::tests::save_ui_snapshot(window.window(), "history");
+    crate::ui::tests::assert_ui_renders(window.window(), "history");
     crate::ui::tests::assert_dialog_button_visible(window, "Go to selected state");
     crate::ui::tests::assert_dialog_button_visible(window, "Cancel selection");
     crate::ui::tests::assert_dialog_button_visible(window, "Close");

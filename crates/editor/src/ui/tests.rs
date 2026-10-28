@@ -1,7 +1,6 @@
 use super::*;
 use crate::identity::id_string;
 use source_formats::fgd::Catalog;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 #[test]
@@ -188,7 +187,7 @@ pub(crate) fn selection_display_controls_share_default_and_agent_view_without_ma
     assert_eq!(lock(&shared).selected_ids(), selection);
     app.show().unwrap();
     app.window().set_size(slint::PhysicalSize::new(1600, 960));
-    save_ui_snapshot(app.window(), "selection-outlines");
+    assert_ui_renders(app.window(), "selection-outlines");
 }
 
 #[test]
@@ -231,7 +230,7 @@ pub(crate) fn entity_picker_shows_shared_map_size_provenance_and_clears_on_reloa
     window.show().unwrap();
     assert_dialog_button_visible(&window, "Place entity");
     assert_dialog_button_visible(&window, "Load FGD…");
-    save_ui_snapshot(window.window(), "entity-catalog-mapsize");
+    assert_ui_renders(window.window(), "entity-catalog-mapsize");
     assert_eq!(session.document().vmf(), &source);
     assert_eq!(session.document().undo_labels().count(), history);
     session.set_definitions(
@@ -350,7 +349,7 @@ pub(crate) fn fog_preview_controls_choose_apply_cancel_and_reject_stale_or_unsup
             .lines()
             .any(|line| line == "Maximum density: 0.8 · Authored fog: enabled")
     );
-    save_ui_snapshot(window.window(), "fog-preview");
+    assert_ui_renders(window.window(), "fog-preview");
     assert_dialog_button_visible(window, "Apply preview");
     assert_dialog_button_visible(window, "Cancel");
     window.invoke_cancel();
@@ -370,7 +369,7 @@ pub(crate) fn fog_preview_controls_choose_apply_cancel_and_reject_stale_or_unsup
     window.invoke_choice_changed();
     assert!(!window.get_can_apply());
     assert!(window.get_detail().contains("fogblend"));
-    save_ui_snapshot(window.window(), "fog-preview-unsupported");
+    assert_ui_renders(window.window(), "fog-preview-unsupported");
     window.invoke_apply();
     assert!(window.get_message().contains("fogblend"));
     window.set_controller_index(1);
@@ -452,7 +451,7 @@ pub(crate) fn manipulation_controls_share_agent_previews_and_selection_without_d
             )
             .unwrap();
         refresh_interaction(&app, &lock(&shared));
-        save_ui_snapshot(app.window(), "transform-handles-controls");
+        assert_ui_renders(app.window(), "transform-handles-controls");
         for label in ["Apply transform", "Cancel"] {
             assert_dialog_button_visible(&app, label);
         }
@@ -498,7 +497,7 @@ pub(crate) fn manipulation_controls_share_agent_previews_and_selection_without_d
             .unwrap();
         refresh_interaction(&app, &state);
         drop(state);
-        save_ui_snapshot(app.window(), "area-selection-controls");
+        assert_ui_renders(app.window(), "area-selection-controls");
         for label in ["Apply selection", "Cancel"] {
             assert_dialog_button_visible(&app, label);
         }
@@ -547,7 +546,7 @@ pub(crate) fn manipulation_controls_share_agent_previews_and_selection_without_d
         assert_eq!(lock(&shared).paint_stroke().unwrap().token, current);
         assert_ne!(old, current);
         refresh_interaction(&app, &lock(&shared));
-        save_ui_snapshot(app.window(), "paint-selection-controls");
+        assert_ui_renders(app.window(), "paint-selection-controls");
         for label in ["Apply selection", "Cancel"] {
             assert_dialog_button_visible(&app, label);
         }
@@ -716,7 +715,7 @@ pub(crate) fn texture_brush_controls_preview_apply_and_cancel_without_desktop_in
         assert_ne!(old, token);
         assert_eq!(lock(&shared).paint_stroke().unwrap().token, token);
         refresh_interaction(&app, &lock(&shared));
-        save_ui_snapshot(app.window(), "texture-stroke-controls");
+        assert_ui_renders(app.window(), "texture-stroke-controls");
         for label in ["Apply textures", "Cancel"] {
             assert_dialog_button_visible(&app, label);
         }
@@ -809,7 +808,7 @@ pub(crate) fn clipping_controls_preview_apply_cancel_and_escape_without_desktop_
             if keep == 2 { 2 } else { 1 }
         );
     }
-    save_ui_snapshot(app.window(), "clipping-controls");
+    assert_ui_renders(app.window(), "clipping-controls");
     let labels = ["Preview plane", "Apply cut", "Cancel cut"];
     let panel =
         i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "Rectangle")
@@ -896,7 +895,7 @@ pub(crate) fn clipping_controls_preview_apply_cancel_and_escape_without_desktop_
         lock(&shared).clip_preview().unwrap().material.as_deref(),
         Some("tools/toolsnodraw")
     );
-    save_ui_snapshot(app.window(), "three-point-clipping");
+    assert_ui_renders(app.window(), "three-point-clipping");
     app.set_clip_handles_mode(2);
     app.set_clip_angle_step("30".into());
     app.invoke_clip_handles_changed();
@@ -915,7 +914,7 @@ pub(crate) fn clipping_controls_preview_apply_cancel_and_escape_without_desktop_
     };
     assert!(app.get_clip_positioning());
     assert_dialog_button_visible(&app, "Cancel positioning");
-    save_ui_snapshot(app.window(), "cut-plane-handles");
+    assert_ui_renders(app.window(), "cut-plane-handles");
     i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Cancel positioning")
         .next()
         .unwrap()
@@ -1020,7 +1019,7 @@ pub(crate) fn connection_controls_share_agent_drafts_and_reject_stale_forms() {
         lock(&shared).connection_draft().unwrap().fields.delay,
         "0.25"
     );
-    save_ui_snapshot(window.window(), "entity-connections");
+    assert_ui_renders(window.window(), "entity-connections");
     assert_dialog_button_visible(&window, "Cancel");
     assert_dialog_button_visible(&window, "Apply connection");
     i_slint_backend_testing::ElementHandle::find_by_accessible_label(&window, "Apply connection")
@@ -1030,7 +1029,7 @@ pub(crate) fn connection_controls_share_agent_drafts_and_reject_stale_forms() {
     assert_eq!(lock(&shared).connection_records(source).unwrap().len(), 1);
     assert_eq!(lock(&shared).incoming_connections(source).unwrap().len(), 1);
     window.invoke_choose(id_string(ObjectId::Entity(source)).into(), 0);
-    save_ui_snapshot(window.window(), "entity-connections-edit");
+    assert_ui_renders(window.window(), "entity-connections-edit");
     let old_token = lock(&shared).connection_draft().unwrap().token;
     lock(&shared).begin_connection_edit(source, None).unwrap();
     window.invoke_apply();
@@ -1181,7 +1180,7 @@ pub(crate) fn rename_controls_share_previews_review_cancel_and_stale_guards() {
     window.set_accept_review(true);
     window.invoke_fields_changed();
     assert!(window.get_can_apply());
-    save_ui_snapshot(window.window(), "entity-rename");
+    assert_ui_renders(window.window(), "entity-rename");
     assert_dialog_button_visible(&window, "New entity name");
     assert_dialog_button_visible(&window, "Current entity name");
     let name_field = i_slint_backend_testing::ElementHandle::find_by_accessible_label(
@@ -1304,7 +1303,7 @@ pub(crate) fn management_controls_stage_cancel_apply_and_report_without_desktop_
             .iter()
             .any(|row| row.status.contains("Mixed"))
     );
-    save_ui_snapshot(window.window(), "batch-properties");
+    assert_ui_renders(window.window(), "batch-properties");
     for label in ["Cancel", "Apply properties"] {
         assert_dialog_button_visible(&window, label);
     }
@@ -1365,7 +1364,7 @@ pub(crate) fn management_controls_stage_cancel_apply_and_report_without_desktop_
     report.invoke_search();
     assert_eq!(report.get_rows().row_count(), 2);
     report.show().unwrap();
-    save_ui_snapshot(report.window(), "object-report");
+    assert_ui_renders(report.window(), "object-report");
     for label in [
         "Close",
         "Show all",
@@ -1425,7 +1424,7 @@ pub(crate) fn statistics_controls_refresh_page_and_close_without_editing() {
     window.set_page(0);
     window.invoke_refresh();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "map-statistics");
+    assert_ui_renders(window.window(), "map-statistics");
     for label in ["Refresh", "Close", "Next"] {
         assert_dialog_button_visible(&window, label);
     }
@@ -1506,7 +1505,7 @@ pub(crate) fn component_controls_select_preview_reject_apply_and_cancel() {
     assert_eq!(lock(&shared).document().vmf(), &original);
     let valid = lock(&shared).render_document().vmf().clone();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "brush-components");
+    assert_ui_renders(window.window(), "brush-components");
     assert_dialog_button_visible(&window, "Stop viewport picking");
     for label in [
         "Cancel",
@@ -1557,7 +1556,7 @@ pub(crate) fn component_controls_select_preview_reject_apply_and_cancel() {
         1
     );
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "brush-faces");
+    assert_ui_renders(window.window(), "brush-faces");
     window.invoke_cancel();
     assert_eq!(lock(&shared).document().vmf(), &valid);
     lock(&shared).undo(Actor::Agent).unwrap();
@@ -1580,7 +1579,7 @@ pub(crate) fn component_controls_select_preview_reject_apply_and_cancel() {
     window.show().unwrap();
     window.window().take_snapshot().unwrap();
     i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(250));
-    save_ui_snapshot(window.window(), "brush-texture-attachment");
+    assert_ui_renders(window.window(), "brush-texture-attachment");
     window.invoke_apply();
     lock(&shared).undo(Actor::Agent).unwrap();
     assert_eq!(lock(&shared).document().vmf(), &original);
@@ -1737,7 +1736,7 @@ pub(crate) fn partition_texture_controls_share_preview_inheritance_keep_cancel_a
     window
         .window()
         .set_size(slint::PhysicalSize::new(1100, 1100));
-    save_ui_snapshot(window.window(), "partition-texture-placement");
+    assert_ui_renders(window.window(), "partition-texture-placement");
     assert_dialog_button_visible(&window, "Cancel");
     assert_dialog_button_visible(&window, "Fit each piece");
     assert_dialog_button_visible(&window, "Preview justification");
@@ -1769,11 +1768,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
         },
     )))
     .unwrap();
-    let mut state = Session::new(if std::env::var_os("HAMMERR_UI_SNAPSHOTS").is_some() {
-        editor_core::startup::mount_game(None)
-    } else {
-        Err("no assets needed".into())
-    });
+    let mut state = Session::new(Err("no assets needed".into()));
     let ObjectId::Solid(id) = state
         .create_block(
             Actor::Agent,
@@ -1826,7 +1821,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
         .set_size(slint::PhysicalSize::new(1100, 900));
     assert_dialog_button_visible(&window, "Stage flat partition");
     window.invoke_preview_edit();
-    save_ui_snapshot(window.window(), "flat-face-partition");
+    assert_ui_renders(window.window(), "flat-face-partition");
     assert_eq!(window.get_operation(), 6);
     assert!(window.get_has_partition_preview() && window.get_partition_flat());
     assert!(window.get_ready());
@@ -1879,7 +1874,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
     window
         .window()
         .set_size(slint::PhysicalSize::new(1100, 900));
-    save_ui_snapshot(window.window(), "partition-top-material");
+    assert_ui_renders(window.window(), "partition-top-material");
     window.invoke_inherit_partition_material();
     assert!(window.get_ready());
     assert_eq!(window.get_top_material(), "brick/test");
@@ -1921,7 +1916,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
         lock(&shared).component_report(&[]).unwrap()["preview"]["partition"]["edge_parameters"],
         serde_json::json!([0.2, 0.8])
     );
-    save_ui_snapshot(window.window(), "adjusted-flat-partition");
+    assert_ui_renders(window.window(), "adjusted-flat-partition");
     for label in [
         "Partition edge A position",
         "Partition edge B position",
@@ -1966,7 +1961,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
     assert_eq!(window.get_cut_first(), "13.7");
     assert_eq!(window.get_cut_second(), "13.7");
     window.set_show_cut_settings(false);
-    save_ui_snapshot(window.window(), "adjusted-partition-ridge");
+    assert_ui_renders(window.window(), "adjusted-partition-ridge");
     window.invoke_flatten_partitions();
     assert!(window.get_ready() && window.get_partition_flat());
 
@@ -1978,7 +1973,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
     window.set_roof_texture_lock(true);
     window.invoke_choose_rise(16.125);
     window.invoke_preview_edit();
-    save_ui_snapshot(window.window(), "raised-face-partition");
+    assert_ui_renders(window.window(), "raised-face-partition");
     assert!(window.get_ready() && !window.get_partition_flat());
     assert_eq!(
         lock(&shared).component_report(&[id]).unwrap()["texture_mode"],
@@ -2028,7 +2023,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
     assert_eq!(window.get_saved_partitions().row_count(), 1);
     let stored = lock(&shared).document().vmf().clone();
     assert_eq!(stored.world, source.world);
-    save_ui_snapshot(window.window(), "saved-face-partitions");
+    assert_ui_renders(window.window(), "saved-face-partitions");
     assert_dialog_button_visible(&window, "Resume pieces");
     assert_dialog_button_visible(&window, "Remove saved");
     window.invoke_resume_saved_partition();
@@ -2050,7 +2045,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
     assert!(!window.get_ready());
     window.invoke_preview_edit();
     assert!(window.get_ready() && window.get_has_extrusion_preview());
-    save_ui_snapshot(window.window(), "partition-extrusion-controls");
+    assert_ui_renders(window.window(), "partition-extrusion-controls");
     for label in [
         "Extrusion depth",
         "Keep top texture at corners",
@@ -2063,7 +2058,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
         assert_dialog_button_visible(&window, label);
     }
     window.window().set_size(slint::PhysicalSize::new(880, 720));
-    save_ui_snapshot(window.window(), "partition-extrusion-compact");
+    assert_ui_renders(window.window(), "partition-extrusion-compact");
     assert_dialog_button_visible(&window, "Apply extrusion");
     assert_dialog_button_visible(&window, "Cancel");
     window
@@ -2099,7 +2094,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
             .get_preview_summary()
             .contains("Cuts 16.125 units inward")
     );
-    save_ui_snapshot(window.window(), "partition-inward-controls");
+    assert_ui_renders(window.window(), "partition-inward-controls");
     assert_dialog_button_visible(&window, "Extrusion direction");
     assert_dialog_button_visible(&window, "Keep floor texture at corners");
     let inward = lock(&shared).render_document().vmf().clone();
@@ -2226,7 +2221,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
     window.invoke_choose_cut_position(1, 80.0);
     window.invoke_preview_cut();
     assert!(window.get_ready());
-    save_ui_snapshot(window.window(), "boundary-partition-controls");
+    assert_ui_renders(window.window(), "boundary-partition-controls");
     window.invoke_apply();
     assert!(!window.get_has_partition_preview());
     let boundary_stored = lock(&shared).document().vmf().clone();
@@ -2240,7 +2235,7 @@ pub(crate) fn flat_partition_controls_stage_highlight_frame_raise_flatten_apply_
     window.invoke_preview_edit();
     assert!(window.get_ready() && window.get_has_extrusion_preview());
     window.set_show_cut_settings(false);
-    save_ui_snapshot(window.window(), "boundary-partition-extrusion");
+    assert_ui_renders(window.window(), "boundary-partition-extrusion");
     window.invoke_cancel();
     assert_eq!(lock(&shared).partition_preview_token(), None);
     assert_eq!(lock(&shared).document().vmf(), &boundary_stored);
@@ -2401,7 +2396,7 @@ pub(crate) fn polygon_partition_controls_offer_complete_choices_keep_resume_and_
         assert!(window.get_message().is_empty());
         assert_dialog_button_visible(&window, "Keep flat pieces");
         assert_dialog_button_visible(&window, "Cancel");
-        save_ui_snapshot(
+        assert_ui_renders(
             window.window(),
             &format!("polygon-{corners}-partition-controls"),
         );
@@ -2493,7 +2488,7 @@ pub(crate) fn component_source_controls_page_large_owners_and_edit_one_child() {
     assert_eq!(lock(&shared).component_solids(), vec![ids[100]]);
     assert_eq!(lock(&shared).selected_ids(), vec![owner]);
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "component-brush-scope");
+    assert_ui_renders(window.window(), "component-brush-scope");
     for label in [
         "Previous brushes",
         "Next brushes",
@@ -2549,7 +2544,7 @@ pub(crate) fn component_source_controls_page_large_owners_and_edit_one_child() {
             .label
             .starts_with(&format!("Brush {} · ", ids[100]))
     );
-    save_ui_snapshot(window.window(), "component-brush-subset");
+    assert_ui_renders(window.window(), "component-brush-subset");
     window.set_source_index(1);
     let stamp = lock(&shared).component_stamp();
     window.invoke_choose_source();
@@ -2625,7 +2620,7 @@ pub(crate) fn component_scale_rotate_controls_share_pivots_and_preserve_valid_dr
     assert!(window.get_ready());
     let draft = lock(&shared).render_document().vmf().clone();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "component-scale");
+    assert_ui_renders(window.window(), "component-scale");
     for label in [
         "Cancel",
         "Apply scale",
@@ -2653,7 +2648,7 @@ pub(crate) fn component_scale_rotate_controls_share_pivots_and_preserve_valid_dr
     assert_eq!(window.get_pivot_z(), "64");
     window.invoke_preview_edit();
     assert!(window.get_ready());
-    save_ui_snapshot(window.window(), "component-rotate");
+    assert_ui_renders(window.window(), "component-rotate");
     for label in [
         "Apply rotation",
         "Preview rotation",
@@ -2765,7 +2760,7 @@ pub(crate) fn component_weld_target_controls_preview_existing_corners_and_world_
     );
     let draft = lock(&shared).render_document().vmf().clone();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "brush-weld-position");
+    assert_ui_renders(window.window(), "brush-weld-position");
     for label in [
         "Cancel",
         "Apply weld",
@@ -2794,7 +2789,7 @@ pub(crate) fn component_weld_target_controls_preview_existing_corners_and_world_
     window.invoke_preview_edit();
     assert!(window.get_ready());
     assert_eq!(window.get_weld_target_mode(), 1);
-    save_ui_snapshot(window.window(), "brush-weld-corner");
+    assert_ui_renders(window.window(), "brush-weld-corner");
     window.invoke_apply();
     lock(&shared).undo(Actor::User).unwrap();
     assert_eq!(lock(&shared).document().vmf(), &original);
@@ -2854,7 +2849,7 @@ pub(crate) fn component_split_controls_show_new_corners_validate_rise_and_restor
     );
     let draft = lock(&shared).render_document().vmf().clone();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "brush-face-split");
+    assert_ui_renders(window.window(), "brush-face-split");
     for label in [
         "Apply split",
         "Discard preview",
@@ -2913,7 +2908,7 @@ pub(crate) fn component_split_controls_show_new_corners_validate_rise_and_restor
     window.invoke_preview_edit();
     assert!(window.get_ready());
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "brush-edge-split");
+    assert_ui_renders(window.window(), "brush-edge-split");
     window.invoke_apply();
     assert_eq!(
         lock(&shared).component_topology(&[id]).unwrap()[0]
@@ -2977,7 +2972,7 @@ pub(crate) fn ridge_controls_share_edge_choices_valid_drafts_cancel_apply_and_un
     let draft = lock(&shared).render_document().vmf().clone();
     assert_eq!(lock(&shared).document().vmf(), &original);
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "brush-roof-ridge");
+    assert_ui_renders(window.window(), "brush-roof-ridge");
     for label in ["Apply ridge", "Discard preview", "Cancel", "Ridge rise"] {
         assert_dialog_button_visible(&window, label);
     }
@@ -3103,7 +3098,7 @@ pub(crate) fn component_weld_controls_preview_discard_apply_and_undo() {
     assert_eq!(lock(&shared).document().vmf(), &original);
     let draft = lock(&shared).render_document().vmf().clone();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "brush-weld");
+    assert_ui_renders(window.window(), "brush-weld");
     assert_dialog_button_visible(&window, "Cancel");
     assert_dialog_button_visible(&window, "Apply weld");
     assert_dialog_button_visible(&window, "Discard preview");
@@ -3162,7 +3157,7 @@ pub(crate) fn merge_controls_keep_sources_and_share_preview_discard_cancel_apply
     assert_eq!(lock(&shared).document().vmf(), &original);
     let draft = lock(&shared).render_document().vmf().clone();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "brush-merging");
+    assert_ui_renders(window.window(), "brush-merging");
     for label in ["Cancel", "Discard preview", "Preview merge", "Apply merge"] {
         assert_dialog_button_visible(&window, label);
     }
@@ -3234,7 +3229,7 @@ pub(crate) fn carving_multiple_cutters_exposes_roles_and_preserves_preview_cance
     let draft = lock(&shared).render_document().vmf().clone();
     assert_eq!(lock(&shared).document().vmf(), &original);
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "carving-multiple-cutters");
+    assert_ui_renders(window.window(), "carving-multiple-cutters");
     for label in [
         "Cancel",
         "Discard preview",
@@ -3329,7 +3324,7 @@ pub(crate) fn carve_controls_keep_targets_show_preview_and_share_apply_discard_c
     assert_eq!(lock(&shared).document().vmf(), &original);
     let draft = lock(&shared).render_document().vmf().clone();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "brush-carving");
+    assert_ui_renders(window.window(), "brush-carving");
     for label in ["Cancel", "Discard preview", "Preview carve", "Apply carve"] {
         assert_dialog_button_visible(&window, label);
     }
@@ -3393,7 +3388,7 @@ pub(crate) fn hollow_controls_preview_validate_look_inside_apply_and_cancel() {
     assert_eq!(lock(&shared).document().vmf(), &original);
     let valid = lock(&shared).render_document().vmf().clone();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "hollow-brushes");
+    assert_ui_renders(window.window(), "hollow-brushes");
     for label in ["Cancel", "Create walls", "Preview walls", "Look inside"] {
         assert_dialog_button_visible(&window, label);
     }
@@ -3437,7 +3432,7 @@ pub(crate) fn hollow_controls_preview_validate_look_inside_apply_and_cancel() {
     window.show().unwrap();
     window.window().take_snapshot().unwrap();
     i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(250));
-    save_ui_snapshot(window.window(), "hollow-openings");
+    assert_ui_renders(window.window(), "hollow-openings");
     let open = lock(&shared).render_document().vmf().clone();
     for row in window
         .get_faces()
@@ -3466,29 +3461,18 @@ pub(crate) fn hollow_controls_preview_validate_look_inside_apply_and_cancel() {
     assert_eq!(lock(&shared).render_document().vmf(), &original);
 }
 
-pub(crate) fn save_ui_snapshot(window: &slint::Window, name: &str) {
+pub(crate) fn assert_ui_renders(window: &slint::Window, name: &str) {
     window.take_snapshot().unwrap();
     i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(250));
-    save_ui_snapshot_at_current_time(window, name);
+    assert_ui_renders_at_current_time(window, name);
 }
 
-pub(crate) fn save_ui_snapshot_at_current_time(window: &slint::Window, name: &str) {
+pub(crate) fn assert_ui_renders_at_current_time(window: &slint::Window, name: &str) {
     let image = window.take_snapshot().unwrap();
-    assert!(image.width() > 0 && image.height() > 0);
-    if let Some(directory) = std::env::var_os("HAMMERR_UI_SNAPSHOTS") {
-        let path = PathBuf::from(directory).join(format!("{name}.png"));
-        let mut png = png::Encoder::new(
-            std::fs::File::create(path).unwrap(),
-            image.width(),
-            image.height(),
-        );
-        png.set_color(png::ColorType::Rgba);
-        png.set_depth(png::BitDepth::Eight);
-        png.write_header()
-            .unwrap()
-            .write_image_data(image.as_bytes())
-            .unwrap();
-    }
+    assert!(
+        image.width() > 0 && image.height() > 0,
+        "{name} rendered an empty image"
+    );
 }
 
 #[test]
@@ -3535,7 +3519,7 @@ pub(crate) fn saved_view_controls_restore_rename_replace_cancel_and_guard_map_ch
     assert!(controller.window.get_message().contains("already"));
     assert_eq!(lock(&shared).document().vmf(), &before);
     controller.window.invoke_choose("1".into());
-    save_ui_snapshot(controller.window.window(), "saved-views");
+    assert_ui_renders(controller.window.window(), "saved-views");
     controller.window.invoke_close_dialog();
     assert_eq!(lock(&shared).document().vmf(), &before);
     controller.show(&lock(&shared)).unwrap();
@@ -3634,7 +3618,7 @@ pub(crate) fn compile_controls_share_cancel_status_and_guard_replaced_jobs() {
     });
     app.show().unwrap();
     assert!(app.get_compile_label().is_empty());
-    save_ui_snapshot(app.window(), "build-settings-toolbar");
+    assert_ui_renders(app.window(), "build-settings-toolbar");
     assert_dialog_button_visible(&app, "Build settings…");
     i_slint_backend_testing::ElementHandle::find_by_accessible_label(&app, "Build settings…")
         .next()
@@ -3713,7 +3697,7 @@ pub(crate) fn compile_controls_share_cancel_status_and_guard_replaced_jobs() {
     controller.refresh(&lock(&shared));
     assert_eq!(controller.window.get_smoothing_angle(), 45);
     assert_eq!(lock(&shared).compile_settings()["smoothing_angle"], 45);
-    save_ui_snapshot(controller.window.window(), "build-settings");
+    assert_ui_renders(controller.window.window(), "build-settings");
     assert!(lock(&shared).compile_status()["job"].is_null());
     assert_eq!(lock(&shared).document().undo_labels().count(), 0);
     controller.window.invoke_change_sky_quality(0);
@@ -4040,7 +4024,7 @@ pub(crate) fn compile_controls_share_cancel_status_and_guard_replaced_jobs() {
     assert_dialog_button_visible(&controller.window, "Cancel build");
     assert_dialog_button_visible(&controller.window, "Play built map");
     controller.refresh(&lock(&shared));
-    save_ui_snapshot(controller.window.window(), "build-status");
+    assert_ui_renders(controller.window.window(), "build-status");
     assert_eq!(controller.window.get_selected_lighting(), "Direct LDR");
     controller.window.invoke_close_dialog();
     assert!(!controller.window.window().is_visible());
@@ -4121,7 +4105,7 @@ pub(crate) fn volume_controls_preview_frame_cancel_and_guard_shared_selection() 
             }
         }
     }
-    save_ui_snapshot(window.window(), "volume-selection");
+    assert_ui_renders(window.window(), "volume-selection");
     for label in [
         "Cancel",
         "Frame box",
@@ -4218,7 +4202,7 @@ pub(crate) fn grouped_surface_controls_apply_exact_preview_and_preserve_foreign_
     window.show().unwrap();
     window.invoke_preview_edit();
     assert!(lock(&shared).has_face_preview());
-    save_ui_snapshot(window.window(), "grouped-textures");
+    assert_ui_renders(window.window(), "grouped-textures");
     for label in [
         "Cancel",
         "Choose material…",
@@ -4253,7 +4237,7 @@ pub(crate) fn grouped_surface_controls_apply_exact_preview_and_preserve_foreign_
     window.set_repeats_u("2".into());
     window.invoke_preview_edit();
     assert_ne!(lock(&shared).face_preview_token(), foreign);
-    save_ui_snapshot(window.window(), "view-projected-textures");
+    assert_ui_renders(window.window(), "view-projected-textures");
     let draft = lock(&shared).face_preview_document().unwrap().vmf().clone();
     window.invoke_apply();
     assert_eq!(lock(&shared).document().vmf(), &draft);
@@ -4301,7 +4285,7 @@ pub(crate) fn material_replacement_controls_preview_cancel_and_reject_foreign_dr
     assert!(lock(&shared).has_face_preview());
     assert_eq!(lock(&shared).document().vmf(), &before);
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "material-replacement");
+    assert_ui_renders(window.window(), "material-replacement");
     for id in ["source-thumbnail", "replacement-thumbnail"] {
         let image = i_slint_backend_testing::ElementHandle::find_by_element_id(
             window,
@@ -4450,7 +4434,7 @@ pub(crate) fn lighting_controls_preserve_mixed_groups_guard_previews_and_cancel(
         assert_eq!(side.lightmap_scale, 4);
     }
     controller.refresh(&lock(&shared));
-    save_ui_snapshot(window.window(), "face-lighting");
+    assert_ui_renders(window.window(), "face-lighting");
     for label in ["Cancel", "Preview settings", "Apply settings"] {
         assert_dialog_button_visible(window, label);
     }
@@ -4586,7 +4570,7 @@ pub(crate) fn primitive_controls_preview_validate_frame_apply_and_cancel_shared_
     assert_eq!(lock(&shared).primitive_preview().unwrap().ids.len(), 12);
     window.invoke_focus_preview();
     assert!(lock(&shared).primitive_preview().is_some());
-    save_ui_snapshot(window.window(), "brush-shapes");
+    assert_ui_renders(window.window(), "brush-shapes");
     for label in [
         "Preview shape",
         "Focus preview",
@@ -4703,7 +4687,7 @@ pub(crate) fn design_context_controls_share_drafts_queries_regions_and_cancel() 
     assert!(window.get_can_apply());
     window.invoke_apply();
     window.invoke_begin("region:1".into());
-    save_ui_snapshot(window.window(), "design-context");
+    assert_ui_renders(window.window(), "design-context");
     for label in [
         "Map brief",
         "Note on selection",
@@ -4816,7 +4800,7 @@ pub(crate) fn map_checks_controls_share_selection_repair_cancel_and_stale_guards
     window.invoke_review_repair();
     assert!(!window.get_preview_token().is_empty());
     assert_eq!(lock(&shared).document().vmf(), &before);
-    save_ui_snapshot(window.window(), "map-checks");
+    assert_ui_renders(window.window(), "map-checks");
     for label in [
         "Run checks",
         "Select issue",
@@ -4890,7 +4874,7 @@ pub(crate) fn recent_map_controls_share_reopen_and_guard_discard_remove_clear_an
     assert_eq!(window.get_rows().row_count(), 2);
     window.invoke_select_map(first.to_string_lossy().to_string().into());
     assert!(window.get_selected_detail().contains("direct_ldr"));
-    save_ui_snapshot(window.window(), "recent-maps");
+    assert_ui_renders(window.window(), "recent-maps");
     for label in [
         "Reload saved list",
         "Open selected map",
@@ -5002,7 +4986,7 @@ pub(crate) fn recovery_controls_guard_settings_and_restore_and_share_snapshot_op
     recovery_ui::refresh(&window, &lock(&shared));
     window.show().unwrap();
     window.invoke_select_snapshot(entry.id.clone().into());
-    save_ui_snapshot(window.window(), "recovery");
+    assert_ui_renders(window.window(), "recovery");
     for label in [
         "Cancel / close",
         "Apply settings",
@@ -5215,7 +5199,7 @@ pub(crate) fn material_catalog_and_texture_dialog_render_without_desktop_input()
     refresh_material_catalog(&material, &mut session);
     refresh_material_window(&material, &mut session);
     material.show().unwrap();
-    save_ui_snapshot(material.window(), "material-browser");
+    assert_ui_renders(material.window(), "material-browser");
     for label in ["Cancel", "Use material", "Next"] {
         assert_dialog_button_visible(&material, label);
     }
@@ -5232,7 +5216,7 @@ pub(crate) fn material_catalog_and_texture_dialog_render_without_desktop_input()
         material.set_material(first.name.clone().into());
         refresh_material_catalog(&material, &mut session);
         refresh_material_window(&material, &mut session);
-        save_ui_snapshot(material.window(), "materials-grouped");
+        assert_ui_renders(material.window(), "materials-grouped");
         let preview = i_slint_backend_testing::ElementHandle::find_by_element_id(
             &material,
             "MaterialWindow::preview-image",
@@ -5269,7 +5253,7 @@ pub(crate) fn material_catalog_and_texture_dialog_render_without_desktop_input()
         material.get_favorites_status(),
         "Favorites saved across sessions"
     );
-    save_ui_snapshot(material.window(), "material-favorites-persistent");
+    assert_ui_renders(material.window(), "material-favorites-persistent");
     let favorite_path = favorites_directory
         .path()
         .join("recovery")
@@ -5281,7 +5265,7 @@ pub(crate) fn material_catalog_and_texture_dialog_render_without_desktop_input()
     refresh_material_catalog(&material, &mut session);
     refresh_material_window(&material, &mut session);
     assert!(material.get_favorites_status().contains("could not save"));
-    save_ui_snapshot(material.window(), "material-favorites-error");
+    assert_ui_renders(material.window(), "material-favorites-error");
     let status = i_slint_backend_testing::ElementHandle::find_by_element_id(
         &material,
         "MaterialWindow::favorites-state",
@@ -5310,7 +5294,7 @@ pub(crate) fn material_catalog_and_texture_dialog_render_without_desktop_input()
     surface.set_rotation("0".into());
     surface.set_message("Preview changes before applying, or Cancel to discard.".into());
     surface.show().unwrap();
-    save_ui_snapshot(surface.window(), "face-textures");
+    assert_ui_renders(surface.window(), "face-textures");
     for label in ["Cancel", "Preview textures", "Apply textures"] {
         assert_dialog_button_visible(&surface, label);
     }
@@ -5318,9 +5302,9 @@ pub(crate) fn material_catalog_and_texture_dialog_render_without_desktop_input()
     surface.set_sample_present(true);
     surface.set_sample_label("dev/dev_measuregeneric01 · brush 2, face 6".into());
     surface.set_sample_preview(surface.get_preview());
-    save_ui_snapshot(surface.window(), "face-wrap");
+    assert_ui_renders(surface.window(), "face-wrap");
     surface.set_operation_index(4);
-    save_ui_snapshot(surface.window(), "face-chain");
+    assert_ui_renders(surface.window(), "face-chain");
     for label in ["Cancel", "Preview textures", "Apply textures"] {
         assert_dialog_button_visible(&surface, label);
     }
@@ -5642,7 +5626,7 @@ pub(crate) fn replacement_transform_drafts_display_shared_operations_without_edi
                 )
                 .unwrap();
             refresh_interaction(&app, &state);
-            save_ui_snapshot(app.window(), "transform-before-replacement");
+            assert_ui_renders(app.window(), "transform-before-replacement");
             assert_eq!(app.get_transform_mode(), previous);
             state
                 .preview_transform(Actor::Agent, &[id], spec, None)
@@ -5650,7 +5634,7 @@ pub(crate) fn replacement_transform_drafts_display_shared_operations_without_edi
             let expected = state.transform_preview().unwrap().document.vmf().clone();
             let summary = state.transform_preview().unwrap().presentation().summary;
             refresh_interaction(&app, &state);
-            save_ui_snapshot(
+            assert_ui_renders(
                 app.window(),
                 &format!("transform-replacement-{previous}-{mode}"),
             );
@@ -5708,7 +5692,7 @@ pub(crate) fn replacement_transform_drafts_display_shared_operations_without_edi
         ["move", "rotate", "scale", "mirror", "shear"]
     );
     refresh_interaction(&app, &state);
-    save_ui_snapshot(app.window(), "transform-compound-summary");
+    assert_ui_renders(app.window(), "transform-compound-summary");
     assert_eq!(app.get_transform_mode(), 4);
     assert_eq!(app.get_transform_preview_summary(), presentation.summary);
     for label in [
@@ -5780,7 +5764,7 @@ pub(crate) fn shear_controls_share_numeric_apply_and_agent_draft_values() {
     refresh_interaction(&app, &state);
     app.show().unwrap();
     scroll_inspector_to_control(&app, "Keep textures attached while shearing");
-    save_ui_snapshot(app.window(), "brush-shear");
+    assert_ui_renders(app.window(), "brush-shear");
     assert_eq!(app.get_transform_mode(), 4);
     assert_eq!(app.get_transform_shear_axis(), 2);
     assert_eq!(app.get_transform_shear_reference(), 0);
@@ -5843,7 +5827,7 @@ pub(crate) fn terrain_creation_controls_use_shared_conversion_and_explain_existi
     app.show().unwrap();
     refresh_terrain_controls(&app, &lock(&shared));
     app.set_selection_title("1 face selected".into());
-    save_ui_snapshot(app.window(), "terrain-creation");
+    assert_ui_renders(app.window(), "terrain-creation");
     let corners = lock(&shared).terrain_creation_faces(&[target]).unwrap()[0].corners;
     app.invoke_create_terrain(4, 3);
     assert_eq!(
@@ -5928,7 +5912,7 @@ pub(crate) fn terrain_resolution_controls_keep_cancel_and_guard_foreign_previews
     controller.initialize(&mut lock(&shared)).unwrap();
     let window = &controller.window;
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "terrain-resolution");
+    assert_ui_renders(window.window(), "terrain-resolution");
     assert!(!window.get_ready());
     window.set_grid_index(2);
     window.invoke_edited();
@@ -6027,7 +6011,7 @@ pub(crate) fn terrain_sculpt_and_blend_controls_drive_shared_previews() {
     window.set_amount("16".into());
     window.invoke_edited();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "terrain-sculpt");
+    assert_ui_renders(window.window(), "terrain-sculpt");
     window.invoke_preview_edit();
     assert!(window.get_ready());
     assert_eq!(
@@ -6056,7 +6040,7 @@ pub(crate) fn terrain_sculpt_and_blend_controls_drive_shared_previews() {
         if mode == 12 {
             assert!(lock(&shared).terrain_grids(&[target], true).unwrap()[0].subdivided);
             window.show().unwrap();
-            save_ui_snapshot(window.window(), "terrain-subdivision-controls");
+            assert_ui_renders(window.window(), "terrain-subdivision-controls");
         }
         window.invoke_cancel();
         assert_eq!(*lock(&shared).document().vmf(), before);
@@ -6064,7 +6048,7 @@ pub(crate) fn terrain_sculpt_and_blend_controls_drive_shared_previews() {
     window.set_operation_index(5);
     window.show().unwrap();
     window.invoke_edited();
-    save_ui_snapshot(window.window(), "terrain-blend");
+    assert_ui_renders(window.window(), "terrain-blend");
     window.invoke_preview_edit();
     window.set_blend_value("256".into());
     window.invoke_edited();
@@ -6078,7 +6062,7 @@ pub(crate) fn terrain_sculpt_and_blend_controls_drive_shared_previews() {
     window.set_radius("32".into());
     window.set_amount("4".into());
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "terrain-stroke-controls");
+    assert_ui_renders(window.window(), "terrain-stroke-controls");
     window.invoke_draw_stroke();
     assert!(controller.is_stroking(), "{}", window.get_message());
     for x in [-32.0, 0.0, 32.0] {
@@ -6174,7 +6158,7 @@ pub(crate) fn terrain_collision_and_sewing_controls_use_shared_owned_previews() 
     window.set_ray_index(2);
     window.invoke_edited();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "terrain-collision");
+    assert_ui_renders(window.window(), "terrain-collision");
     assert_eq!(window.get_physics_current(), "enabled");
     window.invoke_preview_edit();
     assert!(window.get_ready());
@@ -6192,7 +6176,7 @@ pub(crate) fn terrain_collision_and_sewing_controls_use_shared_owned_previews() 
     window.set_sew_blend(true);
     window.invoke_edited();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "terrain-sewing");
+    assert_ui_renders(window.window(), "terrain-sewing");
     window.invoke_preview_edit();
     assert!(window.get_ready(), "{}", window.get_message());
     window.invoke_apply();
@@ -6203,7 +6187,7 @@ pub(crate) fn terrain_collision_and_sewing_controls_use_shared_owned_previews() 
     window.set_smoothing_angle("45.5".into());
     window.invoke_edited();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "terrain-border-smoothing");
+    assert_ui_renders(window.window(), "terrain-border-smoothing");
     window.invoke_preview_edit();
     assert!(window.get_ready(), "{}", window.get_message());
     assert!(
@@ -6274,7 +6258,7 @@ pub(crate) fn terrain_triangle_controls_preserve_owned_cancel_and_apply_subsets(
             .detail
             .contains("no · forced")
     );
-    save_ui_snapshot(window.window(), "terrain-triangle-tags");
+    assert_ui_renders(window.window(), "terrain-triangle-tags");
     assert_eq!(*lock(&shared).document().vmf(), source);
     assert!(!lock(&shared).terrain_triangles(&[face], true).unwrap()[0].triangles[0].walkable);
     window.invoke_cancel();
@@ -6373,7 +6357,7 @@ pub(crate) fn terrain_triangle_batch_controls_pick_frame_and_keep_foreign_guides
         Some(false)
     );
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "terrain-triangle-picking");
+    assert_ui_renders(window.window(), "terrain-triangle-picking");
     let camera = lock(&shared).camera();
     window.invoke_frame_selected();
     assert_ne!(lock(&shared).camera(), camera);
@@ -6473,7 +6457,7 @@ pub(crate) fn terrain_mask_controls_retain_selection_and_confine_sculpt_and_blen
     window.set_amount("16".into());
     window.invoke_edited();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "terrain-vertex-mask");
+    assert_ui_renders(window.window(), "terrain-vertex-mask");
     let before = lock(&shared)
         .terrain_grids(&[face], false)
         .unwrap()
@@ -6516,7 +6500,7 @@ pub(crate) fn terrain_mask_controls_retain_selection_and_confine_sculpt_and_blen
     picker.window.invoke_kind_changed();
     picker.window.invoke_toggle_triangle(12, true);
     picker.window.show().unwrap();
-    save_ui_snapshot(picker.window.window(), "terrain-explicit-vertices");
+    assert_ui_renders(picker.window.window(), "terrain-explicit-vertices");
     picker.window.invoke_frame_selected();
     picker.window.invoke_pick_triangle();
     let point = before.positions[12];
@@ -6559,7 +6543,7 @@ pub(crate) fn terrain_mask_controls_retain_selection_and_confine_sculpt_and_blen
     window.set_vertex_z("12".into());
     window.invoke_edited();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "terrain-vertex-move");
+    assert_ui_renders(window.window(), "terrain-vertex-move");
     window.invoke_preview_edit();
     assert!(window.get_ready(), "{}", window.get_message());
     let draft = lock(&shared)
@@ -6619,7 +6603,7 @@ pub(crate) fn terrain_mask_controls_retain_selection_and_confine_sculpt_and_blen
     assert!(!controller.is_handling());
     assert!(window.get_ready());
     assert_eq!(window.get_vertex_z().as_str(), "16");
-    save_ui_snapshot(window.window(), "terrain-handle-review");
+    assert_ui_renders(window.window(), "terrain-handle-review");
     window.invoke_apply();
     lock(&shared).undo(Actor::User).unwrap();
     assert_eq!(*lock(&shared).document().vmf(), source);
@@ -6705,7 +6689,7 @@ pub(crate) fn terrain_volume_control_selects_triangles_without_changing_the_map(
             .selected
     );
     controller.window.show().unwrap();
-    save_ui_snapshot(controller.window.window(), "terrain-volume-triangles");
+    assert_ui_renders(controller.window.window(), "terrain-volume-triangles");
     assert_eq!(*lock(&shared).document().vmf(), source);
     assert_eq!(lock(&shared).volume_preview().unwrap().token, token);
     controller.window.invoke_use_selection();
@@ -6770,7 +6754,7 @@ pub(crate) fn terrain_center_picking_uses_rendered_hits_and_preserves_foreign_dr
     window.set_amount("64".into());
     window.invoke_edited();
     window.show().unwrap();
-    save_ui_snapshot(window.window(), "terrain-center-picker");
+    assert_ui_renders(window.window(), "terrain-center-picker");
     window.invoke_preview_edit();
     let own = lock(&shared).face_preview_token();
     window.invoke_pick_center();
@@ -6868,7 +6852,7 @@ pub(crate) fn mirror_controls_share_brush_transform_and_agent_preview() {
         .unwrap();
     refresh_interaction(&app, &state);
     app.show().unwrap();
-    save_ui_snapshot(app.window(), "brush-reflection");
+    assert_ui_renders(app.window(), "brush-reflection");
     assert_eq!(app.get_transform_mode(), 3);
     assert!(!app.get_transform_reflect_x());
     assert!(app.get_transform_reflect_y());
@@ -6942,7 +6926,7 @@ pub(crate) fn snap_to_grid_control_previews_the_named_anchor_before_apply() {
     assert_eq!(lock(&shared).document().vmf(), &before);
     assert_eq!(lock(&shared).document().undo_labels().count(), history);
     app.show().unwrap();
-    save_ui_snapshot(app.window(), "snap-to-grid-preview");
+    assert_ui_renders(app.window(), "snap-to-grid-preview");
     app.invoke_apply_transform_preview();
     {
         let mut state = lock(&shared);
@@ -6972,7 +6956,7 @@ pub(crate) fn snap_to_grid_control_previews_the_named_anchor_before_apply() {
     app.window().set_size(slint::PhysicalSize::new(1600, 1000));
     scroll_inspector_to_control(&app, "Preview snap to grid");
     assert_dialog_button_visible(&app, "Preview snap to grid");
-    save_ui_snapshot(app.window(), "independent-grid-snap-preview");
+    assert_ui_renders(app.window(), "independent-grid-snap-preview");
     app.invoke_apply_transform_preview();
     let mut state = lock(&shared);
     assert_eq!(state.document().vmf(), &displayed);
@@ -7050,7 +7034,7 @@ pub(crate) fn independent_texture_controls_share_numeric_and_agent_preview_modes
     assert!(!app.get_transform_texture_lock());
     assert!(app.get_transform_texture_scale_lock());
     app.show().unwrap();
-    save_ui_snapshot(app.window(), "independent-texture-scale-lock");
+    assert_ui_renders(app.window(), "independent-texture-scale-lock");
     assert_eq!(app.get_transform_x(), "2");
     assert_eq!(app.get_transform_y(), "1");
     assert_eq!(app.get_transform_z(), "1");
@@ -7376,7 +7360,7 @@ pub(crate) fn material_reload_button_replaces_failed_cached_previews_without_sou
     ));
     assert_eq!(lock(&shared).document().vmf(), &source);
     refresh_material_window(&window, &mut lock(&shared));
-    save_ui_snapshot(window.window(), "material-reload");
+    assert_ui_renders(window.window(), "material-reload");
     window.hide().unwrap();
 }
 
@@ -7413,7 +7397,7 @@ pub(crate) fn entity_panel_shows_shared_fgd_box_status_and_invalid_definition_di
     assert!(app.get_entity_helper_status().contains("sphere"));
     app.show().unwrap();
     app.window().set_size(slint::PhysicalSize::new(1600, 960));
-    save_ui_snapshot(app.window(), "fgd-size-helpers");
+    assert_ui_renders(app.window(), "fgd-size-helpers");
     session.set_definitions(
         Actor::Agent,
         Catalog::parse("@PointClass size(0 0 0) = sample []").unwrap(),

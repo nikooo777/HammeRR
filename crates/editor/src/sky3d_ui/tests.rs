@@ -114,7 +114,7 @@ fn software_sky3d_controls_choose_camera_toggle_prepare_and_show_unavailable_inp
     assert_eq!(report["ready"], false);
     assert_ne!(report["status"], "ready");
     assert!(!window.get_diagnostics().is_empty());
-    crate::ui::tests::save_ui_snapshot(window.window(), "sky3d-preview-unavailable");
+    crate::ui::tests::assert_ui_renders(window.window(), "sky3d-preview-unavailable");
     for label in [
         "Refresh status",
         "Prepare 3D sky",

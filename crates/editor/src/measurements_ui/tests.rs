@@ -45,7 +45,7 @@ fn measurement_origin_controls_attach_detach_and_explicitly_repair_missing_origi
     assert!(window.get_start_attached());
     assert_eq!(window.get_start_x(), "16.125");
     assert!(window.get_start_origin_status().contains("follows"));
-    crate::ui::tests::save_ui_snapshot(window.window(), "measurements-origin-attachment");
+    crate::ui::tests::assert_ui_renders(window.window(), "measurements-origin-attachment");
     assert_eq!(lock(&shared).document().vmf(), &source);
     window.invoke_detach_start_origin();
     assert!(!window.get_start_attached());
@@ -130,7 +130,7 @@ fn measurement_window_edits_exact_endpoints_previews_saves_frames_deletes_and_ca
     edit(window, "End X", "1.125");
     window.invoke_preview();
     assert!(window.get_ready(), "{}", window.get_message());
-    crate::ui::tests::save_ui_snapshot(window.window(), "measurements-preview");
+    crate::ui::tests::assert_ui_renders(window.window(), "measurements-preview");
     for label in [
         "New measurement",
         "Frame",
@@ -162,7 +162,7 @@ fn measurement_window_edits_exact_endpoints_previews_saves_frames_deletes_and_ca
     assert_eq!(lock(&shared).measurement_state()["show_guides"], false);
     window.set_show_guides(true);
     window.invoke_view_changed();
-    crate::ui::tests::save_ui_snapshot(window.window(), "measurements");
+    crate::ui::tests::assert_ui_renders(window.window(), "measurements");
     let row = window.get_measurements().row_data(0).unwrap();
     let label = format!("{}\n{}", row.name, row.detail);
     let button = i_slint_backend_testing::ElementHandle::find_by_accessible_label(window, &label)
@@ -250,7 +250,7 @@ fn measurement_window_reviews_foreign_previews_and_guards_stale_map_callbacks() 
     assert!(window.get_ready(), "{}", window.get_message());
     assert_eq!(window.get_measurement_name(), "Agent ruler");
     assert_eq!(window.get_end_z(), "12");
-    crate::ui::tests::save_ui_snapshot(window.window(), "measurements-reviewed");
+    crate::ui::tests::assert_ui_renders(window.window(), "measurements-reviewed");
     window.invoke_apply();
     assert_eq!(lock(&shared).measurements().unwrap().measurements.len(), 1);
     window.invoke_choose("1".into());
@@ -332,7 +332,7 @@ fn measurement_surface_controls_pick_exact_endpoints_cancel_and_guard_replaced_o
     assert_eq!(window.get_end_z(), "8.125");
     assert_eq!(lock(&shared).document().vmf(), &source);
     assert_eq!(lock(&shared).document().undo_labels().count(), history);
-    crate::ui::tests::save_ui_snapshot(window.window(), "measurements-surface-picked");
+    crate::ui::tests::assert_ui_renders(window.window(), "measurements-surface-picked");
     window.invoke_pick_end();
     let state = lock(&shared).measurement_state();
     assert!(
@@ -478,7 +478,7 @@ fn measurement_local_controls_capture_reviewed_points_cancel_and_repair_bad_pose
     for label in ["Attach start local", "Attach end local", "Apply", "Cancel"] {
         crate::ui::tests::assert_dialog_button_visible(window, label);
     }
-    crate::ui::tests::save_ui_snapshot(window.window(), "measurement-local-attachment");
+    crate::ui::tests::assert_ui_renders(window.window(), "measurement-local-attachment");
     assert_eq!(lock(&shared).document().vmf(), &source);
     assert_eq!(lock(&shared).document().undo_labels().count(), history);
     window.invoke_cancel();

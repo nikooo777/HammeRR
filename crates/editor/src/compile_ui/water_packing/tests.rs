@@ -5,7 +5,7 @@ use source_formats::keyvalues::WriteOptions;
 use super::*;
 use crate::compile_ui::Controller;
 use crate::ui::tests::{
-    assert_dialog_button_visible, save_ui_snapshot, scroll_inspector_to_control,
+    assert_dialog_button_visible, assert_ui_renders, scroll_inspector_to_control,
 };
 
 #[test]
@@ -43,7 +43,7 @@ fn water_packing_checkbox_uses_shared_settings_recipes_recent_maps_and_active_jo
     assert!(lock(&shared).compile_options().pack_water_assets);
     assert!(!lock(&shared).compile_options().pack_sky_assets);
     assert!(controller.window.get_pack_water_assets());
-    save_ui_snapshot(controller.window.window(), "build-pack-water-assets");
+    assert_ui_renders(controller.window.window(), "build-pack-water-assets");
     for lighting in ["direct_ldr", "direct_ldr_hdr", "fullbright"] {
         lock(&shared)
             .update_build_settings(

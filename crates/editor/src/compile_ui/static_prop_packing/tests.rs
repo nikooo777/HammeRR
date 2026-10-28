@@ -4,7 +4,7 @@ use source_formats::keyvalues::WriteOptions;
 
 use super::*;
 use crate::compile_ui::Controller;
-use crate::ui::tests::{assert_dialog_button_visible, save_ui_snapshot};
+use crate::ui::tests::{assert_dialog_button_visible, assert_ui_renders};
 
 fn scroll_to_packing_control(window: &CompileWindow) {
     let size = window.window().size();
@@ -83,7 +83,7 @@ fn static_prop_packing_checkbox_uses_shared_settings_recipes_recent_maps_and_act
     assert!(!lock(&shared).compile_options().pack_sky_assets);
     assert!(controller.window.get_pack_static_prop_assets());
     controller.refresh(&lock(&shared));
-    save_ui_snapshot(controller.window.window(), "build-pack-static-prop-assets");
+    assert_ui_renders(controller.window.window(), "build-pack-static-prop-assets");
     for lighting in ["direct_ldr", "direct_ldr_hdr", "fullbright"] {
         lock(&shared)
             .update_build_settings(

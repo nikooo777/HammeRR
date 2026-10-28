@@ -145,7 +145,7 @@ fn recovery_warning_keeps_error_domains_with_listing_failures_and_skipped_entrie
     assert!(peer.recovery_status()["snapshot_error"].is_null());
     assert!(window.get_warning().contains("snapshot write failed"));
     window.show().unwrap();
-    crate::ui::tests::save_ui_snapshot(window.window(), "recovery-settings-reload");
+    crate::ui::tests::assert_ui_renders(window.window(), "recovery-settings-reload");
     let replacement = Settings {
         enabled: true,
         interval_seconds: 90,

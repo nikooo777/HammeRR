@@ -262,7 +262,7 @@ fn prefab_gallery_controls_render_actual_cards_and_capture_gallery_without_mutat
             .len()
             > 3
     );
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "prefab-gallery");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "prefab-gallery");
     lock(&shared)
         .prefab_thumbnail_with_style("Gallery 01 Platform", true, ThumbnailStyle::Textured)
         .unwrap();

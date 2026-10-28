@@ -545,7 +545,7 @@ mod tests {
             .window
             .window()
             .set_size(slint::PhysicalSize::new(940, 820));
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "external-map-comparison");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "external-map-comparison");
         let before = lock(&shared).document().vmf().clone();
         lock(&shared).shutdown();
         let mut errors = Vec::new();

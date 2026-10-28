@@ -86,7 +86,7 @@ fn instance_dependency_build_details_share_counts_hashes_and_stale_launch_status
             delta_y: -10_000.0,
         });
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(250));
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "build-instance-dependencies");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "build-instance-dependencies");
     std::fs::remove_file(&grandchild).unwrap();
     controller.refresh(&lock(&shared));
     assert!(!controller.window.get_launch_ready());

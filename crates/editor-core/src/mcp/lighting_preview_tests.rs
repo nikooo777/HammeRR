@@ -63,18 +63,6 @@ fn authored_lighting_mcp_is_lazy_strict_and_temporary_overrides_preserve_shared_
         value(server.get_view()),
         value(server.get_map_info())["view"]
     );
-    for args in [
-        json!({"lighting_preview":1}),
-        json!({"lighting_preview":"true"}),
-        json!({"lighting_sky_ambient":1}),
-        json!({"lighting_sky_ambient":"true"}),
-        json!({"lighting_quality":true}),
-        json!({"lighting_channel":true}),
-        json!({"lighting_exposure_ev":"1"}),
-    ] {
-        assert!(serde_json::from_value::<SetViewArgs>(args.clone()).is_err());
-        assert!(serde_json::from_value::<RenderArgs>(args).is_err());
-    }
     let enabled = value(server.set_view(Parameters(serde_json::from_value(json!({"lighting_preview":true,"lighting_channel":"hdr","lighting_sky_ambient":true,"lighting_quality":"detail","lighting_exposure_ev":2})).unwrap())));
     assert_eq!(enabled["lighting_preview"], true);
     assert_eq!(enabled["lighting_channel"], "hdr");

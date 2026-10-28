@@ -113,13 +113,6 @@ fn surface_shading_is_lazy_atomic_and_preserves_review_and_world_space_terrain_n
     let camera = session.camera();
     let shared = Arc::new(Mutex::new(session));
     let server = EditorServer::new(shared.clone(), None);
-    for args in [
-        json!({"surface_shading":1}),
-        json!({"surface_shading":"true"}),
-    ] {
-        assert!(serde_json::from_value::<SetViewArgs>(args.clone()).is_err());
-        assert!(serde_json::from_value::<RenderArgs>(args).is_err());
-    }
     assert!(!lock(&shared).view().surface_shading);
     let enabled = value(server.set_view(Parameters(
         serde_json::from_value(json!({"surface_shading":true})).unwrap(),

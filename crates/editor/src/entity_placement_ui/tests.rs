@@ -75,7 +75,7 @@ fn point_entity_placement_controls_pick_review_apply_cancel_and_reject_replaceme
             .get_summary()
             .contains("Contact offset · 4.000")
     );
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "entity-placement-controls");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "entity-placement-controls");
     for label in ["Pick surface", "Apply entity", "Cancel"] {
         crate::ui::tests::assert_dialog_button_visible(&controller.window, label);
     }

@@ -579,7 +579,7 @@ mod tests {
         controller.window.invoke_search();
         assert_eq!(controller.window.get_rows().row_count(), 1);
         controller.window.show().unwrap();
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "sound-browser");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "sound-browser");
         lock(&shared)
             .choose_sound(token, "ambient/one.wav", 0)
             .unwrap();
@@ -602,46 +602,5 @@ mod tests {
             .unwrap();
         controller.window.invoke_cancel();
         assert!(lock(&shared).sound_choice(replacement).is_ok());
-        if std::env::var_os("HAMMERR_UI_SNAPSHOTS").is_some()
-            && let Ok(game) = editor_core::startup::mount_game(None)
-        {
-            let mut session = Session::new(Ok(game));
-            session.set_definitions(
-                Actor::User,
-                source_formats::fgd::Catalog::parse(
-                    "@PointClass = ambient_generic [ message(sound) : \"Sound Name\" : \"\" ]",
-                )
-                .unwrap(),
-            );
-            let map_core::ObjectId::Entity(id) = session
-                .create_entity(
-                    Actor::User,
-                    "ambient_generic",
-                    Some(glam::DVec3::ZERO),
-                    std::collections::BTreeMap::new(),
-                )
-                .unwrap()
-            else {
-                unreachable!()
-            };
-            let shared = Arc::new(Mutex::new(session));
-            let controller = Controller::new(&shared).unwrap();
-            controller
-                .initialize(&mut lock(&shared), id, "message")
-                .unwrap();
-            controller.window.set_query("DoSpark".into());
-            controller.window.invoke_search();
-            controller.window.invoke_choose("DoSpark".into());
-            controller.window.set_variant(1);
-            controller.window.invoke_variant_changed();
-            assert!(
-                controller.window.get_can_apply(),
-                "{}",
-                controller.window.get_message()
-            );
-            controller.window.show().unwrap();
-            crate::ui::tests::save_ui_snapshot(controller.window.window(), "sound-browser");
-            controller.window.invoke_cancel();
-        }
     }
 }

@@ -64,7 +64,7 @@ fn admitted_editor_visibility_controls_hide_and_recover_in_faces_without_source_
     assert!(!app.get_can_hide_editor_selection());
     crate::ui::tests::scroll_inspector_to_control(&app, "Show all editor-hidden");
     crate::ui::tests::assert_dialog_button_visible(&app, "Show all editor-hidden");
-    crate::ui::tests::save_ui_snapshot(app.window(), "editor-visibility");
+    crate::ui::tests::assert_ui_renders(app.window(), "editor-visibility");
     crate::ui::tests::scroll_inspector_to_control(&app, "Show all editor-hidden")
         .invoke_accessible_default_action();
     assert_eq!(lock(&shared).editor_hidden_count(), 0);

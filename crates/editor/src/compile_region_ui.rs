@@ -466,7 +466,7 @@ mod tests {
         controller.window.invoke_edited();
         controller.window.invoke_preview();
         assert!(controller.window.get_ready());
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "compile-region");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "compile-region");
         controller.window.invoke_apply();
         assert_eq!(
             lock(&shared).compile_region_state()["committed"]["enabled"],

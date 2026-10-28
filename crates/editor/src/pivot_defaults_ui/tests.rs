@@ -67,7 +67,7 @@ fn pivot_defaults_controls_share_errors_preserve_peers_and_reject_retired_callba
     left.refresh(&lock(&first));
     assert!(left.window.get_current().contains("Selection center"));
     assert_eq!(lock(&second).transform_tool().pivot, Some(point));
-    crate::ui::tests::save_ui_snapshot(left.window.window(), "transform-pivot-defaults");
+    crate::ui::tests::assert_ui_renders(left.window.window(), "transform-pivot-defaults");
     let path = directory
         .path()
         .join(editor_core::pivot_preferences::FILE_NAME);

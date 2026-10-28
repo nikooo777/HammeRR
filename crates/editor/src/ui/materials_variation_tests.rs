@@ -99,7 +99,7 @@ fn seeded_uv_variation_surface_controls_review_owned_drafts_and_render_readable_
     window.invoke_preview_edit();
     window.window().set_size(slint::PhysicalSize::new(700, 760));
     window.show().unwrap();
-    super::super::tests::save_ui_snapshot(window.window(), "uv-variation");
+    super::super::tests::assert_ui_renders(window.window(), "uv-variation");
     for label in ["Cancel", "Preview variation", "Apply textures"] {
         super::super::tests::assert_dialog_button_visible(&window, label);
     }

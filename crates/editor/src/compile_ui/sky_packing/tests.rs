@@ -6,7 +6,7 @@ use source_formats::keyvalues::WriteOptions;
 use super::*;
 use crate::compile_ui::Controller;
 use crate::session::Actor;
-use crate::ui::tests::{assert_dialog_button_visible, save_ui_snapshot};
+use crate::ui::tests::{assert_dialog_button_visible, assert_ui_renders};
 
 #[test]
 fn sky_packing_controls_share_callbacks_restores_job_guards_and_result_statistics() {
@@ -60,7 +60,7 @@ fn sky_packing_controls_share_callbacks_restores_job_guards_and_result_statistic
             .contains("Packed sky assets:")
     );
     assert_dialog_button_visible(&controller.window, "Pack sky assets");
-    save_ui_snapshot(controller.window.window(), "build-pack-sky-default");
+    assert_ui_renders(controller.window.window(), "build-pack-sky-default");
     i_slint_backend_testing::ElementHandle::find_by_accessible_label(
         &controller.window,
         "Pack sky assets",
@@ -90,7 +90,7 @@ fn sky_packing_controls_share_callbacks_restores_job_guards_and_result_statistic
     controller.window.invoke_apply_recipe();
     assert!(controller.window.get_pack_sky_assets());
     controller.refresh(&lock(&shared));
-    save_ui_snapshot(controller.window.window(), "build-pack-sky-controls");
+    assert_ui_renders(controller.window.window(), "build-pack-sky-controls");
     assert_eq!(lock(&shared).document().vmf(), &source);
     assert_eq!(lock(&shared).document().undo_labels().count(), history);
     assert_eq!(lock(&shared).camera(), camera);
@@ -116,7 +116,7 @@ fn sky_packing_controls_share_callbacks_restores_job_guards_and_result_statistic
             .get_details()
             .contains("Packed sky assets:")
     );
-    save_ui_snapshot(controller.window.window(), "build-pack-sky-active");
+    assert_ui_renders(controller.window.window(), "build-pack-sky-active");
     controller.window.invoke_cancel_build();
     let result = request.run();
     assert!(result.is_err());
@@ -184,7 +184,7 @@ fn sky_packing_controls_share_callbacks_restores_job_guards_and_result_statistic
             delta_y: -10000.0,
         });
     i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(250));
-    save_ui_snapshot(controller.window.window(), "build-pack-sky-details");
+    assert_ui_renders(controller.window.window(), "build-pack-sky-details");
     let output = directory.path().join("packed-sky-room.bsp");
     let published = std::fs::read(&output).unwrap();
     let request = lock(&shared)

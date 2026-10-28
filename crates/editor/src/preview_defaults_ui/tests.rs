@@ -44,7 +44,7 @@ fn preview_defaults_window_compares_saves_applies_and_recovers_through_session_c
     assert_eq!(tint.label, "Selection tint");
     assert_eq!(tint.current, "Off");
     assert_eq!(tint.defaults, "On");
-    crate::ui::tests::save_ui_snapshot(window.window(), "preview-defaults");
+    crate::ui::tests::assert_ui_renders(window.window(), "preview-defaults");
     for label in [
         "Save current as defaults",
         "Apply saved defaults",
@@ -93,7 +93,7 @@ fn preview_defaults_window_compares_saves_applies_and_recovers_through_session_c
         window.get_rows().row_data(0).unwrap().defaults,
         "Unavailable"
     );
-    crate::ui::tests::save_ui_snapshot(window.window(), "preview-defaults-error");
+    crate::ui::tests::assert_ui_renders(window.window(), "preview-defaults-error");
     window.invoke_save();
     assert!(window.get_message().contains("did not load"));
     assert_eq!(std::fs::read(path).unwrap(), b"bad preferences");

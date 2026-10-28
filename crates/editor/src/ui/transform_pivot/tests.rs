@@ -69,7 +69,7 @@ fn surface_pivot_ui_arms_cancels_picks_and_releases_foreign_or_stale_input() {
     app.invoke_snap_transform_pivot_to_grid();
     assert!(lock(&shared).transform_pivot_pick_owned(Actor::User));
     crate::ui::tests::assert_dialog_button_visible(&app, "Cancel pivot pick");
-    crate::ui::tests::save_ui_snapshot(app.window(), "surface-picked-transform-pivot");
+    crate::ui::tests::assert_ui_renders(app.window(), "surface-picked-transform-pivot");
     app.invoke_cancel_transform_pivot_pick();
     assert!(!app.get_pivot_picking());
     assert_eq!(
@@ -104,7 +104,7 @@ fn surface_pivot_ui_arms_cancels_picks_and_releases_foreign_or_stale_input() {
     assert_eq!(app.get_pivot_x(), "3.25");
     assert!(app.get_pivot_pick_source().is_empty());
     assert!(app.get_message().contains("on grid 0.25"));
-    crate::ui::tests::save_ui_snapshot(app.window(), "grid-snapped-transform-pivot");
+    crate::ui::tests::assert_ui_renders(app.window(), "grid-snapped-transform-pivot");
     {
         let mut session = lock(&shared);
         let snapshot = session.transform_pivot_pick_stamp();

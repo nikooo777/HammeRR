@@ -66,7 +66,7 @@ fn material_browser_source_window_reads_refreshes_reports_errors_and_closes_with
             .get_source()
             .contains("$basetexture test/checker")
     );
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "material-source");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "material-source");
     crate::ui::tests::assert_dialog_button_visible(&controller.window, "Refresh source");
     crate::ui::tests::assert_dialog_button_visible(&controller.window, "Close");
     std::fs::write(&path, "Patch { include materials/test/missing.vmt }").unwrap();
@@ -171,7 +171,7 @@ fn software_material_source_shows_shared_water_inventory_and_keeps_declarations_
     assert!(!resolved.contains("supported_static_inventory"));
     assert!(window.get_status().contains("Supported static inventory"));
     window.window().take_snapshot().unwrap();
-    crate::ui::tests::save_ui_snapshot(window.window(), "material-source-water");
+    crate::ui::tests::assert_ui_renders(window.window(), "material-source-water");
     crate::ui::tests::assert_dialog_button_visible(&window, "Refresh source");
     crate::ui::tests::assert_dialog_button_visible(&window, "Close");
 

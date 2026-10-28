@@ -675,7 +675,7 @@ mod tests {
             .window
             .set_layer_name("Lights and helpers".into());
         controller.window.invoke_review();
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "layers");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "layers");
         let identity = controller.form.borrow().token.unwrap();
         lock(&shared)
             .update_layer_edit(

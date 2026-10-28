@@ -56,7 +56,7 @@ fn water_current_numeric_world_callbacks_stage_cancel_apply_and_remove_without_n
     window.invoke_component_edit(key.into(), 0, "64".into());
     window.invoke_component_edit(key.into(), 1, "-16".into());
     window.show().unwrap();
-    crate::ui::tests::save_ui_snapshot(window.window(), "water-current-world-settings");
+    crate::ui::tests::assert_ui_renders(window.window(), "water-current-world-settings");
     window.invoke_apply();
     assert_eq!(
         lock(&shared).document().vmf().world.properties.get(key),

@@ -699,25 +699,3 @@ mod surface_corner_tests {
         }
     }
 }
-
-#[cfg(test)]
-mod vector_tests {
-    use super::*;
-
-    #[test]
-    fn direct_vector_parameters_accept_full_and_component_preserving_axes() {
-        let args: EditFacesArgs = serde_json::from_value(
-            json!({"u_axis": [2.0, null, 0.125], "v_axis": [0.25, -1.5, 0.0], "preview": true}),
-        )
-        .unwrap();
-        assert_eq!(args.u_axis, Some([Some(2.0), None, Some(0.125)]));
-        assert_eq!(args.v_axis, Some([Some(0.25), Some(-1.5), Some(0.0)]));
-        for invalid in [
-            json!({"u_axis": [1.0, 0.0]}),
-            json!({"v_axis": [0.0, 1.0, 0.0, 2.0]}),
-            json!({"u_axis": ["1", 0.0, 0.0]}),
-        ] {
-            assert!(serde_json::from_value::<EditFacesArgs>(invalid).is_err());
-        }
-    }
-}

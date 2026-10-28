@@ -833,7 +833,6 @@ dependencies = [
  "sha2",
  "source-formats",
  "tempfile",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1228,7 +1227,6 @@ dependencies = [
  "glam",
  "i-slint-backend-testing",
  "map-core",
- "png",
  "render",
  "rfd",
  "serde_json",

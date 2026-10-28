@@ -102,7 +102,7 @@ fn hdr_sky_inline_controls_share_validation_restore_rejected_toggles_and_preserv
     app.invoke_options_changed();
     app.show().unwrap();
     app.window().set_size(slint::PhysicalSize::new(1600, 960));
-    super::tests::save_ui_snapshot(app.window(), "hdr-sky-preview-controls");
+    super::tests::assert_ui_renders(app.window(), "hdr-sky-preview-controls");
     assert_eq!(lock(&session).document().vmf(), &source);
     assert_eq!(lock(&session).document().undo_labels().count(), history);
     assert_eq!(lock(&session).camera(), camera);
@@ -220,7 +220,7 @@ fn authored_lighting_controls_validate_combined_view_and_keep_owned_drafts() {
     assert!(!lock(&shared).view().lighting_sky_ambient);
     ambient.invoke_accessible_default_action();
     assert!(lock(&shared).view().lighting_sky_ambient);
-    super::tests::save_ui_snapshot(app.window(), "authored-lighting-controls");
+    super::tests::assert_ui_renders(app.window(), "authored-lighting-controls");
     app.hide().unwrap();
     app.set_lighting_preview(false);
     app.invoke_options_changed();

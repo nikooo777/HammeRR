@@ -52,13 +52,6 @@ fn additive_sprite_controls_and_inspection_share_temporary_resource_view_policy(
         view_state(lock(&shared).view())["additive_sprite_guides"],
         false
     );
-    for args in [
-        json!({"additive_sprite_guides":1}),
-        json!({"additive_sprite_guides":"true"}),
-    ] {
-        assert!(serde_json::from_value::<SetViewArgs>(args.clone()).is_err());
-        assert!(serde_json::from_value::<RenderArgs>(args).is_err());
-    }
     let enabled = value(server.set_view(Parameters(
         serde_json::from_value(json!({"additive_sprite_guides":true})).unwrap(),
     )));

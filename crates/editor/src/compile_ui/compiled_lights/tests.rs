@@ -183,11 +183,11 @@ fn compiled_lights_controls_share_pages_channels_details_and_owned_build_invalid
     window.invoke_refresh_inspection();
     window.invoke_inspect_light(1);
     assert!(window.get_details().normal.len() < 64);
-    crate::ui::tests::save_ui_snapshot(window.window(), "compiled-lights");
+    crate::ui::tests::assert_ui_renders(window.window(), "compiled-lights");
     window
         .window()
         .set_size(slint::LogicalSize::new(880.0, 720.0));
-    crate::ui::tests::save_ui_snapshot(window.window(), "compiled-lights-compact");
+    crate::ui::tests::assert_ui_renders(window.window(), "compiled-lights-compact");
     assert!(!controller.window.window().is_visible());
     controller
         .window

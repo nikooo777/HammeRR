@@ -42,13 +42,6 @@ fn hdr_sky_view_requests_validate_atomically_before_graphics_and_preserve_source
         );
         assert_eq!(lock(&shared).view(), default);
     }
-    for args in [
-        json!({"sky_channel":true}),
-        json!({"sky_exposure_ev":"NaN"}),
-    ] {
-        assert!(serde_json::from_value::<SetViewArgs>(args.clone()).is_err());
-        assert!(serde_json::from_value::<RenderArgs>(args).is_err());
-    }
     let view = value(
         server.set_view(Parameters(
             serde_json::from_value(

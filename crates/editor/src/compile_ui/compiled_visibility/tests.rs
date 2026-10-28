@@ -155,7 +155,7 @@ fn visibility_controls_share_owned_navigation_frame_guide_and_invalidation() {
         true
     );
     assert!(window.get_guide_state().contains("displayed"));
-    crate::ui::tests::save_ui_snapshot(window.window(), "visibility-inspection");
+    crate::ui::tests::assert_ui_renders(window.window(), "visibility-inspection");
     window.invoke_clear_guide();
     let session = lock(&shared);
     assert_eq!(session.compiled_visibility_overlay()["requested"], false);

@@ -565,7 +565,7 @@ mod tests {
         );
         assert_eq!(lock(&shared).primitive_preview().unwrap().ids.len(), 4);
         assert_eq!(lock(&shared).document().vmf(), &source);
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "polygon-drawing");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "polygon-drawing");
         controller.window.set_depth("96".into());
         controller.window.invoke_edited();
         controller.window.invoke_apply();

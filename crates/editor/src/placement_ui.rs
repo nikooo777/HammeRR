@@ -640,7 +640,7 @@ mod tests {
         controller.window.invoke_preview();
         controller.pick_at_ray(&mut lock(&shared), ray).unwrap();
         controller.window.show().unwrap();
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "multi-owner-corner-snap");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "multi-owner-corner-snap");
         controller.window.invoke_apply();
         assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
         lock(&shared).undo(Actor::User).unwrap();
@@ -689,7 +689,7 @@ mod tests {
         assert!(!summary.contains("models/test"));
         assert_eq!(lock(&shared).document().vmf(), &original);
         controller.window.show().unwrap();
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "model-vertex-snap");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "model-vertex-snap");
         controller.window.invoke_apply();
         assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
         lock(&shared).undo(Actor::User).unwrap();
@@ -742,7 +742,7 @@ mod tests {
         );
         assert_eq!(lock(&shared).document().vmf(), &source);
         controller.window.show().unwrap();
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "terrain-vertex-snap");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "terrain-vertex-snap");
         controller.window.invoke_apply();
         assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);
         lock(&shared).undo(Actor::User).unwrap();
@@ -797,7 +797,7 @@ mod tests {
         assert!(!controller.is_picking());
         assert!(controller.window.get_ready());
         controller.window.show().unwrap();
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "surface-placement");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "surface-placement");
         assert_eq!(lock(&shared).document().vmf(), &source);
         assert_eq!(lock(&shared).document().undo_labels().count(), history);
         controller.window.set_offset("8".into());
@@ -877,7 +877,7 @@ mod tests {
             )
             .unwrap();
         controller.window.show().unwrap();
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "vertex-snap");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "vertex-snap");
         assert_eq!(lock(&shared).document().vmf(), &source);
         controller.window.invoke_apply();
         assert_eq!(lock(&shared).document().undo_labels().count(), history + 1);

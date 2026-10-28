@@ -116,7 +116,7 @@ fn graph_controls_share_full_selection_filtered_rows_framing_and_stale_refusal()
     crate::ui::tests::assert_dialog_button_visible(window, "Select connected");
     crate::ui::tests::assert_dialog_button_visible(window, "Frame connected");
     crate::ui::tests::assert_dialog_button_visible(window, "Close");
-    crate::ui::tests::save_ui_snapshot(window.window(), "entity-graph");
+    crate::ui::tests::assert_ui_renders(window.window(), "entity-graph");
     lock(&shared)
         .edit(Actor::Agent, "changed graph", |tx| {
             tx.entity_mut(ids[1])?.properties.set("targetname", "other");

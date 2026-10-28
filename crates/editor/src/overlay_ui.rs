@@ -1427,7 +1427,7 @@ mod tests {
         assert_eq!(lock(&shared).document().vmf(), &before);
         assert_eq!(lock(&shared).selected_faces(), sources);
         assert_eq!(lock(&shared).document().undo_labels().count(), history);
-        crate::ui::tests::save_ui_snapshot(
+        crate::ui::tests::assert_ui_renders(
             controller.window.window(),
             if terrain {
                 "overlay-terrain-multiface"
@@ -1684,7 +1684,7 @@ mod tests {
             .window
             .window()
             .set_size(slint::PhysicalSize::new(860, 940));
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "overlay-authoring");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "overlay-authoring");
         for label in [
             "Browse materials…",
             "Review current draft",
@@ -1811,7 +1811,7 @@ mod tests {
         assert!(controller.window.get_refit_mode());
         assert!(controller.window.get_ready());
         assert!(!controller.window.get_can_preview());
-        crate::ui::tests::save_ui_snapshot(controller.window.window(), "overlay-refit");
+        crate::ui::tests::assert_ui_renders(controller.window.window(), "overlay-refit");
         crate::ui::tests::assert_dialog_button_visible(&controller.window, "Apply refit");
         crate::ui::tests::assert_dialog_button_visible(
             &controller.window,
@@ -1913,7 +1913,7 @@ mod tests {
             app.window().take_snapshot().unwrap();
             let overlay = crate::ui::tests::scroll_inspector_to_control(&app, "Overlay…");
             crate::ui::tests::assert_dialog_button_visible(&app, "Overlay…");
-            crate::ui::tests::save_ui_snapshot(app.window(), "overlay-draft-entry");
+            crate::ui::tests::assert_ui_renders(app.window(), "overlay-draft-entry");
             overlay.invoke_accessible_default_action();
             assert!(review.window.window().is_visible());
             assert!(!review.window.get_can_preview());
@@ -2026,7 +2026,7 @@ mod tests {
         for label in ["Preview rebind", "Apply rebind", "Cancel"] {
             crate::ui::tests::assert_dialog_button_visible(&rebind.window, label);
         }
-        crate::ui::tests::save_ui_snapshot(rebind.window.window(), "overlay-rebind");
+        crate::ui::tests::assert_ui_renders(rebind.window.window(), "overlay-rebind");
         rebind.window.invoke_cancel();
         assert!(lock(&shared).get_overlay_state()["draft"].is_null());
         assert_eq!(lock(&shared).document().vmf(), &before_rebind);
@@ -2134,7 +2134,7 @@ mod tests {
         for label in ["Edit selected corners", "Apply corners", "Cancel"] {
             crate::ui::tests::assert_dialog_button_visible(&corners.window, label);
         }
-        crate::ui::tests::save_ui_snapshot(corners.window.window(), "overlay-corners");
+        crate::ui::tests::assert_ui_renders(corners.window.window(), "overlay-corners");
         assert!(corners.window.get_can_handle_corners());
         let origin =
             serde_json::from_value::<[f64; 3]>(draft["draft"]["basis_origin"].clone()).unwrap();
@@ -2230,7 +2230,7 @@ mod tests {
             assert!(!lock(&shared).overlay_corner_handles_active());
         }
         crate::ui::tests::assert_dialog_button_visible(&corners.window, "Viewport handles");
-        crate::ui::tests::save_ui_snapshot(corners.window.window(), "overlay-corner-handles");
+        crate::ui::tests::assert_ui_renders(corners.window.window(), "overlay-corner-handles");
         corners.window.invoke_apply();
         assert_eq!(
             lock(&shared).document().undo_labels().count(),

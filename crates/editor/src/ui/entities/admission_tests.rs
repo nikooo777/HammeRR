@@ -233,7 +233,7 @@ fn hsv_hsl_inspector_picker_preserves_precision_brightness_cancel_and_undo() {
     crate::ui::tests::assert_dialog_button_visible(&f.color, "Hue in degrees");
     crate::ui::tests::assert_dialog_button_visible(&f.color, "Saturation in percent");
     crate::ui::tests::assert_dialog_button_visible(&f.color, "Lightness in percent");
-    crate::ui::tests::save_ui_snapshot(f.color.window(), "entity-color-hsl");
+    crate::ui::tests::assert_ui_renders(f.color.window(), "entity-color-hsl");
     let source = lock(&f.shared).document().vmf().clone();
     let history = lock(&f.shared).document().undo_labels().count();
     f.color.invoke_apply();

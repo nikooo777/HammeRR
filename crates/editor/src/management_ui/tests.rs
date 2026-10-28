@@ -117,7 +117,7 @@ fn hsv_hsl_property_picker_keeps_local_edits_until_apply_and_commits_one_undo() 
     crate::ui::tests::assert_dialog_button_visible(&f.color, "Hue in degrees");
     crate::ui::tests::assert_dialog_button_visible(&f.color, "Saturation in percent");
     crate::ui::tests::assert_dialog_button_visible(&f.color, "Lightness in percent");
-    crate::ui::tests::save_ui_snapshot(f.color.window(), "property-color-hsl");
+    crate::ui::tests::assert_ui_renders(f.color.window(), "property-color-hsl");
     let source = lock(&f.shared).document().vmf().clone();
     let history = lock(&f.shared).document().undo_labels().count();
     f.color.invoke_apply();
@@ -540,7 +540,7 @@ fn saved_palette_picker_buttons_preserve_precision_brightness_and_draft_cancel()
     assert_eq!(f.color.get_intensity(), "123.5");
     f.color.set_palette_name("Choose a saved color".into());
     f.color.invoke_select_model(2);
-    crate::ui::tests::save_ui_snapshot(f.color.window(), "entity-color-palette");
+    crate::ui::tests::assert_ui_renders(f.color.window(), "entity-color-palette");
     press(&f.color, "Reload palette");
     press(&f.color, "Delete saved color");
     assert_eq!(

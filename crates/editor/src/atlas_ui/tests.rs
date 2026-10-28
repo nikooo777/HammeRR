@@ -389,7 +389,7 @@ fn atlas_dialog_preview_apply_cancel_and_material_reload_share_session_guards() 
     assert_eq!(lock(&shared).document().vmf(), &original);
     assert_eq!(lock(&shared).document().undo_labels().count(), history);
     assert!(controller.window.get_valid_region());
-    crate::ui::tests::save_ui_snapshot(controller.window.window(), "atlas-face-fit");
+    crate::ui::tests::assert_ui_renders(controller.window.window(), "atlas-face-fit");
     controller.window.set_region_pixels_wide("0".into());
     controller.window.invoke_edited();
     assert!(!controller.window.get_ready());

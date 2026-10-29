@@ -422,8 +422,10 @@ per channel, followed by the total and omitted-location count when needed.
 Their recorded world position is a cell reference, not an accepted probe.
 
 Probe placement automatically extends an empty original candidate pool with
-up to 152 additional boundary-grid attempts (217 total maximum). It stops at
-the first accepted extra point and leaves a nonempty initial pool unchanged.
+two boundary-grid shells: up to 152 attempts with byte fractions 16/240, then
+up to 296 more with fractions 1/254 (513 total maximum). Each shell runs only
+when earlier searches found no accepted point. It stops at the first accepted
+extra point and leaves a nonempty earlier pool unchanged.
 The same geometry and work limits apply; malformed inputs and provider errors
 still fail. This needs no new setting and runs in Fast, Balanced and Detailed.
 `refine_ambient_probes` keeps its separate gather/count/spacing policy.

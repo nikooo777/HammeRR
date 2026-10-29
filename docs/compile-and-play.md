@@ -227,8 +227,8 @@ settings. Sky and brush models do not certify cover; enabled texture shadows
 reject partial coverage. Terrain remains a sheet; it does not seal a map.
 
 Placement first checks the existing centre and coarse grid. If none is accepted,
-it checks up to 152 additional points near cell boundaries and keeps the first
-accepted point. This runs in all lit sampling modes, without **Refine ambient
+it checks two bounded shells near cell boundaries and keeps the first accepted
+point. The shells add up to 448 attempts, for a maximum of 513 total. This runs in all lit sampling modes, without **Refine ambient
 probes**. The extra search does not change a nonempty initial pool. Every extra
 point uses the same cell, brush, prop and terrain checks.
 

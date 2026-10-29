@@ -16,7 +16,7 @@ mod refinement;
 const MIN_PROBE_SPACING: f64 = 128.0;
 const MAX_AMBIENT_SAMPLES: usize = u16::MAX as usize + 1;
 const CANDIDATE_FRACTIONS: [u8; 4] = [64, 128, 192, 224];
-const BOUNDARY_FRACTIONS: [u8; 2] = [16, 240];
+const BOUNDARY_FRACTIONS: [u8; 4] = [16, 240, 1, 254];
 const MAX_CANDIDATE_POOL: usize = 1 + CANDIDATE_FRACTIONS.len().pow(3);
 const GRID_GENERATION_WORK: usize = 32;
 const MAX_MISSING_PROBE_DETAILS: usize = 8;
@@ -123,29 +123,36 @@ fn candidates(
     boundary.copy_from_slice(&BOUNDARY_FRACTIONS);
     let candidates = std::iter::once(encoded)
         .chain(candidate_grid(&CANDIDATE_FRACTIONS))
-        .map(|position| (false, position))
-        .chain(candidate_grid(&extended).map(|position| (true, position)));
+        .map(|position| (0, position))
+        .chain(
+            (CANDIDATE_FRACTIONS.len() + 2..=extended.len())
+                .step_by(2)
+                .flat_map(|width| {
+                    candidate_grid(&extended[..width]).map(move |position| (width, position))
+                }),
+        );
     let mut valid = Vec::new();
     let mut rejected = Rejections::default();
-    let mut boundary_charged = false;
+    let mut charged_width = 0;
     if ctx.refine {
         valid
             .try_reserve_exact(MAX_CANDIDATE_POOL)
             .map_err(|_| "Cannot reserve ambient refinement candidates")?;
     }
-    for (boundary, position) in candidates {
+    for (width, position) in candidates {
+        let boundary = width != 0;
         if boundary {
             if !valid.is_empty() {
                 break;
             }
-            if !boundary_charged {
-                budget.consume(extended.len().pow(3) * GRID_GENERATION_WORK)?;
-                boundary_charged = true;
+            if charged_width != width {
+                budget.consume(width.pow(3) * GRID_GENERATION_WORK)?;
+                charged_width = width;
             }
             if position == encoded
                 || position
                     .iter()
-                    .all(|fraction| CANDIDATE_FRACTIONS.contains(fraction))
+                    .all(|fraction| extended[..width - 2].contains(fraction))
             {
                 continue;
             }

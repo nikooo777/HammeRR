@@ -1302,6 +1302,9 @@ fn bake_inner(
             super::prop_vertices::Settings {
                 vmf: settings.vmf,
                 prop_sources: settings.prop_sources,
+                fs: settings.fs,
+                reflect_static_props: options.reflect_static_props,
+                prop_shadows: &prop_shadows,
             },
             prop_assets
                 .take()
@@ -1708,7 +1711,23 @@ fn bake_channel(
             ambient_directions: &ambient_directions,
         },
     };
-    if options.bounces == 0
+    let mut prop_channel = if options.reflect_static_props
+        && let Some(prepared) = prop_vertices.as_ref()
+    {
+        budget.phase(LightingPhase::PropVertices);
+        Some(super::prop_vertices::begin_channel(
+            prepared,
+            &prop_context,
+            kind,
+            &mut candidates,
+            report,
+            budget,
+        )?)
+    } else {
+        None
+    };
+    if !options.reflect_static_props
+        && options.bounces == 0
         && let Some(prepared) = prop_vertices
     {
         budget.phase(LightingPhase::PropVertices);
@@ -2011,6 +2030,7 @@ fn bake_channel(
     )?;
     budget.samples_planned_complete();
     let bounce_start = budget.work;
+    let mut prop_bounce_work = 0;
     let mut prop_source = None;
     let bounce = if options.bounces > 0 {
         let direct = if options.bounces > 1 {
@@ -2043,6 +2063,7 @@ fn bake_channel(
                     terrain: terrain_shadows,
                     model_shadows,
                     prop_shadows,
+                    prop_sources: prop_channel.as_ref().map(|state| state.sources()),
                     quality: sky_quality,
                     measured_sources: options.bake_static_prop_vertices,
                 },
@@ -2052,7 +2073,31 @@ fn bake_channel(
                 budget,
             )?;
             final_stats = stats;
-            if prop_vertices.is_some() && index + 1 == options.bounces {
+            if let Some(state) = prop_channel.as_mut() {
+                let prepared = prop_vertices
+                    .as_ref()
+                    .ok_or("Reflected prop channel has no prepared receivers")?;
+                let prop_start = budget.work;
+                budget.phase(LightingPhase::PropVertices);
+                super::prop_vertices::advance_channel(
+                    state,
+                    prepared,
+                    &prop_context,
+                    super::prop_vertices::Indirect {
+                        surfaces: &surfaces,
+                        quality: sky_quality,
+                    },
+                    &mut candidates,
+                    report,
+                    budget,
+                )?;
+                prop_bounce_work += budget.work - prop_start;
+                budget.phase(LightingPhase::Bounce);
+            }
+            if !options.reflect_static_props
+                && prop_vertices.is_some()
+                && index + 1 == options.bounces
+            {
                 prop_source = Some(surfaces);
             } else {
                 drop(surfaces);
@@ -2088,8 +2133,17 @@ fn bake_channel(
             model_samples: 0,
         }
     };
-    let bounce_work = budget.work - bounce_start;
-    if options.bounces > 0
+    let bounce_work = budget.work - bounce_start - prop_bounce_work;
+    let final_prop_sources = prop_channel.as_ref().map(|state| state.sources().clone());
+    if let Some(state) = prop_channel.take() {
+        let prepared = prop_vertices
+            .as_mut()
+            .ok_or("Reflected prop channel has no prepared receivers")?;
+        budget.phase(LightingPhase::PropVertices);
+        super::prop_vertices::publish_channel(prepared, state, budget)?;
+    }
+    if !options.reflect_static_props
+        && options.bounces > 0
         && let Some(prepared) = prop_vertices
     {
         let surfaces = prop_source
@@ -2125,6 +2179,7 @@ fn bake_channel(
             face_sources,
             world_leaf_nodes,
             model_scopes,
+            prop_sources: final_prop_sources.as_ref(),
             map,
             kind,
             tree,
@@ -2148,6 +2203,7 @@ fn bake_channel(
             brush_textures,
             face_sources,
             model_scopes,
+            prop_sources: final_prop_sources.as_ref(),
             map,
             tree,
             visibility,

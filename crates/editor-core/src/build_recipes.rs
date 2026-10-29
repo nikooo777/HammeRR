@@ -47,7 +47,7 @@ impl Recipe {
             .options()
             .expect("recipe settings are validated");
         let description = format!(
-            "{} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
+            "{} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
             options.lighting.label(),
             options.physics.label(),
             options.visibility.label(),
@@ -71,6 +71,11 @@ impl Recipe {
                 "off"
             },
             if options.bake_static_prop_vertices {
+                "on"
+            } else {
+                "off"
+            },
+            if options.reflect_static_props {
                 "on"
             } else {
                 "off"
@@ -159,6 +164,7 @@ pub(crate) fn builtins() -> [Recipe; 2] {
                 pack_water_assets: false,
                 pack_static_prop_assets: false,
                 bake_static_prop_vertices: false,
+                reflect_static_props: false,
                 brush_texture_shadows: false,
                 colored_texture_shadows: false,
                 refine_ambient_probes: false,

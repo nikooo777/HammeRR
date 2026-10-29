@@ -644,6 +644,7 @@ pub struct BuildSettingsUpdate<'a> {
     pub pack_water_assets: Option<bool>,
     pub pack_static_prop_assets: Option<bool>,
     pub bake_static_prop_vertices: Option<bool>,
+    pub reflect_static_props: Option<bool>,
     pub brush_texture_shadows: Option<bool>,
     pub colored_texture_shadows: Option<bool>,
     pub refine_ambient_probes: Option<bool>,
@@ -726,12 +727,34 @@ impl Session {
         settings["lighting_work_description"] = "One aggregate allowance for preparation, LDR and HDR lighting. Raising it preserves sampling quality and all independent allocation, sample, light, probe and geometry limits.".into();
         settings["bake_static_prop_vertices"] =
             self.compilation.options.bake_static_prop_vertices.into();
+        settings["reflect_static_props"] = self.compilation.options.reflect_static_props.into();
+        let prop_reflection_available = self.compilation.options.lighting.performs_lighting()
+            && self.compilation.options.bake_static_prop_vertices;
+        settings["static_prop_reflection"] = json!({
+            "available":prop_reflection_available,
+            "unavailable_reason":if prop_reflection_available { None } else { Some("Choose Direct LDR or Direct LDR + HDR and enable Bake static-prop vertex lighting first.") },
+            "description":"Use eligible baked static props as reflected light sources. Requires Bake static-prop vertex lighting and a lit mode. Choose the shared bounce count under Indirect light; ambient and details sample final output. Runtime direct styles stay separate.",
+            "limits":{
+                "requires":["bake_static_prop_vertices","lit_mode"],
+                "source_draw_lod":0,"source_skin":"selected",
+                "source_materials":["admitted_opaque_vertexlitgeneric","admitted_strict_binary_cutout_vertexlitgeneric"],
+                "source_light_styles":[0],
+                "receivers":["world","terrain","brush_models","prop_vertices","indexed_ambient","detail"],
+                "bounces":{"min":0,"max":compiler::MAX_LIGHT_BOUNCES},
+                "snapshot":"previous_depth_world_and_props",
+                "ambient_and_details":"filtered_final_output",
+                "channels":"independent_ldr_hdr",
+                "requires_shadow_casting":false,"receiver_self_shadow_setting":"preserved",
+                "implicit_emission":false,"runtime_direct_styles":"excluded_from_sources",
+                "switched_indirect_ambient":false
+            }
+        });
         settings["brush_model_shadowing"] = json!({
             "available":self.compilation.options.lighting.performs_lighting(),
             "property":"vrad_brush_cast_shadows","enabled_value":"1","default_value":"0",
             "fullbright":"admit_and_preserve_without_baking",
             "baked_count":"stats.brush_shadow_models",
-            "description":"Advanced properties → Shadows → Yes requests global baked shadows from an unnamed, unparented stationary func_brush. Opaque root and child requests keep their ordinary SOLID material scope. Explicit root and child requests may also use the supported plain LightmappedGeneric alpha-tested or translucent material when Brush texture shadows is enabled in a lit mode. Child cutouts without a global request use only their own applicable baked receiver scope. Root requests use an explicit finite Origin (X Y Z). Child models may instead resolve and consume one origin volume before the ordinary body check. Root and child requests validate before region omission; Fullbright reports admitted opaque source requests without baking, including requests omitted by compile regions. Admitted child initial poses are baked before containing transforms; emitted child angles are zero. Eligible stationary Shadows Yes root and assembled-child func_brush models supply reflected radiance from their baked maps alongside world and terrain. Moving, parented, unrequested and MDL model sources remain unavailable.",
+            "description":"Advanced properties → Shadows → Yes requests global baked shadows from an unnamed, unparented stationary func_brush. Opaque root and child requests keep their ordinary SOLID material scope. Explicit root and child requests may also use the supported plain LightmappedGeneric alpha-tested or translucent material when Brush texture shadows is enabled in a lit mode. Child cutouts without a global request use only their own applicable baked receiver scope. Root requests use an explicit finite Origin (X Y Z). Child models may instead resolve and consume one origin volume before the ordinary body check. Root and child requests validate before region omission; Fullbright reports admitted opaque source requests without baking, including requests omitted by compile regions. Admitted child initial poses are baked before containing transforms; emitted child angles are zero. Eligible stationary Shadows Yes root and assembled-child func_brush models supply reflected radiance from their baked maps alongside world and terrain. Moving, parented and unrequested brush-model sources remain unavailable. Eligible VHV static-prop sources require Reflect light from static props; other MDL sources remain unavailable.",
             "limits":{
                 "classname":"func_brush","origin":"resolved_finite",
                 "root_origin":"explicit_finite","child_origin":"explicit_or_one_consumed_volume",
@@ -798,7 +821,7 @@ impl Session {
         settings["brush_texture_shadowing"] = json!({
             "available":self.compilation.options.lighting.performs_lighting(),
             "unavailable_reason":if self.compilation.options.lighting.performs_lighting() { None } else { Some("Choose Direct LDR or Direct LDR + HDR before enabling brush texture shadows.") },
-            "description":"Use static base-texture alpha on plain LightmappedGeneric world/detail brushes, terrain and admitted initial-pose brush-model self shadows. An eligible stationary root or child func_brush with Advanced properties → Shadows → Yes also casts these texture shadows into global baked lighting, including world and other-model receivers. Child effective origins and source initial poses lower before containing transforms. Unrequested root and child model cutouts stay within their own lit receiver scope. Absent or zero global requests never cast into world or other-model lighting. Eligible stationary Shadows Yes root and assembled-child func_brush models supply reflected radiance from their baked maps alongside world and terrain. Moving, parented, unrequested and MDL model sources remain unavailable. Default off; independent of native model-requested prop texture shadows. Geometry, collision and sealing remain unchanged. Requested unsupported materials, model scopes or missing textures stop publication.",
+            "description":"Use static base-texture alpha on plain LightmappedGeneric world/detail brushes, terrain and admitted initial-pose brush-model self shadows. An eligible stationary root or child func_brush with Advanced properties → Shadows → Yes also casts these texture shadows into global baked lighting, including world and other-model receivers. Child effective origins and source initial poses lower before containing transforms. Unrequested root and child model cutouts stay within their own lit receiver scope. Absent or zero global requests never cast into world or other-model lighting. Eligible stationary Shadows Yes root and assembled-child func_brush models supply reflected radiance from their baked maps alongside world and terrain. Moving, parented and unrequested brush-model sources remain unavailable. Eligible VHV static-prop sources require Reflect light from static props; other MDL sources remain unavailable. Default off; independent of native model-requested prop texture shadows. Geometry, collision and sealing remain unchanged. Requested unsupported materials, model scopes or missing textures stop publication.",
             "limits":{
                 "lighting_modes":["direct_ldr","direct_ldr_hdr"],
                 "casters":["world","func_detail","world_terrain","detail_terrain","brush_model_self","child_brush_model_self","requested_stationary_root_func_brush","requested_stationary_child_func_brush"],
@@ -855,18 +878,18 @@ impl Session {
                 "frames":1,"faces":1,"depth":1,
                 "alpha_reference":{"default":0.5,"min":0,"max":1,"zero_uses_default":true},
                 "colored_transmission_option":"colored_texture_shadows",
-                "unsupported":["alpha modulation","blend-shader terrain opacity","unadmitted model poses","unrequested cutout models without lit receivers","moving parented unrequested or MDL model radiance sources","conditional or animated materials"]
+                "unsupported":["alpha modulation","blend-shader terrain opacity","unadmitted model poses","unrequested cutout models without lit receivers","unadmitted moving parented unrequested or MDL model radiance sources","conditional or animated materials"]
             }
         });
         settings["pack_water_assets"] = self.compilation.options.pack_water_assets.into();
         settings["pack_static_prop_assets"] =
             self.compilation.options.pack_static_prop_assets.into();
-        settings["static_prop_packing_description"] = "Pack original model, companion, all declared skin/LOD materials and basetexture files for emitted static props during Compile or Run Map. Default off; independent of vertex lighting and available in every lighting mode. Requires bounded static MDL 44/48, body 0/root LOD 0, trivial local animation and VertexLitGeneric terminals. Terminals allow only one canonical $basetexture, optionally plus literal $alphatest 1 at the default 0.5 cutoff; authored $alphatestreference is unsupported. Patch chains allow at most eight include edges, with one basetexture insert or replace block per Patch. Deeper edits win within each type; replacements apply after all inserts. All original VMT bytes and every declared VTF remain packed, including overridden textures. Extra keys, combined edit sections, proxies and $envmap reject. Matching PHY is included only for VPhysics props. Missing or unsupported dependencies stop publication. Packing preserves model flags. Compiler texture shadows require the original MDL CAST_TEXTURE_SHADOWS request; without it, enabled prop shadows remain opaque mesh shadows with the existing warning. Selected default-alpha-test vertex-lighting receivers accept the same bounded nested Patch basetexture edits and terminal contract. Every hardware vertex is retained with VHV alpha 255; receiver-only textures are read only if casting or packing needs them. Runtime requires standard CS:S shaders and surface/prop-data definitions with DX90 or newer.".into();
+        settings["static_prop_packing_description"] = "Pack original model, companion, all declared skin/LOD materials and basetexture files for emitted static props during Compile or Run Map. Default off; independent of vertex lighting and available in every lighting mode. Requires bounded static MDL 44/48, body 0/root LOD 0, trivial local animation and VertexLitGeneric terminals. Terminals allow only one canonical $basetexture, optionally plus literal $alphatest 1 at the default 0.5 cutoff; authored $alphatestreference is unsupported. Patch chains allow at most eight include edges, with one basetexture insert or replace block per Patch. Deeper edits win within each type; replacements apply after all inserts. All original VMT bytes and every declared VTF remain packed, including overridden textures. Extra keys, combined edit sections, proxies and $envmap reject. Matching PHY is included only for VPhysics props. Missing or unsupported dependencies stop publication. Packing preserves model flags. Compiler texture shadows require the original MDL CAST_TEXTURE_SHADOWS request; without it, enabled prop shadows remain opaque mesh shadows with the existing warning. Selected default-alpha-test vertex-lighting receivers accept the same bounded nested Patch basetexture edits and terminal contract. Every hardware vertex is retained with VHV alpha 255; receiver-only textures are read only if casting, packing or enabled reflected-source preparation needs them. Runtime requires standard CS:S shaders and surface/prop-data definitions with DX90 or newer.".into();
         settings["water_packing_description"] = "Pack original files for complete supported static Water or opaque SLIME material/Patch/texture closures during Compile or Run Map. Default off. SLIME supports static opaque LightmappedGeneric, UnlitGeneric and unambiguous scalar Patch chains with an explicit basetexture and exact native self-bottom. Original base, bump, tool and named LDR/HDR envmap assets remain packed, including overridden references. Explicit runtime Water surface envmaps and runtime SLIME env_cubemap require Generate reflections and Direct LDR + HDR; generated pairs, bound aliases and original inputs verify before publication. Water bottom/underwater-overlay graphs require explicit named static LDR/HDR envmaps; omitted envmaps, runtime dependencies below the surface root and material cycles reject. Runtime Water envmapframe must be absent or zero and Patch chains cannot edit a key in multiple materials. All original declared resources remain packed, including overridden references. Other resources/effects remain unsupported. Static named-envmap packing works in every lighting mode without capture.".into();
         settings["prop_vertex_lighting"] = json!({
             "available":unavailable_reason.is_none(),
             "unavailable_reason":unavailable_reason,
-            "description":"Bake direct lighting and up to four diffuse bounces from world, terrain and eligible stationary Shadows Yes root/assembled-child func_brush maps on unit-scale static props with one bodypart/model, body0/root0, all 1–8 draw LODs and plain opaque or strict default-alpha-test VertexLitGeneric materials, up to 256 hardware sections total. Direct LDR + HDR evaluates both channels independently. Stored VHV contains the static style-0 base; supported effective point/spot styles remain runtime direct lighting through native WorldLight records and are excluded from VHV. Editor VHV preview stays static; switched indirect ambient remains unsupported. At depth N above zero, prop reception uses world/terrain and eligible stationary requested brush-model lighting from depth N-1 and adds direct light once. Indirect reception requires texture-header or authored material reflectivity for every consumed world/terrain or eligible stationary requested brush-model source. Dimensions independently use diffuse or tool VTF headers, or the SDK no-preview 128x128 convention; every complete VTF actually read for metrics is hashed. Authored $reflectivity accepts one ASCII [r g b] triple of finite linear values from 0 to 1, at most 128 bytes; only trimmed %notooltexture 0 or 1 selects the no-preview convention before dimension reads. Empty or other no-preview values and non-path tool values reject; failed required providers never fall back. disableselfshadowing=1 omits only the receiving prop’s own shadow triangles. lightingorigin preserves a uniquely resolved info_lighting point for native runtime lighting; baked samples, normals and PVS remain at actual vertices, without embedded-vertex recovery. ignorenormals=1 supports zero to four bounces: constant 0.35 point/spot/sun reception, full-sphere sky ambient, and spherical reflected reception with SDK angular normalization. It retains real shadows and finite nonzero model normals. Original vertices may touch opaque world brushes; buried vertices and terrain/other-prop contacts reject. Model/material compatibility is checked during compilation. Unsupported requested receivers stop the build; disablevertexlighting=1 explicitly opts out one prop. No native capture runtime is required.",
+            "description":"Bake direct lighting and up to four diffuse bounces from world, terrain and eligible stationary Shadows Yes root/assembled-child func_brush maps on unit-scale static props with one bodypart/model, body0/root0, all 1–8 draw LODs and plain opaque or strict default-alpha-test VertexLitGeneric materials, up to 256 hardware sections total. Direct LDR + HDR evaluates both channels independently. Stored VHV contains the static style-0 base; supported effective point/spot styles remain runtime direct lighting through native WorldLight records and are excluded from VHV. Editor VHV preview stays static; switched indirect ambient remains unsupported. At depth N above zero, prop reception uses world/terrain and eligible stationary requested brush-model lighting from depth N-1 and adds direct light once. When Reflect light from static props is enabled, eligible prop sources join the same previous-depth snapshot. Indirect reception requires texture-header or authored material reflectivity for every consumed world/terrain or eligible stationary requested brush-model source. Dimensions independently use diffuse or tool VTF headers, or the SDK no-preview 128x128 convention; every complete VTF actually read for metrics is hashed. Authored $reflectivity accepts one ASCII [r g b] triple of finite linear values from 0 to 1, at most 128 bytes; only trimmed %notooltexture 0 or 1 selects the no-preview convention before dimension reads. Empty or other no-preview values and non-path tool values reject; failed required providers never fall back. disableselfshadowing=1 omits only the receiving prop’s own shadow triangles. lightingorigin preserves a uniquely resolved info_lighting point for native runtime lighting; baked samples, normals and PVS remain at actual vertices, without embedded-vertex recovery. ignorenormals=1 supports zero to four bounces: constant 0.35 point/spot/sun reception, full-sphere sky ambient, and spherical reflected reception with SDK angular normalization. It retains real shadows and finite nonzero model normals. Original vertices may touch opaque world brushes; buried vertices and terrain/other-prop contacts reject. Model/material compatibility is checked during compilation. Unsupported requested receivers stop the build; disablevertexlighting=1 explicitly opts out one prop. No native capture runtime is required.",
             "limits":{
                 "lighting_modes":["direct_ldr","direct_ldr_hdr"],
                 "bounces":{"min":0,"max":compiler::MAX_LIGHT_BOUNCES},"indirect_sources":["world","terrain","requested_stationary_root_func_brush","requested_stationary_assembled_child_func_brush"],"indirect_reflectivity":"texture_header_or_authored_material","indirect_dimensions":"header_or_native_no_preview","indirect_dimension_sources":["diffuse_vtf_header","tool_vtf_header","native_no_preview_convention"],"receiver":{"body":0,"root_lod":0,"bodyparts":1,"models":1,"lods":{"min":1,"max":8,"all_required":true},"hardware_meshes_max":compiler::prop_lighting_assets::MAX_RECEIVER_MESHES,"scale":1,"sample_origin":"original_vertex","lighting_origin":{"property":"lightingorigin","baked_samples":"actual_vertices","embedded_recovery":false},"support_contacts":"opaque_world_brush","self_shadowing":{"default":true,"disable_property":"disableselfshadowing","disable_value":1,"disabled_scope":"receiver_owned_triangles","retained_blockers":["other_props","world","terrain"]},"ignore_normals":{"property":"ignorenormals","enabled_value":1,"bounces":{"min":0,"max":compiler::MAX_LIGHT_BOUNCES},"direct_factor":compiler::lighting::IGNORE_NORMALS_FACTOR,"sky_ambient":"full_sphere_visibility_mean","indirect":"spherical_sdk_normalization","keeps_shadows":true}},
@@ -881,7 +904,7 @@ impl Session {
                     "baked_into_vhv":false,
                     "switched_indirect_ambient":false
                 },
-                "unsupported":["buried vertices","terrain/other-prop support contacts","specialized materials","per-texel prop lightmaps","reflected prop sources"]
+                "unsupported":["buried vertices","terrain/other-prop support contacts","specialized materials","per-texel prop lightmaps","unadmitted prop reflected sources"]
             }
         });
         settings
@@ -959,6 +982,7 @@ impl Session {
             pack_water_assets,
             pack_static_prop_assets,
             bake_static_prop_vertices,
+            reflect_static_props,
             brush_texture_shadows,
             colored_texture_shadows,
             refine_ambient_probes,
@@ -973,6 +997,8 @@ impl Session {
                 .unwrap_or(self.compilation.options.colored_texture_shadows),
             bake_static_prop_vertices: bake_static_prop_vertices
                 .unwrap_or(self.compilation.options.bake_static_prop_vertices),
+            reflect_static_props: reflect_static_props
+                .unwrap_or(self.compilation.options.reflect_static_props),
             pack_sky_assets: pack_sky_assets.unwrap_or(self.compilation.options.pack_sky_assets),
             pack_water_assets: pack_water_assets
                 .unwrap_or(self.compilation.options.pack_water_assets),
@@ -1023,7 +1049,7 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
+                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
                     options.lighting.label(),
                     options.physics.label(),
                     options.visibility.label(),
@@ -1034,6 +1060,7 @@ impl Session {
                     if options.brush_texture_shadows { "on" } else { "off" },
                     if options.colored_texture_shadows { "on" } else { "off" },
                     if options.bake_static_prop_vertices { "on" } else { "off" },
+                    if options.reflect_static_props { "on" } else { "off" },
                     if options.generate_reflections { "on" } else { "off" },
                     if options.pack_sky_assets { "on" } else { "off" },
                     if options.pack_water_assets { "on" } else { "off" },
@@ -1598,6 +1625,7 @@ impl Session {
             status["settings"]["lighting_work_limit"] = job.options.lighting_work_limit.into();
             status["settings"]["brush_texture_shadows"] = job.options.brush_texture_shadows.into();
             status["settings"]["colored_texture_shadows"] = job.options.colored_texture_shadows.into();
+            status["settings"]["reflect_static_props"] = job.options.reflect_static_props.into();
             status["settings"]["refine_ambient_probes"] = job.options.refine_ambient_probes.into();
             if let Some(queue) = &job.queue { status["queue"] = queue.snapshot(); }
             if job.instance_dependencies.is_some() { status["instance_dependencies"]=json!({"current":dependency_issue.is_none(),"error":dependency_issue}); }

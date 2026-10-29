@@ -138,9 +138,14 @@ Enable **Bake static-prop vertex lighting** for static-prop receivers.
 Map and vertex receivers keep the chosen zero-to-four bounce depth. Ambient and
 detail receivers retain filtered sampling of final baked maps.
 Stored prop vertex colors remain style 0; supported runtime point/spot styles are separate.
+Enable [**Reflect light from static props**](static-props.md#reflect-light-from-static-props)
+with **Bake static-prop vertex lighting** to include eligible root-LOD static-prop
+sources in the same bounce depth. The option defaults off; ambient and details
+sample the final output.
 
 ![A stationary green brush model reflects light onto the floor and a separate brush](images/stationary-model-reflection.png)
-Moving, parented, unrequested and MDL model sources remain unavailable.
+Moving, parented and unrequested brush-model sources remain unavailable.
+Other MDL source families remain unsupported.
 More bounces increase work. Unsupported material effects report diagnostics rather than fabricated reflectance.
 
 ### Normal-map lighting

@@ -412,6 +412,20 @@ remain in native WorldLight records and are excluded from VHV.
 The editor's VHV preview shows the stored base. Switched indirect ambient and
 animated VHV remain unsupported.
 
+Set `reflect_static_props:true` in `set_compile_settings`, together with
+`bake_static_prop_vertices:true` and `lighting:"direct_ldr"` or `"direct_ldr_hdr"`,
+to use eligible opaque or strict-cutout VHV props as reflected style-0 sources.
+It defaults false. Missing prerequisites reject atomically without enabling
+them; disable the flag in the same request when disabling a prerequisite.
+`static_prop_reflection` reports availability and source limits. Existing recipes,
+per-map settings and job settings retain the flag; older recipes default false.
+Sources use actual root-LOD triangles and selected skins/UVs. The shared
+`bounces:0` through `4` depth advances maps and vertices together; ambient/details
+sample final output. Runtime direct styles remain separate, and switched
+indirect ambient remains unsupported. `stats.prop_vertex_lighting` reports
+`reflected_source_props`, `reflected_source_triangles` and
+`reflected_source_vertices` (unique used root-LOD vertices), counted once per admitted occurrence.
+
 Compile diagnostics retain shared object/position references. Split failures
 include plane-source candidates; visibility limits include work/input counts;
 repeated material warnings include affected brush/side totals.
@@ -419,7 +433,7 @@ Set `brush_texture_shadows:true` for [cutout or partial-transparency texture sha
 Set `colored_texture_shadows:true` in the same `set_compile_settings` call, with `lighting:"direct_ldr"` or `"direct_ldr_hdr"` and `brush_texture_shadows:true`, for [colored transport](brush-texture-shadows.md#colored-texture-shadows). It defaults false. Missing prerequisites reject atomically without enabling them. Base RGB uses gamma 2.2 and saturated byte coverage per channel; white preserves scalar coverage, alpha 0 stays clear, alpha 255 stays opaque and binary cutouts are unchanged. `get_compile_settings.colored_texture_shadowing` reports availability and the declared policy. Recipes, per-map preferences and captured jobs retain the option. Disable it in the same request when disabling a prerequisite. Native VRAD and physical absorption parity are not claimed.
 After compiling, use `set_baked_surfaces` with `action:"prepare"`, inspect the returned token, then use `action:"show"` with that token. Supported plain alpha materials remain displayable with their receivers. The preview uses mip-0 nearest clamp/repeat sampling, checked cutout thresholds or depth-ordered fractional alpha; intersecting translucent batches can sort differently from the game.
 For an eligible stationary root or child `func_brush`, set `vrad_brush_cast_shadows:"1"` through `set_entity_properties` to cast supported cutouts or partial transparency globally. This uses the same **Shadows → Yes** property and lit build option as the UI. Child origins and initial poses lower before containing transforms. Without this request, supported root and child texture shadows stay within their own lit receivers. Absent or zero requests do not affect world or other-model lighting.
-The same eligible stationary request also makes the model's baked maps reflected-light sources. `set_compile_settings` keeps the existing `bounces:0` through `4` depth for world/model maps and opted-in VHV; ambient/details keep filtered final-map reception. Supported source materials include existing opaque and enabled cutout/fractional/colored forms, with checked reflectivity providers. `get_compile_settings.brush_model_shadowing` reports this scope. Moving, parented, unrequested and MDL model sources remain unavailable. No new setting, intrinsic emission or native VRAD parity is implied.
+The same eligible stationary request also makes the model's baked maps reflected-light sources. `set_compile_settings` keeps the existing `bounces:0` through `4` depth for world/model maps and opted-in VHV; ambient/details keep filtered final-map reception. Supported source materials include existing opaque and enabled cutout/fractional/colored forms, with checked reflectivity providers. `get_compile_settings.brush_model_shadowing` reports this brush scope. Moving, parented and unrequested brush-model sources remain unavailable. Eligible VHV static-prop sources instead require `reflect_static_props`; other MDL source families remain unsupported. No intrinsic emission or native VRAD parity is implied.
 Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
 For `env_cubemap`, set `cubemapsize` to `"9"` for **Cubemap Size → 256x256**; `"0"` keeps the 128×128 default. Generated LDR and paired LDR/HDR captures support all authored sizes from 1×1 through 256×256.
@@ -534,7 +548,7 @@ The reference form preserves bindings. Extraction with parameters and general re
 
 Static-prop packing accepts up to eight Patch include edges with one basetexture edit per Patch.
 All original materials and declared textures stay packed. Deeper edits win within each type; replacements apply after all inserts.
-Cutout vertex-lighting receivers accept the same bounded nested basetexture edits; their receiver-only textures stay unread unless casting or packing needs them.
+Cutout vertex-lighting receivers accept the same bounded nested basetexture edits; their receiver-only textures stay unread unless casting, packing or enabled reflected-source preparation needs them.
 
 Static child `env_fog_controller` entities use ordinary create/property/save operations. Set literal primary RGB, start/end, density and enable values; keep blend, radial, `use_angles` and transition time at `0`, HDR/zoom gains at `1` and far-Z nonpositive. Names, I/O and Master/DX flags are unavailable. Refresh reports `fog_controllers` and unavailable parent fog preview. Multiple controllers keep ordinary order; compile regions select their transformed origins.
 

@@ -32,6 +32,7 @@ pub(super) struct Context<'a> {
     pub model_scopes: &'a [super::models::Scope],
     pub emission: Option<&'a super::emission::Prepared>,
     pub brush_textures: Option<&'a super::brush_alpha::Prepared>,
+    pub prop_sources: Option<&'a super::prop_vertices::SourceSnapshot>,
     pub face_sources: &'a [std::sync::Arc<[u32]>],
     pub map: &'a Map<'a>,
     pub tree: &'a Tree,
@@ -208,6 +209,7 @@ pub(super) fn bake(
         ctx.brush_textures,
         ctx.terrain,
         ctx.shadows,
+        ctx.prop_sources,
         budget,
     )?;
     if ctx.directions.is_empty() {

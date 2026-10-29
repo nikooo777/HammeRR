@@ -8,7 +8,7 @@ use source_formats::gamefs::GameFs;
 use source_formats::vmt::{self, Material};
 use source_formats::vtf::Vtf;
 
-mod metrics;
+pub(crate) mod metrics;
 mod read_budget;
 use metrics::{
     DimensionProvider, MetricPlan, NATIVE_NO_PREVIEW_DIMENSION, ReflectivityProvider, TextureHeader,

@@ -98,14 +98,23 @@ pub(crate) fn dependency(path: &str, bytes: &[u8]) -> io::Result<Dependency> {
             (parameter, Some((section, reference)))
         }
         [first, second] if !patch => {
-            let (parameter, alpha) = if first.key.eq_ignore_ascii_case("$basetexture") {
+            let (parameter, metadata) = if first.key.eq_ignore_ascii_case("$basetexture") {
                 (first, second)
             } else {
                 (second, first)
             };
-            if !alpha.key.eq_ignore_ascii_case("$alphatest") || alpha.as_str() != Some("1") {
+            if metadata.key.eq_ignore_ascii_case("$reflectivity") {
+                let value = metadata.as_str().ok_or_else(|| {
+                    invalid(format!("Static-prop $reflectivity must be scalar: {path}"))
+                })?;
+                crate::materials::parse_reflectivity(value).map_err(|error| {
+                    invalid(format!("Invalid static-prop material {path}: {error}"))
+                })?;
+            } else if !metadata.key.eq_ignore_ascii_case("$alphatest")
+                || metadata.as_str() != Some("1")
+            {
                 return Err(invalid(format!(
-                    "Unsupported static-prop material {path}: alpha-tested VertexLitGeneric requires one literal $alphatest 1"
+                    "Unsupported static-prop material {path}: additional VertexLitGeneric parameter must be valid $reflectivity or literal $alphatest 1"
                 )));
             }
             (parameter, None)

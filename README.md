@@ -68,7 +68,7 @@ See the [tool index and setup](docs/mcp.md).
 | [Lighting preview](docs/lighting-preview.md) | [Baked lighting](docs/compile-and-play.md#lighting) |
 | --- | --- |
 | ![HDR authored lighting on brick and concrete](docs/images/authored-lighting-hdr.png) | ![Red and blue translucent terrain casts colored baked shadows](docs/images/texture-shadows-colored.png) |
-| Inspect unshadowed LDR/HDR point, spot and sun lighting. | Bake LDR/HDR, colored texture shadows, material emission and bounces. |
+| Inspect unshadowed LDR/HDR point, spot and sun lighting. | Bake LDR/HDR, colored shadows, emission and brush/prop bounces. |
 
 | [Models](docs/models.md) | [Surface placement](docs/placement.md) |
 | --- | --- |

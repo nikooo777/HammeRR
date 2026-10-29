@@ -1,17 +1,27 @@
-use std::io;
+use std::{io, rc::Rc, sync::Arc};
 
-use source_formats::{model::Model, vmt::Material};
+use glam::DVec3;
+use source_formats::{gamefs::GameFs, model::Model, vmt::Material, vtf::Vtf};
 
 use super::super::asset_tracking::Tracker;
 use super::super::bake::{Allocation, Budget};
-use crate::prop_lighting_assets::SourceAsset;
+use crate::materials::metrics::{HeaderProvider, ReflectivityProvider};
 use crate::static_prop_assets::{MaterialDependency, material_dependency};
 
 const MAX_MATERIAL_BYTES: usize = 64 * 1024;
 type MaterialReader<'a> = dyn FnMut(&str, bool) -> io::Result<Option<Vec<u8>>> + 'a;
 
-pub(super) struct Assets<'a> {
-    tracker: Tracker<'a>,
+pub(super) struct Assets<'fs, 'tracking> {
+    inner: super::super::props::Assets<'fs, 'tracking>,
+}
+
+pub(super) struct SourceMaterial {
+    pub(super) name: String,
+    pub(super) base: String,
+    pub(super) reflectivity: DVec3,
+    pub(super) alpha: Option<Arc<super::super::props::alpha::Material>>,
+    pub(super) two_sided: bool,
+    _allocation: Allocation,
 }
 
 #[derive(Default)]
@@ -99,15 +109,15 @@ fn load_material_observed(
     Ok(material)
 }
 
-impl<'a> Assets<'a> {
-    pub fn new(tracker: Tracker<'a>) -> Self {
-        Self { tracker }
+impl<'fs, 'tracking> Assets<'fs, 'tracking> {
+    pub fn new(tracker: &'tracking mut Tracker<'fs>, fs: &'fs GameFs) -> Self {
+        Self {
+            inner: super::super::props::Assets::for_props(fs, None, Some(tracker)),
+        }
     }
 
     pub fn required(&mut self, path: &str, budget: &mut Budget<'_>) -> Result<Vec<u8>, String> {
-        self.tracker
-            .read(path, source_formats::mdl::MAX_MODEL_BYTES, budget)?
-            .ok_or_else(|| format!("Static-prop vertex source {path} was not found"))
+        self.inner.read(path, budget)
     }
 
     pub fn material(
@@ -116,20 +126,29 @@ impl<'a> Assets<'a> {
         index: usize,
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
+        let _decoded = budget.reserve_bytes(MAX_MATERIAL_BYTES * 128)?;
+        self.find_material(model, index, budget).map(|_| ())
+    }
+
+    fn find_material(
+        &mut self,
+        model: &Model,
+        index: usize,
+        budget: &mut Budget<'_>,
+    ) -> Result<(String, Material), String> {
         let name = model
             .materials
             .get(index)
             .ok_or("Static-prop skin material is unavailable")?;
         let name = name.strip_suffix(".vmt").unwrap_or(name);
-        let _decoded = budget.reserve_bytes(MAX_MATERIAL_BYTES * 128)?;
         for candidate in
             source_formats::model::material_candidates(name, &model.material_directories)
         {
             let path = format!("materials/{candidate}.vmt");
             let material = load_material_observed(&path, &mut |path, charge| {
                 let data = self
-                    .tracker
-                    .read(path, MAX_MATERIAL_BYTES, budget)
+                    .inner
+                    .read_material(path, budget)
                     .map_err(io::Error::other)?;
                 if let Some(data) = &data
                     && charge
@@ -140,15 +159,83 @@ impl<'a> Assets<'a> {
                 }
                 Ok(data)
             })?;
-            if material.is_some() {
-                return Ok(());
+            if let Some(material) = material {
+                return Ok((path, material));
             }
         }
         Err(format!("Static-prop vertex material {name} was not found"))
     }
 
-    pub fn finish(self) -> (Vec<SourceAsset>, Vec<String>, Allocation) {
-        self.tracker.finish()
+    pub(super) fn source_material(
+        &mut self,
+        model: &Model,
+        index: usize,
+        budget: &mut Budget<'_>,
+    ) -> Result<Rc<SourceMaterial>, String> {
+        let _decoded = budget.reserve_bytes(MAX_MATERIAL_BYTES * 128)?;
+        let (name, material) = self.find_material(model, index, budget)?;
+        budget.consume(material.params.len() + 32)?;
+        let primary = material
+            .primary_base_texture_key()
+            .map_err(|error| error.to_string())?;
+        let key =
+            primary.ok_or("Reflected prop sources require a selected original base texture")?;
+        let base = HeaderProvider::new(&material, key)?;
+        if base.runtime() {
+            return Err(format!(
+                "Reflected prop source {name} uses a runtime base texture"
+            ));
+        }
+        let reflectivity = match ReflectivityProvider::new(&material, primary)? {
+            ReflectivityProvider::CompileDefault => {
+                return Err(format!(
+                    "Reflected prop source {name} requires measured VTF or authored reflectivity"
+                ));
+            }
+            ReflectivityProvider::Authored(value) => value,
+            ReflectivityProvider::Header(provider) => {
+                if provider.runtime() {
+                    return Err(format!(
+                        "Reflected prop source {name} uses runtime reflectivity"
+                    ));
+                }
+                let bytes = self.inner.read(&provider.path, budget)?;
+                budget.consume(32)?;
+                let texture =
+                    Vtf::parse(bytes).map_err(|error| format!("{}: {error}", provider.path))?;
+                texture
+                    .validate_native_mips()
+                    .map_err(|error| format!("{}: {error}", provider.path))?;
+                texture.reflectivity
+            }
+        };
+        if reflectivity
+            .iter()
+            .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+        {
+            return Err(format!(
+                "Reflected prop source {name} needs reflectivity between zero and one"
+            ));
+        }
+        let alpha = super::super::props::alpha::prepare(&material, &mut self.inner, budget, false)?;
+        let two_sided = material
+            .get("$nocull")
+            .is_some_and(|value| value.trim().parse::<f64>() == Ok(1.0));
+        let allocation = budget.reserve_bytes(
+            size_of::<SourceMaterial>() + 2 * size_of::<usize>() + name.len() + base.path.len(),
+        )?;
+        Ok(Rc::new(SourceMaterial {
+            name,
+            base: base.path,
+            reflectivity: DVec3::from_array(reflectivity.map(f64::from)),
+            alpha,
+            two_sided,
+            _allocation: allocation,
+        }))
+    }
+
+    pub fn finish(self) -> Vec<Allocation> {
+        self.inner.into_allocations()
     }
 }
 
@@ -165,6 +252,9 @@ pub(super) fn validate_material(material: &Material) -> Result<(), String> {
             | "$model"
             | "%keywords"
             | "%tooltexture" => {}
+            "$reflectivity" => {
+                crate::materials::parse_reflectivity(value)?;
+            }
             "$alpha" if value.trim().parse::<f64>().ok() == Some(1.0) => {}
             "$nocull" if matches!(value.trim().parse::<f64>().ok(), Some(0.0 | 1.0)) => {}
             "$translucent" | "$alphatest" | "$additive" | "$selfillum" | "$vertexalpha"

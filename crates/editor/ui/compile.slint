@@ -27,6 +27,10 @@ export component CompileWindow inherits Window {
     in property <bool> prop-vertex-lighting-enabled;
     in property <string> prop-vertex-lighting-description;
     callback change-bake-static-prop-vertices(bool);
+    in property <bool> reflect-static-props;
+    in property <bool> reflect-static-props-enabled;
+    in property <string> reflect-static-props-description;
+    callback change-reflect-static-props(bool);
     in property <bool> brush-texture-shadows;
     in property <bool> brush-texture-shadows-enabled;
     in property <string> brush-texture-shadows-description;
@@ -155,6 +159,8 @@ export component CompileWindow inherits Window {
                 Text { text: root.colored-texture-shadows-description; wrap: word-wrap; color: #bac2ce; }
                 CheckBox { text: "Bake static-prop vertex lighting"; checked: root.bake-static-prop-vertices; enabled: root.prop-vertex-lighting-enabled; toggled => { root.change-bake-static-prop-vertices(self.checked); } }
                 Text { text: root.prop-vertex-lighting-description; wrap: word-wrap; color: #bac2ce; }
+                CheckBox { text: "Reflect light from static props"; checked: root.reflect-static-props; enabled: root.reflect-static-props-enabled; toggled => { root.change-reflect-static-props(self.checked); } }
+                Text { text: root.reflect-static-props-description; wrap: word-wrap; color: #bac2ce; }
                 CheckBox { text: "Pack sky assets"; checked: root.pack-sky-assets; enabled: root.lighting-enabled; toggled => { root.change-pack-sky-assets(self.checked); } }
                 Text { text: "Packs the selected sky family’s supported materials and textures into the BSP. Missing or unsupported assets stop the build."; wrap: word-wrap; color: #bac2ce; }
                 CheckBox { text: "Pack liquid assets"; checked: root.pack-water-assets; enabled: root.lighting-enabled; toggled => { root.change-pack-water-assets(self.checked); } }

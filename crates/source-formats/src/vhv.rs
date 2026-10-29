@@ -1,5 +1,5 @@
 //! Bounded VHV v2 color files with the SDK producer's contiguous, sector-aligned layout.
-//! Colors are already encoded BGRA bytes; this codec does not convert lighting units.
+//! The codec preserves encoded BGRA bytes; `Bgra8::linear_rgb` decodes shader lighting.
 
 use std::io;
 
@@ -38,6 +38,13 @@ pub struct Bgra8 {
     pub green: u8,
     pub red: u8,
     pub alpha: u8,
+}
+
+impl Bgra8 {
+    pub fn linear_rgb(self) -> [f64; 3] {
+        [self.red, self.green, self.blue]
+            .map(|byte| (2.0 * f64::from(byte) / 255.0).powf(f64::from(2.2_f32)))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -408,7 +408,7 @@ impl Scene {
             return Err("Compiled prop local hardware vertex is unavailable".into());
         }
         let color = self.channel(settings.channel)?[section.vertices.start + vertex];
-        let decoded = decode(color);
+        let decoded = color.linear_rgb();
         Ok(VertexSample {
             bgra: [color.blue, color.green, color.red, color.alpha],
             decoded_linear: decoded,
@@ -577,7 +577,7 @@ impl Scene {
             let vertex_base = mesh.vertices.len() as u32;
             for source in section.vertices.clone() {
                 let mut vertex = self.vertices[source];
-                vertex.baked_irradiance = decode(colors[source]).map(|value| value as f32);
+                vertex.baked_irradiance = colors[source].linear_rgb().map(|value| value as f32);
                 mesh.vertices.push(vertex);
             }
             let first_index = mesh.indices.len() as u32;
@@ -683,11 +683,6 @@ fn transformed(
         lighting_receiver: BAKED_PROP_RECEIVER,
         baked_irradiance: [0.0; 3],
     })
-}
-
-fn decode(color: Bgra8) -> [f64; 3] {
-    [color.red, color.green, color.blue]
-        .map(|byte| (2.0 * f64::from(byte) / 255.0).powf(f64::from(2.2_f32)))
 }
 
 fn index(channel: LightingChannel) -> usize {

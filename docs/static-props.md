@@ -54,8 +54,34 @@ Vertex lighting requires a stricter model/material subset than ordinary prop pla
 Unsupported model or material effects stop the build.
 Default-alpha-test receivers accept the supported nested basetexture Patch edits.
 Every hardware vertex keeps its lighting colors; receiver textures are read only
-when shadow casting or packing needs them.
+when shadow casting, packing or enabled reflected sources need them.
 Use [baked prop inspection](baked-prop-vertices.md) to read the emitted samples.
+
+## Reflect light from static props
+
+Use eligible vertex-lit static props as reflected style-0 light sources.
+
+1. Open **Build settings…** and choose **Direct LDR** or **Direct LDR + HDR**.
+2. Enable **Bake static-prop vertex lighting**.
+3. Enable **Reflect light from static props**.
+4. Choose **Direct only** or one to four diffuse bounces under **Indirect light**.
+5. Compile, then check **Reflected static-prop sources** in **Build details…**.
+
+Sources use their actual root-LOD triangles, selected skin and UVs, and generated
+vertex colors. Source counts include each admitted placed occurrence once.
+Maps and vertex receivers use the chosen bounce depth together. Ambient and
+details sample final output. LDR and HDR remain independent.
+
+The option defaults off and requires both prerequisites. Turn it off before
+disabling vertex lighting or choosing **Fullbright**; invalid changes keep the
+previous settings. Eligible sources may have **Disable Shadows** enabled, and
+receiver self-shadow choices remain effective.
+
+Only admitted opaque or strict binary-cutout vertex-lighting materials qualify.
+Missing source reflectivity, required textures or unsupported material effects
+stop the build. A prop with **Disable Vertex lighting** enabled is not a source.
+Runtime direct styles remain separate. Switched indirect ambient, intrinsic
+prop emission, arbitrary model shaders and animated sources remain unsupported.
 
 ## Visibility and lighting options
 
@@ -85,7 +111,7 @@ Inspect **Instance contents…** before building. Child source files must remain
 - Static props retain unit scale, white tint and normal render-mode restrictions.
 - Leaf membership uses conservative rotated header bounds, not exact model hulls.
 - Packing does not change vertex lighting or shadow settings.
-- Packed chains must end at `VertexLitGeneric` with one canonical `$basetexture`. Optional `$alphatest 1` uses the default cutoff.
+- Packed chains must end at `VertexLitGeneric` with one canonical `$basetexture`. Opaque terminals can add valid `$reflectivity`; strict cutouts can add only `$alphatest 1`.
 - Other terminal parameters, authored alpha references and proxies remain unsupported.
 - Cutout vertex-lighting receivers require one canonical basetexture and literal `$alphatest 1` at the default cutoff, with the same bounded Patch grammar as packing.
 - Cutout vertex lighting is experimental.

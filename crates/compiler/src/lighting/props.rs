@@ -24,7 +24,7 @@ const MAX_ASSET_BYTES: usize = crate::MAX_BRUSH_SHADOW_ASSET_BYTES;
 const MAX_MATERIAL_BYTES: usize = crate::MAX_BRUSH_SHADOW_MATERIAL_BYTES;
 const MAX_MATERIAL_LOOKUPS: usize = crate::MAX_BRUSH_SHADOW_MATERIAL_LOOKUPS;
 const MAX_TRACKING_BYTES: usize = 8 * MAX_MATERIAL_LOOKUPS * size_of::<Allocation>();
-const NO_SHADOW: u32 = 0x10;
+pub(super) const NO_SHADOW: u32 = 0x10;
 const CAST_TEXTURE_SHADOWS: u32 = 0x0004_0000;
 
 pub(super) mod alpha;
@@ -42,34 +42,97 @@ pub(crate) struct Stats {
     pub alpha_bytes: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct PropPrimitive {
+    pub owner: u32,
+    pub triangle: usize,
+}
+
+pub(super) struct PropPose {
+    origin: DVec3,
+    rotation: DQuat,
+}
+
+impl PropPose {
+    pub(super) fn new(prop: &StaticProp) -> Self {
+        let angles = DVec3::from_array(prop.angles.map(f64::from)).map(f64::to_radians);
+        Self {
+            origin: DVec3::from_array(prop.origin.map(f64::from)),
+            rotation: DQuat::from_euler(EulerRot::ZYX, angles.y, angles.x, angles.z),
+        }
+    }
+
+    pub(super) fn points(&self, points: [[f32; 3]; 3]) -> Result<[DVec3; 3], String> {
+        let points = points
+            .map(|point| self.origin + self.rotation * DVec3::from_array(point.map(f64::from)));
+        if points
+            .iter()
+            .any(|point| !point.is_finite() || point.abs().max_element() > MAX_COMPILE_COORD)
+        {
+            return Err(format!(
+                "Static-prop shadow vertices must fit ±{MAX_COMPILE_COORD} units"
+            ));
+        }
+        Ok(points)
+    }
+}
+
+#[derive(Clone)]
 pub(super) struct PropTriangle {
     triangle: Triangle,
-    owner: Option<u32>,
+    primitive: PropPrimitive,
     alpha: Option<(Arc<alpha::Material>, [DVec2; 3])>,
 }
 
 impl PropTriangle {
-    pub(super) fn new(points: [DVec3; 3]) -> Result<Self, String> {
+    pub(super) fn new(points: [DVec3; 3], primitive: PropPrimitive) -> Result<Self, String> {
         Ok(Self {
             triangle: Triangle::new(points)?,
-            owner: None,
+            primitive,
             alpha: None,
         })
     }
 
-    pub(super) fn set_owner(&mut self, owner: u32) {
-        self.owner = Some(owner);
+    pub(super) fn primitive(&self) -> PropPrimitive {
+        self.primitive
+    }
+
+    pub(super) fn set_alpha(
+        &mut self,
+        material: Option<Arc<alpha::Material>>,
+        coordinates: [DVec2; 3],
+    ) {
+        self.alpha = material.map(|material| (material, coordinates));
     }
 
     pub(super) fn owned_by(&self, owner: Option<u32>) -> bool {
-        owner.is_some() && self.owner == owner
+        owner == Some(self.primitive.owner)
     }
 
     pub(super) fn point_contact(&self, point: DVec3, receiver: u32) -> Result<bool, String> {
-        if self.owner == Some(receiver) {
+        if self.primitive.owner == receiver {
             return Ok(false);
         }
         self.triangle.point_contact(point)
+    }
+
+    pub(super) fn intersection(
+        &self,
+        start: DVec3,
+        end: DVec3,
+    ) -> Result<Option<(f64, [f64; 3])>, String> {
+        self.triangle.intersection(start, end)
+    }
+
+    pub(super) fn point(&self, weights: [f64; 3]) -> DVec3 {
+        self.triangle.point(weights)
+    }
+
+    pub(super) fn normal(&self) -> DVec3 {
+        let a = self.point([1.0, 0.0, 0.0]);
+        let b = self.point([0.0, 1.0, 0.0]);
+        let c = self.point([0.0, 0.0, 1.0]);
+        (a - b).cross(c - b).normalize()
     }
 
     pub(super) fn geometric_fraction(
@@ -84,18 +147,9 @@ impl PropTriangle {
     }
 
     fn fraction(&self, start: DVec3, end: DVec3) -> Result<Option<f64>, String> {
-        let Some((fraction, weights)) = self.triangle.intersection(start, end)? else {
-            return Ok(None);
-        };
-        let Some((material, coordinates)) = &self.alpha else {
-            return Ok(Some(fraction));
-        };
-        let uv = coordinates
-            .iter()
-            .zip(weights)
-            .map(|(point, weight)| *point * weight)
-            .sum::<DVec2>();
-        Ok(material.blocks(uv)?.then_some(fraction))
+        Ok(self
+            .sampled_coverage(start, end)?
+            .and_then(|(fraction, coverage)| (!coverage.clear()).then_some(fraction)))
     }
 
     pub(super) fn sampled_coverage(
@@ -103,18 +157,22 @@ impl PropTriangle {
         start: DVec3,
         end: DVec3,
     ) -> Result<Option<(f64, Coverage)>, String> {
-        let Some((fraction, weights)) = self.triangle.intersection(start, end)? else {
+        let Some((fraction, weights)) = self.intersection(start, end)? else {
             return Ok(None);
         };
+        Ok(Some((fraction, self.coverage(weights)?)))
+    }
+
+    pub(super) fn coverage(&self, weights: [f64; 3]) -> Result<Coverage, String> {
         let Some((material, coordinates)) = &self.alpha else {
-            return Ok(Some((fraction, Coverage::OPAQUE)));
+            return Ok(Coverage::OPAQUE);
         };
         let uv = coordinates
             .iter()
             .zip(weights)
             .map(|(point, weight)| *point * weight)
             .sum();
-        Ok(Some((fraction, material.coverage(uv)?)))
+        material.coverage(uv)
     }
 }
 
@@ -159,7 +217,7 @@ impl ShadowIndex<PropTriangle> {
             return Ok(());
         }
         self.visit(start, end, consume, &mut |triangle| {
-            if (skip_owner.is_none() || triangle.owner != skip_owner)
+            if !triangle.owned_by(skip_owner)
                 && let Some((_, value)) = triangle.sampled_coverage(start, end)?
             {
                 coverage.add(value);
@@ -186,7 +244,7 @@ impl ShadowIndex<PropTriangle> {
             return Ok(());
         }
         self.visit(start, end, consume, &mut |triangle| {
-            if (skip_owner.is_none() || triangle.owner != skip_owner)
+            if !triangle.owned_by(skip_owner)
                 && let Some((hit, value)) = triangle.sampled_coverage(start, end)?
                 && hit <= fraction + super::shadows::TRIANGLE_EPSILON
             {
@@ -213,7 +271,7 @@ impl ShadowIndex<PropTriangle> {
         };
         Ok(self
             .nearest(start, end, consume, &mut |triangle| {
-                if triangle.owner == Some(owner) {
+                if triangle.owned_by(Some(owner)) {
                     return Ok(None);
                 }
                 Ok(triangle
@@ -414,7 +472,11 @@ impl<'fs, 'tracking> Assets<'fs, 'tracking> {
         Ok(Some(bytes.to_vec()))
     }
 
-    fn read(&mut self, path: &str, budget: &mut Budget<'_>) -> Result<Vec<u8>, String> {
+    pub(in crate::lighting) fn read(
+        &mut self,
+        path: &str,
+        budget: &mut Budget<'_>,
+    ) -> Result<Vec<u8>, String> {
         let limit = source_formats::mdl::MAX_MODEL_BYTES.min(MAX_ASSET_BYTES - self.bytes);
         let data = if let Some(tracking) = &mut self.tracking {
             tracking.read(path, limit, budget)?
@@ -491,7 +553,7 @@ impl<'fs, 'tracking> Assets<'fs, 'tracking> {
         Ok(None)
     }
 
-    fn read_material(
+    pub(in crate::lighting) fn read_material(
         &mut self,
         path: &str,
         budget: &mut Budget<'_>,
@@ -533,14 +595,14 @@ fn needs_material_warning(material: &Material) -> bool {
 fn append(
     model: &Model,
     prop: &StaticProp,
+    owner: u32,
     materials: &BTreeMap<usize, Option<Arc<alpha::Material>>>,
     triangles: &mut Vec<PropTriangle>,
     budget: &mut Budget<'_>,
 ) -> Result<usize, String> {
-    let angles = DVec3::from_array(prop.angles.map(f64::from)).map(f64::to_radians);
-    let rotation = DQuat::from_euler(EulerRot::ZYX, angles.y, angles.x, angles.z);
-    let origin = DVec3::from_array(prop.origin.map(f64::from));
+    let pose = PropPose::new(prop);
     let mut degenerate = 0;
+    let mut primitive = 0;
     let skin = model
         .skins
         .get(prop.skin as usize)
@@ -551,23 +613,13 @@ fn append(
             .ok_or("Static-prop shadow skin material is unavailable")?;
         for indices in part.indices.as_chunks::<3>().0 {
             budget.consume(4)?;
-            let points = std::array::from_fn(|corner| {
-                origin
-                    + rotation
-                        * DVec3::from_array(
-                            model.vertices[indices[corner] as usize]
-                                .position
-                                .map(f64::from),
-                        )
-            });
-            if points
-                .iter()
-                .any(|point| !point.is_finite() || point.abs().max_element() > MAX_COMPILE_COORD)
-            {
-                return Err(format!(
-                    "Static-prop shadow vertices must fit ±{MAX_COMPILE_COORD} units"
-                ));
-            }
+            let identity = PropPrimitive {
+                owner,
+                triangle: primitive,
+            };
+            primitive += 1;
+            let points =
+                pose.points(indices.map(|index| model.vertices[index as usize].position))?;
             if (points[1] - points[0])
                 .cross(points[2] - points[0])
                 .length_squared()
@@ -579,7 +631,7 @@ fn append(
             if triangles.len() >= MAX_TRIANGLES {
                 return Err("Static-prop shadows exceed the 262,144 world-space triangle limit; disable shadows on unnecessary props".into());
             }
-            let mut triangle = PropTriangle::new(points)?;
+            let mut triangle = PropTriangle::new(points, identity)?;
             if let Some(Some(alpha)) = materials.get(&material) {
                 let coordinates = indices.map(|index| {
                     DVec2::from_array(model.vertices[index as usize].uv.map(f64::from))
@@ -732,13 +784,19 @@ pub(super) fn build(
                         ));
                     }
                     let before = triangles.len();
-                    let degenerate = append(&model, prop, &materials, &mut triangles, budget)?;
+                    let degenerate = append(
+                        &model,
+                        prop,
+                        index as u32,
+                        &materials,
+                        &mut triangles,
+                        budget,
+                    )?;
                     if triangles.len() > before {
                         budget.consume(triangles.len() - before)?;
                         let mut mins = DVec3::splat(f64::INFINITY);
                         let mut maxs = DVec3::splat(f64::NEG_INFINITY);
-                        for triangle in &mut triangles[before..] {
-                            triangle.set_owner(index as u32);
+                        for triangle in &triangles[before..] {
                             let (low, high) = triangle.bounds();
                             mins = mins.min(low);
                             maxs = maxs.max(high);
@@ -779,7 +837,7 @@ pub(super) fn build(
     let probe_bounds = ShadowIndex::new(probe_bounds, &mut |amount| budget.consume(amount))?;
     stats.work = budget.work() - start_work;
     if stats.props > 0 {
-        report.diagnostics.push(Diagnostic::info(format!("Static-prop mesh shadows: {} props, {} models, {} LOD0 triangles; {} props disable shadows. {} triangles use {} alpha-texture materials and {} textures ({} decoded alpha bytes). Two-sided opaque, cutout and requested translucent triangles attenuate direct, sky, bounced and ambient rays. Texture shadows use mip0 nearest texels; translucent coverage adds and saturates per intersected triangle. Reflected prop sources and animated props remain unfinished", stats.props, stats.models, stats.triangles, stats.disabled, stats.alpha_triangles, stats.alpha_materials, stats.alpha_textures, stats.alpha_bytes), None, None));
+        report.diagnostics.push(Diagnostic::info(format!("Static-prop mesh shadows: {} props, {} models, {} LOD0 triangles; {} props disable shadows. {} triangles use {} alpha-texture materials and {} textures ({} decoded alpha bytes). Two-sided opaque, cutout and requested translucent triangles attenuate direct, sky, bounced and ambient rays. Texture shadows use mip0 nearest texels; translucent coverage adds and saturates per intersected triangle. Animated props are unsupported", stats.props, stats.models, stats.triangles, stats.disabled, stats.alpha_triangles, stats.alpha_materials, stats.alpha_textures, stats.alpha_bytes), None, None));
     }
     Ok(Prepared {
         shadows: index,

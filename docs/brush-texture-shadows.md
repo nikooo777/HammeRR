@@ -99,7 +99,7 @@ Texture opacity affects only lit receivers in the same model when the global Sha
 - The bake samples mip 0 with nearest filtering. Game rendering can filter the texture differently.
 - **Baked surfaces…** displays these plain alpha materials with mip-0 nearest sampling and their checked cutoff or fractional alpha. Translucent display sorts whole batches by depth; intersecting surfaces can sort differently from the game.
 - Without an explicit eligible **Shadows → Yes** request, root and child brush-model texture shadows stay within that model's own lit receivers. A model without an applicable baked receiver scope fails.
-- Reflected brush-model sources require that same eligible stationary request. Moving, parented, unrequested and MDL models do not become reflected sources.
+- Reflected brush-model sources require that same eligible stationary request. Moving, parented and unrequested brush models do not become reflected sources. Admitted VHV static props use the separate [Reflect light from static props](static-props.md#reflect-light-from-static-props) setting; other MDL source families remain unsupported.
 - Requested root and child texture-shadow models require **Brush texture shadows** in a lit mode. Fullbright and unsupported materials fail explicitly, including source-material errors outside the compile region.
 - **Colored texture shadows** requires a lit mode and **Brush texture shadows**. Invalid combinations reject. Disable it before disabling **Brush texture shadows** or switching to **Fullbright**.
 - Colored transport uses HammeRR's additive RGB coverage policy, without native VRAD or physical absorption parity. Tied corner planes can conservatively combine their channel coverage.

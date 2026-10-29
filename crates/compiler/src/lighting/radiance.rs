@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use super::Occluder;
 use super::bake::Budget;
+use super::prop_vertices::SourceSnapshot;
 use super::shadows::{ShadowIndex, ShadowObject, Triangle, Visit};
 use super::terrain_shadows::TerrainTriangle;
 use super::transport::{Coverage, Scene, SourceTarget};
@@ -19,6 +20,7 @@ const SOURCE_TRANSPORT_WORK: usize = 24;
 const SOURCE_SAMPLE_WORK: usize = 30;
 const SOURCE_PLANE_WORK: usize = 8;
 const SOURCE_MEMBERSHIP_WORK: usize = 24;
+const PROP_COLOR_WORK: usize = 96;
 
 struct Surface {
     geometry: Geometry,
@@ -61,8 +63,15 @@ struct BrushFan {
 }
 
 enum Geometry {
-    Brush { fan: Arc<BrushFan>, index: usize },
+    Brush {
+        fan: Arc<BrushFan>,
+        index: usize,
+    },
     Terrain(TerrainTriangle),
+    Prop {
+        sources: SourceSnapshot,
+        index: usize,
+    },
 }
 
 impl Geometry {
@@ -103,6 +112,9 @@ impl Geometry {
                 Ok(Some(hit))
             }
             Self::Terrain(triangle) => triangle.source_intersection(start, end),
+            Self::Prop { sources, index } => sources.triangles()[*index]
+                .triangle
+                .intersection(start, end),
         }
     }
 
@@ -110,6 +122,7 @@ impl Geometry {
         match self {
             Self::Brush { fan, index } => fan.triangles[*index].point(weights),
             Self::Terrain(triangle) => triangle.point(weights),
+            Self::Prop { sources, index } => sources.triangles()[*index].triangle.point(weights),
         }
     }
 
@@ -117,6 +130,7 @@ impl Geometry {
         match self {
             Self::Brush { fan, index } => fan.triangles[*index].point(weights),
             Self::Terrain(triangle) => triangle.texture_point(weights),
+            Self::Prop { sources, index } => sources.triangles()[*index].triangle.point(weights),
         }
     }
 }
@@ -549,7 +563,7 @@ pub(super) struct SurfaceIndex {
     radiance: Vec<Radiance>,
     crossings: usize,
     shadow_count: usize,
-    fractional_sources: bool,
+    partitioned_sources: bool,
     sheet_sources: bool,
     _allocation: super::bake::Allocation,
 }
@@ -565,6 +579,7 @@ impl ShadowObject for Surface {
                 SOURCE_INTERSECTION_WORK + 32 + 3 * fan.frame.transform_work()
             }
             Geometry::Terrain(triangle) => triangle.work() + 32,
+            Geometry::Prop { sources, index } => sources.triangles()[*index].triangle.work() + 32,
         }
     }
     fn intersects(&self, start: DVec3, end: DVec3) -> Result<bool, String> {
@@ -642,6 +657,7 @@ pub(super) fn build(
     brush_textures: Option<&super::brush_alpha::Prepared>,
     terrain: &ShadowIndex<TerrainTriangle>,
     shadows: &ShadowIndex<Occluder>,
+    prop_sources: Option<&SourceSnapshot>,
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
     build_with_styles(
@@ -655,6 +671,7 @@ pub(super) fn build(
         brush_textures,
         terrain,
         shadows,
+        prop_sources,
         budget,
     )
 }
@@ -669,6 +686,7 @@ pub(super) fn build_styled(
     brush_textures: Option<&super::brush_alpha::Prepared>,
     terrain: &ShadowIndex<TerrainTriangle>,
     shadows: &ShadowIndex<Occluder>,
+    prop_sources: Option<&SourceSnapshot>,
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
     build_with_styles(
@@ -682,6 +700,7 @@ pub(super) fn build_styled(
         brush_textures,
         terrain,
         shadows,
+        prop_sources,
         budget,
     )
 }
@@ -697,6 +716,7 @@ pub(super) fn build_styled_sky(
     brush_textures: Option<&super::brush_alpha::Prepared>,
     terrain: &ShadowIndex<TerrainTriangle>,
     shadows: &ShadowIndex<Occluder>,
+    prop_sources: Option<&SourceSnapshot>,
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
     build_with_styles(
@@ -710,6 +730,7 @@ pub(super) fn build_styled_sky(
         brush_textures,
         terrain,
         shadows,
+        prop_sources,
         budget,
     )
 }
@@ -726,6 +747,7 @@ fn build_with_styles(
     brush_textures: Option<&super::brush_alpha::Prepared>,
     terrain_shadows: &ShadowIndex<TerrainTriangle>,
     shadows: &ShadowIndex<Occluder>,
+    prop_sources: Option<&SourceSnapshot>,
     budget: &mut Budget<'_>,
 ) -> Result<SurfaceIndex, String> {
     let decoded_bytes = [
@@ -806,6 +828,14 @@ fn build_with_styles(
             .flat_map(|scope| faces[scope.faces.clone()].iter())
     };
     let source_face_count = source_faces().count();
+    let prop_triangle_count = prop_sources.map_or(0, |sources| sources.triangles().len());
+    if prop_triangle_count > Surface::MAX_OBJECTS {
+        return Err("Reflected props exceed the bounded radiance triangle allocation".into());
+    }
+    let prop_record_count = usize::from(prop_triangle_count != 0);
+    let source_record_count = source_face_count
+        .checked_add(prop_record_count)
+        .ok_or("Radiance source record count overflow")?;
     let source_scope_count = model_scopes
         .iter()
         .filter(|scope| scope.reflected_source)
@@ -861,7 +891,7 @@ fn build_with_styles(
         .try_fold(0usize, |count, sides| count.checked_add(sides.len()))
         .ok_or("Radiance contributor allocation size overflow")?;
     let triangles = source_faces()
-        .try_fold(0usize, |total, face| {
+        .try_fold(prop_triangle_count, |total, face| {
             let count = if face.dispinfo >= 0 {
                 map.terrains[face.dispinfo as usize].indices.len()
             } else {
@@ -884,10 +914,14 @@ fn build_with_styles(
             bytes.checked_add(source_face_count * (size_of::<BrushFan>() + 2 * size_of::<usize>()))
         })
         .and_then(|bytes| {
-            bytes.checked_add(source_scope_count * (size_of::<Frame>() + 2 * size_of::<usize>()))
+            bytes.checked_add(
+                (source_scope_count + prop_record_count)
+                    * (size_of::<Frame>() + 2 * size_of::<usize>()),
+            )
         })
         .and_then(|bytes| {
-            bytes.checked_add(source_face_count * (size_of::<Radiance>() + 3 * size_of::<Layer>()))
+            bytes
+                .checked_add(source_record_count * (size_of::<Radiance>() + 3 * size_of::<Layer>()))
         })
         .and_then(|bytes| bytes.checked_add(source_formats::bsp::MAX_LIGHTING_BYTES))
         .and_then(|bytes| {
@@ -898,7 +932,7 @@ fn build_with_styles(
         .ok_or("Surface radiance allocation size overflow")?;
     let mut allocation = budget.reserve_bytes(bytes)?;
     let mut surfaces = Vec::with_capacity(triangles);
-    let mut radiance = Vec::with_capacity(source_face_count);
+    let mut radiance = Vec::with_capacity(source_record_count);
     for scope in model_scopes.iter().filter(|scope| scope.reflected_source) {
         let frame = Arc::new(Frame {
             entity: scope.entity,
@@ -1228,22 +1262,87 @@ fn build_with_styles(
             }
         }
     }
+    if let Some(sources) = prop_sources.filter(|_| prop_triangle_count != 0) {
+        budget.consume(prop_record_count)?;
+        let source = radiance.len();
+        let frame = Arc::new(Frame {
+            entity: 0,
+            pose: None,
+        });
+        radiance.push(Radiance {
+            frame,
+            average: DVec3::ZERO,
+            reflectivity: DVec3::ONE,
+            samples: Vec::new(),
+            dimensions: [0; 2],
+            projection: [[0.0; 4]; 2],
+            mins: [0; 2],
+            sky: false,
+            extras: Vec::new(),
+            boundary: None,
+            alpha: None,
+            casters: Vec::new(),
+            contributors: Vec::new(),
+        });
+        let mut previous = None;
+        for (index, triangle) in sources.triangles().iter().enumerate() {
+            budget.consume(SOURCE_INTERSECTION_WORK + SOURCE_TRANSPORT_WORK)?;
+            if triangle.triangle.primitive() != triangle.primitive {
+                return Err("Reflected prop triangle lost its exact native primitive".into());
+            }
+            let key = (triangle.primitive.owner, triangle.primitive.triangle);
+            if previous.is_some_and(|previous| previous >= key) {
+                return Err("Reflected prop primitives must be ordered and unique".into());
+            }
+            previous = Some(key);
+            if !triangle.reflectivity.is_finite()
+                || triangle.reflectivity.min_element() < 0.0
+                || triangle.reflectivity.max_element() > 1.0
+            {
+                return Err(
+                    "Reflected prop material needs finite reflectivity between 0 and 1".into(),
+                );
+            }
+            let (mins, maxs) = triangle.triangle.bounds();
+            let normal = triangle.triangle.normal();
+            if !normal.is_finite() || normal.length_squared() == 0.0 {
+                return Err(
+                    "Reflected prop source needs a finite nonzero native triangle normal".into(),
+                );
+            }
+            surfaces.push(Surface {
+                geometry: Geometry::Prop {
+                    sources: sources.clone(),
+                    index,
+                },
+                mins,
+                maxs,
+                normal,
+                source,
+                ordinal: surfaces.len(),
+                coordinates: None,
+                boundary_error: 0.0,
+            });
+        }
+    }
     budget.consume(radiance.len())?;
-    let sheet_sources = radiance.iter().any(|source| {
-        !source.sky
-            && source.boundary.is_some()
-            && (source.casters.is_empty() || !source.contributors.is_empty())
-    });
-    let fractional_sources = radiance.iter().any(|source| {
-        source
-            .alpha
-            .as_ref()
-            .is_some_and(super::brush_alpha::Face::fractional)
-    });
+    let sheet_sources = prop_triangle_count != 0
+        || radiance.iter().any(|source| {
+            !source.sky
+                && source.boundary.is_some()
+                && (source.casters.is_empty() || !source.contributors.is_empty())
+        });
+    let partitioned_sources = prop_triangle_count != 0
+        || radiance.iter().any(|source| {
+            source
+                .alpha
+                .as_ref()
+                .is_some_and(super::brush_alpha::Face::fractional)
+        });
     Ok(SurfaceIndex {
         crossings: surfaces.len(),
         shadow_count: shadows.objects().len(),
-        fractional_sources,
+        partitioned_sources,
         sheet_sources,
         geometry: ShadowIndex::new(surfaces, &mut |work| budget.consume(work))?,
         radiance,
@@ -1274,6 +1373,7 @@ struct Crossing {
     boundary_error: f64,
     coverage: Coverage,
     sheet: bool,
+    prop_color: Option<DVec3>,
 }
 
 fn pending_work(pending: &Cell<usize>, work: usize) -> Result<(), String> {
@@ -1310,7 +1410,14 @@ impl SurfaceIndex {
         pending: &Cell<usize>,
     ) -> Result<Crossing, String> {
         let radiance = &self.radiance[surface.source];
-        let coverage = if !radiance.sky && radiance.alpha.is_some() && radiance.boundary.is_some() {
+        let prop = if let Geometry::Prop { sources, index } = &surface.geometry {
+            Some((sources, &sources.triangles()[*index]))
+        } else {
+            None
+        };
+        let coverage = if let Some((_, triangle)) = prop {
+            triangle.triangle.coverage(weights)?
+        } else if !radiance.sky && radiance.alpha.is_some() && radiance.boundary.is_some() {
             Coverage::CLEAR
         } else if let Some(alpha) = &radiance.alpha {
             pending_work(pending, SOURCE_SAMPLE_WORK)?;
@@ -1332,6 +1439,9 @@ impl SurfaceIndex {
             && radiance.casters.is_empty()
             && radiance.alpha.is_none()
             && !radiance.sky;
+        if let Some((_, triangle)) = prop {
+            sheet = triangle.caster_slot.is_none();
+        }
         if !radiance.contributors.is_empty() {
             let mut supported = false;
             sheet = false;
@@ -1355,17 +1465,40 @@ impl SurfaceIndex {
                 ));
             }
         }
+        let prop_color = if let Some((sources, triangle)) = prop {
+            pending_work(pending, PROP_COLOR_WORK)?;
+            if !coverage.clear() && !coverage.opaque() {
+                return Err(
+                    "Reflected prop sources require opaque or binary-cutout coverage".into(),
+                );
+            }
+            let color = sources
+                .colors(triangle)
+                .into_iter()
+                .zip(weights)
+                .map(|(color, weight)| DVec3::from_array(color.linear_rgb()) * weight)
+                .sum::<DVec3>()
+                * triangle.reflectivity;
+            if !color.is_finite() {
+                return Err("Reflected prop vertex radiance must be finite".into());
+            }
+            Some(color.max(DVec3::ZERO))
+        } else {
+            None
+        };
         Ok(Crossing {
             fraction,
             ordinal: surface.ordinal,
             source: surface.source,
             uv,
-            front: surface.normal.dot(-delta) > 0.0,
+            front: prop.is_some_and(|(_, triangle)| triangle.two_sided)
+                || surface.normal.dot(-delta) > 0.0,
             point: radiance.frame.point(sample_point),
             sample_point,
             boundary_error,
             coverage,
             sheet,
+            prop_color,
         })
     }
 
@@ -1405,6 +1538,7 @@ impl SurfaceIndex {
         &self,
         start: DVec3,
         end: DVec3,
+        skipped_owner: Option<u32>,
         budget: &mut Budget<'_>,
     ) -> Result<Option<Crossing>, String> {
         let pending = Cell::new(0usize);
@@ -1421,9 +1555,21 @@ impl SurfaceIndex {
             &mut |surface| {
                 let limit = first.as_ref().map_or(1.0, |first| first.fraction);
                 let source = &self.radiance[surface.source];
-                if source.sky
-                    || source.boundary.is_none()
-                    || (!source.casters.is_empty() && source.contributors.is_empty())
+                let prop_sheet = match &surface.geometry {
+                    Geometry::Prop { sources, index } => {
+                        let triangle = &sources.triangles()[*index];
+                        Some(
+                            triangle.caster_slot.is_none()
+                                || skipped_owner == Some(triangle.primitive.owner),
+                        )
+                    }
+                    _ => None,
+                };
+                if prop_sheet == Some(false)
+                    || (prop_sheet.is_none()
+                        && (source.sky
+                            || source.boundary.is_none()
+                            || (!source.casters.is_empty() && source.contributors.is_empty())))
                 {
                     return Ok(Visit::Continue(limit));
                 }
@@ -1438,7 +1584,7 @@ impl SurfaceIndex {
                     return Ok(Visit::Continue(limit));
                 }
                 let hit = self.crossing(surface, fraction, weights, end - start, &pending)?;
-                if hit.sheet {
+                if (hit.sheet || prop_sheet == Some(true)) && !hit.coverage.clear() {
                     first = Some(hit);
                 }
                 Ok(Visit::Continue(
@@ -1474,7 +1620,10 @@ impl SurfaceIndex {
         };
         visitor(
             &Hit {
-                color: radiance.at(sample_point, crossing.uv, distance, cone) * visibility,
+                color: crossing
+                    .prop_color
+                    .unwrap_or_else(|| radiance.at(sample_point, crossing.uv, distance, cone))
+                    * visibility,
                 point,
                 sky: radiance.sky,
                 front: crossing.front,
@@ -1714,6 +1863,54 @@ impl SurfaceIndex {
         })))
     }
 
+    fn prop_weight(
+        &self,
+        ray: &Ray<'_>,
+        crossing: &Crossing,
+        source: &super::prop_vertices::SourceTriangle,
+        budget: &mut Budget<'_>,
+    ) -> Result<Coverage, String> {
+        if ray
+            .terminal
+            .is_some_and(|terminal| crossing.fraction > terminal)
+            || ray.skip_owner == Some(source.primitive.owner)
+        {
+            return Ok(Coverage::CLEAR);
+        }
+        let Some(slot) = source.caster_slot else {
+            return Ok(Coverage::CLEAR);
+        };
+        budget.consume(SOURCE_TRANSPORT_WORK)?;
+        let physical = ray
+            .scene
+            .props
+            .objects()
+            .get(slot)
+            .ok_or("Reflected prop source lost its physical caster slot")?;
+        if physical.primitive() != source.primitive {
+            return Err("Reflected prop source has a different physical primitive".into());
+        }
+        budget.consume(physical.work() + SOURCE_TRANSPORT_WORK)?;
+        let Some((fraction, amount)) = physical.sampled_coverage(ray.start, ray.end)? else {
+            return Err("Reflected prop source has no matching physical crossing".into());
+        };
+        if fraction != crossing.fraction {
+            return Err("Reflected prop source differs from its physical crossing".into());
+        }
+        if crossing.coverage.amount().cmpgt(amount.amount()).any() {
+            return Err("Reflected prop source coverage exceeds its physical crossing".into());
+        }
+        let remaining = ray.scene.source_visibility(
+            ray.start,
+            ray.end,
+            fraction,
+            SourceTarget::Prop { slot },
+            ray.skip_owner,
+            budget,
+        )?;
+        Ok(limited_coverage(crossing.coverage, remaining))
+    }
+
     pub fn styled_colors(
         &self,
         hit: &Hit,
@@ -1812,12 +2009,12 @@ impl SurfaceIndex {
         if scene.shadows.objects().len() != self.shadow_count {
             return Err("Radiance sources require their prepared global caster index".into());
         }
-        let sheet = if self.fractional_sources && self.sheet_sources {
-            self.sheet_terminal(point, end, budget)?
+        let sheet = if self.partitioned_sources && self.sheet_sources {
+            self.sheet_terminal(point, end, skipped_owner, budget)?
         } else {
             None
         };
-        let sky = if self.fractional_sources {
+        let sky = if self.partitioned_sources {
             scene
                 .shadows
                 .sky_terminal_fraction(point, end, &mut |work| budget.consume(work))?
@@ -1846,7 +2043,7 @@ impl SurfaceIndex {
             };
             let radiance = &self.radiance[crossing.source];
             previous = Some((crossing.fraction, radiance.sky, crossing.ordinal));
-            if !self.fractional_sources {
+            if !self.partitioned_sources {
                 if radiance.sky {
                     let Some(fraction) =
                         scene
@@ -1918,13 +2115,26 @@ impl SurfaceIndex {
                 )?;
                 continue;
             }
-            if !crossing.front || radiance.reflectivity == DVec3::ZERO {
+            if !crossing.front
+                || radiance.reflectivity == DVec3::ZERO
+                || crossing.prop_color == Some(DVec3::ZERO)
+            {
                 continue;
             }
             let mut weight = Coverage::CLEAR;
             for binding in &radiance.casters {
                 budget.consume(SOURCE_TRANSPORT_WORK)?;
                 weight.add(self.hull_weight(&ray, &crossing, binding, budget)?);
+            }
+            if let Geometry::Prop { sources, index } =
+                &self.geometry.objects()[crossing.ordinal].geometry
+            {
+                weight.add(self.prop_weight(
+                    &ray,
+                    &crossing,
+                    &sources.triangles()[*index],
+                    budget,
+                )?);
             }
             if let Geometry::Terrain(triangle) = &self.geometry.objects()[crossing.ordinal].geometry
                 && terminal.is_none_or(|terminal| crossing.fraction <= terminal)

@@ -114,10 +114,6 @@ impl Material {
         self.texture.dimensions
     }
 
-    pub(in crate::lighting) fn blocks(&self, uv: DVec2) -> Result<bool, String> {
-        Ok(!self.coverage(uv)?.clear())
-    }
-
     pub(in crate::lighting) fn fractional(&self) -> bool {
         self.fractional
     }

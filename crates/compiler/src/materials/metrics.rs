@@ -7,13 +7,13 @@ pub(super) const NATIVE_NO_PREVIEW_DIMENSION: i32 = 128;
 const MAX_TOOL_PREVIEW_NAME_BYTES: usize = 241;
 
 #[derive(Clone)]
-pub(super) struct HeaderProvider {
-    pub key: &'static str,
-    pub path: String,
+pub(crate) struct HeaderProvider {
+    pub(crate) key: &'static str,
+    pub(crate) path: String,
 }
 
 impl HeaderProvider {
-    fn new(material: &Material, key: &'static str) -> Result<Self, String> {
+    pub(crate) fn new(material: &Material, key: &'static str) -> Result<Self, String> {
         let value = material.get(key).unwrap_or_default().trim();
         if value.is_empty() {
             return Err(format!("Selected {key} requires a nonblank texture path"));
@@ -43,7 +43,7 @@ impl HeaderProvider {
         })
     }
 
-    fn runtime(&self) -> bool {
+    pub(crate) fn runtime(&self) -> bool {
         self.path
             .strip_prefix("materials/")
             .is_some_and(|name| name.starts_with("_rt_") && !name.contains('/'))
@@ -56,10 +56,21 @@ pub(super) enum DimensionProvider {
     NativeNoPreview,
 }
 
-pub(super) enum ReflectivityProvider {
+pub(crate) enum ReflectivityProvider {
     CompileDefault,
     Header(HeaderProvider),
     Authored([f32; 3]),
+}
+
+impl ReflectivityProvider {
+    pub(crate) fn new(material: &Material, primary: Option<&'static str>) -> Result<Self, String> {
+        if let Some(value) = material.get("$reflectivity") {
+            return parse_reflectivity(value).map(Self::Authored);
+        }
+        primary.map_or(Ok(Self::CompileDefault), |key| {
+            HeaderProvider::new(material, key).map(Self::Header)
+        })
+    }
 }
 
 pub(super) struct MetricPlan {
@@ -69,10 +80,8 @@ pub(super) struct MetricPlan {
 
 impl MetricPlan {
     pub fn new(material: &Material, primary: Option<&'static str>) -> Result<Self, String> {
-        let authored = material
-            .get("$reflectivity")
-            .map(parse_reflectivity)
-            .transpose()?;
+        let reflectivity = ReflectivityProvider::new(material, primary)?;
+        let authored = matches!(reflectivity, ReflectivityProvider::Authored(_));
         let no_preview = match material.get("%notooltexture").map(str::trim_ascii) {
             None => false,
             Some("0" | "1") => true,
@@ -90,10 +99,14 @@ impl MetricPlan {
                 .map(|_| HeaderProvider::new(material, "%tooltexture"))
                 .transpose()?
         };
-        let diffuse = if (!no_preview && tool.is_none()) || authored.is_none() {
-            primary
-                .map(|key| HeaderProvider::new(material, key))
-                .transpose()?
+        let diffuse = if (!no_preview && tool.is_none()) || !authored {
+            match &reflectivity {
+                ReflectivityProvider::Header(provider) => Some(provider.clone()),
+                ReflectivityProvider::Authored(_) => primary
+                    .map(|key| HeaderProvider::new(material, key))
+                    .transpose()?,
+                ReflectivityProvider::CompileDefault => None,
+            }
         } else {
             None
         };
@@ -104,21 +117,13 @@ impl MetricPlan {
                 Some(provider) => {
                     DimensionProvider::Header(provider, DimensionSource::ToolTextureHeader)
                 }
-                None => match &diffuse {
-                    Some(provider) => DimensionProvider::Header(
-                        provider.clone(),
-                        DimensionSource::DiffuseTextureHeader,
-                    ),
+                None => match diffuse {
+                    Some(provider) => {
+                        DimensionProvider::Header(provider, DimensionSource::DiffuseTextureHeader)
+                    }
                     None => DimensionProvider::CompileDefault,
                 },
             }
-        };
-        let reflectivity = match authored {
-            Some(value) => ReflectivityProvider::Authored(value),
-            None => match diffuse {
-                Some(provider) => ReflectivityProvider::Header(provider),
-                None => ReflectivityProvider::CompileDefault,
-            },
         };
         Ok(Self {
             dimensions,

@@ -112,10 +112,10 @@ impl LightingMode {
         match self {
             Self::Fullbright => "No lightmaps; useful for fast geometry checks.",
             Self::DirectLdr => {
-                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with directional normal-map lightmaps, shadows, scoped world/model brush smoothing and model ambient. Up to four diffuse bounces from world, terrain and eligible stationary Shadows Yes func_brush baked maps reach world, terrain, brush entities and opted-in prop vertices. Map reception preserves styles. Prop VHV stores a static style-0 base while supported point/spot styles remain native runtime direct lighting. Switched indirect ambient remains unsupported. Moving, parented, unrequested and MDL model sources remain unsupported. Prop lightmaps remain unfinished."
+                "Bakes static, switchable and animated point/spot lights, sun and sky on world brushes, brush entities and terrain, with directional normal-map lightmaps, shadows, scoped world/model brush smoothing and model ambient. Up to four diffuse bounces from world, terrain and eligible stationary Shadows Yes func_brush baked maps reach world, terrain, brush entities and opted-in prop vertices. Map reception preserves styles. Prop VHV stores a static style-0 base while supported point/spot styles remain native runtime direct lighting. Switched indirect ambient remains unsupported. Moving, parented and unrequested brush-model sources remain unsupported. Eligible VHV static-prop sources require Reflect light from static props; other MDL sources remain unsupported. Prop lightmaps remain unfinished."
             }
             Self::DirectLdrHdr => {
-                "Bakes separate LDR and HDR lightmaps, world lights and model ambient, selecting each channel's authored light inputs. Sampling, diffuse bounces and brush smoothing apply to both channels within one shared work limit. Prop VHV stores style 0 while supported point/spot styles remain native runtime direct lighting; switched indirect ambient remains unsupported. Eligible stationary Shadows Yes root and assembled-child func_brush baked maps supply reflected light alongside world and terrain; moving, parented, unrequested and MDL model sources remain unsupported. Empty HDR lighting, world-light or ambient data cannot activate native HDR. Runtime HDR depends on the game and hardware; Generate reflections captures both LDR and HDR cubemaps when enabled. HDR preview and exposure controls are available. Prop lightmaps remain unfinished."
+                "Bakes separate LDR and HDR lightmaps, world lights and model ambient, selecting each channel's authored light inputs. Sampling, diffuse bounces and brush smoothing apply to both channels within one shared work limit. Prop VHV stores style 0 while supported point/spot styles remain native runtime direct lighting; switched indirect ambient remains unsupported. Eligible stationary Shadows Yes root and assembled-child func_brush baked maps supply reflected light alongside world and terrain; moving, parented and unrequested brush-model sources remain unsupported. Eligible VHV static-prop sources require Reflect light from static props; other MDL sources remain unsupported. Empty HDR lighting, world-light or ambient data cannot activate native HDR. Runtime HDR depends on the game and hardware; Generate reflections captures both LDR and HDR cubemaps when enabled. HDR preview and exposure controls are available. Prop lightmaps remain unfinished."
             }
         }
     }
@@ -188,6 +188,7 @@ pub struct Options {
     pub pack_water_assets: bool,
     pub pack_static_prop_assets: bool,
     pub bake_static_prop_vertices: bool,
+    pub reflect_static_props: bool,
     pub brush_texture_shadows: bool,
     pub colored_texture_shadows: bool,
     pub refine_ambient_probes: bool,
@@ -229,6 +230,7 @@ impl Default for Options {
             pack_water_assets: false,
             pack_static_prop_assets: false,
             bake_static_prop_vertices: false,
+            reflect_static_props: false,
             brush_texture_shadows: false,
             colored_texture_shadows: false,
             refine_ambient_probes: false,
@@ -271,12 +273,20 @@ impl Options {
             || self.pack_water_assets
             || self.pack_static_prop_assets
             || self.bake_static_prop_vertices
+            || self.reflect_static_props
             || self.brush_texture_shadows
             || self.colored_texture_shadows
     }
 
     pub fn validate(self) -> Result<Self, String> {
         validate_lighting_work_limit(self.lighting_work_limit)?;
+        if self.reflect_static_props
+            && (!self.lighting.performs_lighting() || !self.bake_static_prop_vertices)
+        {
+            return Err(
+                "Reflect light from static props requires Bake static-prop vertex lighting and Direct LDR or Direct LDR + HDR lighting".into(),
+            );
+        }
         if self.refine_ambient_probes
             && (!self.lighting.performs_lighting() || self.sky_quality == SkyQuality::Fast)
         {
@@ -661,6 +671,9 @@ pub struct PropVertexLightingStats {
     pub hdr_bytes: usize,
     pub work: usize,
     pub asset_bytes: usize,
+    pub reflected_source_props: usize,
+    pub reflected_source_triangles: usize,
+    pub reflected_source_vertices: usize,
 }
 
 fn serialize_elapsed<S: serde::Serializer>(

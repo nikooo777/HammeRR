@@ -22,6 +22,7 @@ pub(super) struct Context<'a> {
     pub faces: &'a mut [Face],
     pub infos: &'a [TexInfo],
     pub prop_shadows: &'a ShadowIndex<super::props::PropTriangle>,
+    pub prop_sources: Option<&'a super::prop_vertices::SourceSnapshot>,
     pub shadows: &'a ShadowIndex<Occluder>,
     pub terrain: &'a ShadowIndex<super::terrain_shadows::TerrainTriangle>,
     pub model_shadows: &'a [Option<ShadowIndex<Occluder>>],
@@ -147,6 +148,7 @@ pub(super) fn bake(
         ctx.brush_textures,
         ctx.terrain,
         ctx.shadows,
+        ctx.prop_sources,
         budget,
     )?;
     let _directions = budget.reserve::<DVec3>(ctx.quality.directions())?;

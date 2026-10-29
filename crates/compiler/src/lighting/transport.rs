@@ -64,6 +64,7 @@ const SOURCE_PREFIX_WORK: usize = 24;
 pub(super) enum SourceTarget {
     Hull { slot: usize, boundary: usize },
     Terrain { slot: usize },
+    Prop { slot: usize },
     Sky,
     Sheet,
 }
@@ -73,6 +74,7 @@ impl SourceTarget {
         let key = match self {
             Self::Hull { slot, boundary } => (fraction, GLOBAL_HULL_FAMILY, slot, boundary),
             Self::Terrain { slot } => (fraction, TERRAIN_FAMILY, slot, 0),
+            Self::Prop { slot } => (fraction, PROP_FAMILY, slot, 0),
             Self::Sheet => (fraction, TERMINAL_FAMILY, 0, 0),
             Self::Sky => return event.0 <= fraction + TRIANGLE_EPSILON,
         };
@@ -111,6 +113,18 @@ impl Scene<'_> {
             }
             SourceTarget::Terrain { slot } if slot >= self.terrain.objects().len() => {
                 return Err("Source event references a missing terrain triangle".into());
+            }
+            SourceTarget::Prop { slot } => {
+                let triangle = self
+                    .props
+                    .objects()
+                    .get(slot)
+                    .ok_or("Source event references a missing static-prop triangle")?;
+                if triangle.owned_by(skip_owner) {
+                    return Err(
+                        "A skipped static-prop source requires a source-only terminal".into(),
+                    );
+                }
             }
             _ => {}
         }
@@ -248,9 +262,15 @@ impl Scene<'_> {
                     budget.borrow_mut().consume(SOURCE_PREFIX_WORK)?;
                     if !triangle.owned_by(skip_owner)
                         && let Some((hit, value)) = triangle.sampled_coverage(start, end)?
-                        && target.includes(fraction, (hit, PROP_FAMILY, slot, 0))
                     {
-                        coverage.add(value);
+                        if matches!(target, SourceTarget::Prop { slot: source }
+                            if source == slot && hit == fraction)
+                        {
+                            found = true;
+                        }
+                        if target.includes(fraction, (hit, PROP_FAMILY, slot, 0)) {
+                            coverage.add(value);
+                        }
                     }
                     Ok(if coverage.opaque() {
                         Visit::Stop
@@ -259,6 +279,11 @@ impl Scene<'_> {
                     })
                 },
             )?;
+        }
+        if matches!(target, SourceTarget::Prop { .. }) && !found && !coverage.opaque() {
+            return Err(
+                "Source event does not match its actual native static-prop crossing".into(),
+            );
         }
         Ok(coverage.visibility())
     }

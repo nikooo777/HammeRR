@@ -24,6 +24,10 @@ mod assets;
 pub use assets::load_prop_vertex_material;
 mod color;
 mod indirect;
+mod sources;
+pub(super) use sources::{SourceSnapshot, SourceTriangle};
+mod channel;
+pub(super) use channel::{advance_channel, begin_channel, publish_channel};
 
 const MAX_RECEIVERS: usize = 1024;
 const MAX_MODELS: usize = 128;
@@ -56,6 +60,7 @@ pub(super) struct Prepared {
     source_allocation: Allocation,
     output_allocation: Allocation,
     generated_bytes: usize,
+    reflection: Option<sources::Plan>,
 }
 
 pub(super) struct Context<'a> {
@@ -73,6 +78,9 @@ pub(super) struct Indirect<'a> {
 pub(super) struct Settings<'a> {
     pub vmf: &'a Vmf,
     pub prop_sources: &'a [usize],
+    pub fs: &'a GameFs,
+    pub reflect_static_props: bool,
+    pub prop_shadows: &'a super::shadows::ShadowIndex<super::props::PropTriangle>,
 }
 
 fn source(vmf: &Vmf, id: usize) -> Result<&Entity, String> {
@@ -136,14 +144,20 @@ fn admit_prop(entity: &Entity, prop: &StaticProp, model: &str) -> Result<(), Str
     Ok(())
 }
 
-pub(super) fn prepare(
-    settings: Settings<'_>,
-    tracker: super::asset_tracking::Tracker<'_>,
+pub(super) fn prepare<'a>(
+    settings: Settings<'a>,
+    mut tracker: super::asset_tracking::Tracker<'a>,
     bsp: &Bsp,
     report: &mut Report,
     budget: &mut Budget<'_>,
 ) -> Result<Option<Prepared>, String> {
-    let Settings { vmf, prop_sources } = settings;
+    let Settings {
+        vmf,
+        prop_sources,
+        fs,
+        reflect_static_props,
+        prop_shadows,
+    } = settings;
     let start = budget.work();
     let Some(lump) = bsp.game_lumps.iter().find(|lump| lump.id == *b"sprp") else {
         if !prop_sources.is_empty() {
@@ -172,7 +186,7 @@ pub(super) fn prepare(
     if count > MAX_RECEIVERS {
         return Err("Baked prop vertices exceed their 1,024 receiver limit; explicitly disable vertex lighting on other props".into());
     }
-    let mut assets = assets::Assets::new(tracker);
+    let mut assets = assets::Assets::new(&mut tracker, fs);
     let mut allocation = budget.reserve_bytes(
         count * size_of::<BoundReceiver>()
             + MAX_MODELS * size_of::<ModelData>()
@@ -182,6 +196,7 @@ pub(super) fn prepare(
     let mut receivers = Vec::with_capacity(count);
     let mut by_model = BTreeMap::new();
     let mut admitted_materials = std::collections::BTreeSet::new();
+    let mut source_materials = BTreeMap::new();
     let mut total_vertices = 0usize;
     let mut total_meshes = 0usize;
     for (ordinal, (prop, &source_id)) in props.props.iter().zip(prop_sources).enumerate() {
@@ -267,10 +282,31 @@ pub(super) fn prepare(
                 let material = *skin
                     .get(part.material)
                     .ok_or("Baked prop skin binding is unavailable")?;
-                if !admitted_materials.contains(&(model_index, material)) {
+                let reflected_material = if reflect_static_props {
+                    budget.consume(
+                        data.model.parts.len()
+                            + source_materials.len().checked_ilog2().unwrap_or(0) as usize
+                            + 1,
+                    )?;
+                    data.model.parts.iter().any(|part| {
+                        !part.indices.is_empty() && skin.get(part.material) == Some(&material)
+                    })
+                } else {
+                    false
+                };
+                let key = (model_index, material);
+                if reflected_material && !source_materials.contains_key(&key) {
+                    if !admitted_materials.contains(&key) {
+                        allocation.grow(budget, 128)?;
+                    }
+                    allocation.grow(budget, 128 + 16 * size_of::<Allocation>())?;
+                    source_materials
+                        .insert(key, assets.source_material(&data.model, material, budget)?);
+                    admitted_materials.insert(key);
+                } else if !admitted_materials.contains(&key) {
                     allocation.grow(budget, 128)?;
                     assets.material(&data.model, material, budget)?;
-                    admitted_materials.insert((model_index, material));
+                    admitted_materials.insert(key);
                 }
             }
             total_vertices = total_vertices
@@ -323,7 +359,29 @@ pub(super) fn prepare(
             return Err("Static-prop vertex receiver preparation failed".into());
         }
     }
-    let (sources, missing, source_allocation) = assets.finish();
+    let asset_allocations = assets.finish();
+    let reflection = if reflect_static_props {
+        Some(sources::prepare(
+            &models,
+            &receivers,
+            source_materials,
+            prop_shadows,
+            asset_allocations,
+            report,
+            budget,
+        )?)
+    } else {
+        if !asset_allocations.is_empty() {
+            return Err(
+                "Static-prop receiver-only preparation retained unexpected source assets".into(),
+            );
+        }
+        None
+    };
+    let reflected_source_props = reflection.as_ref().map_or(0, |plan| plan.source_props);
+    let reflected_source_triangles = reflection.as_ref().map_or(0, sources::Plan::triangle_count);
+    let reflected_source_vertices = reflection.as_ref().map_or(0, |plan| plan.source_vertices);
+    let (sources, missing, source_allocation) = tracker.finish();
     Ok(Some(Prepared {
         models,
         receivers,
@@ -336,12 +394,16 @@ pub(super) fn prepare(
             meshes: total_meshes,
             vertices: total_vertices,
             work: budget.work() - start,
+            reflected_source_props,
+            reflected_source_triangles,
+            reflected_source_vertices,
             ..Default::default()
         },
         allocation,
         source_allocation,
         output_allocation: budget.reserve_bytes(0)?,
         generated_bytes: 0,
+        reflection,
     }))
 }
 
@@ -411,6 +473,131 @@ fn validate_point(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn vertex_color(
+    index: usize,
+    vertex: &Vertex,
+    receiver: &BoundReceiver,
+    placement: &DAffine3,
+    ctx: &Context<'_>,
+    indirect: Option<&Indirect<'_>>,
+    angular: super::ReceiverAngularMode,
+    directions: &[DVec3],
+    cone: f64,
+    base: Option<DVec3>,
+    candidates: &mut Candidates,
+    budget: &mut Budget<'_>,
+) -> Result<DVec3, String> {
+    budget.consume(if base.is_some() {
+        4
+    } else {
+        receivers::STYLE_COUNT + 4
+    })?;
+    let sample = sample(vertex, placement)?;
+    let point = sample.point;
+    let normal = sample.normal;
+    let result = (|| {
+        let skipped_owner =
+            (receiver.prop.flags & NO_SELF_SHADOW != 0).then_some(receiver.metadata.ordinal);
+        let mut color = if let Some(base) = base {
+            base
+        } else {
+            validate_point(&ctx.direct, receiver.metadata.ordinal, point, budget)?;
+            let cluster = candidates.cluster(point, ctx.map, ctx.tree, ctx.visibility, budget)?;
+            let colors = receivers::direct_with_reception(
+                &ctx.direct,
+                candidates,
+                cluster,
+                sample,
+                true,
+                receivers::Reception {
+                    angular,
+                    skip_owner: skipped_owner,
+                    styles: receivers::Styles::StaticOnly,
+                },
+                budget,
+            )?;
+            if colors.iter().skip(1).any(|color| *color != DVec3::ZERO) {
+                return Err("Baked prop vertices cannot store nonzero light styles".into());
+            }
+            colors[0]
+        };
+        if let Some(indirect) = indirect {
+            color += indirect::gather(
+                angular,
+                normal,
+                directions,
+                ctx.direct.ambient_directions,
+                &mut |direction| {
+                    let mut total = DVec3::ZERO;
+                    indirect.surfaces.trace(
+                        point,
+                        direction,
+                        cone,
+                        &super::transport::Scene {
+                            shadows: ctx.direct.shadows,
+                            terrain: ctx.direct.terrain,
+                            props: ctx.direct.props,
+                            model: None,
+                        },
+                        skipped_owner,
+                        budget,
+                        &mut |hit, _| {
+                            if !hit.sky && hit.front {
+                                total += hit.color * 255.0;
+                            }
+                            Ok(())
+                        },
+                    )?;
+                    Ok(total)
+                },
+            )?;
+        }
+        Ok::<_, String>(color)
+    })();
+    result.map_err(|error| {
+        format!(
+            "vertex {index} at ({:.6}, {:.6}, {:.6}): {error}",
+            point.x, point.y, point.z,
+        )
+    })
+}
+
+fn encode_output(
+    ordinal: u32,
+    checksum: u32,
+    kind: LightingKind,
+    meshes: Vec<vhv::Mesh>,
+    generated_bytes: usize,
+    output_allocation: &mut Allocation,
+    budget: &mut Budget<'_>,
+) -> Result<(GeneratedAsset, usize), String> {
+    let file = vhv::File { checksum, meshes };
+    let limits = vhv::Limits::default();
+    let bytes = file
+        .encoded_len(limits)
+        .map_err(|error| error.to_string())?;
+    let total = generated_bytes
+        .checked_add(bytes)
+        .filter(|bytes| *bytes <= MAX_GENERATED_BYTES)
+        .ok_or("Baked prop VHV output exceeds its aggregate 64 MiB limit")?;
+    output_allocation.grow(budget, bytes)?;
+    budget.consume(bytes.div_ceil(64))?;
+    let data = file.to_bytes(limits).map_err(|error| error.to_string())?;
+    Ok((
+        GeneratedAsset {
+            ordinal,
+            channel: if kind == LightingKind::Hdr {
+                Channel::Hdr
+            } else {
+                Channel::Ldr
+            },
+            data,
+        },
+        total,
+    ))
+}
+
 pub(super) fn bake_channel(
     prepared: &mut Prepared,
     ctx: &Context<'_>,
@@ -451,7 +638,8 @@ pub(super) fn bake_channel(
     } else {
         0.0
     };
-    for receiver in &prepared.receivers {
+    for receiver_index in 0..prepared.receivers.len() {
+        let receiver = &prepared.receivers[receiver_index];
         budget.consume(1)?;
         let angular = if receiver.prop.flags & IGNORE_NORMALS != 0 {
             super::ReceiverAngularMode::IgnoreNormals
@@ -481,84 +669,20 @@ pub(super) fn bake_channel(
                     let color = match cached[index] {
                         Some(color) => color,
                         None => {
-                            budget.consume(receivers::STYLE_COUNT + 4)?;
-                            let sample = sample(&data.model.vertices[index], &placement)?;
-                            let point = sample.point;
-                            let normal = sample.normal;
-                            let colors = (|| {
-                                validate_point(
-                                    &ctx.direct,
-                                    receiver.metadata.ordinal,
-                                    sample.point,
-                                    budget,
-                                )?;
-                                let cluster = candidates.cluster(
-                                    sample.point,
-                                    ctx.map,
-                                    ctx.tree,
-                                    ctx.visibility,
-                                    budget,
-                                )?;
-                                let skipped_owner = (receiver.prop.flags & NO_SELF_SHADOW != 0)
-                                    .then_some(receiver.metadata.ordinal);
-                                let mut colors = receivers::direct_with_reception(
-                                    &ctx.direct,
-                                    candidates,
-                                    cluster,
-                                    sample,
-                                    true,
-                                    receivers::Reception {
-                                        angular,
-                                        skip_owner: skipped_owner,
-                                        styles: receivers::Styles::StaticOnly,
-                                    },
-                                    budget,
-                                )?;
-                                if let Some(indirect) = &indirect {
-                                    colors[0] += indirect::gather(
-                                        angular,
-                                        normal,
-                                        &directions,
-                                        ctx.direct.ambient_directions,
-                                        &mut |direction| {
-                                            let mut total = DVec3::ZERO;
-                                            indirect.surfaces.trace(
-                                                point,
-                                                direction,
-                                                cone,
-                                                &super::transport::Scene {
-                                                    shadows: ctx.direct.shadows,
-                                                    terrain: ctx.direct.terrain,
-                                                    props: ctx.direct.props,
-                                                    model: None,
-                                                },
-                                                skipped_owner,
-                                                budget,
-                                                &mut |hit, _| {
-                                                    if !hit.sky && hit.front {
-                                                        total += hit.color * 255.0;
-                                                    }
-                                                    Ok(())
-                                                },
-                                            )?;
-                                            Ok(total)
-                                        },
-                                    )?;
-                                }
-                                Ok::<_, String>(colors)
-                            })()
-                            .map_err(|error| {
-                                format!(
-                                    "vertex {index} at ({:.6}, {:.6}, {:.6}): {error}",
-                                    point.x, point.y, point.z,
-                                )
-                            })?;
-                            if colors.iter().skip(1).any(|color| *color != DVec3::ZERO) {
-                                return Err(
-                                    "Baked prop vertices cannot store nonzero light styles".into(),
-                                );
-                            }
-                            let color = color::encode(colors[0])?;
+                            let color = color::encode(vertex_color(
+                                index,
+                                &data.model.vertices[index],
+                                receiver,
+                                &placement,
+                                ctx,
+                                indirect.as_ref(),
+                                angular,
+                                &directions,
+                                cone,
+                                None,
+                                candidates,
+                                budget,
+                            )?)?;
                             cached[index] = Some(color);
                             color
                         }
@@ -574,31 +698,19 @@ pub(super) fn bake_channel(
                     colors,
                 });
             }
-            let file = vhv::File {
-                checksum: data.layout.checksum as u32,
+            let ordinal = receiver.metadata.ordinal;
+            let checksum = data.layout.checksum as u32;
+            let (asset, total) = encode_output(
+                ordinal,
+                checksum,
+                kind,
                 meshes,
-            };
-            let limits = vhv::Limits::default();
-            let bytes = file
-                .encoded_len(limits)
-                .map_err(|error| error.to_string())?;
-            let total = prepared
-                .generated_bytes
-                .checked_add(bytes)
-                .filter(|bytes| *bytes <= MAX_GENERATED_BYTES)
-                .ok_or("Baked prop VHV output exceeds its aggregate 64 MiB limit")?;
-            prepared.output_allocation.grow(budget, bytes)?;
-            budget.consume(bytes.div_ceil(64))?;
-            let data = file.to_bytes(limits).map_err(|error| error.to_string())?;
-            prepared.generated.push(GeneratedAsset {
-                ordinal: receiver.metadata.ordinal,
-                channel: if kind == LightingKind::Hdr {
-                    Channel::Hdr
-                } else {
-                    Channel::Ldr
-                },
-                data,
-            });
+                prepared.generated_bytes,
+                &mut prepared.output_allocation,
+                budget,
+            )?;
+            let bytes = asset.data.len();
+            prepared.generated.push(asset);
             prepared.generated_bytes = total;
             match kind {
                 LightingKind::Ldr => prepared.stats.ldr_bytes += bytes,
@@ -607,6 +719,7 @@ pub(super) fn bake_channel(
             Ok::<_, String>(())
         })();
         if let Err(error) = result {
+            let receiver = &prepared.receivers[receiver_index];
             budget.consume(0)?;
             report.diagnostics.push(Diagnostic::error(
                 error,
@@ -639,7 +752,9 @@ pub(super) fn finish(
         source_allocation,
         output_allocation,
         generated_bytes,
+        reflection,
     } = prepared;
+    drop(reflection);
     drop(models);
     let source_bytes = sources.iter().map(|source| source.bytes).sum::<usize>();
     let _publication = budget.reserve_bytes(

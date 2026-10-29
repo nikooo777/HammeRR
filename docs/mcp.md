@@ -412,9 +412,14 @@ The result gives `recorded_position`, `captured_snapshot` and `framed_bounds`.
 
 Only the latest finished job's first 100 rows can be framed. Coordinates can
 belong to an older map state; this does not resolve a current authored object.
-Lighting receiver errors carry certified world positions. Unclassified,
+Lighting receiver errors and missing-probe cell references carry certified world positions. Unclassified,
 model-local, invalid or absent positions remain unavailable. Active viewport
 gestures block framing. Map edits, selection, history and other drafts stay intact.
+
+Missing ambient-probe diagnostics give the channel, native leaf/cluster and first
+rejection counts for the tested candidates. Up to eight located rows are returned
+per channel, followed by the total and omitted-location count when needed.
+Their recorded world position is a cell reference, not an accepted probe.
 
 Set `bake_static_prop_vertices:true` with a lit mode to store the static style-0
 VHV base alongside supported runtime point/spot styles. Effective nonzero styles

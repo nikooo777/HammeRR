@@ -59,7 +59,7 @@ they can refer to an older map state. Finish or cancel active viewport gestures
 before framing.
 
 Only the latest finished job's first 100 diagnostics are retained. Lighting
-receiver errors have certified world positions. Other positions can be
+receiver errors and missing-probe cell references have certified world positions. Other positions can be
 unclassified or local to a model; their framing controls are unavailable.
 This action does not select or resolve an authored object.
 
@@ -229,6 +229,13 @@ Refinement evaluates up to twice as many candidate positions while keeping the
 retained sample count and spacing. Balanced retains up to four probes per open
 world leaf; Detailed retains up to eight. It can increase build work and does
 not guarantee an improvement.
+
+If no candidate is accepted, diagnostics identify the channel, leaf and cluster.
+They count first rejections by cell bounds, world brushes, prop bounds and terrain
+above. Up to eight leaf locations are shown per channel; the summary reports any
+omitted locations. **Frame recorded position** goes to the cell's reference point,
+not to a valid probe. The warning does not prove that every possible native grid
+position is blocked.
 
 Per-vertex static-prop lighting is a separate option; see [static props](static-props.md).
 

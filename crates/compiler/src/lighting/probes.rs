@@ -17,6 +17,7 @@ const MIN_PROBE_SPACING: f64 = 128.0;
 const MAX_AMBIENT_SAMPLES: usize = u16::MAX as usize + 1;
 const CANDIDATE_FRACTIONS: [u8; 4] = [64, 128, 192, 224];
 const MAX_CANDIDATES: usize = 1 + CANDIDATE_FRACTIONS.len().pow(3);
+const MAX_MISSING_PROBE_DETAILS: usize = 8;
 const CUBE_AXES: [DVec3; 6] = [
     DVec3::X,
     DVec3::NEG_X,
@@ -53,13 +54,28 @@ pub(super) struct Stats {
     pub bytes: usize,
 }
 
+#[derive(Default)]
+struct Rejections {
+    attempts: usize,
+    outside: usize,
+    brushes: usize,
+    props: usize,
+    terrain: usize,
+}
+
+struct Candidates {
+    probes: Vec<LeafAmbientSample>,
+    reference: DVec3,
+    rejected: Rejections,
+}
+
 fn candidates(
     ctx: &Context<'_>,
     node: usize,
     leaf: &Leaf,
     limit: usize,
     budget: &mut Budget<'_>,
-) -> Result<Vec<LeafAmbientSample>, String> {
+) -> Result<Candidates, String> {
     let volume = &ctx.tree.nodes[node].volume;
     let count = volume
         .sides
@@ -68,7 +84,7 @@ fn candidates(
         .sum::<usize>();
     budget.consume(count + 1)?;
     if count == 0 {
-        return Ok(Vec::new());
+        return Err("Ambient probe world cell has no boundary vertices".into());
     }
     let center = volume
         .sides
@@ -77,6 +93,9 @@ fn candidates(
         .copied()
         .sum::<DVec3>()
         / count as f64;
+    if !center.is_finite() {
+        return Err("Ambient probe world cell has a nonfinite reference point".into());
+    }
     let encoded = std::array::from_fn(|axis| {
         let min = f64::from(leaf.mins[axis]);
         let span = f64::from(leaf.maxs[axis]) - min;
@@ -96,13 +115,15 @@ fn candidates(
             })
         }));
     let mut valid = Vec::new();
+    let mut rejected = Rejections::default();
     if ctx.refine {
         valid
             .try_reserve_exact(MAX_CANDIDATES)
             .map_err(|_| "Cannot reserve ambient refinement candidates")?;
     }
     for position in candidates {
-        budget.consume(volume.sides.len() + 1)?;
+        budget.consume(volume.sides.len() + 8)?;
+        rejected.attempts += 1;
         let sample = LeafAmbientSample {
             position,
             ..Default::default()
@@ -116,6 +137,7 @@ fn candidates(
             let plane = ctx.map.planes.get(side.plane);
             plane.normal.dot(point) - plane.dist > 0.0001
         }) {
+            rejected.outside += 1;
             continue;
         }
         let blocked = ctx
@@ -132,11 +154,15 @@ fn candidates(
                 },
             )?
             .is_some();
-        if blocked
-            || ctx
-                .prop_bounds
-                .contains_point(point, &mut |work| budget.consume(work))?
+        if blocked {
+            rejected.brushes += 1;
+            continue;
+        }
+        if ctx
+            .prop_bounds
+            .contains_point(point, &mut |work| budget.consume(work))?
         {
+            rejected.props += 1;
             continue;
         }
         let above = point + DVec3::Z * super::sky::TRACE_LENGTH;
@@ -154,6 +180,7 @@ fn candidates(
             )?
             .is_some()
         {
+            rejected.terrain += 1;
             continue;
         }
         valid.push((sample, point));
@@ -193,16 +220,22 @@ fn candidates(
         }
         selected.push(valid.remove(index));
     }
-    if ctx.refine {
+    let probes = if ctx.refine {
         let mut probes = Vec::new();
         probes
             .try_reserve_exact(limit)
             .map_err(|_| "Cannot reserve ambient refinement records")?;
         budget.consume(selected.len())?;
         probes.extend(selected.into_iter().map(|(sample, _)| sample));
-        return Ok(probes);
-    }
-    Ok(selected.into_iter().map(|(sample, _)| sample).collect())
+        probes
+    } else {
+        selected.into_iter().map(|(sample, _)| sample).collect()
+    };
+    Ok(Candidates {
+        probes,
+        reference: center,
+        rejected,
+    })
 }
 
 fn gather(
@@ -242,6 +275,10 @@ pub(super) fn bake(
     report: &mut Report,
     budget: &mut Budget<'_>,
 ) -> Result<Stats, String> {
+    let channel = match ctx.kind {
+        LightingKind::Ldr => "LDR",
+        LightingKind::Hdr => "HDR",
+    };
     let surfaces = super::radiance::build(
         ctx.map,
         bsp,
@@ -290,15 +327,28 @@ pub(super) fn bake(
             crate::SkyQuality::Detailed => 8,
         };
         let _refinement_allocation = ctx.refine.then(|| reserve_refinement(budget)).transpose()?;
-        let mut probes = candidates(
+        let Candidates {
+            mut probes,
+            reference,
+            rejected,
+        } = candidates(
             ctx,
             node,
             leaf,
             if ctx.refine { limit * 2 } else { limit },
             budget,
-        )?;
+        )
+        .map_err(|error| format!("{channel} ambient leaf {index}: {error}"))?;
         if probes.is_empty() {
             missing += 1;
+            if missing <= MAX_MISSING_PROBE_DETAILS {
+                budget.consume(64)?;
+                report.diagnostics.push(Diagnostic::warning(
+                    format!("{channel} ambient leaf {index} (cluster {}): no accepted probe after {} candidate attempts. First rejections: {} outside cell, {} in world brushes, {} in prop bounds, {} with terrain above. Model ambient is missing. Recorded position is the cell reference, not a probe.", leaf.cluster, rejected.attempts, rejected.outside, rejected.brushes, rejected.props, rejected.terrain),
+                    None,
+                    Some(reference),
+                ).with_world_position());
+            }
             continue;
         }
         let emitted = probes.len().min(limit);
@@ -378,7 +428,15 @@ pub(super) fn bake(
     }
     budget.samples_planned_complete();
     if missing != 0 {
-        report.diagnostics.push(Diagnostic::warning(format!("{missing} open leaves have no safe quantized ambient probe; model ambient lighting there is missing"), None, None));
+        let omitted = missing.saturating_sub(MAX_MISSING_PROBE_DETAILS);
+        let mut message =
+            format!("{channel}: model ambient lighting is missing in {missing} open leaves.");
+        if omitted != 0 {
+            message.push_str(&format!(" Additional leaf locations omitted: {omitted}."));
+        }
+        report
+            .diagnostics
+            .push(Diagnostic::warning(message, None, None));
     }
     let stats = Stats {
         samples: samples.len(),

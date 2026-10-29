@@ -150,7 +150,7 @@ get_entity_references also inspects FGD property links, parent references and in
 Use begin_entity_rename, update_entity_rename, commit_entity_rename or cancel_entity_rename \
 for safe naming: exact links update atomically, shared names require rename_group, and \
 unchanged ambiguous references require accept_review after inspecting the preview. \
-get_property_inspector reports world or common entity fields, stored/default values and mixed flags. \
+get_property_inspector reports world or common entity fields, stored/default values and mixed flags. World Native direct emission (_hammerr_emission_native_direct) is an intrinsic default-off exact 0/1 policy beside Emission file, not a build option or recipe field. Enable it through the same property draft only with a nonblank valid Emission file; file/policy edits validate together atomically. It adds per-constant-RGB integration-triangle centroid point approximations for native selected/folded runtime direct lighting and replaces only intrinsic direct emission in indexed probes. Sampled maps/VHV/detail direct and reflected ambient remain. Native slot/angular/folding approximations and inherited static-cache additions on dynamic-lit full-VHV props prevent universal appearance parity. Fullbright validates without emitting records; static previews do not simulate native selection. Inspect actual per-channel native_surface_lights and native_policy under stats.material_emission. \
 Use begin_property_edit (world:true or entity ids), update_property_edit with a changes list, \
 then commit_property_edit or cancel_property_edit using the returned token. Default resets \
 write the FGD value; remove deletes the override. All targets apply in one undo step. \

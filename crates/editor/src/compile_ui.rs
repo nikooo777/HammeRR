@@ -902,6 +902,12 @@ impl Controller {
             String::new()
         };
         let prop_vertex_lighting = prop_vertex_lighting::details(job);
+        let native_emission = result["stats"]["material_emission"]["native_surface_lights"]
+            .as_array()
+            .filter(|counts| counts.len() == 2)
+            .and_then(|counts| Some((counts[0].as_u64()?, counts[1].as_u64()?)))
+            .map(|(ldr, hdr)| format!("\nNative emission surface lights: LDR {ldr} · HDR {hdr}"))
+            .unwrap_or_default();
         let packed_water = water_packing::details(job);
         let packed_static_props = static_prop_packing::details(job);
         let samples = result["stats"]["cubemap_samples"]
@@ -1328,7 +1334,7 @@ impl Controller {
         };
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{brush_global_shadows}{styles}{hdr}{lighting_progress}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{native_emission}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{brush_global_shadows}{styles}{hdr}{lighting_progress}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),

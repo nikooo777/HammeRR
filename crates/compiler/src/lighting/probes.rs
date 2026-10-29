@@ -341,7 +341,7 @@ pub(super) fn bake(
                 )?;
                 Ok(total)
             })?;
-            if let Some(emission) = ctx.emission {
+            if let Some(emission) = ctx.emission.filter(|emission| !emission.native_enabled()) {
                 for (color, normal) in colors.iter_mut().zip(CUBE_AXES) {
                     *color += emission.gather(
                         ctx.kind,

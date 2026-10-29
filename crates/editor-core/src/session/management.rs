@@ -489,6 +489,7 @@ impl Session {
     ) -> Result<(), String> {
         for entity in entities {
             let classname = entity.classname().unwrap_or("").to_owned();
+            let mut emission_changed = false;
             for change in changes {
                 let key = change.key();
                 if ["id", "classname", "targetname", "mapversion"]
@@ -502,6 +503,7 @@ impl Session {
                 if classname.eq_ignore_ascii_case("worldspawn")
                     && compiler::is_material_emission_key(key)
                 {
+                    emission_changed = true;
                     if key != compiler::MATERIAL_EMISSION_FILE_KEY {
                         return Err(format!(
                             "World requires one canonical {} key; resolve noncanonical or duplicate keys before editing",
@@ -526,6 +528,37 @@ impl Session {
                             );
                         }
                     }
+                    continue;
+                }
+                if classname.eq_ignore_ascii_case("worldspawn")
+                    && compiler::is_material_emission_native_direct_key(key)
+                {
+                    if key != compiler::MATERIAL_EMISSION_NATIVE_DIRECT_KEY {
+                        return Err(format!(
+                            "World requires one canonical {} key; resolve noncanonical or duplicate keys before editing",
+                            compiler::MATERIAL_EMISSION_NATIVE_DIRECT_KEY
+                        ));
+                    }
+                    compiler::material_emission_native_direct_field(&entity.properties)?;
+                    match change {
+                        PropertyChange::Set { value, .. } => {
+                            compiler::validate_material_emission_native_direct(value)?;
+                            entity.properties.set(key, value);
+                        }
+                        PropertyChange::Remove { .. } => {
+                            entity.properties.remove(key);
+                        }
+                        PropertyChange::Default { .. } => {
+                            entity.properties.set(key, "0");
+                        }
+                        _ => {
+                            return Err(
+                                "Native direct emission accepts a 0/1 value, reset or removal"
+                                    .into(),
+                            );
+                        }
+                    }
+                    emission_changed = true;
                     continue;
                 }
                 if entity.properties.get_all(key).count() > 1 {
@@ -641,6 +674,9 @@ impl Session {
                     }
                 }
             }
+            if emission_changed {
+                compiler::material_emission_native_direct(&entity.properties)?;
+            }
         }
         Ok(())
     }
@@ -676,8 +712,10 @@ impl Session {
         });
         let mut properties = Vec::new();
         for mut field in fields {
-            let material_emission =
-                target == PropertyTarget::World && compiler::is_material_emission_key(&field.key);
+            let native_emission = target == PropertyTarget::World
+                && compiler::is_material_emission_native_direct_key(&field.key);
+            let material_emission = target == PropertyTarget::World
+                && (compiler::is_material_emission_key(&field.key) || native_emission);
             let generated_detail_tint = target == PropertyTarget::World
                 && field
                     .key
@@ -722,7 +760,11 @@ impl Session {
                 } else {
                     entity.properties.get(&field.key).map(str::to_owned)
                 };
-                let default = property.and_then(|property| property.default_value());
+                let default = if native_emission {
+                    Some("0".into())
+                } else {
+                    property.and_then(|property| property.default_value())
+                };
                 values.push(PropertyValue {
                     object: if target == PropertyTarget::World {
                         "world".into()

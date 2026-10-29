@@ -717,7 +717,31 @@ impl Session {
         };
         settings["lighting_work_limit"] = self.compilation.options.lighting_work_limit.into();
         settings["light_value_bindings"] = instance_reference::light_value_binding_scope();
-        settings["material_emission_description"] = "World settings → Emission file (_hammerr_emission_file) selects an optional mounted relative declaration file; blank or Remove override turns emission off. File contents and source assets validate at compile time. Records are [ldr:|hdr:] material R G B brightness; add texture: before the material to multiply radiance by nearest mip0 base-texture RGB with the 2.2 conversion and stored UV clamp/repeat. One mode per material; unsupported or changed textures reject. Sources are drawn opaque world/detail faces or eligible stationary func_brush models with Shadows Yes, using their compiled initial pose. Moving, unrequested and MDL model sources are unavailable. Finite-area sources use sampled baked lighting; dynamic receivers use indexed ambient lighting only. No native emission records or shader glow. Direct LDR + HDR with emitting faces requires a real authored point, spot or environment world light; zero brightness is allowed.".into();
+        settings["material_emission_description"] = "World settings → Emission file (_hammerr_emission_file) selects an optional mounted relative declaration file. File contents and source assets validate at compile time. Records are [ldr:|hdr:] material R G B brightness; add texture: before the material to multiply radiance by nearest mip0 base-texture RGB with the 2.2 conversion and stored UV clamp/repeat. One mode per material; unsupported or changed textures reject. Sources are drawn opaque world/detail faces or eligible stationary func_brush models with Shadows Yes, using their compiled initial pose. Moving, unrequested and MDL emitting models are unavailable. By default, finite-area sources use sampled baked lighting and dynamic receivers use indexed ambient only. Native direct emission (_hammerr_emission_native_direct) is a default-off World 0/1 policy requiring a nonblank Emission file. It adds native selected/folded runtime direct point approximations at constant-RGB integration-triangle centroids and removes only intrinsic direct emission from indexed ambient; sampled maps, VHV, detail direct and reflected ambient remain. Native light slots and angular/folding behavior do not reproduce finite-area response. The inherited full-VHV native path can add static-cache lighting when dynamic lights affect the prop. No shader glow or exact finite-source visibility is implied. Turn off the policy before clearing Emission file, or change both in one draft. Default-off paired emission keeps the existing authored HDR WorldLight requirement. Fullbright validates without baking or native emission records.".into();
+        let native_emission =
+            compiler::material_emission_native_direct(&self.document.vmf().world.properties);
+        settings["material_emission_native_direct"] = json!({
+            "world_key":compiler::MATERIAL_EMISSION_NATIVE_DIRECT_KEY,
+            "build_option":false,"default":false,"values":["0","1"],
+            "enabled":native_emission.as_ref().ok(),
+            "error":native_emission.as_ref().err(),
+            "requires":"nonblank_valid_emission_file",
+            "fullbright":"validate_only",
+            "runtime_approximation":"constant_rgb_integration_triangle_centroid_point",
+            "intensity":"linear_radiance_times_triangle_area_over_pi",
+            "style":0,"flags":0,
+            "runtime_direct":"native_selected_and_folded",
+            "radius_policy":{
+                "bounds":"actual_stored_model0",
+                "cache_expansion":[32,32,128],
+                "distance":"farthest_corner","rounding":"upward_native"
+            },
+            "radius_coverage":"compiled_world_receiver_and_cache_bounds",
+            "indexed_ambient":"reflected_emission_retained_intrinsic_direct_replaced",
+            "sampled_receivers":"maps_vhv_and_detail_direct_unchanged",
+            "native_static_cache_on_dynamic_lit_full_vhv":true,
+            "finite_area_fidelity":false,"exact_finite_source_visibility":false
+        });
         settings["lighting_work_limit_range"] = json!({
             "min":compiler::MIN_LIGHTING_WORK_LIMIT,
             "max":compiler::MAX_LIGHTING_WORK_LIMIT,

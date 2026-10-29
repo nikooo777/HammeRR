@@ -168,6 +168,13 @@ impl<'a> Expansion<'a> {
             return Err(format!("Instance sources exceed {MAX_TOTAL_NODES} nodes"));
         }
         let child = Vmf::from_nodes(&parsed).map_err(|error| error.to_string())?;
+        if crate::lighting::emission::material_emission_native_direct(&child.world.properties)
+            .map_err(|error| format!("Instance {relative}: {error}"))?
+        {
+            return Err(format!(
+                "Instance {relative}: child Native direct emission is unsupported; enable the policy in the root World settings"
+            ));
+        }
         if crate::lighting::emission::file(&child.world.properties)?.is_some() {
             return Err(format!(
                 "Instance {relative}: child Emission file is unsupported; select the assembled material declaration file in the root World settings"

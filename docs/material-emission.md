@@ -19,8 +19,10 @@ Bake light from an opaque world, detail or stationary brush-model surface.
 
 ![A white panel casts red baked light onto a surface and a prop in CS:S](images/material-emission-native.png)
 
-Blank text or **Remove override** turns emission off. **Fullbright** checks the
-file and sources but does not bake emission. Unused records are allowed;
+Blank text or **Remove override** turns emission off when **Native direct emission**
+is disabled. Disable that policy before clearing the file, or change both in one draft.
+**Fullbright** checks the file and sources but does not bake emission.
+Unused records are allowed;
 no rendered source faces means no emission is baked.
 
 Uniform records set brightness per surface area. Doubling area or brightness
@@ -73,6 +75,40 @@ for the shared admission rules.
 
 ![A rotated stationary panel casts red light onto a floor and prop in CS:S](images/stationary-emission-native.png)
 
+## Native runtime direct lighting
+
+Optionally add native direct-light descriptors for runtime receivers. This is a
+centroid point approximation, with different selection and angular behavior from
+the sampled finite-area bake.
+
+1. Open **World settings…** and set a nonblank **Emission file**.
+2. Enable **Native direct emission**.
+3. Click **Apply properties**, then compile with **Direct LDR** or **Direct LDR + HDR**.
+4. Check **Native emission surface lights** in **Build details…**.
+5. Open **Inspect compiled lights…** and read records whose **Kind** is `surface`.
+
+The policy defaults off. Each constant-colour integration triangle supplies a
+point at its actual centroid, using its normal and area-scaled intensity.
+Texture-driven sources retain their constant-colour integration pieces.
+The radius conservatively reaches the farthest corner of the stored world-model
+bounds expanded by native cache extents of 32/32/128 units, rounded upward to
+native precision. This covers compiled-world receiver/cache bounds, without an
+automatic 2,000-unit cutoff or a coverage promise outside that world.
+Sampled maps, VHV and detail direct lighting remain, as does reflected ambient.
+Only intrinsic direct emission is removed from indexed ambient and supplied by
+native selected or folded direct lighting instead.
+
+Native light slots, selection, angular response and ambient folding can change
+the result. The native full-VHV path can also add static-cache lighting while
+dynamic lights affect the prop, as it can for native point lights. This policy
+does not promise finite-area fidelity or exact finite-source visibility.
+The editor's static previews do not simulate native selection or folding.
+
+Setting the policy to `0`, removing it or unchecking the control restores the
+existing indexed-ambient policy. **Fullbright** validates the configuration but
+does not emit native surface-light records. Child declarations cannot activate
+the policy.
+
 ## Limits
 
 - Sources: drawn opaque flat world, `func_detail` or eligible **Shadows → Yes**
@@ -80,15 +116,18 @@ for the shared admission rules.
   transparent and merged sources with multiple original contributors are
   unavailable. Sources are checked before compile-region filtering.
 - Existing supported baked receivers and diffuse bounces receive emission.
-  Dynamic models receive it through indexed ambient cubes only. The file does
-  not add shader glow or native direct-light records.
-- Paired HDR requires a real authored point, spot or environment light.
+  Dynamic models use indexed ambient by default; **Native direct emission** opts
+  into the separately described runtime approximation. No shader glow is added.
+- With the default policy, paired HDR requires a real authored point, spot or environment light.
   Zero brightness is allowed. The engine requires a nonempty HDR light table.
+  In native mode, positive HDR surface records can provide that table.
 - Sampling can miss thin blockers or apertures between samples. **Detailed**
   uses smaller cells and more work. Exceeded budgets and unconditioned
   source contacts stop the build; quality does not reduce automatically.
 - At most 262,144 cells per receiver, 48 subdivisions, 65,536 source sides and
   262,144 source triangles.
+- Native surface descriptors share the 8,192-record limit per channel with
+  authored lights. Exceeded limits fail without dropping sources.
 - File: 64 KiB, 4,096 records, 1,024 bytes per line. Path: 1,024 ASCII bytes,
   mounted and relative. Includes, traversal, implicit file searches and
   child-owned emission files are unavailable. Root declarations apply to

@@ -65,8 +65,11 @@ pub use detail_props::{
     GENERATED_DETAIL_LIGHTING_TINT_KEY, validate_generated_detail_lighting_tint,
 };
 pub use lighting::emission::{
-    MATERIAL_EMISSION_FILE_KEY, MAX_MATERIAL_EMISSION_FILE_PATH_BYTES, MaterialEmissionStats,
-    is_material_emission_key, material_emission_file_field, validate_material_emission_file,
+    MATERIAL_EMISSION_FILE_KEY, MATERIAL_EMISSION_NATIVE_DIRECT_KEY,
+    MAX_MATERIAL_EMISSION_FILE_PATH_BYTES, MaterialEmissionStats, is_material_emission_key,
+    is_material_emission_native_direct_key, material_emission_file_field,
+    material_emission_native_direct, material_emission_native_direct_field,
+    validate_material_emission_file, validate_material_emission_native_direct,
 };
 pub use lighting::load_prop_vertex_material;
 pub use physics::current::{

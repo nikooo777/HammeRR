@@ -1638,21 +1638,22 @@ fn bake_channel(
     if report.has_errors() {
         return Ok(BakeStats::default());
     }
-    let count = lights
+    let authored_count = lights
         .iter()
         .flat_map(Emitter::world_lights)
         .flatten()
         .count();
+    let native_emission_count =
+        emission.map_or(Ok(0), |emission| emission.native_patch_count(kind, budget))?;
+    let count = authored_count
+        .checked_add(native_emission_count)
+        .filter(|&count| count <= MAX_WORLD_LIGHTS)
+        .ok_or("Direct lighting exceeds the 8,192 world-light limit including sky ambient and native material emission")?;
     if emission.is_some_and(super::emission::Prepared::has_sources)
         && kind == LightingKind::Hdr
         && count == 0
     {
-        return Err("HDR material emission requires at least one real authored point/spot/environment world light; add an authored light (zero brightness is allowed) or use Direct LDR. The installed engine does not activate HDR without WORLDLIGHTS_HDR; no substitute light is generated".into());
-    }
-    if count > MAX_WORLD_LIGHTS {
-        return Err(
-            "Direct lighting exceeds the 8,192 world-light limit including sky ambient".into(),
-        );
+        return Err("HDR material emission requires a nonempty WORLDLIGHTS_HDR table from authored lighting or positive native emission. Add a genuine authored light (zero brightness is allowed), supply positive native emission, or use Direct LDR; no substitute light is generated".into());
     }
     let _native_light_allocation = budget.reserve::<bsp::WorldLight>(count)?;
     let mut world_lights = Vec::new();
@@ -1672,6 +1673,26 @@ fn bake_channel(
             )?;
             world_lights.push(light);
         }
+    }
+    if let Some(emission) = emission.filter(|_| native_emission_count != 0) {
+        let appended = super::emission::native::append(
+            emission,
+            kind,
+            bsp,
+            native_emission_count,
+            &mut world_lights,
+            budget,
+        )?;
+        if appended != native_emission_count || world_lights.len() != count {
+            return Err(
+                "Native material-emission world-light count differs from its admitted count".into(),
+            );
+        }
+        for _ in 0..appended {
+            budget.consume(1)?;
+            origins.push(None, instances)?;
+        }
+        emission.set_native_surface_lights(kind, appended)?;
     }
     let _candidate_allocation = budget.reserve_bytes(super::culling::allocation_bytes(
         visibility.count,

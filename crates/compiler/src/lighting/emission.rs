@@ -18,9 +18,11 @@ use crate::asset_sources::BuildMaterialSources;
 use crate::materials::{Materials, Requirements};
 use crate::{Control, Diagnostic, Options, Report, SkyQuality, map::Map};
 
+pub(super) mod native;
 mod texture;
 
 pub const MATERIAL_EMISSION_FILE_KEY: &str = "_hammerr_emission_file";
+pub const MATERIAL_EMISSION_NATIVE_DIRECT_KEY: &str = "_hammerr_emission_native_direct";
 pub const MAX_MATERIAL_EMISSION_FILE_PATH_BYTES: usize = 1024;
 const MAX_FILE_BYTES: usize = 64 * 1024;
 const MAX_RECORDS: usize = 4096;
@@ -58,6 +60,7 @@ pub struct MaterialEmissionStats {
     pub boundary_cell_angle_degrees: f64,
     pub channel_cells: [usize; 2],
     pub channel_rays: [usize; 2],
+    pub native_surface_lights: [usize; 2],
     pub native_policy: &'static str,
 }
 
@@ -104,7 +107,53 @@ pub fn material_emission_file_field(properties: &Properties) -> Result<Option<&s
     Ok(Some(value))
 }
 
+pub fn is_material_emission_native_direct_key(key: &str) -> bool {
+    key.trim_end_matches(' ')
+        .split('#')
+        .next()
+        .unwrap_or(key)
+        .eq_ignore_ascii_case(MATERIAL_EMISSION_NATIVE_DIRECT_KEY)
+}
+
+pub fn validate_material_emission_native_direct(value: &str) -> Result<(), String> {
+    if !matches!(value, "0" | "1") {
+        return Err("Native direct emission requires exactly 0 or 1".into());
+    }
+    Ok(())
+}
+
+pub fn material_emission_native_direct_field(
+    properties: &Properties,
+) -> Result<Option<&str>, String> {
+    let mut fields = properties
+        .iter()
+        .filter(|(key, _)| is_material_emission_native_direct_key(key));
+    let Some((key, value)) = fields.next() else {
+        return Ok(None);
+    };
+    if key != MATERIAL_EMISSION_NATIVE_DIRECT_KEY || fields.next().is_some() {
+        return Err("Native direct emission requires one canonical _hammerr_emission_native_direct world field".into());
+    }
+    Ok(Some(value))
+}
+
+pub fn material_emission_native_direct(properties: &Properties) -> Result<bool, String> {
+    let Some(value) = material_emission_native_direct_field(properties)? else {
+        return Ok(false);
+    };
+    validate_material_emission_native_direct(value)?;
+    let enabled = value == "1";
+    if enabled {
+        let path = material_emission_file_field(properties)?
+            .filter(|value| !value.trim().is_empty())
+            .ok_or("Native direct emission requires a nonblank Emission file")?;
+        validate_material_emission_file(path)?;
+    }
+    Ok(enabled)
+}
+
 pub(crate) fn file(properties: &Properties) -> Result<Option<&str>, String> {
+    material_emission_native_direct(properties)?;
     let Some(value) = material_emission_file_field(properties)? else {
         return Ok(None);
     };
@@ -138,6 +187,7 @@ pub(crate) struct Input<'a> {
     textures: BTreeMap<usize, texture::Texture>,
     sources: BuildMaterialSources,
     stats: MaterialEmissionStats,
+    native_enabled: bool,
     _allocation: Allocation,
 }
 
@@ -283,6 +333,7 @@ pub(crate) fn preflight<'a>(
     let Some(path) = file(&vmf.world.properties)? else {
         return Ok(None);
     };
+    let native_enabled = material_emission_native_direct(&vmf.world.properties)?;
     let mut budget = Budget::with_options(control, options);
     let allocation =
         budget.reserve_bytes(MAX_FILE_BYTES * 128 + MAX_RECORDS * 1024 + MAX_SOURCE_SIDES * 128)?;
@@ -374,11 +425,21 @@ pub(crate) fn preflight<'a>(
         boundary_cell_angle_degrees: angle / BOUNDARY_REFINEMENT,
         channel_cells: [0; 2],
         channel_rays: [0; 2],
-        native_policy: "indexed_ambient_only_no_emission_worldlights",
+        native_surface_lights: [0; 2],
+        native_policy: if native_enabled {
+            "native_centroid_direct_indexed_reflected_ambient"
+        } else {
+            "indexed_ambient_only_no_emission_worldlights"
+        },
     };
     report.diagnostics.push(Diagnostic::info(format!(
-        "Material emission: {} declarations match {} original world/detail or stationary Shadows Yes brush-model sides, {} textured materials; {}. Radiance uses actual finite source area, nearest mip0 base-texture RGB where requested, sampled segment shadows and indexed model ambient only; no native emission world lights or shader glow",
-        declarations.len(), sides.len(), textures.len(), if options.lighting.performs_lighting() { "baking requested" } else { "not baked in Fullbright" }
+        "Material emission: {} declarations match {} original world/detail or stationary Shadows Yes brush-model sides, {} textured materials; {}. {}",
+        declarations.len(), sides.len(), textures.len(), if options.lighting.performs_lighting() { "baking requested" } else { "not baked in Fullbright" },
+        if native_enabled {
+            "Radiance uses actual finite source area, nearest mip0 base-texture RGB where requested and sampled segment shadows. Native direct emission is an explicit centroid point approximation with limited native slots and ambient folding; the engine's affected-dynamic-light VHV fallback can add baked static direct again. Indexed ambient omits intrinsic emission and retains reflected emission; sampled baked direct remains enabled. No exact finite-source native response or shader glow"
+        } else {
+            "Radiance uses actual finite source area, nearest mip0 base-texture RGB where requested, sampled segment shadows and indexed model ambient only; no native emission world lights or shader glow"
+        }
     ), None, None));
     budget.consume(0)?;
     Ok(Some(Input {
@@ -388,6 +449,7 @@ pub(crate) fn preflight<'a>(
         textures,
         sources: sources.clone(),
         stats,
+        native_enabled,
         _allocation: allocation,
     }))
 }
@@ -513,6 +575,7 @@ impl<'a> Input<'a> {
                 textures: self.textures,
                 sources: self.sources,
                 stats: self.stats,
+                native_enabled: self.native_enabled,
                 _allocation: self._allocation,
             },
         )
@@ -525,15 +588,26 @@ pub(super) struct Declarations {
     textures: BTreeMap<usize, texture::Texture>,
     sources: BuildMaterialSources,
     stats: MaterialEmissionStats,
+    native_enabled: bool,
     _allocation: Allocation,
 }
 
 struct Source {
     face: usize,
+    texinfo: usize,
+    world_plane: Option<usize>,
     location: String,
     triangles: Vec<[DVec3; 3]>,
     radiance: [DVec3; 2],
     boundary: SourceBoundary,
+}
+
+pub(super) struct NativePatch<'a> {
+    pub points: &'a [DVec3; 3],
+    pub radiance: DVec3,
+    pub boundary: &'a SourceBoundary,
+    pub texinfo: usize,
+    pub world_plane: Option<usize>,
 }
 
 pub(super) struct Prepared {
@@ -541,6 +615,8 @@ pub(super) struct Prepared {
     stats: MaterialEmissionStats,
     cells: [Cell<usize>; 2],
     rays: [Cell<usize>; 2],
+    native_enabled: bool,
+    native_surface_lights: [Cell<usize>; 2],
     _allocation: Allocation,
 }
 
@@ -851,6 +927,8 @@ pub(super) fn prepare(
                 sources.push(Source {
                     location: location.clone(),
                     face: index,
+                    texinfo: face.texinfo as usize,
+                    world_plane: (scope.entity == 0).then_some(side.plane),
                     triangles,
                     radiance,
                     boundary: SourceBoundary {
@@ -874,6 +952,8 @@ pub(super) fn prepare(
         stats,
         cells: std::array::from_fn(|_| Cell::new(0)),
         rays: std::array::from_fn(|_| Cell::new(0)),
+        native_enabled: declarations.native_enabled,
+        native_surface_lights: std::array::from_fn(|_| Cell::new(0)),
         _allocation: allocation,
     })
 }
@@ -1005,10 +1085,96 @@ impl Prepared {
         !self.sources.is_empty()
     }
 
+    pub(super) fn native_enabled(&self) -> bool {
+        self.native_enabled
+    }
+
+    pub(super) fn native_patch_count(
+        &self,
+        kind: LightingKind,
+        budget: &mut Budget<'_>,
+    ) -> Result<usize, String> {
+        if !self.native_enabled {
+            return Ok(0);
+        }
+        let channel = usize::from(kind == LightingKind::Hdr);
+        let mut count = 0usize;
+        budget.consume(0)?;
+        for source in &self.sources {
+            budget.consume(1)?;
+            if source.radiance[channel] == DVec3::ZERO {
+                continue;
+            }
+            count = count
+                .checked_add(source.triangles.len())
+                .filter(|count| *count <= bsp::MAX_WORLD_LIGHTS)
+                .ok_or_else(|| {
+                    format!(
+                        "Native direct emission {} face:{} exceeds the 8192 world-light limit; reduce emitting source triangles or disable Native direct emission",
+                        source.location, source.face
+                    )
+                })?;
+        }
+        budget.consume(0)?;
+        Ok(count)
+    }
+
+    pub(super) fn visit_native_patches(
+        &self,
+        kind: LightingKind,
+        budget: &mut Budget<'_>,
+        mut visit: impl FnMut(NativePatch<'_>, &mut Budget<'_>) -> Result<(), String>,
+    ) -> Result<(), String> {
+        if !self.native_enabled {
+            return Ok(());
+        }
+        let channel = usize::from(kind == LightingKind::Hdr);
+        budget.consume(0)?;
+        for (source_index, source) in self.sources.iter().enumerate() {
+            budget.consume(1)?;
+            if source.radiance[channel] == DVec3::ZERO {
+                continue;
+            }
+            for (triangle, points) in source.triangles.iter().enumerate() {
+                budget.consume(1)?;
+                visit(
+                    NativePatch {
+                        points,
+                        radiance: source.radiance[channel],
+                        boundary: &source.boundary,
+                        texinfo: source.texinfo,
+                        world_plane: source.world_plane,
+                    },
+                    budget,
+                )
+                .map_err(|error| {
+                    format!(
+                        "Native direct emission {} face:{} source:{source_index} triangle:{triangle}: {error}",
+                        source.location, source.face
+                    )
+                })?;
+            }
+        }
+        budget.consume(0)
+    }
+
+    pub(super) fn set_native_surface_lights(
+        &self,
+        kind: LightingKind,
+        count: usize,
+    ) -> Result<(), String> {
+        if count > bsp::MAX_WORLD_LIGHTS || (!self.native_enabled && count != 0) {
+            return Err("Native emission count disagrees with its admitted policy or limit".into());
+        }
+        self.native_surface_lights[usize::from(kind == LightingKind::Hdr)].set(count);
+        Ok(())
+    }
+
     pub(super) fn stats(&self) -> MaterialEmissionStats {
         let mut stats = self.stats.clone();
         stats.channel_cells = self.cells.each_ref().map(Cell::get);
         stats.channel_rays = self.rays.each_ref().map(Cell::get);
+        stats.native_surface_lights = self.native_surface_lights.each_ref().map(Cell::get);
         stats
     }
 

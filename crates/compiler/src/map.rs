@@ -304,6 +304,7 @@ impl<'a> Map<'a> {
             .iter()
             .filter(|(key, _)| {
                 !key.eq_ignore_ascii_case(crate::MATERIAL_EMISSION_FILE_KEY)
+                    && !key.eq_ignore_ascii_case(crate::MATERIAL_EMISSION_NATIVE_DIRECT_KEY)
                     && !key.eq_ignore_ascii_case(crate::GENERATED_DETAIL_LIGHTING_TINT_KEY)
                     && !key.eq_ignore_ascii_case(crate::WATER_CURRENT_VELOCITY_KEY)
                     && !key.eq_ignore_ascii_case(crate::WATER_DAMPING_KEY)

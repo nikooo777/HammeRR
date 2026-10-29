@@ -639,6 +639,27 @@ power and sampling work under `stats.material_emission`. Empty source counts
 do not establish illumination. See [Material emission](material-emission.md)
 for source, sampling and native HDR limits.
 
+The default-off **Native direct emission** World policy uses the same draft:
+set `_hammerr_emission_native_direct` to the string `"1"` alongside a nonblank
+`_hammerr_emission_file`, then commit. The file and policy may appear in either
+order in one change list. Clearing the file while leaving the policy enabled
+rejects the complete update. Use `"0"`, `default` or `remove` to disable the policy.
+There is no new compile option or recipe field; save the World properties normally.
+`get_compile_settings.material_emission_native_direct` reports the World key,
+effective value or validation error, and approximation limits.
+
+The policy emits per-constant-RGB integration-triangle centroid point
+approximations for native selected/folded runtime direct lighting. It replaces
+only intrinsic direct emission in indexed probes; sampled maps, VHV, detail
+direct and reflected ambient remain. Native light slots and angular/folding
+behavior are approximate. Full-VHV props affected by dynamic lights can also
+receive inherited static-cache lighting. Static previews do not simulate this
+runtime selection, and exact finite-source visibility remains unsupported.
+`stats.material_emission.native_surface_lights` gives actual LDR/HDR record
+counts; `native_policy` identifies the chosen policy. Native `surface` records
+remain readable through `inspect_compiled_world_lights`, with point/spot source
+associations and selection unchanged.
+
 Use `[ldr:|hdr:] texture: material R G B brightness` for nearest mip0
 base-RGB emission. The same file and property operations apply. Results include
 `textured_materials`, `decoded_texture_texels`, `texture_rectangles`,

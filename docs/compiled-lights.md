@@ -31,6 +31,7 @@ selection; native framing keeps its separate rules.
 
 - Record numbers belong to one build and channel. Source associations are captured during emission and checked against the exact channel table.
 - Sky, surface and other native kinds show source association as unavailable. Older builds without metadata and inconsistent metadata keep readable native rows with an explicit association-unavailable reason.
+- With **Native direct emission**, `surface` records are material-emission centroid point approximations. Their stored origin, normal and intensity do not establish finite-area response, exact visibility or which records the game selects.
 - Occurrence routes capture up to four helper levels. Each helper ID belongs to the map containing that helper; its file identifies the next source. Routes describe the captured source snapshot. An expanded entity ID still distinguishes emitted entities within that build.
 - Framing requires current output and an available channel. Historical records remain readable but cannot be framed.
 - Only point and spot origins inside ±16384 units can be framed. Global, surface and unknown kinds are unavailable for framing.

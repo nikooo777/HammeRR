@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use glam::DVec3;
 use source_formats::bsp::{self, Bsp, GameLump, Lump, contents, lump};
-use source_formats::vmf::format_vec3;
+use source_formats::vmf::{format_number, format_vec3, parse_vec3};
 
 use crate::faces::Face;
-use crate::map::Map;
+use crate::map::{Map, MapEntity};
 use crate::tree::Tree;
 
 use map_core::displacement::native::{vertex_key, vertex_position};
@@ -173,6 +173,7 @@ fn entity_text(map: &Map, models: &[Model]) -> Result<String, String> {
             properties.retain(|(key, _)| key != "model");
             properties.push(("model".into(), format!("*{model}")));
         }
+        normalize_light_orientation(entity, &mut properties)?;
         append_entity(&mut text, &properties, entity.id)?;
     }
     for definition in &map.overlays.definitions {
@@ -181,6 +182,88 @@ fn entity_text(map: &Map, models: &[Model]) -> Result<String, String> {
         }
     }
     Ok(text)
+}
+
+fn normalize_light_orientation(
+    entity: &MapEntity,
+    properties: &mut Vec<(String, String)>,
+) -> Result<(), String> {
+    if !["light", "light_spot", "light_environment"]
+        .iter()
+        .any(|class| entity.classname.eq_ignore_ascii_case(class))
+    {
+        return Ok(());
+    }
+    for (key, _) in properties.iter() {
+        if key.split_once('#').is_some_and(|(name, _)| {
+            ["angle", "angles", "pitch"]
+                .iter()
+                .any(|field| name.eq_ignore_ascii_case(field))
+        }) {
+            return Err(format!(
+                "entity:{}: suffixed light orientation property {key} is unsupported",
+                entity.id
+            ));
+        }
+    }
+    if !properties
+        .iter()
+        .any(|(key, _)| key.eq_ignore_ascii_case("angle"))
+    {
+        return Ok(());
+    }
+    let (mut angles, mut angle, mut pitch) = (None, None, None);
+    for (key, value) in properties.iter() {
+        let field = if key.eq_ignore_ascii_case("angles") {
+            &mut angles
+        } else if key.eq_ignore_ascii_case("angle") {
+            &mut angle
+        } else if key.eq_ignore_ascii_case("pitch") {
+            &mut pitch
+        } else {
+            continue;
+        };
+        if field.replace(value.as_str()).is_some() {
+            return Err(format!(
+                "entity:{}: repeated light orientation property {key}",
+                entity.id
+            ));
+        }
+    }
+    let direction = map_core::light::direction(
+        angles,
+        angle,
+        pitch,
+        entity.origin.unwrap_or(DVec3::ZERO),
+        None,
+    )
+    .map_err(|error| format!("entity:{}: {error}", entity.id))?;
+    let roll = if let Some(angles) = angles {
+        parse_vec3(angles)
+            .ok_or_else(|| format!("entity:{}: invalid light angles", entity.id))?
+            .z
+    } else {
+        0.0
+    };
+    if !(roll as f32).is_finite() {
+        return Err(format!(
+            "entity:{}: light roll must fit a finite native float",
+            entity.id
+        ));
+    }
+    let yaw = direction.y.atan2(direction.x).to_degrees();
+    let pitch = direction
+        .z
+        .atan2(direction.x.hypot(direction.y))
+        .to_degrees();
+    properties.retain(|(key, _)| {
+        !["angle", "angles", "pitch"]
+            .iter()
+            .any(|name| key.eq_ignore_ascii_case(name))
+    });
+    properties.push(("angles".into(), format_vec3(DVec3::new(0.0, yaw, roll))));
+    properties.push(("pitch".into(), format_number(pitch)));
+    Ok(())
 }
 
 fn append_entity(

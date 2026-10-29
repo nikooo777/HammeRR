@@ -221,6 +221,12 @@ See [prop mesh shadows](prop-shadows.md) for static models.
 
 Ambient probes support model illumination.
 
+Placement first checks the existing centre and coarse grid. If none is accepted,
+it checks up to 152 additional points near cell boundaries and keeps the first
+accepted point. This runs in all lit sampling modes, without **Refine ambient
+probes**. Existing successful probe pools stay unchanged. Every extra point uses
+the same cell, brush, prop and terrain checks.
+
 1. Open **Build settings…** and choose **Direct LDR** or **Direct LDR + HDR**.
 2. Set **Sampling quality** to **Balanced (128 directions)** or **Detailed (512 directions)**.
 3. Enable **Refine ambient probes**, then compile.

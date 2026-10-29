@@ -16,7 +16,9 @@ mod refinement;
 const MIN_PROBE_SPACING: f64 = 128.0;
 const MAX_AMBIENT_SAMPLES: usize = u16::MAX as usize + 1;
 const CANDIDATE_FRACTIONS: [u8; 4] = [64, 128, 192, 224];
-const MAX_CANDIDATES: usize = 1 + CANDIDATE_FRACTIONS.len().pow(3);
+const BOUNDARY_FRACTIONS: [u8; 2] = [16, 240];
+const MAX_CANDIDATE_POOL: usize = 1 + CANDIDATE_FRACTIONS.len().pow(3);
+const GRID_GENERATION_WORK: usize = 32;
 const MAX_MISSING_PROBE_DETAILS: usize = 8;
 const CUBE_AXES: [DVec3; 6] = [
     DVec3::X,
@@ -69,6 +71,13 @@ struct Candidates {
     rejected: Rejections,
 }
 
+fn candidate_grid(fractions: &[u8]) -> impl Iterator<Item = [u8; 3]> + '_ {
+    let width = fractions.len();
+    (0..width.pow(3)).map(move |index| {
+        std::array::from_fn(|axis| fractions[(index / width.pow(axis as u32)) % width])
+    })
+}
+
 fn candidates(
     ctx: &Context<'_>,
     node: usize,
@@ -107,21 +116,40 @@ fn candidates(
             0
         }
     });
-    let candidates =
-        std::iter::once(encoded).chain((0..CANDIDATE_FRACTIONS.len().pow(3)).map(|index| {
-            std::array::from_fn(|axis| {
-                CANDIDATE_FRACTIONS[(index / CANDIDATE_FRACTIONS.len().pow(axis as u32))
-                    % CANDIDATE_FRACTIONS.len()]
-            })
-        }));
+    budget.consume(GRID_GENERATION_WORK)?;
+    let mut extended = [0; CANDIDATE_FRACTIONS.len() + BOUNDARY_FRACTIONS.len()];
+    let (primary, boundary) = extended.split_at_mut(CANDIDATE_FRACTIONS.len());
+    primary.copy_from_slice(&CANDIDATE_FRACTIONS);
+    boundary.copy_from_slice(&BOUNDARY_FRACTIONS);
+    let candidates = std::iter::once(encoded)
+        .chain(candidate_grid(&CANDIDATE_FRACTIONS))
+        .map(|position| (false, position))
+        .chain(candidate_grid(&extended).map(|position| (true, position)));
     let mut valid = Vec::new();
     let mut rejected = Rejections::default();
+    let mut boundary_charged = false;
     if ctx.refine {
         valid
-            .try_reserve_exact(MAX_CANDIDATES)
+            .try_reserve_exact(MAX_CANDIDATE_POOL)
             .map_err(|_| "Cannot reserve ambient refinement candidates")?;
     }
-    for position in candidates {
+    for (boundary, position) in candidates {
+        if boundary {
+            if !valid.is_empty() {
+                break;
+            }
+            if !boundary_charged {
+                budget.consume(extended.len().pow(3) * GRID_GENERATION_WORK)?;
+                boundary_charged = true;
+            }
+            if position == encoded
+                || position
+                    .iter()
+                    .all(|fraction| CANDIDATE_FRACTIONS.contains(fraction))
+            {
+                continue;
+            }
+        }
         budget.consume(volume.sides.len() + 8)?;
         rejected.attempts += 1;
         let sample = LeafAmbientSample {
@@ -184,7 +212,7 @@ fn candidates(
             continue;
         }
         valid.push((sample, point));
-        if limit == 1 {
+        if limit == 1 || boundary {
             break;
         }
     }
@@ -263,7 +291,7 @@ fn gather(
 
 fn reserve_refinement(budget: &Budget<'_>) -> Result<super::bake::Allocation, String> {
     budget.reserve_bytes(
-        (MAX_CANDIDATES + refinement::MAX_POOL) * size_of::<(LeafAmbientSample, DVec3)>()
+        (MAX_CANDIDATE_POOL + refinement::MAX_POOL) * size_of::<(LeafAmbientSample, DVec3)>()
             + refinement::MAX_POOL * size_of::<LeafAmbientSample>()
             + refinement::SCRATCH_BYTES,
     )

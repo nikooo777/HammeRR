@@ -421,6 +421,13 @@ rejection counts for the tested candidates. Up to eight located rows are returne
 per channel, followed by the total and omitted-location count when needed.
 Their recorded world position is a cell reference, not an accepted probe.
 
+Probe placement automatically extends an empty original candidate pool with
+up to 152 additional boundary-grid attempts (217 total maximum). It stops at
+the first accepted extra point and preserves every existing nonempty pool.
+The same geometry and work limits apply; malformed inputs and provider errors
+still fail. This needs no new setting and runs in Fast, Balanced and Detailed.
+`refine_ambient_probes` keeps its separate gather/count/spacing policy.
+
 Set `bake_static_prop_vertices:true` with a lit mode to store the static style-0
 VHV base alongside supported runtime point/spot styles. Effective nonzero styles
 remain in native WorldLight records and are excluded from VHV.

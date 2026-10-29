@@ -423,10 +423,17 @@ Their recorded world position is a cell reference, not an accepted probe.
 
 Probe placement automatically extends an empty original candidate pool with
 up to 152 additional boundary-grid attempts (217 total maximum). It stops at
-the first accepted extra point and preserves every existing nonempty pool.
+the first accepted extra point and leaves a nonempty initial pool unchanged.
 The same geometry and work limits apply; malformed inputs and provider errors
 still fail. This needs no new setting and runs in Fast, Balanced and Detailed.
 `refine_ambient_probes` keeps its separate gather/count/spacing policy.
+
+A candidate below terrain is accepted only if the same upward ray first meets
+a fully blocking, non-sky world-brush entry under the selected texture-shadow
+settings. Enabled texture shadows reject partial coverage. Sky, requested
+brush-model casters and terrain-first hits do not certify cover. Existing cell,
+brush and prop-bound checks still apply; the optical query shares the checked
+lighting-work budget. This is automatic and adds no setting.
 
 Set `bake_static_prop_vertices:true` with a lit mode to store the static style-0
 VHV base alongside supported runtime point/spot styles. Effective nonzero styles

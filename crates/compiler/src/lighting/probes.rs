@@ -194,22 +194,37 @@ fn candidates(
             continue;
         }
         let above = point + DVec3::Z * super::sky::TRACE_LENGTH;
-        if ctx
-            .terrain
-            .nearest(
+        if let Some((terrain_fraction, ())) = ctx.terrain.nearest(
+            point,
+            above,
+            &mut |work| budget.consume(work),
+            &mut |triangle| {
+                Ok(triangle
+                    .intersection(point, above)?
+                    .map(|(fraction, _)| (fraction, ())))
+            },
+        )? {
+            let roof = ctx.shadows.nearest(
                 point,
                 above,
                 &mut |work| budget.consume(work),
-                &mut |triangle| {
-                    Ok(triangle
-                        .intersection(point, above)?
-                        .map(|(fraction, _)| (fraction, ())))
+                &mut |hull| {
+                    if !hull.occupies_world() {
+                        return Ok(None);
+                    }
+                    let Some(entry) = hull.optical_boundaries(point, above)?[0] else {
+                        return Ok(None);
+                    };
+                    Ok((entry.fraction < terrain_fraction
+                        && entry.non_sky_coverage.opaque()
+                        && !entry.sky)
+                        .then_some((entry.fraction, ())))
                 },
-            )?
-            .is_some()
-        {
-            rejected.terrain += 1;
-            continue;
+            )?;
+            if roof.is_none() {
+                rejected.terrain += 1;
+                continue;
+            }
         }
         valid.push((sample, point));
         if limit == 1 || boundary {

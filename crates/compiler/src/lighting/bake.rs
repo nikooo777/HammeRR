@@ -601,10 +601,13 @@ fn lights(
             });
             match light {
                 Ok(light) if cluster.is_some() => lights.push(Emitter::Point(light)),
-                Ok(_) => report.diagnostics.push(Diagnostic::warning("Light source is inside solid or unreachable space and does not illuminate the world", Some(format!("entity:{}", entity.id)), entity.origin)),
-                Err(error) => report.diagnostics.push(Diagnostic::error(error, Some(format!("entity:{}", entity.id)), entity.origin)),
+                Ok(_) if kind == LightingKind::Ldr => report.diagnostics.push(Diagnostic::warning("Light source is inside solid or unreachable space and does not illuminate the world", Some(format!("entity:{}", entity.id)), entity.origin).with_world_position()),
+                Ok(_) => {}
+                Err(error) => report.diagnostics.push(Diagnostic::error(error, Some(format!("entity:{}", entity.id)), entity.origin).with_world_position()),
             }
-        } else if entity.classname.to_ascii_lowercase().starts_with("light_") {
+        } else if kind == LightingKind::Ldr
+            && entity.classname.to_ascii_lowercase().starts_with("light_")
+        {
             report.diagnostics.push(Diagnostic::warning(
                 format!(
                     "Direct lighting does not bake {}; point/spot and sky emitters are supported",

@@ -58,9 +58,10 @@ Framing preserves selection and map edits. Coordinates belong to that build;
 they can refer to an older map state. Finish or cancel active viewport gestures
 before framing.
 
-Only the latest finished job's first 100 diagnostics are retained. Lighting
-receiver errors and missing-probe cell references have certified world positions. Other positions can be
-unclassified or local to a model; their framing controls are unavailable.
+Only the latest finished job's first 100 diagnostics are retained. You can frame
+lighting receiver errors, missing-probe cell references, entity inside-solid
+warnings, and point/spot source diagnostics with valid world origins. Invalid or absent
+origins, unclassified positions and model-local positions remain unavailable.
 This action does not select or resolve an authored object.
 
 ## Build settings
@@ -228,8 +229,8 @@ reject partial coverage. Terrain remains a sheet; it does not seal a map.
 
 Placement first checks the existing centre and coarse grid. If none is accepted,
 it checks two bounded shells near cell boundaries and keeps the first accepted
-point. The shells add up to 448 attempts, for a maximum of 513 total. This runs in all lit sampling modes, without **Refine ambient
-probes**. The extra search does not change a nonempty initial pool. Every extra
+point. The shells add up to 448 attempts, for a maximum of 513 total. This runs
+in all lit sampling modes, without **Refine ambient probes**. The extra search does not change a nonempty initial pool. Every extra
 point uses the same cell, brush, prop and terrain checks.
 
 1. Open **Build settings…** and choose **Direct LDR** or **Direct LDR + HDR**.

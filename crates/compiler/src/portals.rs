@@ -203,11 +203,14 @@ pub fn flood_controlled<'a>(
         };
         let leaf = tree.leaf_at(origin, planes);
         if tree.nodes[leaf].solid() {
-            report.diagnostics.push(Diagnostic::warning(
-                format!("{} is inside solid space", entity.classname),
-                Some(format!("entity:{}", entity.id)),
-                Some(origin),
-            ));
+            report.diagnostics.push(
+                Diagnostic::warning(
+                    format!("{} is inside solid space", entity.classname),
+                    Some(format!("entity:{}", entity.id)),
+                    Some(origin),
+                )
+                .with_world_position(),
+            );
         } else if !reached[leaf] {
             reached[leaf] = true;
             seeds[leaf] = Some((entity.id, origin));

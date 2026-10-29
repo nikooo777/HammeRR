@@ -1585,6 +1585,7 @@ pub(super) fn channel_failure(
         sides.first().map(|side| format!("side:{side}")),
         point,
     )
+    .with_world_position()
 }
 
 fn bake_channel(

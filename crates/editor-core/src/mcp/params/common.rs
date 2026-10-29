@@ -638,6 +638,14 @@ pub struct CompileTokenArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FrameBuildDiagnosticArgs {
+    pub job_token: String,
+    pub index: usize,
+    pub aspect: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CompileArgs {
     /// Output .bsp path; defaults to the current map filename with a .bsp extension.
     pub path: Option<String>,

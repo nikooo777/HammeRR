@@ -555,14 +555,19 @@ impl EditorServer {
             Ok(result) => result,
             Err(message) => return fail(message),
         };
+        let job_token = result.job_token().to_string();
         let output = result.output;
-        let diagnostics: Vec<Value> = output.report.diagnostics.iter().map(|d| json!({
-            "level": match d.level { compiler::Level::Info => "info", compiler::Level::Warning => "warning", compiler::Level::Error => "error" },
-            "message": d.message,
-            "object": d.object,
-            "position": d.position.map(point),
-        })).collect();
+        let diagnostics: Vec<Value> = output
+            .report
+            .diagnostics
+            .iter()
+            .enumerate()
+            .map(|(index, diagnostic)| {
+                crate::session::compilation::diagnostic_json(index, diagnostic)
+            })
+            .collect();
         let value = json!({
+            "job_token":job_token,
             "success": output.bsp.is_some(),
             "bsp": output.bsp.as_ref().map(|_| result.path.display().to_string()),
             "diagnostics": diagnostics,

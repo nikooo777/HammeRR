@@ -15,6 +15,7 @@ mod capture;
 mod compiled_details;
 mod compiled_lights;
 mod compiled_visibility;
+mod diagnostics;
 
 mod lighting_progress;
 mod lighting_work;
@@ -446,6 +447,7 @@ impl Controller {
         let token = Rc::new(Cell::new(None));
         let recipes = Rc::new(RefCell::new(RecipeForm::default()));
         let capture = capture::bind(&window, &access, &recipes);
+        diagnostics::bind(&window, &access);
         sky_packing::bind(&window, &access, &recipes);
         prop_vertex_lighting::bind(&window, &access, &recipes);
         brush_texture_shadows::bind(&window, &access, &recipes);
@@ -825,6 +827,7 @@ impl Controller {
     }
 
     pub(crate) fn set_aspect(&self, aspect: f32) {
+        self.window.set_aspect(aspect);
         self.baked_lightmaps.set_aspect(aspect);
         self.compiled_lights.set_aspect(aspect);
         self.compiled_visibility.set_aspect(aspect);
@@ -872,13 +875,13 @@ impl Controller {
             .into(),
         );
         let job = &status["job"];
+        diagnostics::refresh(&self.window, job);
         if job.is_null() {
             self.window
                 .set_summary("No build has run in this session.".into());
             self.window.set_details(
                 "Choose settings above, then Compile or Run Map from the toolbar.".into(),
             );
-            self.window.set_diagnostics("".into());
             return;
         }
         self.window.set_summary(session.compile_label().into());
@@ -1358,41 +1361,6 @@ impl Controller {
             )
             .into(),
         );
-        let mut messages = Vec::new();
-        if let Some(error) = result["error"].as_str() {
-            messages.push(error.to_owned());
-        }
-        if let Some(diagnostics) = result["diagnostics"].as_array() {
-            for diagnostic in diagnostics {
-                messages.push(format!(
-                    "{}{}: {}",
-                    diagnostic["level"].as_str().unwrap_or("info"),
-                    diagnostic["object"]
-                        .as_str()
-                        .map(|object| format!(" · {object}"))
-                        .unwrap_or_default(),
-                    diagnostic["message"].as_str().unwrap_or_default()
-                ));
-            }
-            let count = result["diagnostic_count"].as_u64().unwrap_or_default() as usize;
-            if count > diagnostics.len() {
-                messages.push(format!(
-                    "Showing the first {} of {count} diagnostics.",
-                    diagnostics.len()
-                ));
-            }
-        }
-        if messages.is_empty() {
-            messages.push(
-                if result.is_null() {
-                    "Diagnostics appear when the build finishes."
-                } else {
-                    "No diagnostics."
-                }
-                .into(),
-            );
-        }
-        self.window.set_diagnostics(messages.join("\n\n").into());
     }
 
     pub fn show(&self, session: &Session) -> Result<(), slint::PlatformError> {

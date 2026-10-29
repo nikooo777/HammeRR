@@ -425,6 +425,12 @@ pub enum Level {
     Error,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticPositionSpace {
+    Unspecified,
+    World,
+}
+
 /// A compile message tied to a map object (`solid:<id>` / `entity:<id>`)
 /// and position where possible, so the editor and agents can act on it.
 #[derive(Debug, Clone, PartialEq)]
@@ -433,6 +439,7 @@ pub struct Diagnostic {
     pub message: String,
     pub object: Option<String>,
     pub position: Option<DVec3>,
+    pub position_space: DiagnosticPositionSpace,
 }
 
 impl Diagnostic {
@@ -446,6 +453,7 @@ impl Diagnostic {
             message: message.into(),
             object,
             position,
+            position_space: DiagnosticPositionSpace::Unspecified,
         }
     }
 
@@ -469,6 +477,13 @@ impl Diagnostic {
             level: Level::Error,
             ..Self::info(message, object, position)
         }
+    }
+
+    pub fn with_world_position(mut self) -> Self {
+        if self.position.is_some() {
+            self.position_space = DiagnosticPositionSpace::World;
+        }
+        self
     }
 }
 

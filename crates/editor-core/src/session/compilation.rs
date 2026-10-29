@@ -159,6 +159,10 @@ impl Job {
 }
 
 impl CompileResult {
+    pub(crate) fn job_token(&self) -> u64 {
+        self.token
+    }
+
     fn take_artifact_claim(&self) -> Option<crate::path_claims::Claim> {
         self.publication
             .lock()
@@ -612,6 +616,52 @@ pub(crate) fn stats_json(stats: &compiler::Stats) -> Value {
     serde_json::to_value(stats).expect("compiler statistics are JSON-compatible")
 }
 
+const MAX_RETAINED_DIAGNOSTICS: usize = 100;
+
+fn diagnostic_world_position(diagnostic: &Value) -> Result<DVec3, String> {
+    if diagnostic["position_space"].as_str() != Some("world") {
+        return Err("This diagnostic has no certified world position".into());
+    }
+    let coordinates = diagnostic["position"]
+        .as_array()
+        .filter(|coordinates| coordinates.len() == 3)
+        .ok_or("The recorded diagnostic position is unavailable")?;
+    let mut point = [0.0; 3];
+    for (target, coordinate) in point.iter_mut().zip(coordinates) {
+        *target = coordinate
+            .as_f64()
+            .ok_or("The recorded diagnostic position is not numeric")?;
+    }
+    let point = DVec3::from_array(point);
+    if !point.is_finite() || point.abs().max_element() > compiler::map::MAX_COMPILE_COORD {
+        return Err("The recorded diagnostic position is outside finite compile bounds".into());
+    }
+    Ok(point)
+}
+
+pub(crate) fn diagnostic_json(index: usize, diagnostic: &compiler::Diagnostic) -> Value {
+    let position_space = match diagnostic.position_space {
+        compiler::DiagnosticPositionSpace::Unspecified => None,
+        compiler::DiagnosticPositionSpace::World => Some("world"),
+    };
+    let mut row = json!({
+        "index":index,
+        "level":match diagnostic.level { compiler::Level::Info=>"info",compiler::Level::Warning=>"warning",compiler::Level::Error=>"error" },
+        "message":diagnostic.message,
+        "object":diagnostic.object,
+        "position":diagnostic.position.map(|point|point.to_array()),
+        "position_space":position_space,
+    });
+    let unavailable = if index >= MAX_RETAINED_DIAGNOSTICS {
+        Some("This diagnostic is outside the retained build report".to_owned())
+    } else {
+        diagnostic_world_position(&row).err()
+    };
+    row["frame_available"] = unavailable.is_none().into();
+    row["frame_unavailable_reason"] = unavailable.into();
+    row
+}
+
 fn result_json(result: &CompileResult) -> Value {
     let output = &result.output;
     json!({
@@ -621,10 +671,7 @@ fn result_json(result: &CompileResult) -> Value {
         "warning":result.publication_warning(),
         "bsp":result.published().then(||result.path.display().to_string()),
         "diagnostic_count":output.report.diagnostics.len(),
-        "diagnostics":output.report.diagnostics.iter().take(100).map(|diagnostic|json!({
-            "level":match diagnostic.level { compiler::Level::Info=>"info",compiler::Level::Warning=>"warning",compiler::Level::Error=>"error" },
-            "message":diagnostic.message,"object":diagnostic.object,"position":diagnostic.position.map(|p|p.to_array())
-        })).collect::<Vec<_>>(),
+        "diagnostics":output.report.diagnostics.iter().take(MAX_RETAINED_DIAGNOSTICS).enumerate().map(|(index,diagnostic)|diagnostic_json(index,diagnostic)).collect::<Vec<_>>(),
         "leak":output.leak.as_ref().map(|leak|json!({"entity":format!("entity:{}",leak.entity),"points":leak.points.iter().map(|p|p.to_array()).collect::<Vec<_>>(),"pointfile":result.path.with_extension("lin").display().to_string()})),
         "stats":stats_json(&output.stats),
     })
@@ -1632,6 +1679,56 @@ impl Session {
                     &compiler::Control::default(),
                 )
             })
+    }
+
+    pub fn frame_build_diagnostic(
+        &mut self,
+        actor: Actor,
+        job_token: &str,
+        index: usize,
+        aspect: f32,
+    ) -> Result<Value, String> {
+        self.ensure_not_closing()?;
+        super::inspection_framing::validate_aspect(aspect)?;
+        self.inspection_viewport_ready("framing a recorded build position")?;
+        let (position, snapshot) = {
+            let job = self
+                .compilation
+                .job
+                .as_ref()
+                .ok_or("No retained build job is available")?;
+            if job.token.to_string() != job_token {
+                return Err("Build job token is invalid or has been replaced".into());
+            }
+            if matches!(job.status(), "queued" | "running") {
+                return Err("Wait for the build to finish before framing a diagnostic".into());
+            }
+            let diagnostic = job
+                .result
+                .as_ref()
+                .and_then(|result| result["diagnostics"].as_array())
+                .and_then(|diagnostics| diagnostics.get(index))
+                .ok_or("The diagnostic index is outside the retained build report")?;
+            (diagnostic_world_position(diagnostic)?, job.snapshot.clone())
+        };
+        let center = position.as_vec3();
+        let half = glam::Vec3::splat(super::inspection_framing::ORIGIN_HALF_EXTENT);
+        let (mins, maxs) = (center - half, center + half);
+        let camera =
+            self.inspection_frame_camera(mins, maxs, aspect, "Recorded build diagnostic")?;
+        self.set_camera(camera);
+        self.log(
+            actor,
+            format!("framed recorded build diagnostic {index} from job {job_token}"),
+        );
+        Ok(json!({
+            "job_token":job_token,
+            "index":index,
+            "position_space":"world",
+            "recorded_position":position.to_array(),
+            "captured_snapshot":{"generation":snapshot.generation,"revision":snapshot.revision},
+            "framed_bounds":[mins.to_array(),maxs.to_array()],
+        }))
     }
 
     pub fn compile_status(&self) -> Value {

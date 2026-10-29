@@ -46,6 +46,23 @@ and sprite atlases, plus surface definitions consumed by engine physics.
 Changed inputs require another build before **Play built map**.
 Unused runtime assets are outside this guard.
 
+## Frame a build diagnostic
+
+1. Click **Compile** and wait for the build to finish.
+2. Open **Build details…** below the toolbar.
+3. Find a diagnostic with a recorded world position.
+4. Click **Frame recorded position** to move the viewport camera there.
+5. Enable **Full report** to copy the complete retained report.
+
+Framing preserves selection and map edits. Coordinates belong to that build;
+they can refer to an older map state. Finish or cancel active viewport gestures
+before framing.
+
+Only the latest finished job's first 100 diagnostics are retained. Lighting
+receiver errors have certified world positions. Other positions can be
+unclassified or local to a model; their framing controls are unavailable.
+This action does not select or resolve an authored object.
+
 ## Build settings
 
 | Setting | Use |

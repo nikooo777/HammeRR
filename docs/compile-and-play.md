@@ -118,8 +118,26 @@ world/detail surfaces through **World settings… → Emission file**.
 
 Choose one to four diffuse bounces under **Indirect light**.
 World and terrain surfaces reflect light using their material properties.
-Brush-model lightmaps can receive these bounces.
+Eligible stationary **Shadows → Yes** `func_brush` models also reflect their
+baked maps into world, terrain, same/other brush models, ambient, details and
+opted-in static-prop vertices. Root models and assembled children use their
+compiled initial pose, including admitted opaque and enabled cutout, fractional
+and colored material forms.
+
+1. Select an eligible unnamed, unparented stationary `func_brush`.
+2. Enable **Advanced properties**, set **Origin (X Y Z)** and set **Shadows** to **Yes**.
+3. Choose **Direct LDR** or **Direct LDR + HDR** in **Build settings…**.
+4. Choose one to four bounces under **Indirect light**. Enable **Brush texture shadows** for admitted alpha materials and **Colored texture shadows** when needed.
+5. For a child model, save the child and compile its parent. For a root model, compile the current map.
+6. Inspect the result through **Build details… → Baked surfaces… → Prepare → Show**.
+
 Enable **Bake static-prop vertex lighting** for static-prop receivers.
+Map and vertex receivers keep the chosen zero-to-four bounce depth. Ambient and
+detail receivers retain filtered sampling of final baked maps.
+Prop vertex reception remains style 0.
+
+![A stationary green brush model reflects light onto the floor and a separate brush](images/stationary-model-reflection.png)
+Moving, parented, unrequested and MDL model sources remain unavailable.
 More bounces increase work. Unsupported material effects report diagnostics rather than fabricated reflectance.
 
 ### Normal-map lighting

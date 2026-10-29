@@ -29,6 +29,7 @@ const EXTRA_DIRECTION_WORK: usize = CUBE_AXES.len() * 16;
 const EXTRA_CUBE_WORK: usize = CUBE_AXES.len() * 32;
 
 pub(super) struct Context<'a> {
+    pub model_scopes: &'a [super::models::Scope],
     pub emission: Option<&'a super::emission::Prepared>,
     pub brush_textures: Option<&'a super::brush_alpha::Prepared>,
     pub face_sources: &'a [std::sync::Arc<[u32]>],
@@ -243,11 +244,13 @@ pub(super) fn bake(
     let surfaces = super::radiance::build(
         ctx.map,
         bsp,
+        ctx.model_scopes,
         ctx.kind,
         ctx.sky_radiance,
         ctx.face_sources,
         ctx.brush_textures,
         ctx.terrain,
+        ctx.shadows,
         budget,
     )?;
     let cone = (1.0 - 2.0 / ctx.directions.len() as f64).acos().tan();
@@ -383,9 +386,9 @@ pub(super) fn bake(
     bsp.set_leaf_ambient(ctx.kind, &LeafAmbient::Indexed { indices, samples })
         .map_err(|error| error.to_string())?;
     let message = if ctx.refine {
-        "Model ambient refinement evaluates up to 8/16 separated probes per open world leaf at Balanced/Detailed quality and retains up to 4/8. At the full 4/8-probe count, each channel keeps its first 3/7 anchors and replaces only the final probe when the candidate-pool maximum native reconstruction error strictly decreases. Probes sample filtered local world/terrain lightmaps and sky radiance, with static-prop opaque, cutout and requested translucent attenuation; reflected prop sources remain unfinished"
+        "Model ambient refinement evaluates up to 8/16 separated probes per open world leaf at Balanced/Detailed quality and retains up to 4/8. At the full 4/8-probe count, each channel keeps its first 3/7 anchors and replaces only the final probe when the candidate-pool maximum native reconstruction error strictly decreases. Probes sample filtered local world, terrain and requested stationary brush-model lightmaps and sky radiance, with static-prop opaque, cutout and requested translucent attenuation; reflected prop sources remain unfinished"
     } else {
-        "Model ambient uses up to 1/4/8 separated probes per open world leaf at Fast/Balanced/Detailed quality, sampled from filtered local world/terrain lightmaps and sky radiance. Static-prop opaque, cutout and requested translucent meshes attenuate probe rays; adaptive refinement and reflected prop sources remain unfinished"
+        "Model ambient uses up to 1/4/8 separated probes per open world leaf at Fast/Balanced/Detailed quality, sampled from filtered local world, terrain and requested stationary brush-model lightmaps and sky radiance. Static-prop opaque, cutout and requested translucent meshes attenuate probe rays; adaptive refinement and reflected prop sources remain unfinished"
     };
     report
         .diagnostics

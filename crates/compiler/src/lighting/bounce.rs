@@ -18,6 +18,7 @@ pub(super) struct Context<'a> {
     pub kind: LightingKind,
     pub map: &'a Map<'a>,
     pub plans: &'a [Plan],
+    pub model_scopes: &'a [super::models::Scope],
     pub faces: &'a mut [Face],
     pub infos: &'a [TexInfo],
     pub prop_shadows: &'a ShadowIndex<super::props::PropTriangle>,
@@ -108,7 +109,11 @@ pub(super) fn bake(
     colors: &mut Vec<RgbExp32>,
     budget: &mut Budget<'_>,
 ) -> Result<(Stats, super::radiance::SurfaceIndex), String> {
-    for plan in ctx.plans.iter().filter(|plan| plan.model == 0) {
+    for plan in ctx
+        .plans
+        .iter()
+        .filter(|plan| ctx.model_scopes[plan.model].reflected_source)
+    {
         budget.consume(1)?;
         let info = ctx.infos[ctx.faces[plan.face].texinfo as usize];
         let material = ctx
@@ -136,10 +141,12 @@ pub(super) fn bake(
     let surfaces = super::radiance::build_styled(
         ctx.map,
         bsp,
+        ctx.model_scopes,
         ctx.kind,
         ctx.face_sources,
         ctx.brush_textures,
         ctx.terrain,
+        ctx.shadows,
         budget,
     )?;
     let _directions = budget.reserve::<DVec3>(ctx.quality.directions())?;

@@ -38,6 +38,11 @@ Deeper edits win within the same edit type; replacements apply after all inserts
 3. Choose direct lighting or one to four diffuse bounces.
 4. Compile, then inspect **Static-prop vertex lighting** and **Prop vertex lighting bytes**.
 
+Reflected reception uses the preceding lighting pass from world, terrain and
+eligible stationary **Shadows → Yes** root or assembled-child brush models.
+The existing zero-to-four bounce depth and independent LDR/HDR channels apply.
+Vertex reception remains style 0.
+
 Vertex lighting requires a stricter model/material subset than ordinary prop placement.
 Unsupported model or material effects stop the build.
 Default-alpha-test receivers accept the supported nested basetexture Patch edits.

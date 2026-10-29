@@ -29,6 +29,7 @@ pub(super) struct Channel {
 }
 
 pub(super) struct Context<'a> {
+    pub model_scopes: &'a [super::models::Scope],
     pub emission: Option<&'a super::emission::Prepared>,
     pub brush_textures: Option<&'a super::brush_alpha::Prepared>,
     pub face_sources: &'a [std::sync::Arc<[u32]>],
@@ -200,11 +201,13 @@ pub(super) fn bake(
     let surfaces = super::radiance::build_styled_sky(
         ctx.map,
         bsp,
+        ctx.model_scopes,
         ctx.kind,
         ctx.sky_radiance,
         ctx.face_sources,
         ctx.brush_textures,
         ctx.terrain,
+        ctx.shadows,
         budget,
     )?;
     if ctx.directions.is_empty() {
@@ -276,7 +279,7 @@ pub(super) fn bake(
         .map_err(|error| error.to_string())?;
     report.diagnostics.push(Diagnostic::info(
         format!(
-            "Baked {} detail model/sprite colors and {} light-style contributions from direct light and filtered spherical world/terrain/sky radiance ({:?} channel)",
+            "Baked {} detail model/sprite colors and {} light-style contributions using direct light and filtered spherical radiance from world, terrain, requested stationary brush models and sky ({:?} channel)",
             details.props.len(), records.len(), ctx.kind,
         ),
         None,

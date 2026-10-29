@@ -63,6 +63,10 @@ impl TerrainTriangle {
             .all(|group| groups.contains(group))
     }
 
+    pub(super) fn event_slot(&self) -> usize {
+        self.slot as usize
+    }
+
     pub(super) fn source(&self) -> (usize, usize) {
         let patch = usize::from(self.patch);
         (
@@ -168,7 +172,7 @@ impl TerrainTriangle {
         Ok(Some(hit))
     }
 
-    fn sampled_coverage(&self, weights: [f64; 3]) -> Result<Coverage, String> {
+    pub(super) fn sampled_coverage(&self, weights: [f64; 3]) -> Result<Coverage, String> {
         match &self.topology.patches[usize::from(self.patch)].alpha {
             Some(alpha) => alpha.coverage(self.texture_point(weights)),
             None => Ok(Coverage::OPAQUE),

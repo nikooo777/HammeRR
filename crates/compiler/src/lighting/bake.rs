@@ -769,7 +769,7 @@ fn global_casters(
             }
             brush_shadow_models += 1;
         }
-        report.diagnostics.push(Diagnostic::info(format!("Brush global shadows: {brush_shadow_models} stationary brush models cast into global baked lighting; supported alpha-tested or translucent texture shadows use brush texture shadows, world occupancy and model radiance sources are unchanged"), None, None));
+        report.diagnostics.push(Diagnostic::info(format!("Brush global shadows: {brush_shadow_models} stationary brush models cast into global baked lighting and supply reflected radiance; supported alpha-tested or translucent texture shadows use brush texture shadows; world occupancy is unchanged"), None, None));
     }
     Ok((brush_shadow_models, allocation))
 }
@@ -1263,7 +1263,7 @@ fn bake_inner(
     } else {
         "self shadows and explicitly requested stationary global casters"
     };
-    report.diagnostics.push(Diagnostic::info(format!("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed brush/terrain shadows; up to four style-preserving diffuse world-light bounces are supported; brush entities receive pivot-aware direct and bounced maps with {model_shadow_scope}; reflected model sources and prop lightmaps remain unfinished"), None, None));
+    report.diagnostics.push(Diagnostic::info(format!("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed brush/terrain shadows; up to four style-preserving diffuse light bounces are supported; brush entities receive pivot-aware direct and bounced maps with {model_shadow_scope}; requested stationary brush models supply reflected sources; prop lightmaps remain unfinished"), None, None));
     let shadows = ShadowIndex::new(visibility_hulls, &mut |amount| budget.consume(amount))?;
     let terrain_shadows = super::terrain_shadows::build(map, brush_textures.as_ref(), budget)?;
     budget.phase(LightingPhase::PropShadows);
@@ -1387,6 +1387,7 @@ fn bake_inner(
         tree,
         visibility,
         plans: &plans,
+        model_scopes: &scopes,
         geometry: &faces,
         infos: &infos,
         shadows: &shadows,
@@ -1501,6 +1502,7 @@ struct ChannelContext<'a> {
     tree: &'a Tree,
     visibility: &'a Visibility,
     plans: &'a [Plan],
+    model_scopes: &'a [super::models::Scope],
     geometry: &'a [Face],
     infos: &'a [TexInfo],
     shadows: &'a ShadowIndex<Occluder>,
@@ -1614,6 +1616,7 @@ fn bake_channel(
         tree,
         visibility,
         plans,
+        model_scopes,
         geometry,
         infos,
         shadows,
@@ -2034,6 +2037,7 @@ fn bake_channel(
                     map,
                     kind,
                     plans,
+                    model_scopes,
                     faces: &mut faces,
                     infos,
                     shadows,
@@ -2121,6 +2125,7 @@ fn bake_channel(
             brush_textures,
             face_sources,
             world_leaf_nodes,
+            model_scopes,
             map,
             kind,
             tree,
@@ -2143,6 +2148,7 @@ fn bake_channel(
             emission,
             brush_textures,
             face_sources,
+            model_scopes,
             map,
             tree,
             visibility,

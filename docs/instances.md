@@ -165,6 +165,7 @@ The foreground assembly combines initial pitch, yaw and roll with a containing r
 
 Moving brush models, parenting and named brush models remain unsupported.
 Eligible child `func_brush` models with **Shadows → Yes** can cast [cutout or partial-transparency shadows](brush-texture-shadows.md#cast-from-a-stationary-child-brush-model) when **Brush texture shadows** is enabled in a lit build. **Colored texture shadows** adds base-RGB transport through admitted fractional materials. Without a global request, supported child texture shadows affect only lit receivers in the same model. General translucent effects remain unsupported. Effective origins and initial poses use the same lowering described above.
+Eligible requested stationary children also [reflect their assembled baked maps](compile-and-play.md#bounced-light), with the existing bounce and material settings. Unrequested children do not become reflected sources.
 The compiled entity does not retain the child's original angle value.
 The parent reference preview remains unavailable for child models.
 

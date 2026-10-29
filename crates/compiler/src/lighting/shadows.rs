@@ -433,6 +433,16 @@ impl<T: ShadowObject> ShadowIndex<T> {
         consume: &mut impl FnMut(usize) -> Result<(), String>,
         visitor: &mut impl FnMut(&T) -> Result<Visit, String>,
     ) -> Result<bool, String> {
+        self.visit_indexed(start, end, consume, &mut |_, object| visitor(object))
+    }
+
+    pub(super) fn visit_indexed(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+        visitor: &mut impl FnMut(usize, &T) -> Result<Visit, String>,
+    ) -> Result<bool, String> {
         if !start.is_finite() || !end.is_finite() {
             return Err("Shadow ray must be finite".into());
         }
@@ -440,11 +450,7 @@ impl<T: ShadowObject> ShadowIndex<T> {
         if !self.nodes.is_empty() && !delta.is_finite() {
             return Err("Shadow ray arithmetic must be finite".into());
         }
-        self.traverse(
-            Query::Segment { start, delta },
-            consume,
-            &mut |_, object| visitor(object),
-        )
+        self.traverse(Query::Segment { start, delta }, consume, visitor)
     }
 
     /// Visits stored-box candidates; only Continue certifies complete enumeration, not geometry bounds.
@@ -597,6 +603,24 @@ impl ShadowIndex<Occluder> {
             Ok(Visit::Continue(sky_fraction))
         })?;
         Ok(())
+    }
+
+    pub(super) fn sky_terminal_fraction(
+        &self,
+        start: DVec3,
+        end: DVec3,
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<Option<f64>, String> {
+        let mut sky: Option<f64> = None;
+        self.visit(start, end, consume, &mut |hull| {
+            for boundary in hull.optical_boundaries(start, end)?.into_iter().flatten() {
+                if boundary.sky {
+                    sky = Some(sky.map_or(boundary.fraction, |first| first.min(boundary.fraction)));
+                }
+            }
+            Ok(Visit::Continue(sky.unwrap_or(1.0)))
+        })?;
+        Ok(sky)
     }
 
     pub(super) fn optical_sky_fraction(

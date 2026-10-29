@@ -61,6 +61,10 @@ impl PropTriangle {
         self.owner = Some(owner);
     }
 
+    pub(super) fn owned_by(&self, owner: Option<u32>) -> bool {
+        owner.is_some() && self.owner == owner
+    }
+
     pub(super) fn point_contact(&self, point: DVec3, receiver: u32) -> Result<bool, String> {
         if self.owner == Some(receiver) {
             return Ok(false);
@@ -94,7 +98,7 @@ impl PropTriangle {
         Ok(material.blocks(uv)?.then_some(fraction))
     }
 
-    fn sampled_coverage(
+    pub(super) fn sampled_coverage(
         &self,
         start: DVec3,
         end: DVec3,

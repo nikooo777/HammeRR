@@ -640,10 +640,7 @@ pub(super) fn prepare(
                 let Some(admitted) = declarations.sides.get(&id) else {
                     continue;
                 };
-                if admitted.owner != source_owner
-                    || (scope.entity != 0
-                        && !crate::brush_shadow_casters::enabled(&entity.properties))
-                {
+                if admitted.owner != source_owner || !scope.reflected_source {
                     return Err(
                         "Emission source lost its admitted world or stationary global-caster scope"
                             .into(),

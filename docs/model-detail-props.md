@@ -27,5 +27,5 @@ The target must resolve uniquely; missing or ambiguous references fail explicitl
 - Static-prop models with supported `UnlitGeneric` materials, skin 0 and default bodygroups only.
 - No collision. Detail records are client decoration, not ordinary runtime props.
 - Tint attenuates baked lighting; it does not add a new material effect.
-- LDR+HDR uses one shared HDR base color, with separate channel style extras. It does not store two base colors.
+- LDR+HDR stores independent static colors in each channel’s style-0 table. Legacy shared-base records remain supported.
 - Unsupported assets, transforms or lighting controls stop the build.

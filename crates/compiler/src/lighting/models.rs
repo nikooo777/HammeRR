@@ -11,6 +11,7 @@ pub(super) struct Scope {
     pub entity: usize,
     pub pose: Pose,
     pub faces: Range<usize>,
+    pub reflected_source: bool,
 }
 
 pub(super) fn admit_initial_poses(
@@ -24,14 +25,17 @@ pub(super) fn admit_initial_poses(
         return Err("Initial lighting pose scopes do not match receivers".into());
     }
     for (scope, &receiver) in scopes.iter_mut().zip(receivers) {
-        budget.consume(0)?;
-        if scope.entity == 0
-            || (!receiver
-                && !crate::brush_shadow_casters::enabled(&map.entities[scope.entity].properties))
-        {
+        budget.consume(1)?;
+        if scope.entity == 0 {
+            scope.reflected_source = true;
             continue;
         }
         let entity = &map.entities[scope.entity];
+        budget.consume(entity.properties.len())?;
+        let reflected_source = crate::brush_shadow_casters::enabled(&entity.properties);
+        if !receiver && !reflected_source {
+            continue;
+        }
         for (key, value) in &entity.properties {
             budget.consume(key.len().max(1))?;
             budget.consume(value.len().min(MAX_INITIAL_POSE_BYTES))?;
@@ -59,7 +63,10 @@ pub(super) fn admit_initial_poses(
             Err(error) => Err(error),
         };
         match checked {
-            Ok(pose) => scope.pose = pose,
+            Ok(pose) => {
+                scope.pose = pose;
+                scope.reflected_source = reflected_source;
+            }
             Err(error) => report.diagnostics.push(Diagnostic::error(
                     format!("Unsupported authored initial brush-model lighting pose: {error}; use one bounded angles triple on an unparented func_brush, zero angles, or Fullbright"),
                     Some(format!("entity:{}", entity.id)),
@@ -116,6 +123,7 @@ pub(super) fn scopes(
                 rotation: None,
             },
             faces: first..end,
+            reflected_source: false,
         });
     }
     if end != face_count {

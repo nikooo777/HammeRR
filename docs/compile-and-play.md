@@ -74,11 +74,12 @@ Structural brushes divide space and seal the map. `func_detail` contributes surf
 Supported hint planes, areaportals, fading portal windows and occluders control visibility.
 Use [visibility clusters](visclusters.md) only where their grouping is appropriate.
 
-The compiler removes whole internal caps between solid detail brushes only when
-their complete native face boundaries match exactly in reverse order on opposite
-planes. Both brushes need supported drawn opaque materials on all original
-faces. Partial overlaps are not split, and this does not form a general union
-of detail brushes.
+The compiler removes whole internal caps between opaque solid detail brushes.
+It accepts exact reversed native boundaries, or exact containment by a flat
+rectangle aligned to the world axes. Each face must come from one original
+brush side. Both brushes need supported drawn opaque materials on all original
+faces. For containment, the larger face stays intact. Partial overlaps are not
+split; this does not form a general union of detail brushes.
 
 For a basic areaportal:
 

@@ -1570,7 +1570,7 @@ fn build(
     };
     if removed_caps > 0 {
         output.report.diagnostics.push(Diagnostic::info(
-            format!("Removed {removed_caps} exactly matched internal opaque detail caps"),
+            format!("Removed {removed_caps} fully covered internal opaque detail caps"),
             None,
             None,
         ));

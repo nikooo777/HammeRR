@@ -39,6 +39,12 @@ struct Entry {
     count: usize,
     hash: u64,
     reversed: bool,
+    native: Option<NativeGeometry>,
+}
+
+struct NativeGeometry {
+    bounds: [DVec3; 2],
+    rectangle_axis: Option<usize>,
 }
 
 #[derive(Default)]
@@ -107,7 +113,7 @@ fn eligible_face(
     budget: &mut Budget,
     control: &Control,
 ) -> Result<bool, String> {
-    if face.displacement.is_some() || face.water_region.is_some() || face.source_sides.is_empty() {
+    if face.displacement.is_some() || face.water_region.is_some() || face.source_sides.len() != 1 {
         return Ok(false);
     }
     for &id in face.source_sides.iter() {
@@ -123,6 +129,62 @@ fn eligible_face(
 
 fn native_point(key: [i64; 3]) -> DVec3 {
     DVec3::from_array(vertex_position(key).map(f64::from))
+}
+
+fn native_geometry(
+    keys: &[[i64; 3]],
+    normal: DVec3,
+    budget: &mut Budget,
+    control: &Control,
+) -> Result<NativeGeometry, String> {
+    let first = native_point(
+        *keys
+            .first()
+            .ok_or("Internal detail cap has no native corners")?,
+    );
+    let mut bounds = [first; 2];
+    for &key in keys {
+        budget.charge(POINT_WORK, control)?;
+        let point = native_point(key);
+        bounds[0] = bounds[0].min(point);
+        bounds[1] = bounds[1].max(point);
+    }
+    let mut geometry = NativeGeometry {
+        bounds,
+        rectangle_axis: None,
+    };
+    budget.charge(POINT_WORK, control)?;
+    let axis = (0..3).find(|&axis| {
+        normal[axis].abs() == 1.0 && (0..3).all(|other| other == axis || normal[other] == 0.0)
+    });
+    let Some(axis) = axis else {
+        return Ok(geometry);
+    };
+    if keys.len() != 4 || bounds[0][axis] != bounds[1][axis] {
+        return Ok(geometry);
+    }
+    let axes = [(axis + 1) % 3, (axis + 2) % 3];
+    if axes.iter().any(|&axis| bounds[0][axis] >= bounds[1][axis]) {
+        return Ok(geometry);
+    }
+    let mut corners = 0_u8;
+    for &key in keys {
+        budget.charge(POINT_WORK, control)?;
+        let point = native_point(key);
+        let mut corner = 0;
+        for (slot, &axis) in axes.iter().enumerate() {
+            if point[axis] == bounds[1][axis] {
+                corner |= 1 << slot;
+            } else if point[axis] != bounds[0][axis] {
+                return Ok(geometry);
+            }
+        }
+        corners |= 1 << corner;
+    }
+    if corners == 0b1111 {
+        geometry.rectangle_axis = Some(axis);
+    }
+    Ok(geometry)
 }
 
 fn ring(
@@ -368,6 +430,7 @@ pub(crate) fn remove_internal_caps(
             count: 0,
             hash: 0,
             reversed: false,
+            native: None,
         });
     }
     let mut keys = Vec::new();
@@ -385,6 +448,12 @@ pub(crate) fn remove_internal_caps(
             entry.count = face.winding.0.len();
             entry.hash = hash;
             entry.reversed = reversed;
+            entry.native = Some(native_geometry(
+                &keys[entry.start..entry.start + entry.count],
+                map.planes.get(entry.plane).normal,
+                &mut budget,
+                control,
+            )?);
         }
     }
     budget.charge(entries.len(), control)?;
@@ -394,6 +463,13 @@ pub(crate) fn remove_internal_caps(
     let mut removed = Vec::new();
     budget.reserve(&mut removed, faces.len(), control)?;
     removed.resize(faces.len(), false);
+    let mut supported_pair = |a: &Face, b: &Face, budget: &mut Budget| {
+        Ok::<_, String>(
+            disjoint_brushes(a, b, &owners, budget, control)?
+                && opaque_face(a, map, &owners, &mut states, opaque, budget, control)?
+                && opaque_face(b, map, &owners, &mut states, opaque, budget, control)?,
+        )
+    };
     for source in &entries {
         budget.charge(4, control)?;
         if removed[source.face] {
@@ -414,36 +490,52 @@ pub(crate) fn remove_internal_caps(
             budget.charge(source.count * 4, control)?;
             if keys[source.start..source.start + source.count]
                 != keys[candidate.start..candidate.start + candidate.count]
-                || !disjoint_brushes(
-                    &faces[source.face],
-                    &faces[candidate.face],
-                    &owners,
-                    &mut budget,
-                    control,
-                )?
-                || !opaque_face(
-                    &faces[source.face],
-                    map,
-                    &owners,
-                    &mut states,
-                    opaque,
-                    &mut budget,
-                    control,
-                )?
-                || !opaque_face(
-                    &faces[candidate.face],
-                    map,
-                    &owners,
-                    &mut states,
-                    opaque,
-                    &mut budget,
-                    control,
-                )?
+                || !supported_pair(&faces[source.face], &faces[candidate.face], &mut budget)?
             {
                 continue;
             }
             removed[source.face] = true;
             removed[candidate.face] = true;
+            break;
+        }
+    }
+    for source in &entries {
+        budget.charge(4, control)?;
+        if removed[source.face] {
+            continue;
+        }
+        let source_native = source
+            .native
+            .as_ref()
+            .ok_or("Internal detail cap native geometry is unavailable")?;
+        let plane = source.plane ^ 1;
+        budget.charge(
+            (entries.len().checked_ilog2().unwrap_or(0) as usize + 1) * 16,
+            control,
+        )?;
+        let first = entries.partition_point(|entry| entry.plane < plane);
+        let last = entries.partition_point(|entry| entry.plane <= plane);
+        for candidate in &entries[first..last] {
+            budget.charge(32, control)?;
+            let candidate_native = candidate
+                .native
+                .as_ref()
+                .ok_or("Internal detail cap opposing native geometry is unavailable")?;
+            let Some(axis) = candidate_native.rectangle_axis else {
+                continue;
+            };
+            if source_native.bounds[0][axis] != source_native.bounds[1][axis]
+                || !source_native.bounds[0]
+                    .cmpge(candidate_native.bounds[0])
+                    .all()
+                || !source_native.bounds[1]
+                    .cmple(candidate_native.bounds[1])
+                    .all()
+                || !supported_pair(&faces[source.face], &faces[candidate.face], &mut budget)?
+            {
+                continue;
+            }
+            removed[source.face] = true;
             break;
         }
     }

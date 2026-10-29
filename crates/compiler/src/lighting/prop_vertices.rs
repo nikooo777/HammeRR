@@ -96,30 +96,6 @@ fn source(vmf: &Vmf, id: usize) -> Result<&Entity, String> {
     Ok(entity)
 }
 
-fn unstyled(map: &Map, report: &mut Report, budget: &mut Budget<'_>) -> Result<(), String> {
-    for entity in &map.entities {
-        budget.consume(1)?;
-        if !(entity.classname.eq_ignore_ascii_case("light")
-            || entity.classname.eq_ignore_ascii_case("light_spot"))
-        {
-            continue;
-        }
-        let styled = super::property(entity, "style")
-            .is_some_and(|value| value.trim().parse::<f64>().ok() != Some(0.0))
-            || super::property(entity, "targetname").is_some_and(|value| !value.trim().is_empty());
-        if styled {
-            let message = "Baked static-prop vertices support style-0 lights only; remove named or nonzero-style point/spot lights, or disable baked prop vertices";
-            report.diagnostics.push(Diagnostic::error(
-                message,
-                Some(format!("entity:{}", entity.id)),
-                entity.origin,
-            ));
-            return Err(message.into());
-        }
-    }
-    Ok(())
-}
-
 fn admit_model(data: &ModelData) -> Result<(), String> {
     if data.model.body_groups.len() != 1
         || data.model.body_groups[0].variants.len() != 1
@@ -161,7 +137,6 @@ fn admit_prop(entity: &Entity, prop: &StaticProp, model: &str) -> Result<(), Str
 }
 
 pub(super) fn prepare(
-    map: &Map,
     settings: Settings<'_>,
     tracker: super::asset_tracking::Tracker<'_>,
     bsp: &Bsp,
@@ -197,7 +172,6 @@ pub(super) fn prepare(
     if count > MAX_RECEIVERS {
         return Err("Baked prop vertices exceed their 1,024 receiver limit; explicitly disable vertex lighting on other props".into());
     }
-    unstyled(map, report, budget)?;
     let mut assets = assets::Assets::new(tracker);
     let mut allocation = budget.reserve_bytes(
         count * size_of::<BoundReceiver>()
@@ -536,6 +510,7 @@ pub(super) fn bake_channel(
                                     receivers::Reception {
                                         angular,
                                         skip_owner: skipped_owner,
+                                        styles: receivers::Styles::StaticOnly,
                                     },
                                     budget,
                                 )?;

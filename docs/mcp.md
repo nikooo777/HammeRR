@@ -402,6 +402,16 @@ See [Color correction](color-correction.md) for target and resource limits.
 
 `compile_map` waits for the build. `run_map` builds and launches through the same job system.
 Use `cancel_compile` to stop owned build work.
+
+Set `bake_static_prop_vertices:true` with a lit mode to store the static style-0
+VHV base alongside supported runtime point/spot styles. Effective nonzero styles
+remain in native WorldLight records and are excluded from VHV.
+`prop_vertex_lighting.limits.light_styles` remains `[0]` for stored colors;
+`prop_vertex_lighting.limits.light_styles_scope` and
+`prop_vertex_lighting.limits.runtime_direct` describe the separation.
+The editor's VHV preview shows the stored base. Switched indirect ambient and
+animated VHV remain unsupported.
+
 Compile diagnostics retain shared object/position references. Split failures
 include plane-source candidates; visibility limits include work/input counts;
 repeated material warnings include affected brush/side totals.

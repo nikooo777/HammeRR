@@ -1299,7 +1299,6 @@ fn bake_inner(
     budget.phase(LightingPhase::PropVertices);
     let mut prop_vertices = if options.bake_static_prop_vertices {
         super::prop_vertices::prepare(
-            map,
             super::prop_vertices::Settings {
                 vmf: settings.vmf,
                 prop_sources: settings.prop_sources,

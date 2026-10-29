@@ -17,7 +17,7 @@ use crate::{
     scene::{Batch, LineVertex, Vertex},
 };
 
-pub const POLICY: &str = "Final native static-prop ordinals, selected skins and poses; exact ordered MDL/VVD/DX90-VTX hardware occurrences and independently baked VHV channels. RGB bytes decode per vertex as pow(2*byte/255, f64::from(2.2_f32)) before interpolation. VHV alpha is retained data, not opacity. Baked-static weight is unity with no runtime-style decomposition; shared EV follows compiled diffuse and material coverage, then Reinhard and one sRGB output. No native adaptation or appearance parity.";
+pub const POLICY: &str = "Final native static-prop ordinals, selected skins and poses; exact ordered MDL/VVD/DX90-VTX hardware occurrences and independently baked VHV channels. RGB bytes decode per vertex as pow(2*byte/255, f64::from(2.2_f32)) before interpolation. VHV alpha is retained data, not opacity. Baked-static weight is unity with no runtime-style decomposition; shared EV follows compiled diffuse and material coverage, then Reinhard and one sRGB output. Runtime point/spot style contributions are not simulated. No native adaptation or appearance parity.";
 const MAX_PROPS: usize = 1024;
 const MAX_SECTIONS: usize = 256;
 const MAX_NAME_BYTES: usize = 1024;

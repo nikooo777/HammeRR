@@ -101,6 +101,9 @@ still apply.
 Point and spot lights support color, brightness, falloff and checked directions.
 Use **50 percent falloff distance** and **0 percent falloff distance** for controlled attenuation.
 Named lights can use supported switching and built-in patterns. Custom or unsupported appearances reject.
+These point/spot styles can coexist with **Bake static-prop vertex lighting**.
+The VHV base stores style 0; the game adds supported runtime direct contributions.
+The editor's VHV preview stays static. Switched indirect ambient remains unsupported.
 Each face supports four styles, including Normal. If this limit is exceeded,
 the build error identifies the source side, sample position and light groups.
 Remove unnecessary light names or reduce overlapping groups.
@@ -134,7 +137,7 @@ and colored material forms.
 Enable **Bake static-prop vertex lighting** for static-prop receivers.
 Map and vertex receivers keep the chosen zero-to-four bounce depth. Ambient and
 detail receivers retain filtered sampling of final baked maps.
-Prop vertex reception remains style 0.
+Stored prop vertex colors remain style 0; supported runtime point/spot styles are separate.
 
 ![A stationary green brush model reflects light onto the floor and a separate brush](images/stationary-model-reflection.png)
 Moving, parented, unrequested and MDL model sources remain unavailable.

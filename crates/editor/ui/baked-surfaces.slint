@@ -98,7 +98,7 @@ export component BakedSurfacesWindow inherits Window {
                 Text { text: "\{round(root.style-gain * 100) / 100}"; width: 50px; vertical-alignment: center; }
                 Button { text: "Apply lighting"; enabled: root.has-token && !root.worker-active; clicked => { root.apply-lighting(); } }
             }
-            Text { text: "Styles affect faces: style 0 defaults to 1, others to 0. Static props have fixed baked weight 1. Channel and exposure apply to both."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "Styles affect faces: style 0 defaults to 1, others to 0. Static props have fixed baked weight 1. Runtime point/spot style contributions are not simulated. Channel and exposure apply to both."; wrap: word-wrap; color: #bac2ce; }
             HorizontalLayout {
                 spacing: 8px;
                 Text { text: "Record kind"; vertical-alignment: center; }

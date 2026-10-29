@@ -30,6 +30,13 @@ pub(super) struct Sample {
 pub(super) struct Reception {
     pub angular: ReceiverAngularMode,
     pub skip_owner: Option<u32>,
+    pub styles: Styles,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum Styles {
+    All,
+    StaticOnly,
 }
 
 pub(super) fn cluster(
@@ -91,6 +98,7 @@ pub(super) fn direct_skipping_owner(
         Reception {
             angular: ReceiverAngularMode::Normal,
             skip_owner,
+            styles: Styles::All,
         },
         budget,
     )
@@ -117,6 +125,11 @@ pub(super) fn direct_with_reception(
         let light = &ctx.lights[candidate];
         budget.emitter(light);
         budget.consume(1)?;
+        if matches!(reception.styles, Styles::StaticOnly)
+            && matches!(light, Emitter::Point(light) if light.style != 0)
+        {
+            continue;
+        }
         if super::culling::outside_range(light, sample.point) {
             continue;
         }

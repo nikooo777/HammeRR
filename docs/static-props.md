@@ -33,15 +33,22 @@ Deeper edits win within the same edit type; replacements apply after all inserts
 
 ## Bake vertex lighting
 
+Bake a static style-0 base while supported point/spot switching and patterns
+remain runtime lighting in the game.
+
 1. Choose **Direct LDR** or **Direct LDR + HDR**.
 2. Enable **Bake static-prop vertex lighting**.
 3. Choose direct lighting or one to four diffuse bounces.
 4. Compile, then inspect **Static-prop vertex lighting** and **Prop vertex lighting bytes**.
+5. Use **Run Map** to see supported light switching and patterns in the game.
 
 Reflected reception uses the preceding lighting pass from world, terrain and
 eligible stationary **Shadows → Yes** root or assembled-child brush models.
 The existing zero-to-four bounce depth and independent LDR/HDR channels apply.
-Vertex reception remains style 0.
+VHV stores only the static style-0 base. The game adds supported point/spot
+switching and patterns as runtime direct lighting.
+The editor's baked preview shows the stored base; it does not animate these
+runtime contributions. Switched indirect ambient and animated VHV remain unsupported.
 
 Vertex lighting requires a stricter model/material subset than ordinary prop placement.
 Unsupported model or material effects stop the build.

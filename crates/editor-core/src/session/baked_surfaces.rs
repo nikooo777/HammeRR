@@ -25,7 +25,7 @@ const SOURCE_MODE: baked_build::SourceVerification =
     };
 const DISPLAY_POLICY: &str = "Selected final BSP FACE and LIGHTING channel, without substitution. Stored style 0 defaults to unity; other omitted stored IDs default to zero. Linear RGBExp32/255 maps use face-isolated bilinear sampling at native luxel centers and static material directional reconstruction. Resolved compiled diffuse/blend and static tint multiply linear lighting times 2^EV, then one Reinhard transform and one sRGB output. No editor lighting or native appearance/adaptation parity.";
 const VIEW_POLICY: &str = "The compiled surface layer replaces authored brush and terrain draw surfaces. Working regions include whole final faces whose initial-pose world AABB intersects the region, without clipping triangles. Authored hiding is independent of this immutable compiled layer; no contributor-derived surface subsets are inferred. Authored selection outlines, picking, entities and helpers remain authored; native FACE ordinals are not authored identities.";
-const PROP_POLICY: &str = "Final static-prop geometry uses the exact selected hardware draw LOD and native placement/skin. VHV RGB is decoded per hardware vertex as pow(2*byte/255,2.2_f32) before interpolation. Shared channel and exposure apply; static weight is fixed at 1 and FACE style gains do not affect VHV. Material coverage is independent of VHV alpha. Inspection is double-sided and does not claim native appearance/adaptation parity.";
+const PROP_POLICY: &str = "Final static-prop geometry uses the exact selected hardware draw LOD and native placement/skin. VHV RGB is decoded per hardware vertex as pow(2*byte/255,2.2_f32) before interpolation. Shared channel and exposure apply; static weight is fixed at 1 and FACE style gains do not affect VHV. Runtime point/spot style contributions are not simulated. Material coverage is independent of VHV alpha. Inspection is double-sided and does not claim native appearance/adaptation parity.";
 
 #[derive(
     Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
@@ -595,7 +595,7 @@ impl Session {
             "reconstruction":"auto_material_directional","sampling":"face_isolated_bilinear_native_luxel_centers",
             "material":render::compiled_faces::materials::POLICY,
             "style_zero_policy":"implicit_unity_unless_explicit_gain","styles_apply_to":"faces","display_policy":DISPLAY_POLICY,
-            "static_props":{"enabled":self.baked_surfaces.preparation.compiled_static_props,"draw_lod":self.baked_surfaces.preparation.draw_lod,"static_weight":1,"style_decomposition":false,"policy":PROP_POLICY}})
+            "static_props":{"enabled":self.baked_surfaces.preparation.compiled_static_props,"draw_lod":self.baked_surfaces.preparation.draw_lod,"static_weight":1,"style_decomposition":false,"runtime_direct_lighting":"not_simulated","policy":PROP_POLICY}})
     }
 
     pub fn baked_surfaces_render_report(&self, view: ViewOptions) -> Value {

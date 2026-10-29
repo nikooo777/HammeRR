@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use editor_core::session::compiled_visibility::{
     GuideMode, Inspection, Kind, PositionSource, Query, Row, Target,
 };
+use editor_core::session::compiled_world_lights::Channel;
 use serde_json::Value;
 use slint::{ComponentHandle, Model};
 
@@ -12,6 +13,15 @@ use crate::{CompiledVisibilityWindow, session::Actor};
 pub(super) struct Form {
     window: CompiledVisibilityWindow,
     state: Rc<RefCell<State>>,
+}
+
+impl Clone for Form {
+    fn clone(&self) -> Self {
+        Self {
+            window: self.window.clone_strong(),
+            state: self.state.clone(),
+        }
+    }
 }
 #[derive(Default)]
 struct State {
@@ -90,6 +100,23 @@ fn present(window: &CompiledVisibilityWindow, report: &Inspection) {
         .into(),
     );
     window.set_summary(report.summary.as_ref().map_or_else(|| "Compiler visibility metadata unavailable".into(), |summary| format!("{} world leaves · {} final clusters · {} retained portals · {} excluded exterior/solid portals", summary.world_leaves, summary.clusters, summary.portals, summary.excluded_portals)).into());
+    window.set_world_light_result(
+        report
+            .world_light
+            .as_ref()
+            .map_or_else(String::new, |light| {
+                format!(
+                    "{} native light {} → stored source cluster {}",
+                    match light.channel {
+                        Channel::Ldr => "LDR",
+                        Channel::Hdr => "HDR",
+                    },
+                    light.ordinal,
+                    light.cluster
+                )
+            })
+            .into(),
+    );
     window.set_position_result(
         report
             .position
@@ -168,9 +195,12 @@ fn present(window: &CompiledVisibilityWindow, report: &Inspection) {
         report.build["current"] == true
             && report.build["status"] == "current"
             && report.visibility.total.is_some()
-            && matches!(report.target, Target::Leaf { .. } | Target::Cluster { .. }),
+            && matches!(
+                report.target,
+                Target::Leaf { .. } | Target::Cluster { .. } | Target::WorldLight { .. }
+            ),
     );
-    window.set_details(serde_json::to_string_pretty(&serde_json::json!({"selection":report.selection,"portal_vertices":report.selected_vertices,"position":report.position,"notes":report.notes})).unwrap_or_else(|error| error.to_string()).into());
+    window.set_details(serde_json::to_string_pretty(&serde_json::json!({"target":report.target,"world_light":report.world_light,"selection":report.selection,"portal_vertices":report.selected_vertices,"position":report.position,"notes":report.notes})).unwrap_or_else(|error| error.to_string()).into());
     present_diagnostics(window, report);
     present_guide(window, &report.overlay);
     let (name, ordinal) = match report.target {
@@ -179,6 +209,16 @@ fn present(window: &CompiledVisibilityWindow, report: &Inspection) {
         Target::Cluster { ordinal } => ("Cluster", Some(ordinal)),
         Target::Portal { ordinal } => ("Portal", Some(ordinal)),
         Target::Position { .. } => ("Position", None),
+        Target::WorldLight { channel, ordinal } => {
+            window.set_world_light_channel(
+                match channel {
+                    Channel::Ldr => "LDR",
+                    Channel::Hdr => "HDR",
+                }
+                .into(),
+            );
+            ("World light", Some(ordinal))
+        }
     };
     window.set_target_kind(name.into());
     if let Some(ordinal) = ordinal {
@@ -209,9 +249,13 @@ fn present_guide(window: &CompiledVisibilityWindow, overlay: &Value) {
     window.set_guide_state(
         if overlay["displayed"] == true {
             if overlay["mode"]["kind"] == "destinations" {
-                format!("{} potential destination bounds: {} native world leaves across {} destination clusters from source cluster {} (cap {} leaves). Native bounds are not exact cells or current game occlusion.",
+                let light = &overlay["world_light"];
+                let source = light["channel"].as_str().map_or_else(String::new, |channel| {
+                    format!(" · {} native light {}", channel.to_ascii_uppercase(), light["ordinal"])
+                });
+                format!("{} potential destination bounds: {} native world leaves across {} destination clusters from source cluster {}{} (cap {} leaves). Native bounds are not exact cells or current game occlusion.",
                     if overlay["mode"]["visibility"] == "pas" { "PAS" } else { "PVS" },
-                    overlay["leaf_count"], overlay["destination_clusters"], overlay["source_cluster"], overlay["guide_leaf_cap"])
+                    overlay["leaf_count"], overlay["destination_clusters"], overlay["source_cluster"], source, overlay["guide_leaf_cap"])
             } else {
                 "Selected compiled visibility guide is displayed".into()
             }
@@ -250,7 +294,15 @@ fn from_controls(window: &CompiledVisibilityWindow) -> Result<Target, String> {
         "Leaf" => Ok(Target::Leaf { ordinal }),
         "Cluster" => Ok(Target::Cluster { ordinal }),
         "Portal" => Ok(Target::Portal { ordinal }),
-        _ => Err("Choose Summary, Leaf, Cluster, Portal or Position".into()),
+        "World light" => Ok(Target::WorldLight {
+            channel: match window.get_world_light_channel().as_str() {
+                "LDR" => Channel::Ldr,
+                "HDR" => Channel::Hdr,
+                _ => return Err("Choose LDR or HDR for the native light".into()),
+            },
+            ordinal,
+        }),
+        _ => Err("Choose Summary, Leaf, Cluster, Portal, Position or World light".into()),
     }
 }
 
@@ -374,7 +426,7 @@ fn perform(
             let target = stored
                 .report
                 .as_ref()
-                .ok_or("Inspect a compiled leaf or cluster first")?
+                .ok_or("Inspect a compiled leaf, cluster or native light first")?
                 .target;
             let build_token = token(&stored)?;
             drop(stored);
@@ -452,6 +504,7 @@ fn failure(window: &CompiledVisibilityWindow, state: &RefCell<State>, error: Str
     window.set_summary("".into());
     window.set_details("".into());
     window.set_position_result("".into());
+    window.set_world_light_result("".into());
     window.set_page_label("".into());
     window.set_visibility_label("".into());
     window.set_diagnostics(error.into());
@@ -573,6 +626,28 @@ pub(super) fn bind(
 }
 
 impl Form {
+    pub(super) fn open_world_light(
+        &self,
+        session: &Session,
+        build_token: String,
+        channel: Channel,
+        ordinal: usize,
+    ) -> Result<(), String> {
+        let query = Query {
+            build_token: Some(build_token),
+            target: Target::WorldLight { channel, ordinal },
+            ..Query::default()
+        };
+        let report = session.inspect_compiled_visibility(&query)?;
+        present(&self.window, &report);
+        *self.state.borrow_mut() = State {
+            query,
+            report: Some(report),
+            observation: Some(session.compiled_visibility_observation()),
+        };
+        self.window.show().map_err(|error| error.to_string())
+    }
+
     pub(super) fn set_aspect(&self, aspect: f32) {
         self.window.set_aspect(aspect);
     }

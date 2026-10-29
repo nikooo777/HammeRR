@@ -18,7 +18,9 @@ const DISPLAY_CONVERSION: &str = "Each linear RGB channel uses (v / (1 + v))^(1 
 pub(super) use super::baked_build::BuildIdentity;
 use super::baked_build::{MAX_BSP_BYTES, read_owned_bytes};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
 pub enum Channel {
     #[default]
     Ldr,

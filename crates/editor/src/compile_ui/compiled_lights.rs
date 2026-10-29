@@ -70,6 +70,7 @@ fn clear(window: &CompiledLightsWindow, state: &RefCell<State>) {
     window.set_has_selection(false);
     window.set_can_frame(false);
     window.set_can_select_source(false);
+    window.set_can_inspect_source_visibility(false);
     window.set_details(CompiledLightDetails::default());
     window.set_light_page("No retained light page".into());
     window.set_channels("".into());
@@ -125,6 +126,12 @@ fn details(window: &CompiledLightsWindow, row: &WorldLightRow, report: &Inspecti
     });
     window.set_has_selection(true);
     window.set_can_frame(report.frame_origin(row.ordinal).is_ok());
+    window.set_can_inspect_source_visibility(matches!(
+        row.kind,
+        source_formats::bsp::world_light_kind::POINT
+            | source_formats::bsp::world_light_kind::SPOT
+            | source_formats::bsp::world_light_kind::SURFACE
+    ));
     window.set_can_select_source(
         report.build["current"] == true
             && report.build["status"] == "current"
@@ -191,6 +198,7 @@ fn present(window: &CompiledLightsWindow, report: &Inspection) {
     window.set_has_selection(false);
     window.set_can_frame(false);
     window.set_can_select_source(false);
+    window.set_can_inspect_source_visibility(false);
     window.set_details(CompiledLightDetails::default());
     window.set_light_page(
         match report.page.total {
@@ -260,6 +268,7 @@ fn inspect(
             window.set_has_selection(false);
             window.set_can_frame(false);
             window.set_can_select_source(false);
+            window.set_can_inspect_source_visibility(false);
             window.set_details(CompiledLightDetails::default());
             return;
         }
@@ -329,14 +338,10 @@ fn inspect(
     }
 }
 
-fn current_light(
+fn selected_light(
     window: &CompiledLightsWindow,
-    session: &Session,
     state: &RefCell<State>,
 ) -> Result<(String, Channel, usize), String> {
-    if !current(window, session, state) {
-        return Err("Refresh inspection before acting on a compiled light".into());
-    }
     let selection = {
         let state = state.borrow();
         let report = state
@@ -358,6 +363,17 @@ fn current_light(
         (token, state.query.channel, row.ordinal)
     };
     Ok(selection)
+}
+
+fn current_light(
+    window: &CompiledLightsWindow,
+    session: &Session,
+    state: &RefCell<State>,
+) -> Result<(String, Channel, usize), String> {
+    if !current(window, session, state) {
+        return Err("Refresh inspection before acting on a compiled light".into());
+    }
+    selected_light(window, state)
 }
 
 fn select_source(
@@ -443,6 +459,7 @@ fn handler(
 pub(super) fn bind(
     parent: &CompileWindow,
     access: &DocumentAccess,
+    open_source_visibility: impl Fn(&Session, String, Channel, usize) -> Result<(), String> + 'static,
 ) -> Result<Form, slint::PlatformError> {
     let window = CompiledLightsWindow::new()?;
     let columns = [
@@ -486,6 +503,23 @@ pub(super) fn bind(
     window.on_change_channel(move || channel(0));
     window.on_page_lights(handler(&window, access, &state, Action::Page));
     window.on_inspect_light(handler(&window, access, &state, Action::Select));
+    window.on_inspect_source_visibility({
+        let (window, target, state) = (window.as_weak(), access.downgrade(), state.clone());
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let result = target.upgrade().and_then(|target| {
+                target.with_shared(|shared| {
+                    let (token, channel, ordinal) = selected_light(&window, &state)?;
+                    open_source_visibility(&lock(shared), token, channel, ordinal)
+                })
+            });
+            if let Err(error) = result {
+                window.set_diagnostics(error.into());
+            }
+        }
+    });
     window.on_frame_light({
         let (window, target, state) = (window.as_weak(), access.downgrade(), state.clone());
         move || {

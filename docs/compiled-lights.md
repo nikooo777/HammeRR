@@ -13,6 +13,8 @@ Read native light records and their captured authored sources from the last succ
 7. Select a current **point**, **spot** or **surface** record, then click **Frame light** to frame its stored origin or emission centroid.
 8. For an available current source, click **Select source**, **Select source face** or **Select containing reference**.
 9. To frame an authored sun/sky source, select its source, then use **Frame** in the viewport.
+10. For a **point**, **spot** or **surface** row, click **Inspect source visibility**
+    to open its stored source cluster in the [visibility inspector](visibility.md).
 
 Use **Refresh inspection** after changing sources or building again.
 The inspector is also available from **Build settings…** and explains when no build output is available.
@@ -35,6 +37,12 @@ For a selected root face, **Inspect baked lightmaps… → Inspect selected auth
 finds its compiled matches. MCP can also find an instance face's matches using
 the exact captured occurrence; see [MCP](mcp.md).
 
+**Inspect source visibility** uses the record's stored cluster from the same BSP.
+It does not classify the light's position again. Historical records can be
+inspected; showing visibility bounds requires a current build. PVS and PAS show
+potential visibility or audibility. They do not show native light winners,
+falloff, ray occlusion or exact finite-area visibility.
+
 ## Limits
 
 - Record numbers belong to one build and channel. Source associations are captured during emission and checked against the exact channel table.
@@ -43,6 +51,8 @@ the exact captured occurrence; see [MCP](mcp.md).
 - Occurrence routes capture up to four helper levels. Each helper ID belongs to the map containing that helper; its file identifies the next source. Routes describe the captured source snapshot. An expanded entity ID still distinguishes emitted entities within that build.
 - Framing requires current output and an available channel. Historical records remain readable but cannot be framed.
 - Only finite point/spot origins and surface centroids inside ±16384 units can be framed. Directional sky and unknown kinds have no frameable native point. For sun/sky, use an available authored source instead.
+- Source visibility rejects directional sky, unknown kinds, unbaked channels,
+  invalid record numbers and invalid source clusters.
 - Values are native stored fields, without exposure or display normalization.
 - Fullbright has no baked light tables. LDR builds have no HDR table.
 - A valid table can contain zero records; missing or malformed tables fail explicitly.

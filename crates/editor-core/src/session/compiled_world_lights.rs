@@ -575,60 +575,67 @@ fn read_tables(
     drop(bytes);
     control.checkpoint()?;
     let mut tables = [Vec::new(), Vec::new()];
-    for (index, (channel, lump)) in [
-        (Channel::Ldr, lump::WORLDLIGHTS),
-        (Channel::Hdr, lump::WORLDLIGHTS_HDR),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        control.checkpoint()?;
-        if bsp.lumps[lump].fourcc != [0; 4] {
-            return Err(format!(
-                "{} world-light lump has unsupported fourcc",
-                channel.name()
-            ));
-        }
-        let lights = bsp
-            .world_lights(channel.kind())
-            .map_err(|error| format!("{} world-light table: {error}", channel.name()))?;
-        if !channel_baked(lighting, channel) && !lights.is_empty() {
-            return Err(format!(
-                "{} world-light table is nonempty in a channel that was not baked",
-                channel.name()
-            ));
-        }
-        for (ordinal, light) in lights.iter().enumerate() {
-            control.checkpoint()?;
-            if !light
-                .origin
-                .iter()
-                .chain(&light.intensity)
-                .chain(&light.normal)
-                .copied()
-                .chain([
-                    light.stop_dot,
-                    light.stop_dot2,
-                    light.exponent,
-                    light.radius,
-                    light.constant_attenuation,
-                    light.linear_attenuation,
-                    light.quadratic_attenuation,
-                ])
-                .all(f32::is_finite)
-            {
-                return Err(format!(
-                    "{} world-light record {ordinal} contains a nonfinite scalar",
-                    channel.name()
-                ));
-            }
-        }
-        tables[index] = lights;
+    for (index, channel) in [Channel::Ldr, Channel::Hdr].into_iter().enumerate() {
+        tables[index] = read_native_table(&bsp, lighting, channel, control)?;
     }
     Ok((bsp, tables))
 }
 
-fn channel_baked(lighting: compiler::LightingMode, channel: Channel) -> bool {
+pub(super) fn read_native_table(
+    bsp: &Bsp,
+    lighting: compiler::LightingMode,
+    channel: Channel,
+    control: &compiler::Control,
+) -> Result<Vec<WorldLight>, String> {
+    control.checkpoint()?;
+    let lump = match channel {
+        Channel::Ldr => lump::WORLDLIGHTS,
+        Channel::Hdr => lump::WORLDLIGHTS_HDR,
+    };
+    if bsp.lumps[lump].fourcc != [0; 4] {
+        return Err(format!(
+            "{} world-light lump has unsupported fourcc",
+            channel.name()
+        ));
+    }
+    let lights = bsp
+        .world_lights(channel.kind())
+        .map_err(|error| format!("{} world-light table: {error}", channel.name()))?;
+    if !channel_baked(lighting, channel) && !lights.is_empty() {
+        return Err(format!(
+            "{} world-light table is nonempty in a channel that was not baked",
+            channel.name()
+        ));
+    }
+    for (ordinal, light) in lights.iter().enumerate() {
+        control.checkpoint()?;
+        if !light
+            .origin
+            .iter()
+            .chain(&light.intensity)
+            .chain(&light.normal)
+            .copied()
+            .chain([
+                light.stop_dot,
+                light.stop_dot2,
+                light.exponent,
+                light.radius,
+                light.constant_attenuation,
+                light.linear_attenuation,
+                light.quadratic_attenuation,
+            ])
+            .all(f32::is_finite)
+        {
+            return Err(format!(
+                "{} world-light record {ordinal} contains a nonfinite scalar",
+                channel.name()
+            ));
+        }
+    }
+    Ok(lights)
+}
+
+pub(super) fn channel_baked(lighting: compiler::LightingMode, channel: Channel) -> bool {
     match lighting {
         compiler::LightingMode::Fullbright => false,
         compiler::LightingMode::DirectLdr => channel == Channel::Ldr,

@@ -48,6 +48,7 @@ export component CompiledLightsWindow inherits Window {
     in property <bool> has-selection;
     in property <bool> can-frame;
     in property <bool> can-select-source;
+    in property <bool> can-inspect-source-visibility;
     in property <string> source-selection-label: "Select source";
     in property <float> aspect: 1;
     in property <CompiledLightDetails> details;
@@ -58,6 +59,7 @@ export component CompiledLightsWindow inherits Window {
     callback reset-sort();
     callback frame-light();
     callback select-source();
+    callback inspect-source-visibility();
     callback close-dialog();
     forward-focus: keys;
     keys := FocusScope {
@@ -101,9 +103,11 @@ export component CompiledLightsWindow inherits Window {
             HorizontalLayout {
                 Text { text: root.has-selection ? "Selected record " + root.details.record : "Select a light to inspect its fields"; font-size: 18px; font-weight: 600; }
                 Rectangle { horizontal-stretch: 1; }
+                Button { text: "Inspect source visibility"; enabled: root.can-inspect-source-visibility; clicked => { root.inspect-source-visibility(); } }
                 Button { text: "Frame light"; enabled: root.can-frame; clicked => { root.frame-light(); } }
                 Button { text: root.source-selection-label; enabled: root.can-select-source; clicked => { root.select-source(); } }
             }
+            if root.has-selection && !root.can-inspect-source-visibility: Text { text: "Source visibility is available only for point, spot and surface records. Directional sky and unknown kinds have no supported source-cluster target."; wrap: word-wrap; color: #ffcb80; }
             if root.has-selection: ScrollView {
                 content-width: self.width;
                 min-height: 170px;

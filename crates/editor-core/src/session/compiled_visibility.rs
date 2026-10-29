@@ -10,8 +10,11 @@ use compiler::{
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use source_formats::bsp::{Bsp, Leaf, VisibilityKind, lump};
+use source_formats::bsp::{
+    Bsp, Leaf, MAX_WORLD_LIGHTS, VisibilityKind, WorldLight, lump, world_light_kind,
+};
 
+pub use super::compiled_world_lights::Channel;
 use super::{Actor, Session, baked_build};
 
 pub const MAX_PAGE_ROWS: usize = 64;
@@ -25,7 +28,7 @@ const SOURCE_MODE: baked_build::SourceVerification =
     baked_build::SourceVerification::OriginalMetadata {
         maximum_bytes: MAX_SOURCE_BYTES,
     };
-const NOTES: &str = "Compiler-owned world leaves and final clusters. Leaf boxes are native bounds, not exact convex cells. Portal rings retain compiler binary64 coordinates and build-local original slots, including boundaries inside coarsened clusters; they are not authored faces or BSP render surfaces. PVS/PAS decode separate native visibility rows. Historical ordinals belong only to their captured build. Freshness covers the committed map, settings/content epoch and retained source guards, not every world material. Unapplied drafts are not compiled. Framing and guides require a current owned build. Destination guides show the complete potential PVS/PAS set as native world-leaf bounds, not current game occlusion or rendered cells.";
+const NOTES: &str = "Compiler-owned world leaves and final clusters. Leaf boxes are native bounds, not exact convex cells. Portal rings retain compiler binary64 coordinates and build-local original slots, including boundaries inside coarsened clusters; they are not authored faces or BSP render surfaces. PVS/PAS decode separate native visibility rows. World-light targets use the actual stored source cluster in the selected native channel, without position lookup. This is compiler potential visibility, not native light selection, falloff, ray visibility or exact finite-area emission. Historical ordinals belong only to their captured build. Freshness covers the committed map, settings/content epoch and retained source guards, not every world material. Unapplied drafts are not compiled. Framing and guides require a current owned build. Destination guides show the complete potential PVS/PAS set as native world-leaf bounds, not current game occlusion or rendered cells.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "mcp", derive(schemars::JsonSchema))]
@@ -36,6 +39,7 @@ pub enum Target {
     Cluster { ordinal: usize },
     Portal { ordinal: usize },
     Position { source: PositionSource },
+    WorldLight { channel: Channel, ordinal: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -58,6 +62,13 @@ pub struct PositionResult {
     pub classification: &'static str,
     pub nodes_visited: usize,
     pub numeric_policy: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct WorldLightResult {
+    pub channel: Channel,
+    pub ordinal: usize,
+    pub cluster: i32,
 }
 
 impl Default for Target {
@@ -234,6 +245,7 @@ pub struct Inspection {
     pub selection: Option<Row>,
     pub selected_vertices: Option<Vec<[f64; 3]>>,
     pub position: Option<PositionResult>,
+    pub world_light: Option<WorldLightResult>,
     pub page: Page<Row>,
     pub visibility: Page<usize>,
     pub diagnostics: Vec<String>,
@@ -271,6 +283,7 @@ struct Guide {
     mode: GuideMode,
     geometry: GuideGeometry,
     snapshot: Arc<Snapshot>,
+    world_light: Option<WorldLightResult>,
 }
 
 enum GuideGeometry {
@@ -348,6 +361,7 @@ impl Session {
             selection: None,
             selected_vertices: None,
             position: None,
+            world_light: None,
             page: Page::empty(query.offset, query.limit),
             visibility: Page::empty(query.visibility_offset, query.limit),
             diagnostics: Vec::new(),
@@ -406,15 +420,33 @@ impl Session {
             stale(&mut report, &error);
         }
         let mut resolved = query.clone();
-        if let Target::Position { source } = query.target {
-            let position = resolve_position(&bsp, &leaves, metadata, source, self.camera, control)?;
-            if position.retained_world_leaf {
-                resolved.target = Target::Leaf {
-                    ordinal: position.native_leaf,
-                };
-                report.target = resolved.target;
+        match query.target {
+            Target::Position { source } => {
+                let position =
+                    resolve_position(&bsp, &leaves, metadata, source, self.camera, control)?;
+                if position.retained_world_leaf {
+                    resolved.target = Target::Leaf {
+                        ordinal: position.native_leaf,
+                    };
+                    report.target = resolved.target;
+                }
+                report.position = Some(position);
             }
-            report.position = Some(position);
+            Target::WorldLight { channel, ordinal } => {
+                let light = resolve_world_light(
+                    &bsp,
+                    metadata,
+                    build.options.lighting,
+                    channel,
+                    ordinal,
+                    control,
+                )?;
+                resolved.target = Target::Cluster {
+                    ordinal: light.cluster as usize,
+                };
+                report.world_light = Some(light);
+            }
+            _ => {}
         }
         let destinations = fill(
             &mut report,
@@ -460,6 +492,9 @@ impl Session {
             .is_some_and(|build| build.lightmap_identity.token == guide.token)
             && state.as_ref().is_ok_and(|state| state["current"] == true);
         let mut state = json!({"requested":true,"displayed":current,"build_token":guide.token.to_string(),"target":guide.target,"mode":guide.mode,"guide_leaf_cap":MAX_GUIDE_LEAVES,"guide_byte_cap":MAX_GUIDE_BYTES,"reason":if current {Value::Null} else {json!("The retained guide is suppressed until its owned build is current")}});
+        if let Some(light) = guide.world_light {
+            state["world_light"] = json!(light);
+        }
         if let GuideGeometry::Destinations(destinations) = &guide.geometry {
             state["source_cluster"] = json!(destinations.source_cluster);
             state["destination_clusters"] = json!(destinations.clusters);
@@ -522,8 +557,11 @@ impl Session {
                 (Kind::Pvs, false)
             }
             GuideMode::Destinations { visibility } => {
-                if !matches!(target, Target::Leaf { .. } | Target::Cluster { .. }) {
-                    return Err("Choose a compiled leaf or cluster with a native PVS/PAS source; resolve camera/position first".into());
+                if !matches!(
+                    target,
+                    Target::Leaf { .. } | Target::Cluster { .. } | Target::WorldLight { .. }
+                ) {
+                    return Err("Choose a compiled leaf, cluster or world light with a native PVS/PAS source; resolve camera/position first".into());
                 }
                 (visibility, true)
             }
@@ -560,6 +598,7 @@ impl Session {
             mode,
             geometry,
             snapshot: Arc::clone(metadata),
+            world_light: report.world_light,
         });
         self.compiled_visibility.displayed = true;
         self.scene_serial += 1;
@@ -673,7 +712,11 @@ fn read_native(
         .and_then(|bytes| {
             bytes
                 .checked_add(
-                    MAX_SOURCE_BYTES + MAX_LEAVES * 56 + 4 * MAX_REPORT_BYTES + MAX_GUIDE_BYTES,
+                    MAX_SOURCE_BYTES
+                        + MAX_LEAVES * 56
+                        + 4 * MAX_REPORT_BYTES
+                        + MAX_GUIDE_BYTES
+                        + MAX_WORLD_LIGHTS * size_of::<WorldLight>(),
                 )
                 .and_then(|bytes| bytes.checked_add(retained_guide_bytes))
         })
@@ -707,6 +750,54 @@ fn leaf_row(ordinal: usize, leaves: &[Leaf]) -> Result<LeafRow, String> {
         cluster: leaf.cluster,
         contents: leaf.contents,
         bounds: [leaf.mins.map(f64::from), leaf.maxs.map(f64::from)],
+    })
+}
+
+fn resolve_world_light(
+    bsp: &Bsp,
+    metadata: &Snapshot,
+    lighting: compiler::LightingMode,
+    channel: Channel,
+    ordinal: usize,
+    control: &Control,
+) -> Result<WorldLightResult, String> {
+    if !super::compiled_world_lights::channel_baked(lighting, channel) {
+        return Err("World-light visibility requires a baked lighting channel; Fullbright and unbaked HDR have no native source light".into());
+    }
+    let lights = super::compiled_world_lights::read_native_table(bsp, lighting, channel, control)?;
+    let light = lights
+        .get(ordinal)
+        .ok_or("World-light ordinal is outside the selected native table")?;
+    if !matches!(
+        light.kind,
+        world_light_kind::POINT | world_light_kind::SPOT | world_light_kind::SURFACE
+    ) {
+        return Err("Visibility targets require a compiled point, spot or surface light; directional sky and unknown kinds have no supported source cluster".into());
+    }
+    let visibility = bsp
+        .visibility()
+        .map_err(|error| error.to_string())?
+        .ok_or("Native visibility is unavailable")?;
+    if light.cluster < 0 || light.cluster as usize >= visibility.clusters() {
+        return Err(
+            "World-light stored source cluster is outside the native visibility table".into(),
+        );
+    }
+    let mut retained = false;
+    for leaf in metadata.leaves() {
+        control.checkpoint()?;
+        if i32::from(leaf.cluster) == light.cluster {
+            retained = true;
+            break;
+        }
+    }
+    if !retained {
+        return Err("World-light stored source cluster has no retained world leaves".into());
+    }
+    Ok(WorldLightResult {
+        channel,
+        ordinal,
+        cluster: light.cluster,
     })
 }
 
@@ -811,64 +902,70 @@ fn fill(
         excluded_portals: metadata.excluded_portals(),
         metadata_bytes: metadata.bytes(),
     });
-    let cluster =
-        match query.target {
-            Target::Summary {} => None,
-            Target::Position { .. } => {
-                if !report.position.as_ref().is_some_and(|position| {
-                    position.native_leaf == 0 && !position.retained_world_leaf
-                }) {
-                    return Err("Position lookup did not resolve an owned world leaf".into());
-                }
-                if query.offset != 0 || query.visibility_offset != 0 {
-                    return Err("Reserved leaf0 has no retained portal or PVS/PAS pages".into());
-                }
-                report.page.total = Some(0);
-                return Ok(None);
+    let cluster = match query.target {
+        Target::Summary {} => None,
+        Target::Position { .. } => {
+            if !report
+                .position
+                .as_ref()
+                .is_some_and(|position| position.native_leaf == 0 && !position.retained_world_leaf)
+            {
+                return Err("Position lookup did not resolve an owned world leaf".into());
             }
-            Target::Leaf { ordinal } => {
-                if metadata
-                    .leaves()
-                    .binary_search_by_key(&ordinal, |leaf| leaf.ordinal as usize)
-                    .is_err()
-                {
-                    return Err("Requested leaf is not an emitted world leaf in this build".into());
-                }
-                let row = leaf_row(ordinal, leaves)?;
-                let cluster = (row.cluster >= 0).then_some(row.cluster as usize);
-                report.selection = Some(Row::Leaf(row));
-                cluster
+            if query.offset != 0 || query.visibility_offset != 0 {
+                return Err("Reserved leaf0 has no retained portal or PVS/PAS pages".into());
             }
-            Target::Cluster { ordinal } => {
-                if ordinal >= visibility.clusters() {
-                    return Err("Requested cluster is outside the native visibility table".into());
-                }
-                let mut count = 0;
-                for leaf in metadata.leaves() {
-                    control.checkpoint()?;
-                    count += usize::from(leaf.cluster >= 0 && leaf.cluster as usize == ordinal);
-                }
-                report.selection = Some(Row::Cluster {
-                    ordinal,
-                    leaves: count,
-                });
-                Some(ordinal)
+            report.page.total = Some(0);
+            return Ok(None);
+        }
+        Target::WorldLight { .. } => {
+            return Err(
+                "World-light visibility target did not resolve its stored source cluster".into(),
+            );
+        }
+        Target::Leaf { ordinal } => {
+            if metadata
+                .leaves()
+                .binary_search_by_key(&ordinal, |leaf| leaf.ordinal as usize)
+                .is_err()
+            {
+                return Err("Requested leaf is not an emitted world leaf in this build".into());
             }
-            Target::Portal { ordinal } => {
-                let portal = metadata
-                    .portal(ordinal)
-                    .ok_or("Requested portal slot is not retained by this build")?;
-                report.selection = Some(Row::Portal(portal_row(portal, leaves)?));
-                report.selected_vertices = Some(
-                    portal
-                        .points()
-                        .iter()
-                        .map(|point| point.to_array())
-                        .collect(),
-                );
-                None
+            let row = leaf_row(ordinal, leaves)?;
+            let cluster = (row.cluster >= 0).then_some(row.cluster as usize);
+            report.selection = Some(Row::Leaf(row));
+            cluster
+        }
+        Target::Cluster { ordinal } => {
+            if ordinal >= visibility.clusters() {
+                return Err("Requested cluster is outside the native visibility table".into());
             }
-        };
+            let mut count = 0;
+            for leaf in metadata.leaves() {
+                control.checkpoint()?;
+                count += usize::from(leaf.cluster >= 0 && leaf.cluster as usize == ordinal);
+            }
+            report.selection = Some(Row::Cluster {
+                ordinal,
+                leaves: count,
+            });
+            Some(ordinal)
+        }
+        Target::Portal { ordinal } => {
+            let portal = metadata
+                .portal(ordinal)
+                .ok_or("Requested portal slot is not retained by this build")?;
+            report.selection = Some(Row::Portal(portal_row(portal, leaves)?));
+            report.selected_vertices = Some(
+                portal
+                    .points()
+                    .iter()
+                    .map(|point| point.to_array())
+                    .collect(),
+            );
+            None
+        }
+    };
     let mut total = 0usize;
     match query.target {
         Target::Leaf { ordinal } => {
@@ -1060,6 +1157,7 @@ fn unavailable(report: &mut Inspection, message: &str) {
     report.selection = None;
     report.selected_vertices = None;
     report.position = None;
+    report.world_light = None;
     report.page.rows.clear();
     report.page.total = None;
     report.page.next_offset = None;

@@ -31,6 +31,19 @@ Inspect leaves, portals and visibility sets from the last successful build.
 | --- | --- |
 | ![Potentially visible native leaf bounds](images/visibility-pvs.png) | ![Potentially audible native leaf bounds](images/visibility-pas.png) |
 
+## Inspect a light source
+
+1. Open **Build details… → Inspect compiled lights…**. Choose **Channel** and
+   select a **point**, **spot** or **surface** row.
+2. Click **Inspect source visibility**. The visibility inspector shows the
+   selected light, channel and stored source cluster from the same BSP.
+3. Choose **PVS** or **PAS**, then click **Inspect target**. Use **Show PVS bounds**
+   or **Show PAS bounds** to show the complete destination set.
+
+This uses the stored cluster without a position lookup. A surface centroid can
+lie on a boundary where a position lookup selects another cluster. Historical
+output remains readable; bounds guides require current output.
+
 ## Limits
 
 - Bounds boxes are not exact convex cells. Portal rings retain compiler geometry
@@ -39,6 +52,9 @@ Inspect leaves, portals and visibility sets from the last successful build.
   **Detailed** build, including Fullbright builds; they do not simulate game
   occlusion or sound mixing. Destination guides use the complete chosen row;
   nonclustered solid/exterior leaves have no destination membership.
+- Light-source PVS/PAS does not show native direct-light winners, falloff, ray
+  occlusion or exact finite-area visibility. Directional sky, unknown light
+  kinds, unbaked channels, invalid ordinals and invalid source clusters reject.
 - Complete destination sets above 512 leaves or the 256 KiB bounds/renderer
   allowance refuse with the limit. Sets are never truncated. Ordinary inspection
   stays available, and the previous valid guide remains active.

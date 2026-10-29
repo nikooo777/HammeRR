@@ -454,9 +454,14 @@ impl Controller {
         let baked_lightmaps = baked_lightmaps::bind(&window, &access)?;
         let baked_prop_vertices = baked_prop_vertices::bind(&window, &access)?;
         let baked_surfaces = baked_surfaces::bind(&window, &access)?;
-        let compiled_lights = compiled_lights::bind(&window, &access)?;
-        let compiled_details = compiled_details::bind(&window, &access)?;
         let compiled_visibility = compiled_visibility::bind(&window, &access)?;
+        let compiled_lights = compiled_lights::bind(&window, &access, {
+            let visibility = compiled_visibility.clone();
+            move |session, token, channel, ordinal| {
+                visibility.open_world_light(session, token, channel, ordinal)
+            }
+        })?;
+        let compiled_details = compiled_details::bind(&window, &access)?;
         window.on_choose_recipe({
             let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move |index| {

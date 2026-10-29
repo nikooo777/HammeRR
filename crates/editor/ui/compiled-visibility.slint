@@ -7,12 +7,14 @@ export component CompiledVisibilityWindow inherits Window {
     min-width: 780px;
     min-height: 720px;
     in-out property <string> target-kind: "Summary";
+    in-out property <string> world-light-channel: "LDR";
     in-out property <string> ordinal: "0";
     in-out property <string> visibility-kind: "PVS";
     in-out property <string> position-x: "0";
     in-out property <string> position-y: "0";
     in-out property <string> position-z: "0";
     in property <string> position-result;
+    in property <string> world-light-result;
     in property <string> build-state;
     in property <string> summary;
     in property <string> page-label;
@@ -63,13 +65,16 @@ export component CompiledVisibilityWindow inherits Window {
             HorizontalLayout {
                 spacing: 8px;
                 Text { text: "Target"; vertical-alignment: center; }
-                ComboBox { model: ["Summary", "Leaf", "Cluster", "Portal", "Position"]; current-value <=> root.target-kind; }
+                ComboBox { model: ["Summary", "Leaf", "Cluster", "Portal", "Position", "World light"]; current-value <=> root.target-kind; }
+                if root.target-kind == "World light": ComboBox { model: ["LDR", "HDR"]; current-value <=> root.world-light-channel; accessible-label: "Native light channel"; }
                 Text { text: "Ordinal"; vertical-alignment: center; }
-                LineEdit { text <=> root.ordinal; preferred-width: 110px; accessible-label: "Native leaf or cluster ordinal, or retained portal slot"; }
+                LineEdit { text <=> root.ordinal; preferred-width: 110px; accessible-label: "Native leaf, cluster or light ordinal, or retained portal slot"; }
                 ComboBox { model: ["PVS", "PAS"]; current-value <=> root.visibility-kind; }
                 Button { text: "Inspect target"; clicked => { root.inspect-target(); } }
                 Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }
             }
+            if root.world-light-result != "": Text { text: root.world-light-result; wrap: word-wrap; color: #ffcb80; }
+            Text { text: "Stored compiler PVS/PAS describes potential visibility, not native light selection, falloff or ray visibility."; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
                 Text { text: "World position"; vertical-alignment: center; }

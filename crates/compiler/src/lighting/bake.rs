@@ -566,7 +566,7 @@ fn lights(
                 return Err("Direct lighting exceeds the 8,192 world-light limit".into());
             }
             let light = if sky_present {
-                Err("Direct LDR accepts one visible light_environment; remove duplicate sky emitters".into())
+                Err("Direct lighting accepts one visible light_environment; remove duplicate sky emitters".into())
             } else {
                 match kind {
                     LightingKind::Ldr => SkyLight::from_entity(entity, &targets),
@@ -614,7 +614,7 @@ fn lights(
         } else if entity.classname.to_ascii_lowercase().starts_with("light_") {
             report.diagnostics.push(Diagnostic::warning(
                 format!(
-                    "Direct LDR does not bake {} yet; static point/spot and direct sky emitters are supported",
+                    "Direct lighting does not bake {}; point/spot and sky emitters are supported",
                     entity.classname
                 ),
                 Some(format!("entity:{}", entity.id)),
@@ -648,7 +648,7 @@ fn posed_occluders(
                     .any(|side| textures.contains(side.material))
             })
         {
-            report.diagnostics.push(Diagnostic::warning("Direct LDR casts opaque shadows from translucent/grate brush hulls; material transmittance is unfinished", Some(format!("solid:{}", brush.id)), None));
+            report.diagnostics.push(Diagnostic::warning("Direct lighting casts opaque shadows from this translucent/grate brush hull without supported texture-alpha transmission", Some(format!("solid:{}", brush.id)), None));
         }
         budget.consume(brush.sides.len())?;
         let planes = brush
@@ -803,7 +803,7 @@ fn plans(
                 let material = map.materials.get(map.texdata[info.texdata as usize]);
                 if !material.lit() {
                     return Err(format!(
-                        "Direct LDR terrain needs a lit material on solid:{} side:{}; use Fullbright for unlit terrain",
+                        "Terrain lighting needs a lit material on solid:{} side:{}; use Fullbright for unlit terrain",
                         terrain.solid, terrain.side
                     ));
                 }
@@ -822,7 +822,7 @@ fn plans(
                 sample_records = sample_records
                     .checked_add(dimensions[0] * dimensions[1] * maps + 1)
                     .filter(|&count| count <= MAX_LIGHTING_BYTES / size_of::<RgbExp32>())
-                    .ok_or("Direct LDR lighting exceeds Source's 16 MiB limit")?;
+                    .ok_or("Lighting channel exceeds Source's 16 MiB limit")?;
                 budget.plan_lightmap_samples(dimensions[0] * dimensions[1])?;
                 let terrain = TerrainPlan::new(
                     terrain,
@@ -870,7 +870,7 @@ fn plans(
                 .checked_add(frame.sample_count() * maps + 1)
                 .ok_or("Direct lighting allocation count overflow")?;
             if sample_records > MAX_LIGHTING_BYTES / size_of::<RgbExp32>() {
-                return Err("Direct LDR lighting exceeds Source's 16 MiB limit".into());
+                return Err("Lighting channel exceeds Source's 16 MiB limit".into());
             }
             let points = surfedges
                 [face.first_edge as usize..face.first_edge as usize + face.edge_count as usize]
@@ -1213,7 +1213,6 @@ fn bake_inner(
     }
     if let Some(textures) = &brush_textures {
         textures.qualify_models(map, &scopes, &has_receivers, budget)?;
-        report.diagnostics.push(Diagnostic::info("Brush texture shadows samples binary alpha-test and fractional base-alpha world/detail brush and terrain boundaries, admitted initial-pose root/child same-model self shadows and explicitly requested stationary root or child global casters; geometry and occupancy remain unchanged", None, None));
     }
     for plan in &mut plans {
         let scope = &scopes[plan.model];
@@ -1256,14 +1255,8 @@ fn bake_inner(
     }
 
     if !map.terrains.is_empty() {
-        report.diagnostics.push(Diagnostic::warning("Direct LDR shares terrain border normals across verified full/half edges, using each surface’s Automatic, hard-border or angle-limit choice; other fractional spans remain unfinished", None, None));
+        report.diagnostics.push(Diagnostic::warning("Terrain lighting shares border normals across verified full/half edges, using each surface’s Automatic, hard-border or angle-limit choice; other fractional neighbor spans are unsupported", None, None));
     }
-    let model_shadow_scope = if brush_shadow_models == 0 {
-        "isolated self shadows"
-    } else {
-        "self shadows and explicitly requested stationary global casters"
-    };
-    report.diagnostics.push(Diagnostic::info(format!("Direct LDR bakes native directional normal-map channels and static, switchable and animated point/spot styles, sampled soft sun, sky ambient and model ambient with indexed brush/terrain shadows; up to four style-preserving diffuse light bounces are supported; brush entities receive pivot-aware direct and bounced maps with {model_shadow_scope}; requested stationary brush models supply reflected sources; prop lightmaps remain unfinished"), None, None));
     let shadows = ShadowIndex::new(visibility_hulls, &mut |amount| budget.consume(amount))?;
     let terrain_shadows = super::terrain_shadows::build(map, brush_textures.as_ref(), budget)?;
     budget.phase(LightingPhase::PropShadows);

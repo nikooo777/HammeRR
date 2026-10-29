@@ -387,13 +387,5 @@ pub(super) fn bake(
     };
     bsp.set_leaf_ambient(ctx.kind, &LeafAmbient::Indexed { indices, samples })
         .map_err(|error| error.to_string())?;
-    let message = if ctx.refine {
-        "Model ambient refinement evaluates up to 8/16 separated probes per open world leaf at Balanced/Detailed quality and retains up to 4/8. At the full 4/8-probe count, each channel keeps its first 3/7 anchors and replaces only the final probe when the candidate-pool maximum native reconstruction error strictly decreases. Probes sample filtered local world, terrain and requested stationary brush-model lightmaps and sky radiance, with static-prop opaque, cutout and requested translucent attenuation; reflected prop sources remain unfinished"
-    } else {
-        "Model ambient uses up to 1/4/8 separated probes per open world leaf at Fast/Balanced/Detailed quality, sampled from filtered local world, terrain and requested stationary brush-model lightmaps and sky radiance. Static-prop opaque, cutout and requested translucent meshes attenuate probe rays; adaptive refinement and reflected prop sources remain unfinished"
-    };
-    report
-        .diagnostics
-        .push(Diagnostic::info(message, None, None));
     Ok(stats)
 }

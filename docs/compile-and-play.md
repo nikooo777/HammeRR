@@ -178,7 +178,17 @@ See [prop mesh shadows](prop-shadows.md) for static models.
 
 ### Model ambient lighting
 
-Ambient probes support model illumination. Probe refinement and sample quality increase build work.
+Ambient probes support model illumination.
+
+1. Open **Build settings…** and choose **Direct LDR** or **Direct LDR + HDR**.
+2. Set **Sampling quality** to **Balanced (128 directions)** or **Detailed (512 directions)**.
+3. Enable **Refine ambient probes**, then compile.
+
+Refinement evaluates up to twice as many candidate positions while keeping the
+retained sample count and spacing. Balanced retains up to four probes per open
+world leaf; Detailed retains up to eight. It can increase build work and does
+not guarantee an improvement.
+
 Per-vertex static-prop lighting is a separate option; see [static props](static-props.md).
 
 ## Physics

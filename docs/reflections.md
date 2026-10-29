@@ -21,6 +21,9 @@ The BSP is published only after all required captures and verification succeed.
 **Cubemap Size** supports **Default** (128×128) and authored sizes through **256x256**.
 256×256 capture also requires `wlr-randr`.
 
+Captures include supported [final detail models, cards and shapes](material-detail-scattering.md#capture-details-in-reflections).
+Their original assets must stay mounted; reflection generation does not pack them.
+
 ## Configure the capture runtime
 
 1. Click **Configure capture…** in build settings.

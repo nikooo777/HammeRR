@@ -7,6 +7,7 @@ use source_formats::vmt::{self, Material};
 
 use super::*;
 use crate::Control;
+use crate::asset_sources::BuildMaterialSources;
 
 const DEPENDENCIES: [&str; 3] = ["$bottommaterial", "$crackmaterial", "$fallbackmaterial"];
 
@@ -80,27 +81,31 @@ fn ensure_unmounted(fs: &GameFs, path: &str) -> Result<(), String> {
 pub(super) struct Graph<'a> {
     fs: &'a GameFs,
     control: &'a Control,
+    source_owner: BuildMaterialSources,
     materials: BTreeMap<String, Material>,
     material_snapshots: BTreeMap<String, Vec<u8>>,
     reflective: BTreeMap<String, bool>,
     pub sources: BTreeMap<String, String>,
     pub missing_sources: BTreeSet<String>,
     source_bytes: usize,
+    work: usize,
     pub entries: BTreeMap<String, Vec<u8>>,
     pub aliases: BTreeMap<String, CubemapAliasAsset>,
 }
 
 impl<'a> Graph<'a> {
-    pub fn new(fs: &'a GameFs, control: &'a Control) -> Self {
+    pub fn new(fs: &'a GameFs, source_owner: BuildMaterialSources, control: &'a Control) -> Self {
         Self {
             fs,
             control,
+            source_owner,
             materials: BTreeMap::new(),
             material_snapshots: BTreeMap::new(),
             reflective: BTreeMap::new(),
             sources: BTreeMap::new(),
             missing_sources: BTreeSet::new(),
             source_bytes: 0,
+            work: 0,
             entries: BTreeMap::new(),
             aliases: BTreeMap::new(),
         }
@@ -108,7 +113,7 @@ impl<'a> Graph<'a> {
 
     pub fn record_scene(&mut self, vmf: &source_formats::vmf::Vmf) -> Result<(), String> {
         for entity in vmf.entities.iter().filter(|entity| !entity.hidden) {
-            self.control.checkpoint()?;
+            self.checkpoint()?;
             let Some(model) = entity
                 .properties
                 .get("model")
@@ -116,43 +121,21 @@ impl<'a> Graph<'a> {
             else {
                 continue;
             };
-            if !entity
-                .classname()
-                .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
+            let class = entity.classname().unwrap_or_default();
+            if ["prop_detail", "detail_prop"]
+                .iter()
+                .any(|name| class.eq_ignore_ascii_case(name))
             {
+                continue;
+            }
+            if !class.eq_ignore_ascii_case("prop_static") {
                 return Err(format!(
-                    "entity:{}: native reflection capture currently supports external models only on prop_static; remove this model from the capture scene",
+                    "entity:{}: native reflection capture supports external models only on prop_static or supported compiled details; remove this model from the capture scene",
                     entity.id
                 ));
             }
-            let path = asset_relative(model).map_err(|error| error.to_string())?;
-            let stem = path
-                .strip_suffix(".mdl")
-                .filter(|_| path.starts_with("models/"))
-                .ok_or_else(|| {
-                    format!(
-                        "entity:{}: reflection model must use a relative models/*.mdl path",
-                        entity.id
-                    )
-                })?;
-            let mdl = self.record(&path, source_formats::mdl::MAX_MODEL_BYTES)?;
-            let vvd = self.record(&format!("{stem}.vvd"), source_formats::mdl::MAX_MODEL_BYTES)?;
-            let vtx = self.record(
-                &format!("{stem}.dx90.vtx"),
-                source_formats::mdl::MAX_MODEL_BYTES,
-            )?;
-            let parsed =
-                source_formats::model::Model::parse(&mdl, &vvd, &vtx).map_err(|error| {
-                    format!("entity:{}: reflection model {path}: {error}", entity.id)
-                })?;
-            for name in &parsed.materials {
-                if !self.record_model_material(name, &parsed.material_directories)? {
-                    return Err(format!(
-                        "entity:{}: reflection model material was not found: {name}",
-                        entity.id
-                    ));
-                }
-            }
+            self.record_model(model, false)
+                .map_err(|error| format!("entity:{}: {error}", entity.id))?;
         }
         if let Some(sky) = vmf
             .world
@@ -168,47 +151,237 @@ impl<'a> Graph<'a> {
         Ok(())
     }
 
+    pub fn record_details(
+        &mut self,
+        vmf: &source_formats::vmf::Vmf,
+        bsp: &source_formats::bsp::Bsp,
+    ) -> Result<(), String> {
+        self.checkpoint()?;
+        if let Some(details) = bsp.detail_props().map_err(|error| error.to_string())? {
+            for index in 0..details.models.len() {
+                self.checkpoint()?;
+                let model = details
+                    .model_name(index)
+                    .map_err(|error| error.to_string())?;
+                self.record_model(model, true)
+                    .map_err(|error| format!("Reflection detail model {model}: {error}"))?;
+            }
+        }
+        let atlas = source_formats::bsp::DetailProps::sprite_material_name(
+            vmf.world.properties.get("detailmaterial"),
+        );
+        if atlas.trim() != atlas {
+            return Err(
+                "Reflection detail atlas material cannot contain surrounding whitespace".into(),
+            );
+        }
+        let atlas = material_name(atlas)?;
+        self.validate_detail_material(&atlas)?;
+        let material = self.load(&atlas)?;
+        crate::detail_props::validate_capture_model_material(&material)
+            .map_err(|error| format!("Reflection detail atlas {atlas}: {error}"))?;
+        let texture = crate::detail_props::sprite_atlas_texture(&material)?;
+        let bytes = self.record(&texture, MAX_GENERATED_BYTES)?;
+        let texture = source_formats::vtf::Vtf::parse(bytes)
+            .map_err(|error| format!("Reflection detail atlas {atlas}: {error}"))?;
+        crate::detail_props::validate_sprite_atlas_texture(&texture)
+            .and_then(|()| crate::detail_props::validate_capture_model_texture(&texture))
+            .map_err(|error| format!("Reflection detail atlas {atlas}: {error}"))
+    }
+
+    fn record_model(&mut self, model: &str, detail: bool) -> Result<(), String> {
+        self.checkpoint()?;
+        let path = asset_relative(model).map_err(|error| error.to_string())?;
+        let stem = path
+            .strip_suffix(".mdl")
+            .filter(|_| path.starts_with("models/"))
+            .ok_or("Reflection model must use a relative models/*.mdl path")?;
+        let mdl = self.record(&path, source_formats::mdl::MAX_MODEL_BYTES)?;
+        let vvd = self.record(&format!("{stem}.vvd"), source_formats::mdl::MAX_MODEL_BYTES)?;
+        let vtx = self.record(
+            &format!("{stem}.dx90.vtx"),
+            source_formats::mdl::MAX_MODEL_BYTES,
+        )?;
+        let parsed = source_formats::model::Model::parse(&mdl, &vvd, &vtx)
+            .map_err(|error| format!("Reflection model {path}: {error}"))?;
+        for name in &parsed.materials {
+            self.checkpoint()?;
+            if !self.record_model_material(name, &parsed.material_directories, detail)? {
+                return Err(format!(
+                    "Reflection model {path} material was not found: {name}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn record_model_material(
         &mut self,
         name: &str,
         directories: &[String],
+        detail: bool,
     ) -> Result<bool, String> {
         for candidate in source_formats::model::material_candidates(name, directories) {
+            self.checkpoint()?;
             let candidate = material_name(&candidate)?;
             let path = vmt::material_path(&candidate);
             if self.record_material(&path)?.is_some() {
+                if detail {
+                    self.validate_detail_material(&candidate)?;
+                }
                 self.needs_alias(&candidate)?;
+                if detail {
+                    let material = self.load(&candidate)?;
+                    crate::detail_props::validate_capture_model_material(&material)
+                        .map_err(|error| format!("Detail material {candidate}: {error}"))?;
+                    let texture = material
+                        .get("$basetexture")
+                        .ok_or("Reflection detail material needs $basetexture")?;
+                    let texture = asset_relative(&vmt::texture_path(texture))
+                        .map_err(|error| error.to_string())?;
+                    let bytes = self.record(&texture, MAX_GENERATED_BYTES)?;
+                    let texture = source_formats::vtf::Vtf::parse(bytes)
+                        .map_err(|error| format!("Detail material {candidate}: {error}"))?;
+                    crate::detail_props::validate_capture_model_texture(&texture)
+                        .map_err(|error| format!("Detail material {candidate}: {error}"))?;
+                }
                 return Ok(true);
             }
-            self.record_missing(&path)?;
         }
         Ok(false)
     }
 
-    fn record(&mut self, path: &str, maximum: usize) -> Result<Vec<u8>, String> {
-        self.control.checkpoint()?;
+    fn validate_detail_material(&mut self, name: &str) -> Result<(), String> {
+        self.validate_detail_chain(&vmt::material_path(name), 0, &mut BTreeSet::new())
+    }
+
+    fn validate_detail_chain(
+        &mut self,
+        path: &str,
+        depth: usize,
+        edits: &mut BTreeSet<String>,
+    ) -> Result<(), String> {
+        self.checkpoint()?;
+        if depth > vmt::MAX_PATCH_DEPTH {
+            return Err(format!(
+                "Detail capture material include depth exceeded: {path}"
+            ));
+        }
         let bytes = self
-            .fs
-            .read_limited(path, maximum)
-            .map_err(|error| format!("{path}: {error}"))?
-            .ok_or_else(|| format!("Reflection dependency was not found: {path}"))?;
-        self.record_bytes(path, &bytes)?;
-        Ok(bytes)
+            .record_material(path)?
+            .ok_or_else(|| format!("Detail capture material was not found: {path}"))?;
+        let text = std::str::from_utf8(&bytes).map_err(|error| format!("{path}: {error}"))?;
+        let nodes = keyvalues::parse_lenient_bounded(text.trim_start_matches('\u{feff}'), 32, 4096)
+            .map_err(|error| format!("{path}: {error}"))?;
+        let [shader] = nodes.as_slice() else {
+            return Err(format!(
+                "Detail capture material needs one shader block: {path}"
+            ));
+        };
+        let children = shader
+            .children()
+            .ok_or_else(|| format!("Detail capture material needs one shader block: {path}"))?;
+        let mut keys = BTreeSet::new();
+        for node in children {
+            self.checkpoint()?;
+            if !keys.insert(node.key.to_ascii_lowercase()) {
+                return Err(format!(
+                    "Detail capture material repeats {}: {path}",
+                    node.key
+                ));
+            }
+        }
+        if shader.key.eq_ignore_ascii_case("patch") {
+            let mut include = None;
+            for node in children {
+                match node.key.to_ascii_lowercase().as_str() {
+                    "include" => {
+                        include = Some(node.as_str().ok_or_else(|| {
+                            format!("Detail capture Patch include must be scalar: {path}")
+                        })?);
+                    }
+                    "insert" | "replace" => {
+                        let children = node.children().ok_or_else(|| {
+                            format!("Detail capture Patch edits must be scalar blocks: {path}")
+                        })?;
+                        for edit in children {
+                            self.checkpoint()?;
+                            if edit.as_str().is_none()
+                                || !edits.insert(edit.key.to_ascii_lowercase())
+                            {
+                                return Err(format!(
+                                    "Detail capture Patch edits must be scalar and name each key once across the original chain: {path}"
+                                ));
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(format!(
+                            "Unsupported detail capture Patch key {}: {path}",
+                            node.key
+                        ));
+                    }
+                }
+            }
+            let include =
+                include.ok_or_else(|| format!("Detail capture Patch has no include: {path}"))?;
+            let include = asset_relative(include).map_err(|error| error.to_string())?;
+            self.validate_detail_chain(&include, depth + 1, edits)
+        } else if !shader.key.eq_ignore_ascii_case("unlitgeneric")
+            || children.iter().any(|node| node.as_str().is_none())
+        {
+            Err(format!(
+                "Detail capture material needs static scalar UnlitGeneric parameters: {path}"
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn record(&mut self, path: &str, maximum: usize) -> Result<Vec<u8>, String> {
+        self.read_source(path, maximum)?
+            .ok_or_else(|| format!("Reflection dependency was not found: {path}"))
+    }
+
+    fn checkpoint(&mut self) -> Result<(), String> {
+        self.control.checkpoint()?;
+        self.work = self
+            .work
+            .checked_add(1)
+            .ok_or("Reflection asset work overflow")?;
+        if self.work > MAX_ASSIGNMENT_WORK {
+            return Err("Reflection asset work budget exceeded".into());
+        }
+        Ok(())
+    }
+
+    fn read_source(&mut self, path: &str, maximum: usize) -> Result<Option<Vec<u8>>, String> {
+        self.checkpoint()?;
+        let maximum = if self.sources.contains_key(path) {
+            maximum
+        } else {
+            maximum.min(MAX_GENERATED_BYTES.saturating_sub(self.source_bytes))
+        };
+        let asset = self
+            .source_owner
+            .read_asset(self.fs, path, maximum)
+            .map_err(|error| format!("{path}: {error}"))?;
+        if let Some(asset) = asset {
+            self.record_bytes(path, asset.bytes())?;
+            Ok(Some(asset.bytes().to_vec()))
+        } else {
+            self.record_missing(path)?;
+            Ok(None)
+        }
     }
 
     fn record_material(&mut self, path: &str) -> Result<Option<Vec<u8>>, String> {
         if let Some(bytes) = self.material_snapshots.get(path) {
             return Ok(Some(bytes.clone()));
         }
-        self.control.checkpoint()?;
-        let Some(bytes) = self
-            .fs
-            .read_limited(path, MAX_MATERIAL_BYTES)
-            .map_err(|error| format!("{path}: {error}"))?
-        else {
+        let Some(bytes) = self.read_source(path, MAX_MATERIAL_BYTES)? else {
             return Ok(None);
         };
-        self.record_bytes(path, &bytes)?;
         self.material_snapshots
             .insert(path.to_owned(), bytes.clone());
         Ok(Some(bytes))
@@ -424,8 +597,7 @@ impl<'a> Graph<'a> {
             return Err("Reflection material alias limit exceeded (1024)".into());
         }
         if self
-            .fs
-            .read_limited(&vmt::material_path(&alias), 1)
+            .read_source(&vmt::material_path(&alias), 1)
             .map_err(|error| format!("Generated alias path collision: {alias}: {error}"))?
             .is_some()
         {

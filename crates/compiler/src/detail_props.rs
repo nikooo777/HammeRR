@@ -19,6 +19,10 @@ mod shapes;
 mod sprites;
 mod tint;
 
+pub(crate) use assets::{
+    sprite_atlas_texture, validate_capture_model_material, validate_capture_model_texture,
+    validate_sprite_atlas_texture,
+};
 pub(crate) use sprites::check_native_transform as check_native_sprite_transform;
 pub(crate) use tint::Tint;
 pub use tint::{GENERATED_DETAIL_LIGHTING_TINT_KEY, validate_generated_detail_lighting_tint};

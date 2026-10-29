@@ -436,6 +436,18 @@ For an eligible stationary root or child `func_brush`, set `vrad_brush_cast_shad
 The same eligible stationary request also makes the model's baked maps reflected-light sources. `set_compile_settings` keeps the existing `bounces:0` through `4` depth for world/model maps and opted-in VHV; ambient/details keep filtered final-map reception. Supported source materials include existing opaque and enabled cutout/fractional/colored forms, with checked reflectivity providers. `get_compile_settings.brush_model_shadowing` reports this brush scope. Moving, parented and unrequested brush-model sources remain unavailable. Eligible VHV static-prop sources instead require `reflect_static_props`; other MDL source families remain unsupported. No intrinsic emission or native VRAD parity is implied.
 Game launches use `-insecure` and private validation uses `sv_lan 1`.
 Reflection capture also needs a ready `get_native_capture_runtime` result.
+
+With `generate_reflections:true`, capture checks final compiled detail model
+assets and the World's `detailmaterial` atlas, defaulting to
+`detail/detailsprites`. The atlas is required even for model-only scenes or
+when no details are emitted. Detail model materials require supported static
+`UnlitGeneric` with an explicit static base texture; animated inputs, proxies
+and other runtime effects reject. Original assets remain mounted. Missing or
+unsupported inputs stop before lighting or capture; changed consumed assets
+stop publication. The supported static atlas needs one square 2D texture no
+larger than 4096 pixels per side; procedural, render-target and animated inputs
+reject. See [material detail scattering](material-detail-scattering.md#capture-details-in-reflections).
+
 For `env_cubemap`, set `cubemapsize` to `"9"` for **Cubemap Size → 256x256**; `"0"` keeps the 128×128 default. Generated LDR and paired LDR/HDR captures support all authored sizes from 1×1 through 256×256.
 See [Compile and play](compile-and-play.md).
 
@@ -470,6 +482,19 @@ guarded display assets; editing contexts can suppress it. Authored picking,
 hiding and history remain separate from native face ordinals.
 Baked surfaces and compiled details can be shown together. Keep their preparation tokens and lighting settings separate.
 
+For [generated detail lighting tint](material-detail-scattering.md#generated-lighting-tint),
+use the shared World property draft:
+
+1. Call `begin_property_edit {"world":true}`.
+2. Pass its token to `update_property_edit` with
+   `changes:[{"action":"set","key":"_generated_detail_lighting_tint","value":"255 128 64"}]`.
+3. Call `commit_property_edit` with the same token, then compile again.
+
+The three integer linear channels range from 0 to 255; white preserves baked
+lighting. Action `remove` restores white, and `cancel_property_edit` discards
+the draft. The World tint multiplies dictionary-entry tint on generated models,
+cards and shapes; explicit detail entities use their own `_detail_lighting_tint`.
+
 For [final detail placements](compiled-details.md), call `set_compiled_details`
 with `action:"prepare"`. Set `background:true` to read the owned BSP in a worker.
 Use `inspect_compiled_details` to check readiness and page native records.
@@ -495,6 +520,18 @@ its shared base and selected-channel style 0. Such builds report
 `base_policy:"per_record_static_contributions"`; older shared-base builds keep
 `base_policy:"shared_native_base"`. Missing selected tables reject styled
 records; valid zero-style builds need no tables.
+
+To compare raw static channels, apply Baked radiance with `channel:"ldr"`,
+`exposure_ev:0` and `style_gains:[]`, inspect using the preparation token, then
+repeat with `channel:"hdr"`. Read `lighting.static_contribution.style_zero`
+and `lighting.style_extras` for native RGB bytes and exponents. A row's
+`lighting.rgb` is only the shared base and can be zero when static light is
+stored separately for each channel.
+
+Native detail rendering uses a quantized gamma lookup; sprites use 8-bit vertex
+colours. These stored values and the editor's linear preview do not establish
+floating-point native precision or editor/game colour parity.
+
 Inspection pages accept `limit:1` through `64`, with at most 64 stored style
 records per prop (4,096 per page).
 `render_view.compiled_details` binds the actual layer state and lighting policy

@@ -16,6 +16,169 @@ const MAX_MATERIAL_BYTES: usize = 1024 * 1024;
 const MAX_MATERIAL_LOOKUPS: usize = 65_536;
 const MAX_ATLAS_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ATLAS_DIMENSION: u32 = 4096;
+const MAX_CAPTURE_VALUE_BYTES: usize = 128;
+const DYNAMIC_TEXTURE_FLAGS: u32 = 0x800 | 0x8000 | 0x1_0000;
+
+pub(crate) fn validate_capture_model_material(material: &Material) -> Result<(), String> {
+    if material.shader != "unlitgeneric" || !material.blocks.is_empty() {
+        return Err("Detail capture requires static UnlitGeneric model materials without conditional blocks or proxies".into());
+    }
+    let mut keys = BTreeSet::new();
+    for (key, value) in &material.params {
+        if !keys.insert(key) {
+            return Err(format!("Detail capture material repeats {key}"));
+        }
+        match key.as_str() {
+            "$basetexture" | "$surfaceprop" => {}
+            "$model" | "$translucent" | "$nocull" | "$vertexcolor" | "$vertexalpha"
+            | "$alphatest" => {
+                if capture_scalar(value).is_none_or(|value| value != 0.0 && value != 1.0) {
+                    return Err(format!("Detail capture {key} requires a static 0 or 1"));
+                }
+            }
+            "$alpha" => {
+                if capture_scalar(value).is_none_or(|value| !(0.0..=1.0).contains(&value)) {
+                    return Err(
+                        "Detail capture $alpha must be finite and between zero and one".into(),
+                    );
+                }
+            }
+            "$alphatestreference" => {
+                material.alpha_test_reference()?;
+            }
+            "$reflectivity" => {
+                crate::materials::parse_reflectivity(value)?;
+            }
+            "$frame" => {
+                if capture_scalar(value) != Some(0.0) {
+                    return Err("Detail capture supports only static $frame zero".into());
+                }
+            }
+            "$color" | "$color2" => {
+                if !capture_color(value) {
+                    return Err(format!(
+                        "Detail capture {key} requires a static [r g b] linear color from 0 to 1 or {{r g b}} byte color from 0 to 255"
+                    ));
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "Detail capture does not support model material parameter {key}"
+                ));
+            }
+        }
+    }
+    let texture = material
+        .get("$basetexture")
+        .ok_or("Detail capture model material needs an explicit $basetexture")?;
+    if texture.is_empty() || texture.trim() != texture {
+        return Err(
+            "Detail capture $basetexture must be nonempty without surrounding whitespace".into(),
+        );
+    }
+    let texture = asset_relative(texture).map_err(|error| error.to_string())?;
+    let name = texture.strip_prefix("materials/").unwrap_or(&texture);
+    if name.starts_with('_') || name.eq_ignore_ascii_case("env_cubemap") {
+        return Err(
+            "Detail capture does not support runtime or render-target base textures".into(),
+        );
+    }
+    Ok(())
+}
+
+fn capture_scalar(value: &str) -> Option<f64> {
+    if value.len() > MAX_CAPTURE_VALUE_BYTES || !value.is_ascii() {
+        return None;
+    }
+    source_formats::fgd::vector(value, 1).map(|values| values[0])
+}
+
+fn capture_color(value: &str) -> bool {
+    if value.len() > MAX_CAPTURE_VALUE_BYTES || !value.is_ascii() {
+        return false;
+    }
+    let value = value.trim_ascii();
+    let (inner, maximum) = if let Some(inner) = value
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+    {
+        (inner, 1.0)
+    } else if let Some(inner) = value
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))
+    {
+        (inner, 255.0)
+    } else {
+        return false;
+    };
+    source_formats::fgd::vector(inner, 3)
+        .is_some_and(|values| values.iter().all(|value| (0.0..=maximum).contains(value)))
+}
+
+pub(crate) fn validate_capture_model_texture(texture: &Vtf) -> Result<(), String> {
+    texture
+        .validate_native_mips()
+        .map_err(|error| error.to_string())?;
+    if texture.authored_frames != 1
+        || texture.frames != 1
+        || texture.faces != 1
+        || texture.depth != 1
+        || texture.authored_depth.is_some_and(|depth| depth != 1)
+        || texture.first_frame != 0
+        || texture.flags & DYNAMIC_TEXTURE_FLAGS != 0
+    {
+        return Err("Detail capture textures require one static 2D frame, face and depth without procedural or render-target flags".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn sprite_atlas_texture(material: &Material) -> Result<String, String> {
+    if material.shader != "unlitgeneric"
+        || ["$translucent", "$nocull", "$vertexcolor", "$vertexalpha"]
+            .iter()
+            .any(|flag| !material.compile_flag(flag))
+        || !material.blocks.is_empty()
+        || material.params.iter().any(|(key, _)| {
+            ![
+                "$basetexture",
+                "$translucent",
+                "$nocull",
+                "$vertexcolor",
+                "$vertexalpha",
+                "$surfaceprop",
+            ]
+            .contains(&key.as_str())
+        })
+    {
+        return Err("Detail sprite atlas requires a static UnlitGeneric material with $translucent, $nocull, $vertexcolor and $vertexalpha enabled; material effects and overrides are unsupported".into());
+    }
+    let texture = material
+        .get("$basetexture")
+        .ok_or("Detail sprite atlas material needs $basetexture")?;
+    if texture.is_empty() || texture.trim() != texture {
+        return Err(
+            "Detail sprite atlas needs a nonempty $basetexture path without surrounding whitespace"
+                .into(),
+        );
+    }
+    let texture = asset_relative(texture).map_err(|error| error.to_string())?;
+    Ok(texture_path(&texture))
+}
+
+pub(crate) fn validate_sprite_atlas_texture(atlas: &Vtf) -> Result<(), String> {
+    atlas
+        .validate_native_mips()
+        .map_err(|error| error.to_string())?;
+    if atlas.width != atlas.height
+        || atlas.width > MAX_ATLAS_DIMENSION
+        || atlas.frames != 1
+        || atlas.faces != 1
+        || atlas.depth != 1
+    {
+        return Err("Detail sprite atlas needs one static square 2D texture no larger than 4096 pixels per side".into());
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy)]
 pub(super) struct ModelBounds {
@@ -186,50 +349,15 @@ impl<'a> ModelValidator<'a> {
         })
         .map_err(|error| format!("Detail sprite atlas {path}: {error}"))?
         .ok_or_else(|| format!("Detail sprite atlas material {path} was not found"))?;
-        if material.shader != "unlitgeneric"
-            || ["$translucent", "$nocull", "$vertexcolor", "$vertexalpha"]
-                .iter()
-                .any(|flag| !material.compile_flag(flag))
-            || !material.blocks.is_empty()
-            || material.params.iter().any(|(key, _)| {
-                ![
-                    "$basetexture",
-                    "$translucent",
-                    "$nocull",
-                    "$vertexcolor",
-                    "$vertexalpha",
-                    "$surfaceprop",
-                ]
-                .contains(&key.as_str())
-            })
-        {
-            return Err("Detail sprite atlas requires a static UnlitGeneric material with $translucent, $nocull, $vertexcolor and $vertexalpha enabled; material effects and overrides are unsupported".into());
-        }
-        let texture = material
-            .get("$basetexture")
-            .ok_or("Detail sprite atlas material needs $basetexture")?;
-        if texture.is_empty() || texture.trim() != texture {
-            return Err("Detail sprite atlas needs a nonempty $basetexture path without surrounding whitespace".into());
-        }
-        let texture = asset_relative(texture).map_err(|error| error.to_string())?;
-        let texture = texture_path(&texture);
+        let texture = sprite_atlas_texture(&material)?;
         let data = self
             .read(fs, &texture, MAX_ATLAS_BYTES, control)
             .map_err(|error| format!("Detail sprite atlas texture {texture}: {error}"))?
             .ok_or_else(|| format!("Detail sprite atlas texture {texture} was not found"))?;
         let atlas =
             Vtf::parse(data).map_err(|error| format!("Detail sprite atlas {texture}: {error}"))?;
-        atlas
-            .validate_native_mips()
+        validate_sprite_atlas_texture(&atlas)
             .map_err(|error| format!("Detail sprite atlas {texture}: {error}"))?;
-        if atlas.width != atlas.height
-            || atlas.width > MAX_ATLAS_DIMENSION
-            || atlas.frames != 1
-            || atlas.faces != 1
-            || atlas.depth != 1
-        {
-            return Err("Detail sprite atlas needs one static square 2D texture no larger than 4096 pixels per side".into());
-        }
         control.checkpoint()?;
         Ok(())
     }

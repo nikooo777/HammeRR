@@ -1291,6 +1291,9 @@ fn build(
             cubemap_assets::binding::PrepareOptions {
                 capture_scene: true,
                 hdr: options.lighting == LightingMode::DirectLdrHdr,
+                sources: material_sources
+                    .as_ref()
+                    .ok_or("Reflection source owner is missing")?,
             },
             &mut output.report,
             control,
@@ -1687,6 +1690,12 @@ fn build(
     if output.report.has_errors() {
         return Ok(());
     }
+    let reflection_plan = if let Some(mut plan) = reflection_plan {
+        plan.record_details(vmf, &bsp)?;
+        Some(plan.into_assets())
+    } else {
+        None
+    };
     output.stats.detail_props = detail_stats.props;
     output.stats.detail_prop_models = detail_stats.models;
     output.stats.detail_prop_sprites = detail_stats.sprites;
@@ -1856,10 +1865,10 @@ fn build(
         output.stats.physics_surface_properties = stats.surface_properties;
     }
     control.checkpoint()?;
-    if let Some(mut plan) = reflection_plan {
-        cubemap_assets::pack(&mut bsp, &mut plan.manifest, plan.entries, control)
+    if let Some((mut manifest, entries)) = reflection_plan {
+        cubemap_assets::pack(&mut bsp, &mut manifest, entries, control)
             .map_err(|error| error.to_string())?;
-        output.cubemap_assets = Some(plan.manifest);
+        output.cubemap_assets = Some(manifest);
     }
     if options.pack_sky_assets {
         let archive = bsp

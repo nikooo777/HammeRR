@@ -200,7 +200,11 @@ pub fn inspect_root_cubemap_bindings(
             fs,
             &mut map,
             &context,
-            binding::PrepareOptions::default(),
+            binding::PrepareOptions {
+                capture_scene: false,
+                hdr: false,
+                sources: &materials,
+            },
             &mut report,
             control,
         );

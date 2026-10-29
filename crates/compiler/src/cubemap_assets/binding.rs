@@ -7,6 +7,7 @@ use source_formats::vmf::{Entity, Vmf};
 
 use super::material::{Graph, ensure_default_unmounted, material_name, sample_texture};
 use super::*;
+use crate::asset_sources::BuildMaterialSources;
 use crate::brush_model_pose::{Pose, initial_offset, initial_rotation};
 use crate::map::Map;
 use crate::{Control, Diagnostic, Report};
@@ -75,16 +76,42 @@ pub(crate) fn validate_instance_root_bindings(vmf: &Vmf, control: &Control) -> R
     Ok(())
 }
 
-pub(crate) struct Plan {
+pub(crate) struct Plan<'a> {
     pub manifest: CubemapAssetManifest,
     pub entries: Vec<PakEntry>,
     pub(super) eligible_faces: BTreeSet<u32>,
+    graph: Graph<'a>,
 }
 
-#[derive(Default)]
-pub(crate) struct PrepareOptions {
+impl Plan<'_> {
+    pub fn record_details(
+        &mut self,
+        vmf: &Vmf,
+        bsp: &source_formats::bsp::Bsp,
+    ) -> Result<(), String> {
+        self.graph.record_details(vmf, bsp)
+    }
+
+    pub fn into_assets(mut self) -> (CubemapAssetManifest, Vec<PakEntry>) {
+        self.manifest.sources = self
+            .graph
+            .sources
+            .iter()
+            .map(|(path, sha256)| CubemapSourceAsset {
+                path: path.clone(),
+                sha256: sha256.clone(),
+            })
+            .collect();
+        self.manifest.missing_sources = self.graph.missing_sources.iter().cloned().collect();
+        self.entries.extend(self.graph.into_entries());
+        (self.manifest, self.entries)
+    }
+}
+
+pub(crate) struct PrepareOptions<'a> {
     pub capture_scene: bool,
     pub hdr: bool,
+    pub sources: &'a BuildMaterialSources,
 }
 
 struct Side {
@@ -107,16 +134,20 @@ fn helper_error(report: &mut Report, entity: &Entity, message: &str) {
     ));
 }
 
-pub(crate) fn prepare(
+pub(crate) fn prepare<'a>(
     vmf: &Vmf,
-    fs: &GameFs,
+    fs: &'a GameFs,
     map: &mut Map<'_>,
     context: &CompileContext,
-    options: PrepareOptions,
+    options: PrepareOptions<'_>,
     report: &mut Report,
-    control: &Control,
-) -> Result<Plan, String> {
-    let PrepareOptions { capture_scene, hdr } = options;
+    control: &'a Control,
+) -> Result<Plan<'a>, String> {
+    let PrepareOptions {
+        capture_scene,
+        hdr,
+        sources,
+    } = options;
     let helpers: Vec<_> = vmf
         .entities
         .iter()
@@ -315,7 +346,7 @@ pub(crate) fn prepare(
     {
         return Err("Cubemap assignment comparison budget exceeded".into());
     }
-    let mut graph = Graph::new(fs, control);
+    let mut graph = Graph::new(fs, sources.clone(), control);
     if capture_scene {
         graph.record_scene(vmf)?;
     }
@@ -432,7 +463,7 @@ pub(crate) fn prepare(
         })
         .collect();
     let missing_sources = graph.missing_sources.iter().cloned().collect();
-    let mut entries = graph.into_entries();
+    let mut entries = Vec::new();
     for sample in &samples {
         entries.push(PakEntry {
             name: sample.texture.clone(),
@@ -465,6 +496,7 @@ pub(crate) fn prepare(
             face_bindings: Vec::new(),
         },
         entries,
+        graph,
     })
 }
 

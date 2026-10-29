@@ -401,6 +401,9 @@ See [Color correction](color-correction.md) for target and resource limits.
 5. Inspect diagnostics before calling `launch_game`.
 
 `compile_map` waits for the build. `run_map` builds and launches through the same job system.
+All three accept `path` for the BSP destination and optional `expected_generation`;
+use `document_id` to select a map. Unknown argument names are errors. Omitting
+`path` uses the current map filename with a `.bsp` extension.
 Use `cancel_compile` to stop owned build work.
 
 `compile_map` returns its captured `job_token`; async builds expose it as

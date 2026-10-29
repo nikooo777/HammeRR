@@ -646,6 +646,7 @@ pub struct FrameBuildDiagnosticArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CompileArgs {
     /// Output .bsp path; defaults to the current map filename with a .bsp extension.
     pub path: Option<String>,

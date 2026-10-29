@@ -9,7 +9,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 
 | Area | Works | Not yet / limits |
 | --- | --- | --- |
-| [MCP](mcp.md) | Live desktop and private headless sessions; shared editing, rendering and builds. Explicit empty edit targets reject. | Select a document explicitly when two maps are open. |
+| [MCP](mcp.md) | Live desktop and private headless sessions; shared editing, rendering and builds. Explicit empty edit targets and unknown compile/run argument names reject. | Select a document explicitly when two maps are open. |
 | [Documents](open-documents.md) | Two map windows, silent display, reviewed Quit all including hidden maps, named Close blockers and per-map Save results. | Tabs and workspace restoration. |
 | [VMF and recovery](map-tools.md) | Preserved imported fields, checked Save, recovery snapshots and map checks. | Other-editor round trips; general automatic repairs. |
 | [History](history.md) | Shared Undo/Redo and change summaries. | Persistent history and full property diffs. |

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use sha2::{Digest, Sha256};
 use source_formats::bsp::{Bsp, LightingKind, MAX_WORLD_LIGHTS, WorldLight, lump};
 
@@ -10,6 +12,12 @@ pub(crate) const MAX_CHANNEL_BYTES: usize = (MAX_BYTES
 
 pub use crate::entity_origins::Origin;
 
+#[derive(Debug)]
+pub enum Source {
+    Entity(Origin),
+    EmittingFace { face: usize, material: Arc<str> },
+}
+
 #[derive(Debug, Default)]
 pub struct WorldLightOrigins {
     pub(crate) channels: [Option<ChannelOrigins>; 2],
@@ -17,7 +25,7 @@ pub struct WorldLightOrigins {
 
 #[derive(Debug)]
 pub(crate) struct ChannelOrigins {
-    entries: Vec<Option<Origin>>,
+    entries: Vec<Option<Source>>,
     digest: [u8; 32],
     bytes: usize,
 }
@@ -25,7 +33,7 @@ pub(crate) struct ChannelOrigins {
 impl ChannelOrigins {
     pub(crate) fn new(count: usize) -> Result<Self, String> {
         let bytes = count
-            .checked_mul(size_of::<Option<Origin>>())
+            .checked_mul(size_of::<Option<Source>>())
             .and_then(|bytes| bytes.checked_add(size_of::<Self>()))
             .filter(|&bytes| count <= MAX_WORLD_LIGHTS && bytes <= MAX_CHANNEL_BYTES)
             .ok_or("Compiled light origins exceed their channel storage budget")?;
@@ -40,7 +48,7 @@ impl ChannelOrigins {
         })
     }
 
-    pub(crate) fn push(
+    pub(crate) fn push_entity(
         &mut self,
         source: Option<u32>,
         instances: &crate::instances::Prepared<'_>,
@@ -51,7 +59,33 @@ impl ChannelOrigins {
         let origin = source
             .map(|entity| Origin::capture(entity, instances, &mut self.bytes, MAX_CHANNEL_BYTES))
             .transpose()?;
-        self.entries.push(origin);
+        self.entries.push(origin.map(Source::Entity));
+        Ok(())
+    }
+
+    pub(crate) fn push_emitting_face(
+        &mut self,
+        face: usize,
+        material: &Arc<str>,
+    ) -> Result<(), String> {
+        if self.entries.len() == self.entries.capacity() {
+            return Err("Compiled light origin count exceeds the admitted native table".into());
+        }
+        if face >= crate::face_origins::MAX_FACES || material.is_empty() {
+            return Err(
+                "Compiled emitting light needs a bounded face and original material".into(),
+            );
+        }
+        self.bytes = material
+            .len()
+            .checked_add(2 * size_of::<usize>())
+            .and_then(|bytes| self.bytes.checked_add(bytes))
+            .filter(|&bytes| bytes <= MAX_CHANNEL_BYTES)
+            .ok_or("Compiled emitting light materials exceed their channel storage budget")?;
+        self.entries.push(Some(Source::EmittingFace {
+            face,
+            material: Arc::clone(material),
+        }));
         Ok(())
     }
 
@@ -70,7 +104,7 @@ impl WorldLightOrigins {
         bsp: &Bsp,
         kind: LightingKind,
         count: usize,
-    ) -> Result<&[Option<Origin>], &'static str> {
+    ) -> Result<&[Option<Source>], &'static str> {
         let (index, lump) = match kind {
             LightingKind::Ldr => (0, lump::WORLDLIGHTS),
             LightingKind::Hdr => (1, lump::WORLDLIGHTS_HDR),

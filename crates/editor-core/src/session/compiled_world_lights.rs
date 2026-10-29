@@ -17,11 +17,13 @@ pub const MAX_METADATA_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_DIAGNOSTICS: usize = 64;
 pub const MAX_DIAGNOSTIC_BYTES: usize = baked_build::MAX_DIAGNOSTIC_BYTES;
 const FRAME_HALF_EXTENT: f32 = super::inspection_framing::ORIGIN_HALF_EXTENT;
+const MAX_FACE_DECODE_BYTES: usize =
+    compiler::face_origins::MAX_FACES * size_of::<source_formats::bsp::Face>();
 const SOURCE_MODE: baked_build::SourceVerification =
     baked_build::SourceVerification::OriginalMetadata {
         maximum_bytes: MAX_METADATA_BYTES,
     };
-const NOTES: &str = "Native 88-byte world-light records in file order. Positions/radius use Hammer units; intensity is stored native RGB, not display brightness or illuminance. Owner/cluster/texinfo are native integers, not authored identities. Available point/spot source associations are captured at compilation and paired with exact channel bytes; historical IDs describe that captured source only. Instance identity records the outer helper, leaf file, original entity and build-local expanded entity, with an ordered captured occurrence path of authored helper IDs and referenced files, from the root helper to the leaf source. Historical paths describe the captured snapshot, not current files. Channel availability does not establish runtime HDR activation. Currentness covers the committed map, captured settings/content epoch and tracked original source guards, not a complete world-material closure. Changed lookup directories conservatively make source evidence stale. Unapplied drafts are not baked; pending_preview describes rendered geometry drafts only.";
+const NOTES: &str = "Native 88-byte world-light records in file order. Positions/radius use Hammer units; intensity is stored native RGB, not display brightness or illuminance. Owner/cluster/texinfo are native integers, not authored identities. Available point/spot and sky source associations retain captured authored entities. Surface associations retain the emitting face, its original material and one captured authored face origin, with separate native-table and face-geometry validation. Historical IDs describe that captured source only. Instance identity records the outer helper and exact captured occurrence through referenced files to the leaf entity or face. Surface framing uses the finite stored centroid; directional sky records have no frameable native point. Historical paths describe the captured snapshot, not current files. Channel availability does not establish runtime HDR activation. Currentness covers the committed map, captured settings/content epoch and tracked original source guards, not a complete world-material closure. Changed lookup directories conservatively make source evidence stale. Unapplied drafts are not baked; pending_preview describes rendered geometry drafts only.";
 
 #[derive(Debug, Clone)]
 pub struct Query {
@@ -98,8 +100,11 @@ impl Inspection {
             .iter()
             .find(|light| light.ordinal == ordinal)
             .ok_or("Compiled light ordinal is outside the native table")?;
-        if !matches!(light.kind, world_light_kind::POINT | world_light_kind::SPOT) {
-            return Err("Only compiled point and spot light origins can be framed".into());
+        if !matches!(
+            light.kind,
+            world_light_kind::POINT | world_light_kind::SPOT | world_light_kind::SURFACE
+        ) {
+            return Err("Only compiled point, spot and surface light origins can be framed".into());
         }
         let origin = Vec3::from_array(light.origin);
         if !origin.is_finite()
@@ -141,11 +146,73 @@ pub struct Page {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum SourceAssociation {
     Available {
-        origin: compiler::world_light_origins::Origin,
+        #[serde(flatten)]
+        source: CapturedSource,
     },
     Unavailable {
         reason: &'static str,
     },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum CapturedSource {
+    Entity {
+        origin: compiler::entity_origins::Origin,
+    },
+    EmittingFace {
+        face: usize,
+        material: String,
+        origin: compiler::face_origins::Origin,
+    },
+}
+
+impl SourceAssociation {
+    pub fn available(&self) -> Option<&CapturedSource> {
+        match self {
+            Self::Available { source } => Some(source),
+            Self::Unavailable { .. } => None,
+        }
+    }
+}
+
+impl CapturedSource {
+    pub fn label(&self, compact: bool) -> String {
+        match self {
+            Self::Entity { origin } => origin.label(compact),
+            Self::EmittingFace {
+                face,
+                material,
+                origin,
+            } => {
+                let separator = if compact { " / " } else { "\n" };
+                format!(
+                    "face:{face} · {material}{separator}{}",
+                    origin.label(compact)
+                )
+            }
+        }
+    }
+
+    pub fn selection_kind(&self) -> &'static str {
+        match self {
+            Self::Entity {
+                origin: compiler::entity_origins::Origin::Root { .. },
+            } => "root_entity",
+            Self::EmittingFace {
+                origin: compiler::face_origins::Origin::Root { .. },
+                ..
+            } => "root_face",
+            Self::Entity {
+                origin: compiler::entity_origins::Origin::Instance { .. },
+            }
+            | Self::EmittingFace {
+                origin: compiler::face_origins::Origin::Instance { .. },
+                ..
+            } => "containing_reference",
+            Self::EmittingFace { .. } => "unavailable",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -213,15 +280,18 @@ impl Session {
             .iter()
             .find(|row| row.ordinal == ordinal)
             .ok_or("Compiled light ordinal is outside the native table")?;
-        if !matches!(row.kind, world_light_kind::POINT | world_light_kind::SPOT) {
-            return Err("Only compiled point and spot lights have selectable sources".into());
-        }
-        let SourceAssociation::Available { origin } = &row.source_association else {
-            return Err(
-                "The selected native light has no verified captured source association".into(),
-            );
+        let source = row
+            .source_association
+            .available()
+            .ok_or("The selected native light has no verified captured source association")?;
+        let target = match source {
+            CapturedSource::Entity { origin } => {
+                super::compiled_source_selection::captured_root_target(origin)
+            }
+            CapturedSource::EmittingFace { origin, .. } => {
+                super::compiled_source_selection::captured_face_target(origin)?
+            }
         };
-        let target = super::compiled_source_selection::captured_root_target(origin);
         self.select_compiled_source_target(actor, target)
     }
 
@@ -367,6 +437,50 @@ impl Session {
             return Err("Light page offset exceeds the native table count".into());
         }
         let end = (query.offset + query.limit).min(table.len());
+        let face_origins = if associations.as_ref().is_ok_and(|entries| {
+            table
+                .iter()
+                .enumerate()
+                .take(end)
+                .skip(query.offset)
+                .any(|(ordinal, light)| {
+                    light.kind == world_light_kind::SURFACE
+                        && matches!(
+                            entries.get(ordinal).and_then(Option::as_ref),
+                            Some(compiler::world_light_origins::Source::EmittingFace { .. })
+                        )
+                })
+        }) {
+            control.checkpoint()?;
+            match &build.face_origins {
+                Ok(origins) => match origins.validate_channel(&bsp, query.channel.kind()) {
+                    Ok(()) => Ok(origins.as_ref()),
+                    Err(error) => {
+                        diagnostic(
+                            &mut report,
+                            &format!(
+                                "Emitting face source geometry is unavailable: {}",
+                                baked_build::bounded_message(&error)
+                            ),
+                        );
+                        Err("Emitting face source geometry differs from the native channel")
+                    }
+                },
+                Err(error) => {
+                    diagnostic(
+                        &mut report,
+                        &format!(
+                            "Emitting face source metadata is unavailable: {}",
+                            baked_build::bounded_message(error)
+                        ),
+                    );
+                    Err("Emitting face source metadata was not retained for this build")
+                }
+            }
+        } else {
+            Err("No emitting face source metadata is available for this page")
+        };
+        control.checkpoint()?;
         report
             .page
             .rows
@@ -375,7 +489,13 @@ impl Session {
         let mut source_bytes = 0usize;
         for (ordinal, light) in table.iter().enumerate().take(end).skip(query.offset) {
             control.checkpoint()?;
-            let association = source_association(&associations, ordinal, light, &mut source_bytes)?;
+            let association = source_association(
+                &associations,
+                face_origins,
+                ordinal,
+                light,
+                &mut source_bytes,
+            )?;
             report
                 .page
                 .rows
@@ -431,6 +551,7 @@ fn call_bound(decoded: usize) -> Result<usize, String> {
     let bytes = decoded
         .checked_add(baked_build::MAX_BSP_BYTES as usize)
         .and_then(|bytes| bytes.checked_add(MAX_METADATA_BYTES))
+        .and_then(|bytes| bytes.checked_add(MAX_FACE_DECODE_BYTES))
         .and_then(|bytes| bytes.checked_add(2 * MAX_WORLD_LIGHTS * size_of::<WorldLight>()))
         .and_then(|bytes| bytes.checked_add(MAX_PAGE_LIGHTS * size_of::<WorldLightRow>()))
         .and_then(|bytes| bytes.checked_add(MAX_REPORT_BYTES))
@@ -516,32 +637,99 @@ fn channel_baked(lighting: compiler::LightingMode, channel: Channel) -> bool {
 }
 
 fn source_association(
-    associations: &Result<&[Option<compiler::world_light_origins::Origin>], &'static str>,
+    associations: &Result<&[Option<compiler::world_light_origins::Source>], &'static str>,
+    face_origins: Result<&compiler::face_origins::FaceOrigins, &'static str>,
     ordinal: usize,
     light: &WorldLight,
     bytes: &mut usize,
 ) -> Result<SourceAssociation, String> {
     let unavailable = |reason| SourceAssociation::Unavailable { reason };
-    if !matches!(light.kind, world_light_kind::POINT | world_light_kind::SPOT) {
-        return Ok(unavailable(
-            "Source associations are available only for emitted point and spot lights",
-        ));
-    }
     let entries = match associations {
         Ok(entries) => entries,
         Err(reason) => return Ok(unavailable(reason)),
     };
-    let Some(origin) = entries.get(ordinal).and_then(Option::as_ref) else {
+    let Some(source) = entries.get(ordinal).and_then(Option::as_ref) else {
         return Ok(unavailable(
             "No source association was captured for this native record",
         ));
     };
+    let source = match source {
+        compiler::world_light_origins::Source::Entity(origin) => {
+            if !matches!(
+                light.kind,
+                world_light_kind::POINT
+                    | world_light_kind::SPOT
+                    | world_light_kind::SKY
+                    | world_light_kind::SKY_AMBIENT
+            ) {
+                return Ok(unavailable(
+                    "Captured entity source does not match the native light kind",
+                ));
+            }
+            charge_source_copy(bytes, origin.source_bytes())?;
+            CapturedSource::Entity {
+                origin: origin.try_clone()?,
+            }
+        }
+        compiler::world_light_origins::Source::EmittingFace { face, material } => {
+            if light.kind != world_light_kind::SURFACE {
+                return Ok(unavailable(
+                    "Captured emitting face does not match the native light kind",
+                ));
+            }
+            let origins = match face_origins {
+                Ok(origins) => origins,
+                Err(reason) => return Ok(unavailable(reason)),
+            };
+            let Some(mut contributors) = origins.contributors(*face) else {
+                return Ok(unavailable(
+                    "Captured emitting face is outside the source mapping",
+                ));
+            };
+            let Some(origin) = contributors.next() else {
+                return Ok(unavailable(
+                    "Captured emitting face has no original contributor",
+                ));
+            };
+            if contributors.next().is_some() {
+                return Ok(unavailable(
+                    "Captured emitting face has multiple original contributors",
+                ));
+            }
+            if !matches!(
+                origin,
+                compiler::face_origins::Origin::Root { .. }
+                    | compiler::face_origins::Origin::Instance { .. }
+            ) {
+                return Ok(unavailable(
+                    "Captured emitting face has no authored root or instance origin",
+                ));
+            }
+            let copy_bytes = origin
+                .source_bytes()
+                .checked_add(material.len())
+                .ok_or("Compiled emitting-face source copy size overflow")?;
+            charge_source_copy(bytes, copy_bytes)?;
+            let mut name = String::new();
+            name.try_reserve_exact(material.len())
+                .map_err(|_| "Compiled emitting-face material cannot be allocated")?;
+            name.push_str(material);
+            CapturedSource::EmittingFace {
+                face: *face,
+                material: name,
+                origin: origin.try_clone()?,
+            }
+        }
+    };
+    Ok(SourceAssociation::Available { source })
+}
+
+fn charge_source_copy(bytes: &mut usize, additional: usize) -> Result<(), String> {
     *bytes = bytes
-        .checked_add(origin.source_bytes())
+        .checked_add(additional)
         .filter(|bytes| *bytes <= MAX_REPORT_BYTES)
-        .ok_or("Compiled light source paths exceed the page storage budget")?;
-    let origin = origin.try_clone()?;
-    Ok(SourceAssociation::Available { origin })
+        .ok_or("Compiled light sources exceed the page storage budget")?;
+    Ok(())
 }
 
 impl WorldLightRow {

@@ -1664,10 +1664,10 @@ fn bake_channel(
     for emitter in &lights {
         budget.consume(1)?;
         for light in emitter.world_lights().into_iter().flatten() {
-            origins.push(
+            origins.push_entity(
                 match emitter {
                     Emitter::Point(light) => Some(light.source_id),
-                    Emitter::Sky(_) => None,
+                    Emitter::Sky(light) => Some(light.source_id),
                 },
                 instances,
             )?;
@@ -1681,16 +1681,13 @@ fn bake_channel(
             bsp,
             native_emission_count,
             &mut world_lights,
+            &mut origins,
             budget,
         )?;
         if appended != native_emission_count || world_lights.len() != count {
             return Err(
                 "Native material-emission world-light count differs from its admitted count".into(),
             );
-        }
-        for _ in 0..appended {
-            budget.consume(1)?;
-            origins.push(None, instances)?;
         }
         emission.set_native_surface_lights(kind, appended)?;
     }

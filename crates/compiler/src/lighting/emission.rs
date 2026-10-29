@@ -594,6 +594,7 @@ pub(super) struct Declarations {
 
 struct Source {
     face: usize,
+    material: Option<Arc<str>>,
     texinfo: usize,
     world_plane: Option<usize>,
     location: String,
@@ -603,6 +604,8 @@ struct Source {
 }
 
 pub(super) struct NativePatch<'a> {
+    pub face: usize,
+    pub material: &'a Arc<str>,
     pub points: &'a [DVec3; 3],
     pub radiance: DVec3,
     pub boundary: &'a SourceBoundary,
@@ -892,6 +895,23 @@ pub(super) fn prepare(
                     fragments.len() * (size_of::<Source>() * 2 + location.len() + 128),
                 )?;
             }
+            let material = if declarations.native_enabled {
+                let bytes = original_name
+                    .len()
+                    .checked_add(2 * size_of::<usize>())
+                    .ok_or("Native emission material metadata size overflow")?;
+                allocation.grow(budget, bytes)?;
+                let _copy_allocation = budget.reserve_bytes(original_name.len())?;
+                budget.consume(original_name.len().div_ceil(64) * 2)?;
+                let mut material = String::new();
+                material
+                    .try_reserve_exact(original_name.len())
+                    .map_err(|_| "Native emission source material cannot be allocated")?;
+                material.push_str(&original_name);
+                Some(Arc::<str>::from(material))
+            } else {
+                None
+            };
             for (rgb, triangles) in fragments {
                 let radiance = declaration.channels.map(|value| {
                     let value = value.unwrap_or(DVec3::ZERO);
@@ -927,6 +947,7 @@ pub(super) fn prepare(
                 sources.push(Source {
                     location: location.clone(),
                     face: index,
+                    material: material.clone(),
                     texinfo: face.texinfo as usize,
                     world_plane: (scope.entity == 0).then_some(side.plane),
                     triangles,
@@ -1135,10 +1156,16 @@ impl Prepared {
             if source.radiance[channel] == DVec3::ZERO {
                 continue;
             }
+            let material = source
+                .material
+                .as_ref()
+                .ok_or("Native emission source lost its captured original material")?;
             for (triangle, points) in source.triangles.iter().enumerate() {
                 budget.consume(1)?;
                 visit(
                     NativePatch {
+                        face: source.face,
+                        material,
                         points,
                         radiance: source.radiance[channel],
                         boundary: &source.boundary,

@@ -85,11 +85,11 @@ fn association_text(row: &WorldLightRow, historical: bool, compact: bool) -> Str
         "Captured source: "
     };
     match &row.source_association {
-        SourceAssociation::Available { origin } => {
+        SourceAssociation::Available { source } => {
             if compact {
-                origin.label(true)
+                source.label(true)
             } else {
-                format!("{prefix}{}", origin.label(false))
+                format!("{prefix}{}", source.label(false))
             }
         }
         SourceAssociation::Unavailable { reason } => {
@@ -128,26 +128,17 @@ fn details(window: &CompiledLightsWindow, row: &WorldLightRow, report: &Inspecti
     window.set_can_select_source(
         report.build["current"] == true
             && report.build["status"] == "current"
-            && matches!(
-                row.kind,
-                source_formats::bsp::world_light_kind::POINT
-                    | source_formats::bsp::world_light_kind::SPOT
-            )
-            && matches!(
-                &row.source_association,
-                editor_core::session::compiled_world_lights::SourceAssociation::Available { .. }
-            ),
+            && row.source_association.available().is_some(),
     );
     window.set_source_selection_label(
-        if matches!(
-            &row.source_association,
-            editor_core::session::compiled_world_lights::SourceAssociation::Available {
-                origin: compiler::entity_origins::Origin::Instance { .. }
-            }
-        ) {
-            "Select containing reference"
-        } else {
-            "Select source"
+        match row
+            .source_association
+            .available()
+            .map(|source| source.selection_kind())
+        {
+            Some("root_face") => "Select source face",
+            Some("containing_reference") => "Select containing reference",
+            _ => "Select source",
         }
         .into(),
     );
@@ -352,13 +343,13 @@ fn current_light(
             .report
             .as_ref()
             .ok_or("Inspect compiled lights first")?;
-        let index = usize::try_from(window.get_current_row())
-            .map_err(|_| "Select a compiled point or spot light")?;
+        let index =
+            usize::try_from(window.get_current_row()).map_err(|_| "Select a compiled light")?;
         let row = report
             .page
             .rows
             .get(index)
-            .ok_or("Select a compiled point or spot light")?;
+            .ok_or("Select a compiled light")?;
         let token = state
             .query
             .build_token
@@ -381,13 +372,22 @@ fn select_source(
         channel,
         ordinal,
     )?;
-    window.set_diagnostics(
-        format!(
-            "Selected {} in Objects mode. Camera is unchanged.",
-            selected["target"].as_str().unwrap_or("source")
-        )
-        .into(),
-    );
+    let (target, mode) = match selected["mode"].as_str() {
+        Some("faces") => (
+            format!(
+                "face {}/{}",
+                selected["target"]["solid"], selected["target"]["side"]
+            ),
+            "Faces",
+        ),
+        Some("objects") => (
+            selected["target"].as_str().unwrap_or("source").to_owned(),
+            "Objects",
+        ),
+        _ => ("source".into(), "current selection"),
+    };
+    window
+        .set_diagnostics(format!("Selected {target} in {mode} mode. Camera is unchanged.").into());
     Ok(())
 }
 

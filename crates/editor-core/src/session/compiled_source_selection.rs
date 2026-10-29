@@ -1,12 +1,12 @@
 use compiler::entity_origins::Origin;
-use map_core::ObjectId;
+use map_core::{ObjectId, surface::FaceId};
 use serde_json::{Value, json};
 
 use super::{Actor, SelectMode, Session};
 
-pub(super) struct SourceTarget {
-    id: ObjectId,
-    kind: &'static str,
+pub(super) enum SourceTarget {
+    Object { id: ObjectId, kind: &'static str },
+    Face(FaceId),
 }
 
 pub(super) fn captured_root_target(origin: &Origin) -> SourceTarget {
@@ -14,9 +14,32 @@ pub(super) fn captured_root_target(origin: &Origin) -> SourceTarget {
         Origin::Root { entity } => (*entity, "root_entity"),
         Origin::Instance { instance, .. } => (*instance, "containing_reference"),
     };
-    SourceTarget {
+    SourceTarget::Object {
         id: ObjectId::Entity(id),
         kind,
+    }
+}
+
+pub(super) fn captured_face_target(
+    origin: &compiler::face_origins::Origin,
+) -> Result<SourceTarget, &'static str> {
+    match origin {
+        compiler::face_origins::Origin::Root { solid, side, .. } => {
+            Ok(SourceTarget::Face(FaceId {
+                solid: *solid,
+                side: *side,
+            }))
+        }
+        compiler::face_origins::Origin::Instance { instance, .. } => Ok(SourceTarget::Object {
+            id: ObjectId::Entity(*instance),
+            kind: "containing_reference",
+        }),
+        compiler::face_origins::Origin::GeneratedRegion { .. } => {
+            Err("Generated region faces have no selectable authored source")
+        }
+        compiler::face_origins::Origin::Unresolved { .. } => {
+            Err("The compiled face source is unresolved")
+        }
     }
 }
 
@@ -41,10 +64,24 @@ impl Session {
         target: SourceTarget,
     ) -> Result<Value, String> {
         self.compiled_source_selection_ready()?;
-        self.select(&[target.id], SelectMode::Replace)?;
-        self.log(actor, format!("selected compiled source {}", target.id));
-        Ok(
-            json!({"target":crate::identity::id_string(target.id),"source_kind":target.kind,"mode":"objects","selected_count":1}),
-        )
+        let result = match target {
+            SourceTarget::Object { id, kind } => {
+                self.select(&[id], SelectMode::Replace)?;
+                self.log(actor, format!("selected compiled source {id}"));
+                json!({"target":crate::identity::id_string(id),"source_kind":kind,"mode":"objects","selected_count":1})
+            }
+            SourceTarget::Face(face) => {
+                self.select_faces(&[face], SelectMode::Replace)?;
+                self.log(
+                    actor,
+                    format!(
+                        "selected compiled source solid:{} side:{}",
+                        face.solid, face.side
+                    ),
+                );
+                json!({"target":{"solid":face.solid,"side":face.side},"source_kind":"root_face","mode":"faces","selected_count":1})
+            }
+        };
+        Ok(result)
     }
 }

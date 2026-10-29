@@ -34,6 +34,91 @@ pub enum Origin {
     },
 }
 
+impl Origin {
+    pub fn source_bytes(&self) -> usize {
+        match self {
+            Self::Instance {
+                file, occurrence, ..
+            } => file.len().saturating_add(occurrence.response_bytes()),
+            _ => 0,
+        }
+    }
+
+    pub fn try_clone(&self) -> Result<Self, String> {
+        match self {
+            Self::Root {
+                entity,
+                solid,
+                side,
+            } => Ok(Self::Root {
+                entity: *entity,
+                solid: *solid,
+                side: *side,
+            }),
+            Self::Instance {
+                instance,
+                file,
+                solid,
+                side,
+                occurrence,
+            } => {
+                let mut path = String::new();
+                path.try_reserve_exact(file.len())
+                    .map_err(|_| "Captured face source path cannot be allocated")?;
+                path.push_str(file);
+                Ok(Self::Instance {
+                    instance: *instance,
+                    file: path,
+                    solid: *solid,
+                    side: *side,
+                    occurrence: std::sync::Arc::clone(occurrence),
+                })
+            }
+            Self::GeneratedRegion { solid, side } => Ok(Self::GeneratedRegion {
+                solid: *solid,
+                side: *side,
+            }),
+            Self::Unresolved { side } => Ok(Self::Unresolved { side: *side }),
+        }
+    }
+
+    pub fn label(&self, compact: bool) -> String {
+        match self {
+            Self::Root {
+                entity,
+                solid,
+                side,
+            } => {
+                if compact {
+                    format!("solid:{solid} / side:{side}")
+                } else {
+                    format!("root entity:{entity} / solid:{solid} / side:{side}")
+                }
+            }
+            Self::Instance {
+                instance,
+                file,
+                solid,
+                side,
+                occurrence,
+            } => {
+                if compact {
+                    format!("instance:{instance} / solid:{solid} / side:{side}")
+                } else {
+                    format!(
+                        "outer helper entity:{instance}\nOccurrence: {}\nLeaf file: {file}\nOriginal solid:{solid} · side:{side}",
+                        occurrence.label()
+                    )
+                }
+            }
+            Self::GeneratedRegion { solid, side } => {
+                format!("generated region solid:{solid} / side:{side}")
+            }
+            Self::Unresolved { side } => format!("unresolved side:{side}"),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Source {
     expanded_side: u32,

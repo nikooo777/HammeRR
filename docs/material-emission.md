@@ -85,11 +85,20 @@ the sampled finite-area bake.
 2. Enable **Native direct emission**.
 3. Click **Apply properties**, then compile with **Direct LDR** or **Direct LDR + HDR**.
 4. Check **Native emission surface lights** in **Build details…**.
-5. Open **Inspect compiled lights…** and read records whose **Kind** is `surface`.
+5. Open **Inspect compiled lights…**, choose **Channel**, and select a row whose
+   **Kind** is `surface`.
+6. Read **Source association** for the captured original material and root face
+   or instance route.
+7. Click **Select source face** for a root source, or **Select containing reference**
+   for an instance source.
+8. Click **Frame light** to frame that triangle's native centroid. Selection stays unchanged.
 
 The policy defaults off. Each constant-colour integration triangle supplies a
 point at its actual centroid, using its normal and area-scaled intensity.
 Texture-driven sources retain their constant-colour integration pieces.
+Several records can therefore refer to one authored face. Source associations
+describe the successful build; stale builds or missing metadata cannot select
+current sources.
 The radius conservatively reaches the farthest corner of the stored world-model
 bounds expanded by native cache extents of 32/32/128 units, rounded upward to
 native precision. This covers compiled-world receiver/cache bounds, without an

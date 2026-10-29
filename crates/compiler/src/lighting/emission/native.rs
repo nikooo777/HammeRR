@@ -125,6 +125,7 @@ pub(in crate::lighting) fn append(
     bsp: &Bsp,
     expected: usize,
     lights: &mut Vec<WorldLight>,
+    origins: &mut crate::world_light_origins::ChannelOrigins,
     budget: &mut Budget<'_>,
 ) -> Result<usize, String> {
     if expected == 0 {
@@ -150,6 +151,8 @@ pub(in crate::lighting) fn append(
                 (patch.points[0] + patch.points[1] + patch.points[2]) / 3.0,
             )
         })?;
+        budget.consume(1)?;
+        origins.push_emitting_face(patch.face, patch.material)?;
         lights.push(light);
         emitted += 1;
         Ok(())

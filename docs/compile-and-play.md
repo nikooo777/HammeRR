@@ -153,6 +153,7 @@ More bounces increase work. Unsupported material effects report diagnostics rath
 ### Normal-map lighting
 
 Supported normal maps alter baked lighting. Material albedo and declared reflectivity also affect transport.
+Normal-map lighting uses four maps per baked face. Sun and sky visibility is shared across them at each surface sample.
 The compiler evaluates a checked material subset; it does not simulate every native shader.
 Missing required texture metrics and malformed material declarations fail the build.
 

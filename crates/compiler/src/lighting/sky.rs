@@ -1,6 +1,7 @@
 use glam::DVec3;
 use source_formats::bsp::{LightingKind, WorldLight, world_light_kind};
 
+use super::bake::{Allocation, Budget};
 use super::{
     PointLight, ReceiverAngularMode, checked_intensity, hdr_color, hdr_scale, number, property,
     unresolved_value,
@@ -10,6 +11,67 @@ use crate::map::MapEntity;
 pub(super) const TRACE_LENGTH: f64 = crate::map::MAX_COMPILE_COORD * 4.0;
 const GOLDEN_ANGLE: f64 = 2.399963229728653;
 const MAX_SUN_SPREAD_ANGLE: f64 = 90.0;
+
+struct TransportSample {
+    generation: usize,
+    throughput: DVec3,
+}
+
+pub(super) struct TransportCache {
+    samples: Vec<TransportSample>,
+    generation: usize,
+    _allocation: Allocation,
+}
+
+impl TransportCache {
+    pub(super) fn new(count: usize, budget: &mut Budget<'_>) -> Result<Self, String> {
+        budget.consume(count)?;
+        let allocation = budget.reserve::<TransportSample>(count)?;
+        let mut samples = Vec::new();
+        samples
+            .try_reserve_exact(count)
+            .map_err(|_| "Sky transport samples cannot be allocated")?;
+        samples.resize_with(count, || TransportSample {
+            generation: 0,
+            throughput: DVec3::ZERO,
+        });
+        Ok(Self {
+            samples,
+            generation: 0,
+            _allocation: allocation,
+        })
+    }
+
+    pub(super) fn begin(&mut self, budget: &mut Budget<'_>) -> Result<(), String> {
+        budget.consume(1)?;
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .ok_or("Sky transport receiver generation overflow")?;
+        Ok(())
+    }
+
+    pub(super) fn sample(
+        &mut self,
+        index: usize,
+        budget: &mut Budget<'_>,
+        visible: impl FnOnce(&mut Budget<'_>) -> Result<DVec3, String>,
+    ) -> Result<DVec3, String> {
+        budget.consume(1)?;
+        let sample = self
+            .samples
+            .get_mut(index)
+            .ok_or("Sky transport direction is outside its prepared samples")?;
+        if sample.generation == self.generation {
+            return Ok(sample.throughput);
+        }
+        let throughput = checked_visibility(visible(budget)?)?;
+        budget.consume(1)?;
+        sample.throughput = throughput;
+        sample.generation = self.generation;
+        Ok(throughput)
+    }
+}
 
 fn checked_visibility(value: DVec3) -> Result<DVec3, String> {
     if !value.is_finite() || value.min_element() < 0.0 || value.max_element() > 1.0 {
@@ -231,26 +293,27 @@ impl SkyLight {
             .collect()
     }
 
-    pub(super) fn sun_contribution_with_visibility(
-        self,
-        normal: DVec3,
-        directions: &[DVec3],
-        visible: &mut impl FnMut(DVec3) -> Result<DVec3, String>,
-    ) -> Result<DVec3, String> {
-        self.sun_contribution_with_mode_visibility(
-            normal,
-            directions,
-            ReceiverAngularMode::Normal,
-            visible,
-        )
-    }
-
     pub(super) fn sun_contribution_with_mode_visibility(
         self,
         normal: DVec3,
         directions: &[DVec3],
         mode: ReceiverAngularMode,
         visible: &mut impl FnMut(DVec3) -> Result<DVec3, String>,
+    ) -> Result<DVec3, String> {
+        self.sun_contribution_with_indexed_visibility(
+            normal,
+            directions,
+            mode,
+            &mut |_, direction| visible(direction),
+        )
+    }
+
+    pub(super) fn sun_contribution_with_indexed_visibility(
+        self,
+        normal: DVec3,
+        directions: &[DVec3],
+        mode: ReceiverAngularMode,
+        visible: &mut impl FnMut(usize, DVec3) -> Result<DVec3, String>,
     ) -> Result<DVec3, String> {
         let color = self.contribution_with_mode(normal, mode)?;
         if color == DVec3::ZERO {
@@ -260,8 +323,8 @@ impl SkyLight {
             return Err("Sun visibility needs at least one direction".into());
         }
         let mut received = DVec3::ZERO;
-        for &direction in directions {
-            received += checked_visibility(visible(direction)?)?;
+        for (index, &direction) in directions.iter().enumerate() {
+            received += checked_visibility(visible(index, direction)?)?;
         }
         Ok(color * (received / directions.len() as f64))
     }
@@ -314,20 +377,6 @@ impl SkyLight {
         self.ambient / 255.0
     }
 
-    pub(super) fn ambient_contribution_with_visibility(
-        self,
-        normal: DVec3,
-        directions: &[DVec3],
-        visible: &mut impl FnMut(DVec3) -> Result<DVec3, String>,
-    ) -> Result<DVec3, String> {
-        self.ambient_contribution_with_mode_visibility(
-            normal,
-            directions,
-            ReceiverAngularMode::Normal,
-            visible,
-        )
-    }
-
     pub(super) fn ambient_contribution_with_mode_visibility(
         self,
         normal: DVec3,
@@ -335,18 +384,33 @@ impl SkyLight {
         mode: ReceiverAngularMode,
         visible: &mut impl FnMut(DVec3) -> Result<DVec3, String>,
     ) -> Result<DVec3, String> {
+        self.ambient_contribution_with_indexed_visibility(
+            normal,
+            directions,
+            mode,
+            &mut |_, direction| visible(direction),
+        )
+    }
+
+    pub(super) fn ambient_contribution_with_indexed_visibility(
+        self,
+        normal: DVec3,
+        directions: &[DVec3],
+        mode: ReceiverAngularMode,
+        visible: &mut impl FnMut(usize, DVec3) -> Result<DVec3, String>,
+    ) -> Result<DVec3, String> {
         let normal = normal
             .try_normalize()
             .ok_or("Sky ambient needs a finite nonzero normal")?;
         let mut total = 0.0;
         let mut received = DVec3::ZERO;
-        for &direction in directions {
+        for (index, &direction) in directions.iter().enumerate() {
             let weight = mode.ambient_weight(normal, direction);
             if weight == 0.0 {
                 continue;
             }
             total += weight;
-            received += weight * checked_visibility(visible(direction)?)?;
+            received += weight * checked_visibility(visible(index, direction)?)?;
         }
         if total <= 0.0 {
             return Err(match mode {

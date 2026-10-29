@@ -1757,8 +1757,17 @@ fn bake_channel(
     let mut styled_faces = 0;
     let mut style_maps = 0;
     let mut bump_lightmaps = 0;
+    let mut sky_transport = None;
     for plan in plans {
         budget.consume(1)?;
+        let cache_sky = plan.map_count() > 1 && !sun_directions.is_empty();
+        if cache_sky && sky_transport.is_none() {
+            let count = sun_directions
+                .len()
+                .checked_add(ambient_directions.len())
+                .ok_or("Sky transport sample count overflow")?;
+            sky_transport = Some(super::sky::TransportCache::new(count, budget)?);
+        }
         let mut channels = super::styles::Channels::new(
             plan.sample_count(),
             colors.len(),
@@ -1844,25 +1853,42 @@ fn bake_channel(
                         continue;
                     }
                     evaluated += 1;
+                    if cache_sky
+                        && matches!(light, Emitter::Sky(_))
+                        && let Some(cache) = &mut sky_transport
+                    {
+                        cache.begin(budget)?;
+                    }
+                    let mut sky_visible = |direction_index, direction, budget: &mut Budget<'_>| {
+                        let visible = |budget: &mut Budget<'_>| {
+                            sky_visibility(
+                                direction,
+                                origin,
+                                shadows,
+                                terrain_shadows,
+                                prop_shadows,
+                                &model_shadows[plan.model],
+                                budget,
+                            )
+                        };
+                        if cache_sky && let Some(cache) = &mut sky_transport {
+                            cache.sample(direction_index, budget, visible)
+                        } else {
+                            visible(budget)
+                        }
+                    };
                     if let Emitter::Sky(light) = light
                         && light.has_ambient()
                     {
                         budget.phase(LightingPhase::SkyAmbient);
                         budget.emitter(&lights[index]);
                         budget.consume(ambient_directions.len())?;
-                        let contribution = light.ambient_contribution_with_visibility(
+                        let contribution = light.ambient_contribution_with_indexed_visibility(
                             normal,
                             &ambient_directions,
-                            &mut |direction| {
-                                sky_visibility(
-                                    direction,
-                                    origin,
-                                    shadows,
-                                    terrain_shadows,
-                                    prop_shadows,
-                                    &model_shadows[plan.model],
-                                    budget,
-                                )
+                            super::ReceiverAngularMode::Normal,
+                            &mut |index, direction| {
+                                sky_visible(sun_directions.len() + index, direction, budget)
                             },
                         )?;
                         let contributions = mapped_colors(
@@ -1872,19 +1898,12 @@ fn bake_channel(
                             budget,
                             &mut |normal, budget| {
                                 budget.consume(ambient_directions.len())?;
-                                light.ambient_contribution_with_visibility(
+                                light.ambient_contribution_with_indexed_visibility(
                                     normal,
                                     &ambient_directions,
-                                    &mut |direction| {
-                                        sky_visibility(
-                                            direction,
-                                            origin,
-                                            shadows,
-                                            terrain_shadows,
-                                            prop_shadows,
-                                            &model_shadows[plan.model],
-                                            budget,
-                                        )
+                                    super::ReceiverAngularMode::Normal,
+                                    &mut |index, direction| {
+                                        sky_visible(sun_directions.len() + index, direction, budget)
                                     },
                                 )
                             },
@@ -1932,20 +1951,11 @@ fn bake_channel(
                             }
                         }
                         Emitter::Sky(light) => {
-                            let contribution = light.sun_contribution_with_visibility(
+                            let contribution = light.sun_contribution_with_indexed_visibility(
                                 normal,
                                 &sun_directions,
-                                &mut |direction| {
-                                    sky_visibility(
-                                        direction,
-                                        origin,
-                                        shadows,
-                                        terrain_shadows,
-                                        prop_shadows,
-                                        &model_shadows[plan.model],
-                                        budget,
-                                    )
-                                },
+                                super::ReceiverAngularMode::Normal,
+                                &mut |index, direction| sky_visible(index, direction, budget),
                             )?;
                             let contributions = mapped_colors(
                                 contribution,
@@ -1953,19 +1963,12 @@ fn bake_channel(
                                 plan.map_count(),
                                 budget,
                                 &mut |normal, budget| {
-                                    light.sun_contribution_with_visibility(
+                                    light.sun_contribution_with_indexed_visibility(
                                         normal,
                                         &sun_directions,
-                                        &mut |direction| {
-                                            sky_visibility(
-                                                direction,
-                                                origin,
-                                                shadows,
-                                                terrain_shadows,
-                                                prop_shadows,
-                                                &model_shadows[plan.model],
-                                                budget,
-                                            )
+                                        super::ReceiverAngularMode::Normal,
+                                        &mut |index, direction| {
+                                            sky_visible(index, direction, budget)
                                         },
                                     )
                                 },
@@ -2023,6 +2026,7 @@ fn bake_channel(
         faces[plan.face].styles = styles;
         faces[plan.face].light_offset = offset;
     }
+    drop(sky_transport);
     budget.consume(0)?;
     bsp.set_lighting(kind, &colors)
         .map_err(|error| error.to_string())?;

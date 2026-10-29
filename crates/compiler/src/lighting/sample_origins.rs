@@ -55,7 +55,12 @@ fn rounding(plane: Plane, point: DVec3) -> f64 {
         * (ROUNDING_OPERATIONS * f64::EPSILON)
 }
 
-fn source_plane(
+fn exit_clearance(plane: Plane, point: DVec3, end: DVec3, distance: f64, slope: f64) -> f64 {
+    let allowance = rounding(plane, point).max(rounding(plane, end));
+    ((allowance - distance) / slope).max(0.0)
+}
+
+fn source_contact_plane(
     source: &Source<'_>,
     hull: &Occluder,
     consume: &mut impl FnMut(usize) -> Result<(), String>,
@@ -78,19 +83,22 @@ fn source_plane(
         return Ok(None);
     }
     let lookup = sides.len().checked_ilog2().unwrap_or(0) as usize + 1;
+    let mut coincident = None;
     for (index, (side, actual)) in identity.sides.iter().zip(&hull.planes).enumerate() {
         consume(lookup + 2)?;
         if side.plane == *plane
-            && side
-                .side
-                .is_some_and(|side| sides.binary_search(&side).is_ok())
             && actual.normal == equation.normal
             && actual.dist == equation.dist
+            && let Some(side) = side.side
         {
-            return Ok(Some(index));
+            if sides.binary_search(&side).is_ok() {
+                return Ok(Some(index));
+            }
+            consume(2)?;
+            coincident.get_or_insert(index);
         }
     }
-    Ok(None)
+    Ok(coincident)
 }
 
 fn hull_clearance(
@@ -109,14 +117,14 @@ fn hull_clearance(
         &mut |work| budget.borrow_mut().consume(work),
         &mut |hull| {
             let mut consume = |work| budget.borrow_mut().consume(work);
-            let own = source_plane(source, hull, &mut consume)?;
+            let contact = source_contact_plane(source, hull, &mut consume)?;
             consume(hull.plane_count() * PLANE_WORK)?;
             let Some(interval) = hull.interval(point, full_end)? else {
                 return Ok(Visit::Continue(clearance.limit()));
             };
             let mut exempt = None;
             if interval.entering == 0.0
-                && let Some(index) = own
+                && let Some(index) = contact
             {
                 let plane = hull.planes[index];
                 let distance = plane.distance_to(point);
@@ -124,14 +132,42 @@ fn hull_clearance(
                 if slope > 0.0 {
                     let crossing = -distance / slope;
                     if crossing >= 0.0
-                        && (crossing / clearance.length - interval.leaving).abs()
-                            <= TRIANGLE_EPSILON
+                        && interval.leaving < 1.0
+                        && interval.leaving <= crossing / clearance.length + TRIANGLE_EPSILON
                     {
-                        let allowance = rounding(plane, point).max(rounding(plane, full_end));
-                        clearance.required = clearance
-                            .required
-                            .max(((allowance - distance) / slope).max(0.0));
-                        exempt = Some(interval.leaving);
+                        let end_distance = plane.distance_to(full_end);
+                        let required = if end_distance > 0.0
+                            && distance / (distance - end_distance) == interval.leaving
+                        {
+                            Some(exit_clearance(plane, point, full_end, distance, slope))
+                        } else {
+                            let mut required: Option<f64> = None;
+                            for (candidate_index, &exit) in hull.planes.iter().enumerate() {
+                                if candidate_index == index {
+                                    continue;
+                                }
+                                consume(PLANE_WORK)?;
+                                let a = exit.distance_to(point);
+                                let b = exit.distance_to(full_end);
+                                if a <= 0.0 && b > 0.0 && a / (a - b) == interval.leaving {
+                                    consume(3 * PLANE_WORK)?;
+                                    let slope = exit.normal.dot(direction);
+                                    if slope > 0.0 {
+                                        let candidate =
+                                            exit_clearance(exit, point, full_end, a, slope);
+                                        required = Some(
+                                            required
+                                                .map_or(candidate, |value| value.min(candidate)),
+                                        );
+                                    }
+                                }
+                            }
+                            required
+                        };
+                        if let Some(required) = required {
+                            clearance.required = clearance.required.max(required);
+                            exempt = Some(interval.leaving);
+                        }
                     }
                 }
             }
@@ -159,7 +195,7 @@ fn certify_source_hulls(
         &mut |work| budget.borrow_mut().consume(work),
         &mut |hull| {
             let mut consume = |work| budget.borrow_mut().consume(work);
-            if source_plane(source, hull, &mut consume)?.is_none() {
+            if source_contact_plane(source, hull, &mut consume)?.is_none() {
                 return Ok(Visit::Continue(1.0));
             }
             consume(hull.plane_count() * PLANE_WORK)?;

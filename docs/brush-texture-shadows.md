@@ -39,6 +39,8 @@ With **Colored texture shadows** off, the texture's RGB does not tint transmitte
 
 Surface samples stop their origin offset before nearby caster geometry.
 This keeps thin gaps and close layers in the shadow path, even at transparent texels.
+The same clearance check applies at rounded brush corners and overlapping
+coplanar surfaces. Separate layers still block rays.
 
 The setting applies to direct lights and styles, sun and sky, diffuse bounces,
 ambient probes, detail and static-prop vertex lighting, and material-emission transport.

@@ -14,8 +14,10 @@ const MAX_LIGHTMAP_EXTENT: i32 = 32;
 const MAX_PROVENANCE_WORK: usize = 4_000_000;
 pub(crate) const MAX_SMOOTH_SOURCE_POINTS: usize = 4_000_000;
 
+mod internal_caps;
 mod region_budget;
 mod water_budget;
+pub(crate) use internal_caps::remove_internal_caps;
 pub use region_budget::Limits;
 
 #[derive(Debug)]

@@ -75,13 +75,11 @@ pub(super) struct Plan {
 
 enum Surface {
     Plane {
-        frame: LuxelFrame,
+        sampling: super::surface_samples::Face,
         normal: DVec3,
         world_normal: DVec3,
         source_plane: usize,
-        source_equation: Plane,
         source_error: f64,
-        points: Vec<DVec3>,
         normals: Option<std::sync::Arc<super::normals::Field>>,
     },
     Terrain(TerrainPlan),
@@ -101,13 +99,18 @@ impl Plan {
         let Surface::Plane {
             normal,
             world_normal,
-            points,
+            sampling,
             ..
         } = &mut self.surface
         else {
             return Err("Rotated brush-model lighting cannot contain terrain".into());
         };
-        for &point in points.iter() {
+        for point in sampling
+            .points()
+            .iter()
+            .copied()
+            .chain(sampling.projected_points())
+        {
             budget.consume(1)?;
             checked_model_point(pose.point(point))?;
         }
@@ -149,7 +152,7 @@ impl Plan {
 
     pub(super) fn dimensions(&self) -> [usize; 2] {
         match &self.surface {
-            Surface::Plane { frame, .. } => frame.dimensions(),
+            Surface::Plane { sampling, .. } => sampling.frame().dimensions(),
             Surface::Terrain(plan) => plan.dimensions,
         }
     }
@@ -163,18 +166,17 @@ impl Plan {
         &self,
         s: usize,
         t: usize,
+        workspace: &mut super::surface_samples::Workspace,
         budget: &mut Budget<'_>,
     ) -> Result<(DVec3, DVec3), String> {
         match &self.surface {
             Surface::Plane {
-                frame,
+                sampling,
                 normal,
-                points,
                 normals,
                 ..
             } => {
-                budget.consume(points.len() + 1)?;
-                let point = inside_or_closest(frame.position(s, t)?, points, *normal);
+                let point = sampling.sample(s, t, workspace, budget)?;
                 let shading = if let Some(normals) = normals {
                     budget.consume(normals.point_count())?;
                     normals.sample(point, *normal)
@@ -216,15 +218,19 @@ impl Plan {
             Surface::Plane {
                 world_normal,
                 source_plane,
-                source_equation,
                 source_error,
                 ..
             } => {
                 budget.consume(if self.pose.rotation.is_some() { 24 } else { 4 })?;
+                let authored = ctx.map.planes.get(*source_plane);
+                let source_equation = Plane {
+                    normal: authored.normal,
+                    dist: authored.dist,
+                };
                 (
                     super::sample_origins::Source::Plane {
                         plane: *source_plane,
-                        equation: self.pose.plane(*source_equation),
+                        equation: self.pose.plane(source_equation),
                         sides: &ctx.face_sources[self.face],
                         owners: &ctx.map.entities[self.entity].brushes,
                         error: *source_error,
@@ -247,6 +253,20 @@ impl Plan {
         };
         super::sample_origins::origin(ctx.scene, &source, point, bias, SAMPLE_BIAS, budget)
     }
+}
+
+pub(super) fn sample_workspace(
+    plans: &[Plan],
+    budget: &mut Budget<'_>,
+) -> Result<super::surface_samples::Workspace, String> {
+    let mut vertices = 0;
+    for plan in plans {
+        budget.consume(1)?;
+        if let Surface::Plane { sampling, .. } = &plan.surface {
+            vertices = vertices.max(sampling.vertex_count());
+        }
+    }
+    super::surface_samples::Workspace::new(vertices, budget)
 }
 
 fn checked_model_point(point: DVec3) -> Result<(), String> {
@@ -493,33 +513,6 @@ impl Budget<'_> {
         }
         Ok(())
     }
-}
-
-fn inside_or_closest(point: DVec3, points: &[DVec3], normal: DVec3) -> DVec3 {
-    let mut inside = true;
-    let mut closest = points[0];
-    let mut distance = f64::INFINITY;
-    for index in 0..points.len() {
-        let a = points[index];
-        let b = points[(index + 1) % points.len()];
-        let edge = b - a;
-        if normal.dot(edge.cross(point - a)) > 1e-6 {
-            inside = false;
-        }
-        let squared = edge.length_squared();
-        let t = if squared > 0.0 {
-            ((point - a).dot(edge) / squared).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let candidate = a + t * edge;
-        let candidate_distance = candidate.distance_squared(point);
-        if candidate_distance < distance {
-            closest = candidate;
-            distance = candidate_distance;
-        }
-    }
-    if inside { point } else { closest }
 }
 
 pub(super) enum Emitter {
@@ -884,16 +877,22 @@ fn plans(
             if points.len() < 3 || points.iter().any(|point| !point.is_finite()) {
                 return Err("Direct lighting face has invalid corners".into());
             }
+            let sampling =
+                super::surface_samples::Face::new(frame, points, &info, face.lightmap_mins, budget)
+                    .map_err(|error| format!("face:{index}: {error}"))?;
             let normal = plane.normal.normalize();
             let authored = map.planes.get(face.plane as usize);
             let source_equation = Plane {
                 normal: authored.normal,
                 dist: authored.dist,
             };
-            budget.consume(points.len() + 5)?;
-            let mut source_error = points
+            budget.consume(2 * sampling.vertex_count() + 5)?;
+            let mut source_error = sampling
+                .points()
                 .iter()
-                .map(|&point| source_equation.distance_to(point).abs())
+                .copied()
+                .chain(sampling.projected_points())
+                .map(|point| source_equation.distance_to(point).abs())
                 .fold(0.0_f64, f64::max);
             let [width, height] = frame.dimensions();
             for (s, t) in [
@@ -915,13 +914,11 @@ fn plans(
                 entity: scope.entity,
                 pose: scope.pose,
                 surface: Surface::Plane {
-                    frame,
+                    sampling,
                     normal,
                     world_normal: normal,
                     source_plane: face.plane as usize,
-                    source_equation,
                     source_error,
-                    points,
                     normals: normals.fields.remove(&index),
                 },
                 bump,
@@ -1518,7 +1515,7 @@ pub(super) fn channel_failure(
     map: &Map<'_>,
     face_sources: &[std::sync::Arc<[u32]>],
     plan: &Plan,
-    point: DVec3,
+    point: Option<DVec3>,
     sources: impl Iterator<Item = (u8, Option<u32>)>,
     message: String,
 ) -> Diagnostic {
@@ -1586,7 +1583,7 @@ pub(super) fn channel_failure(
     Diagnostic::error(
         message,
         sides.first().map(|side| format!("side:{side}")),
-        Some(point),
+        point,
     )
 }
 
@@ -1758,6 +1755,7 @@ fn bake_channel(
     let mut style_maps = 0;
     let mut bump_lightmaps = 0;
     let mut sky_transport = None;
+    let mut sample_workspace = sample_workspace(plans, budget)?;
     for plan in plans {
         budget.consume(1)?;
         let cache_sky = plan.map_count() > 1 && !sun_directions.is_empty();
@@ -1789,7 +1787,22 @@ fn bake_channel(
         for t in 0..height {
             for s in 0..width {
                 budget.phase(LightingPhase::Direct);
-                let (point, normal) = plan.sample(s, t, budget)?;
+                let (point, normal) =
+                    plan.sample(s, t, &mut sample_workspace, budget)
+                        .map_err(|message| {
+                            let diagnostic = channel_failure(
+                                instances,
+                                map,
+                                face_sources,
+                                plan,
+                                None,
+                                std::iter::empty(),
+                                format!("Lighting sample [{s}, {t}]: {message}"),
+                            );
+                            let message = diagnostic.message.clone();
+                            report.diagnostics.push(diagnostic);
+                            message
+                        })?;
                 let origin = plan
                     .origin(&origin_context, [s, t], point, normal, budget)
                     .map_err(|message| {
@@ -1798,7 +1811,7 @@ fn bake_channel(
                             map,
                             face_sources,
                             plan,
-                            point,
+                            Some(point),
                             std::iter::empty(),
                             message,
                         );
@@ -1827,7 +1840,7 @@ fn bake_channel(
                                     map,
                                     face_sources,
                                     plan,
-                                    point,
+                                    Some(point),
                                     sources,
                                     message,
                                 );
@@ -2026,6 +2039,7 @@ fn bake_channel(
         faces[plan.face].styles = styles;
         faces[plan.face].light_offset = offset;
     }
+    drop(sample_workspace);
     drop(sky_transport);
     budget.consume(0)?;
     bsp.set_lighting(kind, &colors)

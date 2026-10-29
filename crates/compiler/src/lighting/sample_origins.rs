@@ -12,6 +12,9 @@ const ROUNDING_OPERATIONS: f64 = 64.0;
 const ORIGIN_WORK: usize = 32;
 const PLANE_WORK: usize = 16;
 const PROP_INTERSECTION_WORK: usize = 48;
+const BOUNDARY_TRACKING_WORK: usize = 4;
+const CANDIDATE_WORK: usize = 64;
+const CANDIDATE_LIMIT: usize = 8;
 const QUERY_SCALE: f64 = 2.0;
 
 pub(super) enum Source<'a> {
@@ -36,13 +39,32 @@ struct Clearance {
     rounding: f64,
 }
 
+#[derive(Clone, Copy)]
+struct HullLimit {
+    slot: usize,
+    fraction: f64,
+}
+
+enum Placement {
+    Placed(DVec3),
+    NoPlacement { hint: Option<DVec3> },
+}
+
+#[derive(Clone, Copy)]
+struct Candidate {
+    bias: DVec3,
+    direction: DVec3,
+}
+
 impl Clearance {
-    fn constrain(&mut self, fraction: f64) {
+    fn constrain(&mut self, fraction: f64) -> bool {
+        let previous = self.first;
         let distance = fraction * self.length;
         if distance > 0.0 && distance <= self.maximum + self.rounding {
             let distance = distance.min(self.maximum);
             self.first = Some(self.first.map_or(distance, |first| first.min(distance)));
         }
+        self.first != previous
     }
 
     fn limit(&self) -> f64 {
@@ -109,13 +131,14 @@ fn hull_clearance(
     direction: DVec3,
     clearance: &mut Clearance,
     budget: &mut Budget<'_>,
-) -> Result<(), String> {
+) -> Result<Option<HullLimit>, String> {
     let budget = RefCell::new(budget);
-    hulls.visit(
+    let mut limiting = None;
+    hulls.visit_indexed(
         point,
         full_end,
         &mut |work| budget.borrow_mut().consume(work),
-        &mut |hull| {
+        &mut |slot, hull| {
             let mut consume = |work| budget.borrow_mut().consume(work);
             let contact = source_contact_plane(source, hull, &mut consume)?;
             consume(hull.plane_count() * PLANE_WORK)?;
@@ -173,13 +196,48 @@ fn hull_clearance(
             }
             for fraction in [interval.entering, interval.leaving] {
                 if fraction > 0.0 && fraction < 1.0 && Some(fraction) != exempt {
-                    clearance.constrain(fraction);
+                    consume(BOUNDARY_TRACKING_WORK)?;
+                    if clearance.constrain(fraction) {
+                        limiting = Some(HullLimit { slot, fraction });
+                    }
                 }
             }
             Ok(Visit::Continue(clearance.limit()))
         },
     )?;
-    Ok(())
+    Ok(limiting)
+}
+
+fn boundary_hint(
+    hull: &Occluder,
+    fraction: f64,
+    point: DVec3,
+    end: DVec3,
+    budget: &mut Budget<'_>,
+) -> Result<DVec3, String> {
+    for &plane in &hull.planes {
+        budget.consume(2 * PLANE_WORK)?;
+        let a = plane.distance_to(point);
+        let b = plane.distance_to(end);
+        if !a.is_finite() || !b.is_finite() {
+            return Err("Sample origin limiting plane has nonfinite support".into());
+        }
+        if (a > 0.0 && b <= 0.0) || (a <= 0.0 && b > 0.0) {
+            let denominator = a - b;
+            let crossing = a / denominator;
+            if !denominator.is_finite() || !crossing.is_finite() {
+                return Err("Sample origin limiting plane has invalid arithmetic".into());
+            }
+            if crossing == fraction {
+                budget.consume(ORIGIN_WORK)?;
+                let safe = if a > 0.0 { plane.normal } else { -plane.normal };
+                return safe
+                    .try_normalize()
+                    .ok_or_else(|| "Sample origin limiting plane has an invalid normal".into());
+            }
+        }
+    }
+    Err("Sample origin limiting hull boundary cannot be certified".into())
 }
 
 fn certify_source_hulls(
@@ -212,14 +270,14 @@ fn certify_source_hulls(
     Ok(())
 }
 
-pub(super) fn origin(
+fn placement(
     scene: &Scene<'_>,
     source: &Source<'_>,
     point: DVec3,
     bias: DVec3,
     maximum: f64,
     budget: &mut Budget<'_>,
-) -> Result<DVec3, String> {
+) -> Result<Placement, String> {
     budget.consume(ORIGIN_WORK)?;
     if !point.is_finite()
         || !bias.is_finite()
@@ -286,8 +344,9 @@ pub(super) fn origin(
     } else {
         None
     };
+    let mut limiting_hull = None;
     for hulls in std::iter::once(scene.shadows).chain(scene.model) {
-        hull_clearance(
+        if let Some(limit) = hull_clearance(
             hulls,
             source,
             point,
@@ -295,7 +354,9 @@ pub(super) fn origin(
             direction,
             &mut clearance,
             budget,
-        )?;
+        )? {
+            limiting_hull = Some((hulls, limit));
+        }
     }
     if let Some(fraction) = scene.terrain.geometric_clearance(
         point,
@@ -303,7 +364,10 @@ pub(super) fn origin(
         terrain_contact.as_ref(),
         &mut |work| budget.consume(work),
     )? {
-        clearance.constrain(fraction);
+        budget.consume(BOUNDARY_TRACKING_WORK)?;
+        if clearance.constrain(fraction) {
+            limiting_hull = None;
+        }
     }
     {
         let budget = RefCell::new(&mut *budget);
@@ -314,17 +378,38 @@ pub(super) fn origin(
             &mut |triangle| {
                 budget.borrow_mut().consume(PROP_INTERSECTION_WORK)?;
                 if let Some(fraction) = triangle.geometric_fraction(point, full_end)? {
-                    clearance.constrain(fraction);
+                    budget.borrow_mut().consume(BOUNDARY_TRACKING_WORK)?;
+                    if clearance.constrain(fraction) {
+                        limiting_hull = None;
+                    }
                 }
                 Ok(Visit::Continue(clearance.limit()))
             },
         )?;
     }
     let upper = clearance.first.unwrap_or(maximum);
-    if !clearance.required.is_finite() || clearance.required >= upper {
-        return Err(
-            "Sample origin has no clearance between its source and another boundary".into(),
-        );
+    if !clearance.required.is_finite() || !upper.is_finite() {
+        return Err("Sample origin clearance bounds must be finite".into());
+    }
+    if clearance.required >= upper {
+        let hint = if matches!(source, Source::Plane { .. })
+            && let Some((hulls, limit)) = limiting_hull
+        {
+            let hull = hulls
+                .objects()
+                .get(limit.slot)
+                .ok_or("Sample origin limiting hull is unavailable")?;
+            Some(boundary_hint(
+                hull,
+                limit.fraction,
+                point,
+                full_end,
+                budget,
+            )?)
+        } else {
+            None
+        };
+        return Ok(Placement::NoPlacement { hint });
     }
     let distance = if clearance.first.is_some() {
         clearance.required + (upper - clearance.required) * 0.5
@@ -345,5 +430,102 @@ pub(super) fn origin(
     for hulls in std::iter::once(scene.shadows).chain(scene.model) {
         certify_source_hulls(hulls, source, origin, budget)?;
     }
-    Ok(origin)
+    Ok(Placement::Placed(origin))
+}
+
+fn enqueue_candidate(
+    candidates: &mut [Candidate; CANDIDATE_LIMIT],
+    count: &mut usize,
+    base: DVec3,
+    hint: DVec3,
+    source_normal: DVec3,
+    budget: &mut Budget<'_>,
+) -> Result<(), String> {
+    if *count == candidates.len() {
+        return Ok(());
+    }
+    budget.consume(CANDIDATE_WORK)?;
+    let bias = base + hint;
+    let Some(direction) = bias.try_normalize() else {
+        return Ok(());
+    };
+    let outward = source_normal.dot(direction);
+    if !direction.is_finite() || !outward.is_finite() || outward <= 0.0 {
+        return Ok(());
+    }
+    budget.consume(*count * 4)?;
+    if candidates[..*count]
+        .iter()
+        .any(|candidate| candidate.direction == direction)
+    {
+        return Ok(());
+    }
+    candidates[*count] = Candidate { bias, direction };
+    *count += 1;
+    Ok(())
+}
+
+pub(super) fn origin(
+    scene: &Scene<'_>,
+    source: &Source<'_>,
+    point: DVec3,
+    bias: DVec3,
+    maximum: f64,
+    budget: &mut Budget<'_>,
+) -> Result<DVec3, String> {
+    let mut hint = match placement(scene, source, point, bias, maximum, budget)? {
+        Placement::Placed(origin) => return Ok(origin),
+        Placement::NoPlacement { hint } => hint,
+    };
+    let Source::Plane { equation, .. } = source else {
+        return Err(
+            "Sample origin has no clearance between its source and another boundary".into(),
+        );
+    };
+    budget.consume(CANDIDATE_WORK)?;
+    let native = bias.normalize();
+    let mut current = native;
+    let mut candidates = [Candidate {
+        bias: DVec3::ZERO,
+        direction: DVec3::ZERO,
+    }; CANDIDATE_LIMIT];
+    candidates[0] = Candidate {
+        bias,
+        direction: native,
+    };
+    let mut count = 1;
+    let mut next = 1;
+    loop {
+        if let Some(safe) = hint {
+            enqueue_candidate(
+                &mut candidates,
+                &mut count,
+                native,
+                safe,
+                equation.normal,
+                budget,
+            )?;
+            enqueue_candidate(
+                &mut candidates,
+                &mut count,
+                current,
+                safe,
+                equation.normal,
+                budget,
+            )?;
+        }
+        if next == count {
+            return Err(
+                "Sample origin has no certified planar contact escape within its direction budget"
+                    .into(),
+            );
+        }
+        let candidate = candidates[next];
+        next += 1;
+        current = candidate.direction;
+        match placement(scene, source, point, candidate.bias, maximum, budget)? {
+            Placement::Placed(origin) => return Ok(origin),
+            Placement::NoPlacement { hint: blocked } => hint = blocked,
+        }
+    }
 }

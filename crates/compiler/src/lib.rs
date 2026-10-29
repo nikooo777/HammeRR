@@ -1538,6 +1538,43 @@ fn build(
         &mut retained_points,
         &water.leaves,
     )?;
+    let removed_caps = {
+        let sources = material_sources
+            .as_ref()
+            .ok_or("Internal detail caps require captured original material sources")?;
+        if !map.materials.uses_build_sources(sources) {
+            return Err("Internal detail caps require the map's original material capture".into());
+        }
+        let material_count = map.materials.iter().count();
+        let mut checked = Vec::new();
+        checked
+            .try_reserve_exact(material_count)
+            .map_err(|error| format!("Cannot allocate internal-cap material checks: {error}"))?;
+        checked.resize(material_count, false);
+        let mut opaque = |index| {
+            control.checkpoint()?;
+            let info = map.materials.get(index);
+            if !instances::brush_models::ordinary(info)
+                || !info.draws
+                || info.surface & source_formats::bsp::surf::NODRAW != 0
+            {
+                return Ok(false);
+            }
+            if !checked[index] {
+                brush_shadow_casters::validate_material(&info.name, sources, control, false)?;
+                checked[index] = true;
+            }
+            Ok(true)
+        };
+        faces::remove_internal_caps(&map, &mut faces, &mut opaque, control)?
+    };
+    if removed_caps > 0 {
+        output.report.diagnostics.push(Diagnostic::info(
+            format!("Removed {removed_caps} exactly matched internal opaque detail caps"),
+            None,
+            None,
+        ));
+    }
     faces.extend(map.terrain_faces(&tree, &mut output.report, control)?);
     if output.report.has_errors() {
         return Ok(());

@@ -37,10 +37,18 @@ For example, two crossings with alpha 64 and 128 leave 63/255 visibility.
 A brush's separate entry and exit faces each contribute coverage, so two half-opaque faces can block completely.
 With **Colored texture shadows** off, the texture's RGB does not tint transmitted light.
 
+Planar face boundaries use [covered lightmap cells](compile-and-play.md#lightmap-boundary-sampling)
+before origin clearance. Boundary samples use the covered area's centroid;
+valid empty padding uses a clipped cell centered at the nearest face point.
+Fully covered interior samples keep their grid points.
+
 Surface samples stop their origin offset before nearby caster geometry.
 This keeps thin gaps and close layers in the shadow path, even at transparent texels.
 The same clearance check applies at rounded brush corners and overlapping
-coplanar surfaces. Separate layers still block rays.
+coplanar surfaces. Planar contacts try the native normal first, then can check
+bounded directions outward from the source, based on real blocking planes,
+within the same 0.5-unit radius and geometry checks. Separate layers still block
+rays. Invalid sampling geometry or an exhausted origin search stops the build.
 
 The setting applies to direct lights and styles, sun and sky, diffuse bounces,
 ambient probes, detail and static-prop vertex lighting, and material-emission transport.

@@ -182,6 +182,7 @@ pub(super) fn bake(
             &current_faces
         }
     };
+    let mut sample_workspace = super::bake::sample_workspace(ctx.plans, budget)?;
     for plan in ctx.plans {
         budget.consume(1)?;
         stats.model_faces += usize::from(plan.model != 0);
@@ -206,7 +207,22 @@ pub(super) fn bake(
         };
         for t in 0..height {
             for s in 0..width {
-                let (point, normal) = plan.sample(s, t, budget)?;
+                let (point, normal) =
+                    plan.sample(s, t, &mut sample_workspace, budget)
+                        .map_err(|message| {
+                            let diagnostic = super::bake::channel_failure(
+                                ctx.instances,
+                                ctx.map,
+                                ctx.face_sources,
+                                plan,
+                                None,
+                                std::iter::empty(),
+                                format!("Lighting sample [{s}, {t}]: {message}"),
+                            );
+                            let message = diagnostic.message.clone();
+                            ctx.report.diagnostics.push(diagnostic);
+                            message
+                        })?;
                 let origin = plan
                     .origin(&origin_context, [s, t], point, normal, budget)
                     .map_err(|message| {
@@ -215,7 +231,7 @@ pub(super) fn bake(
                             ctx.map,
                             ctx.face_sources,
                             plan,
-                            point,
+                            Some(point),
                             std::iter::empty(),
                             message,
                         );
@@ -259,7 +275,7 @@ pub(super) fn bake(
                                                 ctx.map,
                                                 ctx.face_sources,
                                                 plan,
-                                                point,
+                                                Some(point),
                                                 sources,
                                                 message,
                                             );
@@ -288,6 +304,7 @@ pub(super) fn bake(
         ctx.faces[plan.face].styles = styles;
         ctx.faces[plan.face].light_offset = offset;
     }
+    drop(sample_workspace);
     *colors = emitted;
     Ok((stats, surfaces))
 }

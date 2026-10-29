@@ -20,6 +20,11 @@ Click an external contributor to find matches for its exact captured occurrence.
 Its details show each containing helper ID and relative source file, from root
 to leaf. Repeated uses of the same leaf face have distinct routes.
 
+The preview follows the native rectangular lightmap grid. Its grid coordinates
+are not actual bake sampling points. Planar boundary samples can use covered
+cell centroids before origin clearance; the BSP does not store those positions.
+See [lightmap boundary sampling](compile-and-play.md#lightmap-boundary-sampling).
+
 ## Limits
 
 - Physical paths that cannot be reported show stale provenance and omitted path fields.

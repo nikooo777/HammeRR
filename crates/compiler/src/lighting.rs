@@ -32,6 +32,7 @@ mod sample_origins;
 mod shadows;
 mod sky;
 pub(crate) mod styles;
+mod surface_samples;
 mod terrain;
 mod terrain_shadows;
 mod transport;

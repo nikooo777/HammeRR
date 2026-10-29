@@ -74,6 +74,12 @@ Structural brushes divide space and seal the map. `func_detail` contributes surf
 Supported hint planes, areaportals, fading portal windows and occluders control visibility.
 Use [visibility clusters](visclusters.md) only where their grouping is appropriate.
 
+The compiler removes whole internal caps between solid detail brushes only when
+their complete native face boundaries match exactly in reverse order on opposite
+planes. Both brushes need supported drawn opaque materials on all original
+faces. Partial overlaps are not split, and this does not form a general union
+of detail brushes.
+
 For a basic areaportal:
 
 1. Put a sealing brush across an opening.
@@ -118,6 +124,22 @@ Use [material emission](material-emission.md) to bake light from supported
 world/detail surfaces through **World settings… → Emission file**.
 The default-off **Native direct emission** World control adds a separately
 described runtime centroid approximation; static previews remain static.
+
+### Lightmap boundary sampling
+
+On planar brush faces, each lightmap sample covers a one-luxel square. A fully
+covered square keeps its exact grid point. At a boundary, the compiler clips the
+square to the face and samples the covered area's centroid. For valid
+padding with no covered area, it first centers the square at the nearest face
+point, then clips it.
+
+This rule applies before origin clearance in direct and bounced lighting.
+On planar faces, clearance tries the native normal first. If that direction has
+no valid placement, it can check a bounded set of directions outward from the
+source, based on real blocking planes. Each candidate must pass the same geometry
+checks within a 0.5-unit radius. Separate blockers stay active. Invalid geometry,
+unsupported arithmetic, exhausted search and resource limits remain errors; cancellation
+stops the build.
 
 ### Bounced light
 

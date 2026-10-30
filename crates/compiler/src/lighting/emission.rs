@@ -1532,11 +1532,6 @@ impl Prepared {
                 {
                     return Ok(0.0);
                 }
-                if exact::front(sample.origin, source.boundary.equation, budget)?
-                    != Ordering::Greater
-                {
-                    return Err("Exact emission visibility requires the actual shadow origin on the source's front side".into());
-                }
                 let mut integral = 0.0;
                 for &triangle in &source.triangles {
                     let mut visibility = exact::Visibility::new(triangle, sample.origin, budget)?;

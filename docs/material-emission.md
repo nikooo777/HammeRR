@@ -140,6 +140,8 @@ hull participates, including invisible boundaries. Eligible stationary brush
 models retain their existing global or same-model shadow scope.
 Unsupported casters, source support or numeric bounds stop the build.
 The previous BSP stays intact. The compiler does not switch to sampled shadows.
+Receivers beside a panel use its finite hull; crossing the panel's extended
+plane alone does not stop the build.
 For larger bakes, open **Build settings…**, increase **Lighting work limit
 (millions)**, then click **Apply work limit**. Numeric and memory limits still apply.
 

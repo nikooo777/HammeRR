@@ -808,6 +808,20 @@ impl Visibility {
             return Err("Exact emission kernel point lies on the source plane".into());
         }
         let height_squared = height.mul(height)?;
+        let mut distance_squared_lower = height_squared;
+        for axis in self.axes {
+            self.work.charge(128, budget)?;
+            let mut coordinates = self.source.map(|point| point[axis]);
+            coordinates.sort_unstable_by(|left, right| left.compare(*right));
+            let gap = if sample[axis].compare(coordinates[0]) == Ordering::Less {
+                coordinates[0].sub(sample[axis])?
+            } else if sample[axis].compare(coordinates[2]) == Ordering::Greater {
+                sample[axis].sub(coordinates[2])?
+            } else {
+                Rational::ZERO
+            };
+            distance_squared_lower = distance_squared_lower.add(gap.mul(gap)?)?;
+        }
         let source = self
             .source
             .map(|point| Point(self.axes.map(|axis| point[axis])));
@@ -905,13 +919,11 @@ impl Visibility {
                 let bound = if original_area == converted_area {
                     0.0
                 } else {
-                    let height_lower = height_squared.lower()?;
-                    if !height_lower.is_finite() || height_lower <= 0.0 {
-                        return Err("Exact emission cannot certify a positive kernel height".into());
-                    }
-                    let omitted_upper =
-                        (original_area.upper()? - converted_area.lower()?).next_up();
-                    let bound = (omitted_upper / height_lower).next_up();
+                    self.work.charge(64, budget)?;
+                    let bound = original_area
+                        .sub(converted_area)?
+                        .div(distance_squared_lower)?
+                        .upper()?;
                     if !bound.is_finite() || bound < 0.0 {
                         return Err(
                             "Exact emission cannot certify a finite conversion bound".into()

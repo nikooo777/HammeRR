@@ -59,8 +59,9 @@ they can refer to an older map state. Finish or cancel active viewport gestures
 before framing.
 
 Only the latest finished job's first 100 diagnostics are retained. You can frame
-lighting receiver errors, missing-probe cell references, entity inside-solid
-warnings, and point/spot source diagnostics with valid world origins. Invalid or absent
+lighting receiver errors, including material-emission failures, missing-probe
+cell references, entity inside-solid warnings, and point/spot source diagnostics
+with valid world origins. Invalid or absent
 origins, unclassified positions and model-local positions remain unavailable.
 This action does not select or resolve an authored object.
 

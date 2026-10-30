@@ -210,7 +210,7 @@ pub(super) fn bake(
                 let (point, normal) =
                     plan.sample(s, t, &mut sample_workspace, budget)
                         .map_err(|message| {
-                            let diagnostic = super::bake::channel_failure(
+                            super::bake::channel_failure(
                                 ctx.instances,
                                 ctx.map,
                                 ctx.face_sources,
@@ -218,15 +218,13 @@ pub(super) fn bake(
                                 None,
                                 std::iter::empty(),
                                 format!("Lighting sample [{s}, {t}]: {message}"),
-                            );
-                            let message = diagnostic.message.clone();
-                            ctx.report.diagnostics.push(diagnostic);
-                            message
+                                ctx.report,
+                            )
                         })?;
                 let origin = plan
                     .origin(&origin_context, [s, t], point, normal, budget)
                     .map_err(|message| {
-                        let diagnostic = super::bake::channel_failure(
+                        super::bake::channel_failure(
                             ctx.instances,
                             ctx.map,
                             ctx.face_sources,
@@ -234,10 +232,8 @@ pub(super) fn bake(
                             Some(point),
                             std::iter::empty(),
                             message,
-                        );
-                        let message = diagnostic.message.clone();
-                        ctx.report.diagnostics.push(diagnostic);
-                        message
+                            ctx.report,
+                        )
                     })?;
                 let normals = plan.shading_normals(normal, budget)?;
                 let mut colors = [[DVec3::ZERO; super::bump::MAPS]; 4];
@@ -270,7 +266,7 @@ pub(super) fn bake(
                                                 .sources()
                                                 .filter(|(present, _)| *present != style)
                                                 .chain(std::iter::once((style, None)));
-                                            let diagnostic = super::bake::channel_failure(
+                                            super::bake::channel_failure(
                                                 ctx.instances,
                                                 ctx.map,
                                                 ctx.face_sources,
@@ -278,10 +274,8 @@ pub(super) fn bake(
                                                 Some(point),
                                                 sources,
                                                 message,
-                                            );
-                                            let message = diagnostic.message.clone();
-                                            ctx.report.diagnostics.push(diagnostic);
-                                            message
+                                                ctx.report,
+                                            )
                                         })?;
                                 }
                                 total += hit.color * LIGHTMAP_SCALE;

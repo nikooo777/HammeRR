@@ -418,8 +418,9 @@ The result gives `recorded_position`, `captured_snapshot` and `framed_bounds`.
 
 Only the latest finished job's first 100 rows can be framed. Coordinates can
 belong to an older map state; this does not resolve a current authored object.
-Lighting receiver errors, missing-probe cell references, entity inside-solid
-warnings and point/spot source diagnostics with valid world origins are certified.
+Lighting receiver errors, including material-emission failures, missing-probe
+cell references, entity inside-solid warnings and point/spot source diagnostics
+with valid world origins are certified.
 Unclassified, model-local, invalid or absent positions remain unavailable. Active viewport
 gestures block framing. Map edits, selection, history and other drafts stay intact.
 Channel-independent unreachable/unsupported-light warnings appear once in the

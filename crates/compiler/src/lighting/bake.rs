@@ -1517,6 +1517,7 @@ struct ChannelContext<'a> {
     options: crate::Options,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn channel_failure(
     instances: &crate::instances::Prepared<'_>,
     map: &Map<'_>,
@@ -1525,7 +1526,8 @@ pub(super) fn channel_failure(
     point: Option<DVec3>,
     sources: impl Iterator<Item = (u8, Option<u32>)>,
     message: String,
-) -> Diagnostic {
+    report: &mut Report,
+) -> String {
     let sides = &face_sources[plan.face];
     let mut references = sides
         .iter()
@@ -1587,12 +1589,15 @@ pub(super) fn channel_failure(
         plan.face,
         references.join(", ")
     );
-    Diagnostic::error(
+    let diagnostic = Diagnostic::error(
         message,
         sides.first().map(|side| format!("side:{side}")),
         point,
     )
-    .with_world_position()
+    .with_world_position();
+    let message = diagnostic.message.clone();
+    report.diagnostics.push(diagnostic);
+    message
 }
 
 fn bake_channel(
@@ -1798,7 +1803,7 @@ fn bake_channel(
                 let (point, normal) =
                     plan.sample(s, t, &mut sample_workspace, budget)
                         .map_err(|message| {
-                            let diagnostic = channel_failure(
+                            channel_failure(
                                 instances,
                                 map,
                                 face_sources,
@@ -1806,15 +1811,13 @@ fn bake_channel(
                                 None,
                                 std::iter::empty(),
                                 format!("Lighting sample [{s}, {t}]: {message}"),
-                            );
-                            let message = diagnostic.message.clone();
-                            report.diagnostics.push(diagnostic);
-                            message
+                                report,
+                            )
                         })?;
                 let origin = plan
                     .origin(&origin_context, [s, t], point, normal, budget)
                     .map_err(|message| {
-                        let diagnostic = channel_failure(
+                        channel_failure(
                             instances,
                             map,
                             face_sources,
@@ -1822,41 +1825,37 @@ fn bake_channel(
                             Some(point),
                             std::iter::empty(),
                             message,
-                        );
-                        let message = diagnostic.message.clone();
-                        report.diagnostics.push(diagnostic);
-                        message
+                            report,
+                        )
                     })?;
                 let normals = plan.shading_normals(normal, budget)?;
                 let mut color = [[DVec3::ZERO; super::bump::MAPS]; 4];
-                let mut add_channel =
-                    |channels: &mut super::styles::Channels,
-                     style,
-                     source,
-                     contributions: &[DVec3; super::bump::MAPS],
-                     colors: &mut super::styles::SampleColors,
-                     budget: &mut Budget<'_>| {
-                        channels
-                            .add(style, Some(source), contributions, colors, budget)
-                            .map_err(|message| {
-                                let sources = channels
-                                    .sources()
-                                    .filter(|(current, _)| *current != style)
-                                    .chain(std::iter::once((style, Some(source))));
-                                let diagnostic = channel_failure(
-                                    instances,
-                                    map,
-                                    face_sources,
-                                    plan,
-                                    Some(point),
-                                    sources,
-                                    message,
-                                );
-                                let message = diagnostic.message.clone();
-                                report.diagnostics.push(diagnostic);
-                                message
-                            })
-                    };
+                let add_channel = |channels: &mut super::styles::Channels,
+                                   style,
+                                   source,
+                                   contributions: &[DVec3; super::bump::MAPS],
+                                   colors: &mut super::styles::SampleColors,
+                                   budget: &mut Budget<'_>,
+                                   report: &mut Report| {
+                    channels
+                        .add(style, source, contributions, colors, budget)
+                        .map_err(|message| {
+                            let sources = channels
+                                .sources()
+                                .filter(|(current, _)| *current != style)
+                                .chain(std::iter::once((style, source)));
+                            channel_failure(
+                                instances,
+                                map,
+                                face_sources,
+                                plan,
+                                Some(point),
+                                sources,
+                                message,
+                                report,
+                            )
+                        })
+                };
                 let cluster = candidates.cluster(origin, map, tree, visibility, budget)?;
                 let culling_enabled = candidates.enabled();
                 let mut evaluated = 0;
@@ -1932,10 +1931,11 @@ fn bake_channel(
                         add_channel(
                             &mut channels,
                             0,
-                            light.source_id,
+                            Some(light.source_id),
                             &contributions,
                             &mut color,
                             budget,
+                            report,
                         )?;
                     }
                     budget.phase(match light {
@@ -1964,10 +1964,11 @@ fn bake_channel(
                                 add_channel(
                                     &mut channels,
                                     light.style,
-                                    light.source_id,
+                                    Some(light.source_id),
                                     &contributions,
                                     &mut color,
                                     budget,
+                                    report,
                                 )?;
                             }
                         }
@@ -1997,10 +1998,11 @@ fn bake_channel(
                             add_channel(
                                 &mut channels,
                                 0,
-                                light.source_id,
+                                Some(light.source_id),
                                 &contributions,
                                 &mut color,
                                 budget,
+                                report,
                             )?;
                         }
                     }
@@ -2009,26 +2011,47 @@ fn bake_channel(
                 if let Some(emission) = emission {
                     let mut contributions = [DVec3::ZERO; super::bump::MAPS];
                     for (map_index, &shading) in normals.iter().enumerate().take(plan.map_count()) {
-                        contributions[map_index] = emission.gather(
-                            kind,
-                            super::emission::Sample {
-                                point,
-                                normal: shading,
-                                origin,
-                                face: Some(plan.face),
-                                angular: super::ReceiverAngularMode::Normal,
-                            },
-                            super::emission::Context {
-                                shadows,
-                                terrain: terrain_shadows,
-                                props: prop_shadows,
-                                model: model_shadows[plan.model].as_ref(),
-                                skip_owner: None,
-                            },
-                            budget,
-                        )?;
+                        contributions[map_index] = emission
+                            .gather(
+                                kind,
+                                super::emission::Sample {
+                                    point,
+                                    normal: shading,
+                                    origin,
+                                    face: Some(plan.face),
+                                    angular: super::ReceiverAngularMode::Normal,
+                                },
+                                super::emission::Context {
+                                    shadows,
+                                    terrain: terrain_shadows,
+                                    props: prop_shadows,
+                                    model: model_shadows[plan.model].as_ref(),
+                                    skip_owner: None,
+                                },
+                                budget,
+                            )
+                            .map_err(|message| {
+                                channel_failure(
+                                    instances,
+                                    map,
+                                    face_sources,
+                                    plan,
+                                    Some(point),
+                                    std::iter::empty(),
+                                    message,
+                                    report,
+                                )
+                            })?;
                     }
-                    channels.add(0, None, &contributions, &mut color, budget)?;
+                    add_channel(
+                        &mut channels,
+                        0,
+                        None,
+                        &contributions,
+                        &mut color,
+                        budget,
+                        report,
+                    )?;
                 }
                 candidates.stats.evaluated += evaluated;
                 candidates.stats.range_skipped += range_skipped;

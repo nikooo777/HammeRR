@@ -1,32 +1,32 @@
 use std::cmp::Ordering;
 
-use bnum::{cast::As, n, types::I512};
+use bnum::{cast::As, n, types::I1024};
 use glam::DVec3;
 use map_core::Plane;
 
 use super::super::bake::{Allocation, Budget};
 
-const MAX_PLANES: usize = 128;
-const MAX_CONSTRAINTS: usize = MAX_PLANES * MAX_PLANES / 4 + MAX_PLANES;
+pub(super) const MAX_HULL_PLANES: usize = 128;
+const MAX_CONSTRAINTS: usize = MAX_HULL_PLANES * MAX_HULL_PLANES / 4 + MAX_HULL_PLANES;
 const MAX_FRAGMENTS: usize = 4096;
 const MAX_VERTICES: usize = 65_536;
 const MAX_POLYGON_VERTICES: usize = MAX_CONSTRAINTS + 3;
 const MAX_WORK: usize = 32_000_000;
-const ARITHMETIC_WORK_SCALE: usize = 4;
-const MAX_DYADIC_POWER: i32 = 510;
+const ARITHMETIC_WORK_SCALE: usize = size_of::<I1024>() / size_of::<i128>();
+const MAX_DYADIC_POWER: i32 = I1024::BITS as i32 - 2;
 const MAX_CONVERSION_ERROR: f64 = 1e-12;
 const MIN_TRIANGLE_CONDITION: f64 = 1.0 / (1u64 << 32) as f64;
 const MIN_ANGULAR_SPAN_SQUARED: f64 = 1.0 / (1u64 << 48) as f64;
 const ARITHMETIC_ERROR: &str =
-    "Exact emission exceeds checked 511-bit rational arithmetic; sampled fallback is disabled";
+    "Exact emission exceeds checked 1023-bit rational arithmetic; sampled fallback is disabled";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Rational {
-    numerator: I512,
-    denominator: I512,
+    numerator: I1024,
+    denominator: I1024,
 }
 
-fn gcd(mut a: I512, mut b: I512) -> I512 {
+fn gcd(mut a: I1024, mut b: I1024) -> I1024 {
     while !b.is_zero() {
         let remainder = a % b;
         a = b;
@@ -46,10 +46,18 @@ impl Rational {
     };
 
     fn new(numerator: i128, denominator: i128) -> Result<Self, String> {
-        let numerator = numerator.as_::<I512>();
-        let denominator = denominator.as_::<I512>();
-        if denominator <= n!(0) {
+        let numerator = numerator.as_::<I1024>();
+        let denominator = denominator.as_::<I1024>();
+        Self::ratio(numerator, denominator)
+    }
+
+    fn ratio(mut numerator: I1024, mut denominator: I1024) -> Result<Self, String> {
+        if denominator.is_zero() || numerator == I1024::MIN || denominator == I1024::MIN {
             return Err(ARITHMETIC_ERROR.into());
+        }
+        if denominator.is_negative() {
+            numerator = -numerator;
+            denominator = -denominator;
         }
         let divisor = gcd(numerator.abs(), denominator);
         Ok(Self {
@@ -79,9 +87,9 @@ impl Rational {
         let trailing = mantissa.trailing_zeros();
         mantissa >>= trailing;
         power += trailing as i32;
-        let mut numerator = mantissa.as_::<I512>();
+        let mut numerator = mantissa.as_::<I1024>();
         let denominator = if power >= 0 {
-            if power > MAX_DYADIC_POWER || numerator > (I512::MAX >> power) {
+            if power > MAX_DYADIC_POWER || numerator > (I1024::MAX >> power) {
                 return Err(ARITHMETIC_ERROR.into());
             }
             numerator <<= power;
@@ -90,7 +98,7 @@ impl Rational {
             if power < -MAX_DYADIC_POWER {
                 return Err(ARITHMETIC_ERROR.into());
             }
-            n!(1I512) << -power
+            n!(1I1024) << -power
         };
         if bits >> 63 != 0 {
             numerator = -numerator;
@@ -130,7 +138,7 @@ impl Rational {
             .checked_mul(self.denominator / divisor)
             .ok_or(ARITHMETIC_ERROR)?;
         let numerator = left.checked_add(right).ok_or(ARITHMETIC_ERROR)?;
-        if numerator == I512::MIN {
+        if numerator == I1024::MIN {
             return Err(ARITHMETIC_ERROR.into());
         }
         let reduction = gcd(numerator.abs(), divisor);
@@ -156,7 +164,7 @@ impl Rational {
         let denominator = (self.denominator / right)
             .checked_mul(other.denominator / left)
             .ok_or(ARITHMETIC_ERROR)?;
-        if numerator == I512::MIN {
+        if numerator == I1024::MIN {
             return Err(ARITHMETIC_ERROR.into());
         }
         Ok(Self {
@@ -237,23 +245,91 @@ impl Rational {
 struct Point([Rational; 2]);
 
 #[derive(Clone, Copy)]
-struct Halfplane([Rational; 3]);
+struct Halfplane([I1024; 3]);
 
 impl Halfplane {
+    fn new(
+        values: [Rational; 3],
+        work: &mut Work,
+        budget: &mut Budget<'_>,
+    ) -> Result<Self, String> {
+        work.charge(64, budget)?;
+        let mut denominator = n!(1I1024);
+        for value in values {
+            denominator = (denominator / gcd(denominator, value.denominator))
+                .checked_mul(value.denominator)
+                .ok_or(ARITHMETIC_ERROR)?;
+        }
+        let mut coefficients = [n!(0I1024); 3];
+        let mut divisor = n!(0I1024);
+        for (coefficient, value) in coefficients.iter_mut().zip(values) {
+            *coefficient = value
+                .numerator
+                .checked_mul(denominator / value.denominator)
+                .filter(|value| *value != I1024::MIN)
+                .ok_or(ARITHMETIC_ERROR)?;
+            divisor = gcd(divisor, coefficient.abs());
+        }
+        if !divisor.is_zero() {
+            coefficients = coefficients.map(|value| value / divisor);
+        }
+        Ok(Self(coefficients))
+    }
+
     fn evaluate(self, point: Point) -> Result<Rational, String> {
-        self.0[0]
+        Rational::ratio(self.0[0], n!(1))?
             .mul(point.0[0])?
-            .add(self.0[1].mul(point.0[1])?)?
-            .add(self.0[2])
+            .add(Rational::ratio(self.0[1], n!(1))?.mul(point.0[1])?)?
+            .add(Rational::ratio(self.0[2], n!(1))?)
+    }
+
+    fn intersection(
+        self,
+        other: Self,
+        work: &mut Work,
+        budget: &mut Budget<'_>,
+    ) -> Result<Point, String> {
+        work.charge(192, budget)?;
+        let determinant = integer_minor(self.0[0], other.0[1], self.0[1], other.0[0])?;
+        if determinant.is_zero() {
+            return Err("Exact emission crossing edges have parallel boundary equations".into());
+        }
+        let point = Point([
+            Rational::ratio(
+                integer_minor(self.0[1], other.0[2], self.0[2], other.0[1])?,
+                determinant,
+            )?,
+            Rational::ratio(
+                integer_minor(self.0[2], other.0[0], self.0[0], other.0[2])?,
+                determinant,
+            )?,
+        ]);
+        if self.evaluate(point)? != Rational::ZERO || other.evaluate(point)? != Rational::ZERO {
+            return Err("Exact emission intersection failed its exact boundary equations".into());
+        }
+        Ok(point)
     }
 
     fn neg(self) -> Self {
-        Self(self.0.map(Rational::neg))
+        Self(self.0.map(|value| -value))
     }
 
     fn constant(self) -> bool {
-        self.0[0] == Rational::ZERO && self.0[1] == Rational::ZERO
+        self.0[0].is_zero() && self.0[1].is_zero()
     }
+}
+
+fn integer_minor(a: I1024, b: I1024, c: I1024, d: I1024) -> Result<I1024, String> {
+    a.checked_mul(b)
+        .and_then(|left| c.checked_mul(d).and_then(|right| left.checked_sub(right)))
+        .filter(|value| *value != I1024::MIN)
+        .ok_or_else(|| ARITHMETIC_ERROR.into())
+}
+
+#[derive(Clone, Copy)]
+struct TopoVertex {
+    point: Point,
+    incoming: Halfplane,
 }
 
 struct Storage<T> {
@@ -285,9 +361,23 @@ impl<T> Storage<T> {
 }
 
 type Polygon = Storage<Point>;
+type TopoPolygon = Storage<TopoVertex>;
+
+impl TopoPolygon {
+    fn push_vertex(&mut self, vertex: TopoVertex) -> Result<(), String> {
+        if self
+            .values
+            .last()
+            .is_none_or(|last| last.point != vertex.point)
+        {
+            self.push(vertex)?;
+        }
+        Ok(())
+    }
+}
 
 struct Polygons {
-    polygons: Storage<Polygon>,
+    polygons: Storage<TopoPolygon>,
     vertices: usize,
 }
 
@@ -299,7 +389,7 @@ impl Polygons {
         })
     }
 
-    fn push(&mut self, polygon: Polygon) -> Result<(), String> {
+    fn push(&mut self, polygon: TopoPolygon) -> Result<(), String> {
         if self.polygons.values.len() >= MAX_FRAGMENTS {
             return Err("Exact emission exceeds 4096 visible fragments".into());
         }
@@ -391,63 +481,137 @@ fn turn(a: Point, b: Point, c: Point) -> Result<Rational, String> {
         .sub(b.0[1].sub(a.0[1])?.mul(c.0[0].sub(a.0[0])?)?)
 }
 
-fn double_area(points: &[Point]) -> Result<Rational, String> {
+fn double_area(points: impl IntoIterator<Item = Point>) -> Result<Rational, String> {
+    let mut points = points.into_iter();
+    let Some(first) = points.next() else {
+        return Ok(Rational::ZERO);
+    };
+    let Some(mut previous) = points.next() else {
+        return Ok(Rational::ZERO);
+    };
     let mut area = Rational::ZERO;
-    for index in 1..points.len() - 1 {
-        area = area.add(turn(points[0], points[index], points[index + 1])?)?;
+    for point in points {
+        area = area.add(turn(first, previous, point)?)?;
+        previous = point;
     }
     Ok(area)
 }
 
+fn incoming_edge(
+    a: Point,
+    b: Point,
+    boundary: Halfplane,
+    work: &mut Work,
+    budget: &mut Budget<'_>,
+) -> Result<Halfplane, String> {
+    work.charge(128, budget)?;
+    if a == b
+        || boundary.constant()
+        || boundary.evaluate(a)? != Rational::ZERO
+        || boundary.evaluate(b)? != Rational::ZERO
+    {
+        return Err("Exact emission edge lost its exact incoming boundary equation".into());
+    }
+    Ok(boundary)
+}
+
+fn world_boundary(
+    boundary: Halfplane,
+    source: &[Point; 3],
+    work: &mut Work,
+    budget: &mut Budget<'_>,
+) -> Result<Halfplane, String> {
+    work.charge(192, budget)?;
+    let dx1 = source[1].0[0].sub(source[0].0[0])?;
+    let dx2 = source[2].0[0].sub(source[0].0[0])?;
+    let dy1 = source[1].0[1].sub(source[0].0[1])?;
+    let dy2 = source[2].0[1].sub(source[0].0[1])?;
+    let determinant = dx1.mul(dy2)?.sub(dx2.mul(dy1)?)?;
+    if determinant == Rational::ZERO {
+        return Err("Exact emission source chart lost its invertible world mapping".into());
+    }
+    let [a, b, c] = boundary.0.map(|numerator| Rational {
+        numerator,
+        denominator: n!(1),
+    });
+    let x = a.mul(dy2)?.sub(b.mul(dy1)?)?;
+    let y = b.mul(dx1)?.sub(a.mul(dx2)?)?;
+    let constant = c
+        .mul(determinant)?
+        .sub(x.mul(source[0].0[0])?)?
+        .sub(y.mul(source[0].0[1])?)?;
+    let mut coefficients = [x, y, constant];
+    if determinant.sign() == Ordering::Less {
+        coefficients = coefficients.map(Rational::neg);
+    }
+    Halfplane::new(coefficients, work, budget)
+}
+
 fn clip(
-    polygon: &Polygon,
+    polygon: &TopoPolygon,
     halfplane: Halfplane,
     work: &mut Work,
     budget: &mut Budget<'_>,
-) -> Result<Option<Polygon>, String> {
+) -> Result<Option<TopoPolygon>, String> {
     work.charge(1, budget)?;
+    if halfplane.constant() {
+        return Err("Exact emission clipping requires a nonconstant boundary equation".into());
+    }
     let capacity = polygon
         .values
         .len()
         .checked_add(1)
         .filter(|capacity| *capacity <= MAX_POLYGON_VERTICES)
         .ok_or("Exact emission exceeds its convex polygon vertex bound")?;
-    let mut result = Polygon::new(capacity, budget)?;
+    let mut result = TopoPolygon::new(capacity, budget)?;
     for index in 0..polygon.values.len() {
         work.charge(96, budget)?;
         let a = polygon.values[index];
         let b = polygon.values[(index + 1) % polygon.values.len()];
-        let da = halfplane.evaluate(a)?;
-        let db = halfplane.evaluate(b)?;
-        if da.sign() != Ordering::Greater && result.values.last() != Some(&a) {
-            result.push(a)?;
+        let inside_a = halfplane.evaluate(a.point)?.sign() != Ordering::Greater;
+        let inside_b = halfplane.evaluate(b.point)?.sign() != Ordering::Greater;
+        if inside_a != inside_b {
+            let edge = incoming_edge(a.point, b.point, b.incoming, work, budget)?;
+            result.push_vertex(TopoVertex {
+                point: edge.intersection(halfplane, work, budget)?,
+                incoming: if inside_a { edge } else { halfplane },
+            })?;
         }
-        if (da.sign() == Ordering::Less && db.sign() == Ordering::Greater)
-            || (da.sign() == Ordering::Greater && db.sign() == Ordering::Less)
-        {
-            let fraction = da.div(da.sub(db)?)?;
-            let intersection = Point([
-                a.0[0].add(b.0[0].sub(a.0[0])?.mul(fraction)?)?,
-                a.0[1].add(b.0[1].sub(a.0[1])?.mul(fraction)?)?,
-            ]);
-            if result.values.last() != Some(&intersection) {
-                result.push(intersection)?;
-            }
+        if inside_b {
+            result.push_vertex(b)?;
         }
     }
-    if result.values.first() == result.values.last() {
-        result.values.pop();
+    if result.values.len() > 1
+        && result.values.first().map(|vertex| vertex.point)
+            == result.values.last().map(|vertex| vertex.point)
+    {
+        let last = result.values.pop().unwrap();
+        result.values[0].incoming = last.incoming;
     }
     if result.values.len() < 3 {
         return Ok(None);
     }
-    work.charge(result.values.len() * 32, budget)?;
-    let area = double_area(&result.values)?;
-    match area.sign() {
-        Ordering::Less => Err("Exact emission clipping reversed a convex fragment".into()),
-        Ordering::Equal => Ok(None),
-        Ordering::Greater => Ok(Some(result)),
+    let edge = incoming_edge(
+        result.values[0].point,
+        result.values[1].point,
+        result.values[1].incoming,
+        work,
+        budget,
+    )?;
+    let mut positive = false;
+    for vertex in result.values.iter().skip(2) {
+        work.charge(64, budget)?;
+        match edge.evaluate(vertex.point)?.sign() {
+            Ordering::Less => positive = true,
+            Ordering::Equal => (),
+            Ordering::Greater => {
+                return Err(
+                    "Exact emission clipping lost a convex fragment's interior support".into(),
+                );
+            }
+        }
     }
+    Ok(positive.then_some(result))
 }
 
 pub(super) struct Visibility {
@@ -485,10 +649,19 @@ impl Visibility {
         {
             return Err("Exact emission requires a positive-area source triangle".into());
         }
-        let mut triangle = Polygon::new(3, budget)?;
-        triangle.push(Point([Rational::ZERO, Rational::ZERO]))?;
-        triangle.push(Point([Rational::ONE, Rational::ZERO]))?;
-        triangle.push(Point([Rational::ZERO, Rational::ONE]))?;
+        let mut triangle = TopoPolygon::new(3, budget)?;
+        triangle.push(TopoVertex {
+            point: Point([Rational::ZERO, Rational::ZERO]),
+            incoming: Halfplane([n!(-1), n!(0), n!(0)]),
+        })?;
+        triangle.push(TopoVertex {
+            point: Point([Rational::ONE, Rational::ZERO]),
+            incoming: Halfplane([n!(0), n!(-1), n!(0)]),
+        })?;
+        triangle.push(TopoVertex {
+            point: Point([Rational::ZERO, Rational::ONE]),
+            incoming: Halfplane([n!(1), n!(1), n!(-1)]),
+        })?;
         let mut fragments = Polygons::new(budget)?;
         fragments.push(triangle)?;
         Ok(Self {
@@ -503,19 +676,18 @@ impl Visibility {
 
     pub(super) fn subtract(
         &mut self,
-        planes: impl IntoIterator<Item = Plane>,
+        planes: &[Plane],
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
-        let mut lower = Storage::new(MAX_PLANES, budget)?;
-        let mut upper = Storage::new(MAX_PLANES, budget)?;
-        let mut parallel = Storage::new(MAX_PLANES, budget)?;
-        let mut count = 0usize;
+        let count = planes.len();
+        if count == 0 || count > MAX_HULL_PLANES {
+            return Err("Exact emission requires 1 to 128 planes for one original hull".into());
+        }
+        let mut lower = Storage::new(count, budget)?;
+        let mut upper = Storage::new(count, budget)?;
+        let mut parallel = Storage::new(count, budget)?;
         for plane in planes {
             self.work.charge(256, budget)?;
-            count += 1;
-            if count > MAX_PLANES {
-                return Err("Exact emission exceeds 128 planes for one original hull".into());
-            }
             let normal = vector(plane.normal)?;
             let origin = dot(normal, self.origin)?;
             let b = Rational::from_f64(plane.dist)?.sub(origin)?;
@@ -524,19 +696,30 @@ impl Visibility {
                 dot(normal, self.source[1])?.sub(origin)?,
                 dot(normal, self.source[2])?.sub(origin)?,
             ];
-            let a = Halfplane([
+            self.work.charge(32, budget)?;
+            if (b.sign() == Ordering::Less
+                && values
+                    .iter()
+                    .all(|value| value.compare(b) != Ordering::Less))
+                || (b == Rational::ZERO
+                    && values
+                        .iter()
+                        .all(|value| value.compare(b) == Ordering::Greater))
+            {
+                return Ok(());
+            }
+            let a = [
                 values[1].sub(values[0])?,
                 values[2].sub(values[0])?,
                 values[0],
-            ]);
+            ];
             match b.sign() {
                 Ordering::Less => upper.push((a, b))?,
-                Ordering::Equal => parallel.push(a)?,
+                Ordering::Equal => {
+                    parallel.push(Halfplane::new(a, &mut self.work, budget)?)?;
+                }
                 Ordering::Greater => lower.push((a, b))?,
             }
-        }
-        if count == 0 {
-            return Err("Exact emission received an empty original hull".into());
         }
         let constraint_count =
             upper.values.len() * (lower.values.len() + 1) + parallel.values.len();
@@ -546,15 +729,22 @@ impl Visibility {
         }
         for &(a, b) in &upper.values {
             self.work.charge(32, budget)?;
-            constraints.push((Halfplane([a.0[0], a.0[1], a.0[2].sub(b)?]), true))?;
+            constraints.push((
+                Halfplane::new([a[0], a[1], a[2].sub(b)?], &mut self.work, budget)?,
+                true,
+            ))?;
             for &(other, scale) in &lower.values {
                 self.work.charge(128, budget)?;
                 constraints.push((
-                    Halfplane([
-                        scale.mul(a.0[0])?.sub(b.mul(other.0[0])?)?,
-                        scale.mul(a.0[1])?.sub(b.mul(other.0[1])?)?,
-                        scale.mul(a.0[2])?.sub(b.mul(other.0[2])?)?,
-                    ]),
+                    Halfplane::new(
+                        [
+                            scale.mul(a[0])?.sub(b.mul(other[0])?)?,
+                            scale.mul(a[1])?.sub(b.mul(other[1])?)?,
+                            scale.mul(a[2])?.sub(b.mul(other[2])?)?,
+                        ],
+                        &mut self.work,
+                        budget,
+                    )?,
                     false,
                 ))?;
             }
@@ -562,8 +752,7 @@ impl Visibility {
         for &(halfplane, strict) in &constraints.values {
             self.work.charge(1, budget)?;
             if halfplane.constant()
-                && (halfplane.0[2].sign() == Ordering::Greater
-                    || (strict && halfplane.0[2] == Rational::ZERO))
+                && (halfplane.0[2] > n!(0) || (strict && halfplane.0[2].is_zero()))
             {
                 return Ok(());
             }
@@ -619,6 +808,9 @@ impl Visibility {
             return Err("Exact emission kernel point lies on the source plane".into());
         }
         let height_squared = height.mul(height)?;
+        let source = self
+            .source
+            .map(|point| Point(self.axes.map(|axis| point[axis])));
         let triangle_capacity = self.fragments.vertices;
         let mut result = Storage::new(triangle_capacity, budget)?;
         let mut error = 0.0;
@@ -626,10 +818,22 @@ impl Visibility {
             let polygon = &self.fragments.polygons.values[index];
             self.work.charge(polygon.values.len() * 64, budget)?;
             let mut world = Polygon::new(polygon.values.len(), budget)?;
-            for &point in &polygon.values {
-                world.push(self.world(point)?)?;
+            for vertex in &polygon.values {
+                world.push(self.world(vertex.point)?)?;
             }
-            let area = double_area(&world.values)?;
+            let mut boundaries = Storage::new(polygon.values.len(), budget)?;
+            for (index, vertex) in polygon.values.iter().enumerate() {
+                let boundary = world_boundary(vertex.incoming, &source, &mut self.work, budget)?;
+                let previous = (index + world.values.len() - 1) % world.values.len();
+                boundaries.push(incoming_edge(
+                    world.values[previous],
+                    world.values[index],
+                    boundary,
+                    &mut self.work,
+                    budget,
+                )?)?;
+            }
+            let area = double_area(world.values.iter().copied())?;
             if area == Rational::ZERO {
                 return Err("Exact emission lost a positive-area source fragment".into());
             }
@@ -678,7 +882,7 @@ impl Visibility {
                     candidate.push(Point([Rational::from_f64(x)?, Rational::from_f64(y)?]))?;
                 }
                 if let Some(reason) = conversion_rejection(
-                    &world.values,
+                    &boundaries.values,
                     &candidate.values,
                     orientation,
                     &mut self.work,
@@ -688,16 +892,33 @@ impl Visibility {
                     continue;
                 }
                 self.work.charge(candidate.values.len() * 64, budget)?;
-                let converted_area = double_area(&candidate.values)?;
+                let converted_area = double_area(candidate.values.iter().copied())?;
                 if converted_area.sign() != orientation {
                     rejection = "collapsed or reversed area";
                     continue;
                 }
-                let omitted = area.abs().sub(converted_area.abs())?;
-                if omitted.sign() == Ordering::Less {
+                let original_area = area.abs();
+                let converted_area = converted_area.abs();
+                if converted_area.compare(original_area) == Ordering::Greater {
                     return Err("Exact emission conversion enlarged a visible fragment".into());
                 }
-                let bound = omitted.div(height_squared)?.upper()?;
+                let bound = if original_area == converted_area {
+                    0.0
+                } else {
+                    let height_lower = height_squared.lower()?;
+                    if !height_lower.is_finite() || height_lower <= 0.0 {
+                        return Err("Exact emission cannot certify a positive kernel height".into());
+                    }
+                    let omitted_upper =
+                        (original_area.upper()? - converted_area.lower()?).next_up();
+                    let bound = (omitted_upper / height_lower).next_up();
+                    if !bound.is_finite() || bound < 0.0 {
+                        return Err(
+                            "Exact emission cannot certify a finite conversion bound".into()
+                        );
+                    }
+                    bound
+                };
                 converted = Some((candidate, bound));
                 break;
             }
@@ -772,19 +993,16 @@ impl Visibility {
 }
 
 fn conversion_rejection(
-    polygon: &[Point],
+    boundaries: &[Halfplane],
     candidate: &[Point],
     orientation: Ordering,
     work: &mut Work,
     budget: &mut Budget<'_>,
 ) -> Result<Option<&'static str>, String> {
-    for index in 0..polygon.len() {
-        let a = polygon[index];
-        let b = polygon[(index + 1) % polygon.len()];
+    for &boundary in boundaries {
         for &point in candidate {
             work.charge(64, budget)?;
-            let sign = turn(a, b, point)?.sign();
-            if sign != Ordering::Equal && sign != orientation {
+            if boundary.evaluate(point)?.sign() == Ordering::Greater {
                 return Ok(Some("rounded vertex outside exact fragment"));
             }
         }
@@ -842,4 +1060,146 @@ fn condition(
         return Err("Exact emission refuses a visible sliver or source span outside its kernel conditioning scope".into());
     }
     Ok(())
+}
+
+const MAX_HULL_CERTIFICATE_WORK: usize = 32_000_000;
+
+fn hull_charge(work: &mut usize, amount: usize, budget: &mut Budget<'_>) -> Result<(), String> {
+    let amount = amount
+        .checked_mul(ARITHMETIC_WORK_SCALE)
+        .ok_or("Exact emission hull certificate work charge overflow")?;
+    budget.consume(amount)?;
+    *work = work
+        .checked_add(amount)
+        .filter(|work| *work <= MAX_HULL_CERTIFICATE_WORK)
+        .ok_or("Exact emission hull certification exceeds 32000000 work units")?;
+    Ok(())
+}
+
+fn hull_cross(a: [Rational; 3], b: [Rational; 3]) -> Result<[Rational; 3], String> {
+    Ok([
+        a[1].mul(b[2])?.sub(a[2].mul(b[1])?)?,
+        a[2].mul(b[0])?.sub(a[0].mul(b[2])?)?,
+        a[0].mul(b[1])?.sub(a[1].mul(b[0])?)?,
+    ])
+}
+
+fn hull_axis_certificate(
+    planes: [([Rational; 3], Rational); 3],
+    coefficients: [Rational; 3],
+    axis: usize,
+    negative: bool,
+    work: &mut usize,
+    budget: &mut Budget<'_>,
+) -> Result<bool, String> {
+    hull_charge(work, 16, budget)?;
+    if coefficients
+        .iter()
+        .any(|coefficient| coefficient.sign() == Ordering::Less)
+    {
+        return Ok(false);
+    }
+    hull_charge(work, 96, budget)?;
+    for coordinate in 0..3 {
+        let expected = if coordinate != axis {
+            Rational::ZERO
+        } else if negative {
+            Rational::ONE.neg()
+        } else {
+            Rational::ONE
+        };
+        let actual = dot(
+            coefficients,
+            [
+                planes[0].0[coordinate],
+                planes[1].0[coordinate],
+                planes[2].0[coordinate],
+            ],
+        )?;
+        if actual != expected {
+            return Err("Exact emission hull certificate failed exact axis reconstruction".into());
+        }
+    }
+    let _upper = dot(coefficients, [planes[0].1, planes[1].1, planes[2].1])?;
+    Ok(true)
+}
+
+pub(super) fn closed_hull(
+    planes: &[Plane],
+    interior: DVec3,
+    budget: &mut Budget<'_>,
+) -> Result<(), String> {
+    budget.consume(0)?;
+    if !(4..=MAX_HULL_PLANES).contains(&planes.len()) {
+        return Err("Exact emission hull certification requires 4 to 128 final planes".into());
+    }
+    let mut work = 0usize;
+    hull_charge(&mut work, 64, budget)?;
+    let interior = vector(interior)?;
+    hull_charge(&mut work, 1, budget)?;
+    let mut exact = Storage::new(planes.len(), budget)?;
+    for plane in planes {
+        hull_charge(&mut work, 128, budget)?;
+        let normal = vector(plane.normal)?;
+        let distance = Rational::from_f64(plane.dist)?;
+        if dot(normal, interior)?.compare(distance) != Ordering::Less {
+            return Err("Exact emission hull requires a certified strict interior point behind every final plane".into());
+        }
+        exact.push((normal, distance))?;
+    }
+    let mut certified = [false; 6];
+    let mut invertible = false;
+    for first in 0..exact.values.len() - 2 {
+        for second in first + 1..exact.values.len() - 1 {
+            for third in second + 1..exact.values.len() {
+                hull_charge(&mut work, 128, budget)?;
+                let selected = [
+                    exact.values[first],
+                    exact.values[second],
+                    exact.values[third],
+                ];
+                let cofactors = [
+                    hull_cross(selected[1].0, selected[2].0)?,
+                    hull_cross(selected[2].0, selected[0].0)?,
+                    hull_cross(selected[0].0, selected[1].0)?,
+                ];
+                let determinant = dot(selected[0].0, cofactors[0])?;
+                if determinant == Rational::ZERO {
+                    continue;
+                }
+                invertible = true;
+                for (target, complete) in certified.iter_mut().enumerate() {
+                    if *complete {
+                        continue;
+                    }
+                    hull_charge(&mut work, 64, budget)?;
+                    let axis = target / 2;
+                    let negative = target % 2 != 0;
+                    let mut coefficients = [
+                        cofactors[0][axis].div(determinant)?,
+                        cofactors[1][axis].div(determinant)?,
+                        cofactors[2][axis].div(determinant)?,
+                    ];
+                    if negative {
+                        coefficients = coefficients.map(Rational::neg);
+                    }
+                    *complete = hull_axis_certificate(
+                        selected,
+                        coefficients,
+                        axis,
+                        negative,
+                        &mut work,
+                        budget,
+                    )?;
+                }
+                if certified.iter().all(|complete| *complete) {
+                    return Ok(());
+                }
+            }
+        }
+    }
+    if !invertible {
+        return Err("Exact emission hull normals do not span three dimensions".into());
+    }
+    Err("Exact emission hull lacks an exact nonnegative axis-bound certificate; its final halfspaces are not certified bounded".into())
 }

@@ -268,7 +268,7 @@ fn field(entity: &Entity, class: Option<&Class>, key: String, stored_value: Opti
     }
     if exact_emission {
         result.label = "Exact emission visibility".into();
-        result.description = "Exact shadows from planar world/detail sources and opaque axis-aligned brushes. Unsupported casters or numeric limits stop the build. Requires Emission file. Native direct emission stays a point approximation. Fullbright only checks the setting.".into();
+        result.description = "Exact shadows from axis-aligned world/detail faces and certified closed convex opaque brushes, including oblique casters. Unsupported sources, casters or numeric limits stop the build. Requires Emission file. Native direct emission stays a point approximation. Fullbright checks the setting and declarations.".into();
         result.advanced = false;
         if let Err(error) = compiler::validate_material_emission_exact_visibility(&result.value) {
             result.description.push_str(&format!(

@@ -118,6 +118,9 @@ fn material_emission_details(stats: &serde_json::Value) -> String {
     if let Some(policy) = emission["visibility_policy"].as_str() {
         let label = match policy {
             "sampled_segments" => "Sampled segments",
+            "exact_opaque_convex_hull_topology_bounded_kernel_conversion" => {
+                "Exact opaque convex hulls"
+            }
             "exact_axis_aligned_opaque_hull_topology_bounded_kernel_conversion" => {
                 "Exact axis-aligned opaque hulls"
             }

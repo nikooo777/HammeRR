@@ -760,12 +760,15 @@ World policy uses the same draft: set `_hammerr_emission_exact_visibility` to
 `"1"` alongside the file, then commit. It is not a compile option or recipe
 field. `get_compile_settings.material_emission_exact_visibility` reports the
 effective value or validation error, source and hull scope, and refusal policy.
-It supports uniquely owned, exactly planar world/detail sources and every
-applicable final axis-aligned opaque brush hull, checked against original
-materials. Sky, alpha or oblique hulls, terrain/prop shadow providers,
-posed/rounded sources and exhausted numeric/resource bounds reject without
-sampled fallback or replacement of the previous BSP. Fullbright validates the
-policy, file and declarations without admitting exact geometry.
+It supports uniquely owned axis-aligned world/detail source faces, including
+assembled children, with zero native-plane support residual and every applicable
+opaque brush hull certified closed, bounded and convex from its final planes,
+including oblique casters. Original materials and existing global/model shadow
+scopes still apply. Oblique emitting faces, brush-model emitting sources,
+nonzero native-plane support residuals, sky/alpha/unknown materials, terrain/prop
+shadow providers, uncertified hulls and exhausted numeric/resource bounds reject
+without sampled fallback or replacement of the previous BSP. Fullbright validates
+the policy, file and declarations without admitting exact geometry.
 
 Under `stats.material_emission`, `visibility_policy` identifies the selected
 policy. `maximum_visibility_conversion_error` is the maximum bound per receiver;

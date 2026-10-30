@@ -69,6 +69,7 @@ not the complete shader. Use one mode per material across LDR and HDR records.
 4. Set **Pitch Yaw Roll (Y Z X)** for an initial rotation, if needed.
 5. Apply a declared emission material to its source faces, then compile.
 
+Disable **Exact emission visibility** for brush-model emitting sources.
 The source uses its compiled initial pose. Other solids in the same model
 still block light. Supported child models use their assembled pose once.
 See [stationary shadow sources](brush-texture-shadows.md#cast-from-a-stationary-root-brush-model)
@@ -104,7 +105,7 @@ The radius conservatively reaches the farthest corner of the stored world-model
 bounds expanded by native cache extents of 32/32/128 units, rounded upward to
 native precision. This covers compiled-world receiver/cache bounds, without an
 automatic 2,000-unit cutoff or a coverage promise outside that world.
-Sampled maps, VHV and detail direct lighting remain, as does reflected ambient.
+Baked maps, VHV and detail direct lighting remain, as does reflected ambient.
 Only intrinsic direct emission is removed from indexed ambient and supplied by
 native selected or folded direct lighting instead.
 
@@ -126,13 +127,19 @@ Resolve brush shadows across the source area instead of sampling segments.
 1. Open **World settings…** and set **Emission file**.
 2. Enable **Exact emission visibility**, then click **Apply properties**.
 3. Compile with **Direct LDR** or **Direct LDR + HDR**.
-4. Open **Build details…**. Read **Emission visibility policy** and
-   **Emission conversion bounds (dimensionless)**.
+4. Open **Build details…**. **Emission visibility policy** should read
+   **Exact opaque convex hulls**. Check **Emission conversion bounds (dimensionless)**.
 
-The first scope supports planar world/detail emitters and opaque axis-aligned
-brush hulls. Every applicable original hull participates, including invisible
-boundaries. Unsupported casters, source support or numeric bounds stop the build.
+Exact mode supports uniquely owned axis-aligned world/detail emitting faces,
+including supported assembled children. Every source vertex must lie exactly
+on its native plane. Opaque brush casters may have oblique planes when their
+final hull is certified closed, bounded and convex. Every applicable original
+hull participates, including invisible boundaries. Eligible stationary brush
+models retain their existing global or same-model shadow scope.
+Unsupported casters, source support or numeric bounds stop the build.
 The previous BSP stays intact. The compiler does not switch to sampled shadows.
+For larger bakes, open **Build settings…**, increase **Lighting work limit
+(millions)**, then click **Apply work limit**. Numeric and memory limits still apply.
 
 Clipping uses exact rational arithmetic. Conversion to the floating lighting
 kernel has a reported bound of at most `1e-9` per receiver, before source colour
@@ -140,9 +147,10 @@ and brightness. This is not an RGB, BSP quantization or native image error bound
 **Native direct emission** keeps its separate point approximation.
 Disable **Exact emission visibility** to use the original sampled bake.
 
-Exact mode currently rejects oblique hull planes, sky/alpha/unknown materials,
-terrain and prop shadow providers, posed sources and nonzero source-plane
-residuals. Checked arithmetic, fragment and conditioning limits also apply.
+Exact mode rejects oblique emitting faces, brush-model emitting sources,
+nonzero native-plane support residuals, sky/alpha/unknown materials, terrain and
+prop shadow providers, and uncertified hulls. Checked arithmetic, fragment and
+conditioning limits also apply.
 **Fullbright** checks the setting and declarations without exact shadow admission.
 
 ## Limits

@@ -34,7 +34,6 @@ const MAX_SOURCE_SIDES: usize = 65_536;
 const MAX_TRIANGLES: usize = 262_144;
 const MAX_CELLS: usize = 262_144;
 const MAX_DEPTH: usize = 48;
-const MAX_EXACT_HULL_PLANES: usize = 128;
 const MAX_EXACT_RECEIVER_CONVERSION_ERROR: f64 = 1.0e-9;
 const BOUNDARY_REFINEMENT: f64 = 16.0;
 const LIGHTMAP_SCALE: f64 = 255.0;
@@ -494,7 +493,7 @@ pub(crate) fn preflight<'a>(
         channel_rays: [0; 2],
         native_surface_lights: [0; 2],
         visibility_policy: if exact_enabled {
-            "exact_axis_aligned_opaque_hull_topology_bounded_kernel_conversion"
+            "exact_opaque_convex_hull_topology_bounded_kernel_conversion"
         } else {
             "sampled_segments"
         },
@@ -507,7 +506,7 @@ pub(crate) fn preflight<'a>(
         },
     };
     let visibility = if exact_enabled {
-        "Exact emission visibility requests complete axis-aligned original opaque-hull shadow topology with bounded kernel conversion; unsupported providers, sources, arithmetic or exhausted resources fail the request"
+        "Exact emission visibility requests complete certified original opaque-convex-hull shadow topology with bounded kernel conversion; unsupported providers, sources, arithmetic or exhausted resources fail the request"
     } else {
         "Material emission uses sampled segment shadows"
     };
@@ -893,6 +892,13 @@ pub(super) fn prepare(
                 normal: local_plane.normal,
                 dist: local_plane.dist,
             });
+            if declarations.exact_enabled
+                && ![DVec3::X, DVec3::Y, DVec3::Z].contains(&plane.normal.abs())
+            {
+                return Err(
+                    "Exact emission visibility requires an axis-aligned emitting face".into(),
+                );
+            }
             let texture = if declaration.textured {
                 Some(
                     declarations
@@ -1166,10 +1172,12 @@ fn admit_exact_hulls(
                 {
                     return Err("Exact emission visibility requires ordinary opaque original hulls; sky, alpha, grate and translucent hulls are unsupported".into());
                 }
-                if !(6..=MAX_EXACT_HULL_PLANES).contains(&hull.planes.len())
+                if !(4..=exact::MAX_HULL_PLANES).contains(&hull.planes.len())
                     || source.sides.len() != hull.planes.len()
                 {
-                    return Err("Exact emission visibility requires 6 to 128 original axis-aligned hull planes".into());
+                    return Err(
+                        "Exact emission visibility requires 4 to 128 original hull planes".into(),
+                    );
                 }
                 budget.consume(scopes.len())?;
                 let scope = scopes
@@ -1185,8 +1193,8 @@ fn admit_exact_hulls(
                     return Err("Exact emission hull lost its original entity ownership".into());
                 }
                 budget.consume(brush.sides.len())?;
-                let mut mins = DVec3::splat(f64::NEG_INFINITY);
-                let mut maxs = DVec3::splat(f64::INFINITY);
+                let mut interior = DVec3::ZERO;
+                let mut vertices = 0usize;
                 let mut originals = brush.sides.iter().filter(|side| !side.bevel);
                 for (identity, plane) in source.sides.iter().zip(&hull.planes) {
                     budget.consume(1)?;
@@ -1209,28 +1217,16 @@ fn admit_exact_hulls(
                                 .into(),
                         );
                     }
-                    let axis = if plane.normal == DVec3::X {
-                        (0, true)
-                    } else if plane.normal == DVec3::NEG_X {
-                        (0, false)
-                    } else if plane.normal == DVec3::Y {
-                        (1, true)
-                    } else if plane.normal == DVec3::NEG_Y {
-                        (1, false)
-                    } else if plane.normal == DVec3::Z {
-                        (2, true)
-                    } else if plane.normal == DVec3::NEG_Z {
-                        (2, false)
-                    } else {
-                        return Err("Exact emission visibility currently requires axis-aligned final hull planes; oblique hulls are unsupported".into());
-                    };
-                    if !plane.dist.is_finite() {
-                        return Err("Exact emission hull plane must be finite".into());
-                    }
-                    if axis.1 {
-                        maxs[axis.0] = maxs[axis.0].min(plane.dist);
-                    } else {
-                        mins[axis.0] = mins[axis.0].max(-plane.dist);
+                    let winding = original
+                        .winding
+                        .as_ref()
+                        .ok_or("Exact emission hull lost its original face winding")?;
+                    budget.consume(winding.0.len())?;
+                    vertices = vertices
+                        .checked_add(winding.0.len())
+                        .ok_or("Exact emission hull interior count overflow")?;
+                    for &point in &winding.0 {
+                        interior += point;
                     }
                     let material = map.materials.get(original.material);
                     budget.consume(1 + material.name.len().div_ceil(64))?;
@@ -1251,13 +1247,16 @@ fn admit_exact_hulls(
                         checked.insert(original.material);
                     }
                 }
-                if originals.next().is_some()
-                    || !mins.is_finite()
-                    || !maxs.is_finite()
-                    || !mins.cmplt(maxs).all()
-                {
-                    return Err("Exact emission hull must be a bounded full-dimensional closed axis-aligned intersection".into());
+                if originals.next().is_some() || vertices == 0 {
+                    return Err(
+                        "Exact emission hull lost its complete original face geometry".into(),
+                    );
                 }
+                exact::closed_hull(
+                    &hull.planes,
+                    scope.pose.point(interior / vertices as f64),
+                    budget,
+                )?;
                 Ok::<(), String>(())
             })();
             result
@@ -1549,7 +1548,7 @@ impl Prepared {
                     for index in std::iter::once(context.shadows).chain(context.model) {
                         for hull in index.objects() {
                             budget.consume(1)?;
-                            visibility.subtract(hull.planes.iter().copied(), budget)?;
+                            visibility.subtract(&hull.planes, budget)?;
                         }
                     }
                     let fragments = visibility.finish(sample.point, budget)?;

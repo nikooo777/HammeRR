@@ -69,7 +69,8 @@ not the complete shader. Use one mode per material across LDR and HDR records.
 4. Set **Pitch Yaw Roll (Y Z X)** for an initial rotation, if needed.
 5. Apply a declared emission material to its source faces, then compile.
 
-Disable **Exact emission visibility** for brush-model emitting sources.
+For **Exact emission visibility**, the final emitting face must be axis-aligned
+and every source vertex must lie exactly on its native plane.
 The source uses its compiled initial pose. Other solids in the same model
 still block light. Supported child models use their assembled pose once.
 See [stationary shadow sources](brush-texture-shadows.md#cast-from-a-stationary-root-brush-model)
@@ -130,8 +131,9 @@ Resolve brush shadows across the source area instead of sampling segments.
 4. Open **Build details…**. **Emission visibility policy** should read
    **Exact opaque convex hulls**. Check **Emission conversion bounds (dimensionless)**.
 
-Exact mode supports uniquely owned axis-aligned world/detail emitting faces,
-including supported assembled children. Every source vertex must lie exactly
+Exact mode supports uniquely owned world/detail and eligible stationary
+**Shadows → Yes** `func_brush` emitting faces, at root or in supported assemblies.
+The final emitting plane must be axis-aligned, with every source vertex exactly
 on its native plane. Opaque brush casters may have oblique planes when their
 final hull is certified closed, bounded and convex. Every applicable original
 hull participates, including invisible boundaries. Eligible stationary brush
@@ -147,10 +149,10 @@ and brightness. This is not an RGB, BSP quantization or native image error bound
 **Native direct emission** keeps its separate point approximation.
 Disable **Exact emission visibility** to use the original sampled bake.
 
-Exact mode rejects oblique emitting faces, brush-model emitting sources,
-nonzero native-plane support residuals, sky/alpha/unknown materials, terrain and
-prop shadow providers, and uncertified hulls. Checked arithmetic, fragment and
-conditioning limits also apply.
+Exact mode rejects oblique final emitting faces, nonzero native-plane support
+residuals, moving/parented/unrequested brush-model emitting sources,
+sky/alpha/unknown materials, terrain and prop shadow providers, and uncertified
+hulls. Checked arithmetic, fragment and conditioning limits also apply.
 **Fullbright** checks the setting and declarations without exact shadow admission.
 
 ## Limits

@@ -859,11 +859,6 @@ pub(super) fn prepare(
             let &(owner, side, entity) = owners
                 .get(id)
                 .ok_or("Emission source has no admitted original brush owner")?;
-            if declarations.exact_enabled && entity != 0 {
-                return Err(
-                    "Exact emission visibility requires original world/detail sources".into(),
-                );
-            }
             if entity != scope.entity {
                 return Err("Emission face disagrees with its original model scope".into());
             }

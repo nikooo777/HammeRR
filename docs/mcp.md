@@ -760,15 +760,17 @@ World policy uses the same draft: set `_hammerr_emission_exact_visibility` to
 `"1"` alongside the file, then commit. It is not a compile option or recipe
 field. `get_compile_settings.material_emission_exact_visibility` reports the
 effective value or validation error, source and hull scope, and refusal policy.
-It supports uniquely owned axis-aligned world/detail source faces, including
-assembled children, with zero native-plane support residual and every applicable
-opaque brush hull certified closed, bounded and convex from its final planes,
-including oblique casters. Original materials and existing global/model shadow
-scopes still apply. Oblique emitting faces, brush-model emitting sources,
-nonzero native-plane support residuals, sky/alpha/unknown materials, terrain/prop
-shadow providers, uncertified hulls and exhausted numeric/resource bounds reject
-without sampled fallback or replacement of the previous BSP. Fullbright validates
-the policy, file and declarations without admitting exact geometry.
+It supports uniquely owned world/detail or eligible stationary Shadows Yes
+`func_brush` emitting faces, at root or assembled-child scope, with a final
+axis-aligned plane and zero native-plane support residual. Every applicable
+opaque brush hull must be certified closed, bounded and convex from its final
+planes, including oblique casters. Original materials and existing global/model
+shadow scopes still apply. Oblique final emitting faces, nonzero native-plane
+support residuals, moving/parented/unrequested brush-model emitting sources,
+sky/alpha/unknown materials, terrain/prop shadow providers, uncertified hulls and
+exhausted numeric/resource bounds reject without sampled fallback or replacement
+of the previous BSP. Fullbright validates the policy, file and declarations
+without admitting exact geometry.
 
 Under `stats.material_emission`, `visibility_policy` identifies the selected
 policy. `maximum_visibility_conversion_error` is the maximum bound per receiver;
@@ -786,11 +788,10 @@ base-RGB emission. The same file and property operations apply. Results include
 area remain separate from the clipped integration pieces. Texture failures
 reject; no average colour or substitute asset is used.
 
-With exact visibility disabled, an eligible stationary `func_brush` can emit
-from its initial pose. Set its finite `origin` and `vrad_brush_cast_shadows:"1"`
-through `set_entity_properties`,
-then use the same World emission file. Supported child poses are assembled
-once. Moving or unrequested model sources reject.
+An eligible stationary `func_brush` can emit from its initial pose. Set its
+finite `origin` and `vrad_brush_cast_shadows:"1"` through `set_entity_properties`,
+then use the same World emission file. Supported child poses are assembled once.
+Moving, parented or unrequested model sources reject.
 
 ## Tool reference
 

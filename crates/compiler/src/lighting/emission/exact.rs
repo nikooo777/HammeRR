@@ -245,6 +245,144 @@ impl Rational {
 struct Point([Rational; 2]);
 
 #[derive(Clone, Copy)]
+struct Interval {
+    lower: f64,
+    upper: f64,
+}
+
+impl Interval {
+    const ZERO: Self = Self {
+        lower: 0.0,
+        upper: 0.0,
+    };
+
+    fn new(lower: f64, upper: f64) -> Result<Self, String> {
+        if !lower.is_finite() || !upper.is_finite() || lower > upper {
+            return Err("Exact emission cannot certify a finite conversion interval".into());
+        }
+        Ok(Self { lower, upper })
+    }
+
+    fn enclose(value: Rational) -> Result<Self, String> {
+        Self::new(value.lower()?, value.upper()?)
+    }
+
+    fn add(self, other: Self) -> Result<Self, String> {
+        Self::new(
+            (self.lower + other.lower).next_down(),
+            (self.upper + other.upper).next_up(),
+        )
+    }
+
+    fn sub(self, other: Self) -> Result<Self, String> {
+        Self::new(
+            (self.lower - other.upper).next_down(),
+            (self.upper - other.lower).next_up(),
+        )
+    }
+
+    fn mul(self, other: Self) -> Result<Self, String> {
+        let products = [
+            self.lower * other.lower,
+            self.lower * other.upper,
+            self.upper * other.lower,
+            self.upper * other.upper,
+        ];
+        if products.iter().any(|value| !value.is_finite()) {
+            return Err("Exact emission cannot certify a finite conversion interval".into());
+        }
+        Self::new(
+            products
+                .into_iter()
+                .fold(f64::INFINITY, f64::min)
+                .next_down(),
+            products
+                .into_iter()
+                .fold(f64::NEG_INFINITY, f64::max)
+                .next_up(),
+        )
+    }
+
+    fn neg(self) -> Self {
+        Self {
+            lower: -self.upper,
+            upper: -self.lower,
+        }
+    }
+}
+
+fn point_difference(a: Point, b: Point) -> Result<Point, String> {
+    Ok(Point([a.0[0].sub(b.0[0])?, a.0[1].sub(b.0[1])?]))
+}
+
+fn point_interval(point: Point) -> Result<[Interval; 2], String> {
+    Ok([
+        Interval::enclose(point.0[0])?,
+        Interval::enclose(point.0[1])?,
+    ])
+}
+
+fn interval_cross(a: [Interval; 2], b: [Interval; 2]) -> Result<Interval, String> {
+    a[0].mul(b[1])?.sub(a[1].mul(b[0])?)
+}
+
+fn conversion_error(
+    original: &[Point],
+    candidate: &[Point],
+    orientation: Ordering,
+    distance_squared_lower: Rational,
+    work: &mut Work,
+    budget: &mut Budget<'_>,
+) -> Result<f64, String> {
+    if original.len() != candidate.len() || original.len() < 3 {
+        return Err("Exact emission conversion lost matching polygon vertices".into());
+    }
+    work.charge(original.len() * 4, budget)?;
+    if original == candidate {
+        return Ok(0.0);
+    }
+    let mut loss = Interval::ZERO;
+    let zero = Point([Rational::ZERO; 2]);
+    for index in 0..original.len() {
+        work.charge(192, budget)?;
+        let next = (index + 1) % original.len();
+        let delta = point_difference(original[index], candidate[index])?;
+        let next_delta = point_difference(original[next], candidate[next])?;
+        if delta == zero && next_delta == zero {
+            continue;
+        }
+        loss = loss.add(
+            interval_cross(point_interval(delta)?, point_interval(original[next])?)?.add(
+                interval_cross(
+                    point_interval(candidate[index])?,
+                    point_interval(next_delta)?,
+                )?,
+            )?,
+        )?;
+    }
+    let loss = match orientation {
+        Ordering::Less => loss.neg(),
+        Ordering::Greater => loss,
+        Ordering::Equal => {
+            return Err("Exact emission conversion lost its source orientation".into());
+        }
+    };
+    if loss.upper < 0.0 {
+        return Err("Exact emission conversion enlarged a visible fragment".into());
+    }
+    work.charge(64, budget)?;
+    let distance_lower = distance_squared_lower.lower()?;
+    if !distance_lower.is_finite() || distance_lower <= 0.0 {
+        return Err("Exact emission cannot certify a positive kernel distance".into());
+    }
+    let bound = (loss.upper / distance_lower).next_up();
+    if !bound.is_finite() || bound < 0.0 {
+        return Err("Exact emission cannot certify a finite conversion bound".into());
+    }
+    Ok(bound)
+}
+
+#[derive(Clone, Copy)]
 struct Halfplane([I1024; 3]);
 
 impl Halfplane {
@@ -628,6 +766,7 @@ fn clip(
 pub(super) struct Visibility {
     source: [[Rational; 3]; 3],
     origin: [Rational; 3],
+    orientation: Ordering,
     axis: usize,
     axes: [usize; 2],
     fragments: Polygons,
@@ -652,12 +791,13 @@ impl Visibility {
             .find(|&axis| source[0][axis] == source[1][axis] && source[0][axis] == source[2][axis])
             .ok_or("Exact emission currently requires an axis-aligned source plane")?;
         let axes = [(axis + 1) % 3, (axis + 2) % 3];
-        if turn(
+        let orientation = turn(
             Point([source[0][axes[0]], source[0][axes[1]]]),
             Point([source[1][axes[0]], source[1][axes[1]]]),
             Point([source[2][axes[0]], source[2][axes[1]]]),
-        )? == Rational::ZERO
-        {
+        )?
+        .sign();
+        if orientation == Ordering::Equal {
             return Err("Exact emission requires a positive-area source triangle".into());
         }
         let mut triangle = TopoPolygon::new(3, budget)?;
@@ -678,6 +818,7 @@ impl Visibility {
         Ok(Self {
             source,
             origin: vector(origin)?,
+            orientation,
             axis,
             axes,
             fragments,
@@ -858,11 +999,7 @@ impl Visibility {
                     budget,
                 )?)?;
             }
-            let area = double_area(world.values.iter().copied())?;
-            if area == Rational::ZERO {
-                return Err("Exact emission lost a positive-area source fragment".into());
-            }
-            let orientation = area.sign();
+            let orientation = self.orientation;
             let mut center = None;
             for index in 1..world.values.len() - 1 {
                 self.work.charge(64, budget)?;
@@ -922,26 +1059,14 @@ impl Visibility {
                     rejection = "collapsed or reversed area";
                     continue;
                 }
-                let original_area = area.abs();
-                let converted_area = converted_area.abs();
-                if converted_area.compare(original_area) == Ordering::Greater {
-                    return Err("Exact emission conversion enlarged a visible fragment".into());
-                }
-                let bound = if original_area == converted_area {
-                    0.0
-                } else {
-                    self.work.charge(64, budget)?;
-                    let bound = original_area
-                        .sub(converted_area)?
-                        .div(distance_squared_lower)?
-                        .upper()?;
-                    if !bound.is_finite() || bound < 0.0 {
-                        return Err(
-                            "Exact emission cannot certify a finite conversion bound".into()
-                        );
-                    }
-                    bound
-                };
+                let bound = conversion_error(
+                    &world.values,
+                    &candidate.values,
+                    orientation,
+                    distance_squared_lower,
+                    &mut self.work,
+                    budget,
+                )?;
                 converted = Some((candidate, bound));
                 break;
             }

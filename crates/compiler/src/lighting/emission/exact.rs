@@ -692,6 +692,37 @@ fn dot(a: [Rational; 3], b: [Rational; 3]) -> Result<Rational, String> {
     a[0].mul(b[0])?.add(a[1].mul(b[1])?)?.add(a[2].mul(b[2])?)
 }
 
+fn triangle_normal(points: [[Rational; 3]; 3]) -> Result<[Rational; 3], String> {
+    let first = [
+        points[1][0].sub(points[0][0])?,
+        points[1][1].sub(points[0][1])?,
+        points[1][2].sub(points[0][2])?,
+    ];
+    let second = [
+        points[2][0].sub(points[0][0])?,
+        points[2][1].sub(points[0][1])?,
+        points[2][2].sub(points[0][2])?,
+    ];
+    hull_cross(first, second)
+}
+
+fn normalized_normal(actual: [Rational; 3]) -> Result<([Rational; 3], usize), String> {
+    let mut axis = 0;
+    for (candidate, component) in actual.into_iter().enumerate().skip(1) {
+        if component.abs().compare(actual[axis].abs()) == Ordering::Greater {
+            axis = candidate;
+        }
+    }
+    if actual[axis] == Rational::ZERO {
+        return Err("Exact emission requires a positive-area source triangle".into());
+    }
+    let mut normal = [Rational::ZERO; 3];
+    for (component, value) in normal.iter_mut().zip(actual) {
+        *component = value.div(actual[axis])?;
+    }
+    Ok((normal, axis))
+}
+
 pub(super) fn source_support(
     points: [DVec3; 3],
     plane: Plane,
@@ -711,15 +742,147 @@ pub(super) fn source_support(
     Ok(())
 }
 
-pub(super) fn front(
-    point: DVec3,
-    plane: Plane,
-    budget: &mut Budget<'_>,
-) -> Result<Ordering, String> {
-    budget.consume(64 * ARITHMETIC_WORK_SCALE)?;
-    Ok(dot(vector(plane.normal)?, vector(point)?)?
-        .sub(Rational::from_f64(plane.dist)?)?
-        .sign())
+pub(super) struct SourceFace {
+    normal: [Rational; 3],
+    distance: Rational,
+    orientation: Ordering,
+    retained_support: bool,
+    fan: Storage<bool>,
+    _allocation: Allocation,
+}
+
+impl SourceFace {
+    pub(super) fn new(
+        points: &[DVec3],
+        retained_plane: Plane,
+        budget: &mut Budget<'_>,
+    ) -> Result<Self, String> {
+        if points.len() < 3 {
+            return Err(
+                "Exact emission requires at least three actual native source corners".into(),
+            );
+        }
+        let allocation = budget.reserve_bytes(size_of::<Self>() + 2 * size_of::<usize>())?;
+        let mut work = Work::new("source face admission");
+        let mut source = Storage::new(points.len(), budget)?;
+        for &point in points {
+            work.charge(32, budget)?;
+            source.push(vector(point)?)?;
+        }
+        let mut actual = [Rational::ZERO; 3];
+        for pair in source.values[1..].windows(2) {
+            work.charge(128, budget)?;
+            actual = triangle_normal([source.values[0], pair[1], pair[0]])?;
+            if actual.iter().any(|value| *value != Rational::ZERO) {
+                break;
+            }
+        }
+        work.charge(128, budget)?;
+        let (normal, axis) = normalized_normal(actual)?;
+        let orientation = actual[axis].sign();
+        let axes = [(axis + 1) % 3, (axis + 2) % 3];
+        let distance = dot(normal, source.values[0])?;
+        let retained_normal = vector(retained_plane.normal)?;
+        let retained_distance = Rational::from_f64(retained_plane.dist)?;
+        work.charge(64, budget)?;
+        if dot(normal, retained_normal)?.sign() != orientation {
+            return Err("Exact emission actual native face must point outward relative to its retained plane".into());
+        }
+        let mut retained_support = true;
+        for &point in &source.values {
+            work.charge(128, budget)?;
+            if dot(normal, point)? != distance {
+                return Err(
+                    "Exact emission requires exactly planar actual native source corners".into(),
+                );
+            }
+            if dot(retained_normal, point)? != retained_distance {
+                retained_support = false;
+            }
+        }
+        for index in 0..source.values.len() {
+            let a = Point(axes.map(|axis| source.values[index][axis]));
+            let b = Point(axes.map(|axis| source.values[(index + 1) % source.values.len()][axis]));
+            for (other, &point) in source.values.iter().enumerate() {
+                work.charge(64, budget)?;
+                if other != index && source.values[index] == point {
+                    return Err("Exact emission actual native face repeats a source corner".into());
+                }
+                let side = turn(a, b, Point(axes.map(|axis| point[axis])))?.sign();
+                if side != Ordering::Equal && side != orientation.reverse() {
+                    return Err(
+                        "Exact emission requires a simple convex actual native source face".into(),
+                    );
+                }
+            }
+        }
+        let mut fan = Storage::new(points.len() - 2, budget)?;
+        let first = Point(axes.map(|axis| source.values[0][axis]));
+        for pair in source.values[1..].windows(2) {
+            work.charge(64, budget)?;
+            let side = turn(
+                first,
+                Point(axes.map(|axis| pair[1][axis])),
+                Point(axes.map(|axis| pair[0][axis])),
+            )?
+            .sign();
+            if side != Ordering::Equal && side != orientation {
+                return Err(
+                    "Exact emission actual native fan does not cover its outward face".into(),
+                );
+            }
+            fan.push(side != Ordering::Equal)?;
+        }
+        Ok(Self {
+            normal,
+            distance,
+            orientation,
+            retained_support,
+            fan,
+            _allocation: allocation,
+        })
+    }
+
+    pub(super) fn supports_retained_plane(&self) -> bool {
+        self.retained_support
+    }
+
+    pub(super) fn fan_triangle(
+        &self,
+        corner: usize,
+        budget: &mut Budget<'_>,
+    ) -> Result<bool, String> {
+        budget.consume(1)?;
+        self.fan
+            .values
+            .get(corner)
+            .copied()
+            .ok_or_else(|| "Exact emission actual native fan lost its source corner".into())
+    }
+
+    pub(super) fn front(&self, point: DVec3, budget: &mut Budget<'_>) -> Result<Ordering, String> {
+        budget.consume(64 * ARITHMETIC_WORK_SCALE)?;
+        let side = dot(self.normal, vector(point)?)?.sub(self.distance)?.sign();
+        Ok(if self.orientation == Ordering::Less {
+            side.reverse()
+        } else {
+            side
+        })
+    }
+
+    pub(super) fn support(
+        &self,
+        points: [DVec3; 3],
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
+        budget.consume(192 * ARITHMETIC_WORK_SCALE)?;
+        for point in points {
+            if dot(self.normal, vector(point)?)? != self.distance {
+                return Err("Exact emission converted source vertices must remain on the certified actual native face".into());
+            }
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn receiver_normal(normal: DVec3, budget: &mut Budget<'_>) -> Result<(), String> {
@@ -974,29 +1137,8 @@ impl Visibility {
             axis
         } else {
             budget.consume(512 * ARITHMETIC_WORK_SCALE)?;
-            let first = [
-                source[1][0].sub(source[0][0])?,
-                source[1][1].sub(source[0][1])?,
-                source[1][2].sub(source[0][2])?,
-            ];
-            let second = [
-                source[2][0].sub(source[0][0])?,
-                source[2][1].sub(source[0][1])?,
-                source[2][2].sub(source[0][2])?,
-            ];
-            let actual = hull_cross(first, second)?;
-            let mut axis = 0;
-            for (candidate, component) in actual.into_iter().enumerate().skip(1) {
-                if component.abs().compare(actual[axis].abs()) == Ordering::Greater {
-                    axis = candidate;
-                }
-            }
-            if actual[axis] == Rational::ZERO {
-                return Err("Exact emission requires a positive-area source triangle".into());
-            }
-            for (component, value) in normal.iter_mut().zip(actual) {
-                *component = value.div(actual[axis])?;
-            }
+            let (actual, axis) = normalized_normal(triangle_normal(source)?)?;
+            normal = actual;
             axis
         };
         let axes = [(axis + 1) % 3, (axis + 2) % 3];

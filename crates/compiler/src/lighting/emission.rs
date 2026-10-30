@@ -3,6 +3,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 use std::ops::ControlFlow;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
@@ -689,6 +690,7 @@ struct Source {
     triangles: Vec<[DVec3; 3]>,
     radiance: [DVec3; 2],
     boundary: SourceBoundary,
+    exact_face: Option<Rc<exact::SourceFace>>,
 }
 
 pub(super) struct NativePatch<'a> {
@@ -951,19 +953,33 @@ pub(super) fn prepare(
             {
                 return Err("Emission source needs at least three finite native vertices within Source coordinate bounds".into());
             }
-            if declarations.exact_enabled {
-                for &point in &points {
-                    exact::source_support([point; 3], plane, budget)?;
+            let exact_face = if declarations.exact_enabled {
+                let certificate = exact::SourceFace::new(&points, plane, budget)?;
+                if !certificate.supports_retained_plane()
+                    && texture.is_some_and(|texture| texture.rectangles() != 1)
+                {
+                    return Err("Exact emission sources with nonzero retained-plane residual do not support generated texture partitions".into());
                 }
-            }
+                Some(Rc::new(certificate))
+            } else {
+                None
+            };
             let mut triangles = Vec::with_capacity(points.len() - 2);
             let mut texture_triangles = Vec::new();
             let mut face_area = 0.0;
             for (corner, pair) in points[1..].windows(2).enumerate() {
                 budget.consume(1)?;
+                if let Some(certificate) = &exact_face
+                    && !certificate.fan_triangle(corner, budget)?
+                {
+                    continue;
+                }
                 let cross = (pair[1] - points[0]).cross(pair[0] - points[0]);
                 let area = cross.length() * 0.5;
                 if area == 0.0 {
+                    if exact_face.is_some() {
+                        return Err("Exact emission source loses positive native triangle area in floating evaluation".into());
+                    }
                     continue;
                 }
                 if !area.is_finite() || cross.dot(plane.normal) <= 0.0 {
@@ -1063,8 +1079,15 @@ pub(super) fn prepare(
             };
             for (rgb, triangles) in fragments {
                 if declarations.exact_enabled && texture.is_some() {
+                    let certificate = exact_face
+                        .as_ref()
+                        .ok_or("Exact emission source lost its planar face certificate")?;
                     for &triangle in &triangles {
-                        exact::source_support(triangle, plane, budget)?;
+                        if certificate.supports_retained_plane() {
+                            exact::source_support(triangle, plane, budget)?;
+                        } else {
+                            certificate.support(triangle, budget)?;
+                        }
                     }
                 }
                 let radiance = declaration.channels.map(|value| {
@@ -1106,6 +1129,7 @@ pub(super) fn prepare(
                     world_plane: (scope.entity == 0).then_some(side.plane),
                     triangles,
                     radiance,
+                    exact_face: exact_face.clone(),
                     boundary: SourceBoundary {
                         plane: side.plane,
                         equation: plane,
@@ -1619,9 +1643,11 @@ impl Prepared {
                 continue;
             }
             let result = (|| {
-                if exact::front(sample.point, source.boundary.equation, budget)?
-                    != Ordering::Greater
-                {
+                let certificate = source
+                    .exact_face
+                    .as_ref()
+                    .ok_or("Exact emission source lost its planar face certificate")?;
+                if certificate.front(sample.point, budget)? != Ordering::Greater {
                     return Ok(0.0);
                 }
                 let mut integral = 0.0;

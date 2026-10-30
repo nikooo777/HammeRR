@@ -70,8 +70,10 @@ not the complete shader. Use one mode per material across LDR and HDR records.
 5. Apply a declared emission material to its source faces, then compile.
 
 For **Exact emission visibility**, the final emitting face can be axis-aligned
-or oblique. Every source vertex must lie exactly on the retained posed source
-plane, and the compiler must certify conversion of the visible fragments.
+or oblique. The compiler must certify its actual planar geometry and conversion
+of the visible fragments. A nonzero difference from the retained posed source
+plane requires uniform radiance or one texture rectangle that preserves the
+original native triangles.
 The source uses its compiled initial pose. Other solids in the same model
 still block light. Supported child models use their assembled pose once.
 See [stationary shadow sources](brush-texture-shadows.md#cast-from-a-stationary-root-brush-model)
@@ -98,7 +100,8 @@ the sampled finite-area bake.
 8. Click **Frame light** to frame that triangle's native centroid. Selection stays unchanged.
 
 The policy defaults off. Each constant-colour integration triangle supplies a
-point at its actual centroid, using its normal and area-scaled intensity.
+point at its actual centroid, using the retained posed source-plane normal and
+area-scaled intensity.
 Texture-driven sources retain their constant-colour integration pieces.
 Several records can therefore refer to one authored face. Source associations
 describe the successful build; stale builds or missing metadata cannot select
@@ -137,13 +140,24 @@ Resolve opaque brush, terrain and static prop shadows across the source area.
 
 Exact mode supports uniquely owned world/detail and eligible stationary
 **Shadows → Yes** `func_brush` emitting faces, at root or in supported assemblies.
-The final emitting plane can be axis-aligned or oblique. Every actual source
-vertex must lie exactly on the retained posed source plane. Converted binary64
-kernel vertices must remain exactly on that plane. All converted coverage must
-stay inside the exact visible region. The compiler rejects faces that cannot meet these checks.
-Opaque brush casters may have
-oblique planes when their final hull is certified closed, bounded and convex.
-Every applicable original hull participates, including invisible boundaries.
+The actual native face must be exactly planar and convex, with nonzero area.
+Its triangle fan must point outward relative to the retained posed brush plane.
+The face can be axis-aligned or oblique. Source facing uses its actual plane, which
+can differ from the retained plane. The retained plane keeps the original side
+and hull identity and the normal used by native direct emission.
+Every owning hull still blocks light, so real self-occlusion can darken a source.
+
+At nonzero residual from the retained plane, uniform records are supported.
+A texture source is supported only when one constant-colour rectangle preserves
+the original native triangles. Generated texture partitions still require zero
+residual. Other zero-residual texture limits are unchanged.
+
+Converted binary64 kernel vertices must stay exactly on the actual source
+plane. All converted coverage must stay inside the exact visible region.
+The compiler rejects faces that cannot meet these checks.
+Opaque brush casters may have oblique planes when their final hull is certified
+closed, bounded and convex. Every applicable original hull participates,
+including invisible boundaries.
 Eligible stationary brush models retain their existing global or same-model
 shadow scope.
 
@@ -178,8 +192,9 @@ quantization or native image error bound.
 **Native direct emission** keeps its separate point approximation.
 Disable **Exact emission visibility** to use the original sampled bake.
 
-Exact mode rejects nonzero residuals from the retained posed source plane,
-unrepresentable on-plane fragment vertices, moving/parented/unrequested brush-model emitting
+Exact mode rejects nonplanar or uncertified source faces, generated texture
+partitions at nonzero residual from the retained posed plane, unrepresentable
+on-plane fragment vertices, moving/parented/unrequested brush-model emitting
 sources, sky/alpha/unknown materials, unsupported prop models, zero-area mesh
 triangles and uncertified hulls. Checked arithmetic, fragment and conditioning
 limits also apply.

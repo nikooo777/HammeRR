@@ -145,11 +145,15 @@ world/detail surfaces through **World settings… → Emission file**.
 The default-off [**Exact emission visibility**](material-emission.md#exact-brush-shadows)
 World control supports uniquely owned world/detail and eligible stationary
 **Shadows → Yes** `func_brush` emitters with planar faces, including oblique
-faces with zero residual from the retained posed source plane and certified
-fragment conversion. Converted binary64 kernel vertices must stay on that plane,
-with all converted coverage inside the exact visible region. Shadow casters use certified closed
-convex opaque brush hulls, including oblique hulls, actual opaque terrain triangles and strictly admitted
-opaque static-prop meshes.
+faces. Certified planar convex native faces may differ from the retained posed
+brush plane with uniform radiance or one texture rectangle that preserves the
+original triangles. Source facing uses the actual plane, and owning hulls retain
+real self-occlusion. Converted binary64 kernel vertices must stay on the actual
+source plane, with all converted coverage inside the exact visible region.
+Shadow casters use certified closed convex opaque brush hulls, including oblique
+hulls, actual opaque terrain triangles and strictly admitted opaque static-prop
+meshes. Nonplanar faces and generated texture partitions at nonzero retained-plane
+residual remain unsupported.
 Unsupported sources, geometry or numeric bounds stop the build.
 The default-off **Native direct emission** World control adds a separately
 described runtime centroid approximation; static previews remain static.

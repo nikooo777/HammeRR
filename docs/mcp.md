@@ -762,15 +762,23 @@ World policy uses the same draft: set `_hammerr_emission_exact_visibility` to
 field. `get_compile_settings.material_emission_exact_visibility` reports the
 effective value or validation error, source and shadow scope, and refusal policy.
 It supports uniquely owned world/detail or eligible stationary Shadows Yes
-`func_brush` emitting faces, at root or assembled-child scope, with an
-axis-aligned or oblique final plane and zero residual from the retained posed
-source plane on every actual source vertex. Converted binary64 kernel vertices
-must lie exactly on that plane. All converted coverage must stay inside the exact
-visible region. `fragment_conversion` reports this
-contract. Every applicable opaque brush hull must be certified closed, bounded
-and convex from its final
-planes, including oblique casters. Original materials and existing global/model
-shadow scopes still apply.
+`func_brush` emitting faces, at root or assembled-child scope. The actual native
+face must be exactly planar and convex, with nonzero area and certified fan
+coverage oriented outward relative to the retained posed brush plane.
+Source facing uses its actual plane. The retained posed brush plane keeps
+original side/hull custody and native direct-emission semantics;
+all applicable owning hulls still block light, including real self-occlusion.
+
+Nonzero residual from the retained plane permits uniform radiance or one texture
+rectangle that preserves the original native triangles. Generated texture
+partitions still require zero residual. Existing zero-residual texture limits
+are unchanged. `source_support_certificate` reports these requirements and
+scopes. Converted binary64 kernel vertices must lie exactly on the actual
+source plane. All converted coverage must stay inside the exact visible region;
+`fragment_conversion` reports this contract.
+Every applicable opaque brush hull must be certified closed, bounded and convex
+from its final planes, including oblique casters. Original materials and
+existing global/model shadow scopes still apply.
 
 Terrain and eligible static props cast from their actual two-sided triangles,
 including edges. Props use body 0, LOD 0, selected skin and the compiled
@@ -784,8 +792,9 @@ its shadow geometry. Receiver `disableselfshadowing:1` omits only that prop's
 own triangles; other providers still block light. Terrain and MDL emission
 sources remain unavailable.
 
-Nonzero residuals from the retained posed source plane, unrepresentable on-plane
-fragment vertices, moving/parented/unrequested brush-model emitting sources, sky, alpha, unknown or
+Nonplanar or uncertified actual source faces, generated texture partitions at
+nonzero retained-plane residual, unrepresentable on-plane fragment vertices,
+moving/parented/unrequested brush-model emitting sources, sky, alpha, unknown or
 missing materials, unsupported prop models, zero-area mesh triangles,
 uncertified hulls and exhausted numeric/resource bounds reject without sampled
 fallback or replacement of the previous BSP. Fullbright validates the policy,

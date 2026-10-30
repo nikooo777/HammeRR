@@ -135,10 +135,11 @@ impl Chord {
     fn validated(mut self) -> Result<Self, String> {
         self.key = canonical_key(&self.key).ok_or("Choose A–Z, F1–F12, Delete or Backspace")?;
         if (!self.control && matches!(self.key.as_str(), "W" | "A" | "S" | "D" | "Q" | "E"))
-            || (self.control && matches!(self.key.as_str(), "N" | "O" | "S" | "C" | "X" | "V"))
+            || (self.control
+                && matches!(self.key.as_str(), "N" | "O" | "S" | "C" | "X" | "V" | "K"))
         {
             return Err(format!(
-                "{} is reserved for camera, file or clipboard controls",
+                "{} is reserved for camera, file, clipboard or search controls",
                 self.label()
             ));
         }

@@ -1973,6 +1973,23 @@ export component ReportWindow inherits Window {
 export struct Activity {
     actor: string,
     text: string,
+    time: string,
+    tool: string,
+}
+
+export struct PaletteCommand {
+    id: string,
+    title: string,
+    group: string,
+    enabled: bool,
+}
+
+export struct PaletteRow {
+    object: bool,
+    id: string,
+    title: string,
+    detail: string,
+    enabled: bool,
 }
 
 component StatusText inherits Text {
@@ -2322,6 +2339,119 @@ export component AppWindow inherits Window {
 
     property <int> dock-tab: 0;
     property <bool> overlays-open;
+    in property <[PaletteRow]> palette-rows;
+    in-out property <string> palette-query;
+    in-out property <bool> palette-open;
+    property <int> palette-index;
+    callback palette-search(string);
+    callback palette-pick-object(string);
+    out property <[PaletteCommand]> palette-commands: [
+        { id: "new-map", title: "New map", group: "File", enabled: true },
+        { id: "open-map", title: "Open…", group: "File", enabled: true },
+        { id: "recent-maps", title: "Recent maps…", group: "File", enabled: true },
+        { id: "open-documents", title: "Open documents…", group: "File", enabled: true },
+        { id: "save-map", title: "Save", group: "File", enabled: true },
+        { id: "save-map-as", title: "Save as…", group: "File", enabled: true },
+        { id: "import-brush-batch", title: "Import brush batch…", group: "File", enabled: true },
+        { id: "external-comparison", title: "Compare external map…", group: "File", enabled: true },
+        { id: "recovery", title: "Recovery…", group: "File", enabled: true },
+        { id: "undo", title: "Undo", group: "Edit", enabled: root.can-undo },
+        { id: "redo", title: "Redo", group: "Edit", enabled: root.can-redo },
+        { id: "history", title: "History…", group: "Edit", enabled: true },
+        { id: "cut", title: "Cut", group: "Edit", enabled: root.has-selection },
+        { id: "copy", title: "Copy", group: "Edit", enabled: root.has-selection },
+        { id: "paste", title: "Paste…", group: "Edit", enabled: true },
+        { id: "delete", title: "Delete selection", group: "Edit", enabled: root.has-selection },
+        { id: "grid-defaults", title: "Grid defaults…", group: "Edit › Preferences", enabled: true },
+        { id: "pivot-defaults", title: "Transform pivot defaults…", group: "Edit › Preferences", enabled: true },
+        { id: "navigation-defaults", title: "Navigation defaults…", group: "Edit › Preferences", enabled: true },
+        { id: "preview-defaults", title: "Preview defaults…", group: "Edit › Preferences", enabled: true },
+        { id: "selection-defaults", title: "Selection defaults…", group: "Edit › Preferences", enabled: true },
+        { id: "keyboard-shortcuts", title: "Keyboard shortcuts…", group: "Edit › Preferences", enabled: true },
+        { id: "perspective", title: "Perspective view", group: "View › Projection", enabled: true },
+        { id: "top", title: "Top view · XY", group: "View › Projection", enabled: true },
+        { id: "front", title: "Front view · XZ", group: "View › Projection", enabled: true },
+        { id: "side", title: "Side view · YZ", group: "View › Projection", enabled: true },
+        { id: "textured", title: "Textured shading", group: "View › Shading", enabled: true },
+        { id: "flat", title: "Flat shading", group: "View › Shading", enabled: true },
+        { id: "wireframe", title: "Wireframe", group: "View › Shading", enabled: true },
+        { id: "lightmap-density", title: "Lightmap density", group: "View › Shading", enabled: true },
+        { id: "smoothing-groups", title: "Smoothing groups", group: "View › Shading", enabled: true },
+        { id: "frame-selection", title: "Frame selection", group: "View", enabled: true },
+        { id: "saved-views", title: "Saved views…", group: "View", enabled: true },
+        { id: "measurements", title: "Measurements…", group: "View", enabled: true },
+        { id: "overlays", title: "Overlays", group: "View", enabled: true },
+        { id: "tool-textures", title: root.show-tools ? "Hide tool textures" : "Show tool textures", group: "View", enabled: true },
+        { id: "leak-path", title: root.show-leak ? "Hide leak path" : "Show leak path", group: "View", enabled: true },
+        { id: "show-grid", title: root.grid-visible ? "Hide grid" : "Show grid", group: "View", enabled: true },
+        { id: "snap", title: root.snap-grid ? "Turn off snap to grid" : "Turn on snap to grid", group: "View", enabled: true },
+        { id: "selection-outlines", title: root.selection-outlines ? "Hide selection outlines" : "Show selection outlines", group: "View", enabled: true },
+        { id: "authored-lighting", title: root.lighting-preview ? "Turn off authored lighting" : "Turn on authored lighting", group: "View", enabled: true },
+        { id: "sky3d", title: "3D sky preview…", group: "View", enabled: true },
+        { id: "fog", title: "Fog preview…", group: "View", enabled: true },
+        { id: "color-correction", title: "Color correction…", group: "View", enabled: true },
+        { id: "instance-contents", title: "Instance contents…", group: "View", enabled: true },
+        { id: "working-region", title: "Working region…", group: "View", enabled: true },
+        { id: "clear-working-region", title: "Clear working region", group: "View", enabled: root.working-region-active },
+        { id: "hide-editor", title: "Hide selected in editor", group: "View", enabled: root.can-hide-editor-selection },
+        { id: "show-editor-hidden", title: "Show all editor-hidden", group: "View", enabled: root.editor-hidden-count > 0 },
+        { id: "objects", title: "Select objects", group: "Select", enabled: true },
+        { id: "faces", title: "Select faces", group: "Select", enabled: true },
+        { id: "select-volume", title: "Select a volume…", group: "Select", enabled: true },
+        { id: "object-report", title: "Object report…", group: "Select", enabled: true },
+        { id: "object-groups", title: "Object groups…", group: "Select", enabled: true },
+        { id: "layers", title: "Layers…", group: "Select", enabled: true },
+        { id: "select-tool", title: "Select tool", group: "Tools", enabled: true },
+        { id: "move-tool", title: "Move handles", group: "Tools", enabled: true },
+        { id: "rotate-tool", title: "Rotate handles", group: "Tools", enabled: true },
+        { id: "scale-tool", title: "Scale handles", group: "Tools", enabled: true },
+        { id: "paint-selection", title: "Paint selection", group: "Tools", enabled: true },
+        { id: "paint-texture", title: "Paint texture", group: "Tools", enabled: true },
+        { id: "block", title: root.projection-index == 0 ? "Add brush" : "Draw brush", group: "Brush", enabled: true },
+        { id: "brush-shapes", title: "Brush shapes…", group: "Brush", enabled: true },
+        { id: "draw-polygon", title: "Draw polygon…", group: "Brush", enabled: true },
+        { id: "linked-path", title: "Create linked path…", group: "Brush", enabled: true },
+        { id: "clip", title: "Clip selected brushes", group: "Brush", enabled: root.can-clip && !root.clipping },
+        { id: "hollow", title: "Hollow brushes…", group: "Brush", enabled: root.can-clip },
+        { id: "carve", title: "Carve brushes…", group: "Brush", enabled: root.can-clip },
+        { id: "merge", title: "Merge brushes…", group: "Brush", enabled: root.can-clip },
+        { id: "reshape", title: "Reshape brushes…", group: "Brush", enabled: root.can-clip },
+        { id: "place-on-surface", title: "Place on surface…", group: "Brush", enabled: root.has-selection },
+        { id: "repeat-array", title: "Repeat array…", group: "Brush", enabled: root.has-selection },
+        { id: "tie", title: "Tie to entity…", group: "Brush", enabled: root.can-tie },
+        { id: "move-to-world", title: "Move to world", group: "Brush", enabled: root.brush-entity-selected },
+        { id: "browse-materials", title: "Browse materials…", group: "Brush › Materials", enabled: true },
+        { id: "sample-face", title: "Sample face texture", group: "Brush › Materials", enabled: root.can-sample-face },
+        { id: "face-textures", title: "Edit face textures…", group: "Brush › Materials", enabled: root.has-faces },
+        { id: "map-textures", title: "Map textures together…", group: "Brush › Materials", enabled: root.has-faces },
+        { id: "face-lighting", title: "Face lighting…", group: "Brush › Materials", enabled: root.has-faces },
+        { id: "replace-materials", title: "Replace materials…", group: "Brush › Materials", enabled: true },
+        { id: "overlay", title: "Overlay…", group: "Brush › Materials", enabled: true },
+        { id: "place-entity", title: "Place entity…", group: "Entity", enabled: true },
+        { id: "batch-properties", title: "Edit selected entity properties…", group: "Entity", enabled: true },
+        { id: "connections", title: "Connections…", group: "Entity", enabled: root.entity-selected },
+        { id: "references", title: "References and rename…", group: "Entity", enabled: root.entity-selected },
+        { id: "model-details", title: "Model details…", group: "Entity", enabled: root.can-inspect-model },
+        { id: "cubemap-faces", title: "Cubemap faces…", group: "Entity", enabled: root.can-cubemap-faces },
+        { id: "reload-models", title: "Reload models", group: "Entity", enabled: root.has-fgd-model-guide },
+        { id: "entity-graph", title: "Entity graph…", group: "Entity", enabled: true },
+        { id: "prefabs", title: "Prefabs…", group: "Entity", enabled: true },
+        { id: "extract-instance", title: "Extract selection to instance…", group: "Entity", enabled: true },
+        { id: "instance-reference", title: "Instance reference…", group: "Entity", enabled: true },
+        { id: "edit-instance-reference", title: "Edit instance reference…", group: "Entity", enabled: root.can-edit-instance-reference },
+        { id: "world-settings", title: "World settings…", group: "Map", enabled: true },
+        { id: "map-statistics", title: "Map statistics…", group: "Map", enabled: true },
+        { id: "map-checks", title: "Check map…", group: "Map", enabled: true },
+        { id: "pointfile", title: "Pointfile…", group: "Map", enabled: true },
+        { id: "design-context", title: "Design context…", group: "Map", enabled: true },
+        { id: "compile", title: "Compile", group: "Build", enabled: !root.compiling && !root.launching },
+        { id: "run-map", title: "Run map", group: "Build", enabled: !root.compiling && !root.launching && !root.game-running },
+        { id: "stop-map", title: "Stop map", group: "Build", enabled: root.game-running },
+        { id: "cancel-build", title: "Cancel build", group: "Build", enabled: root.compiling && root.compile-cancellable },
+        { id: "build-settings", title: "Build settings…", group: "Build", enabled: true },
+        { id: "compile-region", title: root.compile-region-label, group: "Build", enabled: true },
+        { id: "game-log", title: "Game log…", group: "Build", enabled: true },
+    ];
     property <string> tool-label: root.drawing-block ? (root.projection-index == 0 ? "Add brush" : "Draw brush") : root.clipping ? "Clip brushes" : root.handles-mode-index == 1 ? "Move" : root.handles-mode-index == 2 ? "Rotate" : root.handles-mode-index == 3 ? "Scale" : root.handles-mode-index == 4 ? "Paint selection" : root.handles-mode-index == 5 ? "Paint texture" : "Select";
     property <image> tool-icon: root.drawing-block ? Icon.block : root.clipping ? Icon.clip : root.handles-mode-index == 1 ? Icon.move : root.handles-mode-index == 2 ? Icon.rotate : root.handles-mode-index == 3 ? Icon.scale : root.handles-mode-index == 4 ? Icon.paint : root.handles-mode-index == 5 ? Icon.bucket : Icon.select;
 
@@ -2348,6 +2478,139 @@ export component AppWindow inherits Window {
         }
         root.handles-mode-index = index;
         root.transform-tool-changed();
+    }
+
+    function open-palette() {
+        root.overlays-open = false;
+        root.palette-query = "";
+        root.palette-index = 0;
+        root.palette-open = true;
+        root.palette-search("");
+    }
+
+    function close-palette() {
+        root.palette-open = false;
+        focus.focus();
+    }
+
+    function run-palette-row(row: PaletteRow) {
+        if !row.enabled {
+            return;
+        }
+        root.close-palette();
+        if row.object {
+            root.palette-pick-object(row.id);
+        } else {
+            root.run-command(row.id);
+        }
+    }
+
+    function run-command(id: string) {
+        if id == "new-map" { root.new-map(); }
+        else if id == "open-map" { root.open-map(); }
+        else if id == "recent-maps" { root.recent-maps(); }
+        else if id == "open-documents" { root.open-documents(); }
+        else if id == "save-map" { root.save-map(); }
+        else if id == "save-map-as" { root.save-map-as(); }
+        else if id == "import-brush-batch" { root.import-brush-batch(); }
+        else if id == "external-comparison" { root.external-comparison(); }
+        else if id == "recovery" { root.recovery(); }
+        else if id == "undo" { root.undo(); }
+        else if id == "redo" { root.redo(); }
+        else if id == "history" { root.history(); }
+        else if id == "cut" { root.cut-objects(); }
+        else if id == "copy" { root.copy-objects(); }
+        else if id == "paste" { root.paste-objects(); }
+        else if id == "delete" { root.delete-selection(); }
+        else if id == "grid-defaults" { root.grid-defaults(); }
+        else if id == "pivot-defaults" { root.pivot-defaults(); }
+        else if id == "navigation-defaults" { root.navigation-defaults(); }
+        else if id == "preview-defaults" { root.preview-defaults(); }
+        else if id == "selection-defaults" { root.selection-defaults(); }
+        else if id == "keyboard-shortcuts" { root.keyboard-shortcuts(); }
+        else if id == "perspective" { root.projection-changed(0); }
+        else if id == "top" { root.projection-changed(1); }
+        else if id == "front" { root.projection-changed(2); }
+        else if id == "side" { root.projection-changed(3); }
+        else if id == "textured" { root.choose-surface-view(0); }
+        else if id == "flat" { root.choose-surface-view(1); }
+        else if id == "wireframe" { root.choose-surface-view(2); }
+        else if id == "lightmap-density" { root.choose-surface-view(3); }
+        else if id == "smoothing-groups" { root.choose-surface-view(4); }
+        else if id == "frame-selection" { root.frame-selection(); }
+        else if id == "saved-views" { root.saved-views(); }
+        else if id == "measurements" { root.measurements(); }
+        else if id == "overlays" { root.overlays-open = true; }
+        else if id == "tool-textures" { root.show-tools = !root.show-tools; root.options-changed(); }
+        else if id == "leak-path" { root.show-leak = !root.show-leak; root.options-changed(); }
+        else if id == "show-grid" { root.grid-visible = !root.grid-visible; root.spatial-changed(); }
+        else if id == "snap" { root.snap-grid = !root.snap-grid; root.spatial-changed(); }
+        else if id == "selection-outlines" { root.selection-outlines = !root.selection-outlines; root.options-changed(); }
+        else if id == "authored-lighting" { root.lighting-preview = !root.lighting-preview; root.options-changed(); }
+        else if id == "sky3d" { root.sky3d-preview(); }
+        else if id == "fog" { root.fog-preview(); }
+        else if id == "color-correction" { root.color-correction-preview(); }
+        else if id == "instance-contents" { root.inspect-instance-contents(); }
+        else if id == "working-region" { root.working-region(); }
+        else if id == "clear-working-region" { root.clear-working-region(); }
+        else if id == "hide-editor" { root.hide-editor-selection(); }
+        else if id == "show-editor-hidden" { root.show-all-editor-hidden(); }
+        else if id == "objects" { root.selection-mode-changed(0); }
+        else if id == "faces" { root.selection-mode-changed(1); }
+        else if id == "select-volume" { root.select-volume(); }
+        else if id == "object-report" { root.object-report(); }
+        else if id == "object-groups" { root.object-groups(); }
+        else if id == "layers" { root.layers(); }
+        else if id == "select-tool" { root.choose-tool(0); }
+        else if id == "move-tool" { root.choose-tool(1); }
+        else if id == "rotate-tool" { root.choose-tool(2); }
+        else if id == "scale-tool" { root.choose-tool(3); }
+        else if id == "paint-selection" { root.choose-tool(4); }
+        else if id == "paint-texture" { root.choose-tool(5); }
+        else if id == "block" { root.create-block(); }
+        else if id == "brush-shapes" { root.brush-shapes(); }
+        else if id == "draw-polygon" { root.draw-polygon(); }
+        else if id == "linked-path" { root.create-linked-path(); }
+        else if id == "clip" { root.start-clip(); }
+        else if id == "hollow" { root.hollow-brushes(); }
+        else if id == "carve" { root.carve-brushes(); }
+        else if id == "merge" { root.merge-brushes(); }
+        else if id == "reshape" { root.brush-components(); }
+        else if id == "place-on-surface" { root.place-on-surface(); }
+        else if id == "repeat-array" { root.repeat-array(); }
+        else if id == "tie" { root.tie-entity(); }
+        else if id == "move-to-world" { root.move-to-world(); }
+        else if id == "browse-materials" { root.browse-material(""); }
+        else if id == "sample-face" { root.sample-face-texture(); }
+        else if id == "face-textures" { root.edit-face-textures(); }
+        else if id == "map-textures" { root.map-face-group(); }
+        else if id == "face-lighting" { root.edit-face-lighting(); }
+        else if id == "replace-materials" { root.replace-materials(); }
+        else if id == "overlay" { root.create-overlay(); }
+        else if id == "place-entity" { root.place-entity(); }
+        else if id == "batch-properties" { root.batch-properties(); }
+        else if id == "connections" { root.edit-connections(); }
+        else if id == "references" { root.edit-references(); }
+        else if id == "model-details" { root.inspect-model(); }
+        else if id == "cubemap-faces" { root.cubemap-faces(); }
+        else if id == "reload-models" { root.reload-model-guides(); }
+        else if id == "entity-graph" { root.entity-graph(); }
+        else if id == "prefabs" { root.prefabs(); }
+        else if id == "extract-instance" { root.extract-instance(); }
+        else if id == "instance-reference" { root.create-instance-reference(); }
+        else if id == "edit-instance-reference" { root.edit-instance-reference(); }
+        else if id == "world-settings" { root.world-settings(); }
+        else if id == "map-statistics" { root.map-statistics(); }
+        else if id == "map-checks" { root.map-checks(); }
+        else if id == "pointfile" { root.pointfile(); }
+        else if id == "design-context" { root.design-context(); }
+        else if id == "compile" { root.compile-map(); }
+        else if id == "run-map" { root.run-map(); }
+        else if id == "stop-map" { root.stop-game(); }
+        else if id == "cancel-build" { root.cancel-build(); }
+        else if id == "build-settings" { root.build-status(); }
+        else if id == "compile-region" { root.compile-region(); }
+        else if id == "game-log" { root.game-log(); }
     }
 
     function choose-surface-view(index: int) {
@@ -2509,6 +2772,7 @@ export component AppWindow inherits Window {
         }
         Menu {
             title: "Help";
+            MenuItem { title: "Search commands and objects…"; activated => { root.open-palette(); } }
             MenuItem { title: "Keyboard shortcuts…"; activated => { root.keyboard-shortcuts(); } }
         }
     }
@@ -2567,6 +2831,36 @@ export component AppWindow inherits Window {
                 IconButton { y: 6px; icon: Icon.snap; tooltip: "Snap to grid"; checked: root.snap-grid; clicked => { root.snap-grid = !root.snap-grid; root.spatial-changed(); } }
                 IconButton { y: 6px; icon: Icon.grid; tooltip: "Show grid"; checked: root.grid-visible; clicked => { root.grid-visible = !root.grid-visible; root.spatial-changed(); } }
                 Rectangle { horizontal-stretch: 1; }
+                Rectangle {
+                    y: 7px;
+                    width: 240px;
+                    height: 26px;
+                    border-radius: Theme.radius-sm + 1px;
+                    border-width: 1px;
+                    border-color: Theme.border-strong;
+                    background: search-touch.has-hover ? Theme.hover : Theme.panel;
+                    accessible-role: button;
+                    accessible-label: "Search commands and objects";
+                    accessible-action-default => { root.open-palette(); }
+                    HorizontalLayout {
+                        padding-left: Theme.space;
+                        padding-right: 6px;
+                        spacing: Theme.space;
+                        Image { y: (parent.height - self.height) / 2; width: 13px; height: 13px; source: Icon.search; colorize: Theme.text-faint; }
+                        Text { text: "Search commands"; color: Theme.text-faint; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                        Rectangle {
+                            y: 4px;
+                            width: kbd.preferred-width + 10px;
+                            height: 16px;
+                            border-radius: 3px;
+                            border-width: 1px;
+                            border-color: Theme.border-strong;
+                            kbd := Text { text: "Ctrl K"; color: Theme.text-faint; font-size: 10px; font-family: "monospace"; }
+                        }
+                    }
+                    search-touch := TouchArea { clicked => { root.open-palette(); } }
+                }
+                Rectangle { width: Theme.space-lg; }
                 if root.compile-label == "": Text { text: root.compile-region-label == "Compile region…" ? "" : root.compile-region-label; color: Theme.text-faint; vertical-alignment: center; overflow: elide; }
                 Rectangle { width: Theme.space; }
                 Button { y: 7px; height: 26px; text: root.compiling ? "Compiling…" : "Compile"; icon: Icon.compile; colorize-icon: true; enabled: !root.compiling && !root.launching; clicked => { root.compile-map(); } }
@@ -2746,6 +3040,10 @@ export component AppWindow inherits Window {
                     key-pressed(event) => {
                         if (event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta && event.text == "o") {
                             root.open-map();
+                            return accept;
+                        }
+                        if (event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta && event.text == "k") {
+                            root.open-palette();
                             return accept;
                         }
                         root.key(event.text, true, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) ? EventResult.accept : EventResult.reject
@@ -3440,12 +3738,28 @@ export component AppWindow inherits Window {
                                             fill: entry.actor == "agent" ? Theme.agent-soft : entry.actor == "you" ? Theme.user-soft : Theme.control;
                                         }
                                     }
-                                    Text {
+                                    VerticalLayout {
                                         horizontal-stretch: 1;
-                                        text: entry.text;
-                                        color: Theme.text-muted;
+                                        spacing: 1px;
+                                        if entry.tool != "": Text {
+                                            text: entry.tool;
+                                            color: Theme.text;
+                                            font-size: Theme.font-small;
+                                            font-family: "monospace";
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: entry.text;
+                                            color: Theme.text-muted;
+                                            font-size: Theme.font-small;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+                                    Text {
+                                        text: entry.time;
+                                        color: Theme.text-faint;
                                         font-size: Theme.font-small;
-                                        wrap: word-wrap;
+                                        horizontal-alignment: right;
                                     }
                                 }
                             }
@@ -3485,6 +3799,148 @@ export component AppWindow inherits Window {
                     spacing: 5px;
                     Rectangle { y: (parent.height - self.height) / 2; width: 7px; height: 7px; border-radius: 4px; background: root.mcp-status == "" ? Theme.text-disabled : Theme.agent; }
                     StatusText { text: root.mcp-status == "" ? "MCP off" : "MCP"; }
+                }
+            }
+        }
+    }
+
+    if root.palette-open: Rectangle {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        background: Theme.scrim;
+        TouchArea { clicked => { root.close-palette(); } }
+    }
+    if root.palette-open: Rectangle {
+        x: (root.width - self.width) / 2;
+        y: 56px;
+        width: min(660px, root.width - 40px);
+        height: palette-layout.preferred-height;
+        background: Theme.panel;
+        border-color: Theme.border-strong;
+        border-width: 1px;
+        border-radius: Theme.radius-lg + 2px;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #000000a0;
+        clip: true;
+        accessible-role: list;
+        accessible-label: "Command palette";
+        TouchArea { }
+        palette-layout := VerticalLayout {
+            Rectangle {
+                height: 46px;
+                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 10px;
+                    spacing: 10px;
+                    Image { y: (parent.height - self.height) / 2; width: 16px; height: 16px; source: Icon.search; colorize: Theme.text-faint; }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        if root.palette-query == "": Text {
+                            width: parent.width;
+                            height: parent.height;
+                            text: "Type a command, or an object id, class, name or material";
+                            color: Theme.text-faint;
+                            font-size: 15px;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        TextInput {
+                            width: parent.width;
+                            height: parent.height;
+                            text <=> root.palette-query;
+                            color: Theme.text;
+                            font-size: 15px;
+                            vertical-alignment: center;
+                            single-line: true;
+                            selection-background-color: Theme.selection;
+                            accessible-label: "Search commands and objects";
+                            init => { self.focus(); }
+                            edited => {
+                                root.palette-index = 0;
+                                results.viewport-y = 0;
+                                root.palette-search(self.text);
+                            }
+                            accepted => {
+                                if root.palette-index < root.palette-rows.length {
+                                    root.run-palette-row(root.palette-rows[root.palette-index]);
+                                }
+                            }
+                            key-pressed(event) => {
+                                if event.text == Key.Escape {
+                                    root.close-palette();
+                                    return accept;
+                                }
+                                if event.text == Key.DownArrow || event.text == Key.UpArrow {
+                                    root.palette-index = event.text == Key.DownArrow ? min(root.palette-index + 1, root.palette-rows.length - 1) : max(root.palette-index - 1, 0);
+                                    if root.palette-index * 32px < -results.viewport-y {
+                                        results.viewport-y = -root.palette-index * 32px;
+                                    } else if (root.palette-index + 1) * 32px > -results.viewport-y + results.visible-height {
+                                        results.viewport-y = results.visible-height - (root.palette-index + 1) * 32px;
+                                    }
+                                    return accept;
+                                }
+                                reject
+                            }
+                        }
+                    }
+                    Rectangle {
+                        y: 14px;
+                        width: esc.preferred-width + 10px;
+                        height: 18px;
+                        border-radius: 3px;
+                        border-width: 1px;
+                        border-color: Theme.border-strong;
+                        esc := Text { text: "Esc"; color: Theme.text-faint; font-size: 10px; font-family: "monospace"; }
+                    }
+                }
+            }
+            results := ListView {
+                height: min(max(root.palette-rows.length, 1) * 32px, 384px);
+                for row[index] in root.palette-rows: Rectangle {
+                    height: 32px;
+                    background: index == root.palette-index ? Theme.active : row-touch.has-hover ? Theme.hover : transparent;
+                    accessible-role: list-item;
+                    accessible-label: row.title;
+                    HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 10px;
+                        Image {
+                            y: (parent.height - self.height) / 2;
+                            width: 15px;
+                            height: 15px;
+                            source: row.object ? (row.detail == "solid" ? Icon.block : Icon.entity) : Icon.command;
+                            colorize: !row.enabled ? Theme.text-disabled : row.object ? Theme.warning : Theme.text-muted;
+                        }
+                        Text { text: row.title; color: row.enabled ? Theme.text : Theme.text-disabled; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                        Text { text: row.object ? row.id : row.detail; color: Theme.text-faint; font-size: Theme.font-small; vertical-alignment: center; }
+                    }
+                    row-touch := TouchArea {
+                        moved => { root.palette-index = index; }
+                        clicked => { root.run-palette-row(row); }
+                    }
+                }
+            }
+            if root.palette-rows.length == 0: Text {
+                height: 40px;
+                text: "No matching commands or objects";
+                color: Theme.text-faint;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                height: 30px;
+                Rectangle { y: 0; height: 1px; background: Theme.border; }
+                HorizontalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: Theme.space-xl;
+                    Text { text: "↑↓ move"; color: Theme.text-faint; font-size: Theme.font-small; vertical-alignment: center; }
+                    Text { text: "⏎ run"; color: Theme.text-faint; font-size: Theme.font-small; vertical-alignment: center; }
+                    Text { text: "Objects match id, class, name or material"; color: Theme.text-faint; font-size: Theme.font-small; vertical-alignment: center; horizontal-alignment: right; horizontal-stretch: 1; }
                 }
             }
         }

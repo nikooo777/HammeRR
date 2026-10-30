@@ -23,6 +23,9 @@ Start the editor before connecting.
 Use `--mcp-port <port>` to change the port.
 Use `--no-mcp` to disable HTTP access.
 
+The **Agent** panel in the editor shows each agent action with the tool that made it.
+Agent previews use the same Apply and Cancel controls as your own.
+
 ## Without a window
 
 1. Build the standalone server:

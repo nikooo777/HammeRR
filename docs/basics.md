@@ -16,10 +16,19 @@ Use the viewport to inspect the map. Use the Inspector to change the selection.
 | Tool rail | Select, move, rotate and scale handles; paint tools; brush, clip and reshape tools; entities, overlays, measurements and paths. |
 | Viewport header | Projection, shading, **Overlays**, frame and saved views. |
 | Inspector | The selection: transform, terrain, material, brush tools, placement and entity properties. |
-| Agent | Recent activity from you and connected agents, and the MCP address. |
+| Agent | Recent activity from you and connected agents: who acted, the MCP tool an agent called, and how long ago. |
 | Status bar | The latest message, map counts, camera position and MCP state. |
 
 Commands that open a dialog end with "…". Hover a toolbar or rail icon to see its name.
+
+## Search commands
+
+1. Press **Ctrl+K** in the viewport, or click **Search commands** in the toolbar.
+2. Type part of a command, menu name, object ID, class, name or material.
+3. Use the arrow keys to choose a result, then press Enter.
+
+Commands run exactly like their menu items. Unavailable commands appear dimmed.
+Objects select and frame the chosen object. Escape or a click outside closes the search.
 
 ## Navigate
 

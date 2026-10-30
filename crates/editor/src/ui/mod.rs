@@ -7,7 +7,7 @@ use map_core::{
 };
 use render::Projection;
 use session::{Pointer, SelectMode, TransformTool};
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel, platform::Key};
+use slint::{ComponentHandle, Model as _, ModelRc, SharedString, VecModel, platform::Key};
 use source_formats::fgd::ClassKind;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -46,6 +46,7 @@ mod instance_contents;
 mod instance_extraction;
 mod instance_reference;
 mod object_picking;
+mod palette;
 mod selection_filters;
 mod transform_pivot;
 use transform_pivot::*;
@@ -601,11 +602,37 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
         .map(|e| Activity {
             actor: e.actor.label().into(),
             text: e.text.clone().into(),
+            time: activity_age(e.at).into(),
+            tool: e.tool.clone().unwrap_or_default().into(),
         })
         .collect();
     app.set_activity(ModelRc::new(VecModel::from(activity)));
     if app.get_can_apply_material() {
         refresh_material_preview(app, session);
+    }
+}
+
+fn activity_age(at: Instant) -> String {
+    let seconds = at.elapsed().as_secs();
+    match seconds {
+        0..10 => "now".into(),
+        10..60 => format!("{}s", seconds / 10 * 10),
+        60..3600 => format!("{}m", seconds / 60),
+        _ => format!("{}h", seconds / 3600),
+    }
+}
+
+fn refresh_activity_ages(app: &AppWindow, session: &Session) {
+    let rows = app.get_activity();
+    for (index, entry) in session.recent_log().take(rows.row_count()).enumerate() {
+        let Some(mut row) = rows.row_data(index) else {
+            break;
+        };
+        let time = activity_age(entry.at);
+        if row.time != time.as_str() {
+            row.time = time.into();
+            rows.set_row_data(index, row);
+        }
     }
 }
 
@@ -973,6 +1000,7 @@ fn create_document_window(
     bind_manipulation_controls_with_access(&app, &file_access(&ui));
     bind_pivot_pick_controls_with_access(&app, &file_access(&ui));
     selection_filters::bind(&app, &file_access(&ui));
+    palette::bind(&app, &file_access(&ui));
     editor_visibility::bind(&app, &file_access(&ui));
     root_callback!(app, ui, on_place_entity, |app| show_entity_window(
         &app.unwrap(),
@@ -3275,6 +3303,7 @@ fn create_document_window(
                     {
                         controller.refresh(&lock(&ui.session));
                     }
+                    refresh_activity_ages(&app, &lock(&ui.session));
                     grid_defaults_ui::refresh_status(&app, &lock(&ui.session));
                     pivot_defaults_ui::refresh_status(&app, &lock(&ui.session));
                     app.set_preview_defaults_error(

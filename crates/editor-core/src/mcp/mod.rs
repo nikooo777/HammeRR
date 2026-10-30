@@ -405,6 +405,31 @@ pub struct EditorServer {
     offscreen: Arc<Mutex<OffscreenState>>,
     model_renderer: Arc<Mutex<crate::model_preview::PreviewRenderer>>,
     tool_router: ToolRouter<Self>,
+    tool: Option<String>,
+}
+
+struct ToolSession<'a> {
+    guard: MutexGuard<'a, Session>,
+}
+
+impl std::ops::Deref for ToolSession<'_> {
+    type Target = Session;
+
+    fn deref(&self) -> &Session {
+        &self.guard
+    }
+}
+
+impl std::ops::DerefMut for ToolSession<'_> {
+    fn deref_mut(&mut self) -> &mut Session {
+        &mut self.guard
+    }
+}
+
+impl Drop for ToolSession<'_> {
+    fn drop(&mut self) {
+        self.guard.set_log_tool(None);
+    }
 }
 
 impl EditorServer {
@@ -421,6 +446,7 @@ impl EditorServer {
                 error: None,
             })),
             tool_router: Self::tool_router(),
+            tool: None,
         }
     }
 
@@ -451,12 +477,15 @@ impl EditorServer {
         )
     }
 
-    fn session(&self) -> MutexGuard<'_, Session> {
-        lock(&self.session)
+    fn session(&self) -> ToolSession<'_> {
+        let mut guard = lock(&self.session);
+        guard.set_log_tool(self.tool.clone());
+        ToolSession { guard }
     }
 
     fn admitted(&self, tool: &str) -> Result<Self, String> {
         let mut server = self.clone();
+        server.tool = Some(tool.to_owned());
         if server.operation.is_none() {
             server.operation = server
                 ._document

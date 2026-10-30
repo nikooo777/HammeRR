@@ -258,6 +258,9 @@ impl Actor {
 pub struct LogEntry {
     pub actor: Actor,
     pub text: String,
+    pub at: Instant,
+    /// The MCP tool whose call produced an agent entry.
+    pub tool: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -361,6 +364,7 @@ pub struct Session {
     /// Bumped when the camera is set from outside the viewport.
     camera_serial: u64,
     log_serial: u64,
+    log_tool: Option<String>,
     document_generation: u64,
     buffer_review_scope: String,
     compiling: bool,
@@ -686,6 +690,7 @@ impl Session {
             scene_serial: 1,
             camera_serial: 1,
             log_serial: 0,
+            log_tool: None,
             document_generation: 0,
             buffer_review_scope: crate::recovery::unique_id(),
             compiling: false,
@@ -1484,8 +1489,14 @@ impl Session {
         self.log.push_back(LogEntry {
             actor,
             text: text.into(),
+            at: Instant::now(),
+            tool: self.log_tool.clone().filter(|_| actor == Actor::Agent),
         });
         self.log_serial += 1;
+    }
+
+    pub(crate) fn set_log_tool(&mut self, tool: Option<String>) {
+        self.log_tool = tool;
     }
 
     /// Most recent first.

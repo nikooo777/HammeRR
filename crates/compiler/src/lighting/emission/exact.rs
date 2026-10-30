@@ -404,20 +404,31 @@ impl Polygons {
     }
 }
 
-#[derive(Default)]
-struct Work(usize);
+struct Work {
+    used: usize,
+    operation: &'static str,
+}
 
 impl Work {
+    fn new(operation: &'static str) -> Self {
+        Self { used: 0, operation }
+    }
+
     fn charge(&mut self, amount: usize, budget: &mut Budget<'_>) -> Result<(), String> {
         let amount = amount
             .checked_mul(ARITHMETIC_WORK_SCALE)
             .ok_or("Exact emission work charge overflow")?;
         budget.consume(amount)?;
-        self.0 = self
-            .0
+        self.used = self
+            .used
             .checked_add(amount)
             .filter(|work| *work <= MAX_WORK)
-            .ok_or("Exact emission exceeds 32000000 work units for one source triangle")?;
+            .ok_or_else(|| {
+                format!(
+                    "Exact emission exceeds {MAX_WORK} work units for one {}",
+                    self.operation
+                )
+            })?;
         Ok(())
     }
 }
@@ -670,7 +681,7 @@ impl Visibility {
             axis,
             axes,
             fragments,
-            work: Work::default(),
+            work: Work::new("source triangle"),
         })
     }
 
@@ -1074,20 +1085,6 @@ fn condition(
     Ok(())
 }
 
-const MAX_HULL_CERTIFICATE_WORK: usize = 32_000_000;
-
-fn hull_charge(work: &mut usize, amount: usize, budget: &mut Budget<'_>) -> Result<(), String> {
-    let amount = amount
-        .checked_mul(ARITHMETIC_WORK_SCALE)
-        .ok_or("Exact emission hull certificate work charge overflow")?;
-    budget.consume(amount)?;
-    *work = work
-        .checked_add(amount)
-        .filter(|work| *work <= MAX_HULL_CERTIFICATE_WORK)
-        .ok_or("Exact emission hull certification exceeds 32000000 work units")?;
-    Ok(())
-}
-
 fn hull_cross(a: [Rational; 3], b: [Rational; 3]) -> Result<[Rational; 3], String> {
     Ok([
         a[1].mul(b[2])?.sub(a[2].mul(b[1])?)?,
@@ -1101,17 +1098,17 @@ fn hull_axis_certificate(
     coefficients: [Rational; 3],
     axis: usize,
     negative: bool,
-    work: &mut usize,
+    work: &mut Work,
     budget: &mut Budget<'_>,
 ) -> Result<bool, String> {
-    hull_charge(work, 16, budget)?;
+    work.charge(16, budget)?;
     if coefficients
         .iter()
         .any(|coefficient| coefficient.sign() == Ordering::Less)
     {
         return Ok(false);
     }
-    hull_charge(work, 96, budget)?;
+    work.charge(96, budget)?;
     for coordinate in 0..3 {
         let expected = if coordinate != axis {
             Rational::ZERO
@@ -1145,13 +1142,13 @@ pub(super) fn closed_hull(
     if !(4..=MAX_HULL_PLANES).contains(&planes.len()) {
         return Err("Exact emission hull certification requires 4 to 128 final planes".into());
     }
-    let mut work = 0usize;
-    hull_charge(&mut work, 64, budget)?;
+    let mut work = Work::new("hull certificate");
+    work.charge(64, budget)?;
     let interior = vector(interior)?;
-    hull_charge(&mut work, 1, budget)?;
+    work.charge(1, budget)?;
     let mut exact = Storage::new(planes.len(), budget)?;
     for plane in planes {
-        hull_charge(&mut work, 128, budget)?;
+        work.charge(128, budget)?;
         let normal = vector(plane.normal)?;
         let distance = Rational::from_f64(plane.dist)?;
         if dot(normal, interior)?.compare(distance) != Ordering::Less {
@@ -1164,7 +1161,7 @@ pub(super) fn closed_hull(
     for first in 0..exact.values.len() - 2 {
         for second in first + 1..exact.values.len() - 1 {
             for third in second + 1..exact.values.len() {
-                hull_charge(&mut work, 128, budget)?;
+                work.charge(128, budget)?;
                 let selected = [
                     exact.values[first],
                     exact.values[second],
@@ -1184,7 +1181,7 @@ pub(super) fn closed_hull(
                     if *complete {
                         continue;
                     }
-                    hull_charge(&mut work, 64, budget)?;
+                    work.charge(64, budget)?;
                     let axis = target / 2;
                     let negative = target % 2 != 0;
                     let mut coefficients = [

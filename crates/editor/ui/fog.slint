@@ -22,8 +22,8 @@ export component FogWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 24px; spacing: 16px;
-            Text { text: "Fog preview"; font-size: 24px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 16px;
+            Text { text: "Fog preview"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.current; wrap: word-wrap; color: Theme.text-muted; }
             CheckBox {
                 text: "Enable fog preview";
@@ -43,7 +43,7 @@ export component FogWindow inherits Window {
                     Text { text: root.detail; wrap: word-wrap; }
                     Text {
                         text: "Preview static fog in Perspective · Textured view. Sky, background and editor helpers stay unchanged.\n\nRadial fog, directional blending, far-Z clipping and HDR/zoom scaling are unsupported. Fog volumes, transitions and runtime I/O are not evaluated. Choose the controller explicitly.";
-                        wrap: word-wrap; color: Theme.text-muted; font-size: 12px;
+                        wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font;
                     }
                 }
             }

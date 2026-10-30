@@ -49,8 +49,8 @@ export component ModelBrowserWindow inherits Window {
     dialog-focus:=FocusScope {
         key-pressed(event)=>{if event.text==Key.Escape {root.cancel();accept} else {reject}}
         VerticalLayout {
-            padding:20px;spacing:12px;
-            Text {text:"Choose a model";font-size:24px;font-weight:600;}
+            padding: Theme.space-xl;spacing:12px;
+            Text {text:"Choose a model";font-size: Theme.font-display;font-weight:600;}
             HorizontalLayout {
                 spacing:10px;
                 LineEdit {text<=>root.query;placeholder-text:"Search model names or folders…";edited=>{root.search();}horizontal-stretch:1;}
@@ -72,7 +72,7 @@ export component ModelBrowserWindow inherits Window {
                             VerticalLayout {
                                 padding:8px;spacing:3px;
                                 Text {text:row.name;color:Theme.text;overflow:elide;}
-                                Text {text:row.folder;color:Theme.text-faint;font-size:11px;overflow:elide;}
+                                Text {text:row.folder;color:Theme.text-faint;font-size: Theme.font-small;overflow:elide;}
                                 Text {text:row.source;color:Theme.text-faint;font-size:10px;overflow:elide;}
                             }
                             touch:=TouchArea {clicked=>{root.choose(row.path);}}
@@ -127,7 +127,7 @@ export component ModelBrowserWindow inherits Window {
                 spacing:8px;
                 Button {text:"Cancel";clicked=>{root.cancel();}}
                 Rectangle {horizontal-stretch:1;}
-                Text {text:"Scale 1";vertical-alignment:center;color:Theme.text-faint;font-size:12px;}
+                Text {text:"Scale 1";vertical-alignment:center;color:Theme.text-faint;font-size: Theme.font;}
                 Button {text:"Use model";enabled:root.can-apply;clicked=>{root.apply();}}
             }
         }

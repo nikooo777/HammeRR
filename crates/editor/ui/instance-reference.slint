@@ -15,7 +15,7 @@ component ReferenceVector inherits HorizontalLayout {
     Text { text: root.label; width: 80px; vertical-alignment: center; color: Theme.text-muted; }
     for label[index] in [root.label-x, root.label-y, root.label-z]: VerticalLayout {
         spacing: 4px;
-        Text { text: label; color: Theme.text-muted; font-size: 12px; }
+        Text { text: label; color: Theme.text-muted; font-size: Theme.font; }
         LineEdit {
             min-width: 70px;
             horizontal-stretch: 1;
@@ -71,10 +71,10 @@ export component InstanceReferenceWindow inherits Window {
             if event.text == Key.Escape { root.cancel(); accept } else { reject }
         }
         VerticalLayout {
-            padding: 22px;
+            padding: Theme.space-xl;
             spacing: 14px;
-            Text { text: root.collapse-active ? "Collapse references" : root.edit-mode ? "Edit instance reference" : "Create instance reference"; font-size: 23px; font-weight: 600; color: Theme.text; }
-            Text { text: root.source; color: Theme.text-faint; wrap: word-wrap; font-size: 12px; }
+            Text { text: root.collapse-active ? "Collapse references" : root.edit-mode ? "Edit instance reference" : "Create instance reference"; font-size: Theme.font-display; font-weight: 600; color: Theme.text; }
+            Text { text: root.source; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font; }
             if !root.collapse-active: VerticalLayout {
             spacing: 14px;
             Text { text: "VMF reference"; color: Theme.text-muted; }
@@ -109,7 +109,7 @@ export component InstanceReferenceWindow inherits Window {
                 ComboBox { model: ["All visible references", "Selected leading references"]; current-index <=> root.collapse-scope; enabled: root.can-collapse && !root.collapse-active; accessible-label: "Collapse scope"; horizontal-stretch: 1; }
             }
             if root.edit-mode && !root.collapse-active: Button { text: "Preview collapse references…"; enabled: root.can-collapse; clicked => { root.preview-collapse(); } }
-            if (root.edit-mode || root.collapse-active) && root.collapse-scope == 1: Text { text: "Select complete visible root references, starting with the first reference in parent entity order. Include every earlier visible root. Other selections stop the batch. Unselected roots stay unchanged."; color: Theme.text-faint; wrap: word-wrap; font-size: 12px; }
+            if (root.edit-mode || root.collapse-active) && root.collapse-scope == 1: Text { text: "Select complete visible root references, starting with the first reference in parent entity order. Include every earlier visible root. Other selections stop the batch. Unselected roots stay unchanged."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font; }
             contents-scroll := ScrollView {
                 min-height: 45px;
                 preferred-height: root.collapse-active ? 280px : 60px;
@@ -118,7 +118,7 @@ export component InstanceReferenceWindow inherits Window {
                 content-width: self.visible-width;
                 Text { width: contents-scroll.visible-width; text: root.contents; color: Theme.text-muted; wrap: word-wrap; }
             }
-            Text { text: root.collapse-active ? "Converts the reviewed roots recursively to editable brushes, terrain, static props, checked point/spot lights and cubemap samples. Child props require an empty lightingorigin. Reference markers and their color/layout are removed; child object settings remain. Unselected and hidden root references and child files stay intact. Unsupported child content stops the whole batch. Apply is one Undo step." : "File checks confirm path and presence only. Refresh or Compile validates committed child contents.\nFour helper levels · root-relative paths · world and func_detail brushes\nNo child editing, replacements or search fallback."; color: Theme.text-faint; wrap: word-wrap; font-size: 12px; }
+            Text { text: root.collapse-active ? "Converts the reviewed roots recursively to editable brushes, terrain, static props, checked point/spot lights and cubemap samples. Child props require an empty lightingorigin. Reference markers and their color/layout are removed; child object settings remain. Unselected and hidden root references and child files stay intact. Unsupported child content stops the whole batch. Apply is one Undo step." : "File checks confirm path and presence only. Refresh or Compile validates committed child contents.\nFour helper levels · root-relative paths · world and func_detail brushes\nNo child editing, replacements or search fallback."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font; }
             if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;

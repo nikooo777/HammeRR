@@ -25,8 +25,8 @@ export component ParticleBrowserWindow inherits Window {
     dialog-focus:=FocusScope {
         key-pressed(event)=>{if event.text==Key.Escape{root.cancel();accept}else{reject}}
         VerticalLayout {
-            padding:20px;spacing:12px;
-            Text {text:"Choose a particle effect";font-size:23px;font-weight:600;}
+            padding: Theme.space-xl;spacing:12px;
+            Text {text:"Choose a particle effect";font-size: Theme.font-display;font-weight:600;}
             Text {text:root.target;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:10px;
@@ -43,7 +43,7 @@ export component ParticleBrowserWindow inherits Window {
                             VerticalLayout {
                                 padding:8px;spacing:4px;
                                 Text {text:row.name;color:Theme.text;overflow:elide;}
-                                Text {text:row.detail;color:Theme.text-faint;font-size:11px;overflow:elide;}
+                                Text {text:row.detail;color:Theme.text-faint;font-size: Theme.font-small;overflow:elide;}
                             }
                             touch:=TouchArea {clicked=>{root.choose(row.name);}}
                         }
@@ -59,14 +59,14 @@ export component ParticleBrowserWindow inherits Window {
                     width:420px;
                     VerticalLayout {
                         spacing:12px;
-                        Text {text:root.value=="" ? "Select a particle system to inspect it" : root.value;wrap:word-wrap;font-size:17px;}
+                        Text {text:root.value=="" ? "Select a particle system to inspect it" : root.value;wrap:word-wrap;font-size: Theme.font-heading;}
                         Text {text:root.details;wrap:word-wrap;color:Theme.text-muted;}
                         Rectangle {vertical-stretch:1;}
                     }
                 }
             }
             Text {text:"Definition metadata only · no particle animation or viewport preview";wrap:word-wrap;color:Theme.warning;}
-            Text {text:"Global active manifest · DMX binary 2 / PCF 1 · map manifests and includes are unsupported";font-size:12px;wrap:word-wrap;color:Theme.text-faint;}
+            Text {text:"Global active manifest · DMX binary 2 / PCF 1 · map manifests and includes are unsupported";font-size: Theme.font;wrap:word-wrap;color:Theme.text-faint;}
             Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:32px;}
             HorizontalLayout {
                 spacing:8px;

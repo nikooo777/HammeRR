@@ -60,6 +60,7 @@ Set **Fly speed** under **Overlays → Camera**, or scroll while flying.
 Applied map edits create one Undo step. A conflicting edit invalidates the preview.
 Users and agents share the selection, previews and Undo history.
 Handle and area previews show their **Apply** and **Cancel** buttons at the bottom of the viewport.
+A transform preview made by an agent is labelled **Agent preview**. You can still apply or cancel it.
 
 ## Grid and snapping
 

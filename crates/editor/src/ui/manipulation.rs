@@ -120,6 +120,11 @@ pub(super) fn refresh_interaction(app: &AppWindow, session: &Session) {
         app.set_transform_preview_summary("".into());
     }
     app.set_has_transform_preview(session.transform_preview().is_some());
+    app.set_agent_preview(
+        session
+            .transform_preview()
+            .is_some_and(|preview| preview.actor == Actor::Agent),
+    );
     app.set_has_area_preview(session.area_preview().is_some());
     let summary = if let Some(drag) = session.component_drag() {
         drag.error.clone().unwrap_or_else(|| {
@@ -149,7 +154,15 @@ pub(super) fn refresh_interaction(app: &AppWindow, session: &Session) {
             _ => "Drag to preview · release applies · Esc cancels".into(),
         }
     } else if let Some(preview) = session.transform_preview() {
-        format!("{} objects · transform preview", preview.ids.len())
+        format!(
+            "{} {} · transform preview",
+            preview.ids.len(),
+            if preview.ids.len() == 1 {
+                "object"
+            } else {
+                "objects"
+            }
+        )
     } else if let Some(stroke) = session.paint_stroke() {
         if let Some(texture) = &stroke.texture {
             format!(

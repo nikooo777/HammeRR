@@ -35,8 +35,8 @@ export component OpenDocumentsWindow inherits Window {
     callback refresh();
     callback close-list();
     VerticalLayout {
-        padding: 20px; spacing: 12px;
-        Text { text: "Open documents"; color: Theme.text; font-size: 23px; font-weight: 600; }
+        padding: Theme.space-xl; spacing: 12px;
+        Text { text: "Open documents"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
         Text { text: root.summary; color: Theme.text-muted; wrap: word-wrap; }
         if !root.quit-review: Text { text: "Two independent maps in this editor. New / Open… in a map window still replace that window's map."; color: Theme.text-muted; wrap: word-wrap; }
         HorizontalLayout {
@@ -49,7 +49,7 @@ export component OpenDocumentsWindow inherits Window {
         }
         if root.quit-review: VerticalLayout {
             spacing: 10px;
-            Text { text: "Quit every open map and exit the editor?"; color: Theme.text; font-size: 18px; font-weight: 600; }
+            Text { text: "Quit every open map and exit the editor?"; color: Theme.text; font-size: Theme.font-heading; font-weight: 600; }
             ScrollView { vertical-stretch: 1; min-height: 90px; Text { text: root.quit-description; color: Theme.warning; wrap: word-wrap; } }
             Text { text: "This includes hidden maps. Owned game and sound playback will stop, and owned work will be cancelled and drained. Changes after this review require a fresh review."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
@@ -72,7 +72,7 @@ export component OpenDocumentsWindow inherits Window {
             }
         }
         Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
-        if !root.quit-review: Text { text: "MCP-created documents start hidden. Quit all… reviews every map before exiting. Closing the last visible map with hidden peers opens that review; cancelling keeps every map open."; color: Theme.text-muted; wrap: word-wrap; font-size: 12px; }
+        if !root.quit-review: Text { text: "MCP-created documents start hidden. Quit all… reviews every map before exiting. Closing the last visible map with hidden peers opens that review; cancelling keeps every map open."; color: Theme.text-muted; wrap: word-wrap; font-size: Theme.font; }
         Button { text: "Close list"; clicked => { root.close-list(); } }
     }
 }

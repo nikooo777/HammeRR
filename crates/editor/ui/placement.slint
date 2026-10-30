@@ -22,8 +22,8 @@ export component PlacementWindow inherits Window {
     dialog-focus:=FocusScope {
         key-pressed(event)=>{if event.text==Key.Escape{root.cancel();accept}else{reject}}
         VerticalLayout {
-            padding:20px;spacing:14px;
-            Text {text:"Place selection on a surface";font-size:20px;}
+            padding: Theme.space-xl;spacing:14px;
+            Text {text:"Place selection on a surface";font-size: Theme.font-display;}
             Text {text:root.selection+" · selected objects move together";wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:10px;

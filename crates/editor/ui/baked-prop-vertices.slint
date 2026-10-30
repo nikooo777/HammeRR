@@ -51,9 +51,9 @@ export component BakedPropVerticesWindow inherits Window {
             ScrollView {
                 content-width: self.width;
                 VerticalLayout {
-                    padding: 20px;
+                    padding: Theme.space-xl;
                     spacing: 10px;
-                    Text { text: "Baked prop vertices"; font-size: 24px; font-weight: 600; }
+                    Text { text: "Baked prop vertices"; font-size: Theme.font-display; font-weight: 600; }
                     Text { text: root.build-state; wrap: word-wrap; color: Theme.warning; }
                     Text { text: root.channels; wrap: word-wrap; }
                     HorizontalLayout {
@@ -65,7 +65,7 @@ export component BakedPropVerticesWindow inherits Window {
                         Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
-                    Text { text: "Compiled props"; font-size: 18px; font-weight: 600; }
+                    Text { text: "Compiled props"; font-size: Theme.font-heading; font-weight: 600; }
                     Text { text: root.prop-page; }
                     ListView {
                         height: 110px;
@@ -77,7 +77,7 @@ export component BakedPropVerticesWindow inherits Window {
                         Button { text: "Next props"; enabled: root.next-props; clicked => { root.page-props(1); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
-                    Text { text: "Hardware sections"; font-size: 18px; font-weight: 600; }
+                    Text { text: "Hardware sections"; font-size: Theme.font-heading; font-weight: 600; }
                     Text { text: root.section-page; }
                     ListView {
                         height: 85px;
@@ -101,7 +101,7 @@ export component BakedPropVerticesWindow inherits Window {
                     }
                     Text { text: root.leaf-bounds-state; wrap: word-wrap; }
                     Text { text: "Purple boxes show every native leaf membership bound for this prop. These conservative bounds do not show its exact mesh or runtime visibility. The cyan visibility guide is separate."; wrap: word-wrap; color: Theme.text-muted; }
-                    Text { text: "Vertex colors"; font-size: 18px; font-weight: 600; }
+                    Text { text: "Vertex colors"; font-size: Theme.font-heading; font-weight: 600; }
                     Text { text: "Local index · hardware index · R · G · B · A"; }
                     Text { text: root.vertex-page; }
                     ListView {

@@ -30,11 +30,11 @@ export component InstanceContentsWindow inherits Window {
     keys := FocusScope {
       key-pressed(event) => { if event.text == Key.Escape { root.close-dialog(); accept } else { reject } }
     VerticalLayout {
-        padding: 22px;
+        padding: Theme.space-xl;
         spacing: 12px;
-        Text { text: "Instance contents"; font-size: 23px; font-weight: 600; color: Theme.text; }
+        Text { text: "Instance contents"; font-size: Theme.font-display; font-weight: 600; color: Theme.text; }
         Text { text: root.summary; color: Theme.text-muted; wrap: word-wrap; }
-        Text { text: root.source; color: Theme.text-faint; wrap: word-wrap; font-size: 12px; }
+        Text { text: root.source; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font; }
         HorizontalLayout {
             spacing: 8px;
             Button { text: "Refresh instance contents"; enabled: !root.loading; clicked => { root.refresh-contents(); } }
@@ -57,7 +57,7 @@ export component InstanceContentsWindow inherits Window {
             Text { text: root.page-summary; color: Theme.text-faint; vertical-alignment: center; horizontal-stretch: 1; }
             Button { text: "Next"; enabled: root.has-next; clicked => { root.next(); } }
         }
-        Text { text: "Four helper levels · root-relative VMF paths · root owner selection\nNo child edits, material preview or surface placement. Refresh after source changes."; color: Theme.text-faint; font-size: 12px; wrap: word-wrap; }
+        Text { text: "Four helper levels · root-relative VMF paths · root owner selection\nNo child edits, material preview or surface placement. Refresh after source changes."; color: Theme.text-faint; font-size: Theme.font; wrap: word-wrap; }
         if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
         Button { text: "Close"; clicked => { root.close-dialog(); } }
     }

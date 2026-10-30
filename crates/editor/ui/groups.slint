@@ -53,9 +53,9 @@ export component ObjectGroupsWindow inherits Window {
         height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.close-dialog(); accept } else { reject } }
         VerticalLayout {
-            padding: 22px;
+            padding: Theme.space-xl;
             spacing: 12px;
-            Text { text: "Object groups"; font-size: 24px; font-weight: 600; }
+            Text { text: "Object groups"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Keep objects together. Nested groups retain their own membership when you group or ungroup."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 12px;
@@ -82,7 +82,7 @@ export component ObjectGroupsWindow inherits Window {
                             spacing: 3px;
                             padding-bottom: 8px;
                             Button { text: (root.selected == group.id ? "● " : "") + group.label; clicked => { root.choose(group.id); } }
-                            Text { text: group.detail; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                            Text { text: group.detail; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                         }
                     }
                     HorizontalLayout {
@@ -121,7 +121,7 @@ export component ObjectGroupsWindow inherits Window {
                             VerticalLayout {
                                 horizontal-stretch: 1;
                                 Text { text: member.label; wrap: word-wrap; }
-                                Text { text: member.detail; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+                                Text { text: member.detail; color: Theme.text-muted; font-size: Theme.font; wrap: word-wrap; }
                             }
                             Button { text: "Select"; clicked => { root.select-member(member.id); } }
                             if root.editing && !root.ungrouping: Button { text: "Remove"; clicked => { root.remove-member(member.id); } }

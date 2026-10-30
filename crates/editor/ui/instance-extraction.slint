@@ -25,9 +25,9 @@ export component InstanceExtractionWindow inherits Window {
     keys := FocusScope {
       key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
     VerticalLayout {
-        padding: 20px;
+        padding: Theme.space-xl;
         spacing: 14px;
-        Text { text: "Extract selection to instance"; color: Theme.text; font-size: 20px; }
+        Text { text: "Extract selection to instance"; color: Theme.text; font-size: Theme.font-display; }
         Text { text: "New child VMF · explicit relative path under the saved parent"; color: Theme.text-muted; }
         LineEdit { text <=> root.file; enabled: !root.active; placeholder-text: "assemblies/platform.vmf"; }
         HorizontalLayout {

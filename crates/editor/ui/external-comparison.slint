@@ -40,9 +40,9 @@ export component ExternalComparisonWindow inherits Window {
             return reject;
         }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 10px;
-            Text { text: "Compare external map"; font-size: 24px; font-weight: 600; }
+            Text { text: "Compare external map"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Compare authored world brushes and whole entities by their stored IDs. Hidden content participates. This does not merge maps or establish geometric equivalence."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;

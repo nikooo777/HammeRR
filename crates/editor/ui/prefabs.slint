@@ -20,9 +20,9 @@ component PrefabCard inherits Rectangle {
         Rectangle {
             height:106px;background:Theme.control;border-radius:5px;clip:true;
             if root.entry.has-image:Image {source:root.entry.thumbnail;image-fit:contain;width:parent.width;height:parent.height;}
-            if !root.entry.has-image:Text {text:root.entry.status==""?"Render page":root.entry.status;width:parent.width;height:parent.height;horizontal-alignment:center;vertical-alignment:center;wrap:word-wrap;color:Theme.text-faint;font-size:11px;}
+            if !root.entry.has-image:Text {text:root.entry.status==""?"Render page":root.entry.status;width:parent.width;height:parent.height;horizontal-alignment:center;vertical-alignment:center;wrap:word-wrap;color:Theme.text-faint;font-size: Theme.font-small;}
         }
-        Text {text:root.entry.name;overflow:elide;font-size:12px;font-weight:600;color:Theme.text;}
+        Text {text:root.entry.name;overflow:elide;font-size: Theme.font;font-weight:600;color:Theme.text;}
         Text {text:root.entry.detail;overflow:elide;font-size:10px;color:Theme.text-muted;}
     }
     card-focus:=FocusScope {
@@ -95,8 +95,8 @@ export component PrefabsWindow inherits Window {
         width:parent.width;height:parent.height;
         key-pressed(event)=>{if event.text==Key.Escape {if root.editing {root.cancel();}else{root.close-dialog();}accept}else{reject}}
         VerticalLayout {
-            padding:22px;spacing:12px;
-            Text {text:"Prefab library";font-size:24px;font-weight:600;}
+            padding: Theme.space-xl;spacing:12px;
+            Text {text:"Prefab library";font-size: Theme.font-display;font-weight:600;}
             Text {text:"Reuse brush and entity assemblies. Review placement in the map before applying.";wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:8px;
@@ -128,7 +128,7 @@ export component PrefabsWindow inherits Window {
                             }
                         }
                     }
-                    Text {text:root.gallery-status;wrap:word-wrap;color:Theme.text-muted;font-size:11px;}
+                    Text {text:root.gallery-status;wrap:word-wrap;color:Theme.text-muted;font-size: Theme.font-small;}
                     HorizontalLayout {
                         spacing:6px;
                         Button {text:"Previous";enabled:root.previous&&!root.editing;clicked=>{root.page(-1);}}
@@ -138,7 +138,7 @@ export component PrefabsWindow inherits Window {
                 }
                 VerticalLayout {
                     horizontal-stretch:1;spacing:10px;
-                    Text {text:root.saving?"Save the current selection":root.deleting?"Delete “"+root.selected+"”?":root.renaming?"Rename “"+root.selected+"”":root.selected==""?"Choose an assembly":root.selected;font-size:18px;font-weight:600;wrap:word-wrap;}
+                    Text {text:root.saving?"Save the current selection":root.deleting?"Delete “"+root.selected+"”?":root.renaming?"Rename “"+root.selected+"”":root.selected==""?"Choose an assembly":root.selected;font-size: Theme.font-heading;font-weight:600;wrap:word-wrap;}
                     if root.saving||root.renaming: VerticalLayout {
                         spacing:8px;
                         Text {text:"Prefab name";}
@@ -216,7 +216,7 @@ export component PrefabsWindow inherits Window {
                     if root.editing: Rectangle {vertical-stretch:1;}
                 }
             }
-            Text {text:"Library folder: "+root.directory;wrap:word-wrap;color:Theme.text-faint;font-size:12px;}
+            Text {text:"Library folder: "+root.directory;wrap:word-wrap;color:Theme.text-faint;font-size: Theme.font;}
             Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:36px;}
             HorizontalLayout {
                 spacing:8px;

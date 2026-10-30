@@ -30,9 +30,9 @@ export component MaterialReplaceWindow inherits Window {
         height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 24px;
+            padding: Theme.space-xl;
             spacing: 14px;
-            Text { text: "Replace materials"; font-size: 24px; font-weight: 600; }
+            Text { text: "Replace materials"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Change a material across the map or within your selection."; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 12px;

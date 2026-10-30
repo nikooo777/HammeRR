@@ -23,9 +23,9 @@ export component MaterialSourceWindow inherits Window {
         }
     }
     VerticalLayout {
-        padding: 18px;
+        padding: Theme.space-xl;
         spacing: 10px;
-        Text { text: "Material source"; font-size: 24px; font-weight: 600; }
+        Text { text: "Material source"; font-size: Theme.font-display; font-weight: 600; }
         Text { text: root.material; wrap: word-wrap; }
         Text { text: "Mounted source and Patch includes"; font-weight: 600; }
         TextEdit { text: root.provenance; read-only: true; wrap: word-wrap; height: 145px; accessible-label: "Material source provenance"; }
@@ -37,7 +37,7 @@ export component MaterialSourceWindow inherits Window {
             text: "Read-only inspection of current mounted files. Ordinary shader and texture names are declarations. The Water section checks a bounded SDK-qualified file inventory and VTF headers, not rendering or map portability. Material previews refresh separately through Reload material assets.";
             wrap: word-wrap;
             color: Theme.text-muted;
-            font-size: 12px;
+            font-size: Theme.font;
         }
         HorizontalLayout {
             spacing: 8px;

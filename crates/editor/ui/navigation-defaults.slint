@@ -24,9 +24,9 @@ export component NavigationDefaultsWindow inherits Window {
     keys := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape { root.close-dialog(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 12px;
-            Text { text: "Navigation defaults"; font-size: 24px; font-weight: 600; }
+            Text { text: "Navigation defaults"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Set Fly speed in the viewport, then explicitly save the speed you want at startup."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 Text { text: "Setting"; horizontal-stretch: 1; font-weight: 600; }

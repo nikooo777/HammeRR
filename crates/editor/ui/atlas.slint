@@ -66,9 +66,9 @@ export component AtlasWindow inherits Window {
         }
         focus-lost => { if root.rectangle-dragging { root.cancel-rectangle(); } }
         VerticalLayout {
-            padding: 24px;
+            padding: Theme.space-xl;
             spacing: 12px;
-            Text { text: "Fit atlas region"; font-size: 24px; font-weight: 600; }
+            Text { text: "Fit atlas region"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.selection-label; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;

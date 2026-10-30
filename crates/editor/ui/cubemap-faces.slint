@@ -49,9 +49,9 @@ export component CubemapFacesWindow inherits Window {
         height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 10px;
-            Text { text: "Cubemap faces"; font-size: 24px; font-weight: 600; }
+            Text { text: "Cubemap faces"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.helper-label; color: Theme.text-muted; wrap: word-wrap; }
             Text { text: "Select root-authored faces in the map. Choices include samples from visible instances; child faces and helpers are edited in their own source map."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
@@ -65,13 +65,13 @@ export component CubemapFacesWindow inherits Window {
                 Button { text: "Remove selected bindings"; enabled: root.can-remove; clicked => { root.remove(); } }
                 Button { text: "Clear all manual bindings"; enabled: root.can-clear; clicked => { root.clear-bindings(); } }
             }
-            Text { text: "Removing bindings lets the compiler choose any active sample. Each action previews its exact choices before Apply."; font-size: 12px; color: Theme.text-muted; wrap: word-wrap; }
+            Text { text: "Removing bindings lets the compiler choose any active sample. Each action previews its exact choices before Apply."; font-size: Theme.font; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
                 LineEdit { text <=> root.search; placeholder-text: "Filter material or face ID"; accessible-label: "Cubemap face search"; horizontal-stretch: 1; accepted => { root.refresh(); } }
                 Button { text: "Refresh"; clicked => { root.refresh(); } }
             }
-            Text { text: root.inspection-label; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+            Text { text: root.inspection-label; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
             ScrollView {
                 vertical-stretch: 1;
                 VerticalLayout {
@@ -90,8 +90,8 @@ export component CubemapFacesWindow inherits Window {
                                 Button { text: row.selected ? "Deselect face" : "Select face"; clicked => { root.select-face(row.index); } }
                             }
                             Text { text: row.choice; color: Theme.text-muted; wrap: word-wrap; }
-                            Text { text: row.material; wrap: word-wrap; font-size: 12px; }
-                            Text { text: row.alias; color: Theme.text-muted; wrap: word-wrap; font-size: 12px; }
+                            Text { text: row.material; wrap: word-wrap; font-size: Theme.font; }
+                            Text { text: row.alias; color: Theme.text-muted; wrap: word-wrap; font-size: Theme.font; }
                         }
                     }
                 }
@@ -102,7 +102,7 @@ export component CubemapFacesWindow inherits Window {
                 Text { text: root.page-label; horizontal-stretch: 1; horizontal-alignment: center; vertical-alignment: center; }
                 Button { text: "Next"; enabled: root.next-page; clicked => { root.page-change(1); } }
             }
-            Text { text: root.helper-status; color: Theme.text-muted; wrap: word-wrap; font-size: 12px; }
+            Text { text: root.helper-status; color: Theme.text-muted; wrap: word-wrap; font-size: Theme.font; }
             Text { text: root.draft-label; wrap: word-wrap; font-weight: 600; }
             ListView {
                 height: root.preview-assignments.length > 0 ? 125px : 0px;
@@ -110,7 +110,7 @@ export component CubemapFacesWindow inherits Window {
                     spacing: 2px;
                     padding-bottom: 6px;
                     Text { text: row.label + " · " + row.choice; wrap: word-wrap; }
-                    Text { text: row.alias; color: Theme.text-muted; wrap: word-wrap; font-size: 12px; }
+                    Text { text: row.alias; color: Theme.text-muted; wrap: word-wrap; font-size: Theme.font; }
                 }
             }
             Text { text: root.message; color: Theme.info; wrap: word-wrap; }

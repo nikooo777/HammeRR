@@ -27,9 +27,9 @@ export component EntityPlacementWindow inherits Window {
             if event.text == Key.Escape { root.cancel(); accept } else { reject }
         }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 14px;
-            Text { text: "Place a point entity on a surface"; font-size: 20px; }
+            Text { text: "Place a point entity on a surface"; font-size: Theme.font-display; }
             Text { text: "Entity · " + root.classname; wrap: word-wrap; }
             Text { text: "Pick a visible brush, terrain or model surface. Review the entity bounds before applying."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {

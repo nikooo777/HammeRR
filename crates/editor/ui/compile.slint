@@ -136,9 +136,10 @@ export component CompileWindow inherits Window {
         ScrollView {
             content-width: self.width;
             VerticalLayout {
-                padding: 24px;
+                alignment: start;
+                padding: Theme.space-xl;
                 spacing: 14px;
-                Text { text: "Build status"; font-size: 24px; font-weight: 600; }
+                Text { text: "Build status"; font-size: Theme.font-display; font-weight: 600; }
                 HorizontalLayout {
                     spacing: 12px;
                     Text { text: "Build recipe"; vertical-alignment: center; }
@@ -259,7 +260,7 @@ export component CompileWindow inherits Window {
                     Button { text: "Apply work limit"; enabled: root.lighting-enabled; clicked => { root.change-lighting-work-limit(root.lighting-work-limit-millions); } }
                 }
                 Text { text: "0.000001–10000 million work units; default 1000. Up to six decimal places retain exact work units. " + root.lighting-work-description; wrap: word-wrap; color: Theme.text-muted; }
-                Text { text: root.summary; font-size: 16px; font-weight: 600; wrap: word-wrap; }
+                Text { text: root.summary; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
                 Text { text: root.details; wrap: word-wrap; color: Theme.text-muted; }
                 Text { text: "Diagnostics"; font-weight: 600; }
                 Text { text: root.diagnostic-summary; wrap: word-wrap; }
@@ -360,9 +361,10 @@ export component BakedLightmapsWindow inherits Window {
       ScrollView {
         content-width: self.width;
         VerticalLayout {
-          padding: 24px;
+          alignment: start;
+          padding: Theme.space-xl;
           spacing: 12px;
-          Text { text: "Baked BSP face lightmaps"; font-size: 24px; font-weight: 600; }
+          Text { text: "Baked BSP face lightmaps"; font-size: Theme.font-display; font-weight: 600; }
           Text { text: root.build-state; wrap: word-wrap; color: Theme.warning; }
           Text { text: root.channels; wrap: word-wrap; }
           HorizontalLayout {

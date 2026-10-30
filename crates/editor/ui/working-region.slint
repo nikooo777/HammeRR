@@ -24,8 +24,8 @@ export component WorkingRegionWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px; spacing: 12px;
-            Text { text: "Working region visibility"; font-size: 24px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 12px;
+            Text { text: "Working region visibility"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
             CheckBox { text: "Enabled"; checked <=> root.region-enabled; }
             Text { text: "Whole objects touching these bounds stay visible. Hidden objects stay hidden. This changes only the editor view; saved visibility and compilation are unaffected."; wrap: word-wrap; color: Theme.text-muted; }

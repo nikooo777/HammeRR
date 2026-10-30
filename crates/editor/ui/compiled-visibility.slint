@@ -59,9 +59,9 @@ export component CompiledVisibilityWindow inherits Window {
             return reject;
         }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 9px;
-            Text { text: "Visibility inspection"; font-size: 24px; font-weight: 600; }
+            Text { text: "Visibility inspection"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.build-state; wrap: word-wrap; color: Theme.warning; }
             Text { text: root.summary; wrap: word-wrap; }
             HorizontalLayout {

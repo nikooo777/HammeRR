@@ -35,13 +35,13 @@ export component CarveWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 24px; spacing: 12px;
-            Text { text: "Subtract brush shapes"; font-size: 24px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 12px;
+            Text { text: "Subtract brush shapes"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Choose the shapes to subtract and the target brushes to carve. Only their combined overlapping volume is removed. Cutters stay unchanged."; wrap: word-wrap; color: Theme.text-muted; }
             CheckBox { text: "Use multiple cutter brushes"; checked <=> root.multiple-cutters; toggled => {root.toggle-multiple();} }
             if !root.multiple-cutters: Text { text: "Cutter · shape to subtract"; font-weight: 600; }
             if !root.multiple-cutters: ComboBox { model: root.cutters; current-index <=> root.cutter; enabled: root.cutters.length > 1; selected => { root.choose-cutter(); } }
-            Text { text: root.multiple-cutters ? "Brush roles · cutters are retained" : "Target brushes"; font-size: 18px; font-weight: 600; }
+            Text { text: root.multiple-cutters ? "Brush roles · cutters are retained" : "Target brushes"; font-size: Theme.font-heading; font-weight: 600; }
             ListView {
                 vertical-stretch: 1; min-height: 160px;
                 for target in root.targets: VerticalLayout {
@@ -60,7 +60,7 @@ export component CarveWindow inherits Window {
                     }
                 }
             }
-            Text { text: "New cut faces"; font-size: 18px; font-weight: 600; }
+            Text { text: "New cut faces"; font-size: Theme.font-heading; font-weight: 600; }
             ComboBox {
                 model: ["Use cutter surface settings", "Use corresponding target surface settings", "Use named material with cutter mapping"];
                 current-index <=> root.cut-material-policy;
@@ -79,9 +79,9 @@ export component CarveWindow inherits Window {
                     : "New faces copy their cutter's material, world texture projection, lighting and metadata. Nodraw cutters produce nodraw cut faces. Original target faces keep their settings.";
                 wrap: word-wrap; color: Theme.text-muted;
             }
-            Text { text: root.summary; font-size: 17px; font-weight: 600; wrap: word-wrap; }
+            Text { text: root.summary; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
             Text { text: "Whole world brushes may disappear; removing every brush from an entity is rejected."; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: "1–8 convex cutters · up to 16 targets · 256 fragments at every stage. Displacement brushes are unsupported."; wrap: word-wrap; font-size: 12px; color: Theme.text-muted; }
+            Text { text: "1–8 convex cutters · up to 16 targets · 256 fragments at every stage. Displacement brushes are unsupported."; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
             if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
                 spacing: 10px;

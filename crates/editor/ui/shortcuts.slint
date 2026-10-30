@@ -39,9 +39,9 @@ export component ShortcutsWindow inherits Window {
     focus := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 12px;
-            Text {text:"Keyboard shortcuts";font-size:24px;font-weight:600;}
+            Text {text:"Keyboard shortcuts";font-size: Theme.font-display;font-weight:600;}
             Text {text:"These commands run while the viewport has keyboard focus. Text fields keep their normal editing shortcuts. Save shortcuts applies your changes now and at startup.";wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing: 8px;

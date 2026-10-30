@@ -41,9 +41,9 @@ export component SelectionDefaultsWindow inherits Window {
     keys := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape { root.close-dialog(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 12px;
-            Text { text: "Selection defaults"; font-size: 24px; font-weight: 600; }
+            Text { text: "Selection defaults"; font-size: Theme.font-display; font-weight: 600; }
             ComboBox { model: ["Startup defaults", "Named profiles"]; current-index <=> root.section; accessible-label: "Selection settings section"; }
             if root.section == 0: VerticalLayout {
                 spacing: 10px;

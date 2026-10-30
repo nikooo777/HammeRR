@@ -82,9 +82,9 @@ export component OverlayWindow inherits Window {
         height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 10px;
-            Text { text: root.corners-mode ? "Edit overlay corners" : root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : "Fit an overlay to faces"; font-size: 24px; font-weight: 600; }
+            Text { text: root.corners-mode ? "Edit overlay corners" : root.rebind-mode ? "Rebind existing overlay" : root.refit-mode ? "Refit existing overlay" : "Fit an overlay to faces"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.source-label; wrap: word-wrap; color: Theme.text-muted; }
             if root.source-count > 1: Text { text: "One projection spans the bound faces. Native rendering clips it to each face and leaves gaps clear. Corner editing keeps the stored axes and every binding. Rebind uses the selected destination set and its first eligible quad; multi-face refit requires an explicit reference quad."; wrap: word-wrap; color: Theme.text-muted; }
             ScrollView {
@@ -114,7 +114,7 @@ export component OverlayWindow inherits Window {
                             for entry in root.overlay-targets: VerticalLayout {
                                 spacing: 3px; padding-bottom: 6px;
                                 Button { text: entry.label; enabled: entry.eligible; clicked => { root.choose-overlay(entry.entity); } }
-                                Text { text: entry.detail; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                Text { text: entry.detail; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                             }
                         }
                         HorizontalLayout {
@@ -145,7 +145,7 @@ export component OverlayWindow inherits Window {
                                     horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; color: Theme.text-muted;
                                 }
                             }
-                            Text { text: "Face plane · original proportions"; font-size: 12px; color: Theme.text-muted; }
+                            Text { text: "Face plane · original proportions"; font-size: Theme.font; color: Theme.text-muted; }
                         }
                         VerticalLayout {
                             width: 220px; spacing: 5px;
@@ -154,7 +154,7 @@ export component OverlayWindow inherits Window {
                                 height: 180px; background: Theme.hover; border-color: Theme.border-strong; border-width: 1px; border-radius: 4px;
                                 Image { width: parent.width; height: parent.height; source: root.material-image; image-fit: contain; }
                             }
-                            Text { text: root.material-detail; wrap: word-wrap; font-size: 12px; color: Theme.text-muted; }
+                            Text { text: root.material-detail; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
                         }
                     }
                     if root.corners-mode: VerticalLayout {
@@ -193,7 +193,7 @@ export component OverlayWindow inherits Window {
                             Text { text: "V"; vertical-alignment: center; }
                             LineEdit { text <=> root.corner-3-v; input-type: decimal; accessible-label: "Overlay corner 3 V"; edited => { root.corners-edited(); } }
                         }
-                        Text { text: root.corner-frame; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                        Text { text: root.corner-frame; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                         Button { text: "Preview corners"; enabled: root.can-preview-corners; clicked => { root.preview-corners(); } }
                         Button { text: "Viewport handles"; enabled: root.can-handle-corners; clicked => { root.handle-corners(); } }
                         Text { text: "Preview corners, then drag a cyan corner in the viewport. Release to review with Apply corners. Escape or Cancel handles restores the draft from before the drag. Motion is unsnapped in the fixed projection plane."; wrap: word-wrap; color: Theme.text-muted; }
@@ -223,7 +223,7 @@ export component OverlayWindow inherits Window {
                         Text { text: "V end"; vertical-alignment: center; }
                         LineEdit { enabled: !root.refit-mode; text <=> root.v-end; width: 80px; input-type: decimal; accessible-label: "Overlay V end"; edited => { root.edited(); } }
                     }
-                    Text { text: root.refit-mode ? "Existing-overlay edits preserve the material, name, texture ranges, render order and fades." : "Fit resets U and V to 0–1. Reverse a range to mirror. Higher render orders draw later."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                    Text { text: root.refit-mode ? "Existing-overlay edits preserve the material, name, texture ranges, render order and fades." : "Fit resets U and V to 0–1. Reverse a range to mirror. Higher render orders draw later."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     HorizontalLayout {
                         spacing: 10px;
                         Text { text: "Fade"; width: 72px; vertical-alignment: center; }
@@ -232,7 +232,7 @@ export component OverlayWindow inherits Window {
                         Text { text: "End distance"; vertical-alignment: center; }
                         LineEdit { enabled: !root.refit-mode; text <=> root.fade-max; input-type: decimal; accessible-label: "Overlay fade end distance"; edited => { root.edited(); } }
                     }
-                    Text { text: "World units · end 0 disables fading; start -1 lets the game choose the start."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                    Text { text: "World units · end 0 disables fading; start -1 lets the game choose the start."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     Text { text: root.draft-label; wrap: word-wrap; font-weight: 600; }
                     Text { text: "Cyan lines mark the projection corners. The viewport does not preview the projected material. Compile and run the map to see the overlay."; wrap: word-wrap; color: Theme.text-muted; }
                 }

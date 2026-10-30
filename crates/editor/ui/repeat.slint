@@ -44,8 +44,8 @@ export component RepeatWindow inherits Window {
     dialog-focus:=FocusScope {
         key-pressed(event)=>{if event.text==Key.Escape{root.cancel();accept}else{reject}}
         VerticalLayout {
-            padding:20px;spacing:12px;
-            Text {text:"Repeat selected objects";font-size:20px;}
+            padding: Theme.space-xl;spacing:12px;
+            Text {text:"Repeat selected objects";font-size: Theme.font-display;}
             Text {text:root.selection;wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:10px;

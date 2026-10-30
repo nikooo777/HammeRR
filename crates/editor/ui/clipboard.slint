@@ -30,9 +30,9 @@ export component PasteWindow inherits Window {
     dialog-focus := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 12px;
-            Text { text: "Paste objects"; font-size: 21px; }
+            Text { text: "Paste objects"; font-size: Theme.font-display; }
             Text { text: root.destination; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: root.payload; wrap: word-wrap; }
             HorizontalLayout {

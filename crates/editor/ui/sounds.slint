@@ -33,8 +33,8 @@ export component SoundBrowserWindow inherits Window {
     dialog-focus:=FocusScope {
         key-pressed(event)=>{if event.text==Key.Escape{root.cancel();accept}else{reject}}
         VerticalLayout {
-            padding:20px;spacing:12px;
-            Text {text:"Choose a sound";font-size:23px;font-weight:600;}
+            padding: Theme.space-xl;spacing:12px;
+            Text {text:"Choose a sound";font-size: Theme.font-display;font-weight:600;}
             Text {text:root.target;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:10px;
@@ -51,7 +51,7 @@ export component SoundBrowserWindow inherits Window {
                             VerticalLayout {
                                 padding:8px;spacing:4px;
                                 Text {text:row.name;color:Theme.text;overflow:elide;}
-                                Text {text:row.detail;color:Theme.text-faint;font-size:11px;overflow:elide;}
+                                Text {text:row.detail;color:Theme.text-faint;font-size: Theme.font-small;overflow:elide;}
                             }
                             touch:=TouchArea {clicked=>{root.choose(row.value);}}
                         }
@@ -66,7 +66,7 @@ export component SoundBrowserWindow inherits Window {
                 ScrollView {
                     width:400px;
                     VerticalLayout {spacing:12px;
-                    Text {text:root.value=="" ? "Select a sound to inspect it" : root.value;wrap:word-wrap;font-size:17px;}
+                    Text {text:root.value=="" ? "Select a sound to inspect it" : root.value;wrap:word-wrap;font-size: Theme.font-heading;}
                     Text {text:root.details;wrap:word-wrap;color:Theme.text-muted;}
                     if root.waves.length>0:VerticalLayout {
                         spacing:5px;
@@ -77,14 +77,14 @@ export component SoundBrowserWindow inherits Window {
                     Rectangle {vertical-stretch:1;}
                     Text {text:"Preview volume · \{round(root.volume)}%";}
                     Slider {minimum:0;maximum:100;value<=>root.volume;changed=>{root.volume-changed();}}
-                    Text {text:"Applies to the next preview, separate from game volume.";font-size:12px;wrap:word-wrap;color:Theme.text-faint;}
+                    Text {text:"Applies to the next preview, separate from game volume.";font-size: Theme.font;wrap:word-wrap;color:Theme.text-faint;}
                     HorizontalLayout {
                         spacing:8px;
                         Button {text:"Play";enabled:root.can-apply;clicked=>{root.play();}}
                         Button {text:"Stop";enabled:root.can-stop;clicked=>{root.stop();}}
                     }
                     Text {text:root.playback;wrap:word-wrap;color:Theme.text-muted;min-height:30px;}
-                    Text {text:"Up to 10 seconds · no game mixing or distance effects";font-size:12px;wrap:word-wrap;color:Theme.text-faint;}
+                    Text {text:"Up to 10 seconds · no game mixing or distance effects";font-size: Theme.font;wrap:word-wrap;color:Theme.text-faint;}
                     }
                 }
             }

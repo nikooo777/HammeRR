@@ -24,7 +24,7 @@ Use `--mcp-port <port>` to change the port.
 Use `--no-mcp` to disable HTTP access.
 
 The **Agent** panel in the editor shows each agent action with the tool that made it.
-Agent previews use the same Apply and Cancel controls as your own.
+Agent transform previews appear in the viewport as **Agent preview**, with the same Apply and Cancel controls as your own.
 
 ## Without a window
 

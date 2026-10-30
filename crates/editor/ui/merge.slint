@@ -25,10 +25,10 @@ export component MergeWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 24px; spacing: 14px;
-            Text { text: "Merge into one convex brush"; font-size: 24px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 14px;
+            Text { text: "Merge into one convex brush"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Choose brushes whose combined shape is convex and has no gaps. Preview checks the complete volume before replacing the source brushes."; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: "Source brushes"; font-size: 18px; font-weight: 600; }
+            Text { text: "Source brushes"; font-size: Theme.font-heading; font-weight: 600; }
             ListView {
                 vertical-stretch: 1; min-height: 150px;
                 for source in root.sources: CheckBox {
@@ -38,9 +38,9 @@ export component MergeWindow inherits Window {
                     toggled => { root.choose-source(source.solid); }
                 }
             }
-            Text { text: root.summary; font-size: 17px; font-weight: 600; wrap: word-wrap; }
+            Text { text: root.summary; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
             Text { text: "The lowest brush ID keeps its ID and brush metadata. Outer faces keep their original material, world texture projection and lighting. On shared planes, the lowest brush ID wins."; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: "2–16 convex brushes · world brushes or one brush entity · no displacements. Nonconvex shapes and gaps are rejected."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+            Text { text: "2–16 convex brushes · world brushes or one brush entity · no displacements. Nonconvex shapes and gaps are rejected."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
             if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
                 spacing: 10px;

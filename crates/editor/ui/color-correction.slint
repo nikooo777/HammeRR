@@ -20,8 +20,8 @@ export component ColorCorrectionWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.dismiss(); accept } else { reject } }
         VerticalLayout {
-            padding: 24px; spacing: 16px;
-            Text { text: "Color correction"; font-size: 24px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 16px;
+            Text { text: "Color correction"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.status; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: "Source .raw LUT path"; font-weight: 600; }
             HorizontalLayout {
@@ -38,7 +38,7 @@ export component ColorCorrectionWindow inherits Window {
             }
             Text {
                 text: "Load a Source .raw LUT, then set the weight and apply the preview. Loading turns the preview off.\n\nThe whole viewport is affected. HDR, volumes and multiple LUTs are unavailable.";
-                wrap: word-wrap; color: Theme.text-muted; font-size: 12px;
+                wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font;
             }
             if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }

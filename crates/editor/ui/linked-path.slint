@@ -40,9 +40,9 @@ export component LinkedPathWindow inherits Window {
     dialog-focus := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape { if root.picking { root.cancel-pick(); } else { root.cancel(); } accept } else { reject } }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 12px;
-            Text { text: root.existing ? "Edit linked path" : "Create linked path"; font-size: 24px; font-weight: 600; }
+            Text { text: root.existing ? "Edit linked path" : "Create linked path"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.existing ? "Add, remove, reorder or reposition nodes. Retained names, IDs and properties stay with each node." : "Place ordered point entities and link each target to the next name."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
@@ -137,8 +137,8 @@ export component LinkedPathWindow inherits Window {
                                     Button { text: "Remove"; width: 130px; enabled: root.editable && root.points.length > 2; clicked => { root.remove-point(index); } }
                                     Button { text: "Pick position…"; width: 140px; enabled: root.ready; clicked => { root.pick-position(index); } }
                                 }
-                                if root.existing: Text { text: point.id == "" ? (point.name == "" ? "New node · assigned at Preview" : point.name + " · new node") : point.name + " · " + point.id; color: Theme.text; font-size: 12px; wrap: word-wrap; }
-                                if point.link != "": Text { text: point.link; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+                                if root.existing: Text { text: point.id == "" ? (point.name == "" ? "New node · assigned at Preview" : point.name + " · new node") : point.name + " · " + point.id; color: Theme.text; font-size: Theme.font; wrap: word-wrap; }
+                                if point.link != "": Text { text: point.link; color: Theme.text-muted; font-size: Theme.font; wrap: word-wrap; }
                             }
                             if root.removed-nodes.length > 0: Text { text: "Will remove · " + root.removed-nodes.length + " nodes"; color: Theme.danger; font-weight: 600; }
                             for name in root.removed-nodes: Text { text: name; color: Theme.danger; wrap: word-wrap; }

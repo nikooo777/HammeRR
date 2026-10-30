@@ -29,9 +29,9 @@ export component PreviewDefaultsWindow inherits Window {
     keys := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape { root.close-dialog(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 12px;
-            Text { text: "Preview defaults"; font-size: 24px; font-weight: 600; }
+            Text { text: "Preview defaults"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Choose preview and guide visibility in the viewport, then save the settings you want at startup."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 Text { text: "Setting"; horizontal-stretch: 1; font-weight: 600; }

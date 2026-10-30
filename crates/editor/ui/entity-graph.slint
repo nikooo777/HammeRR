@@ -39,9 +39,9 @@ export component EntityGraphWindow inherits Window {
             return reject;
         }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 10px;
-            Text { text: "Entity graph"; font-size: 24px; font-weight: 600; }
+            Text { text: "Entity graph"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Inspect applied I/O between authored entities in this map, excluding saved Hide. Unapplied drafts and expanded instance contents are excluded."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;
@@ -51,7 +51,7 @@ export component EntityGraphWindow inherits Window {
             Text { text: root.root-summary; wrap: word-wrap; font-weight: 600; }
             HorizontalLayout {
                 spacing: 8px;
-                Text { text: "Root IDs (advanced)"; vertical-alignment: center; color: Theme.text-muted; font-size: 12px; }
+                Text { text: "Root IDs (advanced)"; vertical-alignment: center; color: Theme.text-muted; font-size: Theme.font; }
                 LineEdit { text <=> root.roots; placeholder-text: "entity:12, entity:34"; edited => { root.fields-changed(); } accessible-label: "Graph root entity IDs"; }
             }
             HorizontalLayout {

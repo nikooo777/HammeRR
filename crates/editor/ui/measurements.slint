@@ -68,10 +68,10 @@ export component MeasurementsWindow inherits Window {
             } else { reject }
         }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 12px;
             HorizontalLayout {
-                Text { text: "Measurements"; font-size: 24px; font-weight: 600; }
+                Text { text: "Measurements"; font-size: Theme.font-display; font-weight: 600; }
                 Rectangle { horizontal-stretch: 1; }
                 CheckBox { text: "Show guides"; checked <=> root.show-guides; toggled => { root.view-changed(); } }
             }
@@ -159,10 +159,10 @@ export component MeasurementsWindow inherits Window {
                 Rectangle { horizontal-stretch: 1; }
                 Text { text: "Preview first · visible surfaces · no snapping"; color: Theme.text-muted; wrap: word-wrap; }
             }
-            Text { text: root.result; font-size: 17px; font-weight: 600; min-height: 45px; wrap: word-wrap; }
+            Text { text: root.result; font-size: Theme.font-heading; font-weight: 600; min-height: 45px; wrap: word-wrap; }
             Text { text: root.preview-status; min-height: 40px; wrap: word-wrap; }
             Text { text: root.message; color: Theme.text-muted; min-height: 36px; wrap: word-wrap; }
-            Text { text: "128 rulers · 80 characters per name · ±65536 per coordinate · Guides cannot be picked and ignore object visibility."; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
+            Text { text: "128 rulers · 80 characters per name · ±65536 per coordinate · Guides cannot be picked and ignore object visibility."; color: Theme.text-muted; font-size: Theme.font; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

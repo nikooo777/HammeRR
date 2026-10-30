@@ -34,9 +34,9 @@ export component LightingWindow inherits Window {
         height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 22px;
+            padding: Theme.space-xl;
             spacing: 12px;
-            Text { text: "Face lighting"; font-size: 24px; font-weight: 600; }
+            Text { text: "Face lighting"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.selection-label; color: Theme.text-muted; }
             Text { text: "Lightmap scale · world units per lighting pixel"; font-weight: 600; }
             HorizontalLayout {

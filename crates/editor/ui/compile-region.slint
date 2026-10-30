@@ -31,8 +31,8 @@ export component CompileRegionWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px; spacing: 10px;
-            Text { text: "Compile part of the map"; font-size: 24px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 10px;
+            Text { text: "Compile part of the map"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.committed; color: Theme.text-muted; wrap: word-wrap; }
             CheckBox { text: "Enable region for builds"; checked <=> root.region-enabled; toggled => { root.edited(); } }
             Text { text: "Region corners · world units"; font-weight: 600; }

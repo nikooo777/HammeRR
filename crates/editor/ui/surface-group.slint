@@ -30,9 +30,9 @@ export component SurfaceGroupWindow inherits Window {
         height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 24px;
+            padding: Theme.space-xl;
             spacing: 14px;
-            Text { text: "Map textures together"; font-size: 24px; font-weight: 600; }
+            Text { text: "Map textures together"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.selection-label; color: Theme.text-muted; }
             ComboBox {
                 model: ["Fit faces together", "Project along current view"];

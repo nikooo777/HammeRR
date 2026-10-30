@@ -32,8 +32,8 @@ export component HollowWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 24px; spacing: 16px;
-            Text { text: "Turn solids into walls"; font-size: 24px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 16px;
+            Text { text: "Turn solids into walls"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.selection-label; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 16px;
@@ -51,7 +51,7 @@ export component HollowWindow inherits Window {
             Text { text: root.direction == 0 ? "The outer shape stays the same. Walls reduce the space inside." : "The original shape becomes the empty space. Walls grow outward."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 12px;
-                Text { text: "Openings"; font-size: 18px; font-weight: 600; vertical-alignment: center; }
+                Text { text: "Openings"; font-size: Theme.font-heading; font-weight: 600; vertical-alignment: center; }
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: "Close all openings"; enabled: root.faces.length > 0; clicked => { root.close-openings(); } }
             }
@@ -63,14 +63,14 @@ export component HollowWindow inherits Window {
                     CheckBox { text: face.label; checked: face.open; toggled => { root.choose-opening(face.key); } }
                 }
             }
-            Text { text: root.summary; font-size: 17px; font-weight: 600; wrap: word-wrap; }
+            Text { text: root.summary; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 if root.cavities > 1: Text { text: "Cavity"; vertical-alignment: center; }
                 if root.cavities > 1: SpinBox { minimum: 1; maximum: max(1,root.cavities); value <=> root.cavity; }
                 Button { text: "Look inside"; enabled: root.token != ""; clicked => { root.look-inside(); } }
             }
-            Text { text: "Look inside moves the camera into the preview. Use Wireframe for an outside view of the walls. Cancel keeps the camera position."; color: Theme.text-muted; wrap: word-wrap; font-size: 12px; }
+            Text { text: "Look inside moves the camera into the preview. Use Wireframe for an outside view of the walls. Cancel keeps the camera position."; color: Theme.text-muted; wrap: word-wrap; font-size: Theme.font; }
             if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {

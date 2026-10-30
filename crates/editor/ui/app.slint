@@ -90,7 +90,7 @@ component ConnectionField inherits VerticalLayout {
             selected(value) => { if self.current-index > 0 { root.value = value; root.changed(); } }
         }
     }
-    if root.help != "": Text { text: root.help; wrap: word-wrap; font-size: 12px; }
+    if root.help != "": Text { text: root.help; wrap: word-wrap; font-size: Theme.font; }
 }
 
 export component ConnectionWindow inherits Window {
@@ -141,7 +141,7 @@ export component ConnectionWindow inherits Window {
         VerticalLayout {
             padding: 16px;
             spacing: 12px;
-            Text { text: root.source-label; font-size: 20px; font-weight: 600; wrap: word-wrap; }
+            Text { text: root.source-label; font-size: Theme.font-display; font-weight: 600; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 18px;
                 vertical-stretch: 1;
@@ -159,8 +159,8 @@ export component ConnectionWindow inherits Window {
                             padding-bottom: 12px;
                             spacing: 4px;
                             Text { text: row.label; wrap: word-wrap; font-weight: 600; }
-                            Text { text: row.detail; wrap: word-wrap; font-size: 12px; }
-                            if row.warning != "": Text { text: row.warning; wrap: word-wrap; color: Theme.warning; font-size: 12px; }
+                            Text { text: row.detail; wrap: word-wrap; font-size: Theme.font; }
+                            if row.warning != "": Text { text: row.warning; wrap: word-wrap; color: Theme.warning; font-size: Theme.font; }
                             HorizontalLayout {
                                 spacing: 8px;
                                 Button {
@@ -282,8 +282,8 @@ component RenameReference inherits VerticalLayout {
     spacing: 4px;
     Text { text: root.entry.label; wrap: word-wrap; font-weight: 600; }
     Text { text: root.entry.change; wrap: word-wrap; }
-    Text { text: root.entry.reason; wrap: word-wrap; color: root.entry.review ? Theme.warning : Theme.text-faint; font-size: 12px; }
-    if root.show-details: Text { text: root.entry.details; wrap: word-wrap; font-size: 11px; color: Theme.text-faint; }
+    Text { text: root.entry.reason; wrap: word-wrap; color: root.entry.review ? Theme.warning : Theme.text-faint; font-size: Theme.font; }
+    if root.show-details: Text { text: root.entry.details; wrap: word-wrap; font-size: Theme.font-small; color: Theme.text-faint; }
 }
 
 export component RenameWindow inherits Window {
@@ -320,9 +320,9 @@ export component RenameWindow inherits Window {
             if event.text == Key.Escape { root.cancel(); accept } else { reject }
         }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 12px;
-            Text { text: root.has-proposal ? "Rename entity" : "Entity references"; font-size: 24px; font-weight: 600; }
+            Text { text: root.has-proposal ? "Rename entity" : "Entity references"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.entity-label; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 12px;
@@ -348,7 +348,7 @@ export component RenameWindow inherits Window {
                 toggled => { root.fields-changed(); }
             }
             Text { text: root.summary; wrap: word-wrap; font-weight: 600; accessible-label: "Rename summary"; }
-            if root.rename-group: Text { text: root.members; wrap: word-wrap; font-size: 12px; color: Theme.text-faint; }
+            if root.rename-group: Text { text: root.members; wrap: word-wrap; font-size: Theme.font; color: Theme.text-faint; }
             if root.references.length == 0: Text { text: root.has-proposal ? "No linked fields need updating." : "No references found."; wrap: word-wrap; }
             ListView {
                 vertical-stretch: 1;
@@ -356,11 +356,11 @@ export component RenameWindow inherits Window {
                     spacing: 8px;
                     if row.section != "": Text {
                         text: row.section;
-                        font-size: 18px;
+                        font-size: Theme.font-heading;
                         font-weight: 600;
                         color: row.review ? Theme.warning : Theme.text;
                     }
-                    if row.section-note != "": Text { text: row.section-note; wrap: word-wrap; font-size: 12px; }
+                    if row.section-note != "": Text { text: row.section-note; wrap: word-wrap; font-size: Theme.font; }
                     RenameReference { entry: row; show-details: root.show-details; }
                 }
             }
@@ -581,10 +581,10 @@ export component ColorWindow inherits Window {
             if event.text == Key.Escape { root.cancel(); accept } else { reject }
         }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 12px;
             alignment: start;
-            Text { text: root.field-label; font-size: 18px; }
+            Text { text: root.field-label; font-size: Theme.font-heading; }
             Rectangle { height: 70px; background: rgb(root.red, root.green, root.blue); border-radius: 6px; }
             HorizontalLayout {
                 spacing: 8px;
@@ -782,7 +782,7 @@ export component MaterialWindow inherits Window {
                                     padding: 8px;
                                     spacing: 6px;
                                     Image { height: 110px; source: tile.preview; image-fit: contain; }
-                                    Text { text: (tile.favorite ? "★ " : "") + tile.name; wrap: word-wrap; font-size: 11px; }
+                                    Text { text: (tile.favorite ? "★ " : "") + tile.name; wrap: word-wrap; font-size: Theme.font-small; }
                                     Text { text: tile.source; overflow: elide; font-size: 10px; color: Theme.text-muted; }
                                 }
                                 TouchArea { clicked => { root.material = tile.name; root.preview-material(); } }
@@ -820,7 +820,7 @@ export component MaterialWindow inherits Window {
                     Button { text: "Source…"; enabled: root.material != ""; clicked => { root.inspect-source(); } }
                     Button { text: root.favorite ? "Remove favorite" : "Add favorite"; enabled: root.material != ""; clicked => { root.toggle-favorite(); } }
                     Button { text: "Reload favorites"; enabled: root.favorites-reload-available; clicked => { root.reload-favorites(); } }
-                    favorites-state := Text { text: root.favorites-status; wrap: word-wrap; font-size: 11px; }
+                    favorites-state := Text { text: root.favorites-status; wrap: word-wrap; font-size: Theme.font-small; }
                 }
             }
             if root.reload-status != "": ScrollView {
@@ -891,9 +891,9 @@ export component TerrainWindow inherits Window {
     dialog-focus := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape {root.cancel(); accept} else {reject} }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 14px;
-            Text {text: root.selection-label; font-size: 17px; wrap: word-wrap;}
+            Text {text: root.selection-label; font-size: Theme.font-heading; wrap: word-wrap;}
             Text {text: "Operation";}
             ComboBox {model:["Grid resolution", "Raise / lower", "Flatten", "Smooth", "Noise", "Paint blend", "Fill blend", "Invert blend", "Collision", "Sew borders & corners", "Border smoothing", "Move selected vertices", "Subdivide base cage"]; current-index <=> root.operation-index; enabled: !root.stale; selected => {root.edited();}}
             if root.operation-index == 11: VerticalLayout {
@@ -911,12 +911,12 @@ export component TerrainWindow inherits Window {
                 }
                 Text {text:"Moves only the retained vertex selection by exact world coordinates. X/Y reshape the terrain sideways; Z changes height. Each offset can be −4096 to 4096 units. Neighboring triangles follow their shared vertices.";wrap:word-wrap;color:Theme.text-muted;}
                 Button {text:"Move with handles…";enabled:root.mask-available && !root.stale;clicked=>{root.move-handles();}}
-                Text {text:"Drag an axis or plane, then review with Apply or Cancel. Handles follow the editor's grid snapping.";wrap:word-wrap;color:Theme.text-muted;font-size:12px;}
+                Text {text:"Drag an axis or plane, then review with Apply or Cancel. Handles follow the editor's grid snapping.";wrap:word-wrap;color:Theme.text-muted;font-size: Theme.font;}
             }
             if root.operation-index >= 1 && root.operation-index <= 7: VerticalLayout {
                 spacing: 4px;
                 CheckBox {text:"Affect only selected terrain vertices";checked <=> root.use-mask;enabled:root.mask-available && !root.stale;toggled=>{root.edited();}}
-                Text {text:root.mask-label;wrap:word-wrap;color:Theme.text-faint;font-size:12px;}
+                Text {text:root.mask-label;wrap:word-wrap;color:Theme.text-faint;font-size: Theme.font;}
             }
             if root.operation-index == 0: VerticalLayout {
                 spacing: 12px;
@@ -1001,10 +1001,10 @@ export component TerrainWindow inherits Window {
             }
             if root.operation-index == 9: CheckBox {text:"Also sew blend values"; checked <=> root.sew-blend; toggled=>{root.edited();}}
             if root.operation-index == 12: Text {text:"Round the selected base faces into a connected surface. Replaces existing sculpting; preserves blend values and materials. Matching full edges share samples. Outer base edges stay fixed.";wrap:word-wrap;color:Theme.text-muted;}
-            if root.operation-index == 12: Text {text:"Select every base face you want rounded. Half-edge junctions and corner-only contacts need separate actions. Powers and start corners stay fixed.";wrap:word-wrap;color:Theme.text-muted;font-size:12px;}
+            if root.operation-index == 12: Text {text:"Select every base face you want rounded. Half-edge junctions and corner-only contacts need separate actions. Powers and start corners stay fixed.";wrap:word-wrap;color:Theme.text-muted;font-size: Theme.font;}
             if root.operation-index != 0 && root.operation-index != 10 && root.operation-index != 11 && root.operation-index != 12: Text {text:root.operation-index == 9 ? "Join full/half borders or matching corners at different resolutions. Shared points are averaged; finer border points follow the coarser grid. Interior vertices stay fixed." : root.operation-index == 8 ? "Keep current preserves each face. Geometry, blend values and other flags stay fixed. Individual triangle removal is separate." : root.operation-index == 2 ? "Flatten moves toward the plane through the brush center. Center Z sets its height with world-Z direction." : root.operation-index == 3 ? "Smooth uses the original neighboring samples. A brush fades toward its edge." : root.operation-index == 4 ? "The same seed and source give the same noise preview. A brush fades toward its edge." : root.operation-index == 5 ? "Paint moves blend values toward the chosen value, fading toward the brush edge. Choose a two-texture material to see the blend." : root.operation-index == 6 ? "Fill applies one blend value to the complete selected terrain grids." : root.operation-index == 7 ? "Invert swaps first- and second-texture weights across the complete grids." : "Raise / lower follows the chosen direction and fades toward the brush edge."; wrap:word-wrap; color:Theme.text-muted;}
             Rectangle {vertical-stretch: 1;}
-            if root.operation-index >= 1 && root.operation-index <= 5: Text {text:"A stroke applies this brush at each sample. Overlapping samples build up the edit.";wrap:word-wrap;font-size:12px;color:Theme.text-muted;}
+            if root.operation-index >= 1 && root.operation-index <= 5: Text {text:"A stroke applies this brush at each sample. Overlapping samples build up the edit.";wrap:word-wrap;font-size: Theme.font;color:Theme.text-muted;}
             if root.operation-index >= 1 && root.operation-index <= 5: Button {text:"Draw stroke in viewport…";enabled:!root.stale;clicked=>{root.draw-stroke();}}
             Text {text: root.message; wrap: word-wrap; color: Theme.text-faint;}
             HorizontalLayout {
@@ -1067,9 +1067,9 @@ export component SurfaceWindow inherits Window {
             if event.text == Key.Escape { root.cancel(); accept } else { reject }
         }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 12px;
-            Text { text: root.selection-label; font-size: 18px; }
+            Text { text: root.selection-label; font-size: Theme.font-heading; }
             ComboBox {
                 model: ["Edit texture settings", "Paint sampled material", "Copy sampled projection", "Wrap across a shared edge", "Wrap connected faces", "Vary texture offsets"];
                 current-index <=> root.operation-index;
@@ -1082,7 +1082,7 @@ export component SurfaceWindow inherits Window {
                     Image { width: 96px; height: 96px; source: root.sample-preview; image-fit: contain; }
                     VerticalLayout {
                         spacing: 8px;
-                        Text { text: "Sampled texture"; font-size: 16px; }
+                        Text { text: "Sampled texture"; font-size: Theme.font-heading; }
                         Text { text: root.sample-label; wrap: word-wrap; color: Theme.text-muted; }
                     }
                 }
@@ -1301,8 +1301,8 @@ component PropertyField inherits VerticalLayout {
         if root.browsable: IconButton { y: -1px; icon: Icon.open; tooltip: "Browse…"; enabled: !root.field.read-only; clicked => { root.browse(); } }
         if root.field.description != "": IconButton { y: -1px; icon: Icon.info; tooltip: "Show help"; checked: root.show-help; clicked => { root.show-help = !root.show-help; } }
     }
-    if root.advanced: Text { text: root.field.key + " · " + root.field.type-name; color: Theme.text-faint; font-size: 11px; }
-    if root.show-help: Text { text: root.field.description; wrap: word-wrap; color: Theme.text-faint; font-size: 11px; }
+    if root.advanced: Text { text: root.field.key + " · " + root.field.type-name; color: Theme.text-faint; font-size: Theme.font-small; }
+    if root.show-help: Text { text: root.field.description; wrap: word-wrap; color: Theme.text-faint; font-size: Theme.font-small; }
     if root.field.control == "flags": VerticalLayout {
         spacing: 2px;
         for flag in root.field.flags: CheckBox {
@@ -1327,7 +1327,7 @@ component PropertyField inherits VerticalLayout {
                 Text {
                     text: root.field.component-labels[index];
                     color: index == 0 ? Theme.axis-x : index == 1 ? Theme.axis-y : index == 2 ? Theme.axis-z : Theme.text-faint;
-                    font-size: 11px;
+                    font-size: Theme.font-small;
                     font-weight: 600;
                     vertical-alignment: center;
                 }
@@ -1335,7 +1335,7 @@ component PropertyField inherits VerticalLayout {
                     horizontal-stretch: 1;
                     text: component;
                     color: Theme.text;
-                    font-size: 12px;
+                    font-size: Theme.font;
                     vertical-alignment: center;
                     single-line: true;
                     input-type: decimal;
@@ -1413,8 +1413,8 @@ export component PropertiesWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px; spacing: 12px;
-            Text { text: root.heading; font-size: 23px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 12px;
+            Text { text: root.heading; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.summary; wrap: word-wrap; }
             if root.world-settings: Button {
                 text: "Inspect applied sky…";
@@ -1432,7 +1432,7 @@ export component PropertiesWindow inherits Window {
                         pick-color => { root.pick-color(row.field.key); }
                         pick-material => { root.pick-material(row.field.key); }
                     }
-                    Text { text: row.status; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                    Text { text: row.status; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     HorizontalLayout {
                         spacing: 8px;
                         Button { text: "Use default"; enabled: row.can-reset && !row.field.read-only; clicked => { root.reset(row.field.key); } }
@@ -1499,11 +1499,11 @@ export component ChecksWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px; spacing: 12px;
+            padding: Theme.space-xl; spacing: 12px;
             HorizontalLayout {
                 VerticalLayout {
                     spacing: 4px;
-                    Text { text: "Map checks"; font-size: 24px; font-weight: 600; }
+                    Text { text: "Map checks"; font-size: Theme.font-display; font-weight: 600; }
                     Text { text: root.summary; color: Theme.text-muted; }
                 }
                 Button { text: "Run checks"; clicked => { root.run-checks(); } }
@@ -1529,7 +1529,7 @@ export component ChecksWindow inherits Window {
                             }
                         }
                     }
-                    Text { text: root.page-summary; color: Theme.text-faint; font-size: 12px; }
+                    Text { text: root.page-summary; color: Theme.text-faint; font-size: Theme.font; }
                     HorizontalLayout {
                         spacing: 8px;
                         Button { text: "Previous"; enabled: root.page > 0; clicked => { root.page -= 1; root.filter(); } }
@@ -1539,9 +1539,9 @@ export component ChecksWindow inherits Window {
                 Rectangle { width: 1px; background: Theme.control-strong; }
                 VerticalLayout {
                     horizontal-stretch: 1; min-width: 450px; spacing: 12px;
-                    Text { text: root.detail-title; font-size: 19px; font-weight: 600; wrap: word-wrap; }
+                    Text { text: root.detail-title; font-size: Theme.font-display; font-weight: 600; wrap: word-wrap; }
                     Text { text: root.detail; wrap: word-wrap; }
-                    Text { text: root.location; color: Theme.text-faint; wrap: word-wrap; font-size: 12px; }
+                    Text { text: root.location; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font; }
                     HorizontalLayout {
                         spacing: 8px;
                         Button { text: "Select issue"; enabled: root.can-select; clicked => { root.navigate(false); } }
@@ -1550,7 +1550,7 @@ export component ChecksWindow inherits Window {
                     Button { text: "Review repair…"; enabled: root.can-repair; clicked => { root.review-repair(); } }
                     if root.preview-token != "": VerticalLayout {
                         spacing: 8px;
-                        Text { text: "Proposed repair"; font-size: 16px; font-weight: 600; }
+                        Text { text: "Proposed repair"; font-size: Theme.font-heading; font-weight: 600; }
                         TextEdit { text: root.preview-text; read-only: true; wrap: word-wrap; preferred-height: 140px; max-height: 230px; }
                         Text { text: "Apply records one undo step. Cancel leaves the map unchanged."; wrap: word-wrap; color: Theme.text-faint; }
                         HorizontalLayout {
@@ -1563,7 +1563,7 @@ export component ChecksWindow inherits Window {
                 }
             }
             if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
-            Text { text: "Checks include hidden objects and exclude pending edits. Compile and test in CS:S to check leaks and playability."; color: Theme.text-faint; font-size: 12px; wrap: word-wrap; }
+            Text { text: "Checks include hidden objects and exclude pending edits. Compile and test in CS:S to check leaks and playability."; color: Theme.text-faint; font-size: Theme.font; wrap: word-wrap; }
             Button { text: "Cancel / close"; clicked => { root.cancel(); } }
         }
     }
@@ -1599,8 +1599,8 @@ export component RecentMapsWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px; spacing: 10px;
-            Text { text: "Recent maps"; font-size: 23px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 10px;
+            Text { text: "Recent maps"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Reopen a map with its retained build settings. Game content stays mounted from this editor session."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 Text { text: root.summary; horizontal-stretch: 1; vertical-alignment: center; }
@@ -1611,8 +1611,8 @@ export component RecentMapsWindow inherits Window {
                 for row in root.rows: VerticalLayout {
                     spacing: 3px; padding-bottom: 10px;
                     Button { text: row.title + (root.selected-path == row.path ? " · selected" : ""); clicked => { root.select-map(row.path); } }
-                    Text { text: row.path; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
-                    Text { text: row.detail; color: Theme.text-muted; font-size: 12px; }
+                    Text { text: row.path; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                    Text { text: row.detail; color: Theme.text-muted; font-size: Theme.font; }
                 }
             }
             Text { text: root.selected-detail; wrap: word-wrap; color: Theme.text-muted; }
@@ -1674,8 +1674,8 @@ export component RecoveryWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px; spacing: 10px;
-            Text { text: "Autosave and recovery"; font-size: 23px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 10px;
+            Text { text: "Autosave and recovery"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.status; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 12px;
@@ -1703,7 +1703,7 @@ export component RecoveryWindow inherits Window {
                 for row in root.rows: VerticalLayout {
                     spacing: 3px; padding-bottom: 8px;
                     Button { text: row.title + (root.selected-id == row.id ? " · selected" : ""); clicked => { root.select-snapshot(row.id); } }
-                    Text { text: row.detail; color: Theme.text-muted; font-size: 12px; }
+                    Text { text: row.detail; color: Theme.text-muted; font-size: Theme.font; }
                 }
             }
             HorizontalLayout {
@@ -1722,7 +1722,7 @@ export component RecoveryWindow inherits Window {
             Text { text: "Recovered maps open as unsaved copies. Choose a save path to keep them."; wrap: word-wrap; color: Theme.text-faint; }
             if root.warning != "": Text { text: root.warning; wrap: word-wrap; color: Theme.warning; }
             if root.message != "": Text { text: root.message; wrap: word-wrap; }
-            Text { text: "Storage: " + root.storage; wrap: word-wrap; color: Theme.text-faint; font-size: 11px; }
+            Text { text: "Storage: " + root.storage; wrap: word-wrap; color: Theme.text-faint; font-size: Theme.font-small; }
             Button { text: "Cancel / close"; clicked => { root.cancel(); } }
         }
     }
@@ -1751,8 +1751,8 @@ export component PointfileWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px; spacing: 14px;
-            Text { text: "Follow a leak path"; font-size: 24px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 14px;
+            Text { text: "Follow a leak path"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Load a pointfile or explore the latest compile's leak. Navigation moves the editor camera."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;
@@ -1795,8 +1795,8 @@ component StatisticCard inherits Rectangle {
     VerticalLayout {
         padding: 16px; spacing: 8px;
         Text { text: root.label; color: Theme.text-muted; }
-        Text { text: root.value; font-size: 30px; font-weight: 600; }
-        Text { text: root.detail; font-size: 12px; color: Theme.text-muted; wrap: word-wrap; }
+        Text { text: root.value; font-size: 24px; font-weight: 600; }
+        Text { text: root.detail; font-size: Theme.font; color: Theme.text-muted; wrap: word-wrap; }
     }
 }
 
@@ -1825,8 +1825,8 @@ export component StatisticsWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px; spacing: 14px;
-            Text { text: "Map statistics"; font-size: 24px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 14px;
+            Text { text: "Map statistics"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Current map, including hidden objects. Previews are excluded."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 12px;
@@ -1857,7 +1857,7 @@ export component StatisticsWindow inherits Window {
                 Button { text: "Previous"; enabled: root.page > 0; clicked => { root.page -= 1; root.refresh(); } }
                 Button { text: "Next"; enabled: root.has-next; clicked => { root.page += 1; root.refresh(); } }
             }
-            Text { text: "Authored counts, not compiled BSP budgets. Brush sides count plane records. Hidden brushes include those inside hidden entities. Locate IDs with Object report."; wrap: word-wrap; color: Theme.text-faint; font-size: 12px; }
+            Text { text: "Authored counts, not compiled BSP budgets. Brush sides count plane records. Hidden brushes include those inside hidden entities. Locate IDs with Object report."; wrap: word-wrap; color: Theme.text-faint; font-size: Theme.font; }
             Button { text: "Close"; clicked => { root.cancel(); } }
         }
     }
@@ -1900,8 +1900,8 @@ export component ReportWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px; spacing: 12px;
-            Text { text: "Find objects"; font-size: 23px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 12px;
+            Text { text: "Find objects"; font-size: Theme.font-display; font-weight: 600; }
             LineEdit { text <=> root.query; placeholder-text: "Search IDs, names, classes and materials…"; edited => { root.page = 0; root.search(); } }
             HorizontalLayout {
                 spacing: 8px;
@@ -1944,7 +1944,7 @@ export component ReportWindow inherits Window {
                         Button { text: "Select"; clicked => { root.select-result(row.id, false); } }
                         Button { text: "Frame"; clicked => { root.select-result(row.id, true); } }
                     }
-                    Text { text: row.detail; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                    Text { text: row.detail; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                 }
             }
             HorizontalLayout {
@@ -1995,7 +1995,7 @@ export struct PaletteRow {
 component StatusText inherits Text {
     color: Theme.text-faint;
     vertical-alignment: center;
-    font-size: 12px;
+    font-size: Theme.font;
 }
 
 component TransformVector inherits HorizontalLayout {
@@ -2019,7 +2019,7 @@ export component AppWindow inherits Window {
     preferred-width: 1600px;
     preferred-height: 960px;
     background: Theme.panel;
-    default-font-size: 12px;
+    default-font-size: Theme.font;
     forward-focus: focus;
 
     in property <image> frame;
@@ -2113,6 +2113,7 @@ export component AppWindow inherits Window {
     in-out property <int> area-rule-index;
     in-out property <int> area-mode-index;
     in property <bool> has-transform-preview;
+    in property <bool> agent-preview;
     in property <string> transform-preview-summary;
     in property <[string]> transform-preview-values: ["0", "0", "0", "0", "0", "0", "1", "1", "1"];
     in property <bool> has-area-preview;
@@ -3136,8 +3137,8 @@ export component AppWindow inherits Window {
                     y: parent.height - self.height - 44px;
                     width: min(pending-row.preferred-width + 8px, parent.width - 20px);
                     height: 44px;
-                    background: Theme.panel;
-                    border-color: Theme.accent;
+                    background: root.agent-preview ? Theme.agent-soft : Theme.panel;
+                    border-color: root.agent-preview ? Theme.agent-border : Theme.accent;
                     border-width: 1px;
                     border-radius: Theme.radius-lg;
                     drop-shadow-blur: 18px;
@@ -3146,6 +3147,8 @@ export component AppWindow inherits Window {
                         padding: 8px;
                         padding-left: Theme.space-lg;
                         spacing: Theme.space;
+                        if root.agent-preview: Image { y: (parent.height - self.height) / 2; width: 15px; height: 15px; source: Icon.agent; colorize: Theme.agent; }
+                        if root.agent-preview: Text { text: "Agent preview"; color: Theme.agent-text; font-weight: 600; vertical-alignment: center; }
                         Text { text: root.interaction-summary; color: Theme.text; vertical-alignment: center; overflow: elide; }
                         Button { text: "Cancel"; clicked => { root.cancel-interaction(); } }
                         Button { primary: true; text: root.has-transform-preview ? "Apply transform" : root.has-texture-stroke ? "Apply textures" : "Apply selection"; clicked => { if root.has-transform-preview { root.apply-transform-preview(); } else { root.apply-area-selection(); } } }

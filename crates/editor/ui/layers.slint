@@ -50,8 +50,8 @@ export component LayersWindow inherits Window {
         width:parent.width;height:parent.height;
         key-pressed(event)=>{if event.text==Key.Escape {root.close-dialog();accept}else{reject}}
         VerticalLayout {
-            padding:22px;spacing:12px;
-            Text {text:"Layers";font-size:24px;font-weight:600;}
+            padding: Theme.space-xl;spacing:12px;
+            Text {text:"Layers";font-size: Theme.font-display;font-weight:600;}
             Text {text:"Organize a map into named, colored layers. Objects can belong to several layers.";color:Theme.text-muted;wrap:word-wrap;}
             HorizontalLayout {
                 spacing:8px;
@@ -73,7 +73,7 @@ export component LayersWindow inherits Window {
                             VerticalLayout {
                                 horizontal-stretch:1;spacing:3px;
                                 Button {text:(root.selected==layer.id?"● ":"")+layer.label;enabled:!root.editing;clicked=>{root.choose(layer.id);}}
-                                Text {text:layer.detail;wrap:word-wrap;color:Theme.text-muted;font-size:12px;}
+                                Text {text:layer.detail;wrap:word-wrap;color:Theme.text-muted;font-size: Theme.font;}
                             }
                         }
                     }
@@ -141,7 +141,7 @@ export component LayersWindow inherits Window {
                     }
                 }
             }
-            Text {text:"Hide also omits members from builds. A layer link on an entity-owned brush selects or hides the whole entity. Use Faces mode to assign individual owned brushes.";wrap:word-wrap;color:Theme.text-muted;font-size:12px;}
+            Text {text:"Hide also omits members from builds. A layer link on an entity-owned brush selects or hides the whole entity. Use Faces mode to assign individual owned brushes.";wrap:word-wrap;color:Theme.text-muted;font-size: Theme.font;}
             Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:40px;}
             HorizontalLayout {
                 spacing:8px;

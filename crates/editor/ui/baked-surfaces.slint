@@ -50,10 +50,10 @@ export component BakedSurfacesWindow inherits Window {
             return reject;
         }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 10px;
             HorizontalLayout {
-                Text { text: "Baked surfaces"; font-size: 24px; font-weight: 600; }
+                Text { text: "Baked surfaces"; font-size: Theme.font-display; font-weight: 600; }
                 Rectangle { horizontal-stretch: 1; }
                 Text { text: root.state; vertical-alignment: center; color: Theme.warning; }
             }

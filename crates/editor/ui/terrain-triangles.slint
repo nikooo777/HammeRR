@@ -44,9 +44,9 @@ export component TerrainTrianglesWindow inherits Window {
     focus := FocusScope {
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px;
+            padding: Theme.space-xl;
             spacing: 8px;
-            Text { text: root.kind-index == 1 ? "Choose terrain vertices" : "Choose terrain triangles"; font-size: 20px; }
+            Text { text: root.kind-index == 1 ? "Choose terrain vertices" : "Choose terrain triangles"; font-size: Theme.font-display; }
             Text { text: "Selection type"; }
             ComboBox {model: ["Triangles · classifications & brush masks", "Vertices · exact positions & brush masks"]; current-index <=> root.kind-index; enabled: !root.stale; selected => {root.kind-changed();}}
             Text { text: "Surface"; }
@@ -71,7 +71,7 @@ export component TerrainTrianglesWindow inherits Window {
                     for row[index] in root.triangles: VerticalLayout {
                         spacing: 3px;
                         CheckBox { text: row.label; checked: row.selected; enabled: !root.stale; toggled => { root.toggle-triangle(index, self.checked); } }
-                        Text { text: row.detail; wrap: word-wrap; font-size: 12px; color: Theme.text-faint; }
+                        Text { text: row.detail; wrap: word-wrap; font-size: Theme.font; color: Theme.text-faint; }
                     }
                 }
             }
@@ -96,9 +96,9 @@ export component TerrainTrianglesWindow inherits Window {
                     LineEdit { text <=> root.height-csv-path; placeholder-text: "Height CSV file path"; enabled: !root.stale; }
                     Button { text: "Preview CSV"; enabled: !root.stale; clicked => { root.preview-height-csv(); } }
                 }
-                Text { text: "CSV header: solid,side,vertex,z. One explicit height per row; selected surfaces only, at most 16 surfaces / 4624 vertices / 512 KiB. CSV rows choose their own subset. Matching border positions retain seams; heights are not sewn automatically."; wrap: word-wrap; font-size: 12px; color: Theme.text-muted; }
+                Text { text: "CSV header: solid,side,vertex,z. One explicit height per row; selected surfaces only, at most 16 surfaces / 4624 vertices / 512 KiB. CSV rows choose their own subset. Matching border positions retain seams; heights are not sewn automatically."; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
             }
-            Text { text: root.kind-index == 1 ? "Cyan markers show checked native vertices. Preview height preserves X/Y; Preview CSV sets each row's world Z. Apply commits the last successful preview. Use selection retains this brush mask; changing selection type clears this dialog's selection." : "Yellow outlines show selected triangles. Selections stay checked when switching surfaces; Preview applies to all of them. These are engine classifications; collision stays fixed. Removal is not available yet."; wrap: word-wrap; font-size: 12px; color: Theme.text-muted; }
+            Text { text: root.kind-index == 1 ? "Cyan markers show checked native vertices. Preview height preserves X/Y; Preview CSV sets each row's world Z. Apply commits the last successful preview. Use selection retains this brush mask; changing selection type clears this dialog's selection." : "Yellow outlines show selected triangles. Selections stay checked when switching surfaces; Preview applies to all of them. These are engine classifications; collision stays fixed. Removal is not available yet."; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
             Text { text: root.message; wrap: word-wrap; color: Theme.text-faint; }
             HorizontalLayout {
                 spacing: 8px;

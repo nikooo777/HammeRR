@@ -61,11 +61,11 @@ export component ContextWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 20px; spacing: 12px;
+            padding: Theme.space-xl; spacing: 12px;
             HorizontalLayout {
                 VerticalLayout {
                     spacing: 4px;
-                    Text { text: "Design context"; font-size: 24px; font-weight: 600; }
+                    Text { text: "Design context"; font-size: Theme.font-display; font-weight: 600; }
                     Text { text: "Intent, constraints and observations, attached to the map."; color: Theme.text-muted; }
                 }
                 CheckBox { text: "Show region guides"; checked <=> root.show-regions; toggled => { root.toggle-regions(); } }
@@ -121,7 +121,7 @@ export component ContextWindow inherits Window {
                             }
                         }
                     }
-                    Text { text: root.page-summary; color: Theme.text-faint; font-size: 12px; wrap: word-wrap; }
+                    Text { text: root.page-summary; color: Theme.text-faint; font-size: Theme.font; wrap: word-wrap; }
                     HorizontalLayout {
                         spacing: 8px;
                         Button { text: "Previous"; enabled: root.page > 0; clicked => { root.page -= 1; root.filter(); } }
@@ -131,7 +131,7 @@ export component ContextWindow inherits Window {
                 Rectangle { width: 1px; background: Theme.control-strong; }
                 VerticalLayout {
                     spacing: 10px;
-                    Text { text: root.scope-label; font-size: 20px; font-weight: 600; wrap: word-wrap; }
+                    Text { text: root.scope-label; font-size: Theme.font-display; font-weight: 600; wrap: word-wrap; }
                     if root.source-status != "": Text { text: root.source-status; color: Theme.text-muted; wrap: word-wrap; }
                     if root.token == "": Text { text: "Choose a note, add a map brief, or attach context to a selected object. Regions describe an area without adding game geometry."; wrap: word-wrap; color: Theme.text-muted; }
                     if root.token != "": VerticalLayout {
@@ -140,7 +140,7 @@ export component ContextWindow inherits Window {
                         LineEdit { text <=> root.summary; placeholder-text: "What should someone know about this?"; edited => { root.edit(); } }
                         Text { text: "Intent, constraints and observations"; font-weight: 600; }
                         TextEdit { text <=> root.body; wrap: word-wrap; min-height: 145px; edited => { root.edit(); } }
-                        Text { text: root.note-budget; color: Theme.text-faint; font-size: 12px; }
+                        Text { text: root.note-budget; color: Theme.text-faint; font-size: Theme.font; }
                         if root.region: VerticalLayout {
                             spacing: 8px;
                             Text { text: "Region bounds · world units"; font-weight: 600; }
@@ -190,7 +190,7 @@ export component ContextWindow inherits Window {
                 }
             }
             if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
-            Text { text: "Editor-only notes. Keep durable context here; consolidate existing notes instead of adding activity logs. Current instructions take precedence."; color: Theme.text-faint; wrap: word-wrap; font-size: 12px; }
+            Text { text: "Editor-only notes. Keep durable context here; consolidate existing notes instead of adding activity logs. Current instructions take precedence."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font; }
             Button { text: "Cancel / close"; clicked => { root.cancel(); } }
         }
     }

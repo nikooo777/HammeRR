@@ -152,8 +152,8 @@ export component ComponentsWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: 24px; spacing: 14px;
-            Text { text: "Reshape a brush"; font-size: 24px; font-weight: 600; }
+            padding: Theme.space-xl; spacing: 14px;
+            Text { text: "Reshape a brush"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Move or reshape components, raise a ridge, or extrude flat pieces."; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 20px;
@@ -189,7 +189,7 @@ export component ComponentsWindow inherits Window {
                             spacing: 4px; padding-top: 5px; padding-bottom: 7px;
                             if root.has-partition-preview: Text { text: row.label; color: Theme.text; }
                             if !root.has-partition-preview: CheckBox { text: row.label; checked: row.selected; enabled: !root.topology-preview; toggled => { root.choose(row.key); } }
-                            Text { text: row.detail; wrap: word-wrap; font-size: 12px; color: Theme.text-muted; }
+                            Text { text: row.detail; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
                         }
                     }
                     HorizontalLayout {
@@ -245,7 +245,7 @@ export component ComponentsWindow inherits Window {
                         }
                         Text { text: "Collapsed faces are removed. The remaining brush must stay convex with flat faces."; wrap: word-wrap; color: Theme.text-muted; }
                         CheckBox { text: "Keep textures at surviving corners"; checked <=> root.texture-lock; toggled => { root.edited(); } }
-                        Text { text: root.texture-lock ? "Surviving corners keep their UVs. The merged corner averages its original UVs separately on each face." : "Textures keep their world projection. Preview shows the merged corner and removed-face count."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                        Text { text: root.texture-lock ? "Surviving corners keep their UVs. The merged corner averages its original UVs separately on each face." : "Textures keep their world projection. Preview shows the merged corner and removed-face count."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     }
                     if root.operation == 2: VerticalLayout {
                         spacing: 12px;
@@ -253,9 +253,9 @@ export component ComponentsWindow inherits Window {
                         Text { text: "Raise outward · world units"; color: Theme.text-muted; }
                         LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Split rise"; edited => { root.edited(); } }
                         Slider { minimum: 0.125; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
-                        Text { text: "A face rises along its normal. An edge rises between its two face normals. Existing corners stay in place."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                        Text { text: "A face rises along its normal. An edge rises between its two face normals. Existing corners stay in place."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                         CheckBox { text: "Keep textures at corners"; checked <=> root.texture-lock; toggled => { root.edited(); } }
-                        Text { text: root.texture-lock ? "Each triangle keeps its original corner and center texture coordinates. Textures stretch with the raised fan." : "New faces inherit the original material and world texture projection."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                        Text { text: root.texture-lock ? "Each triangle keeps its original corner and center texture coordinates. Textures stretch with the raised fan." : "New faces inherit the original material and world texture projection."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     }
                     if root.operation == 5: VerticalLayout {
                         spacing: 10px;
@@ -272,8 +272,8 @@ export component ComponentsWindow inherits Window {
                         LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Ridge rise"; edited => { root.edited(); } }
                         Slider { minimum: 0.125; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
                         CheckBox { text: "Keep roof texture at corners"; checked <=> root.roof-texture-lock; toggled => { root.edited(); } }
-                        Text { text: root.roof-texture-lock ? "The two roof textures stretch with their pieces. Neighboring faces keep world projection." : "All faces keep their source material and world texture projection."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
-                        Text { text: "The brush must remain convex with flat roof faces. Incompatible shapes are rejected."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                        Text { text: root.roof-texture-lock ? "The two roof textures stretch with their pieces. Neighboring faces keep world projection." : "All faces keep their source material and world texture projection."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                        Text { text: "The brush must remain convex with flat roof faces. Incompatible shapes are rejected."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     }
                     if root.operation == 6: VerticalLayout {
                         spacing: 10px;
@@ -296,14 +296,14 @@ export component ComponentsWindow inherits Window {
                                 for row in root.partition-rows: VerticalLayout {
                                     spacing: 2px;
                                     CheckBox { text: row.label; checked: row.selected; toggled => { root.choose-partition(row.key); } }
-                                    Text { text: row.detail; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                    Text { text: row.detail; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                                 }
                             }
                             Button { text: "Frame highlighted pieces"; clicked => { root.frame-partitions(); } }
                             CheckBox { text: "Planned top material"; checked <=> root.show-top-material; }
                             if root.show-top-material: VerticalLayout {
                                 spacing: 6px;
-                                Text { text: root.top-material-summary; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                Text { text: root.top-material-summary; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                                 HorizontalLayout {
                                     spacing: 6px;
                                     Image { source: root.top-material-preview; width: 40px; height: 40px; image-fit: contain; }
@@ -315,12 +315,12 @@ export component ComponentsWindow inherits Window {
                                     Button { text: "Preview material"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets && root.top-material != ""; clicked => { root.preview-partition-material(); } }
                                     Button { text: "Restore inheritance"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; clicked => { root.inherit-partition-material(); } }
                                 }
-                                Text { text: "Changes highlighted roofs or prism tops. Bases and walls keep their own materials. Return to flat to change the plan."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                Text { text: "Changes highlighted roofs or prism tops. Bases and walls keep their own materials. Return to flat to change the plan."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                             }
                             CheckBox { text: "Top texture placement"; checked <=> root.show-top-texture; }
                             if root.show-top-texture: VerticalLayout {
                                 spacing: 6px;
-                                Text { text: root.top-texture-summary; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                Text { text: root.top-texture-summary; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                                 HorizontalLayout {
                                     spacing: 8px;
                                     VerticalLayout {
@@ -367,8 +367,8 @@ export component ComponentsWindow inherits Window {
                                     ComboBox { horizontal-stretch: 1; model: ["Keep vertical", "Top", "Center", "Bottom"]; current-index <=> root.texture-justify-v; accessible-label: "Vertical justification"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; }
                                 }
                                 Button { text: "Preview justification"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets && (root.texture-justify-u > 0 || root.texture-justify-v > 0); clicked => { root.justify-partition-texture(); } }
-                                Text { text: "Fit and justification use each piece's bounds and material dimensions. Preview numeric changes first."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
-                                Text { text: "Changes highlighted tops. Negative scales mirror the texture. Keep at corners attaches placement when raising or extruding."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                Text { text: "Fit and justification use each piece's bounds and material dimensions. Preview numeric changes first."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                                Text { text: "Changes highlighted tops. Negative scales mirror the texture. Keep at corners attaches placement when raising or extruding."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                             }
                             CheckBox { text: "Adjust dividing edge"; checked <=> root.show-cut-settings; }
                             if root.show-cut-settings: VerticalLayout {
@@ -389,28 +389,28 @@ export component ComponentsWindow inherits Window {
                                         Slider { enabled: root.partition-flat && !root.has-extrusion-preview; minimum: 1; maximum: 99; value: root.cut-second-value; released(value) => { root.choose-cut-position(1,value); } }
                                     }
                                 }
-                                if root.cut-first == "" || root.cut-second == "": Text { text: "Saved sources have different positions. Enter both values to adjust them together."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
-                                Text { text: "Applies to every source brush. Unequal positions can make a diagonal cut. Return to flat before adjusting."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                if root.cut-first == "" || root.cut-second == "": Text { text: "Saved sources have different positions. Enter both values to adjust them together."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                                Text { text: "Applies to every source brush. Unequal positions can make a diagonal cut. Return to flat before adjusting."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                                 Button { text: "Preview cut"; enabled: root.partition-flat && !root.has-extrusion-preview; clicked => { root.preview-cut(); } }
                                 if !root.cut-is-midpoint: Button { text: "Reset cut to midpoint"; enabled: root.partition-flat && !root.has-extrusion-preview; clicked => { root.choose-cut-position(0,50); root.choose-cut-position(1,50); root.preview-cut(); } }
                             }
                             ComboBox { model: root.can-raise-partition ? ["Raise shared ridge", "Extrude highlighted pieces"] : ["Keep flat pieces", "Extrude highlighted pieces"]; current-index <=> root.partition-mode; selected => { root.edited(); } }
                             if root.partition-mode == 0 && root.can-raise-partition: VerticalLayout {
                                 spacing: 6px;
-                                if !root.cut-is-midpoint: Text { text: root.cut-first == "" || root.cut-second == "" ? "Saved sources have different cut positions" : "Cut positions · A " + root.cut-first + "% · B " + root.cut-second + "%"; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                if !root.cut-is-midpoint: Text { text: root.cut-first == "" || root.cut-second == "" ? "Saved sources have different cut positions" : "Cut positions · A " + root.cut-first + "% · B " + root.cut-second + "%"; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                                 Text { text: "Shared ridge height · world units"; wrap: word-wrap; color: Theme.text-muted; }
                                 LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Partition ridge height"; edited => { root.edited(); } }
                                 Slider { minimum: 0; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
                                 CheckBox { text: "Keep roof texture at corners"; checked <=> root.roof-texture-lock; toggled => { root.edited(); } }
                             }
-                            if root.partition-mode == 0 && root.can-raise-partition && !root.cut-is-midpoint: Text { text: "Preview checks flat, convex roofs. Adjust the cut or extrude if needed."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                            if root.partition-mode == 0 && root.can-raise-partition && !root.cut-is-midpoint: Text { text: "Preview checks flat, convex roofs. Adjust the cut or extrude if needed."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                             if root.partition-mode == 1: VerticalLayout {
                                 spacing: 6px;
                                 ComboBox { model: ["Outward · add brushes", "Inward · cut source"]; current-index <=> root.extrusion-direction; accessible-label: "Extrusion direction"; selected => { root.edited(); } }
                                 Text { text: "Extrusion depth · world units"; color: Theme.text-muted; }
                                 LineEdit { text <=> root.extrusion-height; input-type: decimal; accessible-label: "Extrusion depth"; edited => { root.edited(); } }
                                 Slider { minimum: 0.125; maximum: max(128, root.extrusion-height-value); value: root.extrusion-height-value; released(value) => { root.choose-extrusion-height(value); } }
-                                if root.extrusion-direction == 1: Text { text: "Cuts into the source opposite its face normal, continuing through thinner areas. Apply replaces the source with convex fragments and consumes its saved pieces."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                if root.extrusion-direction == 1: Text { text: "Cuts into the source opposite its face normal, continuing through thinner areas. Apply replaces the source with convex fragments and consumes its saved pieces."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                                 CheckBox { text: root.extrusion-direction == 1 ? "Keep floor texture at corners" : "Keep top texture at corners"; checked <=> root.extrusion-texture-lock; toggled => { root.edited(); } }
                                 CheckBox { text: "Choose wall material"; checked <=> root.wall-override; toggled => { root.edited(); } }
                                 if root.wall-override: HorizontalLayout {
@@ -419,18 +419,18 @@ export component ComponentsWindow inherits Window {
                                     LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.wall-material; accessible-label: "Extrusion wall material"; edited => { root.edited(); } }
                                     Button { text: "Browse…"; clicked => { root.browse-extrusion-material(); } }
                                 }
-                                Text { text: root.extrusion-direction == 1 ? "Replaces source brushes with convex fragments and consumes their saved pieces. Undo restores both." : "Adds separate volumes. Original brushes and saved pieces remain."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                Text { text: root.extrusion-direction == 1 ? "Replaces source brushes with convex fragments and consumes their saved pieces. Undo restores both." : "Adds separate volumes. Original brushes and saved pieces remain."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                             }
                             Button { text: "Return to flat"; enabled: !root.partition-flat || root.has-extrusion-preview; clicked => { root.flatten-partitions(); } }
                         }
-                        if !root.can-raise-partition: Text { text: "Ridges need two quad pieces. Keep these flat or extrude them."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
-                        if root.partition-mode == 0 && root.can-raise-partition: Text { text: "Raising moves the shared ridge of both pieces."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
-                        Text { text: "Preview before Apply. Keep flat pieces to resume them later."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                        if !root.can-raise-partition: Text { text: "Ridges need two quad pieces. Keep these flat or extrude them."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                        if root.partition-mode == 0 && root.can-raise-partition: Text { text: "Raising moves the shared ridge of both pieces."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                        Text { text: "Preview before Apply. Keep flat pieces to resume them later."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                         if !root.has-partition-preview && root.saved-partitions.length > 0: VerticalLayout {
                             spacing: 6px;
                             Text { text: "Saved flat pieces"; font-weight: 600; }
                             ComboBox { model: root.saved-partition-labels; current-index <=> root.saved-partition-index; }
-                            Text { text: root.saved-partitions[root.saved-partition-index].detail; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                            Text { text: root.saved-partitions[root.saved-partition-index].detail; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                             HorizontalLayout {
                                 spacing: 6px;
                                 Button { text: "Resume pieces"; enabled: root.saved-partitions[root.saved-partition-index].selected; clicked => { root.resume-saved-partition(); } }
@@ -459,13 +459,13 @@ export component ComponentsWindow inherits Window {
                         }
                         CheckBox { text: "Keep textures at corners"; checked <=> root.texture-lock; toggled => { root.edited(); } }
                         Text { text: "Unselected corners stay in place. Faces must remain flat and the brush convex."; wrap: word-wrap; color: Theme.text-muted; }
-                        Text { text: root.operation == 3 ? "Use positive factors. Attached textures must fit every face corner." : "Rotate in X, then Y, then Z order. Move handles pause during the preview."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                        Text { text: root.operation == 3 ? "Use positive factors. Attached textures must fit every face corner." : "Rotate in X, then Y, then Z order. Move handles pause during the preview."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     }
                     Button { text: root.operation == 6 ? (root.has-partition-preview ? (root.partition-mode == 1 ? "Preview extrusion" : (root.can-raise-partition ? "Preview ridge" : "Preview flat pieces")) : "Stage flat partition") : root.operation == 5 ? "Preview ridge" : root.operation == 3 ? "Preview scale" : root.operation == 4 ? "Preview rotation" : root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
                     Text { text: root.preview-summary; wrap: word-wrap; color: Theme.warning; }
                     Rectangle { vertical-stretch: 1; }
-                    if !root.has-partition-preview: Text { text: root.has-partition-preview ? "Click a visible piece to highlight it. Ctrl toggles; an empty click clears. Orange outlines show highlights." : root.kind == 2 ? "Face clicks choose the visible surface. Use the list for faces behind it." : "Orange marks selected components. Blue corners and edges can be picked through surfaces."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
-                    if root.operation == 0: Text { text: "Faces must stay flat and the brush convex. Attached textures stretch or rotate with the face and must fit every corner."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                    if !root.has-partition-preview: Text { text: root.has-partition-preview ? "Click a visible piece to highlight it. Ctrl toggles; an empty click clears. Orange outlines show highlights." : root.kind == 2 ? "Face clicks choose the visible surface. Use the list for faces behind it." : "Orange marks selected components. Blue corners and edges can be picked through surfaces."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                    if root.operation == 0: Text { text: "Faces must stay flat and the brush convex. Attached textures stretch or rotate with the face and must fit every corner."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     }
                 }
             }

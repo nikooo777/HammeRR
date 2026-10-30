@@ -127,7 +127,7 @@ pub mod volume;
 pub mod working_region;
 pub use clipping::ClipPreview;
 
-pub use management::{ObjectFilter, PropertyChange, PropertyDraft, PropertyTarget};
+pub use management::{ObjectFilter, ObjectReport, PropertyChange, PropertyDraft, PropertyTarget};
 pub(crate) use recovery::RecoveryCompletion;
 pub use recovery::RecoveryRequest;
 pub use surfaces::GroupProjection;

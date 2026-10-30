@@ -16,6 +16,7 @@ Use the viewport to inspect the map. Use the Inspector to change the selection.
 | Tool rail | Select, move, rotate and scale handles; paint tools; brush, clip and reshape tools; entities, overlays, measurements and paths. |
 | Viewport header | Projection, shading, **Overlays**, frame and saved views. |
 | Inspector | The selection: transform, terrain, material, brush tools, placement and entity properties. |
+| Outliner | World brushes and entities grouped by class, with counts and a filter. |
 | Agent | Recent activity from you and connected agents: who acted, the MCP tool an agent called, and how long ago. |
 | Status bar | The latest message, map counts, camera position and MCP state. |
 
@@ -29,6 +30,15 @@ Commands that open a dialog end with "…". Hover a toolbar or rail icon to see 
 
 Commands run exactly like their menu items. Unavailable commands appear dimmed.
 Objects select and frame the chosen object. Escape or a click outside closes the search.
+
+## Browse objects
+
+1. Open the **Outliner** tab next to **Inspector**.
+2. Click **World brushes** or a class to expand it.
+3. Click an object to select and frame it.
+
+Type in the filter to match an object ID, class, name or material; matching groups expand.
+Highlighted rows contain the current selection. Large groups show their first 500 objects.
 
 ## Navigate
 

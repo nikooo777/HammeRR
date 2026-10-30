@@ -46,6 +46,7 @@ mod instance_contents;
 mod instance_extraction;
 mod instance_reference;
 mod object_picking;
+mod outliner;
 mod palette;
 mod selection_filters;
 mod transform_pivot;
@@ -610,6 +611,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     if app.get_can_apply_material() {
         refresh_material_preview(app, session);
     }
+    outliner::refresh(app, session);
 }
 
 fn activity_age(at: Instant) -> String {
@@ -1001,6 +1003,7 @@ fn create_document_window(
     bind_pivot_pick_controls_with_access(&app, &file_access(&ui));
     selection_filters::bind(&app, &file_access(&ui));
     palette::bind(&app, &file_access(&ui));
+    outliner::bind(&app, &file_access(&ui));
     editor_visibility::bind(&app, &file_access(&ui));
     root_callback!(app, ui, on_place_entity, |app| show_entity_window(
         &app.unwrap(),

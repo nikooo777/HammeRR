@@ -80,7 +80,7 @@ fn object_rows(session: &Session, query: &str) -> Vec<PaletteRow> {
     }
 }
 
-fn pick_object(app: &AppWindow, session: &mut Session, id: &str) -> Result<(), String> {
+pub(super) fn pick_object(app: &AppWindow, session: &mut Session, id: &str) -> Result<(), String> {
     session.select(&[parse_id(id)?], SelectMode::Replace)?;
     let aspect = app.get_viewport_width() / app.get_viewport_height().max(1.0);
     session.frame_selection(Actor::User, aspect)

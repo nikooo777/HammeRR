@@ -1984,6 +1984,17 @@ export struct PaletteCommand {
     enabled: bool,
 }
 
+export struct OutlinerRow {
+    depth: int,
+    key: string,
+    label: string,
+    detail: string,
+    expandable: bool,
+    expanded: bool,
+    selected: bool,
+    object: bool,
+}
+
 export struct PaletteRow {
     object: bool,
     id: string,
@@ -2340,6 +2351,17 @@ export component AppWindow inherits Window {
 
     property <int> dock-tab: 0;
     property <bool> overlays-open;
+    in property <[OutlinerRow]> outliner-rows;
+    in-out property <string> outliner-filter;
+    out property <bool> outliner-visible: root.dock-tab == 2;
+    callback outliner-refresh();
+    callback outliner-toggle(string);
+    callback outliner-pick(string);
+    changed outliner-visible => {
+        if root.outliner-visible {
+            root.outliner-refresh();
+        }
+    }
     in property <[PaletteRow]> palette-rows;
     in-out property <string> palette-query;
     in-out property <bool> palette-open;
@@ -3276,6 +3298,7 @@ export component AppWindow inherits Window {
                             padding-left: Theme.space;
                             alignment: start;
                             DockTab { text: "Inspector"; active: root.dock-tab == 0; clicked => { root.dock-tab = 0; } }
+                            DockTab { text: "Outliner"; active: root.dock-tab == 2; clicked => { root.dock-tab = 2; } }
                             if root.clipping: DockTab { text: "Clip"; active: root.dock-tab == 1; clicked => { root.dock-tab = 1; } }
                         }
                     }
@@ -3622,6 +3645,76 @@ export component AppWindow inherits Window {
                                             root.property-edited(new-key.text, text);
                                             new-key.text = "";
                                             self.text = "";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.dock-tab == 2: VerticalLayout {
+                        vertical-stretch: 1;
+                        padding-top: Theme.space;
+                        spacing: Theme.space-xs;
+                        HorizontalLayout {
+                            padding-left: Theme.space;
+                            padding-right: Theme.space;
+                            LineEdit {
+                                text <=> root.outliner-filter;
+                                placeholder-text: "Filter by id, class, name or material";
+                                accessible-label: "Filter objects";
+                                edited => { root.outliner-refresh(); }
+                            }
+                        }
+                        ListView {
+                            vertical-stretch: 1;
+                            for row in root.outliner-rows: Rectangle {
+                                height: 26px;
+                                background: row.selected && row.object ? Theme.selection : outliner-touch.has-hover && (row.object || row.expandable) ? Theme.hover : transparent;
+                                accessible-role: list-item;
+                                accessible-label: row.label;
+                                accessible-expandable: row.expandable;
+                                accessible-expanded: row.expanded;
+                                HorizontalLayout {
+                                    padding-left: Theme.space + row.depth * 18px;
+                                    padding-right: Theme.space-lg;
+                                    spacing: 6px;
+                                    if row.expandable: Image {
+                                        y: (parent.height - self.height) / 2;
+                                        width: 12px;
+                                        height: 12px;
+                                        source: row.expanded || root.outliner-filter != "" ? Icon.chevron-down : Icon.chevron-right;
+                                        colorize: Theme.text-faint;
+                                    }
+                                    if row.expandable: Image {
+                                        y: (parent.height - self.height) / 2;
+                                        width: 14px;
+                                        height: 14px;
+                                        source: row.key == "world" ? Icon.block : Icon.entity;
+                                        colorize: row.selected ? Theme.accent : Theme.text-muted;
+                                    }
+                                    Text {
+                                        text: row.label;
+                                        color: !row.object && !row.expandable ? Theme.text-faint : Theme.text;
+                                        font-weight: row.expandable ? 500 : 400;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: row.detail;
+                                        color: Theme.text-faint;
+                                        font-size: Theme.font-small;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                }
+                                outliner-touch := TouchArea {
+                                    clicked => {
+                                        if row.expandable {
+                                            root.outliner-toggle(row.key);
+                                        } else if row.object {
+                                            root.outliner-pick(row.key);
                                         }
                                     }
                                 }

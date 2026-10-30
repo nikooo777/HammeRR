@@ -899,13 +899,6 @@ pub(super) fn prepare(
                 normal: local_plane.normal,
                 dist: local_plane.dist,
             });
-            if declarations.exact_enabled
-                && ![DVec3::X, DVec3::Y, DVec3::Z].contains(&plane.normal.abs())
-            {
-                return Err(
-                    "Exact emission visibility requires an axis-aligned emitting face".into(),
-                );
-            }
             let texture = if declaration.textured {
                 Some(
                     declarations

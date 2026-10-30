@@ -945,6 +945,9 @@ pub(super) struct Visibility {
     orientation: Ordering,
     axis: usize,
     axes: [usize; 2],
+    normal: [Rational; 3],
+    normal_squared: Rational,
+    area_scale_upper: f64,
     fragments: Polygons,
     work: Work,
 }
@@ -963,10 +966,47 @@ impl Visibility {
     ) -> Result<Self, String> {
         budget.consume(256 * ARITHMETIC_WORK_SCALE)?;
         let source = [vector(points[0])?, vector(points[1])?, vector(points[2])?];
-        let axis = (0..3)
-            .find(|&axis| source[0][axis] == source[1][axis] && source[0][axis] == source[2][axis])
-            .ok_or("Exact emission currently requires an axis-aligned source plane")?;
+        let aligned_axis = (0..3)
+            .find(|&axis| source[0][axis] == source[1][axis] && source[0][axis] == source[2][axis]);
+        let mut normal = [Rational::ZERO; 3];
+        let axis = if let Some(axis) = aligned_axis {
+            normal[axis] = Rational::ONE;
+            axis
+        } else {
+            budget.consume(512 * ARITHMETIC_WORK_SCALE)?;
+            let first = [
+                source[1][0].sub(source[0][0])?,
+                source[1][1].sub(source[0][1])?,
+                source[1][2].sub(source[0][2])?,
+            ];
+            let second = [
+                source[2][0].sub(source[0][0])?,
+                source[2][1].sub(source[0][1])?,
+                source[2][2].sub(source[0][2])?,
+            ];
+            let actual = hull_cross(first, second)?;
+            let mut axis = 0;
+            for (candidate, component) in actual.into_iter().enumerate().skip(1) {
+                if component.abs().compare(actual[axis].abs()) == Ordering::Greater {
+                    axis = candidate;
+                }
+            }
+            if actual[axis] == Rational::ZERO {
+                return Err("Exact emission requires a positive-area source triangle".into());
+            }
+            for (component, value) in normal.iter_mut().zip(actual) {
+                *component = value.div(actual[axis])?;
+            }
+            axis
+        };
         let axes = [(axis + 1) % 3, (axis + 2) % 3];
+        let normal_squared = dot(normal, normal)?;
+        // The normalized L1 norm bounds the projected-to-surface area scale above.
+        let area_scale_upper = normal[0]
+            .abs()
+            .add(normal[1].abs())?
+            .add(normal[2].abs())?
+            .upper()?;
         let orientation = turn(
             Point([source[0][axes[0]], source[0][axes[1]]]),
             Point([source[1][axes[0]], source[1][axes[1]]]),
@@ -997,6 +1037,9 @@ impl Visibility {
             orientation,
             axis,
             axes,
+            normal,
+            normal_squared,
+            area_scale_upper,
             fragments,
             work: Work::new("source triangle"),
         })
@@ -1217,6 +1260,18 @@ impl Visibility {
         Ok(Point(result))
     }
 
+    fn lift(&self, point: Point) -> Result<[Rational; 3], String> {
+        let mut result = self.source[0];
+        for (coordinate, axis) in self.axes.into_iter().enumerate() {
+            result[axis] = point.0[coordinate];
+            if self.normal[axis] != Rational::ZERO {
+                result[self.axis] = result[self.axis]
+                    .sub(self.normal[axis].mul(point.0[coordinate].sub(self.source[0][axis])?)?)?;
+            }
+        }
+        Ok(result)
+    }
+
     pub(super) fn finish(
         mut self,
         sample_point: DVec3,
@@ -1225,13 +1280,25 @@ impl Visibility {
         self.fragments.coalesce(&mut self.work, budget)?;
         self.work.charge(128, budget)?;
         let sample = vector(sample_point)?;
-        let height = sample[self.axis].sub(self.source[0][self.axis])?.abs();
+        let oblique = self.normal_squared != Rational::ONE;
+        let mut height = sample[self.axis].sub(self.source[0][self.axis])?;
+        if oblique {
+            self.work.charge(128, budget)?;
+            for axis in self.axes {
+                height =
+                    height.add(self.normal[axis].mul(sample[axis].sub(self.source[0][axis])?)?)?;
+            }
+        }
         if height == Rational::ZERO {
             return Err("Exact emission kernel point lies on the source plane".into());
         }
-        let height_squared = height.mul(height)?;
-        let mut distance_squared_lower = height_squared;
-        for axis in self.axes {
+        let height_squared = height.mul(height)?.div(self.normal_squared)?;
+        let mut distance_squared_lower = if oblique {
+            Rational::ZERO
+        } else {
+            height_squared
+        };
+        for axis in self.axes.into_iter().chain(oblique.then_some(self.axis)) {
             self.work.charge(128, budget)?;
             let mut coordinates = self.source.map(|point| point[axis]);
             coordinates.sort_unstable_by(|left, right| left.compare(*right));
@@ -1243,6 +1310,9 @@ impl Visibility {
                 Rational::ZERO
             };
             distance_squared_lower = distance_squared_lower.add(gap.mul(gap)?)?;
+        }
+        if distance_squared_lower.compare(height_squared) == Ordering::Less {
+            distance_squared_lower = height_squared;
         }
         let source = self
             .source
@@ -1296,7 +1366,7 @@ impl Visibility {
             let center = center.ok_or("Exact emission cannot condition a positive fragment")?;
             let mut converted = None;
             let mut rejection = "no conversion candidate";
-            for contraction in 0..18 {
+            'conversion: for contraction in 0..18 {
                 self.work.charge(world.values.len() * 96, budget)?;
                 let fraction = if contraction == 0 {
                     Rational::ZERO
@@ -1311,7 +1381,17 @@ impl Visibility {
                     let y = point.0[1]
                         .add(center.0[1].sub(point.0[1])?.mul(fraction)?)?
                         .approximate();
-                    candidate.push(Point([Rational::from_f64(x)?, Rational::from_f64(y)?]))?;
+                    let point = Point([Rational::from_f64(x)?, Rational::from_f64(y)?]);
+                    if oblique {
+                        self.work.charge(128, budget)?;
+                        let coordinate = self.lift(point)?[self.axis];
+                        if Rational::from_f64(coordinate.approximate())? != coordinate {
+                            rejection =
+                                "source-plane lift is not exactly representable in binary64";
+                            continue 'conversion;
+                        }
+                    }
+                    candidate.push(point)?;
                 }
                 if let Some(reason) = conversion_rejection(
                     &boundaries.values,
@@ -1337,6 +1417,11 @@ impl Visibility {
                     &mut self.work,
                     budget,
                 )?;
+                let bound = if self.area_scale_upper == 1.0 {
+                    bound
+                } else {
+                    (bound * self.area_scale_upper).next_up()
+                };
                 converted = Some((candidate, bound));
                 break;
             }
@@ -1348,7 +1433,7 @@ impl Visibility {
                         .map_or([0.0; 2], |point| point.0.map(Rational::approximate))
                 });
                 return Err(format!(
-                    "Exact emission cannot round a positive fragment without crossing a shadow boundary: {rejection}; shadow origin {:?}, source triangle {:?}, fragment {index}/{} with {} vertices, first world source-plane vertices {:?}",
+                    "Exact emission cannot certify a native binary64 conversion of a positive fragment within its numeric scope: {rejection}; shadow origin {:?}, source triangle {:?}, fragment {index}/{} with {} vertices, first world source-plane vertices {:?}",
                     self.origin.map(Rational::approximate),
                     self.source.map(|point| point.map(Rational::approximate)),
                     self.fragments.polygons.values.len(),
@@ -1376,20 +1461,26 @@ impl Visibility {
                 if triangle_area.sign() != orientation {
                     return Err("Exact emission conversion reversed a visible triangle".into());
                 }
+                if oblique {
+                    self.work.charge(384, budget)?;
+                }
+                let lifted = [
+                    self.lift(points[0])?,
+                    self.lift(points[1])?,
+                    self.lift(points[2])?,
+                ];
                 condition(
-                    points,
+                    lifted,
                     sample,
-                    self.axes,
+                    [self.axes[0], self.axes[1], self.axis],
                     height_squared,
                     triangle_area.abs(),
                     &mut self.work,
                     budget,
                 )?;
                 let mut triangle = [DVec3::ZERO; 3];
-                for (output, point) in triangle.iter_mut().zip(points) {
-                    output[self.axis] = self.source[0][self.axis].approximate();
-                    output[self.axes[0]] = point.0[0].approximate();
-                    output[self.axes[1]] = point.0[1].approximate();
+                for (output, point) in triangle.iter_mut().zip(lifted) {
+                    *output = DVec3::from_array(point.map(Rational::approximate));
                 }
                 let native_normal = (triangle[1] - triangle[0]).cross(triangle[2] - triangle[0]);
                 if !native_normal.is_finite()
@@ -1398,6 +1489,18 @@ impl Visibility {
                         != (orientation == Ordering::Greater)
                 {
                     return Err("Exact emission kernel conversion lost triangle orientation".into());
+                }
+                if oblique {
+                    self.work.charge(64, budget)?;
+                    let facing = native_normal.dot(sample_point - triangle[0]);
+                    if !facing.is_finite()
+                        || facing == 0.0
+                        || facing.is_sign_positive() != (height.sign() == orientation)
+                    {
+                        return Err(
+                            "Exact emission kernel conversion cannot certify source facing".into(),
+                        );
+                    }
                 }
                 result.push(triangle)?;
             }
@@ -1443,14 +1546,15 @@ fn conversion_rejection(
 }
 
 fn condition(
-    points: [Point; 3],
+    points: [[Rational; 3]; 3],
     sample: [Rational; 3],
-    axes: [usize; 2],
+    axes: [usize; 3],
     height_squared: Rational,
-    area: Rational,
+    projected_area: Rational,
     work: &mut Work,
     budget: &mut Budget<'_>,
 ) -> Result<(), String> {
+    let [x, y, z] = axes;
     let mut maximum_edge_squared = 0.0f64;
     let mut minimum_edge_squared = f64::INFINITY;
     let mut maximum_distance_squared = 0.0f64;
@@ -1458,17 +1562,18 @@ fn condition(
         work.charge(128, budget)?;
         let a = points[index];
         let b = points[(index + 1) % 3];
-        let dx = b.0[0].sub(a.0[0])?;
-        let dy = b.0[1].sub(a.0[1])?;
-        let edge_squared = dx.mul(dx)?.add(dy.mul(dy)?)?;
+        let edge = [b[x].sub(a[x])?, b[y].sub(a[y])?, b[z].sub(a[z])?];
+        let edge_squared = dot(edge, edge)?;
         maximum_edge_squared = maximum_edge_squared.max(edge_squared.upper()?);
         minimum_edge_squared = minimum_edge_squared.min(edge_squared.lower()?);
-        let dx = a.0[0].sub(sample[axes[0]])?;
-        let dy = a.0[1].sub(sample[axes[1]])?;
-        maximum_distance_squared = maximum_distance_squared
-            .max(dx.mul(dx)?.add(dy.mul(dy)?)?.add(height_squared)?.upper()?);
+        let distance = [
+            a[x].sub(sample[x])?,
+            a[y].sub(sample[y])?,
+            a[z].sub(sample[z])?,
+        ];
+        maximum_distance_squared = maximum_distance_squared.max(dot(distance, distance)?.upper()?);
     }
-    let condition_lower = (area.lower()? / maximum_edge_squared).next_down();
+    let condition_lower = (projected_area.lower()? / maximum_edge_squared).next_down();
     let span_lower = (minimum_edge_squared / maximum_distance_squared).next_down();
     let plane_span_lower = (height_squared.lower()? / maximum_distance_squared).next_down();
     if condition_lower < MIN_TRIANGLE_CONDITION

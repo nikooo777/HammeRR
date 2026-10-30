@@ -762,9 +762,13 @@ World policy uses the same draft: set `_hammerr_emission_exact_visibility` to
 field. `get_compile_settings.material_emission_exact_visibility` reports the
 effective value or validation error, source and shadow scope, and refusal policy.
 It supports uniquely owned world/detail or eligible stationary Shadows Yes
-`func_brush` emitting faces, at root or assembled-child scope, with a final
-axis-aligned plane and zero native-plane support residual. Every applicable
-opaque brush hull must be certified closed, bounded and convex from its final
+`func_brush` emitting faces, at root or assembled-child scope, with an
+axis-aligned or oblique final plane and zero residual from the retained posed
+source plane on every actual source vertex. Converted binary64 kernel vertices
+must lie exactly on that plane. All converted coverage must stay inside the exact
+visible region. `fragment_conversion` reports this
+contract. Every applicable opaque brush hull must be certified closed, bounded
+and convex from its final
 planes, including oblique casters. Original materials and existing global/model
 shadow scopes still apply.
 
@@ -780,8 +784,8 @@ its shadow geometry. Receiver `disableselfshadowing:1` omits only that prop's
 own triangles; other providers still block light. Terrain and MDL emission
 sources remain unavailable.
 
-Oblique final emitting faces, nonzero native-plane support residuals,
-moving/parented/unrequested brush-model emitting sources, sky, alpha, unknown or
+Nonzero residuals from the retained posed source plane, unrepresentable on-plane
+fragment vertices, moving/parented/unrequested brush-model emitting sources, sky, alpha, unknown or
 missing materials, unsupported prop models, zero-area mesh triangles,
 uncertified hulls and exhausted numeric/resource bounds reject without sampled
 fallback or replacement of the previous BSP. Fullbright validates the policy,
@@ -791,10 +795,11 @@ Under `stats.material_emission`, `visibility_policy` identifies the selected
 policy. `maximum_visibility_conversion_error` is the maximum bound per receiver;
 `total_visibility_conversion_error` sums bounds across all gathers in both
 channels. These dimensionless bounds cover conversion from exact clipped
-fragments to the floating kernel, limited to `1e-12` per source triangle and
-`1e-9` per receiver before source RGB/brightness and BSP quantization. They are
-not RGB or image error bounds. **Build details…** shows **Emission visibility
-policy** and **Emission conversion bounds (dimensionless)**.
+fragments to the floating kernel, including source surface-area scale, limited
+to `1e-12` per source triangle and `1e-9` per receiver before source
+RGB/brightness and BSP quantization. They are not RGB or image error bounds.
+**Build details…** shows **Emission visibility policy** and
+**Emission conversion bounds (dimensionless)**.
 
 Use `[ldr:|hdr:] texture: material R G B brightness` for nearest mip0
 base-RGB emission. The same file and property operations apply. Results include

@@ -268,7 +268,7 @@ fn field(entity: &Entity, class: Option<&Class>, key: String, stored_value: Opti
     }
     if exact_emission {
         result.label = "Exact emission visibility".into();
-        result.description = "Exact shadows from final axis-aligned world/detail or stationary Shadows Yes func_brush emitting faces and certified closed convex opaque brushes, including oblique casters, plus actual two-sided opaque native terrain and strictly admitted opaque static-prop mesh triangles. Terrain and prop emitting sources, alpha and unqualified prop casters, other unsupported sources or casters, and numeric limits stop the build. Requires Emission file. Native direct emission stays a point approximation. Fullbright checks the setting and declarations.".into();
+        result.description = "Exact shadows from uniquely owned planar world/detail or stationary Shadows Yes func_brush emitting faces, including oblique faces with zero residual from the retained posed source plane and certified on-plane fragment conversion. Casters use certified closed convex opaque brushes and actual two-sided opaque terrain or admitted static-prop triangles. Terrain and prop emitting sources, alpha and unqualified prop casters, unrepresentable on-plane fragments, other unsupported sources or casters, and numeric or resource limits stop the build. Requires Emission file. Native direct emission stays a point approximation. Fullbright checks the setting and declarations.".into();
         result.advanced = false;
         if let Err(error) = compiler::validate_material_emission_exact_visibility(&result.value) {
             result.description.push_str(&format!(

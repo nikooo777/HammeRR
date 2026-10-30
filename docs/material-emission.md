@@ -69,8 +69,9 @@ not the complete shader. Use one mode per material across LDR and HDR records.
 4. Set **Pitch Yaw Roll (Y Z X)** for an initial rotation, if needed.
 5. Apply a declared emission material to its source faces, then compile.
 
-For **Exact emission visibility**, the final emitting face must be axis-aligned
-and every source vertex must lie exactly on its native plane.
+For **Exact emission visibility**, the final emitting face can be axis-aligned
+or oblique. Every source vertex must lie exactly on the retained posed source
+plane, and the compiler must certify conversion of the visible fragments.
 The source uses its compiled initial pose. Other solids in the same model
 still block light. Supported child models use their assembled pose once.
 See [stationary shadow sources](brush-texture-shadows.md#cast-from-a-stationary-root-brush-model)
@@ -136,11 +137,15 @@ Resolve opaque brush, terrain and static prop shadows across the source area.
 
 Exact mode supports uniquely owned world/detail and eligible stationary
 **Shadows → Yes** `func_brush` emitting faces, at root or in supported assemblies.
-The final emitting plane must be axis-aligned, with every source vertex exactly
-on its native plane. Opaque brush casters may have oblique planes when their
-final hull is certified closed, bounded and convex. Every applicable original
-hull participates, including invisible boundaries. Eligible stationary brush
-models retain their existing global or same-model shadow scope.
+The final emitting plane can be axis-aligned or oblique. Every actual source
+vertex must lie exactly on the retained posed source plane. Converted binary64
+kernel vertices must remain exactly on that plane. All converted coverage must
+stay inside the exact visible region. The compiler rejects faces that cannot meet these checks.
+Opaque brush casters may have
+oblique planes when their final hull is certified closed, bounded and convex.
+Every applicable original hull participates, including invisible boundaries.
+Eligible stationary brush models retain their existing global or same-model
+shadow scope.
 
 Terrain with a supported opaque material casts from its actual triangles.
 Terrain materials require opaque **LightmappedGeneric**, **UnlitGeneric**, or a
@@ -166,17 +171,18 @@ For larger bakes, open **Build settings…**, increase **Lighting work limit
 Clipping uses exact rational arithmetic. Exact mode removes redundant cuts
 between visible regions when their exact union is convex. Shadow boundaries stay
 fixed. Real narrow openings can still exceed numeric limits.
-Conversion to the floating lighting
-kernel has a reported bound of at most `1e-9` per receiver, before source colour
-and brightness. This is not an RGB, BSP quantization or native image error bound.
+Conversion to the floating lighting kernel includes the source surface-area
+scale. Its reported bound is at most `1e-12` per source triangle and `1e-9` per
+receiver, before source colour and brightness. This is not an RGB, BSP
+quantization or native image error bound.
 **Native direct emission** keeps its separate point approximation.
 Disable **Exact emission visibility** to use the original sampled bake.
 
-Exact mode rejects oblique final emitting faces, nonzero native-plane support
-residuals, moving/parented/unrequested brush-model emitting sources,
-sky/alpha/unknown materials, unsupported prop models, zero-area mesh triangles
-and uncertified hulls. Checked arithmetic, fragment and conditioning limits also
-apply.
+Exact mode rejects nonzero residuals from the retained posed source plane,
+unrepresentable on-plane fragment vertices, moving/parented/unrequested brush-model emitting
+sources, sky/alpha/unknown materials, unsupported prop models, zero-area mesh
+triangles and uncertified hulls. Checked arithmetic, fragment and conditioning
+limits also apply.
 **Fullbright** checks the setting and declarations without exact shadow admission.
 
 ## Limits

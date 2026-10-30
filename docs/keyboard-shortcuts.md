@@ -30,7 +30,7 @@ Cancel discards unsaved changes, including hidden search results.
 
 ## Limits
 
-- Bindings apply to the focused viewport. Text fields retain normal editing keys.
+- Bindings work anywhere in the window, except while you type in a text field. Pointing at the viewport gives it keyboard focus unless a text field is being edited.
 - Ctrl+K always opens **Search commands**. Like Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+C, Ctrl+X and Ctrl+V, it cannot be assigned.
 - Projection, authoring and editor-visibility commands start unbound.
 - Hide requires selected objects and committed geometry. Show all restores only temporary editor-hidden objects, including during a preview.

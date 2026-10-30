@@ -2801,1062 +2801,1075 @@ export component AppWindow inherits Window {
         }
     }
 
-    VerticalLayout {
-        Rectangle {
-            height: 40px;
-            background: Theme.bar;
-            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
-            HorizontalLayout {
-                padding-left: Theme.space;
-                padding-right: Theme.space;
-                spacing: 2px;
-                alignment: start;
-                IconButton { y: 6px; icon: Icon.new; tooltip: "New map"; clicked => { root.new-map(); } }
-                IconButton { y: 6px; icon: Icon.open; tooltip: "Open map · Ctrl+O"; clicked => { root.open-map(); } }
-                IconButton { y: 6px; icon: Icon.save; tooltip: "Save map"; clicked => { root.save-map(); } }
-                Separator { y: 10px; }
-                IconButton { y: 6px; icon: Icon.undo; tooltip: "Undo"; enabled: root.can-undo; clicked => { root.undo(); } }
-                IconButton { y: 6px; icon: Icon.redo; tooltip: "Redo"; enabled: root.can-redo; clicked => { root.redo(); } }
-                IconButton { y: 6px; icon: Icon.history; tooltip: "History"; clicked => { root.history(); } }
-                Separator { y: 10px; }
-                Rectangle {
-                    y: 6px;
-                    width: mode-row.preferred-width + 4px;
-                    height: 28px;
-                    border-radius: Theme.radius;
-                    background: Theme.field;
-                    border-width: 1px;
-                    border-color: Theme.border-strong;
-                    mode-row := HorizontalLayout {
-                        padding: 2px;
-                        spacing: 2px;
-                        for mode[index] in ["Objects", "Faces"]: Rectangle {
-                            property <bool> active: (index == 1) == root.face-mode;
-                            width: mode-text.preferred-width + 20px;
-                            border-radius: Theme.radius-sm;
-                            background: self.active ? Theme.active : mode-touch.has-hover ? Theme.hover : transparent;
-                            accessible-role: button;
-                            accessible-label: mode + " selection";
-                            accessible-checked: self.active;
-                            mode-text := Text {
-                                text: mode;
-                                color: parent.active ? Theme.text : Theme.text-muted;
-                                font-size: Theme.font;
-                            }
-                            mode-touch := TouchArea { clicked => { root.selection-mode-changed(index); } }
-                        }
-                    }
-                }
-                Separator { y: 10px; }
-                Text { text: "Grid"; color: Theme.text-faint; vertical-alignment: center; }
-                Rectangle { width: 4px; }
-                LineEdit { y: 7px; width: 62px; height: 26px; text <=> root.grid-size; input-type: decimal; accessible-label: "Viewport grid size"; accepted => { root.spatial-changed(); } }
-                Rectangle { width: 4px; }
-                IconButton { y: 6px; icon: Icon.snap; tooltip: "Snap to grid"; checked: root.snap-grid; clicked => { root.snap-grid = !root.snap-grid; root.spatial-changed(); } }
-                IconButton { y: 6px; icon: Icon.grid; tooltip: "Show grid"; checked: root.grid-visible; clicked => { root.grid-visible = !root.grid-visible; root.spatial-changed(); } }
-                Rectangle { horizontal-stretch: 1; }
-                Rectangle {
-                    y: 7px;
-                    width: 240px;
-                    height: 26px;
-                    border-radius: Theme.radius-sm + 1px;
-                    border-width: 1px;
-                    border-color: Theme.border-strong;
-                    background: search-touch.has-hover ? Theme.hover : Theme.panel;
-                    accessible-role: button;
-                    accessible-label: "Search commands and objects";
-                    accessible-action-default => { root.open-palette(); }
-                    HorizontalLayout {
-                        padding-left: Theme.space;
-                        padding-right: 6px;
-                        spacing: Theme.space;
-                        Image { y: (parent.height - self.height) / 2; width: 13px; height: 13px; source: Icon.search; colorize: Theme.text-faint; }
-                        Text { text: "Search commands"; color: Theme.text-faint; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-                        Rectangle {
-                            y: 4px;
-                            width: kbd.preferred-width + 10px;
-                            height: 16px;
-                            border-radius: 3px;
-                            border-width: 1px;
-                            border-color: Theme.border-strong;
-                            kbd := Text { text: "Ctrl K"; color: Theme.text-faint; font-size: 10px; font-family: "monospace"; }
-                        }
-                    }
-                    search-touch := TouchArea { clicked => { root.open-palette(); } }
-                }
-                Rectangle { width: Theme.space-lg; }
-                if root.compile-label == "": Text { text: root.compile-region-label == "Compile region…" ? "" : root.compile-region-label; color: Theme.text-faint; vertical-alignment: center; overflow: elide; }
-                Rectangle { width: Theme.space; }
-                Button { y: 7px; height: 26px; text: root.compiling ? "Compiling…" : "Compile"; icon: Icon.compile; colorize-icon: true; enabled: !root.compiling && !root.launching; clicked => { root.compile-map(); } }
-                Rectangle { width: Theme.space-sm; }
-                Button { y: 7px; height: 26px; primary: true; text: root.launching ? "Launching…" : "Run map"; icon: Icon.run; colorize-icon: true; enabled: !root.compiling && !root.launching && !root.game-running; clicked => { root.run-map(); } }
-                if root.game-running: Rectangle { width: Theme.space-sm; }
-                if root.game-running: Button { y: 7px; height: 26px; text: "Stop map"; clicked => { root.stop-game(); } }
-                Rectangle { width: Theme.space-xs; }
-                IconButton { y: 6px; icon: Icon.terminal; tooltip: "Game log"; clicked => { root.game-log(); } }
+    shortcuts := FocusScope {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: 100%;
+        // Keys that the focused control rejects bubble here, so shortcuts work after toolbar and panel clicks.
+        key-pressed(event) => {
+            if (event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta && event.text == "o") {
+                root.open-map();
+                return accept;
             }
+            if (event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta && event.text == "k") {
+                root.open-palette();
+                return accept;
+            }
+            root.key(event.text, true, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) ? EventResult.accept : EventResult.reject
+        }
+        key-released(event) => {
+            root.key(event.text, false, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) ? EventResult.accept : EventResult.reject
         }
 
-        Rectangle {
-            height: 36px;
-            background: Theme.base;
-            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
-            HorizontalLayout {
-                padding-left: Theme.space-lg;
-                padding-right: Theme.space-lg;
-                spacing: Theme.space;
-                Image { y: (parent.height - self.height) / 2; width: 15px; height: 15px; source: root.tool-icon; colorize: Theme.accent; }
-                Text { text: root.tool-label; color: Theme.text; font-weight: 600; vertical-alignment: center; }
-                Separator { y: 8px; }
-                if root.drawing-block && root.projection-index != 0: HorizontalLayout {
-                    alignment: start;
-                    spacing: Theme.space;
-                    Text { text: "Start " + root.workplane-axis; color: Theme.text-faint; vertical-alignment: center; }
-                    LineEdit { y: 5px; width: 76px; height: 26px; text <=> root.brush-elevation; input-type: decimal; accepted => { root.spatial-changed(); } }
-                    Text { text: "Depth " + root.workplane-axis; color: Theme.text-faint; vertical-alignment: center; }
-                    LineEdit { y: 5px; width: 76px; height: 26px; text <=> root.brush-depth; input-type: decimal; accepted => { root.spatial-changed(); } }
-                    Text { text: root.brush-preview == "" ? "Drag a footprint · Esc cancels" : root.brush-preview; color: Theme.info; vertical-alignment: center; overflow: elide; }
-                    Button { y: 5px; height: 26px; text: "Done"; clicked => { root.create-block(); } }
-                }
-                if root.drawing-block && root.projection-index == 0: Text { text: "Switch to a planar view to drag a footprint, or Add brush places one at the view centre."; color: Theme.text-faint; vertical-alignment: center; overflow: elide; }
-                if root.clipping: HorizontalLayout {
-                    spacing: Theme.space;
-                    Text { text: root.clip-summary == "" ? "Set the cut in the Tool panel or drag the plane handles" : root.clip-summary; color: Theme.info; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                    Button { y: 5px; height: 26px; text: "Cancel cut"; clicked => { root.cancel-clip(); } }
-                    Button { y: 5px; height: 26px; primary: true; text: "Apply cut"; enabled: root.has-clip-preview && !root.clip-positioning; clicked => { root.apply-clip(); } }
-                }
-                if !root.drawing-block && !root.clipping: HorizontalLayout {
-                    alignment: start;
-                    spacing: Theme.space;
-                    if root.handles-mode-index > 0 && root.handles-mode-index < 4: ComboBox {
-                        y: 5px; width: 120px; height: 26px;
-                        model: ["World axes", "Local axes"];
-                        current-index <=> root.transform-space-index;
-                        selected => { root.transform-tool-changed(); }
-                    }
-                    if root.handles-mode-index > 0 && root.handles-mode-index < 4: CheckBox {
-                        text: "Follow move/rotation";
-                        checked <=> root.transform-texture-lock;
-                        toggled => { root.transform-tool-changed(); }
-                    }
-                    if root.handles-mode-index == 3: CheckBox {
-                        text: "Stretch with scale";
-                        checked <=> root.transform-texture-scale-lock;
-                        toggled => { root.transform-tool-changed(); }
-                    }
-                    if root.handles-mode-index == 2: Text { text: "Angle snap °"; color: Theme.text-faint; vertical-alignment: center; }
-                    if root.handles-mode-index == 2: LineEdit { y: 5px; width: 56px; height: 26px; text <=> root.rotation-step; input-type: decimal; accepted => { root.transform-tool-changed(); } }
-                    if root.handles-mode-index == 5: ComboBox {
-                        y: 5px; width: 150px; height: 26px;
-                        model: ["Material only", "Copy projection"];
-                        current-index <=> root.texture-paint-mode;
-                        selected => { root.paint-settings-changed(); }
-                    }
-                    if root.handles-mode-index >= 4: Text { text: "Radius " + round(root.paint-radius) + " px"; color: Theme.text-faint; vertical-alignment: center; }
-                    if root.handles-mode-index >= 4: Slider { width: 110px; minimum: 2; maximum: 64; value: root.paint-radius; changed(value) => { root.paint-radius = round(value); root.paint-settings-changed(); } }
-                    if root.handles-mode-index == 5: Image { y: (parent.height - self.height) / 2; width: 24px; height: 24px; source: root.texture-sample-preview; image-fit: contain; }
-                    if root.handles-mode-index == 5: Text { text: root.texture-sample-material == "" ? "Select one face, then sample it" : root.texture-sample-material; color: Theme.text-muted; vertical-alignment: center; overflow: elide; }
-                    if root.handles-mode-index == 5: Button { y: 5px; height: 26px; text: "Sample face"; enabled: root.can-sample-face; clicked => { root.sample-face-texture(); } }
-                    if root.handles-mode-index < 4: Text { text: "Area"; color: Theme.text-faint; vertical-alignment: center; }
-                    if root.handles-mode-index < 4: ComboBox {
-                        y: 5px; width: 116px; height: 26px;
-                        model: ["Intersects", "Fully inside"];
-                        current-index <=> root.area-rule-index;
-                        selected => { root.area-settings-changed(); }
-                    }
-                    if root.handles-mode-index != 5: ComboBox {
-                        y: 5px; width: 100px; height: 26px;
-                        model: ["Replace", "Add", "Remove", "Toggle"];
-                        current-index <=> root.area-mode-index;
-                        selected => { root.area-settings-changed(); }
-                    }
-                }
-                Rectangle { horizontal-stretch: 1; }
-                if !root.face-mode && !root.drawing-block && !root.clipping && root.handles-mode-index == 0: Text { text: "Alt+click cycles overlapping objects"; color: Theme.text-faint; vertical-alignment: center; }
-            }
-        }
-
-        if root.working-region-active: Rectangle {
-            height: 32px;
-            background: Theme.warning-soft;
-            HorizontalLayout {
-                padding-left: Theme.space-lg;
-                padding-right: Theme.space;
-                spacing: Theme.space;
-                Image { y: (parent.height - self.height) / 2; width: 14px; height: 14px; source: Icon.inspect; colorize: Theme.warning; }
-                Text { text: "Working region active · editor view only"; color: Theme.warning; vertical-alignment: center; horizontal-stretch: 1; }
-                Button { y: 3px; height: 26px; text: "Working region…"; clicked => { root.working-region(); } }
-                Button { y: 3px; height: 26px; text: "Clear"; clicked => { root.clear-working-region(); } }
-            }
-        }
-        if root.compile-label != "": Rectangle {
-            height: 32px;
-            background: Theme.info-soft;
-            HorizontalLayout {
-                padding-left: Theme.space-lg;
-                padding-right: Theme.space;
-                spacing: Theme.space;
-                Image { y: (parent.height - self.height) / 2; width: 14px; height: 14px; source: Icon.compile; colorize: Theme.info; }
-                Text { text: root.compile-label; vertical-alignment: center; horizontal-stretch: 1; color: Theme.text; overflow: elide; }
-                Button { y: 3px; height: 26px; text: "Build details…"; clicked => { root.build-status(); } }
-                if root.compiling: Button { y: 3px; height: 26px; text: "Cancel build"; enabled: root.compile-cancellable; clicked => { root.cancel-build(); } }
-            }
-        }
-        if root.preview-error != "": Rectangle {
-            min-height: 32px;
-            background: Theme.danger-soft;
-            HorizontalLayout {
-                padding: Theme.space-xs;
-                padding-left: Theme.space-lg;
-                padding-right: Theme.space;
-                spacing: Theme.space;
-                Image { y: (parent.height - self.height) / 2; width: 14px; height: 14px; source: Icon.error; colorize: Theme.danger; }
-                Text { text: root.preview-error; color: Theme.danger; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; }
-                Button { height: 26px; text: "Check map…"; clicked => { root.map-checks(); } }
-            }
-        }
-
-        HorizontalLayout {
-            vertical-stretch: 1;
-
+        VerticalLayout {
             Rectangle {
-                width: 44px;
+                height: 40px;
                 background: Theme.bar;
-                Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
-                VerticalLayout {
-                    padding-top: Theme.space;
-                    padding-left: 6px;
+                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                HorizontalLayout {
+                    padding-left: Theme.space;
+                    padding-right: Theme.space;
                     spacing: 2px;
                     alignment: start;
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.select; tooltip: "Select"; checked: !root.drawing-block && !root.clipping && root.handles-mode-index == 0; clicked => { root.choose-tool(0); } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.move; tooltip: "Move handles"; checked: !root.drawing-block && !root.clipping && root.handles-mode-index == 1; clicked => { root.choose-tool(1); } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.rotate; tooltip: "Rotate handles"; checked: !root.drawing-block && !root.clipping && root.handles-mode-index == 2; clicked => { root.choose-tool(2); } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.scale; tooltip: "Scale handles"; checked: !root.drawing-block && !root.clipping && root.handles-mode-index == 3; clicked => { root.choose-tool(3); } }
-                    Rectangle { height: 9px; Separator { vertical: false; } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.paint; tooltip: "Paint selection"; checked: !root.drawing-block && !root.clipping && root.handles-mode-index == 4; clicked => { root.choose-tool(4); } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.bucket; tooltip: "Paint texture"; checked: !root.drawing-block && !root.clipping && root.handles-mode-index == 5; clicked => { root.choose-tool(5); } }
-                    Rectangle { height: 9px; Separator { vertical: false; } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.block; tooltip: root.projection-index == 0 ? "Add brush" : "Draw brush"; checked: root.drawing-block; clicked => { root.create-block(); } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.cylinder; tooltip: "Brush shapes"; clicked => { root.brush-shapes(); } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.polygon; tooltip: "Draw polygon"; clicked => { root.draw-polygon(); } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.clip; tooltip: "Clip selected brushes"; checked: root.clipping; enabled: root.can-clip || root.clipping; clicked => { if !root.clipping { root.start-clip(); } } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.reshape; tooltip: "Reshape brushes"; enabled: root.can-clip; clicked => { root.brush-components(); } }
-                    Rectangle { height: 9px; Separator { vertical: false; } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.entity; tooltip: "Place entity"; clicked => { root.place-entity(); } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.overlay; tooltip: "Overlay"; clicked => { root.create-overlay(); } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.measure; tooltip: "Measurements"; clicked => { root.measurements(); } }
-                    IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.path; tooltip: "Create linked path"; clicked => { root.create-linked-path(); } }
-                }
-            }
-
-            viewport := Rectangle {
-                horizontal-stretch: 1;
-                background: Theme.canvas;
-
-                Image {
-                    width: parent.width;
-                    height: parent.height;
-                    source: root.frame;
-                    image-fit: fill;
-                }
-
-                focus := FocusScope {
-                    key-pressed(event) => {
-                        if (event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta && event.text == "o") {
-                            root.open-map();
-                            return accept;
-                        }
-                        if (event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta && event.text == "k") {
-                            root.open-palette();
-                            return accept;
-                        }
-                        root.key(event.text, true, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) ? EventResult.accept : EventResult.reject
-                    }
-                    key-released(event) => {
-                        root.key(event.text, false, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) ? EventResult.accept : EventResult.reject
-                    }
-                    focus-lost => {
-                        root.viewport-focus-lost();
-                    }
-
-                    touch := TouchArea {
-                        mouse-cursor: root.flying ? MouseCursor.move : (root.surface-picking || root.overlay-handling || root.pivot-picking || ((root.drawing-block || root.clipping) && root.projection-index != 0)) ? MouseCursor.crosshair : MouseCursor.default;
-                        pointer-event(event) => {
-                            if (event.kind == PointerEventKind.down) {
-                                focus.focus();
-                            }
-                            if (event.kind == PointerEventKind.down || event.kind == PointerEventKind.up) {
-                                root.mouse-button(
-                                    event.button == PointerEventButton.left ? 0 : event.button == PointerEventButton.right ? 1 : 2,
-                                    event.kind == PointerEventKind.down,
-                                    self.mouse-x,
-                                    self.mouse-y,
-                                    event.modifiers.control,
-                                    event.modifiers.alt);
-                            }
-                        }
-                        moved => {
-                            root.mouse-moved(self.mouse-x, self.mouse-y);
-                        }
-                        scroll-event(event) => {
-                            root.wheel(event.delta-y, self.mouse-x, self.mouse-y);
-                            accept
-                        }
-                    }
-                }
-
-                Rectangle {
-                    x: 10px;
-                    y: 10px;
-                    width: view-row.preferred-width;
-                    height: 34px;
-                    background: Theme.overlay;
-                    border-color: Theme.border-strong;
-                    border-width: 1px;
-                    border-radius: Theme.radius + 1px;
-                    view-row := HorizontalLayout {
-                        padding: 3px;
-                        spacing: 2px;
-                        ComboBox {
-                            width: 132px;
-                            model: ["Perspective", "Top · XY", "Front · XZ", "Side · YZ"];
-                            current-index: root.projection-index;
-                            selected => { root.projection-changed(self.current-index); }
-                        }
-                        ComboBox {
-                            width: 148px;
-                            model: ["Textured", "Flat shading", "Wireframe", "Lightmap density", "Smoothing groups"];
-                            current-index <=> root.surface-view;
-                            selected => { root.surface-view-changed(); }
-                        }
-                        Button { text: "Overlays"; icon: Icon.layers; colorize-icon: true; checkable: true; checked <=> root.overlays-open; }
-                        Rectangle { width: 4px; }
-                        IconButton { icon: Icon.frame; tooltip: root.frame-shortcut == "" ? "Frame selection" : "Frame selection · " + root.frame-shortcut; clicked => { root.frame-selection(); } }
-                        IconButton { icon: Icon.bookmark; tooltip: "Saved views"; clicked => { root.saved-views(); } }
-                    }
-                }
-
-                if root.overlay-handle-notice != "" || root.pivot-pick-notice != "": Rectangle {
-                    x: 10px;
-                    y: 52px;
-                    width: min(notice-row.preferred-width, parent.width - 20px);
-                    height: 40px;
-                    background: Theme.overlay;
-                    border-color: Theme.border-strong;
-                    border-width: 1px;
-                    border-radius: Theme.radius + 1px;
-                    notice-row := HorizontalLayout {
-                        padding: 6px;
-                        padding-left: Theme.space-lg;
-                        spacing: Theme.space;
-                        Text { text: root.overlay-handle-notice != "" ? root.overlay-handle-notice : root.pivot-pick-notice; color: Theme.info; vertical-alignment: center; overflow: elide; }
-                        if root.can-cancel-overlay-handles: Button { text: "Cancel handles"; clicked => { root.cancel-overlay-handles(); } }
-                        if root.overlay-handle-notice == "" && root.can-cancel-pivot-pick: Button { text: "Cancel pivot pick"; clicked => { root.cancel-transform-pivot-pick(); } }
-                    }
-                }
-
-                if root.has-transform-preview || root.has-area-preview || root.has-paint-preview: Rectangle {
-                    x: (parent.width - self.width) / 2;
-                    y: parent.height - self.height - 44px;
-                    width: min(pending-row.preferred-width + 8px, parent.width - 20px);
-                    height: 44px;
-                    background: root.agent-preview ? Theme.agent-soft : Theme.panel;
-                    border-color: root.agent-preview ? Theme.agent-border : Theme.accent;
-                    border-width: 1px;
-                    border-radius: Theme.radius-lg;
-                    drop-shadow-blur: 18px;
-                    drop-shadow-color: #00000080;
-                    pending-row := HorizontalLayout {
-                        padding: 8px;
-                        padding-left: Theme.space-lg;
-                        spacing: Theme.space;
-                        if root.agent-preview: Image { y: (parent.height - self.height) / 2; width: 15px; height: 15px; source: Icon.agent; colorize: Theme.agent; }
-                        if root.agent-preview: Text { text: "Agent preview"; color: Theme.agent-text; font-weight: 600; vertical-alignment: center; }
-                        Text { text: root.interaction-summary; color: Theme.text; vertical-alignment: center; overflow: elide; }
-                        Button { text: "Cancel"; clicked => { root.cancel-interaction(); } }
-                        Button { primary: true; text: root.has-transform-preview ? "Apply transform" : root.has-texture-stroke ? "Apply textures" : "Apply selection"; clicked => { if root.has-transform-preview { root.apply-transform-preview(); } else { root.apply-area-selection(); } } }
-                    }
-                }
-
-                Rectangle {
-                    x: 10px;
-                    y: parent.height - self.height - 10px;
-                    width: hint.preferred-width + 16px;
-                    height: hint.preferred-height + 8px;
-                    border-radius: Theme.radius-sm;
-                    background: Theme.overlay;
-                    hint := Text {
-                        text: root.clipping ? "Drag a plane handle · release keeps the preview · Apply cut changes the map · Esc cancels" : root.handles-mode-index == 5 ? "Drag to paint the sampled texture · release applies · Esc cancels" : root.handles-mode-index == 4 ? "Drag to paint visible hits · release selects · Ctrl toggles · Esc cancels" : root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates" + (root.frame-shortcut == "" ? "" : " · " + root.frame-shortcut + " frames") + " · Esc cancels";
-                        color: Theme.text-muted;
-                        font-size: Theme.font-small;
-                    }
-                }
-
-                if root.overlays-open: TouchArea {
-                    clicked => { root.overlays-open = false; }
-                }
-                if root.overlays-open: Rectangle {
-                    x: 10px;
-                    y: 50px;
-                    width: 320px;
-                    height: min(overlay-content.preferred-height + 2px, viewport.height - 60px);
-                    TouchArea { }
+                    IconButton { y: 6px; icon: Icon.new; tooltip: "New map"; clicked => { root.new-map(); } }
+                    IconButton { y: 6px; icon: Icon.open; tooltip: "Open map · Ctrl+O"; clicked => { root.open-map(); } }
+                    IconButton { y: 6px; icon: Icon.save; tooltip: "Save map"; clicked => { root.save-map(); } }
+                    Separator { y: 10px; }
+                    IconButton { y: 6px; icon: Icon.undo; tooltip: "Undo"; enabled: root.can-undo; clicked => { root.undo(); } }
+                    IconButton { y: 6px; icon: Icon.redo; tooltip: "Redo"; enabled: root.can-redo; clicked => { root.redo(); } }
+                    IconButton { y: 6px; icon: Icon.history; tooltip: "History"; clicked => { root.history(); } }
+                    Separator { y: 10px; }
                     Rectangle {
-                        background: Theme.panel;
-                        border-color: Theme.border-strong;
+                        y: 6px;
+                        width: mode-row.preferred-width + 4px;
+                        height: 28px;
+                        border-radius: Theme.radius;
+                        background: Theme.field;
                         border-width: 1px;
-                        border-radius: Theme.radius-lg;
-                        drop-shadow-blur: 24px;
-                        drop-shadow-color: #00000090;
-                        clip: true;
-                        ScrollView {
-                            overlay-content := VerticalLayout {
-                                padding-top: Theme.space-xs;
-                                padding-bottom: Theme.space;
-                                spacing: 2px;
-                                SectionHeader { text: "CAMERA"; collapsible: false; }
-                                FieldRow {
-                                    label: "Fly speed";
-                                    LineEdit { text <=> root.fly-speed; input-type: decimal; accessible-label: "Fly speed"; accepted => { root.fly-speed-changed(); } }
-                                    Text { text: "units/s"; color: Theme.text-faint; vertical-alignment: center; }
+                        border-color: Theme.border-strong;
+                        mode-row := HorizontalLayout {
+                            padding: 2px;
+                            spacing: 2px;
+                            for mode[index] in ["Objects", "Faces"]: Rectangle {
+                                property <bool> active: (index == 1) == root.face-mode;
+                                width: mode-text.preferred-width + 20px;
+                                border-radius: Theme.radius-sm;
+                                background: self.active ? Theme.active : mode-touch.has-hover ? Theme.hover : transparent;
+                                accessible-role: button;
+                                accessible-label: mode + " selection";
+                                accessible-checked: self.active;
+                                mode-text := Text {
+                                    text: mode;
+                                    color: parent.active ? Theme.text : Theme.text-muted;
+                                    font-size: Theme.font;
                                 }
-                                SectionHeader { text: "DISPLAY"; collapsible: false; }
-                                OverlaySwitch { text: "Tool textures"; checked <=> root.show-tools; toggled => { root.options-changed(); } }
-                                OverlaySwitch { text: "Leak path"; checked <=> root.show-leak; toggled => { root.options-changed(); } }
-                                OverlaySwitch { text: "Show grid"; checked <=> root.grid-visible; toggled => { root.spatial-changed(); } }
-                                OverlaySwitch { text: "Selection tint"; checked <=> root.selection-tint; toggled => { root.options-changed(); } }
-                                OverlaySwitch { text: "Selection outlines"; checked <=> root.selection-outlines; toggled => { root.options-changed(); } }
-                                SectionHeader { text: "ENTITIES"; collapsible: false; }
-                                OverlaySwitch { text: "Entity images"; checked <=> root.entity-images; toggled => { root.options-changed(); } }
-                                OverlaySwitch { text: "Additive sprite guides"; enabled: root.entity-images; checked <=> root.additive-sprite-guides; toggled => { root.options-changed(); } }
-                                OverlaySwitch { text: "Entity model guides"; checked <=> root.entity-model-guides; toggled => { root.options-changed(); } }
-                                OverlayNote { text: "FGD resource guides · boxes remain when off"; }
-                                SectionHeader { text: "SURFACES"; collapsible: false; }
-                                OverlaySwitch { text: "Normal map preview"; checked <=> root.normal-maps; toggled => { root.options-changed(); } }
-                                if root.normal-maps: OverlayNote { text: root.normal-map-status + (root.lighting-preview ? " · unshadowed authored lights" : " · fixed editor light"); }
-                                OverlaySwitch { text: "Directional surface shading"; checked <=> root.surface-shading; toggled => { root.options-changed(); } }
-                                if root.surface-shading: OverlayNote { text: root.surface-view == 0 ? "Stronger fixed editor light · authored lighting takes precedence" : "Directional surface shading requires Textured view"; }
-                                if root.surface-view == 4: FieldRow {
-                                    label: "Highlight group";
-                                    SpinBox { minimum: 1; maximum: 32; value <=> root.smoothing-view-group; edited => { root.surface-view-changed(); } }
-                                }
-                                if root.surface-view >= 3: OverlayNote { text: "Authored settings · baked lighting is pending"; }
-                                SectionHeader { text: "LIGHTING"; collapsible: false; }
-                                OverlaySwitch { text: "Unshadowed authored lighting"; checked <=> root.lighting-preview; toggled => { root.options-changed(); } }
-                                FieldRow {
-                                    label: "Channel";
-                                    ComboBox { model: ["LDR", "HDR"]; current-index <=> root.lighting-channel; selected => { root.options-changed(); } }
-                                }
-                                if root.lighting-preview: OverlaySwitch { text: "Include sky ambient"; checked <=> root.lighting-sky-ambient; toggled => { root.options-changed(); } }
-                                if root.lighting-preview: FieldRow {
-                                    label: "Quality";
-                                    ComboBox { model: ["Fast · vertex", "Detail · per-fragment"]; current-index <=> root.lighting-quality; selected => { root.options-changed(); } }
-                                }
-                                if root.lighting-preview: FieldRow {
-                                    label: "Exposure EV";
-                                    LineEdit { text <=> root.lighting-exposure-ev; input-type: decimal; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
-                                }
-                                if root.lighting-preview: OverlayNote { text: root.lighting-status + " · no shadows or bounce"; }
-                                if root.lighting-error != "": OverlayNote { text: root.lighting-error; text-color: Theme.warning; }
-                                SectionHeader { text: "ENVIRONMENT"; collapsible: false; }
-                                OverlaySwitch { text: "2D sky preview"; checked <=> root.sky-preview; toggled => { root.options-changed(); } }
-                                if root.sky-preview: FieldRow {
-                                    label: "Sky channel";
-                                    ComboBox { model: ["LDR", "HDR · editor preview"]; current-index <=> root.sky-channel; selected => { root.options-changed(); } }
-                                }
-                                if root.sky-preview && root.sky-channel == 1: FieldRow {
-                                    label: "Sky EV";
-                                    LineEdit { text <=> root.sky-exposure-ev; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
-                                }
-                                if root.sky-preview: OverlayNote { text: root.sky-preview-status + " · Perspective, Textured"; }
-                                if root.sky-preview-error != "": OverlayNote { text: root.sky-preview-error; text-color: Theme.warning; }
-                                OverlaySwitch { text: "Rope preview"; checked <=> root.rope-preview; toggled => { root.options-changed(); } }
-                                if root.rope-preview: OverlayNote { text: root.rope-preview-status + " · static curves"; }
-                                OverlaySwitch { text: "Instance contents"; checked <=> root.instance-contents; toggled => { root.options-changed(); } }
-                                if root.instance-contents: OverlayNote { text: root.instance-contents-status; }
-                                OverlayLink { text: "3D sky"; status: root.sky3d-preview-status; clicked => { root.overlays-open = false; root.sky3d-preview(); } }
-                                if root.sky3d-render-error != "": OverlayNote { text: root.sky3d-render-error; text-color: Theme.warning; }
-                                OverlayLink { text: "Fog"; status: root.fog-preview-status; clicked => { root.overlays-open = false; root.fog-preview(); } }
-                                OverlayLink { text: "Color correction"; status: root.color-correction-status; clicked => { root.overlays-open = false; root.color-correction-preview(); } }
-                                if root.color-correction-error != "": OverlayNote { text: root.color-correction-error; text-color: Theme.warning; }
-                                OverlayLink { text: "Instance contents"; status: "Inspect…"; clicked => { root.overlays-open = false; root.inspect-instance-contents(); } }
+                                mode-touch := TouchArea { clicked => { root.selection-mode-changed(index); } }
                             }
                         }
                     }
+                    Separator { y: 10px; }
+                    Text { text: "Grid"; color: Theme.text-faint; vertical-alignment: center; }
+                    Rectangle { width: 4px; }
+                    LineEdit { y: 7px; width: 62px; height: 26px; text <=> root.grid-size; input-type: decimal; accessible-label: "Viewport grid size"; accepted => { root.spatial-changed(); } }
+                    Rectangle { width: 4px; }
+                    IconButton { y: 6px; icon: Icon.snap; tooltip: "Snap to grid"; checked: root.snap-grid; clicked => { root.snap-grid = !root.snap-grid; root.spatial-changed(); } }
+                    IconButton { y: 6px; icon: Icon.grid; tooltip: "Show grid"; checked: root.grid-visible; clicked => { root.grid-visible = !root.grid-visible; root.spatial-changed(); } }
+                    Rectangle { horizontal-stretch: 1; }
+                    Rectangle {
+                        y: 7px;
+                        width: 240px;
+                        height: 26px;
+                        border-radius: Theme.radius-sm + 1px;
+                        border-width: 1px;
+                        border-color: Theme.border-strong;
+                        background: search-touch.has-hover ? Theme.hover : Theme.panel;
+                        accessible-role: button;
+                        accessible-label: "Search commands and objects";
+                        accessible-action-default => { root.open-palette(); }
+                        HorizontalLayout {
+                            padding-left: Theme.space;
+                            padding-right: 6px;
+                            spacing: Theme.space;
+                            Image { y: (parent.height - self.height) / 2; width: 13px; height: 13px; source: Icon.search; colorize: Theme.text-faint; }
+                            Text { text: "Search commands"; color: Theme.text-faint; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                            Rectangle {
+                                y: 4px;
+                                width: kbd.preferred-width + 10px;
+                                height: 16px;
+                                border-radius: 3px;
+                                border-width: 1px;
+                                border-color: Theme.border-strong;
+                                kbd := Text { text: "Ctrl K"; color: Theme.text-faint; font-size: 10px; font-family: "monospace"; }
+                            }
+                        }
+                        search-touch := TouchArea { clicked => { root.open-palette(); } }
+                    }
+                    Rectangle { width: Theme.space-lg; }
+                    if root.compile-label == "": Text { text: root.compile-region-label == "Compile region…" ? "" : root.compile-region-label; color: Theme.text-faint; vertical-alignment: center; overflow: elide; }
+                    Rectangle { width: Theme.space; }
+                    Button { y: 7px; height: 26px; text: root.compiling ? "Compiling…" : "Compile"; icon: Icon.compile; colorize-icon: true; enabled: !root.compiling && !root.launching; clicked => { root.compile-map(); } }
+                    Rectangle { width: Theme.space-sm; }
+                    Button { y: 7px; height: 26px; primary: true; text: root.launching ? "Launching…" : "Run map"; icon: Icon.run; colorize-icon: true; enabled: !root.compiling && !root.launching && !root.game-running; clicked => { root.run-map(); } }
+                    if root.game-running: Rectangle { width: Theme.space-sm; }
+                    if root.game-running: Button { y: 7px; height: 26px; text: "Stop map"; clicked => { root.stop-game(); } }
+                    Rectangle { width: Theme.space-xs; }
+                    IconButton { y: 6px; icon: Icon.terminal; tooltip: "Game log"; clicked => { root.game-log(); } }
                 }
             }
 
             Rectangle {
-                width: 344px;
-                background: Theme.panel;
-                Rectangle { x: 0; width: 1px; background: Theme.border; }
-                VerticalLayout {
-                    padding-left: 1px;
-                    Rectangle {
-                        height: 34px;
-                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
-                        HorizontalLayout {
-                            padding-left: Theme.space;
-                            alignment: start;
-                            DockTab { text: "Inspector"; active: root.dock-tab == 0; clicked => { root.dock-tab = 0; } }
-                            DockTab { text: "Outliner"; active: root.dock-tab == 2; clicked => { root.dock-tab = 2; } }
-                            if root.clipping: DockTab { text: "Clip"; active: root.dock-tab == 1; clicked => { root.dock-tab = 1; } }
+                height: 36px;
+                background: Theme.base;
+                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                HorizontalLayout {
+                    padding-left: Theme.space-lg;
+                    padding-right: Theme.space-lg;
+                    spacing: Theme.space;
+                    Image { y: (parent.height - self.height) / 2; width: 15px; height: 15px; source: root.tool-icon; colorize: Theme.accent; }
+                    Text { text: root.tool-label; color: Theme.text; font-weight: 600; vertical-alignment: center; }
+                    Separator { y: 8px; }
+                    if root.drawing-block && root.projection-index != 0: HorizontalLayout {
+                        alignment: start;
+                        spacing: Theme.space;
+                        Text { text: "Start " + root.workplane-axis; color: Theme.text-faint; vertical-alignment: center; }
+                        LineEdit { y: 5px; width: 76px; height: 26px; text <=> root.brush-elevation; input-type: decimal; accepted => { root.spatial-changed(); } }
+                        Text { text: "Depth " + root.workplane-axis; color: Theme.text-faint; vertical-alignment: center; }
+                        LineEdit { y: 5px; width: 76px; height: 26px; text <=> root.brush-depth; input-type: decimal; accepted => { root.spatial-changed(); } }
+                        Text { text: root.brush-preview == "" ? "Drag a footprint · Esc cancels" : root.brush-preview; color: Theme.info; vertical-alignment: center; overflow: elide; }
+                        Button { y: 5px; height: 26px; text: "Done"; clicked => { root.create-block(); } }
+                    }
+                    if root.drawing-block && root.projection-index == 0: Text { text: "Switch to a planar view to drag a footprint, or Add brush places one at the view centre."; color: Theme.text-faint; vertical-alignment: center; overflow: elide; }
+                    if root.clipping: HorizontalLayout {
+                        spacing: Theme.space;
+                        Text { text: root.clip-summary == "" ? "Set the cut in the Tool panel or drag the plane handles" : root.clip-summary; color: Theme.info; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                        Button { y: 5px; height: 26px; text: "Cancel cut"; clicked => { root.cancel-clip(); } }
+                        Button { y: 5px; height: 26px; primary: true; text: "Apply cut"; enabled: root.has-clip-preview && !root.clip-positioning; clicked => { root.apply-clip(); } }
+                    }
+                    if !root.drawing-block && !root.clipping: HorizontalLayout {
+                        alignment: start;
+                        spacing: Theme.space;
+                        if root.handles-mode-index > 0 && root.handles-mode-index < 4: ComboBox {
+                            y: 5px; width: 120px; height: 26px;
+                            model: ["World axes", "Local axes"];
+                            current-index <=> root.transform-space-index;
+                            selected => { root.transform-tool-changed(); }
+                        }
+                        if root.handles-mode-index > 0 && root.handles-mode-index < 4: CheckBox {
+                            text: "Follow move/rotation";
+                            checked <=> root.transform-texture-lock;
+                            toggled => { root.transform-tool-changed(); }
+                        }
+                        if root.handles-mode-index == 3: CheckBox {
+                            text: "Stretch with scale";
+                            checked <=> root.transform-texture-scale-lock;
+                            toggled => { root.transform-tool-changed(); }
+                        }
+                        if root.handles-mode-index == 2: Text { text: "Angle snap °"; color: Theme.text-faint; vertical-alignment: center; }
+                        if root.handles-mode-index == 2: LineEdit { y: 5px; width: 56px; height: 26px; text <=> root.rotation-step; input-type: decimal; accepted => { root.transform-tool-changed(); } }
+                        if root.handles-mode-index == 5: ComboBox {
+                            y: 5px; width: 150px; height: 26px;
+                            model: ["Material only", "Copy projection"];
+                            current-index <=> root.texture-paint-mode;
+                            selected => { root.paint-settings-changed(); }
+                        }
+                        if root.handles-mode-index >= 4: Text { text: "Radius " + round(root.paint-radius) + " px"; color: Theme.text-faint; vertical-alignment: center; }
+                        if root.handles-mode-index >= 4: Slider { width: 110px; minimum: 2; maximum: 64; value: root.paint-radius; changed(value) => { root.paint-radius = round(value); root.paint-settings-changed(); } }
+                        if root.handles-mode-index == 5: Image { y: (parent.height - self.height) / 2; width: 24px; height: 24px; source: root.texture-sample-preview; image-fit: contain; }
+                        if root.handles-mode-index == 5: Text { text: root.texture-sample-material == "" ? "Select one face, then sample it" : root.texture-sample-material; color: Theme.text-muted; vertical-alignment: center; overflow: elide; }
+                        if root.handles-mode-index == 5: Button { y: 5px; height: 26px; text: "Sample face"; enabled: root.can-sample-face; clicked => { root.sample-face-texture(); } }
+                        if root.handles-mode-index < 4: Text { text: "Area"; color: Theme.text-faint; vertical-alignment: center; }
+                        if root.handles-mode-index < 4: ComboBox {
+                            y: 5px; width: 116px; height: 26px;
+                            model: ["Intersects", "Fully inside"];
+                            current-index <=> root.area-rule-index;
+                            selected => { root.area-settings-changed(); }
+                        }
+                        if root.handles-mode-index != 5: ComboBox {
+                            y: 5px; width: 100px; height: 26px;
+                            model: ["Replace", "Add", "Remove", "Toggle"];
+                            current-index <=> root.area-mode-index;
+                            selected => { root.area-settings-changed(); }
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    if !root.face-mode && !root.drawing-block && !root.clipping && root.handles-mode-index == 0: Text { text: "Alt+click cycles overlapping objects"; color: Theme.text-faint; vertical-alignment: center; }
+                }
+            }
+
+            if root.working-region-active: Rectangle {
+                height: 32px;
+                background: Theme.warning-soft;
+                HorizontalLayout {
+                    padding-left: Theme.space-lg;
+                    padding-right: Theme.space;
+                    spacing: Theme.space;
+                    Image { y: (parent.height - self.height) / 2; width: 14px; height: 14px; source: Icon.inspect; colorize: Theme.warning; }
+                    Text { text: "Working region active · editor view only"; color: Theme.warning; vertical-alignment: center; horizontal-stretch: 1; }
+                    Button { y: 3px; height: 26px; text: "Working region…"; clicked => { root.working-region(); } }
+                    Button { y: 3px; height: 26px; text: "Clear"; clicked => { root.clear-working-region(); } }
+                }
+            }
+            if root.compile-label != "": Rectangle {
+                height: 32px;
+                background: Theme.info-soft;
+                HorizontalLayout {
+                    padding-left: Theme.space-lg;
+                    padding-right: Theme.space;
+                    spacing: Theme.space;
+                    Image { y: (parent.height - self.height) / 2; width: 14px; height: 14px; source: Icon.compile; colorize: Theme.info; }
+                    Text { text: root.compile-label; vertical-alignment: center; horizontal-stretch: 1; color: Theme.text; overflow: elide; }
+                    Button { y: 3px; height: 26px; text: "Build details…"; clicked => { root.build-status(); } }
+                    if root.compiling: Button { y: 3px; height: 26px; text: "Cancel build"; enabled: root.compile-cancellable; clicked => { root.cancel-build(); } }
+                }
+            }
+            if root.preview-error != "": Rectangle {
+                min-height: 32px;
+                background: Theme.danger-soft;
+                HorizontalLayout {
+                    padding: Theme.space-xs;
+                    padding-left: Theme.space-lg;
+                    padding-right: Theme.space;
+                    spacing: Theme.space;
+                    Image { y: (parent.height - self.height) / 2; width: 14px; height: 14px; source: Icon.error; colorize: Theme.danger; }
+                    Text { text: root.preview-error; color: Theme.danger; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; }
+                    Button { height: 26px; text: "Check map…"; clicked => { root.map-checks(); } }
+                }
+            }
+
+            HorizontalLayout {
+                vertical-stretch: 1;
+
+                Rectangle {
+                    width: 44px;
+                    background: Theme.bar;
+                    Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+                    VerticalLayout {
+                        padding-top: Theme.space;
+                        padding-left: 6px;
+                        spacing: 2px;
+                        alignment: start;
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.select; tooltip: "Select"; checked: !root.drawing-block && !root.clipping && root.handles-mode-index == 0; clicked => { root.choose-tool(0); } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.move; tooltip: "Move handles"; checked: !root.drawing-block && !root.clipping && root.handles-mode-index == 1; clicked => { root.choose-tool(1); } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.rotate; tooltip: "Rotate handles"; checked: !root.drawing-block && !root.clipping && root.handles-mode-index == 2; clicked => { root.choose-tool(2); } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.scale; tooltip: "Scale handles"; checked: !root.drawing-block && !root.clipping && root.handles-mode-index == 3; clicked => { root.choose-tool(3); } }
+                        Rectangle { height: 9px; Separator { vertical: false; } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.paint; tooltip: "Paint selection"; checked: !root.drawing-block && !root.clipping && root.handles-mode-index == 4; clicked => { root.choose-tool(4); } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.bucket; tooltip: "Paint texture"; checked: !root.drawing-block && !root.clipping && root.handles-mode-index == 5; clicked => { root.choose-tool(5); } }
+                        Rectangle { height: 9px; Separator { vertical: false; } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.block; tooltip: root.projection-index == 0 ? "Add brush" : "Draw brush"; checked: root.drawing-block; clicked => { root.create-block(); } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.cylinder; tooltip: "Brush shapes"; clicked => { root.brush-shapes(); } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.polygon; tooltip: "Draw polygon"; clicked => { root.draw-polygon(); } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.clip; tooltip: "Clip selected brushes"; checked: root.clipping; enabled: root.can-clip || root.clipping; clicked => { if !root.clipping { root.start-clip(); } } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.reshape; tooltip: "Reshape brushes"; enabled: root.can-clip; clicked => { root.brush-components(); } }
+                        Rectangle { height: 9px; Separator { vertical: false; } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.entity; tooltip: "Place entity"; clicked => { root.place-entity(); } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.overlay; tooltip: "Overlay"; clicked => { root.create-overlay(); } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.measure; tooltip: "Measurements"; clicked => { root.measurements(); } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.path; tooltip: "Create linked path"; clicked => { root.create-linked-path(); } }
+                    }
+                }
+
+                viewport := Rectangle {
+                    horizontal-stretch: 1;
+                    background: Theme.canvas;
+
+                    Image {
+                        width: parent.width;
+                        height: parent.height;
+                        source: root.frame;
+                        image-fit: fill;
+                    }
+
+                    focus := FocusScope {
+                        focus-lost => {
+                            root.viewport-focus-lost();
+                        }
+
+                        touch := TouchArea {
+                            changed has-hover => {
+                                if self.has-hover && !focus.has-focus && !TextInputInterface.text-input-focused {
+                                    focus.focus();
+                                }
+                            }
+                            mouse-cursor: root.flying ? MouseCursor.move : (root.surface-picking || root.overlay-handling || root.pivot-picking || ((root.drawing-block || root.clipping) && root.projection-index != 0)) ? MouseCursor.crosshair : MouseCursor.default;
+                            pointer-event(event) => {
+                                if (event.kind == PointerEventKind.down) {
+                                    focus.focus();
+                                }
+                                if (event.kind == PointerEventKind.down || event.kind == PointerEventKind.up) {
+                                    root.mouse-button(
+                                        event.button == PointerEventButton.left ? 0 : event.button == PointerEventButton.right ? 1 : 2,
+                                        event.kind == PointerEventKind.down,
+                                        self.mouse-x,
+                                        self.mouse-y,
+                                        event.modifiers.control,
+                                        event.modifiers.alt);
+                                }
+                            }
+                            moved => {
+                                root.mouse-moved(self.mouse-x, self.mouse-y);
+                            }
+                            scroll-event(event) => {
+                                root.wheel(event.delta-y, self.mouse-x, self.mouse-y);
+                                accept
+                            }
                         }
                     }
 
-                    if root.dock-tab == 0: ScrollView {
-                        vertical-stretch: 1;
-                        VerticalLayout {
-                            alignment: start;
-                            padding-bottom: Theme.space-lg;
+                    Rectangle {
+                        x: 10px;
+                        y: 10px;
+                        width: view-row.preferred-width;
+                        height: 34px;
+                        background: Theme.overlay;
+                        border-color: Theme.border-strong;
+                        border-width: 1px;
+                        border-radius: Theme.radius + 1px;
+                        view-row := HorizontalLayout {
+                            padding: 3px;
                             spacing: 2px;
+                            ComboBox {
+                                width: 132px;
+                                model: ["Perspective", "Top · XY", "Front · XZ", "Side · YZ"];
+                                current-index: root.projection-index;
+                                selected => { root.projection-changed(self.current-index); }
+                            }
+                            ComboBox {
+                                width: 148px;
+                                model: ["Textured", "Flat shading", "Wireframe", "Lightmap density", "Smoothing groups"];
+                                current-index <=> root.surface-view;
+                                selected => { root.surface-view-changed(); }
+                            }
+                            Button { text: "Overlays"; icon: Icon.layers; colorize-icon: true; checkable: true; checked <=> root.overlays-open; }
+                            Rectangle { width: 4px; }
+                            IconButton { icon: Icon.frame; tooltip: root.frame-shortcut == "" ? "Frame selection" : "Frame selection · " + root.frame-shortcut; clicked => { root.frame-selection(); } }
+                            IconButton { icon: Icon.bookmark; tooltip: "Saved views"; clicked => { root.saved-views(); } }
+                        }
+                    }
 
-                            HorizontalLayout {
-                                padding: Theme.space-lg;
-                                spacing: 10px;
-                                Rectangle {
-                                    width: 34px;
-                                    height: 34px;
-                                    border-radius: 7px;
-                                    background: root.entity-selected ? Theme.warning-soft : root.has-selection ? Theme.accent-soft : Theme.control;
-                                    Image {
-                                        width: 18px;
-                                        height: 18px;
-                                        source: root.entity-selected ? Icon.entity : root.face-mode && root.has-faces ? Icon.material : root.has-selection ? Icon.block : Icon.select;
-                                        colorize: root.entity-selected ? Theme.warning : root.has-selection ? Theme.accent : Theme.text-faint;
-                                    }
-                                }
-                                VerticalLayout {
-                                    alignment: center;
+                    if root.overlay-handle-notice != "" || root.pivot-pick-notice != "": Rectangle {
+                        x: 10px;
+                        y: 52px;
+                        width: min(notice-row.preferred-width, parent.width - 20px);
+                        height: 40px;
+                        background: Theme.overlay;
+                        border-color: Theme.border-strong;
+                        border-width: 1px;
+                        border-radius: Theme.radius + 1px;
+                        notice-row := HorizontalLayout {
+                            padding: 6px;
+                            padding-left: Theme.space-lg;
+                            spacing: Theme.space;
+                            Text { text: root.overlay-handle-notice != "" ? root.overlay-handle-notice : root.pivot-pick-notice; color: Theme.info; vertical-alignment: center; overflow: elide; }
+                            if root.can-cancel-overlay-handles: Button { text: "Cancel handles"; clicked => { root.cancel-overlay-handles(); } }
+                            if root.overlay-handle-notice == "" && root.can-cancel-pivot-pick: Button { text: "Cancel pivot pick"; clicked => { root.cancel-transform-pivot-pick(); } }
+                        }
+                    }
+
+                    if root.has-transform-preview || root.has-area-preview || root.has-paint-preview: Rectangle {
+                        x: (parent.width - self.width) / 2;
+                        y: parent.height - self.height - 44px;
+                        width: min(pending-row.preferred-width + 8px, parent.width - 20px);
+                        height: 44px;
+                        background: root.agent-preview ? Theme.agent-soft : Theme.panel;
+                        border-color: root.agent-preview ? Theme.agent-border : Theme.accent;
+                        border-width: 1px;
+                        border-radius: Theme.radius-lg;
+                        drop-shadow-blur: 18px;
+                        drop-shadow-color: #00000080;
+                        pending-row := HorizontalLayout {
+                            padding: 8px;
+                            padding-left: Theme.space-lg;
+                            spacing: Theme.space;
+                            if root.agent-preview: Image { y: (parent.height - self.height) / 2; width: 15px; height: 15px; source: Icon.agent; colorize: Theme.agent; }
+                            if root.agent-preview: Text { text: "Agent preview"; color: Theme.agent-text; font-weight: 600; vertical-alignment: center; }
+                            Text { text: root.interaction-summary; color: Theme.text; vertical-alignment: center; overflow: elide; }
+                            Button { text: "Cancel"; clicked => { root.cancel-interaction(); } }
+                            Button { primary: true; text: root.has-transform-preview ? "Apply transform" : root.has-texture-stroke ? "Apply textures" : "Apply selection"; clicked => { if root.has-transform-preview { root.apply-transform-preview(); } else { root.apply-area-selection(); } } }
+                        }
+                    }
+
+                    Rectangle {
+                        x: 10px;
+                        y: parent.height - self.height - 10px;
+                        width: hint.preferred-width + 16px;
+                        height: hint.preferred-height + 8px;
+                        border-radius: Theme.radius-sm;
+                        background: Theme.overlay;
+                        hint := Text {
+                            text: root.clipping ? "Drag a plane handle · release keeps the preview · Apply cut changes the map · Esc cancels" : root.handles-mode-index == 5 ? "Drag to paint the sampled texture · release applies · Esc cancels" : root.handles-mode-index == 4 ? "Drag to paint visible hits · release selects · Ctrl toggles · Esc cancels" : root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates" + (root.frame-shortcut == "" ? "" : " · " + root.frame-shortcut + " frames") + " · Esc cancels";
+                            color: Theme.text-muted;
+                            font-size: Theme.font-small;
+                        }
+                    }
+
+                    if root.overlays-open: TouchArea {
+                        clicked => { root.overlays-open = false; }
+                    }
+                    if root.overlays-open: Rectangle {
+                        x: 10px;
+                        y: 50px;
+                        width: 320px;
+                        height: min(overlay-content.preferred-height + 2px, viewport.height - 60px);
+                        TouchArea { }
+                        Rectangle {
+                            background: Theme.panel;
+                            border-color: Theme.border-strong;
+                            border-width: 1px;
+                            border-radius: Theme.radius-lg;
+                            drop-shadow-blur: 24px;
+                            drop-shadow-color: #00000090;
+                            clip: true;
+                            ScrollView {
+                                overlay-content := VerticalLayout {
+                                    padding-top: Theme.space-xs;
+                                    padding-bottom: Theme.space;
                                     spacing: 2px;
-                                    Text { text: root.selection-title; color: Theme.text; font-size: Theme.font-title; font-weight: 600; wrap: word-wrap; }
-                                    if root.selection-detail != "": Text { text: root.selection-detail; color: Theme.text-faint; font-size: Theme.font-small; wrap: word-wrap; }
+                                    SectionHeader { text: "CAMERA"; collapsible: false; }
+                                    FieldRow {
+                                        label: "Fly speed";
+                                        LineEdit { text <=> root.fly-speed; input-type: decimal; accessible-label: "Fly speed"; accepted => { root.fly-speed-changed(); } }
+                                        Text { text: "units/s"; color: Theme.text-faint; vertical-alignment: center; }
+                                    }
+                                    SectionHeader { text: "DISPLAY"; collapsible: false; }
+                                    OverlaySwitch { text: "Tool textures"; checked <=> root.show-tools; toggled => { root.options-changed(); } }
+                                    OverlaySwitch { text: "Leak path"; checked <=> root.show-leak; toggled => { root.options-changed(); } }
+                                    OverlaySwitch { text: "Show grid"; checked <=> root.grid-visible; toggled => { root.spatial-changed(); } }
+                                    OverlaySwitch { text: "Selection tint"; checked <=> root.selection-tint; toggled => { root.options-changed(); } }
+                                    OverlaySwitch { text: "Selection outlines"; checked <=> root.selection-outlines; toggled => { root.options-changed(); } }
+                                    SectionHeader { text: "ENTITIES"; collapsible: false; }
+                                    OverlaySwitch { text: "Entity images"; checked <=> root.entity-images; toggled => { root.options-changed(); } }
+                                    OverlaySwitch { text: "Additive sprite guides"; enabled: root.entity-images; checked <=> root.additive-sprite-guides; toggled => { root.options-changed(); } }
+                                    OverlaySwitch { text: "Entity model guides"; checked <=> root.entity-model-guides; toggled => { root.options-changed(); } }
+                                    OverlayNote { text: "FGD resource guides · boxes remain when off"; }
+                                    SectionHeader { text: "SURFACES"; collapsible: false; }
+                                    OverlaySwitch { text: "Normal map preview"; checked <=> root.normal-maps; toggled => { root.options-changed(); } }
+                                    if root.normal-maps: OverlayNote { text: root.normal-map-status + (root.lighting-preview ? " · unshadowed authored lights" : " · fixed editor light"); }
+                                    OverlaySwitch { text: "Directional surface shading"; checked <=> root.surface-shading; toggled => { root.options-changed(); } }
+                                    if root.surface-shading: OverlayNote { text: root.surface-view == 0 ? "Stronger fixed editor light · authored lighting takes precedence" : "Directional surface shading requires Textured view"; }
+                                    if root.surface-view == 4: FieldRow {
+                                        label: "Highlight group";
+                                        SpinBox { minimum: 1; maximum: 32; value <=> root.smoothing-view-group; edited => { root.surface-view-changed(); } }
+                                    }
+                                    if root.surface-view >= 3: OverlayNote { text: "Authored settings · baked lighting is pending"; }
+                                    SectionHeader { text: "LIGHTING"; collapsible: false; }
+                                    OverlaySwitch { text: "Unshadowed authored lighting"; checked <=> root.lighting-preview; toggled => { root.options-changed(); } }
+                                    FieldRow {
+                                        label: "Channel";
+                                        ComboBox { model: ["LDR", "HDR"]; current-index <=> root.lighting-channel; selected => { root.options-changed(); } }
+                                    }
+                                    if root.lighting-preview: OverlaySwitch { text: "Include sky ambient"; checked <=> root.lighting-sky-ambient; toggled => { root.options-changed(); } }
+                                    if root.lighting-preview: FieldRow {
+                                        label: "Quality";
+                                        ComboBox { model: ["Fast · vertex", "Detail · per-fragment"]; current-index <=> root.lighting-quality; selected => { root.options-changed(); } }
+                                    }
+                                    if root.lighting-preview: FieldRow {
+                                        label: "Exposure EV";
+                                        LineEdit { text <=> root.lighting-exposure-ev; input-type: decimal; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
+                                    }
+                                    if root.lighting-preview: OverlayNote { text: root.lighting-status + " · no shadows or bounce"; }
+                                    if root.lighting-error != "": OverlayNote { text: root.lighting-error; text-color: Theme.warning; }
+                                    SectionHeader { text: "ENVIRONMENT"; collapsible: false; }
+                                    OverlaySwitch { text: "2D sky preview"; checked <=> root.sky-preview; toggled => { root.options-changed(); } }
+                                    if root.sky-preview: FieldRow {
+                                        label: "Sky channel";
+                                        ComboBox { model: ["LDR", "HDR · editor preview"]; current-index <=> root.sky-channel; selected => { root.options-changed(); } }
+                                    }
+                                    if root.sky-preview && root.sky-channel == 1: FieldRow {
+                                        label: "Sky EV";
+                                        LineEdit { text <=> root.sky-exposure-ev; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
+                                    }
+                                    if root.sky-preview: OverlayNote { text: root.sky-preview-status + " · Perspective, Textured"; }
+                                    if root.sky-preview-error != "": OverlayNote { text: root.sky-preview-error; text-color: Theme.warning; }
+                                    OverlaySwitch { text: "Rope preview"; checked <=> root.rope-preview; toggled => { root.options-changed(); } }
+                                    if root.rope-preview: OverlayNote { text: root.rope-preview-status + " · static curves"; }
+                                    OverlaySwitch { text: "Instance contents"; checked <=> root.instance-contents; toggled => { root.options-changed(); } }
+                                    if root.instance-contents: OverlayNote { text: root.instance-contents-status; }
+                                    OverlayLink { text: "3D sky"; status: root.sky3d-preview-status; clicked => { root.overlays-open = false; root.sky3d-preview(); } }
+                                    if root.sky3d-render-error != "": OverlayNote { text: root.sky3d-render-error; text-color: Theme.warning; }
+                                    OverlayLink { text: "Fog"; status: root.fog-preview-status; clicked => { root.overlays-open = false; root.fog-preview(); } }
+                                    OverlayLink { text: "Color correction"; status: root.color-correction-status; clicked => { root.overlays-open = false; root.color-correction-preview(); } }
+                                    if root.color-correction-error != "": OverlayNote { text: root.color-correction-error; text-color: Theme.warning; }
+                                    OverlayLink { text: "Instance contents"; status: "Inspect…"; clicked => { root.overlays-open = false; root.inspect-instance-contents(); } }
                                 }
                             }
+                        }
+                    }
+                }
 
-                            if root.has-selection: HorizontalLayout {
+                Rectangle {
+                    width: 344px;
+                    background: Theme.panel;
+                    Rectangle { x: 0; width: 1px; background: Theme.border; }
+                    VerticalLayout {
+                        padding-left: 1px;
+                        Rectangle {
+                            height: 34px;
+                            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                            HorizontalLayout {
                                 padding-left: Theme.space;
-                                padding-right: Theme.space;
                                 alignment: start;
+                                DockTab { text: "Inspector"; active: root.dock-tab == 0; clicked => { root.dock-tab = 0; } }
+                                DockTab { text: "Outliner"; active: root.dock-tab == 2; clicked => { root.dock-tab = 2; } }
+                                if root.clipping: DockTab { text: "Clip"; active: root.dock-tab == 1; clicked => { root.dock-tab = 1; } }
+                            }
+                        }
+
+                        if root.dock-tab == 0: ScrollView {
+                            vertical-stretch: 1;
+                            VerticalLayout {
+                                alignment: start;
+                                padding-bottom: Theme.space-lg;
                                 spacing: 2px;
-                                IconButton { icon: Icon.frame; tooltip: "Frame selection"; clicked => { root.frame-selection(); } }
-                                IconButton { icon: Icon.eye-off; tooltip: "Hide in editor"; enabled: root.can-hide-editor-selection; clicked => { root.hide-editor-selection(); } }
-                                IconButton { icon: Icon.copy; tooltip: "Copy"; clicked => { root.copy-objects(); } }
-                                IconButton { icon: Icon.paste; tooltip: "Paste"; clicked => { root.paste-objects(); } }
-                                IconButton { icon: Icon.trash; tooltip: "Delete"; clicked => { root.delete-selection(); } }
-                            }
-                            if root.editor-hidden-count > 0: HorizontalLayout {
-                                padding-left: Theme.space-lg;
-                                padding-right: Theme.space-lg;
-                                spacing: Theme.space;
-                                Text { text: root.editor-hidden-count + " hidden in editor"; color: Theme.text-faint; vertical-alignment: center; horizontal-stretch: 1; }
-                                Button { text: "Show all"; clicked => { root.show-all-editor-hidden(); } }
-                            }
-                            if !root.has-selection: VerticalLayout {
-                                padding-left: Theme.space-lg;
-                                padding-right: Theme.space-lg;
-                                spacing: Theme.space;
-                                MutedText { text: "Click an object, drag an area, or let your agent select. Use the rail to draw brushes and place entities."; }
+
                                 HorizontalLayout {
-                                    spacing: Theme.space-sm;
-                                    Button { text: root.projection-index == 0 ? "Add brush" : "Draw brush"; icon: Icon.block; colorize-icon: true; clicked => { root.create-block(); } }
-                                    Button { text: "Place entity"; icon: Icon.entity; colorize-icon: true; clicked => { root.place-entity(); } }
-                                }
-                            }
-
-                            if root.surface-picking: VerticalLayout {
-                                padding-left: Theme.space-lg;
-                                padding-right: Theme.space-lg;
-                                spacing: Theme.space-sm;
-                                Text { text: "Click a visible surface. Escape cancels picking."; wrap: word-wrap; color: Theme.info; }
-                                Button { text: "Cancel picking"; clicked => { root.cancel-surface-pick(); } }
-                            }
-
-                            if root.has-selection: SectionHeader { text: "TRANSFORM"; expanded <=> root.show-transform; }
-                            if root.has-selection && root.show-transform: VerticalLayout {
-                                padding-left: Theme.space-lg;
-                                padding-right: Theme.space-lg;
-                                spacing: Theme.space-sm;
-                                if root.has-transform-preview: Text { text: root.transform-preview-summary; color: Theme.text; font-size: Theme.font-small; wrap: word-wrap; }
-                                ComboBox {
-                                    enabled: !root.has-transform-preview;
-                                    model: ["Move", "Rotate", "Scale", "Mirror", "Shear"];
-                                    current-index <=> root.transform-mode;
-                                    selected => { root.handles-mode-index = self.current-index >= 3 ? 0 : self.current-index + 1; root.transform-tool-changed(); }
-                                }
-                                Text {
-                                    text: root.transform-mode == 0 ? "Offset · units" : root.transform-mode == 1 ? (root.transform-space-index == 0 ? "World-axis rotation · degrees" : "Local-axis rotation · degrees") : root.transform-mode == 2 ? (root.transform-space-index == 0 ? "World-axis scale · factors" : "Local-axis scale · factors") : root.transform-mode == 3 ? "Reflect checked coordinates across the pivot" : "Shift one coordinate in proportion to another";
-                                    color: Theme.text-faint; font-size: Theme.font-small;
-                                }
-                                if root.transform-mode < 3: TransformVector {
-                                    enabled: !root.has-transform-preview;
-                                    x-value <=> root.transform-x;
-                                    y-value <=> root.transform-y;
-                                    z-value <=> root.transform-z;
-                                    apply => { root.apply-transform(); }
-                                }
-                                if root.transform-mode == 3: HorizontalLayout {
-                                    spacing: Theme.space-lg;
-                                    CheckBox { text: "Mirror X"; enabled: !root.has-transform-preview; checked <=> root.transform-reflect-x; }
-                                    CheckBox { text: "Mirror Y"; enabled: !root.has-transform-preview; checked <=> root.transform-reflect-y; }
-                                    CheckBox { text: "Mirror Z"; enabled: !root.has-transform-preview; checked <=> root.transform-reflect-z; }
-                                }
-                                if root.transform-mode == 4: VerticalLayout {
-                                    spacing: Theme.space-sm;
-                                    HorizontalLayout {
-                                        spacing: Theme.space;
-                                        Text { text: "Shift"; color: Theme.text-muted; vertical-alignment: center; }
-                                        ComboBox { enabled: !root.has-transform-preview; model: ["X", "Y", "Z"]; current-index <=> root.transform-shear-axis; }
-                                        Text { text: "by"; color: Theme.text-muted; vertical-alignment: center; }
-                                        ComboBox { enabled: !root.has-transform-preview; model: ["X", "Y", "Z"]; current-index <=> root.transform-shear-reference; }
-                                    }
-                                    HorizontalLayout {
-                                        spacing: Theme.space;
-                                        Text { text: "Factor"; color: Theme.text-muted; vertical-alignment: center; }
-                                        LineEdit { enabled: !root.has-transform-preview; text <=> root.transform-shear-factor; input-type: decimal; accepted => { root.apply-transform(); } }
-                                    }
-                                    MutedText { text: "0.5 shifts the chosen coordinate by half the reference distance from the pivot. Choose different axes."; font-size: Theme.font-small; }
-                                }
-                                if root.transform-mode >= 3: ComboBox {
-                                    enabled: !root.has-transform-preview;
-                                    model: ["World axes", "Local axes"];
-                                    current-index <=> root.transform-space-index;
-                                    selected => { root.transform-tool-changed(); }
-                                }
-                                if root.transform-mode != 0: VerticalLayout {
-                                    spacing: Theme.space-sm;
-                                    HorizontalLayout {
-                                        spacing: Theme.space;
-                                        Text { width: 44px; text: "Pivot"; color: Theme.text-muted; vertical-alignment: center; }
-                                        ComboBox {
-                                            horizontal-stretch: 1;
-                                            model: ["Selection center", "World origin", "Custom"];
-                                            enabled: !root.has-transform-preview;
-                                            current-index <=> root.transform-pivot-mode;
-                                            selected => { root.transform-tool-changed(); }
-                                        }
-                                    }
-                                    if root.transform-pivot-mode == 0: Text { text: root.selection-pivot; color: Theme.text-faint; font-size: Theme.font-small; }
-                                    HorizontalLayout {
-                                        spacing: Theme.space-sm;
-                                        Button { text: "Pick pivot…"; enabled: root.can-pick-pivot; clicked => { root.pick-transform-pivot(); } }
-                                        Button { text: "Snap pivot to grid"; enabled: root.can-snap-pivot; clicked => { root.snap-transform-pivot-to-grid(); } }
-                                    }
-                                    if root.pivot-grid-error != "": MutedText { text: root.pivot-grid-error; font-size: Theme.font-small; }
-                                    if root.pivot-pick-source != "": MutedText { text: root.pivot-pick-source; font-size: Theme.font-small; }
-                                    if root.transform-pivot-mode == 2: TransformVector {
-                                        enabled: !root.has-transform-preview;
-                                        x-value <=> root.pivot-x;
-                                        y-value <=> root.pivot-y;
-                                        z-value <=> root.pivot-z;
-                                        apply => { root.transform-tool-changed(); }
-                                    }
-                                }
-                                if root.can-apply-material && root.transform-mode < 3: CheckBox { text: "Follow move and rotation"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-lock; toggled => { root.transform-tool-changed(); } }
-                                if root.can-apply-material && root.transform-mode == 2: CheckBox { text: "Stretch textures when scaling"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
-                                if root.can-apply-material && root.transform-mode >= 3: CheckBox { text: root.transform-mode == 3 ? "Mirror textures with geometry" : "Keep textures attached while shearing"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
-                                if root.transform-mode >= 3: MutedText { text: "Edits brushes and brush entities. Point entities and terrain require separate support."; font-size: Theme.font-small; }
-                                Button {
-                                    primary: true;
-                                    text: root.transform-mode == 0 ? "Move selection" : root.transform-mode == 1 ? "Rotate selection" : root.transform-mode == 2 ? "Scale selection" : root.transform-mode == 3 ? "Mirror selection" : "Shear selection";
-                                    enabled: !root.has-transform-preview;
-                                    clicked => { root.apply-transform(); }
-                                }
-                                HorizontalLayout {
-                                    spacing: Theme.space;
-                                    Text { text: "Snap"; color: Theme.text-muted; vertical-alignment: center; }
-                                    ComboBox {
-                                        horizontal-stretch: 1;
-                                        enabled: !root.has-transform-preview;
-                                        model: ["Selection", "Each object"];
-                                        current-index <=> root.grid-snap-mode;
-                                    }
-                                }
-                                Button { text: "Preview snap to grid"; enabled: !root.has-transform-preview; clicked => { root.preview-snap-to-grid(); } }
-                                MutedText { text: root.grid-snap-mode == 1 ? "Anchors each object's bounds minimum. Group members snap separately; brush entities stay together." : "Anchors the selection bounds minimum. Relative positions and brush shapes stay fixed."; font-size: Theme.font-small; }
-                            }
-
-                            if root.has-faces: SectionHeader { text: "TERRAIN"; }
-                            if root.has-faces: VerticalLayout {
-                                padding-left: Theme.space-lg;
-                                padding-right: Theme.space-lg;
-                                spacing: Theme.space-sm;
-                                if root.terrain-center-picking: VerticalLayout {
-                                    spacing: Theme.space-sm;
-                                    Text { text: "Click selected terrain to set the brush center."; wrap: word-wrap; color: Theme.info; }
-                                    Button { text: "Cancel picking"; clicked => { root.cancel-terrain-center-pick(); } }
-                                }
-                                if root.terrain-triangle-picking: VerticalLayout {
-                                    spacing: Theme.space-sm;
-                                    Text { text: "Click selected terrain to pick a triangle or vertex. Escape cancels."; wrap: word-wrap; color: Theme.info; }
-                                    Button { text: "Cancel picking"; clicked => { root.cancel-terrain-triangle-pick(); } }
-                                }
-                                if root.terrain-stroking: VerticalLayout {
-                                    spacing: Theme.space-sm;
-                                    Text { text: "Drag on selected terrain, then release to review. Escape cancels."; wrap: word-wrap; color: Theme.info; }
-                                    Button { text: "Cancel stroke"; clicked => { root.cancel-terrain-stroke(); } }
-                                }
-                                if root.terrain-handling: VerticalLayout {
-                                    spacing: Theme.space-sm;
-                                    Text { text: "Move selected terrain vertices"; wrap: word-wrap; color: Theme.text-muted; }
-                                    Button { text: "Cancel terrain move"; clicked => { root.cancel-terrain-handles(); } }
-                                }
-                                if !root.can-remove-terrain: VerticalLayout {
-                                    spacing: Theme.space-sm;
-                                    HorizontalLayout {
-                                        spacing: Theme.space;
-                                        terrain-grid := ComboBox { horizontal-stretch: 1; model: ["5 × 5 · power 2", "9 × 9 · power 3", "17 × 17 · power 4"]; current-index: 0; }
-                                        ComboBox { horizontal-stretch: 1; model: root.terrain-corner-choices; current-index <=> root.terrain-corner-index; enabled: root.terrain-creation-error == ""; }
-                                    }
-                                    Button { text: "Create terrain"; icon: Icon.terrain; colorize-icon: true; enabled: root.terrain-creation-error == ""; clicked => { root.create-terrain(terrain-grid.current-index + 2, root.terrain-corner-index); } }
-                                    MutedText { text: root.terrain-creation-error == "" ? "Terrain does not seal maps. Undo restores the brush." : root.terrain-creation-error; font-size: Theme.font-small; }
-                                }
-                                if root.can-remove-terrain: VerticalLayout {
-                                    spacing: Theme.space-sm;
-                                    HorizontalLayout {
-                                        spacing: Theme.space-sm;
-                                        Button { text: "Edit terrain…"; clicked => { root.change-terrain-resolution(); } }
-                                        Button { text: "Terrain triangles…"; clicked => { root.edit-terrain-triangles(); } }
-                                    }
-                                    Button { text: "Remove terrain"; clicked => { root.remove-terrain(); } }
-                                    MutedText { text: "Removing the last terrain face restores the parent brush's volume."; font-size: Theme.font-small; }
-                                }
-                            }
-
-                            if root.can-apply-material: SectionHeader { text: root.face-mode ? "FACE MATERIAL" : "MATERIAL"; }
-                            if root.can-apply-material: VerticalLayout {
-                                padding-left: Theme.space-lg;
-                                padding-right: Theme.space-lg;
-                                spacing: Theme.space-sm;
-                                HorizontalLayout {
+                                    padding: Theme.space-lg;
                                     spacing: 10px;
                                     Rectangle {
-                                        width: 52px;
-                                        height: 52px;
-                                        border-radius: Theme.radius-sm;
-                                        background: Theme.field;
-                                        border-color: Theme.border-strong;
-                                        border-width: 1px;
-                                        clip: true;
-                                        if root.has-material-preview: Image { width: parent.width; height: parent.height; source: root.material-preview; image-fit: cover; }
+                                        width: 34px;
+                                        height: 34px;
+                                        border-radius: 7px;
+                                        background: root.entity-selected ? Theme.warning-soft : root.has-selection ? Theme.accent-soft : Theme.control;
+                                        Image {
+                                            width: 18px;
+                                            height: 18px;
+                                            source: root.entity-selected ? Icon.entity : root.face-mode && root.has-faces ? Icon.material : root.has-selection ? Icon.block : Icon.select;
+                                            colorize: root.entity-selected ? Theme.warning : root.has-selection ? Theme.accent : Theme.text-faint;
+                                        }
                                     }
                                     VerticalLayout {
-                                        spacing: Theme.space-sm;
-                                        LineEdit {
-                                            text <=> root.material;
-                                            placeholder-text: "Material path";
-                                            accepted => { root.material-changed(); root.apply-material(); }
-                                        }
-                                        HorizontalLayout {
-                                            spacing: Theme.space-sm;
-                                            Button { text: "Browse materials…"; clicked => { root.browse-material(""); } }
-                                            Button { text: "Apply"; primary: true; clicked => { root.apply-material(); } }
-                                        }
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text { text: root.selection-title; color: Theme.text; font-size: Theme.font-title; font-weight: 600; wrap: word-wrap; }
+                                        if root.selection-detail != "": Text { text: root.selection-detail; color: Theme.text-faint; font-size: Theme.font-small; wrap: word-wrap; }
                                     }
                                 }
-                                if root.has-faces: HorizontalLayout {
-                                    spacing: Theme.space-sm;
-                                    Button { text: "Sample face texture"; enabled: root.can-sample-face; clicked => { root.sample-face-texture(); } }
-                                    Button { text: "Edit face textures…"; clicked => { root.edit-face-textures(); } }
-                                }
-                                if root.has-faces: HorizontalLayout {
-                                    spacing: Theme.space-sm;
-                                    Button { text: "Map textures together…"; clicked => { root.map-face-group(); } }
-                                    Button { text: "Face lighting…"; clicked => { root.edit-face-lighting(); } }
-                                }
-                            }
 
-                            if root.can-clip: SectionHeader { text: "BRUSH TOOLS"; }
-                            if root.can-clip: VerticalLayout {
-                                padding-left: Theme.space-lg;
-                                padding-right: Theme.space-lg;
-                                spacing: Theme.space-sm;
-                                HorizontalLayout {
-                                    spacing: Theme.space-sm;
-                                    ToolTile { text: "Hollow"; icon: Icon.hollow; clicked => { root.hollow-brushes(); } }
-                                    ToolTile { text: "Carve"; icon: Icon.carve; clicked => { root.carve-brushes(); } }
-                                    ToolTile { text: "Merge"; icon: Icon.merge; clicked => { root.merge-brushes(); } }
+                                if root.has-selection: HorizontalLayout {
+                                    padding-left: Theme.space;
+                                    padding-right: Theme.space;
+                                    alignment: start;
+                                    spacing: 2px;
+                                    IconButton { icon: Icon.frame; tooltip: "Frame selection"; clicked => { root.frame-selection(); } }
+                                    IconButton { icon: Icon.eye-off; tooltip: "Hide in editor"; enabled: root.can-hide-editor-selection; clicked => { root.hide-editor-selection(); } }
+                                    IconButton { icon: Icon.copy; tooltip: "Copy"; clicked => { root.copy-objects(); } }
+                                    IconButton { icon: Icon.paste; tooltip: "Paste"; clicked => { root.paste-objects(); } }
+                                    IconButton { icon: Icon.trash; tooltip: "Delete"; clicked => { root.delete-selection(); } }
                                 }
-                                HorizontalLayout {
-                                    spacing: Theme.space-sm;
-                                    ToolTile { text: "Clip"; icon: Icon.clip; active: root.clipping; clicked => { if !root.clipping { root.start-clip(); } } }
-                                    ToolTile { text: "Reshape"; icon: Icon.reshape; clicked => { root.brush-components(); } }
-                                    ToolTile { text: "Repeat"; icon: Icon.instances; clicked => { root.repeat-array(); } }
-                                }
-                            }
-
-                            if root.has-selection: SectionHeader { text: "PLACEMENT"; }
-                            if root.has-selection: VerticalLayout {
-                                padding-left: Theme.space-lg;
-                                padding-right: Theme.space-lg;
-                                spacing: Theme.space-sm;
-                                HorizontalLayout {
-                                    spacing: Theme.space-sm;
-                                    Button { text: "Place on surface…"; clicked => { root.place-on-surface(); } }
-                                    if !root.can-clip: Button { text: "Repeat array…"; clicked => { root.repeat-array(); } }
-                                }
-                                if root.can-tie || root.brush-entity-selected: HorizontalLayout {
-                                    spacing: Theme.space-sm;
-                                    if root.can-tie: Button { text: "Tie to entity…"; clicked => { root.tie-entity(); } }
-                                    if root.brush-entity-selected: Button { text: "Move to world"; clicked => { root.move-to-world(); } }
-                                }
-                            }
-
-                            if root.entity-selected: SectionHeader { text: "PROPERTIES"; }
-                            if root.entity-selected: VerticalLayout {
-                                padding-left: Theme.space-lg;
-                                padding-right: Theme.space-lg;
-                                spacing: Theme.space-sm;
-                                HorizontalLayout {
-                                    spacing: Theme.space-sm;
-                                    Button { text: "Connections…"; clicked => { root.edit-connections(); } }
-                                    Button { text: "References and rename…"; clicked => { root.edit-references(); } }
-                                }
-                                if root.can-inspect-model || root.can-cubemap-faces: HorizontalLayout {
-                                    spacing: Theme.space-sm;
-                                    if root.can-inspect-model: Button { text: "Model details…"; clicked => { root.inspect-model(); } }
-                                    if root.can-cubemap-faces: Button { text: "Cubemap faces…"; clicked => { root.cubemap-faces(); } }
-                                }
-                                if root.has-fgd-model-guide: Button { text: "Reload models"; clicked => { root.reload-model-guides(); } }
-                                CheckBox { text: "Advanced properties"; checked <=> root.advanced-properties; }
-                                if root.advanced-properties && root.entity-helper-status != "": MutedText { text: root.entity-helper-status; font-size: Theme.font-small; }
-                                for row in root.entity-properties: VerticalLayout {
-                                    if !row.advanced || root.advanced-properties: PropertyField {
-                                        field: row;
-                                        advanced: root.advanced-properties;
-                                        model-browsing: true;
-                                        edited(value) => { root.property-edited(row.key, value); }
-                                        component-edited(index, value) => { root.property-component-edited(row.key, index, value); }
-                                        removed => { root.property-removed(row.key); }
-                                        flag-toggled(flag, checked) => { root.flag-toggled(row.key, flag, checked); }
-                                        pick-color => { root.pick-color(row.key); }
-                                        pick-material => { root.browse-material(row.key); }
-                                        pick-model => { root.browse-model(); }
-                                        pick-sound => { root.browse-sound(row.key); }
-                                        pick-particle => { root.browse-particle(); }
-                                    }
-                                }
-                                if root.advanced-properties: HorizontalLayout {
-                                    spacing: Theme.space-sm;
-                                    new-key := LineEdit { width: 110px; placeholder-text: "Property key"; }
-                                    new-value := LineEdit {
-                                        horizontal-stretch: 1;
-                                        placeholder-text: "Value";
-                                        accepted(text) => {
-                                            root.property-edited(new-key.text, text);
-                                            new-key.text = "";
-                                            self.text = "";
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if root.dock-tab == 2: VerticalLayout {
-                        vertical-stretch: 1;
-                        padding-top: Theme.space;
-                        spacing: Theme.space-xs;
-                        HorizontalLayout {
-                            padding-left: Theme.space;
-                            padding-right: Theme.space;
-                            LineEdit {
-                                text <=> root.outliner-filter;
-                                placeholder-text: "Filter by id, class, name or material";
-                                accessible-label: "Filter objects";
-                                edited => { root.outliner-refresh(); }
-                            }
-                        }
-                        ListView {
-                            vertical-stretch: 1;
-                            for row in root.outliner-rows: Rectangle {
-                                height: 26px;
-                                background: row.selected && row.object ? Theme.selection : outliner-touch.has-hover && (row.object || row.expandable) ? Theme.hover : transparent;
-                                accessible-role: list-item;
-                                accessible-label: row.label;
-                                accessible-expandable: row.expandable;
-                                accessible-expanded: row.expanded;
-                                HorizontalLayout {
-                                    padding-left: Theme.space + row.depth * 18px;
-                                    padding-right: Theme.space-lg;
-                                    spacing: 6px;
-                                    if row.expandable: Image {
-                                        y: (parent.height - self.height) / 2;
-                                        width: 12px;
-                                        height: 12px;
-                                        source: row.expanded || root.outliner-filter != "" ? Icon.chevron-down : Icon.chevron-right;
-                                        colorize: Theme.text-faint;
-                                    }
-                                    if row.expandable: Image {
-                                        y: (parent.height - self.height) / 2;
-                                        width: 14px;
-                                        height: 14px;
-                                        source: row.key == "world" ? Icon.block : Icon.entity;
-                                        colorize: row.selected ? Theme.accent : Theme.text-muted;
-                                    }
-                                    Text {
-                                        text: row.label;
-                                        color: !row.object && !row.expandable ? Theme.text-faint : Theme.text;
-                                        font-weight: row.expandable ? 500 : 400;
-                                        vertical-alignment: center;
-                                        horizontal-stretch: 1;
-                                        overflow: elide;
-                                    }
-                                    Text {
-                                        text: row.detail;
-                                        color: Theme.text-faint;
-                                        font-size: Theme.font-small;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                    }
-                                }
-                                outliner-touch := TouchArea {
-                                    clicked => {
-                                        if row.expandable {
-                                            root.outliner-toggle(row.key);
-                                        } else if row.object {
-                                            root.outliner-pick(row.key);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if root.dock-tab == 1: ScrollView {
-                        vertical-stretch: 1;
-                        VerticalLayout {
-                            alignment: start;
-                            padding: Theme.space-lg;
-                            spacing: Theme.space;
-                            HorizontalLayout {
-                                spacing: Theme.space-sm;
-                                Button { text: root.clip-point-mode ? "Use plane / line" : "Pick three points"; clicked => { root.clip-points-action(root.clip-point-mode ? 3 : 0); } }
-                                if root.clip-point-mode: Button { text: "Remove last point"; enabled: root.clip-point-count > 0; clicked => { root.clip-points-action(1); } }
-                                if root.clip-point-mode: Button { text: "Start again"; enabled: root.clip-point-count > 0; clicked => { root.clip-points-action(2); } }
-                            }
-                            if root.clip-point-mode: Text { text: root.clip-points-summary; color: Theme.warning; font-size: Theme.font-small; wrap: word-wrap; }
-                            FieldRow {
-                                padding-left: 0; padding-right: 0; label-width: 64px;
-                                label: "Keep";
-                                ComboBox {
-                                    horizontal-stretch: 1;
-                                    model: ["Arrow side", "Opposite side", "Both sides"];
-                                    current-index <=> root.clip-keep-index;
-                                    selected => { root.clip-settings-changed(); }
-                                }
-                            }
-                            MutedText { text: "The cyan arrow points to the front side."; font-size: Theme.font-small; }
-                            FieldRow {
-                                padding-left: 0; padding-right: 0; label-width: 64px;
-                                label: "Handles";
-                                ComboBox {
-                                    horizontal-stretch: 1;
-                                    model: ["Hidden", "Move plane", "Rotate plane"];
-                                    current-index <=> root.clip-handles-mode;
-                                    selected => { root.clip-handles-changed(); }
-                                }
-                            }
-                            HorizontalLayout {
-                                spacing: Theme.space;
-                                CheckBox { text: "Snap"; checked <=> root.clip-handles-snap; toggled => { root.clip-handles-changed(); } }
-                                if root.clip-handles-mode == 2: LineEdit { width: 56px; text <=> root.clip-angle-step; input-type: decimal; accepted => { root.clip-handles-changed(); } }
-                                if root.clip-handles-mode == 2: Text { text: "° steps"; color: Theme.text-muted; vertical-alignment: center; }
-                                Rectangle { horizontal-stretch: 1; }
-                                Text { text: "World axes"; color: Theme.text-faint; vertical-alignment: center; }
-                            }
-                            if root.clip-positioning: Button { text: "Cancel positioning"; clicked => { root.cancel-clip-positioning(); } }
-                            if !root.clip-point-mode: VerticalLayout {
-                                spacing: Theme.space-sm;
-                                Text { text: "Plane normal"; color: Theme.text-muted; }
-                                HorizontalLayout {
-                                    spacing: 6px;
-                                    Text { text: "X"; color: Theme.axis-x; vertical-alignment: center; }
-                                    LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.clip-normal-x; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
-                                    Text { text: "Y"; color: Theme.axis-y; vertical-alignment: center; }
-                                    LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.clip-normal-y; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
-                                    Text { text: "Z"; color: Theme.axis-z; vertical-alignment: center; }
-                                    LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.clip-normal-z; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
-                                }
-                                FieldRow {
-                                    padding-left: 0; padding-right: 0; label-width: 64px;
-                                    label: "Distance";
-                                    LineEdit { horizontal-stretch: 1; text <=> root.clip-distance; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
-                                }
-                                Button { text: "Preview plane"; clicked => { root.preview-clip-plane(); } }
-                            }
-                            Text { text: "Cut material"; color: Theme.text-muted; }
-                            HorizontalLayout {
-                                spacing: Theme.space-sm;
-                                LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.clip-material; placeholder-text: "Inherit each brush's material"; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
-                                Button { text: "Browse…"; clicked => { root.browse-material("@clip"); } }
-                            }
-                            if root.clip-summary != "": Text { text: root.clip-summary; color: Theme.info; font-size: Theme.font-small; wrap: word-wrap; }
-                            HorizontalLayout {
-                                spacing: Theme.space-sm;
-                                alignment: end;
-                                Button { text: "Cancel cut"; clicked => { root.cancel-clip(); } }
-                                Button { primary: true; text: "Apply cut"; enabled: root.has-clip-preview && !root.clip-positioning; clicked => { root.apply-clip(); } }
-                            }
-                        }
-                    }
-
-                    Rectangle {
-                        height: 250px;
-                        background: Theme.bar;
-                        Rectangle { y: 0; height: 1px; background: Theme.border; }
-                        VerticalLayout {
-                            padding-top: 1px;
-                            Rectangle {
-                                height: 34px;
-                                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
-                                HorizontalLayout {
+                                if root.editor-hidden-count > 0: HorizontalLayout {
                                     padding-left: Theme.space-lg;
                                     padding-right: Theme.space-lg;
-                                    spacing: 7px;
-                                    Image { y: (parent.height - self.height) / 2; width: 14px; height: 14px; source: Icon.agent; colorize: Theme.agent; }
-                                    Text { text: "Agent"; color: Theme.text; font-weight: 600; vertical-alignment: center; }
-                                    Text { text: root.mcp-status; color: Theme.text-faint; font-size: Theme.font-small; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                    spacing: Theme.space;
+                                    Text { text: root.editor-hidden-count + " hidden in editor"; color: Theme.text-faint; vertical-alignment: center; horizontal-stretch: 1; }
+                                    Button { text: "Show all"; clicked => { root.show-all-editor-hidden(); } }
+                                }
+                                if !root.has-selection: VerticalLayout {
+                                    padding-left: Theme.space-lg;
+                                    padding-right: Theme.space-lg;
+                                    spacing: Theme.space;
+                                    MutedText { text: "Click an object, drag an area, or let your agent select. Use the rail to draw brushes and place entities."; }
+                                    HorizontalLayout {
+                                        spacing: Theme.space-sm;
+                                        Button { text: root.projection-index == 0 ? "Add brush" : "Draw brush"; icon: Icon.block; colorize-icon: true; clicked => { root.create-block(); } }
+                                        Button { text: "Place entity"; icon: Icon.entity; colorize-icon: true; clicked => { root.place-entity(); } }
+                                    }
+                                }
+
+                                if root.surface-picking: VerticalLayout {
+                                    padding-left: Theme.space-lg;
+                                    padding-right: Theme.space-lg;
+                                    spacing: Theme.space-sm;
+                                    Text { text: "Click a visible surface. Escape cancels picking."; wrap: word-wrap; color: Theme.info; }
+                                    Button { text: "Cancel picking"; clicked => { root.cancel-surface-pick(); } }
+                                }
+
+                                if root.has-selection: SectionHeader { text: "TRANSFORM"; expanded <=> root.show-transform; }
+                                if root.has-selection && root.show-transform: VerticalLayout {
+                                    padding-left: Theme.space-lg;
+                                    padding-right: Theme.space-lg;
+                                    spacing: Theme.space-sm;
+                                    if root.has-transform-preview: Text { text: root.transform-preview-summary; color: Theme.text; font-size: Theme.font-small; wrap: word-wrap; }
+                                    ComboBox {
+                                        enabled: !root.has-transform-preview;
+                                        model: ["Move", "Rotate", "Scale", "Mirror", "Shear"];
+                                        current-index <=> root.transform-mode;
+                                        selected => { root.handles-mode-index = self.current-index >= 3 ? 0 : self.current-index + 1; root.transform-tool-changed(); }
+                                    }
+                                    Text {
+                                        text: root.transform-mode == 0 ? "Offset · units" : root.transform-mode == 1 ? (root.transform-space-index == 0 ? "World-axis rotation · degrees" : "Local-axis rotation · degrees") : root.transform-mode == 2 ? (root.transform-space-index == 0 ? "World-axis scale · factors" : "Local-axis scale · factors") : root.transform-mode == 3 ? "Reflect checked coordinates across the pivot" : "Shift one coordinate in proportion to another";
+                                        color: Theme.text-faint; font-size: Theme.font-small;
+                                    }
+                                    if root.transform-mode < 3: TransformVector {
+                                        enabled: !root.has-transform-preview;
+                                        x-value <=> root.transform-x;
+                                        y-value <=> root.transform-y;
+                                        z-value <=> root.transform-z;
+                                        apply => { root.apply-transform(); }
+                                    }
+                                    if root.transform-mode == 3: HorizontalLayout {
+                                        spacing: Theme.space-lg;
+                                        CheckBox { text: "Mirror X"; enabled: !root.has-transform-preview; checked <=> root.transform-reflect-x; }
+                                        CheckBox { text: "Mirror Y"; enabled: !root.has-transform-preview; checked <=> root.transform-reflect-y; }
+                                        CheckBox { text: "Mirror Z"; enabled: !root.has-transform-preview; checked <=> root.transform-reflect-z; }
+                                    }
+                                    if root.transform-mode == 4: VerticalLayout {
+                                        spacing: Theme.space-sm;
+                                        HorizontalLayout {
+                                            spacing: Theme.space;
+                                            Text { text: "Shift"; color: Theme.text-muted; vertical-alignment: center; }
+                                            ComboBox { enabled: !root.has-transform-preview; model: ["X", "Y", "Z"]; current-index <=> root.transform-shear-axis; }
+                                            Text { text: "by"; color: Theme.text-muted; vertical-alignment: center; }
+                                            ComboBox { enabled: !root.has-transform-preview; model: ["X", "Y", "Z"]; current-index <=> root.transform-shear-reference; }
+                                        }
+                                        HorizontalLayout {
+                                            spacing: Theme.space;
+                                            Text { text: "Factor"; color: Theme.text-muted; vertical-alignment: center; }
+                                            LineEdit { enabled: !root.has-transform-preview; text <=> root.transform-shear-factor; input-type: decimal; accepted => { root.apply-transform(); } }
+                                        }
+                                        MutedText { text: "0.5 shifts the chosen coordinate by half the reference distance from the pivot. Choose different axes."; font-size: Theme.font-small; }
+                                    }
+                                    if root.transform-mode >= 3: ComboBox {
+                                        enabled: !root.has-transform-preview;
+                                        model: ["World axes", "Local axes"];
+                                        current-index <=> root.transform-space-index;
+                                        selected => { root.transform-tool-changed(); }
+                                    }
+                                    if root.transform-mode != 0: VerticalLayout {
+                                        spacing: Theme.space-sm;
+                                        HorizontalLayout {
+                                            spacing: Theme.space;
+                                            Text { width: 44px; text: "Pivot"; color: Theme.text-muted; vertical-alignment: center; }
+                                            ComboBox {
+                                                horizontal-stretch: 1;
+                                                model: ["Selection center", "World origin", "Custom"];
+                                                enabled: !root.has-transform-preview;
+                                                current-index <=> root.transform-pivot-mode;
+                                                selected => { root.transform-tool-changed(); }
+                                            }
+                                        }
+                                        if root.transform-pivot-mode == 0: Text { text: root.selection-pivot; color: Theme.text-faint; font-size: Theme.font-small; }
+                                        HorizontalLayout {
+                                            spacing: Theme.space-sm;
+                                            Button { text: "Pick pivot…"; enabled: root.can-pick-pivot; clicked => { root.pick-transform-pivot(); } }
+                                            Button { text: "Snap pivot to grid"; enabled: root.can-snap-pivot; clicked => { root.snap-transform-pivot-to-grid(); } }
+                                        }
+                                        if root.pivot-grid-error != "": MutedText { text: root.pivot-grid-error; font-size: Theme.font-small; }
+                                        if root.pivot-pick-source != "": MutedText { text: root.pivot-pick-source; font-size: Theme.font-small; }
+                                        if root.transform-pivot-mode == 2: TransformVector {
+                                            enabled: !root.has-transform-preview;
+                                            x-value <=> root.pivot-x;
+                                            y-value <=> root.pivot-y;
+                                            z-value <=> root.pivot-z;
+                                            apply => { root.transform-tool-changed(); }
+                                        }
+                                    }
+                                    if root.can-apply-material && root.transform-mode < 3: CheckBox { text: "Follow move and rotation"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-lock; toggled => { root.transform-tool-changed(); } }
+                                    if root.can-apply-material && root.transform-mode == 2: CheckBox { text: "Stretch textures when scaling"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
+                                    if root.can-apply-material && root.transform-mode >= 3: CheckBox { text: root.transform-mode == 3 ? "Mirror textures with geometry" : "Keep textures attached while shearing"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
+                                    if root.transform-mode >= 3: MutedText { text: "Edits brushes and brush entities. Point entities and terrain require separate support."; font-size: Theme.font-small; }
+                                    Button {
+                                        primary: true;
+                                        text: root.transform-mode == 0 ? "Move selection" : root.transform-mode == 1 ? "Rotate selection" : root.transform-mode == 2 ? "Scale selection" : root.transform-mode == 3 ? "Mirror selection" : "Shear selection";
+                                        enabled: !root.has-transform-preview;
+                                        clicked => { root.apply-transform(); }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: Theme.space;
+                                        Text { text: "Snap"; color: Theme.text-muted; vertical-alignment: center; }
+                                        ComboBox {
+                                            horizontal-stretch: 1;
+                                            enabled: !root.has-transform-preview;
+                                            model: ["Selection", "Each object"];
+                                            current-index <=> root.grid-snap-mode;
+                                        }
+                                    }
+                                    Button { text: "Preview snap to grid"; enabled: !root.has-transform-preview; clicked => { root.preview-snap-to-grid(); } }
+                                    MutedText { text: root.grid-snap-mode == 1 ? "Anchors each object's bounds minimum. Group members snap separately; brush entities stay together." : "Anchors the selection bounds minimum. Relative positions and brush shapes stay fixed."; font-size: Theme.font-small; }
+                                }
+
+                                if root.has-faces: SectionHeader { text: "TERRAIN"; }
+                                if root.has-faces: VerticalLayout {
+                                    padding-left: Theme.space-lg;
+                                    padding-right: Theme.space-lg;
+                                    spacing: Theme.space-sm;
+                                    if root.terrain-center-picking: VerticalLayout {
+                                        spacing: Theme.space-sm;
+                                        Text { text: "Click selected terrain to set the brush center."; wrap: word-wrap; color: Theme.info; }
+                                        Button { text: "Cancel picking"; clicked => { root.cancel-terrain-center-pick(); } }
+                                    }
+                                    if root.terrain-triangle-picking: VerticalLayout {
+                                        spacing: Theme.space-sm;
+                                        Text { text: "Click selected terrain to pick a triangle or vertex. Escape cancels."; wrap: word-wrap; color: Theme.info; }
+                                        Button { text: "Cancel picking"; clicked => { root.cancel-terrain-triangle-pick(); } }
+                                    }
+                                    if root.terrain-stroking: VerticalLayout {
+                                        spacing: Theme.space-sm;
+                                        Text { text: "Drag on selected terrain, then release to review. Escape cancels."; wrap: word-wrap; color: Theme.info; }
+                                        Button { text: "Cancel stroke"; clicked => { root.cancel-terrain-stroke(); } }
+                                    }
+                                    if root.terrain-handling: VerticalLayout {
+                                        spacing: Theme.space-sm;
+                                        Text { text: "Move selected terrain vertices"; wrap: word-wrap; color: Theme.text-muted; }
+                                        Button { text: "Cancel terrain move"; clicked => { root.cancel-terrain-handles(); } }
+                                    }
+                                    if !root.can-remove-terrain: VerticalLayout {
+                                        spacing: Theme.space-sm;
+                                        HorizontalLayout {
+                                            spacing: Theme.space;
+                                            terrain-grid := ComboBox { horizontal-stretch: 1; model: ["5 × 5 · power 2", "9 × 9 · power 3", "17 × 17 · power 4"]; current-index: 0; }
+                                            ComboBox { horizontal-stretch: 1; model: root.terrain-corner-choices; current-index <=> root.terrain-corner-index; enabled: root.terrain-creation-error == ""; }
+                                        }
+                                        Button { text: "Create terrain"; icon: Icon.terrain; colorize-icon: true; enabled: root.terrain-creation-error == ""; clicked => { root.create-terrain(terrain-grid.current-index + 2, root.terrain-corner-index); } }
+                                        MutedText { text: root.terrain-creation-error == "" ? "Terrain does not seal maps. Undo restores the brush." : root.terrain-creation-error; font-size: Theme.font-small; }
+                                    }
+                                    if root.can-remove-terrain: VerticalLayout {
+                                        spacing: Theme.space-sm;
+                                        HorizontalLayout {
+                                            spacing: Theme.space-sm;
+                                            Button { text: "Edit terrain…"; clicked => { root.change-terrain-resolution(); } }
+                                            Button { text: "Terrain triangles…"; clicked => { root.edit-terrain-triangles(); } }
+                                        }
+                                        Button { text: "Remove terrain"; clicked => { root.remove-terrain(); } }
+                                        MutedText { text: "Removing the last terrain face restores the parent brush's volume."; font-size: Theme.font-small; }
+                                    }
+                                }
+
+                                if root.can-apply-material: SectionHeader { text: root.face-mode ? "FACE MATERIAL" : "MATERIAL"; }
+                                if root.can-apply-material: VerticalLayout {
+                                    padding-left: Theme.space-lg;
+                                    padding-right: Theme.space-lg;
+                                    spacing: Theme.space-sm;
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        Rectangle {
+                                            width: 52px;
+                                            height: 52px;
+                                            border-radius: Theme.radius-sm;
+                                            background: Theme.field;
+                                            border-color: Theme.border-strong;
+                                            border-width: 1px;
+                                            clip: true;
+                                            if root.has-material-preview: Image { width: parent.width; height: parent.height; source: root.material-preview; image-fit: cover; }
+                                        }
+                                        VerticalLayout {
+                                            spacing: Theme.space-sm;
+                                            LineEdit {
+                                                text <=> root.material;
+                                                placeholder-text: "Material path";
+                                                accepted => { root.material-changed(); root.apply-material(); }
+                                            }
+                                            HorizontalLayout {
+                                                spacing: Theme.space-sm;
+                                                Button { text: "Browse materials…"; clicked => { root.browse-material(""); } }
+                                                Button { text: "Apply"; primary: true; clicked => { root.apply-material(); } }
+                                            }
+                                        }
+                                    }
+                                    if root.has-faces: HorizontalLayout {
+                                        spacing: Theme.space-sm;
+                                        Button { text: "Sample face texture"; enabled: root.can-sample-face; clicked => { root.sample-face-texture(); } }
+                                        Button { text: "Edit face textures…"; clicked => { root.edit-face-textures(); } }
+                                    }
+                                    if root.has-faces: HorizontalLayout {
+                                        spacing: Theme.space-sm;
+                                        Button { text: "Map textures together…"; clicked => { root.map-face-group(); } }
+                                        Button { text: "Face lighting…"; clicked => { root.edit-face-lighting(); } }
+                                    }
+                                }
+
+                                if root.can-clip: SectionHeader { text: "BRUSH TOOLS"; }
+                                if root.can-clip: VerticalLayout {
+                                    padding-left: Theme.space-lg;
+                                    padding-right: Theme.space-lg;
+                                    spacing: Theme.space-sm;
+                                    HorizontalLayout {
+                                        spacing: Theme.space-sm;
+                                        ToolTile { text: "Hollow"; icon: Icon.hollow; clicked => { root.hollow-brushes(); } }
+                                        ToolTile { text: "Carve"; icon: Icon.carve; clicked => { root.carve-brushes(); } }
+                                        ToolTile { text: "Merge"; icon: Icon.merge; clicked => { root.merge-brushes(); } }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: Theme.space-sm;
+                                        ToolTile { text: "Clip"; icon: Icon.clip; active: root.clipping; clicked => { if !root.clipping { root.start-clip(); } } }
+                                        ToolTile { text: "Reshape"; icon: Icon.reshape; clicked => { root.brush-components(); } }
+                                        ToolTile { text: "Repeat"; icon: Icon.instances; clicked => { root.repeat-array(); } }
+                                    }
+                                }
+
+                                if root.has-selection: SectionHeader { text: "PLACEMENT"; }
+                                if root.has-selection: VerticalLayout {
+                                    padding-left: Theme.space-lg;
+                                    padding-right: Theme.space-lg;
+                                    spacing: Theme.space-sm;
+                                    HorizontalLayout {
+                                        spacing: Theme.space-sm;
+                                        Button { text: "Place on surface…"; clicked => { root.place-on-surface(); } }
+                                        if !root.can-clip: Button { text: "Repeat array…"; clicked => { root.repeat-array(); } }
+                                    }
+                                    if root.can-tie || root.brush-entity-selected: HorizontalLayout {
+                                        spacing: Theme.space-sm;
+                                        if root.can-tie: Button { text: "Tie to entity…"; clicked => { root.tie-entity(); } }
+                                        if root.brush-entity-selected: Button { text: "Move to world"; clicked => { root.move-to-world(); } }
+                                    }
+                                }
+
+                                if root.entity-selected: SectionHeader { text: "PROPERTIES"; }
+                                if root.entity-selected: VerticalLayout {
+                                    padding-left: Theme.space-lg;
+                                    padding-right: Theme.space-lg;
+                                    spacing: Theme.space-sm;
+                                    HorizontalLayout {
+                                        spacing: Theme.space-sm;
+                                        Button { text: "Connections…"; clicked => { root.edit-connections(); } }
+                                        Button { text: "References and rename…"; clicked => { root.edit-references(); } }
+                                    }
+                                    if root.can-inspect-model || root.can-cubemap-faces: HorizontalLayout {
+                                        spacing: Theme.space-sm;
+                                        if root.can-inspect-model: Button { text: "Model details…"; clicked => { root.inspect-model(); } }
+                                        if root.can-cubemap-faces: Button { text: "Cubemap faces…"; clicked => { root.cubemap-faces(); } }
+                                    }
+                                    if root.has-fgd-model-guide: Button { text: "Reload models"; clicked => { root.reload-model-guides(); } }
+                                    CheckBox { text: "Advanced properties"; checked <=> root.advanced-properties; }
+                                    if root.advanced-properties && root.entity-helper-status != "": MutedText { text: root.entity-helper-status; font-size: Theme.font-small; }
+                                    for row in root.entity-properties: VerticalLayout {
+                                        if !row.advanced || root.advanced-properties: PropertyField {
+                                            field: row;
+                                            advanced: root.advanced-properties;
+                                            model-browsing: true;
+                                            edited(value) => { root.property-edited(row.key, value); }
+                                            component-edited(index, value) => { root.property-component-edited(row.key, index, value); }
+                                            removed => { root.property-removed(row.key); }
+                                            flag-toggled(flag, checked) => { root.flag-toggled(row.key, flag, checked); }
+                                            pick-color => { root.pick-color(row.key); }
+                                            pick-material => { root.browse-material(row.key); }
+                                            pick-model => { root.browse-model(); }
+                                            pick-sound => { root.browse-sound(row.key); }
+                                            pick-particle => { root.browse-particle(); }
+                                        }
+                                    }
+                                    if root.advanced-properties: HorizontalLayout {
+                                        spacing: Theme.space-sm;
+                                        new-key := LineEdit { width: 110px; placeholder-text: "Property key"; }
+                                        new-value := LineEdit {
+                                            horizontal-stretch: 1;
+                                            placeholder-text: "Value";
+                                            accepted(text) => {
+                                                root.property-edited(new-key.text, text);
+                                                new-key.text = "";
+                                                self.text = "";
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.dock-tab == 2: VerticalLayout {
+                            vertical-stretch: 1;
+                            padding-top: Theme.space;
+                            spacing: Theme.space-xs;
+                            HorizontalLayout {
+                                padding-left: Theme.space;
+                                padding-right: Theme.space;
+                                LineEdit {
+                                    text <=> root.outliner-filter;
+                                    placeholder-text: "Filter by id, class, name or material";
+                                    accessible-label: "Filter objects";
+                                    edited => { root.outliner-refresh(); }
                                 }
                             }
                             ListView {
                                 vertical-stretch: 1;
-                                for entry in root.activity: HorizontalLayout {
-                                    padding-left: Theme.space-lg;
-                                    padding-right: Theme.space-lg;
-                                    padding-top: 5px;
-                                    padding-bottom: 5px;
-                                    spacing: Theme.space;
-                                    VerticalLayout {
-                                        alignment: start;
-                                        Badge {
-                                            text: entry.actor;
-                                            text-color: entry.actor == "agent" ? Theme.agent-text : entry.actor == "you" ? Theme.user : Theme.text-faint;
-                                            fill: entry.actor == "agent" ? Theme.agent-soft : entry.actor == "you" ? Theme.user-soft : Theme.control;
+                                for row in root.outliner-rows: Rectangle {
+                                    height: 26px;
+                                    background: row.selected && row.object ? Theme.selection : outliner-touch.has-hover && (row.object || row.expandable) ? Theme.hover : transparent;
+                                    accessible-role: list-item;
+                                    accessible-label: row.label;
+                                    accessible-expandable: row.expandable;
+                                    accessible-expanded: row.expanded;
+                                    HorizontalLayout {
+                                        padding-left: Theme.space + row.depth * 18px;
+                                        padding-right: Theme.space-lg;
+                                        spacing: 6px;
+                                        if row.expandable: Image {
+                                            y: (parent.height - self.height) / 2;
+                                            width: 12px;
+                                            height: 12px;
+                                            source: row.expanded || root.outliner-filter != "" ? Icon.chevron-down : Icon.chevron-right;
+                                            colorize: Theme.text-faint;
                                         }
-                                    }
-                                    VerticalLayout {
-                                        horizontal-stretch: 1;
-                                        spacing: 1px;
-                                        if entry.tool != "": Text {
-                                            text: entry.tool;
-                                            color: Theme.text;
-                                            font-size: Theme.font-small;
-                                            font-family: "monospace";
+                                        if row.expandable: Image {
+                                            y: (parent.height - self.height) / 2;
+                                            width: 14px;
+                                            height: 14px;
+                                            source: row.key == "world" ? Icon.block : Icon.entity;
+                                            colorize: row.selected ? Theme.accent : Theme.text-muted;
+                                        }
+                                        Text {
+                                            text: row.label;
+                                            color: !row.object && !row.expandable ? Theme.text-faint : Theme.text;
+                                            font-weight: row.expandable ? 500 : 400;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
                                             overflow: elide;
                                         }
                                         Text {
-                                            text: entry.text;
-                                            color: Theme.text-muted;
+                                            text: row.detail;
+                                            color: Theme.text-faint;
                                             font-size: Theme.font-small;
-                                            wrap: word-wrap;
+                                            vertical-alignment: center;
+                                            overflow: elide;
                                         }
                                     }
-                                    Text {
-                                        text: entry.time;
-                                        color: Theme.text-faint;
-                                        font-size: Theme.font-small;
-                                        horizontal-alignment: right;
+                                    outliner-touch := TouchArea {
+                                        clicked => {
+                                            if row.expandable {
+                                                root.outliner-toggle(row.key);
+                                            } else if row.object {
+                                                root.outliner-pick(row.key);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.dock-tab == 1: ScrollView {
+                            vertical-stretch: 1;
+                            VerticalLayout {
+                                alignment: start;
+                                padding: Theme.space-lg;
+                                spacing: Theme.space;
+                                HorizontalLayout {
+                                    spacing: Theme.space-sm;
+                                    Button { text: root.clip-point-mode ? "Use plane / line" : "Pick three points"; clicked => { root.clip-points-action(root.clip-point-mode ? 3 : 0); } }
+                                    if root.clip-point-mode: Button { text: "Remove last point"; enabled: root.clip-point-count > 0; clicked => { root.clip-points-action(1); } }
+                                    if root.clip-point-mode: Button { text: "Start again"; enabled: root.clip-point-count > 0; clicked => { root.clip-points-action(2); } }
+                                }
+                                if root.clip-point-mode: Text { text: root.clip-points-summary; color: Theme.warning; font-size: Theme.font-small; wrap: word-wrap; }
+                                FieldRow {
+                                    padding-left: 0; padding-right: 0; label-width: 64px;
+                                    label: "Keep";
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        model: ["Arrow side", "Opposite side", "Both sides"];
+                                        current-index <=> root.clip-keep-index;
+                                        selected => { root.clip-settings-changed(); }
+                                    }
+                                }
+                                MutedText { text: "The cyan arrow points to the front side."; font-size: Theme.font-small; }
+                                FieldRow {
+                                    padding-left: 0; padding-right: 0; label-width: 64px;
+                                    label: "Handles";
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        model: ["Hidden", "Move plane", "Rotate plane"];
+                                        current-index <=> root.clip-handles-mode;
+                                        selected => { root.clip-handles-changed(); }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: Theme.space;
+                                    CheckBox { text: "Snap"; checked <=> root.clip-handles-snap; toggled => { root.clip-handles-changed(); } }
+                                    if root.clip-handles-mode == 2: LineEdit { width: 56px; text <=> root.clip-angle-step; input-type: decimal; accepted => { root.clip-handles-changed(); } }
+                                    if root.clip-handles-mode == 2: Text { text: "° steps"; color: Theme.text-muted; vertical-alignment: center; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Text { text: "World axes"; color: Theme.text-faint; vertical-alignment: center; }
+                                }
+                                if root.clip-positioning: Button { text: "Cancel positioning"; clicked => { root.cancel-clip-positioning(); } }
+                                if !root.clip-point-mode: VerticalLayout {
+                                    spacing: Theme.space-sm;
+                                    Text { text: "Plane normal"; color: Theme.text-muted; }
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        Text { text: "X"; color: Theme.axis-x; vertical-alignment: center; }
+                                        LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.clip-normal-x; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
+                                        Text { text: "Y"; color: Theme.axis-y; vertical-alignment: center; }
+                                        LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.clip-normal-y; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
+                                        Text { text: "Z"; color: Theme.axis-z; vertical-alignment: center; }
+                                        LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.clip-normal-z; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
+                                    }
+                                    FieldRow {
+                                        padding-left: 0; padding-right: 0; label-width: 64px;
+                                        label: "Distance";
+                                        LineEdit { horizontal-stretch: 1; text <=> root.clip-distance; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
+                                    }
+                                    Button { text: "Preview plane"; clicked => { root.preview-clip-plane(); } }
+                                }
+                                Text { text: "Cut material"; color: Theme.text-muted; }
+                                HorizontalLayout {
+                                    spacing: Theme.space-sm;
+                                    LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.clip-material; placeholder-text: "Inherit each brush's material"; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
+                                    Button { text: "Browse…"; clicked => { root.browse-material("@clip"); } }
+                                }
+                                if root.clip-summary != "": Text { text: root.clip-summary; color: Theme.info; font-size: Theme.font-small; wrap: word-wrap; }
+                                HorizontalLayout {
+                                    spacing: Theme.space-sm;
+                                    alignment: end;
+                                    Button { text: "Cancel cut"; clicked => { root.cancel-clip(); } }
+                                    Button { primary: true; text: "Apply cut"; enabled: root.has-clip-preview && !root.clip-positioning; clicked => { root.apply-clip(); } }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            height: 250px;
+                            background: Theme.bar;
+                            Rectangle { y: 0; height: 1px; background: Theme.border; }
+                            VerticalLayout {
+                                padding-top: 1px;
+                                Rectangle {
+                                    height: 34px;
+                                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                                    HorizontalLayout {
+                                        padding-left: Theme.space-lg;
+                                        padding-right: Theme.space-lg;
+                                        spacing: 7px;
+                                        Image { y: (parent.height - self.height) / 2; width: 14px; height: 14px; source: Icon.agent; colorize: Theme.agent; }
+                                        Text { text: "Agent"; color: Theme.text; font-weight: 600; vertical-alignment: center; }
+                                        Text { text: root.mcp-status; color: Theme.text-faint; font-size: Theme.font-small; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                    }
+                                }
+                                ListView {
+                                    vertical-stretch: 1;
+                                    for entry in root.activity: HorizontalLayout {
+                                        padding-left: Theme.space-lg;
+                                        padding-right: Theme.space-lg;
+                                        padding-top: 5px;
+                                        padding-bottom: 5px;
+                                        spacing: Theme.space;
+                                        VerticalLayout {
+                                            alignment: start;
+                                            Badge {
+                                                text: entry.actor;
+                                                text-color: entry.actor == "agent" ? Theme.agent-text : entry.actor == "you" ? Theme.user : Theme.text-faint;
+                                                fill: entry.actor == "agent" ? Theme.agent-soft : entry.actor == "you" ? Theme.user-soft : Theme.control;
+                                            }
+                                        }
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 1px;
+                                            if entry.tool != "": Text {
+                                                text: entry.tool;
+                                                color: Theme.text;
+                                                font-size: Theme.font-small;
+                                                font-family: "monospace";
+                                                overflow: elide;
+                                            }
+                                            Text {
+                                                text: entry.text;
+                                                color: Theme.text-muted;
+                                                font-size: Theme.font-small;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                        Text {
+                                            text: entry.time;
+                                            color: Theme.text-faint;
+                                            font-size: Theme.font-small;
+                                            horizontal-alignment: right;
+                                        }
                                     }
                                 }
                             }
@@ -3864,38 +3877,38 @@ export component AppWindow inherits Window {
                     }
                 }
             }
-        }
 
-        Rectangle {
-            height: 24px;
-            background: Theme.chrome;
-            Rectangle { y: 0; height: 1px; background: Theme.border; }
-            HorizontalLayout {
-                padding-left: Theme.space;
-                padding-right: Theme.space;
-                spacing: Theme.space-xl;
-
-                StatusText {
-                    text: root.message;
-                    color: Theme.text-muted;
-                    horizontal-stretch: 1;
-                    overflow: elide;
-                }
-
-                StatusText {
-                    text: root.stats;
-                }
-
-                StatusText {
-                    text: root.camera;
-                    font-family: "monospace";
-                    font-size: Theme.font-small;
-                }
-
+            Rectangle {
+                height: 24px;
+                background: Theme.chrome;
+                Rectangle { y: 0; height: 1px; background: Theme.border; }
                 HorizontalLayout {
-                    spacing: 5px;
-                    Rectangle { y: (parent.height - self.height) / 2; width: 7px; height: 7px; border-radius: 4px; background: root.mcp-status == "" ? Theme.text-disabled : Theme.agent; }
-                    StatusText { text: root.mcp-status == "" ? "MCP off" : "MCP"; }
+                    padding-left: Theme.space;
+                    padding-right: Theme.space;
+                    spacing: Theme.space-xl;
+
+                    StatusText {
+                        text: root.message;
+                        color: Theme.text-muted;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+
+                    StatusText {
+                        text: root.stats;
+                    }
+
+                    StatusText {
+                        text: root.camera;
+                        font-family: "monospace";
+                        font-size: Theme.font-small;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 5px;
+                        Rectangle { y: (parent.height - self.height) / 2; width: 7px; height: 7px; border-radius: 4px; background: root.mcp-status == "" ? Theme.text-disabled : Theme.agent; }
+                        StatusText { text: root.mcp-status == "" ? "MCP off" : "MCP"; }
+                    }
                 }
             }
         }

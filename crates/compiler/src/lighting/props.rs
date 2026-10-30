@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     ops::ControlFlow,
+    rc::Rc,
     sync::Arc,
 };
 
@@ -9,7 +10,7 @@ use source_formats::{
     bsp::{Bsp, StaticProp},
     gamefs::GameFs,
     model::Model,
-    vmf::Vmf,
+    vmf::{Entity, Vmf},
     vmt::Material,
 };
 
@@ -26,6 +27,26 @@ const MAX_MATERIAL_LOOKUPS: usize = crate::MAX_BRUSH_SHADOW_MATERIAL_LOOKUPS;
 const MAX_TRACKING_BYTES: usize = 8 * MAX_MATERIAL_LOOKUPS * size_of::<Allocation>();
 pub(super) const NO_SHADOW: u32 = 0x10;
 const CAST_TEXTURE_SHADOWS: u32 = 0x0004_0000;
+
+struct ExactMaterial {
+    path: String,
+    _allocation: Allocation,
+}
+
+struct ShadowMaterial {
+    alpha: Option<Arc<alpha::Material>>,
+    exact: Option<ExactMaterial>,
+}
+
+struct ExactPropSource {
+    model: String,
+    material: String,
+    material_index: usize,
+    entity: u32,
+    owner: u32,
+    skin: i32,
+    _allocation: Allocation,
+}
 
 pub(super) mod alpha;
 
@@ -82,6 +103,7 @@ pub(super) struct PropTriangle {
     triangle: Triangle,
     primitive: PropPrimitive,
     alpha: Option<(Arc<alpha::Material>, [DVec2; 3])>,
+    exact: Option<Rc<ExactPropSource>>,
 }
 
 impl PropTriangle {
@@ -90,11 +112,30 @@ impl PropTriangle {
             triangle: Triangle::new(points)?,
             primitive,
             alpha: None,
+            exact: None,
         })
     }
 
     pub(super) fn primitive(&self) -> PropPrimitive {
         self.primitive
+    }
+
+    pub(super) fn exact_positions(&self) -> Result<[DVec3; 3], String> {
+        let source = self
+            .exact
+            .as_ref()
+            .ok_or("Exact emission prop triangle lacks original opaque model/material admission")?;
+        if self.alpha.is_some()
+            || source.owner != self.primitive.owner
+            || source.model.is_empty()
+            || source.material.is_empty()
+        {
+            return Err(format!(
+                "Exact emission prop identity failed for entity:{} model {} skin {} material {} ({})",
+                source.entity, source.model, source.skin, source.material, source.material_index
+            ));
+        }
+        Ok(self.triangle.positions())
     }
 
     pub(super) fn set_alpha(
@@ -524,8 +565,9 @@ impl<'fs, 'tracking> Assets<'fs, 'tracking> {
         &mut self,
         model: &Model,
         index: usize,
+        exact: bool,
         budget: &mut Budget<'_>,
-    ) -> Result<Option<Material>, String> {
+    ) -> Result<Option<(String, Material)>, String> {
         let name = &model.materials[index];
         let name = name.strip_suffix(".vmt").unwrap_or(name);
         for candidate in
@@ -538,16 +580,39 @@ impl<'fs, 'tracking> Assets<'fs, 'tracking> {
                     "Static-prop shadow material lookup exceeds its 65,536 lookup limit".into(),
                 );
             }
-            let material = Material::load_with_reader(
-                &source_formats::vmt::material_path(&candidate),
-                &mut |path| {
-                    self.read_material(path, budget)
-                        .map_err(std::io::Error::other)
-                },
-            )
+            let path = source_formats::vmt::material_path(&candidate);
+            let mut terminal = false;
+            let material = Material::load_with_reader(&path, &mut |path| {
+                let data = self
+                    .read_material(path, budget)
+                    .map_err(std::io::Error::other)?;
+                if exact && let Some(data) = &data {
+                    budget
+                        .consume(data.len().div_ceil(64) + 1)
+                        .map_err(std::io::Error::other)?;
+                    let _parsed = budget
+                        .reserve_bytes(data.len() * 4 + 4096)
+                        .map_err(std::io::Error::other)?;
+                    let dependency = crate::static_prop_assets::material_dependency(path, data)?;
+                    terminal |= matches!(
+                        dependency,
+                        crate::static_prop_assets::MaterialDependency::Texture(_)
+                    );
+                }
+                Ok(data)
+            })
             .map_err(|error| format!("Static-prop shadow material {candidate}: {error}"))?;
             if let Some(material) = material {
-                return Ok(Some(material));
+                if exact
+                    && (!terminal
+                        || material.shader != "vertexlitgeneric"
+                        || needs_material_warning(&material))
+                {
+                    return Err(format!(
+                        "Exact emission prop material {path} requires checked original plain opaque VertexLitGeneric/Patch"
+                    ));
+                }
+                return Ok(Some((path, material)));
             }
         }
         Ok(None)
@@ -592,11 +657,37 @@ fn needs_material_warning(material: &Material) -> bool {
         || !material.blocks.is_empty()
 }
 
+fn exact_source(entity: &Entity, prop: &StaticProp, path: &str) -> Result<(), String> {
+    let model =
+        source_formats::gamefs::asset_relative(entity.properties.get("model").unwrap_or(""))
+            .map_err(|error| error.to_string())?;
+    let skin = entity.properties.get("skin").map_or(Ok(0), |value| {
+        value
+            .parse::<i32>()
+            .map_err(|_| "Exact emission prop skin must be an integer")
+    })?;
+    let origin = entity.origin().unwrap_or(DVec3::ZERO);
+    let angles = crate::static_props::angles(entity)?;
+    if model != path
+        || skin != prop.skin
+        || origin.to_array().map(|value| value as f32) != prop.origin
+        || angles.to_array().map(|value| value as f32) != prop.angles
+    {
+        return Err(
+            "Exact emission prop record differs from its original source model, skin or pose"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 fn append(
     model: &Model,
     prop: &StaticProp,
     owner: u32,
-    materials: &BTreeMap<usize, Option<Arc<alpha::Material>>>,
+    materials: &BTreeMap<usize, ShadowMaterial>,
+    source: Option<(&Entity, &str)>,
     triangles: &mut Vec<PropTriangle>,
     budget: &mut Budget<'_>,
 ) -> Result<usize, String> {
@@ -611,6 +702,30 @@ fn append(
         let material = *skin
             .get(part.material)
             .ok_or("Static-prop shadow skin material is unavailable")?;
+        let exact = if let Some((entity, path)) = source {
+            let material_path = &materials
+                .get(&material)
+                .and_then(|material| material.exact.as_ref())
+                .ok_or("Exact emission prop primitive lacks its selected original material")?
+                .path;
+            let allocation = budget.reserve_bytes(
+                size_of::<ExactPropSource>()
+                    + 2 * size_of::<usize>()
+                    + path.len()
+                    + material_path.len(),
+            )?;
+            Some(Rc::new(ExactPropSource {
+                model: path.to_owned(),
+                material: material_path.clone(),
+                material_index: material,
+                entity: entity.id,
+                owner,
+                skin: prop.skin,
+                _allocation: allocation,
+            }))
+        } else {
+            None
+        };
         for indices in part.indices.as_chunks::<3>().0 {
             budget.consume(4)?;
             let identity = PropPrimitive {
@@ -625,6 +740,11 @@ fn append(
                 .length_squared()
                 == 0.0
             {
+                if source.is_some() {
+                    return Err(
+                        "Exact emission refuses a collapsed original static-prop primitive".into(),
+                    );
+                }
                 degenerate += 1;
                 continue;
             }
@@ -632,7 +752,11 @@ fn append(
                 return Err("Static-prop shadows exceed the 262,144 world-space triangle limit; disable shadows on unnecessary props".into());
             }
             let mut triangle = PropTriangle::new(points, identity)?;
-            if let Some(Some(alpha)) = materials.get(&material) {
+            triangle.exact = exact.clone();
+            if let Some(alpha) = materials
+                .get(&material)
+                .and_then(|material| material.alpha.as_ref())
+            {
                 let coordinates = indices.map(|index| {
                     DVec2::from_array(model.vertices[index as usize].uv.map(f64::from))
                 });
@@ -644,12 +768,15 @@ fn append(
     Ok(degenerate)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build(
     bsp: &Bsp,
     vmf: &Vmf,
+    prop_sources: &[usize],
     mut assets: Assets<'_, '_>,
     generate_reflections: bool,
     colored: bool,
+    exact: bool,
     report: &mut Report,
     budget: &mut Budget<'_>,
 ) -> Result<Prepared, String> {
@@ -658,7 +785,11 @@ pub(super) fn build(
     let mut stats = Stats::default();
     let mut allocations = Vec::new();
     let start_work = budget.work();
-    if let Some(props) = bsp.static_props().map_err(|error| error.to_string())? {
+    let props = bsp.static_props().map_err(|error| error.to_string())?;
+    if exact && props.is_none() && !prop_sources.is_empty() {
+        return Err("Exact emission prop source ordinals exist without native records".into());
+    }
+    if let Some(props) = props {
         let entities: Vec<_> = vmf
             .entities
             .iter()
@@ -671,6 +802,17 @@ pub(super) fn build(
             .collect();
         if entities.len() != props.props.len() {
             return Err("Static-prop shadow source records do not match emitted props".into());
+        }
+        if exact
+            && (prop_sources.len() != props.props.len()
+                || entities
+                    .iter()
+                    .zip(prop_sources)
+                    .any(|(entity, source)| entity.id as usize != *source))
+        {
+            return Err(
+                "Exact emission prop emitted-source ordinals do not match original entities".into(),
+            );
         }
         stats.disabled = props
             .props
@@ -720,6 +862,21 @@ pub(super) fn build(
                 let entity = entities[index];
                 let prop = &props.props[index];
                 let result = (|| {
+                    if exact {
+                        budget.consume(vmf.entities.len())?;
+                        if vmf
+                            .entities
+                            .iter()
+                            .filter(|candidate| candidate.id == entity.id)
+                            .count()
+                            != 1
+                        {
+                            return Err(
+                                "Exact emission prop original source identity is ambiguous".into(),
+                            );
+                        }
+                        exact_source(entity, prop, path)?;
+                    }
                     let skin = model
                         .skins
                         .get(prop.skin as usize)
@@ -733,9 +890,22 @@ pub(super) fn build(
                         if let std::collections::btree_map::Entry::Vacant(entry) =
                             materials.entry(material)
                         {
-                            let loaded = assets.material(&model, material, budget)?;
+                            let loaded = assets.material(&model, material, exact, budget)?;
+                            let exact_material = if exact {
+                                let name = &loaded.as_ref().ok_or_else(|| format!(
+                                    "Exact emission prop original material {} was not found", model.materials[material]
+                                ))?.0;
+                                let allocation = budget
+                                    .reserve_bytes(size_of::<ExactMaterial>() + name.len())?;
+                                Some(ExactMaterial {
+                                    path: name.clone(),
+                                    _allocation: allocation,
+                                })
+                            } else {
+                                None
+                            };
                             if !generate_reflections
-                                && loaded.as_ref().is_some_and(|material| {
+                                && loaded.as_ref().is_some_and(|(_, material)| {
                                     material.get("$envmap").is_some_and(|value| {
                                         value.trim().eq_ignore_ascii_case("env_cubemap")
                                     })
@@ -744,7 +914,7 @@ pub(super) fn build(
                                 reflective_materials.insert(material);
                             }
                             let cutout = if model.header.flags & CAST_TEXTURE_SHADOWS != 0 {
-                                let loaded = loaded.as_ref().ok_or_else(|| format!(
+                                let (_, loaded) = loaded.as_ref().ok_or_else(|| format!(
                                     "{path}: requested texture-shadow material {} was not found", model.materials[material]
                                 ))?;
                                 alpha::prepare(loaded, &mut assets, budget, colored).map_err(
@@ -757,7 +927,7 @@ pub(super) fn build(
                                 )?
                             } else {
                                 match loaded {
-                                Some(material) if !needs_material_warning(&material) => {}
+                                Some((_, material)) if !needs_material_warning(&material) => {}
                                 Some(_) => report.diagnostics.push(Diagnostic::warning(
                                     format!("{path}: static-prop shadows use opaque mesh triangles; texture alpha, translucency, nonstandard shaders and material animation/conditional blocks are not evaluated"),
                                     Some(format!("entity:{}", entity.id)), entity.origin())),
@@ -770,7 +940,10 @@ pub(super) fn build(
                             if cutout.is_some() {
                                 stats.alpha_materials += 1;
                             }
-                            entry.insert(cutout);
+                            entry.insert(ShadowMaterial {
+                                alpha: cutout,
+                                exact: exact_material,
+                            });
                         }
                         if reflective_materials.contains(&material) {
                             reflection_material.get_or_insert(material);
@@ -789,6 +962,7 @@ pub(super) fn build(
                         prop,
                         index as u32,
                         &materials,
+                        exact.then_some((entity, path)),
                         &mut triangles,
                         budget,
                     )?;

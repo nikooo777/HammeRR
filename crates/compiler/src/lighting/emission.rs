@@ -494,7 +494,7 @@ pub(crate) fn preflight<'a>(
         channel_rays: [0; 2],
         native_surface_lights: [0; 2],
         visibility_policy: if exact_enabled {
-            "exact_opaque_convex_hull_and_terrain_triangle_topology_bounded_kernel_conversion"
+            "exact_opaque_convex_hull_and_mesh_triangle_topology_bounded_kernel_conversion"
         } else {
             "sampled_segments"
         },
@@ -507,7 +507,7 @@ pub(crate) fn preflight<'a>(
         },
     };
     let visibility = if exact_enabled {
-        "Exact emission visibility requests complete certified original opaque convex-hull and native terrain-triangle shadow topology with bounded kernel conversion; unsupported providers, sources, arithmetic or exhausted resources fail the request"
+        "Exact emission visibility requests complete certified original opaque convex-hull, native terrain-triangle and static-prop mesh-triangle shadow topology with bounded kernel conversion; unsupported providers, sources, arithmetic or exhausted resources fail the request"
     } else {
         "Material emission uses sampled segment shadows"
     };
@@ -674,6 +674,12 @@ pub(super) struct Declarations {
     _allocation: Allocation,
 }
 
+impl Declarations {
+    pub(super) fn exact_visibility(&self) -> bool {
+        self.exact_enabled
+    }
+}
+
 struct Source {
     face: usize,
     material: Option<Arc<str>>,
@@ -742,6 +748,7 @@ pub(super) fn prepare(
     shadows: &ShadowIndex<Occluder>,
     model_shadows: &[Option<ShadowIndex<Occluder>>],
     terrain_shadows: &ShadowIndex<TerrainTriangle>,
+    prop_shadows: &ShadowIndex<super::props::PropTriangle>,
     budget: &mut Budget<'_>,
 ) -> Result<Prepared, String> {
     budget.consume(0)?;
@@ -789,6 +796,7 @@ pub(super) fn prepare(
             shadows,
             model_shadows,
             terrain_shadows,
+            prop_shadows,
             instances,
             budget,
         )?;
@@ -1144,6 +1152,7 @@ fn admit_exact_providers(
     shadows: &ShadowIndex<Occluder>,
     model_shadows: &[Option<ShadowIndex<Occluder>>],
     terrain_shadows: &ShadowIndex<TerrainTriangle>,
+    prop_shadows: &ShadowIndex<super::props::PropTriangle>,
     instances: &crate::instances::Prepared<'_>,
     budget: &mut Budget<'_>,
 ) -> Result<(), String> {
@@ -1282,6 +1291,7 @@ fn admit_exact_providers(
                             .into(),
                     );
                 }
+                exact::admit_triangle(provider.positions(), budget)?;
                 let (mins, maxs) = provider.bounds();
                 if !mins.is_finite()
                     || !maxs.is_finite()
@@ -1307,6 +1317,31 @@ fn admit_exact_providers(
     }
     if triangles.next().is_some() {
         return Err("Exact emission terrain index has no original native triangle identity".into());
+    }
+    for provider in prop_shadows.objects() {
+        budget.consume(4)?;
+        let points = provider.exact_positions()?;
+        exact::admit_triangle(points, budget).map_err(|message| {
+            let primitive = provider.primitive();
+            format!(
+                "Exact emission native prop ordinal:{} triangle:{}: {message}",
+                primitive.owner, primitive.triangle
+            )
+        })?;
+        let (mins, maxs) = provider.bounds();
+        if !mins.is_finite()
+            || !maxs.is_finite()
+            || !mins.cmple(maxs).all()
+            || points.iter().any(|point| {
+                !point.is_finite() || !mins.cmple(*point).all() || !point.cmple(maxs).all()
+            })
+        {
+            let primitive = provider.primitive();
+            return Err(format!(
+                "Exact emission static-prop {} triangle {} bounds do not enclose its actual mesh geometry",
+                primitive.owner, primitive.triangle
+            ));
+        }
     }
     budget.consume(0)
 }
@@ -1582,15 +1617,6 @@ impl Prepared {
                 budget.consume(1 + hull.planes.len())?;
             }
         }
-        for triangle in context.props.objects() {
-            budget.consume(1)?;
-            if !triangle.owned_by(context.skip_owner) {
-                return Err(
-                    "Exact emission visibility does not support static-prop shadow providers"
-                        .into(),
-                );
-            }
-        }
         let mut total = DVec3::ZERO;
         let mut conversion_error = 0.0;
         let mut visited = 0usize;
@@ -1637,6 +1663,26 @@ impl Prepared {
                         if enumeration.is_break() {
                             return Err(
                                 "Exact emission terrain enumeration did not complete".into()
+                            );
+                        }
+                        let enumeration = context.props.visit_bounds(
+                            mins,
+                            maxs,
+                            &mut |amount| work.borrow_mut().consume(amount),
+                            &mut |_, provider| {
+                                work.borrow_mut().consume(1)?;
+                                if !provider.owned_by(context.skip_owner) {
+                                    visibility.subtract_triangle(
+                                        provider.exact_positions()?,
+                                        &mut work.borrow_mut(),
+                                    )?;
+                                }
+                                Ok(ControlFlow::Continue(()))
+                            },
+                        )?;
+                        if enumeration.is_break() {
+                            return Err(
+                                "Exact emission static-prop enumeration did not complete".into()
                             );
                         }
                     }

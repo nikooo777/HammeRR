@@ -18,6 +18,26 @@ Use **Not Solid**, **Use Bounding Box** or **Use VPhysics** under **Collisions**
 VPhysics needs compatible model collision data from a matching `.phy` file.
 The **Physics bodies** setting controls compiled brush and terrain bodies separately.
 
+## Cast exact emission shadows
+
+Use supported opaque prop triangles to block [material emission](material-emission.md#exact-brush-shadows).
+
+1. Leave **Disable Shadows** disabled on the prop.
+2. Open **World settings…** and set **Emission file**.
+3. Enable **Exact emission visibility**, then click **Apply properties**.
+4. Compile with **Direct LDR** or **Direct LDR + HDR**.
+5. Open **Build details…**. Check **Emission visibility policy** and **Diagnostics**.
+
+Shadows use actual triangles from body 0 and LOD 0 with the selected **Skin**
+and compiled pose, including supported referenced props. Materials require plain
+opaque **VertexLitGeneric** or supported **Patch** chains. Exact mode checks the
+original model and material inputs. Missing, unsupported or alpha materials and
+zero-area triangles stop the build. The previous BSP stays intact.
+
+**Disable Shadows** removes that prop's shadow geometry. Disabling receiver self
+shadows omits only that receiving prop's own triangles. Other props, world and
+terrain still block light. Static props cannot emit intrinsic material light.
+
 ## Pack static prop assets
 
 1. Enable **Pack static prop assets** in **Build settings…**.

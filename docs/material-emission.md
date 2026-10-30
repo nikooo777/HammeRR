@@ -123,15 +123,15 @@ the policy.
 
 <a id="exact-brush-shadows"></a>
 
-## Exact brush and terrain shadows
+## Exact brush, terrain and prop shadows
 
-Resolve opaque brush and terrain shadows across the source area.
+Resolve opaque brush, terrain and static prop shadows across the source area.
 
 1. Open **World settings…** and set **Emission file**.
 2. Enable **Exact emission visibility**, then click **Apply properties**.
 3. Compile with **Direct LDR** or **Direct LDR + HDR**.
 4. Open **Build details…**. **Emission visibility policy** should read
-   **Exact opaque hulls and terrain triangles**. Check
+   **Exact opaque hulls and mesh triangles**. Check
    **Emission conversion bounds (dimensionless)**.
 
 Exact mode supports uniquely owned world/detail and eligible stationary
@@ -143,11 +143,18 @@ hull participates, including invisible boundaries. Eligible stationary brush
 models retain their existing global or same-model shadow scope.
 
 Terrain with a supported opaque material casts from its actual triangles.
-Casters require opaque **LightmappedGeneric**, **UnlitGeneric**, or a supported
-**Patch** chain. Terrain blend shaders are unsupported in exact mode.
-Each triangle blocks from both sides, including its edges. Only contacts between
-the shadow segment endpoints block light. Collision settings do not disable
-these shadows. Exact mode checks each original terrain material.
+Terrain materials require opaque **LightmappedGeneric**, **UnlitGeneric**, or a
+supported **Patch** chain. Terrain blend shaders are unsupported in exact mode.
+Collision settings do not disable terrain shadows.
+
+Eligible static props cast from actual triangles in body 0 and LOD 0, with
+the selected skin at the compiled pose. Materials require plain opaque
+**VertexLitGeneric** or supported **Patch** chains. Supported referenced props
+use their assembled pose. See [prop shadow controls](static-props.md#cast-exact-emission-shadows).
+
+Terrain and prop triangles block from both sides, including their edges.
+Only contacts between the shadow segment endpoints block light. Exact mode
+checks the original model and material inputs before gathering light.
 
 Unsupported casters, source support or numeric bounds stop the build.
 The previous BSP stays intact. The compiler does not switch to sampled shadows.
@@ -164,7 +171,7 @@ Disable **Exact emission visibility** to use the original sampled bake.
 
 Exact mode rejects oblique final emitting faces, nonzero native-plane support
 residuals, moving/parented/unrequested brush-model emitting sources,
-sky/alpha/unknown materials, prop shadow providers, zero-area terrain triangles
+sky/alpha/unknown materials, unsupported prop models, zero-area mesh triangles
 and uncertified hulls. Checked arithmetic, fragment and conditioning limits also
 apply.
 **Fullbright** checks the setting and declarations without exact shadow admission.

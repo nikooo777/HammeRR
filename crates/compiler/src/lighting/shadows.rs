@@ -108,6 +108,10 @@ pub(super) struct Triangle {
 }
 
 impl Triangle {
+    pub(super) fn positions(&self) -> [DVec3; 3] {
+        self.points
+    }
+
     pub(super) fn point(&self, weights: [f64; 3]) -> DVec3 {
         self.points
             .into_iter()

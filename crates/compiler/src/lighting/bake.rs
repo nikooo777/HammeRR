@@ -1279,6 +1279,7 @@ fn bake_inner(
     } = super::props::build(
         bsp,
         settings.vmf,
+        settings.prop_sources,
         super::props::Assets::for_props(
             settings.fs,
             settings.prop_asset_sources,
@@ -1286,6 +1287,7 @@ fn bake_inner(
         ),
         options.generate_reflections,
         options.colored_texture_shadows,
+        emission_input.is_some_and(super::emission::Declarations::exact_visibility),
         report,
         budget,
     )?;
@@ -1323,6 +1325,7 @@ fn bake_inner(
                 &shadows,
                 &model_shadows,
                 &terrain_shadows,
+                &prop_shadows,
                 budget,
             )
         })

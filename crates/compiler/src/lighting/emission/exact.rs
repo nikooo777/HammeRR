@@ -698,15 +698,40 @@ fn world_boundary(
     Halfplane::new(coefficients, work, budget)
 }
 
-fn clip(
+enum Split {
+    Inside,
+    Outside,
+    Cut {
+        inside: TopoPolygon,
+        outside: TopoPolygon,
+    },
+}
+
+fn split(
     polygon: &TopoPolygon,
     halfplane: Halfplane,
     work: &mut Work,
     budget: &mut Budget<'_>,
-) -> Result<Option<TopoPolygon>, String> {
+) -> Result<Split, String> {
     work.charge(1, budget)?;
     if halfplane.constant() {
         return Err("Exact emission clipping requires a nonconstant boundary equation".into());
+    }
+    let mut signs = Storage::new(polygon.values.len(), budget)?;
+    let mut negative = false;
+    let mut positive = false;
+    for vertex in &polygon.values {
+        work.charge(48, budget)?;
+        let sign = halfplane.evaluate(vertex.point)?.sign();
+        negative |= sign == Ordering::Less;
+        positive |= sign == Ordering::Greater;
+        signs.push(sign)?;
+    }
+    if !positive {
+        return Ok(Split::Inside);
+    }
+    if !negative {
+        return Ok(Split::Outside);
     }
     let capacity = polygon
         .values
@@ -714,55 +739,97 @@ fn clip(
         .checked_add(1)
         .filter(|capacity| *capacity <= MAX_POLYGON_VERTICES)
         .ok_or("Exact emission exceeds its convex polygon vertex bound")?;
-    let mut result = TopoPolygon::new(capacity, budget)?;
+    let mut inside = TopoPolygon::new(capacity, budget)?;
+    let mut outside = TopoPolygon::new(capacity, budget)?;
     for index in 0..polygon.values.len() {
-        work.charge(96, budget)?;
+        work.charge(1, budget)?;
+        let next = (index + 1) % polygon.values.len();
         let a = polygon.values[index];
-        let b = polygon.values[(index + 1) % polygon.values.len()];
-        let inside_a = halfplane.evaluate(a.point)?.sign() != Ordering::Greater;
-        let inside_b = halfplane.evaluate(b.point)?.sign() != Ordering::Greater;
-        if inside_a != inside_b {
+        let b = polygon.values[next];
+        let inside_a = signs.values[index] != Ordering::Greater;
+        let inside_b = signs.values[next] != Ordering::Greater;
+        let outside_a = signs.values[index] != Ordering::Less;
+        let outside_b = signs.values[next] != Ordering::Less;
+        if inside_a != inside_b || outside_a != outside_b {
             let edge = incoming_edge(a.point, b.point, b.incoming, work, budget)?;
-            result.push_vertex(TopoVertex {
-                point: edge.intersection(halfplane, work, budget)?,
-                incoming: if inside_a { edge } else { halfplane },
-            })?;
-        }
-        if inside_b {
-            result.push_vertex(b)?;
-        }
-    }
-    if result.values.len() > 1
-        && result.values.first().map(|vertex| vertex.point)
-            == result.values.last().map(|vertex| vertex.point)
-    {
-        let last = result.values.pop().unwrap();
-        result.values[0].incoming = last.incoming;
-    }
-    if result.values.len() < 3 {
-        return Ok(None);
-    }
-    let edge = incoming_edge(
-        result.values[0].point,
-        result.values[1].point,
-        result.values[1].incoming,
-        work,
-        budget,
-    )?;
-    let mut positive = false;
-    for vertex in result.values.iter().skip(2) {
-        work.charge(64, budget)?;
-        match edge.evaluate(vertex.point)?.sign() {
-            Ordering::Less => positive = true,
-            Ordering::Equal => (),
-            Ordering::Greater => {
-                return Err(
-                    "Exact emission clipping lost a convex fragment's interior support".into(),
-                );
+            let point = if signs.values[index] == Ordering::Equal {
+                a.point
+            } else if signs.values[next] == Ordering::Equal {
+                b.point
+            } else {
+                edge.intersection(halfplane, work, budget)?
+            };
+            if inside_a != inside_b {
+                inside.push_vertex(TopoVertex {
+                    point,
+                    incoming: if inside_a { edge } else { halfplane },
+                })?;
+            }
+            if outside_a != outside_b {
+                outside.push_vertex(TopoVertex {
+                    point,
+                    incoming: if outside_a { edge } else { halfplane.neg() },
+                })?;
             }
         }
+        if inside_b {
+            inside.push_vertex(b)?;
+        }
+        if outside_b {
+            outside.push_vertex(b)?;
+        }
     }
-    Ok(positive.then_some(result))
+    for result in [&mut inside, &mut outside] {
+        if result.values.first().map(|vertex| vertex.point)
+            == result.values.last().map(|vertex| vertex.point)
+        {
+            let last = result
+                .values
+                .pop()
+                .ok_or("Exact emission split lost its vertices")?;
+            result.values[0].incoming = last.incoming;
+        }
+        if result.values.len() < 3 {
+            return Err("Exact emission split lost a positive-area half polygon".into());
+        }
+    }
+    Ok(Split::Cut { inside, outside })
+}
+
+fn triangle_planes(
+    points: [DVec3; 3],
+    work: &mut Work,
+    budget: &mut Budget<'_>,
+) -> Result<[([Rational; 3], Rational); TRIANGLE_PLANES], String> {
+    work.charge(256, budget)?;
+    let points = [vector(points[0])?, vector(points[1])?, vector(points[2])?];
+    let mut edges = [[Rational::ZERO; 3]; 3];
+    for index in 0..3 {
+        for coordinate in 0..3 {
+            edges[index][coordinate] =
+                points[(index + 1) % 3][coordinate].sub(points[index][coordinate])?;
+        }
+    }
+    let normal = hull_cross(edges[0], edges[1])?;
+    if normal.iter().all(|value| *value == Rational::ZERO) {
+        return Err("Exact emission requires a positive-area opaque triangle".into());
+    }
+    let distance = dot(normal, points[0])?;
+    let mut planes = [([Rational::ZERO; 3], Rational::ZERO); TRIANGLE_PLANES];
+    planes[0] = (normal, distance);
+    planes[1] = (normal.map(Rational::neg), distance.neg());
+    for index in 0..3 {
+        work.charge(128, budget)?;
+        let outward = hull_cross(edges[index], normal)?;
+        planes[index + 2] = (outward, dot(outward, points[index])?);
+    }
+    Ok(planes)
+}
+
+pub(super) fn admit_triangle(points: [DVec3; 3], budget: &mut Budget<'_>) -> Result<(), String> {
+    let mut work = Work::new("triangle admission");
+    triangle_planes(points, &mut work, budget)?;
+    Ok(())
 }
 
 pub(super) struct Visibility {
@@ -850,28 +917,12 @@ impl Visibility {
         points: [DVec3; 3],
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
-        self.work.charge(256, budget)?;
-        let points = [vector(points[0])?, vector(points[1])?, vector(points[2])?];
-        let mut edges = [[Rational::ZERO; 3]; 3];
-        for index in 0..3 {
-            for coordinate in 0..3 {
-                edges[index][coordinate] =
-                    points[(index + 1) % 3][coordinate].sub(points[index][coordinate])?;
-            }
+        self.work.charge(1, budget)?;
+        if self.fragments.polygons.values.is_empty() {
+            return Ok(());
         }
-        let normal = hull_cross(edges[0], edges[1])?;
-        if normal.iter().all(|value| *value == Rational::ZERO) {
-            return Err("Exact emission requires a positive-area opaque terrain triangle".into());
-        }
-        let distance = dot(normal, points[0])?;
-        let mut planes = [([Rational::ZERO; 3], Rational::ZERO); TRIANGLE_PLANES];
-        planes[0] = (normal, distance);
-        planes[1] = (normal.map(Rational::neg), distance.neg());
-        for index in 0..3 {
-            self.work.charge(128, budget)?;
-            let outward = hull_cross(edges[index], normal)?;
-            planes[index + 2] = (outward, dot(outward, points[index])?);
-        }
+        let planes = triangle_planes(points, &mut self.work, budget)?;
+        let (normal, distance) = planes[0];
         self.work.charge(256, budget)?;
         let (values, b) = self.segment_values(normal, distance)?;
         if b == Rational::ZERO {
@@ -1019,32 +1070,21 @@ impl Visibility {
                     continue;
                 }
                 let current = inside.as_ref().unwrap_or(&polygon);
-                let mut negative = false;
-                let mut positive = false;
-                for vertex in &current.values {
-                    self.work.charge(48, budget)?;
-                    match halfplane.evaluate(vertex.point)?.sign() {
-                        Ordering::Less => negative = true,
-                        Ordering::Equal => (),
-                        Ordering::Greater => positive = true,
+                match split(current, halfplane, &mut self.work, budget)? {
+                    Split::Inside => (),
+                    Split::Outside => {
+                        next.polygons.values.truncate(start);
+                        next.vertices = vertices;
+                        next.push(polygon)?;
+                        break;
                     }
-                }
-                if !positive {
-                    continue;
-                }
-                inside = if negative {
-                    if let Some(outside) = clip(current, halfplane.neg(), &mut self.work, budget)? {
+                    Split::Cut {
+                        inside: cut,
+                        outside,
+                    } => {
                         next.push(outside)?;
+                        inside = Some(cut);
                     }
-                    clip(current, halfplane, &mut self.work, budget)?
-                } else {
-                    None
-                };
-                if inside.is_none() {
-                    next.polygons.values.truncate(start);
-                    next.vertices = vertices;
-                    next.push(polygon)?;
-                    break;
                 }
             }
         }

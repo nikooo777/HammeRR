@@ -768,15 +768,21 @@ opaque brush hull must be certified closed, bounded and convex from its final
 planes, including oblique casters. Original materials and existing global/model
 shadow scopes still apply.
 
-Terrain with a supported opaque material casts from its actual two-sided
-triangles, including edges. Exact mode checks each original terrain material.
+Terrain and eligible static props cast from their actual two-sided triangles,
+including edges. Props use body 0, LOD 0, selected skin and the compiled
+pose, including supported assembled placements. Prop materials require plain
+opaque `VertexLitGeneric` or supported `Patch` chains. Exact mode checks the
+original model and material inputs before gathering light.
+
 Only contacts between the shadow segment endpoints block light. Collision
-settings do not disable terrain shadows. Terrain emission sources remain
-unavailable.
+settings do not disable terrain shadows. A prop's `disableshadows:1` removes
+its shadow geometry. Receiver `disableselfshadowing:1` omits only that prop's
+own triangles; other providers still block light. Terrain and MDL emission
+sources remain unavailable.
 
 Oblique final emitting faces, nonzero native-plane support residuals,
-moving/parented/unrequested brush-model emitting sources,
-sky/alpha/unknown materials, prop shadow providers, zero-area terrain triangles,
+moving/parented/unrequested brush-model emitting sources, sky, alpha, unknown or
+missing materials, unsupported prop models, zero-area mesh triangles,
 uncertified hulls and exhausted numeric/resource bounds reject without sampled
 fallback or replacement of the previous BSP. Fullbright validates the policy,
 file and declarations without admitting exact geometry.

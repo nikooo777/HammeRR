@@ -955,11 +955,6 @@ pub(super) fn prepare(
             }
             let exact_face = if declarations.exact_enabled {
                 let certificate = exact::SourceFace::new(&points, plane, budget)?;
-                if !certificate.supports_retained_plane()
-                    && texture.is_some_and(|texture| texture.rectangles() != 1)
-                {
-                    return Err("Exact emission sources with nonzero retained-plane residual do not support generated texture partitions".into());
-                }
                 Some(Rc::new(certificate))
             } else {
                 None
@@ -1053,6 +1048,25 @@ pub(super) fn prepare(
                 texture_work.triangles(triangles.len())?;
                 BTreeMap::from([([255; 3], triangles)])
             };
+            let generated_partition = texture.is_some_and(|texture| texture.rectangles() != 1);
+            if generated_partition
+                && let Some(certificate) = &exact_face
+                && !certificate.supports_retained_plane()
+            {
+                budget.consume(fragments.len())?;
+                let triangle_count = fragments.values().try_fold(0usize, |count, triangles| {
+                    count
+                        .checked_add(triangles.len())
+                        .filter(|count| *count <= MAX_TRIANGLES)
+                        .ok_or("Exact emission partition exceeds 262144 source triangles")
+                })?;
+                certificate.partition(
+                    &points,
+                    fragments.values().flatten().copied(),
+                    triangle_count,
+                    budget,
+                )?;
+            }
             let location = source_location(instances, map.brushes[owner].id, *id);
             if declaration.textured {
                 allocation.grow(
@@ -1082,10 +1096,12 @@ pub(super) fn prepare(
                     let certificate = exact_face
                         .as_ref()
                         .ok_or("Exact emission source lost its planar face certificate")?;
-                    for &triangle in &triangles {
-                        if certificate.supports_retained_plane() {
+                    if certificate.supports_retained_plane() {
+                        for &triangle in &triangles {
                             exact::source_support(triangle, plane, budget)?;
-                        } else {
+                        }
+                    } else if !generated_partition {
+                        for &triangle in &triangles {
                             certificate.support(triangle, budget)?;
                         }
                     }

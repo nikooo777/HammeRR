@@ -769,11 +769,20 @@ Source facing uses its actual plane. The retained posed brush plane keeps
 original side/hull custody and native direct-emission semantics;
 all applicable owning hulls still block light, including real self-occlusion.
 
-Nonzero residual from the retained plane permits uniform radiance or one texture
-rectangle that preserves the original native triangles. Generated texture
-partitions still require zero residual. Existing zero-residual texture limits
-are unchanged. `source_support_certificate` reports these requirements and
-scopes. Converted binary64 kernel vertices must lie exactly on the actual
+Nonzero residual from the retained plane permits uniform radiance, textures that
+preserve original native triangles, or generated texture partitions with exact
+coverage. The generated actual binary64 triangles must have exact actual-plane
+support, positive outward area, containment in the original face, pairwise
+disjoint interiors and total projected area exactly equal to the original face.
+Shared edges and vertices are allowed. The proof includes every RGB group,
+including black, before radiance shortcuts. No floating coverage allowance is
+accepted. `texture_partition_certificate` reports this scope and its requirements.
+The zero-residual texture path is unchanged.
+
+Colour selection keeps nearest mip0 RGB and binary64 UV semantics. The coverage
+proof does not certify real-arithmetic UV boundaries or native filtering parity.
+`source_support_certificate` reports face requirements and scopes.
+Converted binary64 kernel vertices must lie exactly on the actual
 source plane. All converted coverage must stay inside the exact visible region;
 `fragment_conversion` reports this contract.
 Every applicable opaque brush hull must be certified closed, bounded and convex
@@ -792,8 +801,8 @@ its shadow geometry. Receiver `disableselfshadowing:1` omits only that prop's
 own triangles; other providers still block light. Terrain and MDL emission
 sources remain unavailable.
 
-Nonplanar or uncertified actual source faces, generated texture partitions at
-nonzero retained-plane residual, unrepresentable on-plane fragment vertices,
+Nonplanar or uncertified actual source faces, nonzero-residual texture partitions
+that fail exact coverage, unrepresentable on-plane fragment vertices,
 moving/parented/unrequested brush-model emitting sources, sky, alpha, unknown or
 missing materials, unsupported prop models, zero-area mesh triangles,
 uncertified hulls and exhausted numeric/resource bounds reject without sampled

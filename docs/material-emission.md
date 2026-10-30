@@ -71,9 +71,8 @@ not the complete shader. Use one mode per material across LDR and HDR records.
 
 For **Exact emission visibility**, the final emitting face can be axis-aligned
 or oblique. The compiler must certify its actual planar geometry and conversion
-of the visible fragments. A nonzero difference from the retained posed source
-plane requires uniform radiance or one texture rectangle that preserves the
-original native triangles.
+of the visible fragments. At nonzero residual from the retained posed plane,
+generated texture partitions also require exact coverage of the original face.
 The source uses its compiled initial pose. Other solids in the same model
 still block light. Supported child models use their assembled pose once.
 See [stationary shadow sources](brush-texture-shadows.md#cast-from-a-stationary-root-brush-model)
@@ -147,10 +146,19 @@ can differ from the retained plane. The retained plane keeps the original side
 and hull identity and the normal used by native direct emission.
 Every owning hull still blocks light, so real self-occlusion can darken a source.
 
-At nonzero residual from the retained plane, uniform records are supported.
-A texture source is supported only when one constant-colour rectangle preserves
-the original native triangles. Generated texture partitions still require zero
-residual. Other zero-residual texture limits are unchanged.
+At nonzero residual from the retained plane, uniform records and textures that
+preserve the original native triangles are supported. Generated texture
+partitions must pass an exact coverage proof. Every actual binary64 triangle
+must lie on the actual source plane, point outward with positive area and stay
+inside the original face. Triangle interiors must not overlap, and their total
+projected area must equal the original face area. Shared edges and vertices are
+allowed. The proof includes all RGB groups, including black, before zero-light
+shortcuts. It accepts no floating coverage allowance.
+
+The proof checks the generated geometry. Colour selection still uses nearest
+mip0 RGB and binary64 UV calculations. Exact real-arithmetic UV boundaries and
+native filtering parity are not certified. The zero-residual texture path is
+unchanged.
 
 Converted binary64 kernel vertices must stay exactly on the actual source
 plane. All converted coverage must stay inside the exact visible region.
@@ -192,8 +200,8 @@ quantization or native image error bound.
 **Native direct emission** keeps its separate point approximation.
 Disable **Exact emission visibility** to use the original sampled bake.
 
-Exact mode rejects nonplanar or uncertified source faces, generated texture
-partitions at nonzero residual from the retained posed plane, unrepresentable
+Exact mode rejects nonplanar or uncertified source faces, nonzero-residual
+texture partitions that fail the exact coverage proof, unrepresentable
 on-plane fragment vertices, moving/parented/unrequested brush-model emitting
 sources, sky/alpha/unknown materials, unsupported prop models, zero-area mesh
 triangles and uncertified hulls. Checked arithmetic, fragment and conditioning

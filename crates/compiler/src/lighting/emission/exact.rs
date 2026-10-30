@@ -745,6 +745,7 @@ pub(super) fn source_support(
 pub(super) struct SourceFace {
     normal: [Rational; 3],
     distance: Rational,
+    axis: usize,
     orientation: Ordering,
     retained_support: bool,
     fan: Storage<bool>,
@@ -836,6 +837,7 @@ impl SourceFace {
         Ok(Self {
             normal,
             distance,
+            axis,
             orientation,
             retained_support,
             fan,
@@ -877,12 +879,128 @@ impl SourceFace {
     ) -> Result<(), String> {
         budget.consume(192 * ARITHMETIC_WORK_SCALE)?;
         for point in points {
-            if dot(self.normal, vector(point)?)? != self.distance {
-                return Err("Exact emission converted source vertices must remain on the certified actual native face".into());
+            self.supported_point(point)?;
+        }
+        Ok(())
+    }
+
+    fn supported_point(&self, point: DVec3) -> Result<[Rational; 3], String> {
+        let point = vector(point)?;
+        if dot(self.normal, point)? != self.distance {
+            return Err("Exact emission converted source vertices must remain on the certified actual native face".into());
+        }
+        Ok(point)
+    }
+
+    pub(super) fn partition(
+        &self,
+        points: &[DVec3],
+        triangles: impl IntoIterator<Item = [DVec3; 3]>,
+        triangle_count: usize,
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
+        if points.len() != self.fan.values.len() + 2 || triangle_count == 0 {
+            return Err(
+                "Exact emission texture partition lost its actual native face or positive pieces"
+                    .into(),
+            );
+        }
+        let mut work = Work::new("texture partition admission");
+        let axes = [(self.axis + 1) % 3, (self.axis + 2) % 3];
+        let mut source = Polygon::new(points.len(), budget)?;
+        for &point in points {
+            work.charge(128, budget)?;
+            let point = self.supported_point(point)?;
+            source.push(Point(axes.map(|axis| point[axis])))?;
+        }
+        work.charge(points.len() * 64, budget)?;
+        let source_area = double_area(source.values.iter().copied())?;
+        if source_area.sign() != self.orientation.reverse() {
+            return Err(
+                "Exact emission texture partition lost its actual native face winding".into(),
+            );
+        }
+        let mut pieces = Storage::new(triangle_count, budget)?;
+        let mut area = Rational::ZERO;
+        for triangle in triangles {
+            if pieces.values.len() == triangle_count {
+                return Err(
+                    "Exact emission texture partition disagrees with its charged piece count"
+                        .into(),
+                );
+            }
+            let mut piece = [Point([Rational::ZERO; 2]); 3];
+            for (output, point) in piece.iter_mut().zip(triangle) {
+                work.charge(128, budget)?;
+                let point = self.supported_point(point)?;
+                *output = Point(axes.map(|axis| point[axis]));
+            }
+            work.charge(128, budget)?;
+            let piece_area = turn(piece[0], piece[1], piece[2])?;
+            if piece_area.sign() != self.orientation {
+                return Err(
+                    "Exact emission texture partition requires positive outward actual triangles"
+                        .into(),
+                );
+            }
+            for index in 0..source.values.len() {
+                let a = source.values[index];
+                let b = source.values[(index + 1) % source.values.len()];
+                for point in piece {
+                    work.charge(64, budget)?;
+                    let side = turn(a, b, point)?.sign();
+                    if side != Ordering::Equal && side != self.orientation.reverse() {
+                        return Err("Exact emission texture partition crosses its original native face boundary".into());
+                    }
+                }
+            }
+            area = area.add(piece_area.abs())?;
+            pieces.push(piece)?;
+        }
+        work.charge(64, budget)?;
+        if pieces.values.len() != triangle_count {
+            return Err(
+                "Exact emission texture partition disagrees with its charged piece count".into(),
+            );
+        }
+        if area != source_area.abs() {
+            return Err("Exact emission texture partition does not exactly cover its original native face area".into());
+        }
+        for (index, piece) in pieces.values.iter().enumerate() {
+            for other in &pieces.values[index + 1..] {
+                work.charge(1, budget)?;
+                if !disjoint_triangles(piece, other, self.orientation, &mut work, budget)? {
+                    return Err("Exact emission texture partition has overlapping actual triangle interiors".into());
+                }
             }
         }
         Ok(())
     }
+}
+
+fn disjoint_triangles(
+    a: &[Point; 3],
+    b: &[Point; 3],
+    orientation: Ordering,
+    work: &mut Work,
+    budget: &mut Budget<'_>,
+) -> Result<bool, String> {
+    for (triangle, other) in [(a, b), (b, a)] {
+        for index in 0..3 {
+            let mut separates = true;
+            for &point in other {
+                work.charge(64, budget)?;
+                if turn(triangle[index], triangle[(index + 1) % 3], point)?.sign() == orientation {
+                    separates = false;
+                    break;
+                }
+            }
+            if separates {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 pub(super) fn receiver_normal(normal: DVec3, budget: &mut Budget<'_>) -> Result<(), String> {

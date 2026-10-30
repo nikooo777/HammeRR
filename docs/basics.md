@@ -44,7 +44,7 @@ Highlighted rows contain the current selection. Large groups show their first 50
 
 | Action | Control |
 | --- | --- |
-| Fly | Hold the right mouse button; use WASD and Q/E. |
+| Fly | Hold the right mouse button; use WASD and Q/E. The cursor locks and hides until you release the button. |
 | Fly faster | Hold Shift while flying. |
 | Planar pan / zoom | Right-drag / mouse wheel. |
 | Change projection | Use the projection menu in the viewport header: **Perspective**, **Top · XY**, **Front · XZ**, **Side · YZ**. |

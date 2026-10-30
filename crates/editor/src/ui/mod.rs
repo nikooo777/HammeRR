@@ -48,6 +48,7 @@ mod instance_reference;
 mod object_picking;
 mod outliner;
 mod palette;
+mod pointer_lock;
 mod selection_filters;
 mod transform_pivot;
 use transform_pivot::*;
@@ -2623,7 +2624,9 @@ fn create_document_window(
             scope.input((), |app, ui| {
                 let size = (app.get_viewport_width(), app.get_viewport_height());
                 let mut ui = ui.borrow_mut();
-                ui.viewport.mouse_moved(x, y, size.1);
+                if !pointer_lock::relative(&app) {
+                    ui.viewport.mouse_moved(x, y, size.1);
+                }
                 if ui.object_cycle.moved(Pointer {
                     position: DVec2::new(f64::from(x), f64::from(y)),
                     size: (
@@ -2857,6 +2860,10 @@ fn create_document_window(
                 last_tick = now;
 
                 let ui = &mut *ui.borrow_mut();
+                pointer_lock::sync(&app, ui.viewport.looking());
+                if let Some((dx, dy)) = pointer_lock::take_delta(&app) {
+                    ui.viewport.look_by(dx, dy, app.get_viewport_height());
+                }
                 let fly_speed = lock(&ui.session).fly_speed();
                 ui.viewport.update(dt, fly_speed);
                 let mut panel_dirty = false;

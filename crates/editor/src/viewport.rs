@@ -167,20 +167,24 @@ impl Viewport {
             return;
         }
         if let Some((lx, ly)) = self.last_mouse {
-            let (dx, dy) = (x - lx, y - ly);
-            if dx != 0.0 || dy != 0.0 {
-                if self.camera.projection == Projection::Perspective {
-                    self.camera
-                        .look(-dx * LOOK_DEGREES_PER_PIXEL, -dy * LOOK_DEGREES_PER_PIXEL);
-                } else {
-                    let units = self.camera.ortho_height / height.max(1.0);
-                    self.camera.position +=
-                        (-self.camera.right() * dx + self.camera.up() * dy) * units;
-                }
-                self.dirty = true;
-            }
+            self.look_by(x - lx, y - ly, height);
         }
         self.last_mouse = Some((x, y));
+    }
+
+    /// Looks around in perspective or pans a planar view by a pointer movement in pixels.
+    pub fn look_by(&mut self, dx: f32, dy: f32, height: f32) {
+        if !self.looking || (dx == 0.0 && dy == 0.0) {
+            return;
+        }
+        if self.camera.projection == Projection::Perspective {
+            self.camera
+                .look(-dx * LOOK_DEGREES_PER_PIXEL, -dy * LOOK_DEGREES_PER_PIXEL);
+        } else {
+            let units = self.camera.ortho_height / height.max(1.0);
+            self.camera.position += (-self.camera.right() * dx + self.camera.up() * dy) * units;
+        }
+        self.dirty = true;
     }
 
     /// Wheel dollies the perspective camera or zooms a planar view.

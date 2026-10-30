@@ -520,6 +520,7 @@ pub(super) fn run(
             device: ctx.device.clone(),
             queue: ctx.queue.clone(),
         })
+        .with_winit_custom_application_handler(super::pointer_lock::Handler)
         .select()?;
     let owner = Owner::new(ctx.clone());
     let result = (|| {

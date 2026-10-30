@@ -220,6 +220,22 @@ impl Rational {
         self.numerator.as_::<f64>() / self.denominator.as_::<f64>()
     }
 
+    fn round_dyadic(self, power: u32) -> Result<Self, String> {
+        if self.sign() == Ordering::Less || power > f64::MANTISSA_DIGITS {
+            return Err(
+                "Exact emission dyadic conversion requires bounded nonnegative weights".into(),
+            );
+        }
+        let denominator = n!(1I1024) << power;
+        let scaled = self.mul(Self::ratio(denominator, n!(1))?)?;
+        let mut integer = scaled.numerator / scaled.denominator;
+        let remainder = scaled.numerator % scaled.denominator;
+        if remainder >= scaled.denominator - remainder {
+            integer = integer.checked_add(n!(1)).ok_or(ARITHMETIC_ERROR)?;
+        }
+        Self::ratio(integer, denominator)
+    }
+
     fn upper(self) -> Result<f64, String> {
         let mut value = self.approximate();
         for _ in 0..8 {
@@ -1274,6 +1290,32 @@ pub(super) fn admit_triangle(points: [DVec3; 3], budget: &mut Budget<'_>) -> Res
     Ok(())
 }
 
+fn dyadic_precision(
+    source: &[[Rational; 3]; 3],
+    work: &mut Work,
+    budget: &mut Budget<'_>,
+) -> Result<Option<u32>, String> {
+    work.charge(128, budget)?;
+    let power = source
+        .iter()
+        .flatten()
+        .map(|value| value.denominator.trailing_zeros())
+        .max()
+        .unwrap_or(0);
+    let mut bits = 0;
+    for value in source.iter().flatten() {
+        if !value.numerator.is_zero() {
+            bits = bits.max(
+                I1024::BITS - value.numerator.abs().leading_zeros() + power
+                    - value.denominator.trailing_zeros(),
+            );
+        }
+    }
+    Ok(f64::MANTISSA_DIGITS
+        .checked_sub(bits)
+        .filter(|precision| *precision > 0))
+}
+
 pub(super) struct Visibility {
     source: [[Rational; 3]; 3],
     origin: [Rational; 3],
@@ -1556,22 +1598,25 @@ impl Visibility {
         Ok(())
     }
 
+    fn coordinate(&self, point: Point, axis: usize) -> Result<Rational, String> {
+        self.source[0][axis]
+            .add(
+                self.source[1][axis]
+                    .sub(self.source[0][axis])?
+                    .mul(point.0[0])?,
+            )?
+            .add(
+                self.source[2][axis]
+                    .sub(self.source[0][axis])?
+                    .mul(point.0[1])?,
+            )
+    }
+
     fn world(&self, point: Point) -> Result<Point, String> {
-        let mut result = [Rational::ZERO; 2];
-        for (index, &axis) in self.axes.iter().enumerate() {
-            result[index] = self.source[0][axis]
-                .add(
-                    self.source[1][axis]
-                        .sub(self.source[0][axis])?
-                        .mul(point.0[0])?,
-                )?
-                .add(
-                    self.source[2][axis]
-                        .sub(self.source[0][axis])?
-                        .mul(point.0[1])?,
-                )?;
-        }
-        Ok(Point(result))
+        Ok(Point([
+            self.coordinate(point, self.axes[0])?,
+            self.coordinate(point, self.axes[1])?,
+        ]))
     }
 
     fn lift(&self, point: Point) -> Result<[Rational; 3], String> {
@@ -1633,6 +1678,7 @@ impl Visibility {
             .map(|point| Point(self.axes.map(|axis| point[axis])));
         let triangle_capacity = self.fragments.vertices;
         let mut result = Storage::new(triangle_capacity, budget)?;
+        let mut coarse_error = 0.0;
         let mut error = 0.0;
         for index in 0..self.fragments.polygons.values.len() {
             let polygon = &self.fragments.polygons.values[index];
@@ -1655,6 +1701,7 @@ impl Visibility {
             }
             let orientation = self.orientation;
             let mut center = None;
+            let mut center_index = 0;
             for index in 1..world.values.len() - 1 {
                 self.work.charge(64, budget)?;
                 if turn(
@@ -1674,70 +1721,144 @@ impl Visibility {
                             .add(world.values[index + 1].0[1])?
                             .div(divisor)?,
                     ]));
+                    center_index = index;
                     break;
                 }
             }
             let center = center.ok_or("Exact emission cannot condition a positive fragment")?;
             let mut converted = None;
             let mut rejection = "no conversion candidate";
-            'conversion: for contraction in 0..18 {
-                self.work.charge(world.values.len() * 96, budget)?;
-                let fraction = if contraction == 0 {
-                    Rational::ZERO
+            for family in 0..2 {
+                let barycentric = if family == 0 {
+                    None
                 } else {
-                    Rational::new(1, 1i128 << (49 - contraction))?
+                    if !oblique {
+                        break;
+                    }
+                    let Some(precision) = dyadic_precision(&self.source, &mut self.work, budget)?
+                    else {
+                        rejection =
+                            "native source coordinates leave no dyadic barycentric precision";
+                        break;
+                    };
+                    self.work.charge(128, budget)?;
+                    let points = [
+                        polygon.values[0].point,
+                        polygon.values[center_index].point,
+                        polygon.values[center_index + 1].point,
+                    ];
+                    let divisor = Rational::new(3, 1)?;
+                    let center = Point([
+                        points[0].0[0]
+                            .add(points[1].0[0])?
+                            .add(points[2].0[0])?
+                            .div(divisor)?,
+                        points[0].0[1]
+                            .add(points[1].0[1])?
+                            .add(points[2].0[1])?
+                            .div(divisor)?,
+                    ]);
+                    Some((center, precision))
                 };
-                let mut candidate = Polygon::new(world.values.len(), budget)?;
-                for &point in &world.values {
-                    let x = point.0[0]
-                        .add(center.0[0].sub(point.0[0])?.mul(fraction)?)?
-                        .approximate();
-                    let y = point.0[1]
-                        .add(center.0[1].sub(point.0[1])?.mul(fraction)?)?
-                        .approximate();
-                    let point = Point([Rational::from_f64(x)?, Rational::from_f64(y)?]);
-                    if oblique {
-                        self.work.charge(128, budget)?;
-                        let coordinate = self.lift(point)?[self.axis];
-                        if Rational::from_f64(coordinate.approximate())? != coordinate {
-                            rejection =
-                                "source-plane lift is not exactly representable in binary64";
-                            continue 'conversion;
+                'conversion: for contraction in 0..18 {
+                    self.work.charge(world.values.len() * 96, budget)?;
+                    let fraction = if contraction == 0 {
+                        Rational::ZERO
+                    } else if barycentric.is_some() {
+                        Rational::new(1, 1i128 << (21 - contraction))?
+                    } else {
+                        Rational::new(1, 1i128 << (49 - contraction))?
+                    };
+                    let mut candidate = Polygon::new(world.values.len(), budget)?;
+                    if let Some((center, precision)) = barycentric {
+                        for vertex in &polygon.values {
+                            self.work.charge(256, budget)?;
+                            let point = vertex.point;
+                            let weight = Point([
+                                point.0[0]
+                                    .add(center.0[0].sub(point.0[0])?.mul(fraction)?)?
+                                    .round_dyadic(precision)?,
+                                point.0[1]
+                                    .add(center.0[1].sub(point.0[1])?.mul(fraction)?)?
+                                    .round_dyadic(precision)?,
+                            ]);
+                            if weight.0[0].sign() == Ordering::Less
+                                || weight.0[1].sign() == Ordering::Less
+                                || weight.0[0].add(weight.0[1])?.compare(Rational::ONE)
+                                    == Ordering::Greater
+                            {
+                                rejection =
+                                    "dyadic barycentric weights leave the actual source triangle";
+                                continue 'conversion;
+                            }
+                            let native = [
+                                self.coordinate(weight, 0)?,
+                                self.coordinate(weight, 1)?,
+                                self.coordinate(weight, 2)?,
+                            ];
+                            for coordinate in native {
+                                if Rational::from_f64(coordinate.approximate())? != coordinate {
+                                    rejection = "dyadic source mapping is not exactly representable in binary64";
+                                    continue 'conversion;
+                                }
+                            }
+                            candidate.push(Point(self.axes.map(|axis| native[axis])))?;
+                        }
+                    } else {
+                        for &point in &world.values {
+                            let x = point.0[0]
+                                .add(center.0[0].sub(point.0[0])?.mul(fraction)?)?
+                                .approximate();
+                            let y = point.0[1]
+                                .add(center.0[1].sub(point.0[1])?.mul(fraction)?)?
+                                .approximate();
+                            let point = Point([Rational::from_f64(x)?, Rational::from_f64(y)?]);
+                            if oblique {
+                                self.work.charge(128, budget)?;
+                                let coordinate = self.lift(point)?[self.axis];
+                                if Rational::from_f64(coordinate.approximate())? != coordinate {
+                                    rejection = "source-plane lift is not exactly representable in binary64";
+                                    continue 'conversion;
+                                }
+                            }
+                            candidate.push(point)?;
                         }
                     }
-                    candidate.push(point)?;
+                    if let Some(reason) = conversion_rejection(
+                        &boundaries.values,
+                        &candidate.values,
+                        orientation,
+                        &mut self.work,
+                        budget,
+                    )? {
+                        rejection = reason;
+                        continue;
+                    }
+                    self.work.charge(candidate.values.len() * 64, budget)?;
+                    let converted_area = double_area(candidate.values.iter().copied())?;
+                    if converted_area.sign() != orientation {
+                        rejection = "collapsed or reversed area";
+                        continue;
+                    }
+                    let bound = conversion_error(
+                        &world.values,
+                        &candidate.values,
+                        orientation,
+                        distance_squared_lower,
+                        &mut self.work,
+                        budget,
+                    )?;
+                    let bound = if self.area_scale_upper == 1.0 {
+                        bound
+                    } else {
+                        (bound * self.area_scale_upper).next_up()
+                    };
+                    converted = Some((candidate, bound));
+                    break;
                 }
-                if let Some(reason) = conversion_rejection(
-                    &boundaries.values,
-                    &candidate.values,
-                    orientation,
-                    &mut self.work,
-                    budget,
-                )? {
-                    rejection = reason;
-                    continue;
+                if converted.is_some() {
+                    break;
                 }
-                self.work.charge(candidate.values.len() * 64, budget)?;
-                let converted_area = double_area(candidate.values.iter().copied())?;
-                if converted_area.sign() != orientation {
-                    rejection = "collapsed or reversed area";
-                    continue;
-                }
-                let bound = conversion_error(
-                    &world.values,
-                    &candidate.values,
-                    orientation,
-                    distance_squared_lower,
-                    &mut self.work,
-                    budget,
-                )?;
-                let bound = if self.area_scale_upper == 1.0 {
-                    bound
-                } else {
-                    (bound * self.area_scale_upper).next_up()
-                };
-                converted = Some((candidate, bound));
-                break;
             }
             let Some((candidate, bound)) = converted else {
                 let preview: [[f64; 2]; 4] = std::array::from_fn(|index| {
@@ -1756,10 +1877,48 @@ impl Visibility {
                 ));
             };
             if bound > 0.0 {
-                error = (error + bound).next_up();
+                coarse_error = (coarse_error + bound).next_up();
             }
-            if error > MAX_CONVERSION_ERROR {
-                return Err("Exact emission geometric conversion exceeds 1e-12 integral error for one source triangle".into());
+            error = coarse_error;
+            if coarse_error > MAX_CONVERSION_ERROR {
+                self.work.charge(256, budget)?;
+                let scale = Rational::from_f64(self.area_scale_upper)?;
+                if self.normal_squared.compare(scale.mul(scale)?) == Ordering::Greater {
+                    return Err(
+                        "Exact emission source area lost its certified scale upper bound".into(),
+                    );
+                }
+                let jacobian_upper = self.normal_squared.upper()?.sqrt().next_up();
+                let exact_jacobian = Rational::from_f64(jacobian_upper)?;
+                if exact_jacobian
+                    .mul(exact_jacobian)?
+                    .compare(self.normal_squared)
+                    == Ordering::Less
+                {
+                    return Err("Exact emission cannot certify an outward source area bound".into());
+                }
+                let jacobian_ratio = (jacobian_upper / self.area_scale_upper).next_up().min(1.0);
+                let ratio = height_squared.div(distance_squared_lower)?;
+                if ratio.compare(Rational::ONE) == Ordering::Greater {
+                    return Err(
+                        "Exact emission source cosine lost its certified distance lower bound"
+                            .into(),
+                    );
+                }
+                let cosine_upper = ratio.upper()?.sqrt().next_up().min(1.0);
+                let exact_cosine = Rational::from_f64(cosine_upper)?;
+                if exact_cosine.mul(exact_cosine)?.compare(ratio) == Ordering::Less {
+                    return Err(
+                        "Exact emission cannot certify an outward source cosine bound".into(),
+                    );
+                }
+                error = ((coarse_error * jacobian_ratio).next_up() * cosine_upper).next_up();
+            }
+            if !error.is_finite() || error > MAX_CONVERSION_ERROR {
+                return Err(format!(
+                    "Exact emission geometric conversion exceeds 1e-12 integral error for one source triangle: bound {error}, coarse bound {coarse_error}; source triangle {:?}",
+                    self.source.map(|point| point.map(Rational::approximate)),
+                ));
             }
             for index in 1..candidate.values.len() - 1 {
                 self.work.charge(256, budget)?;

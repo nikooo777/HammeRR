@@ -798,6 +798,19 @@ proof does not certify real-arithmetic UV boundaries or native filtering parity.
 Converted binary64 kernel vertices must lie exactly on each actual source
 triangle plane. All converted coverage must stay inside the exact visible region;
 `fragment_conversion` reports this contract.
+`fragment_conversion_candidates` reports the projected search first. If it cannot
+certify an oblique source triangle's conversion, bounded dyadic native-triangle
+weights are tried. Those weights map exactly through the original source triangle;
+all three coordinates must round-trip through binary64 exactly.
+Existing containment, orientation, area-loss, conditioning and error guards still
+decide acceptance. Source coordinates stay unchanged; complex cuts can still fail.
+Arithmetic and resource errors stop the build.
+`fragment_conversion_bound_policy` permits refinement only when the accumulated
+coarse triangle bound exceeds its limit. Certified actual source-area Jacobian
+and source-incidence cosine upper bounds refine the whole accumulated bound.
+The Jacobian replaces the coarse L1 surface scale. The cosine uses the unbiased
+kernel point and a distance lower bound over the whole original source triangle.
+Accepted coarse bounds and error caps stay unchanged.
 Every applicable opaque brush hull must be certified closed, bounded and convex
 from its final planes, including oblique casters. Original materials and
 existing global/model shadow scopes still apply.

@@ -193,9 +193,12 @@ For larger bakes, open **Build settings…**, increase **Lighting work limit
 
 Clipping uses exact rational arithmetic. Exact mode removes redundant cuts
 between visible regions when their exact union is convex. Shadow boundaries stay
-fixed. Real narrow openings can still exceed numeric limits.
+fixed. Conversion uses bounded on-plane candidates. Narrow openings and complex
+cuts can still exceed numeric limits.
 Conversion to the floating lighting kernel includes the source surface-area
-scale. Its reported bound is at most `1e-12` per source triangle and `1e-9` per
+scale and, when needed, certified actual source-area Jacobian and source-incidence
+cosine upper bounds.
+Its reported bound is at most `1e-12` per source triangle and `1e-9` per
 receiver, before source colour and brightness. This is not an RGB, BSP
 quantization or native image error bound.
 **Native direct emission** keeps its separate point approximation.

@@ -25,6 +25,7 @@ doctest = false
 bench = false
 
 [dependencies]
+bnum = { version = "0.14.4", default-features = false }
 glam.workspace = true
 map-core.workspace = true
 source-formats.workspace = true

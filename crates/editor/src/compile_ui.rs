@@ -112,6 +112,41 @@ fn hdr_lighting_details(stats: &serde_json::Value) -> String {
     )
 }
 
+fn material_emission_details(stats: &serde_json::Value) -> String {
+    let emission = &stats["material_emission"];
+    let mut details = String::new();
+    if let Some(policy) = emission["visibility_policy"].as_str() {
+        let label = match policy {
+            "sampled_segments" => "Sampled segments",
+            "exact_axis_aligned_opaque_hull_topology_bounded_kernel_conversion" => {
+                "Exact axis-aligned opaque hulls"
+            }
+            other => other,
+        };
+        details.push_str(&format!("\nEmission visibility policy: {label}"));
+        if policy != "sampled_segments"
+            && let (Some(maximum), Some(total)) = (
+                emission["maximum_visibility_conversion_error"].as_f64(),
+                emission["total_visibility_conversion_error"].as_f64(),
+            )
+        {
+            details.push_str(&format!(
+                "\nEmission conversion bounds (dimensionless): max/receiver {maximum:e} · total {total:e}"
+            ));
+        }
+    }
+    if let Some((ldr, hdr)) = emission["native_surface_lights"]
+        .as_array()
+        .filter(|counts| counts.len() == 2)
+        .and_then(|counts| Some((counts[0].as_u64()?, counts[1].as_u64()?)))
+    {
+        details.push_str(&format!(
+            "\nNative emission surface lights: LDR {ldr} · HDR {hdr}"
+        ));
+    }
+    details
+}
+
 fn visibility_details(stats: &serde_json::Value) -> String {
     let Some(count) = stats["clusters"].as_u64() else {
         return String::new();
@@ -910,12 +945,7 @@ impl Controller {
             String::new()
         };
         let prop_vertex_lighting = prop_vertex_lighting::details(job);
-        let native_emission = result["stats"]["material_emission"]["native_surface_lights"]
-            .as_array()
-            .filter(|counts| counts.len() == 2)
-            .and_then(|counts| Some((counts[0].as_u64()?, counts[1].as_u64()?)))
-            .map(|(ldr, hdr)| format!("\nNative emission surface lights: LDR {ldr} · HDR {hdr}"))
-            .unwrap_or_default();
+        let material_emission = material_emission_details(&result["stats"]);
         let packed_water = water_packing::details(job);
         let packed_static_props = static_prop_packing::details(job);
         let samples = result["stats"]["cubemap_samples"]
@@ -1342,7 +1372,7 @@ impl Controller {
         };
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{native_emission}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{brush_global_shadows}{styles}{hdr}{lighting_progress}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{material_emission}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{brush_global_shadows}{styles}{hdr}{lighting_progress}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),

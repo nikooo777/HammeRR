@@ -126,7 +126,12 @@ fn field(entity: &Entity, class: Option<&Class>, key: String, stored_value: Opti
         && entity
             .classname()
             .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"));
-    let property = if material_emission || native_emission {
+    let exact_emission = compiler::is_material_emission_exact_visibility_key(&key)
+        && entity
+            .classname()
+            .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"));
+    let emission_policy = native_emission || exact_emission;
+    let property = if material_emission || emission_policy {
         None
     } else {
         class.and_then(|class| class.property(&key))
@@ -151,7 +156,7 @@ fn field(entity: &Entity, class: Option<&Class>, key: String, stored_value: Opti
         && entity
             .classname()
             .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"));
-    let kind = if native_emission {
+    let kind = if emission_policy {
         "boolean"
     } else if water_current {
         "vector"
@@ -170,14 +175,14 @@ fn field(entity: &Entity, class: Option<&Class>, key: String, stored_value: Opti
             |property| property.kind.as_str(),
         )
     };
-    let stored = if material_emission || native_emission {
+    let stored = if material_emission || emission_policy {
         stored_value
     } else {
         entity.properties.get(&key)
     };
     let value = stored
         .map(str::to_owned)
-        .or_else(|| native_emission.then(|| "0".into()))
+        .or_else(|| emission_policy.then(|| "0".into()))
         .or_else(|| water_current.then(|| WATER_CURRENT_DEFAULT.into()))
         .or_else(|| water_damping.then(|| compiler::DEFAULT_WATER_DAMPING.to_string()))
         .or_else(|| property.and_then(Property::default_value))
@@ -235,7 +240,7 @@ fn field(entity: &Entity, class: Option<&Class>, key: String, stored_value: Opti
     if material_emission {
         result.label = "Emission file".into();
         result.description = format!(
-            "Mounted relative path, up to {} ASCII bytes. Blank turns emission off; disable Native direct emission before clearing the file, or change both in one draft. Compile to bake uniform or texture-driven light from declared world/detail and eligible stationary brush materials. Fullbright does not bake emission.",
+            "Mounted relative path, up to {} ASCII bytes. Blank turns emission off; disable Native direct emission and Exact emission visibility before clearing the file, or change them in one draft. Compile to bake uniform or texture-driven light from declared world/detail and eligible stationary brush materials. Fullbright does not bake emission.",
             compiler::MAX_MATERIAL_EMISSION_FILE_PATH_BYTES
         );
         result.advanced = false;
@@ -258,6 +263,19 @@ fn field(entity: &Entity, class: Option<&Class>, key: String, stored_value: Opti
             ));
         }
         if let Err(error) = compiler::material_emission_native_direct(&entity.properties) {
+            result.description.push_str(&format!(" {error}"));
+        }
+    }
+    if exact_emission {
+        result.label = "Exact emission visibility".into();
+        result.description = "Exact shadows from planar world/detail sources and opaque axis-aligned brushes. Unsupported casters or numeric limits stop the build. Requires Emission file. Native direct emission stays a point approximation. Fullbright only checks the setting.".into();
+        result.advanced = false;
+        if let Err(error) = compiler::validate_material_emission_exact_visibility(&result.value) {
+            result.description.push_str(&format!(
+                " Stored exact emission visibility policy is invalid: {error}"
+            ));
+        }
+        if let Err(error) = compiler::material_emission_exact_visibility(&entity.properties) {
             result.description.push_str(&format!(" {error}"));
         }
     }
@@ -511,7 +529,9 @@ pub fn inspect(entity: &Entity, class: Option<&Class>) -> Inspector {
             if entity
                 .classname()
                 .is_some_and(|class| class.eq_ignore_ascii_case("worldspawn"))
-                && compiler::is_material_emission_key(&property.name)
+                && (compiler::is_material_emission_key(&property.name)
+                    || compiler::is_material_emission_native_direct_key(&property.name)
+                    || compiler::is_material_emission_exact_visibility_key(&property.name))
             {
                 continue;
             }
@@ -547,6 +567,15 @@ pub fn inspect(entity: &Entity, class: Option<&Class>) -> Inspector {
         {
             names.push((compiler::MATERIAL_EMISSION_NATIVE_DIRECT_KEY.into(), None));
         }
+        if !names
+            .iter()
+            .any(|(name, _)| name == compiler::MATERIAL_EMISSION_EXACT_VISIBILITY_KEY)
+        {
+            names.push((
+                compiler::MATERIAL_EMISSION_EXACT_VISIBILITY_KEY.into(),
+                None,
+            ));
+        }
         for key in [
             compiler::WATER_CURRENT_VELOCITY_KEY,
             compiler::WATER_DAMPING_KEY,
@@ -569,7 +598,8 @@ pub fn inspect(entity: &Entity, class: Option<&Class>) -> Inspector {
             "angles" => 4,
             compiler::MATERIAL_EMISSION_FILE_KEY => 5,
             compiler::MATERIAL_EMISSION_NATIVE_DIRECT_KEY => 6,
-            _ => 7,
+            compiler::MATERIAL_EMISSION_EXACT_VISIBILITY_KEY => 7,
+            _ => 8,
         };
         (field.advanced, priority)
     });

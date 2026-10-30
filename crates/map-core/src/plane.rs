@@ -17,7 +17,16 @@ impl Plane {
     /// The plane through three points in VMF order. The normal points out of
     /// the brush; `None` if the points are collinear.
     pub fn from_points([a, b, c]: [DVec3; 3]) -> Option<Self> {
-        let normal = (a - b).cross(c - b).try_normalize()?;
+        let cross = (a - b).cross(c - b);
+        let mut normal = cross.try_normalize()?;
+        if let Some(axis) = (0..3).find(|&axis| {
+            a[axis] == b[axis]
+                && b[axis] == c[axis]
+                && cross[axis] != 0.0
+                && (0..3).all(|other| other == axis || cross[other] == 0.0)
+        }) {
+            normal[axis] = cross[axis].signum();
+        }
         Some(Self {
             normal,
             dist: normal.dot(b),

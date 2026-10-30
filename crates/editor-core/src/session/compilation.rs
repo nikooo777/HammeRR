@@ -764,7 +764,7 @@ impl Session {
         };
         settings["lighting_work_limit"] = self.compilation.options.lighting_work_limit.into();
         settings["light_value_bindings"] = instance_reference::light_value_binding_scope();
-        settings["material_emission_description"] = "World settings → Emission file (_hammerr_emission_file) selects an optional mounted relative declaration file. File contents and source assets validate at compile time. Records are [ldr:|hdr:] material R G B brightness; add texture: before the material to multiply radiance by nearest mip0 base-texture RGB with the 2.2 conversion and stored UV clamp/repeat. One mode per material; unsupported or changed textures reject. Sources are drawn opaque world/detail faces or eligible stationary func_brush models with Shadows Yes, using their compiled initial pose. Moving, unrequested and MDL emitting models are unavailable. By default, finite-area sources use sampled baked lighting and dynamic receivers use indexed ambient only. Native direct emission (_hammerr_emission_native_direct) is a default-off World 0/1 policy requiring a nonblank Emission file. It adds native selected/folded runtime direct point approximations at constant-RGB integration-triangle centroids and removes only intrinsic direct emission from indexed ambient; sampled maps, VHV, detail direct and reflected ambient remain. Native light slots and angular/folding behavior do not reproduce finite-area response. The inherited full-VHV native path can add static-cache lighting when dynamic lights affect the prop. No shader glow or exact finite-source visibility is implied. Turn off the policy before clearing Emission file, or change both in one draft. Default-off paired emission keeps the existing authored HDR WorldLight requirement. Fullbright validates without baking or native emission records.".into();
+        settings["material_emission_description"] = "World settings → Emission file (_hammerr_emission_file) selects an optional mounted relative declaration file. File contents and source assets validate at compile time. Records are [ldr:|hdr:] material R G B brightness; add texture: before the material to multiply radiance by nearest mip0 base-texture RGB with the 2.2 conversion and stored UV clamp/repeat. One mode per material; unsupported or changed textures reject. Sources are drawn opaque world/detail faces or eligible stationary func_brush models with Shadows Yes, using their compiled initial pose. Moving, unrequested and MDL emitting models are unavailable. By default, finite-area sources use sampled baked lighting and dynamic receivers use indexed ambient only. Exact emission visibility (_hammerr_emission_exact_visibility) is a separate default-off World 0/1 policy requiring a nonblank Emission file. It requests bounded exact rational finite-source shadow subtraction for uniquely owned exactly planar world/detail sources and all applicable original axis-aligned opaque brush hulls. Unsupported providers, uncertain source support, unqualified fragment conversion/conditioning and exhausted bounds reject without sampled fallback or BSP publication. Native direct emission (_hammerr_emission_native_direct) is a default-off World 0/1 policy requiring a nonblank Emission file. It adds native selected/folded runtime direct point approximations at constant-RGB integration-triangle centroids and removes only intrinsic direct emission from indexed ambient; baked maps, VHV, detail direct and reflected ambient remain, with emission visibility selected independently. Native light slots and angular/folding behavior do not reproduce finite-area response. The inherited full-VHV native path can add static-cache lighting when dynamic lights affect the prop. Native direct emission implies no shader glow or exact finite-source runtime response. Turn off both emission policies before clearing Emission file, or change them in one draft. Default-off paired emission keeps the existing authored HDR WorldLight requirement. Fullbright validates without baking or native emission records.".into();
         let native_emission =
             compiler::material_emission_native_direct(&self.document.vmf().world.properties);
         settings["material_emission_native_direct"] = json!({
@@ -786,8 +786,27 @@ impl Session {
             "radius_coverage":"compiled_world_receiver_and_cache_bounds",
             "indexed_ambient":"reflected_emission_retained_intrinsic_direct_replaced",
             "sampled_receivers":"maps_vhv_and_detail_direct_unchanged",
+            "emission_visibility":"selected_independently_by_world_exact_visibility_policy",
             "native_static_cache_on_dynamic_lit_full_vhv":true,
             "finite_area_fidelity":false,"exact_finite_source_visibility":false
+        });
+        let exact_emission =
+            compiler::material_emission_exact_visibility(&self.document.vmf().world.properties);
+        settings["material_emission_exact_visibility"] = json!({
+            "world_key":compiler::MATERIAL_EMISSION_EXACT_VISIBILITY_KEY,
+            "label":"Exact emission visibility",
+            "build_option":false,"default":false,"values":["0","1"],
+            "enabled":exact_emission.as_ref().ok(),
+            "error":exact_emission.as_ref().err(),
+            "requires":"nonblank_valid_emission_file",
+            "fullbright":"validate_only_without_exact_geometry_admission",
+            "source_scope":"uniquely_owned_exactly_planar_world_detail_actual_source_vertices",
+            "occluder_scope":"all_applicable_original_axis_aligned_opaque_brush_hulls",
+            "topology":"bounded_exact_rational_open_segment_shadow_subtraction",
+            "failure_policy":"reject_without_sampled_fallback_or_bsp_publication",
+            "unsupported":["posed_or_rounded_sources","terrain_providers","prop_providers","alpha_or_unknown_materials","non_axis_aligned_hull_planes","uncertain_source_support","unqualified_fragment_conversion_or_conditioning","exhausted_work_storage_or_arithmetic_bounds"],
+            "default_visibility":"sampled_segments",
+            "native_direct":"independent_centroid_point_approximation_unchanged"
         });
         settings["lighting_work_limit_range"] = json!({
             "min":compiler::MIN_LIGHTING_WORK_LIMIT,

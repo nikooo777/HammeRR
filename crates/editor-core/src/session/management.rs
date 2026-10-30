@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use glam::DVec3;
 use map_core::{ObjectId, query};
 use serde::{Deserialize, Serialize};
-use source_formats::vmf::Entity;
+use source_formats::vmf::{Entity, Properties};
 
 use super::{Actor, SelectMode, Session};
 use crate::inspector;
@@ -530,19 +530,41 @@ impl Session {
                     }
                     continue;
                 }
-                if classname.eq_ignore_ascii_case("worldspawn")
-                    && compiler::is_material_emission_native_direct_key(key)
+                let emission_policy = if !classname.eq_ignore_ascii_case("worldspawn") {
+                    None
+                } else if compiler::is_material_emission_native_direct_key(key) {
+                    Some((
+                        compiler::MATERIAL_EMISSION_NATIVE_DIRECT_KEY,
+                        "Native direct emission",
+                        compiler::material_emission_native_direct_field
+                            as fn(&Properties) -> Result<Option<&str>, String>,
+                        compiler::validate_material_emission_native_direct
+                            as fn(&str) -> Result<(), String>,
+                    ))
+                } else if compiler::is_material_emission_exact_visibility_key(key) {
+                    Some((
+                        compiler::MATERIAL_EMISSION_EXACT_VISIBILITY_KEY,
+                        "Exact emission visibility",
+                        compiler::material_emission_exact_visibility_field
+                            as fn(&Properties) -> Result<Option<&str>, String>,
+                        compiler::validate_material_emission_exact_visibility
+                            as fn(&str) -> Result<(), String>,
+                    ))
+                } else {
+                    None
+                };
+                if let Some((canonical_key, label, validate_fields, validate_value)) =
+                    emission_policy
                 {
-                    if key != compiler::MATERIAL_EMISSION_NATIVE_DIRECT_KEY {
+                    if key != canonical_key {
                         return Err(format!(
-                            "World requires one canonical {} key; resolve noncanonical or duplicate keys before editing",
-                            compiler::MATERIAL_EMISSION_NATIVE_DIRECT_KEY
+                            "World requires one canonical {canonical_key} key; resolve noncanonical or duplicate keys before editing"
                         ));
                     }
-                    compiler::material_emission_native_direct_field(&entity.properties)?;
+                    validate_fields(&entity.properties)?;
                     match change {
                         PropertyChange::Set { value, .. } => {
-                            compiler::validate_material_emission_native_direct(value)?;
+                            validate_value(value)?;
                             entity.properties.set(key, value);
                         }
                         PropertyChange::Remove { .. } => {
@@ -552,10 +574,7 @@ impl Session {
                             entity.properties.set(key, "0");
                         }
                         _ => {
-                            return Err(
-                                "Native direct emission accepts a 0/1 value, reset or removal"
-                                    .into(),
-                            );
+                            return Err(format!("{label} accepts a 0/1 value, reset or removal"));
                         }
                     }
                     emission_changed = true;
@@ -676,6 +695,7 @@ impl Session {
             }
             if emission_changed {
                 compiler::material_emission_native_direct(&entity.properties)?;
+                compiler::material_emission_exact_visibility(&entity.properties)?;
             }
         }
         Ok(())
@@ -714,8 +734,12 @@ impl Session {
         for mut field in fields {
             let native_emission = target == PropertyTarget::World
                 && compiler::is_material_emission_native_direct_key(&field.key);
+            let exact_emission = target == PropertyTarget::World
+                && compiler::is_material_emission_exact_visibility_key(&field.key);
             let material_emission = target == PropertyTarget::World
-                && (compiler::is_material_emission_key(&field.key) || native_emission);
+                && (compiler::is_material_emission_key(&field.key)
+                    || native_emission
+                    || exact_emission);
             let generated_detail_tint = target == PropertyTarget::World
                 && field
                     .key
@@ -760,7 +784,7 @@ impl Session {
                 } else {
                     entity.properties.get(&field.key).map(str::to_owned)
                 };
-                let default = if native_emission {
+                let default = if native_emission || exact_emission {
                     Some("0".into())
                 } else {
                     property.and_then(|property| property.default_value())

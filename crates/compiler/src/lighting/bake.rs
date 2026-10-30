@@ -1319,6 +1319,9 @@ fn bake_inner(
                 &scopes,
                 settings.face_sources,
                 settings.instances,
+                settings.fs,
+                &shadows,
+                &model_shadows,
                 budget,
             )
         })

@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 use std::sync::Arc;
@@ -18,11 +19,13 @@ use crate::asset_sources::BuildMaterialSources;
 use crate::materials::{Materials, Requirements};
 use crate::{Control, Diagnostic, Options, Report, SkyQuality, map::Map};
 
+mod exact;
 pub(super) mod native;
 mod texture;
 
 pub const MATERIAL_EMISSION_FILE_KEY: &str = "_hammerr_emission_file";
 pub const MATERIAL_EMISSION_NATIVE_DIRECT_KEY: &str = "_hammerr_emission_native_direct";
+pub const MATERIAL_EMISSION_EXACT_VISIBILITY_KEY: &str = "_hammerr_emission_exact_visibility";
 pub const MAX_MATERIAL_EMISSION_FILE_PATH_BYTES: usize = 1024;
 const MAX_FILE_BYTES: usize = 64 * 1024;
 const MAX_RECORDS: usize = 4096;
@@ -31,6 +34,8 @@ const MAX_SOURCE_SIDES: usize = 65_536;
 const MAX_TRIANGLES: usize = 262_144;
 const MAX_CELLS: usize = 262_144;
 const MAX_DEPTH: usize = 48;
+const MAX_EXACT_HULL_PLANES: usize = 128;
+const MAX_EXACT_RECEIVER_CONVERSION_ERROR: f64 = 1.0e-9;
 const BOUNDARY_REFINEMENT: f64 = 16.0;
 const LIGHTMAP_SCALE: f64 = 255.0;
 const ARITHMETIC_OPERATIONS: f64 = 256.0;
@@ -62,6 +67,9 @@ pub struct MaterialEmissionStats {
     pub channel_rays: [usize; 2],
     pub native_surface_lights: [usize; 2],
     pub native_policy: &'static str,
+    pub visibility_policy: &'static str,
+    pub maximum_visibility_conversion_error: f64,
+    pub total_visibility_conversion_error: f64,
 }
 
 pub fn validate_material_emission_file(value: &str) -> Result<(), String> {
@@ -107,53 +115,110 @@ pub fn material_emission_file_field(properties: &Properties) -> Result<Option<&s
     Ok(Some(value))
 }
 
-pub fn is_material_emission_native_direct_key(key: &str) -> bool {
+fn is_emission_policy_key(key: &str, canonical: &str) -> bool {
     key.trim_end_matches(' ')
         .split('#')
         .next()
         .unwrap_or(key)
-        .eq_ignore_ascii_case(MATERIAL_EMISSION_NATIVE_DIRECT_KEY)
+        .eq_ignore_ascii_case(canonical)
 }
 
-pub fn validate_material_emission_native_direct(value: &str) -> Result<(), String> {
-    if !matches!(value, "0" | "1") {
-        return Err("Native direct emission requires exactly 0 or 1".into());
-    }
-    Ok(())
-}
-
-pub fn material_emission_native_direct_field(
-    properties: &Properties,
-) -> Result<Option<&str>, String> {
+fn emission_policy_field<'a>(
+    properties: &'a Properties,
+    canonical: &str,
+    label: &str,
+) -> Result<Option<&'a str>, String> {
     let mut fields = properties
         .iter()
-        .filter(|(key, _)| is_material_emission_native_direct_key(key));
+        .filter(|(key, _)| is_emission_policy_key(key, canonical));
     let Some((key, value)) = fields.next() else {
         return Ok(None);
     };
-    if key != MATERIAL_EMISSION_NATIVE_DIRECT_KEY || fields.next().is_some() {
-        return Err("Native direct emission requires one canonical _hammerr_emission_native_direct world field".into());
+    if key != canonical || fields.next().is_some() {
+        return Err(format!(
+            "{label} requires one canonical {canonical} world field"
+        ));
     }
     Ok(Some(value))
 }
 
-pub fn material_emission_native_direct(properties: &Properties) -> Result<bool, String> {
-    let Some(value) = material_emission_native_direct_field(properties)? else {
+fn validate_emission_policy(value: &str, label: &str) -> Result<(), String> {
+    if !matches!(value, "0" | "1") {
+        return Err(format!("{label} requires exactly 0 or 1"));
+    }
+    Ok(())
+}
+
+fn emission_policy(properties: &Properties, canonical: &str, label: &str) -> Result<bool, String> {
+    let Some(value) = emission_policy_field(properties, canonical, label)? else {
         return Ok(false);
     };
-    validate_material_emission_native_direct(value)?;
+    validate_emission_policy(value, label)?;
     let enabled = value == "1";
     if enabled {
         let path = material_emission_file_field(properties)?
             .filter(|value| !value.trim().is_empty())
-            .ok_or("Native direct emission requires a nonblank Emission file")?;
+            .ok_or_else(|| format!("{label} requires a nonblank Emission file"))?;
         validate_material_emission_file(path)?;
     }
     Ok(enabled)
 }
 
+pub fn is_material_emission_native_direct_key(key: &str) -> bool {
+    is_emission_policy_key(key, MATERIAL_EMISSION_NATIVE_DIRECT_KEY)
+}
+
+pub fn validate_material_emission_native_direct(value: &str) -> Result<(), String> {
+    validate_emission_policy(value, "Native direct emission")
+}
+
+pub fn material_emission_native_direct_field(
+    properties: &Properties,
+) -> Result<Option<&str>, String> {
+    emission_policy_field(
+        properties,
+        MATERIAL_EMISSION_NATIVE_DIRECT_KEY,
+        "Native direct emission",
+    )
+}
+
+pub fn material_emission_native_direct(properties: &Properties) -> Result<bool, String> {
+    emission_policy(
+        properties,
+        MATERIAL_EMISSION_NATIVE_DIRECT_KEY,
+        "Native direct emission",
+    )
+}
+
+pub fn is_material_emission_exact_visibility_key(key: &str) -> bool {
+    is_emission_policy_key(key, MATERIAL_EMISSION_EXACT_VISIBILITY_KEY)
+}
+
+pub fn validate_material_emission_exact_visibility(value: &str) -> Result<(), String> {
+    validate_emission_policy(value, "Exact emission visibility")
+}
+
+pub fn material_emission_exact_visibility_field(
+    properties: &Properties,
+) -> Result<Option<&str>, String> {
+    emission_policy_field(
+        properties,
+        MATERIAL_EMISSION_EXACT_VISIBILITY_KEY,
+        "Exact emission visibility",
+    )
+}
+
+pub fn material_emission_exact_visibility(properties: &Properties) -> Result<bool, String> {
+    emission_policy(
+        properties,
+        MATERIAL_EMISSION_EXACT_VISIBILITY_KEY,
+        "Exact emission visibility",
+    )
+}
+
 pub(crate) fn file(properties: &Properties) -> Result<Option<&str>, String> {
     material_emission_native_direct(properties)?;
+    material_emission_exact_visibility(properties)?;
     let Some(value) = material_emission_file_field(properties)? else {
         return Ok(None);
     };
@@ -188,6 +253,7 @@ pub(crate) struct Input<'a> {
     sources: BuildMaterialSources,
     stats: MaterialEmissionStats,
     native_enabled: bool,
+    exact_enabled: bool,
     _allocation: Allocation,
 }
 
@@ -334,6 +400,7 @@ pub(crate) fn preflight<'a>(
         return Ok(None);
     };
     let native_enabled = material_emission_native_direct(&vmf.world.properties)?;
+    let exact_enabled = material_emission_exact_visibility(&vmf.world.properties)?;
     let mut budget = Budget::with_options(control, options);
     let allocation =
         budget.reserve_bytes(MAX_FILE_BYTES * 128 + MAX_RECORDS * 1024 + MAX_SOURCE_SIDES * 128)?;
@@ -426,19 +493,31 @@ pub(crate) fn preflight<'a>(
         channel_cells: [0; 2],
         channel_rays: [0; 2],
         native_surface_lights: [0; 2],
+        visibility_policy: if exact_enabled {
+            "exact_axis_aligned_opaque_hull_topology_bounded_kernel_conversion"
+        } else {
+            "sampled_segments"
+        },
+        maximum_visibility_conversion_error: 0.0,
+        total_visibility_conversion_error: 0.0,
         native_policy: if native_enabled {
             "native_centroid_direct_indexed_reflected_ambient"
         } else {
             "indexed_ambient_only_no_emission_worldlights"
         },
     };
+    let visibility = if exact_enabled {
+        "Exact emission visibility requests complete axis-aligned original opaque-hull shadow topology with bounded kernel conversion; unsupported providers, sources, arithmetic or exhausted resources fail the request"
+    } else {
+        "Material emission uses sampled segment shadows"
+    };
     report.diagnostics.push(Diagnostic::info(format!(
-        "Material emission: {} declarations match {} original world/detail or stationary Shadows Yes brush-model sides, {} textured materials; {}. {}",
+        "Material emission: {} declarations match {} original world/detail or stationary Shadows Yes brush-model sides, {} textured materials; {}. {visibility}. {}",
         declarations.len(), sides.len(), textures.len(), if options.lighting.performs_lighting() { "baking requested" } else { "not baked in Fullbright" },
         if native_enabled {
-            "Radiance uses actual finite source area, nearest mip0 base-texture RGB where requested and sampled segment shadows. Native direct emission is an explicit centroid point approximation with limited native slots and ambient folding; the engine's affected-dynamic-light VHV fallback can add baked static direct again. Indexed ambient omits intrinsic emission and retains reflected emission; sampled baked direct remains enabled. No exact finite-source native response or shader glow"
+            "Native direct emission is an explicit centroid point approximation with limited native slots and ambient folding; the engine's affected-dynamic-light VHV fallback can add baked static direct again. Indexed ambient omits intrinsic emission and retains reflected emission; baked direct remains enabled. No exact finite-source native response or shader glow"
         } else {
-            "Radiance uses actual finite source area, nearest mip0 base-texture RGB where requested, sampled segment shadows and indexed model ambient only; no native emission world lights or shader glow"
+            "Radiance uses actual finite source area, nearest mip0 base-texture RGB where requested and indexed model ambient only; no native emission world lights or shader glow"
         }
     ), None, None));
     budget.consume(0)?;
@@ -450,6 +529,7 @@ pub(crate) fn preflight<'a>(
         sources: sources.clone(),
         stats,
         native_enabled,
+        exact_enabled,
         _allocation: allocation,
     }))
 }
@@ -576,6 +656,7 @@ impl<'a> Input<'a> {
                 sources: self.sources,
                 stats: self.stats,
                 native_enabled: self.native_enabled,
+                exact_enabled: self.exact_enabled,
                 _allocation: self._allocation,
             },
         )
@@ -589,6 +670,7 @@ pub(super) struct Declarations {
     sources: BuildMaterialSources,
     stats: MaterialEmissionStats,
     native_enabled: bool,
+    exact_enabled: bool,
     _allocation: Allocation,
 }
 
@@ -619,7 +701,10 @@ pub(super) struct Prepared {
     cells: [Cell<usize>; 2],
     rays: [Cell<usize>; 2],
     native_enabled: bool,
+    exact_enabled: bool,
     native_surface_lights: [Cell<usize>; 2],
+    maximum_conversion_error: Cell<f64>,
+    total_conversion_error: Cell<f64>,
     _allocation: Allocation,
 }
 
@@ -645,6 +730,7 @@ pub(super) struct Sample {
     pub angular: ReceiverAngularMode,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn prepare(
     declarations: &Declarations,
     map: &Map<'_>,
@@ -652,6 +738,9 @@ pub(super) fn prepare(
     scopes: &[super::models::Scope],
     face_sources: &[Arc<[u32]>],
     instances: &crate::instances::Prepared<'_>,
+    fs: &GameFs,
+    shadows: &ShadowIndex<Occluder>,
+    model_shadows: &[Option<ShadowIndex<Occluder>>],
     budget: &mut Budget<'_>,
 ) -> Result<Prepared, String> {
     budget.consume(0)?;
@@ -689,6 +778,17 @@ pub(super) fn prepare(
     let surfedges = bsp.surfedges().map_err(|error| error.to_string())?;
     if face_sources.len() != faces.len() {
         return Err("Emission face contributors disagree with emitted geometry".into());
+    }
+    if declarations.exact_enabled {
+        admit_exact_hulls(
+            declarations,
+            map,
+            scopes,
+            fs,
+            shadows,
+            model_shadows,
+            budget,
+        )?;
     }
     let source_side_count = declarations.sides.len();
     let mut allocation = budget.reserve_bytes(
@@ -760,6 +860,11 @@ pub(super) fn prepare(
             let &(owner, side, entity) = owners
                 .get(id)
                 .ok_or("Emission source has no admitted original brush owner")?;
+            if declarations.exact_enabled && entity != 0 {
+                return Err(
+                    "Exact emission visibility requires original world/detail sources".into(),
+                );
+            }
             if entity != scope.entity {
                 return Err("Emission face disagrees with its original model scope".into());
             }
@@ -840,6 +945,11 @@ pub(super) fn prepare(
             {
                 return Err("Emission source needs at least three finite native vertices within Source coordinate bounds".into());
             }
+            if declarations.exact_enabled {
+                for &point in &points {
+                    exact::source_support([point; 3], plane, budget)?;
+                }
+            }
             let mut triangles = Vec::with_capacity(points.len() - 2);
             let mut texture_triangles = Vec::new();
             let mut face_area = 0.0;
@@ -866,6 +976,39 @@ pub(super) fn prepare(
                         texture_points[corner + 2],
                         texture_points[corner + 1],
                     ]);
+                }
+            }
+            if declarations.exact_enabled {
+                let mut matching = false;
+                for hull in shadows.objects() {
+                    budget.consume(1 + hull.planes.len())?;
+                    if hull.source.as_ref().is_some_and(|source| {
+                        source.brush == owner
+                            && source
+                                .sides
+                                .iter()
+                                .zip(&hull.planes)
+                                .any(|(identity, actual)| {
+                                    identity.side == Some(*id)
+                                        && identity.plane == side.plane
+                                        && actual.normal == plane.normal
+                                        && actual.dist == plane.dist
+                                })
+                    }) {
+                        if matching {
+                            return Err(
+                                "Exact emission source has ambiguous prepared hull ownership"
+                                    .into(),
+                            );
+                        }
+                        matching = true;
+                    }
+                }
+                if !matching {
+                    return Err(
+                        "Exact emission source lost its original prepared hull and side equation"
+                            .into(),
+                    );
                 }
             }
             if triangles.is_empty() {
@@ -913,6 +1056,11 @@ pub(super) fn prepare(
                 None
             };
             for (rgb, triangles) in fragments {
+                if declarations.exact_enabled && texture.is_some() {
+                    for &triangle in &triangles {
+                        exact::source_support(triangle, plane, budget)?;
+                    }
+                }
                 let radiance = declaration.channels.map(|value| {
                     let value = value.unwrap_or(DVec3::ZERO);
                     if declaration.textured {
@@ -974,9 +1122,149 @@ pub(super) fn prepare(
         cells: std::array::from_fn(|_| Cell::new(0)),
         rays: std::array::from_fn(|_| Cell::new(0)),
         native_enabled: declarations.native_enabled,
+        exact_enabled: declarations.exact_enabled,
         native_surface_lights: std::array::from_fn(|_| Cell::new(0)),
+        maximum_conversion_error: Cell::new(0.0),
+        total_conversion_error: Cell::new(0.0),
         _allocation: allocation,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn admit_exact_hulls(
+    declarations: &Declarations,
+    map: &Map<'_>,
+    scopes: &[super::models::Scope],
+    fs: &GameFs,
+    shadows: &ShadowIndex<Occluder>,
+    model_shadows: &[Option<ShadowIndex<Occluder>>],
+    budget: &mut Budget<'_>,
+) -> Result<(), String> {
+    let mut assets = super::props::Assets::for_brushes(fs, &declarations.sources);
+    let mut checked = BTreeSet::new();
+    let mut checked_allocation = budget.reserve_bytes(0)?;
+    for index in std::iter::once(shadows).chain(model_shadows.iter().flatten()) {
+        budget.consume(0)?;
+        for hull in index.objects() {
+            budget.consume(1 + hull.planes.len())?;
+            let source = hull
+                .source
+                .as_ref()
+                .ok_or("Exact emission hull has no original brush identity")?;
+            let brush = map
+                .brushes
+                .get(source.brush)
+                .ok_or("Exact emission hull references a missing original brush")?;
+            let result = (|| {
+                if brush.contents & !source_formats::bsp::contents::DETAIL
+                    != source_formats::bsp::contents::SOLID
+                    || hull.sky.iter().any(|sky| *sky)
+                    || hull
+                        .optical
+                        .as_ref()
+                        .is_some_and(|optical| optical.faces.iter().any(Option::is_some))
+                {
+                    return Err("Exact emission visibility requires ordinary opaque original hulls; sky, alpha, grate and translucent hulls are unsupported".into());
+                }
+                if !(6..=MAX_EXACT_HULL_PLANES).contains(&hull.planes.len())
+                    || source.sides.len() != hull.planes.len()
+                {
+                    return Err("Exact emission visibility requires 6 to 128 original axis-aligned hull planes".into());
+                }
+                budget.consume(scopes.len())?;
+                let scope = scopes
+                    .iter()
+                    .find(|scope| scope.entity == brush.entity)
+                    .ok_or("Exact emission hull lost its admitted model scope")?;
+                let entity = map
+                    .entities
+                    .get(brush.entity)
+                    .ok_or("Exact emission hull has no original entity")?;
+                budget.consume(entity.brushes.len())?;
+                if !entity.brushes.contains(&source.brush) {
+                    return Err("Exact emission hull lost its original entity ownership".into());
+                }
+                budget.consume(brush.sides.len())?;
+                let mut mins = DVec3::splat(f64::NEG_INFINITY);
+                let mut maxs = DVec3::splat(f64::INFINITY);
+                let mut originals = brush.sides.iter().filter(|side| !side.bevel);
+                for (identity, plane) in source.sides.iter().zip(&hull.planes) {
+                    budget.consume(1)?;
+                    let original = originals
+                        .next()
+                        .ok_or("Exact emission hull original plane count changed")?;
+                    let original_plane = map.planes.get(original.plane);
+                    let expected = scope.pose.plane(map_core::Plane {
+                        normal: original_plane.normal,
+                        dist: original_plane.dist,
+                    });
+                    if identity.plane != original.plane
+                        || identity.side.is_none()
+                        || identity.side != original.source_id
+                        || plane.normal != expected.normal
+                        || plane.dist != expected.dist
+                    {
+                        return Err(
+                            "Exact emission hull lost its original side, plane or final pose"
+                                .into(),
+                        );
+                    }
+                    let axis = if plane.normal == DVec3::X {
+                        (0, true)
+                    } else if plane.normal == DVec3::NEG_X {
+                        (0, false)
+                    } else if plane.normal == DVec3::Y {
+                        (1, true)
+                    } else if plane.normal == DVec3::NEG_Y {
+                        (1, false)
+                    } else if plane.normal == DVec3::Z {
+                        (2, true)
+                    } else if plane.normal == DVec3::NEG_Z {
+                        (2, false)
+                    } else {
+                        return Err("Exact emission visibility currently requires axis-aligned final hull planes; oblique hulls are unsupported".into());
+                    };
+                    if !plane.dist.is_finite() {
+                        return Err("Exact emission hull plane must be finite".into());
+                    }
+                    if axis.1 {
+                        maxs[axis.0] = maxs[axis.0].min(plane.dist);
+                    } else {
+                        mins[axis.0] = mins[axis.0].max(-plane.dist);
+                    }
+                    let material = map.materials.get(original.material);
+                    budget.consume(1 + material.name.len().div_ceil(64))?;
+                    if !crate::instances::brush_models::ordinary(material) {
+                        return Err(format!(
+                            "Exact emission visibility requires retained ordinary opaque material {} on every original nonbevel boundary",
+                            material.name
+                        ));
+                    }
+                    if !checked.contains(&original.material) {
+                        checked_allocation.grow(budget, 1024)?;
+                        let _parsed = budget.reserve_bytes(
+                            crate::MAX_BRUSH_SHADOW_MATERIAL_BYTES
+                                * 128
+                                * (source_formats::vmt::MAX_PATCH_DEPTH + 1),
+                        )?;
+                        assets.brush_opaque_material(&material.name, budget)?;
+                        checked.insert(original.material);
+                    }
+                }
+                if originals.next().is_some()
+                    || !mins.is_finite()
+                    || !maxs.is_finite()
+                    || !mins.cmplt(maxs).all()
+                {
+                    return Err("Exact emission hull must be a bounded full-dimensional closed axis-aligned intersection".into());
+                }
+                Ok::<(), String>(())
+            })();
+            result
+                .map_err(|error| format!("Exact material emission solid:{}: {error}", brush.id))?;
+        }
+    }
+    budget.consume(0)
 }
 
 fn unit(value: DVec3) -> Result<DVec3, String> {
@@ -1202,7 +1490,116 @@ impl Prepared {
         stats.channel_cells = self.cells.each_ref().map(Cell::get);
         stats.channel_rays = self.rays.each_ref().map(Cell::get);
         stats.native_surface_lights = self.native_surface_lights.each_ref().map(Cell::get);
+        stats.maximum_visibility_conversion_error = self.maximum_conversion_error.get();
+        stats.total_visibility_conversion_error = self.total_conversion_error.get();
         stats
+    }
+
+    fn gather_exact(
+        &self,
+        channel: usize,
+        sample: &Sample,
+        context: Context<'_>,
+        budget: &mut Budget<'_>,
+    ) -> Result<DVec3, String> {
+        budget.consume(0)?;
+        exact::receiver_normal(sample.normal, budget)?;
+        for index in std::iter::once(context.shadows).chain(context.model) {
+            for hull in index.objects() {
+                budget.consume(1 + hull.planes.len())?;
+            }
+        }
+        if !context.terrain.objects().is_empty() {
+            budget.consume(1)?;
+            return Err(
+                "Exact emission visibility does not support terrain shadow providers".into(),
+            );
+        }
+        for triangle in context.props.objects() {
+            budget.consume(1)?;
+            if !triangle.owned_by(context.skip_owner) {
+                return Err(
+                    "Exact emission visibility does not support static-prop shadow providers"
+                        .into(),
+                );
+            }
+        }
+        let mut total = DVec3::ZERO;
+        let mut conversion_error = 0.0;
+        let mut visited = 0usize;
+        for source in &self.sources {
+            budget.consume(1)?;
+            if sample.face == Some(source.face) || source.radiance[channel] == DVec3::ZERO {
+                continue;
+            }
+            let result = (|| {
+                if exact::front(sample.point, source.boundary.equation, budget)?
+                    != Ordering::Greater
+                {
+                    return Ok(0.0);
+                }
+                if exact::front(sample.origin, source.boundary.equation, budget)?
+                    != Ordering::Greater
+                {
+                    return Err("Exact emission visibility requires the actual shadow origin on the source's front side".into());
+                }
+                let mut integral = 0.0;
+                for &triangle in &source.triangles {
+                    let mut visibility = exact::Visibility::new(triangle, sample.origin, budget)?;
+                    for index in std::iter::once(context.shadows).chain(context.model) {
+                        for hull in index.objects() {
+                            budget.consume(1)?;
+                            visibility.subtract(hull.planes.iter().copied(), budget)?;
+                        }
+                    }
+                    let fragments = visibility.finish(sample.point, budget)?;
+                    if fragments.conversion_error_upper > 0.0 {
+                        conversion_error =
+                            (conversion_error + fragments.conversion_error_upper).next_up();
+                    }
+                    if !conversion_error.is_finite()
+                        || conversion_error > MAX_EXACT_RECEIVER_CONVERSION_ERROR
+                    {
+                        return Err("Exact emission visibility exceeds its 1e-9 receiver kernel conversion error limit".into());
+                    }
+                    for &fragment in &fragments.triangles {
+                        budget.consume(64)?;
+                        visited = visited
+                            .checked_add(1)
+                            .filter(|count| *count <= MAX_CELLS)
+                            .ok_or("Exact emission visibility exceeds 262144 receiver fragments")?;
+                        self.cells[channel].set(
+                            self.cells[channel]
+                                .get()
+                                .checked_add(1)
+                                .ok_or("Emission cell count overflow")?,
+                        );
+                        integral += weight(fragment, sample)?;
+                    }
+                }
+                Ok::<f64, String>(integral)
+            })();
+            let integral = result.map_err(|error| {
+                format!(
+                    "Material emission {} face:{} receiver {:#?}: {error}",
+                    source.location, source.face, sample.point
+                )
+            })?;
+            total += source.radiance[channel] * (LIGHTMAP_SCALE / PI * integral);
+        }
+        budget.consume(0)?;
+        let accumulated = if conversion_error > 0.0 {
+            (self.total_conversion_error.get() + conversion_error).next_up()
+        } else {
+            self.total_conversion_error.get()
+        };
+        if !total.is_finite() || total.min_element() < 0.0 || !accumulated.is_finite() {
+            return Err("Material emission illumination or conversion accounting overflow".into());
+        }
+        self.maximum_conversion_error
+            .set(self.maximum_conversion_error.get().max(conversion_error));
+        self.total_conversion_error.set(accumulated);
+        Ok(total)
     }
 
     pub(super) fn gather(
@@ -1219,6 +1616,9 @@ impl Prepared {
         sample.normal = unit(sample.normal)?;
         if !sample.point.is_finite() || !sample.origin.is_finite() {
             return Err("Emission receiver must be finite".into());
+        }
+        if self.exact_enabled {
+            return self.gather_exact(channel, &sample, context, budget);
         }
         let angle = self.stats.maximum_cell_angle_degrees.to_radians();
         let threshold = angle.cos();

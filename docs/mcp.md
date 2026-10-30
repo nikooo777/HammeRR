@@ -722,9 +722,10 @@ Use the same roots/direction/depth and snapshot with `select_entity_graph` (`mod
    `changes:[{"action":"set","key":"_hammerr_emission_file","value":"scripts/room.rad"}]`.
 3. Call `commit_property_edit` with the same token, then compile normally.
 
-Use `cancel_property_edit` to discard, or action `remove` in a new draft to
-disable emission. File paths use shared validation; compilation checks the
-mounted file and materials. `get_compile_settings.material_emission_description`
+Use `cancel_property_edit` to discard. To remove the emission file, disable both
+emission policies first or in the same draft. File paths use shared validation;
+compilation checks the mounted file and materials.
+`get_compile_settings.material_emission_description`
 describes the capability. Build results report actual counts, area, per-channel
 power and sampling work under `stats.material_emission`. Empty source counts
 do not establish illumination. See [Material emission](material-emission.md)
@@ -732,24 +733,48 @@ for source, sampling and native HDR limits.
 
 The default-off **Native direct emission** World policy uses the same draft:
 set `_hammerr_emission_native_direct` to the string `"1"` alongside a nonblank
-`_hammerr_emission_file`, then commit. The file and policy may appear in either
-order in one change list. Clearing the file while leaving the policy enabled
-rejects the complete update. Use `"0"`, `default` or `remove` to disable the policy.
+`_hammerr_emission_file`, then commit. The file and policies may appear in either
+order in one change list. Clearing the file while leaving either policy enabled
+rejects the complete update. Both policy keys require their canonical spelling
+and exactly `"0"` or `"1"`; absent keys default false. Use `"0"`, `default` or
+`remove` to disable a policy.
 There is no new compile option or recipe field; save the World properties normally.
 `get_compile_settings.material_emission_native_direct` reports the World key,
 effective value or validation error, and approximation limits.
 
 The policy emits per-constant-RGB integration-triangle centroid point
 approximations for native selected/folded runtime direct lighting. It replaces
-only intrinsic direct emission in indexed probes; sampled maps, VHV, detail
+only intrinsic direct emission in indexed probes; baked maps, VHV, detail
 direct and reflected ambient remain. Native light slots and angular/folding
 behavior are approximate. Full-VHV props affected by dynamic lights can also
 receive inherited static-cache lighting. Static previews do not simulate this
-runtime selection, and exact finite-source visibility remains unsupported.
+runtime selection. Native direct emission remains a centroid approximation
+independent of the baked emission visibility policy.
 `stats.material_emission.native_surface_lights` gives actual LDR/HDR record
 counts; `native_policy` identifies the chosen policy. Native `surface` records
 remain readable through `inspect_compiled_world_lights`, with point/spot source
 associations and selection unchanged.
+
+The default-off [**Exact emission visibility**](material-emission.md#exact-brush-shadows)
+World policy uses the same draft: set `_hammerr_emission_exact_visibility` to
+`"1"` alongside the file, then commit. It is not a compile option or recipe
+field. `get_compile_settings.material_emission_exact_visibility` reports the
+effective value or validation error, source and hull scope, and refusal policy.
+It supports uniquely owned, exactly planar world/detail sources and every
+applicable final axis-aligned opaque brush hull, checked against original
+materials. Sky, alpha or oblique hulls, terrain/prop shadow providers,
+posed/rounded sources and exhausted numeric/resource bounds reject without
+sampled fallback or replacement of the previous BSP. Fullbright validates the
+policy, file and declarations without admitting exact geometry.
+
+Under `stats.material_emission`, `visibility_policy` identifies the selected
+policy. `maximum_visibility_conversion_error` is the maximum bound per receiver;
+`total_visibility_conversion_error` sums bounds across all gathers in both
+channels. These dimensionless bounds cover conversion from exact clipped
+fragments to the floating kernel, limited to `1e-12` per source triangle and
+`1e-9` per receiver before source RGB/brightness and BSP quantization. They are
+not RGB or image error bounds. **Build details…** shows **Emission visibility
+policy** and **Emission conversion bounds (dimensionless)**.
 
 Use `[ldr:|hdr:] texture: material R G B brightness` for nearest mip0
 base-RGB emission. The same file and property operations apply. Results include
@@ -758,8 +783,9 @@ base-RGB emission. The same file and property operations apply. Results include
 area remain separate from the clipped integration pieces. Texture failures
 reject; no average colour or substitute asset is used.
 
-An eligible stationary `func_brush` can emit from its initial pose. Set its
-finite `origin` and `vrad_brush_cast_shadows:"1"` through `set_entity_properties`,
+With exact visibility disabled, an eligible stationary `func_brush` can emit
+from its initial pose. Set its finite `origin` and `vrad_brush_cast_shadows:"1"`
+through `set_entity_properties`,
 then use the same World emission file. Supported child poses are assembled
 once. Moving or unrequested model sources reject.
 

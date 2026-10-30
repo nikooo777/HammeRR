@@ -163,7 +163,10 @@ plane alone does not stop the build.
 For larger bakes, open **Build settings…**, increase **Lighting work limit
 (millions)**, then click **Apply work limit**. Numeric and memory limits still apply.
 
-Clipping uses exact rational arithmetic. Conversion to the floating lighting
+Clipping uses exact rational arithmetic. Exact mode removes redundant cuts
+between visible regions when their exact union is convex. Shadow boundaries stay
+fixed. Real narrow openings can still exceed numeric limits.
+Conversion to the floating lighting
 kernel has a reported bound of at most `1e-9` per receiver, before source colour
 and brightness. This is not an RGB, BSP quantization or native image error bound.
 **Native direct emission** keeps its separate point approximation.

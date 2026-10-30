@@ -384,7 +384,7 @@ fn conversion_error(
     Ok(bound)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct Halfplane([I1024; 3]);
 
 impl Halfplane {
@@ -514,6 +514,80 @@ impl TopoPolygon {
         }
         Ok(())
     }
+
+    fn remove_collinear(&mut self, work: &mut Work, budget: &mut Budget<'_>) -> Result<(), String> {
+        let count = self.values.len();
+        let first = self.values[0].incoming;
+        let mut retained = 0;
+        for index in 0..count {
+            work.charge(8, budget)?;
+            let next = self
+                .values
+                .get(index + 1)
+                .map_or(first, |vertex| vertex.incoming);
+            if self.values[index].incoming != next {
+                self.values[retained] = self.values[index];
+                retained += 1;
+            }
+        }
+        if retained < 3 {
+            return Err("Exact emission collinear cleanup lost a positive fragment".into());
+        }
+        self.values.truncate(retained);
+        Ok(())
+    }
+
+    fn merged(
+        &self,
+        other: &Self,
+        work: &mut Work,
+        budget: &mut Budget<'_>,
+    ) -> Result<Option<Self>, String> {
+        for (left, a) in self.values.iter().enumerate() {
+            let previous_left = self.values[(left + self.values.len() - 1) % self.values.len()];
+            let next_left = self.values[(left + 1) % self.values.len()];
+            for (right, b) in other.values.iter().enumerate() {
+                work.charge(1, budget)?;
+                if a.incoming != b.incoming.neg() {
+                    continue;
+                }
+                work.charge(4, budget)?;
+                let previous_right =
+                    other.values[(right + other.values.len() - 1) % other.values.len()];
+                let next_right = other.values[(right + 1) % other.values.len()];
+                if a.point != previous_right.point || b.point != previous_left.point {
+                    continue;
+                }
+                // Convex inputs meet across a complete edge; only the new joins can turn outward.
+                work.charge(96, budget)?;
+                if previous_right.incoming.evaluate(next_left.point)?.sign() == Ordering::Greater
+                    || previous_left.incoming.evaluate(next_right.point)?.sign()
+                        == Ordering::Greater
+                {
+                    return Ok(None);
+                }
+                let capacity = self.values.len() + other.values.len() - 2;
+                if capacity > MAX_POLYGON_VERTICES {
+                    return Ok(None);
+                }
+                let mut merged = Self::new(capacity, budget)?;
+                work.charge(capacity * 8, budget)?;
+                merged.push(TopoVertex {
+                    point: a.point,
+                    incoming: previous_right.incoming,
+                })?;
+                for offset in 1..self.values.len() {
+                    merged.push(self.values[(left + offset) % self.values.len()])?;
+                }
+                for offset in 1..other.values.len() - 1 {
+                    merged.push(other.values[(right + offset) % other.values.len()])?;
+                }
+                merged.remove_collinear(work, budget)?;
+                return Ok(Some(merged));
+            }
+        }
+        Ok(None)
+    }
 }
 
 struct Polygons {
@@ -541,6 +615,39 @@ impl Polygons {
         self.polygons.push(polygon)?;
         self.vertices = vertices;
         Ok(())
+    }
+
+    fn coalesce(&mut self, work: &mut Work, budget: &mut Budget<'_>) -> Result<(), String> {
+        for polygon in &mut self.polygons.values {
+            let previous = polygon.values.len();
+            polygon.remove_collinear(work, budget)?;
+            self.vertices -= previous - polygon.values.len();
+        }
+        loop {
+            let mut changed = false;
+            'pairs: for left in 0..self.polygons.values.len() {
+                for right in left + 1..self.polygons.values.len() {
+                    work.charge(1, budget)?;
+                    if let Some(merged) = self.polygons.values[left].merged(
+                        &self.polygons.values[right],
+                        work,
+                        budget,
+                    )? {
+                        self.vertices -= self.polygons.values[left].values.len()
+                            + self.polygons.values[right].values.len()
+                            - merged.values.len();
+                        self.polygons.values[left] = merged;
+                        work.charge((self.polygons.values.len() - right) * 4, budget)?;
+                        self.polygons.values.remove(right);
+                        changed = true;
+                        break 'pairs;
+                    }
+                }
+            }
+            if !changed {
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -1115,6 +1222,7 @@ impl Visibility {
         sample_point: DVec3,
         budget: &mut Budget<'_>,
     ) -> Result<Fragments, String> {
+        self.fragments.coalesce(&mut self.work, budget)?;
         self.work.charge(128, budget)?;
         let sample = vector(sample_point)?;
         let height = sample[self.axis].sub(self.source[0][self.axis])?.abs();

@@ -1,8 +1,10 @@
-import { Button, CheckBox, ComboBox, LineEdit, ListView, SpinBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, SpinBox } from "widgets.slint";
 
 export struct OpeningRow { key: string, label: string, open: bool }
 
 export component HollowWindow inherits Window {
+    background: Theme.panel;
     title: "Hollow brushes - HammeRR";
     preferred-width: 820px; preferred-height: 690px;
     in property <[OpeningRow]> faces;
@@ -32,7 +34,7 @@ export component HollowWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 16px;
             Text { text: "Turn solids into walls"; font-size: 24px; font-weight: 600; }
-            Text { text: root.selection-label; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: root.selection-label; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 16px;
                 VerticalLayout {
@@ -46,14 +48,14 @@ export component HollowWindow inherits Window {
                     ComboBox { model: ["Inside the original size", "Outside the original size"]; current-index <=> root.direction; selected => { root.edited(); } }
                 }
             }
-            Text { text: root.direction == 0 ? "The outer shape stays the same. Walls reduce the space inside." : "The original shape becomes the empty space. Walls grow outward."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: root.direction == 0 ? "The outer shape stays the same. Walls reduce the space inside." : "The original shape becomes the empty space. Walls grow outward."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 12px;
                 Text { text: "Openings"; font-size: 18px; font-weight: 600; vertical-alignment: center; }
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: "Close all openings"; enabled: root.faces.length > 0; clicked => { root.close-openings(); } }
             }
-            Text { text: "Check faces to leave open. Unchecked faces become walls. Keep at least one wall per brush."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: "Check faces to leave open. Unchecked faces become walls. Keep at least one wall per brush."; color: Theme.text-muted; wrap: word-wrap; }
             ListView {
                 vertical-stretch: 1; min-height: 150px;
                 for face in root.faces: VerticalLayout {
@@ -68,8 +70,8 @@ export component HollowWindow inherits Window {
                 if root.cavities > 1: SpinBox { minimum: 1; maximum: max(1,root.cavities); value <=> root.cavity; }
                 Button { text: "Look inside"; enabled: root.token != ""; clicked => { root.look-inside(); } }
             }
-            Text { text: "Look inside moves the camera into the preview. Use Wireframe for an outside view of the walls. Cancel keeps the camera position."; color: #aeb9c8; wrap: word-wrap; font-size: 12px; }
-            if root.message != "": Text { text: root.message; color: #ffc66d; wrap: word-wrap; }
+            Text { text: "Look inside moves the camera into the preview. Use Wireframe for an outside view of the walls. Cancel keeps the camera position."; color: Theme.text-muted; wrap: word-wrap; font-size: 12px; }
+            if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
                 spacing: 10px;

@@ -1,4 +1,5 @@
-import { Button, ListView, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, ListView, ScrollView } from "widgets.slint";
 
 export struct OpenDocumentRow {
     selector: string,
@@ -11,7 +12,7 @@ export component OpenDocumentsWindow inherits Window {
     title: "Open documents";
     preferred-width: 820px;
     preferred-height: 540px;
-    background: #171b23;
+    background: Theme.control;
     in property <[OpenDocumentRow]> rows;
     in property <string> summary;
     in property <bool> can-create;
@@ -35,9 +36,9 @@ export component OpenDocumentsWindow inherits Window {
     callback close-list();
     VerticalLayout {
         padding: 20px; spacing: 12px;
-        Text { text: "Open documents"; color: #eef1f7; font-size: 23px; font-weight: 600; }
-        Text { text: root.summary; color: #c8d1df; wrap: word-wrap; }
-        if !root.quit-review: Text { text: "Two independent maps in this editor. New / Open… in a map window still replace that window's map."; color: #aab8cc; wrap: word-wrap; }
+        Text { text: "Open documents"; color: Theme.text; font-size: 23px; font-weight: 600; }
+        Text { text: root.summary; color: Theme.text-muted; wrap: word-wrap; }
+        if !root.quit-review: Text { text: "Two independent maps in this editor. New / Open… in a map window still replace that window's map."; color: Theme.text-muted; wrap: word-wrap; }
         HorizontalLayout {
             spacing: 10px;
             Button { text: "New document"; enabled: root.can-create && !root.busy; clicked => { root.new-document(); } }
@@ -48,9 +49,9 @@ export component OpenDocumentsWindow inherits Window {
         }
         if root.quit-review: VerticalLayout {
             spacing: 10px;
-            Text { text: "Quit every open map and exit the editor?"; color: #eef1f7; font-size: 18px; font-weight: 600; }
-            ScrollView { vertical-stretch: 1; min-height: 90px; Text { text: root.quit-description; color: #e8bd82; wrap: word-wrap; } }
-            Text { text: "This includes hidden maps. Owned game and sound playback will stop, and owned work will be cancelled and drained. Changes after this review require a fresh review."; color: #c8d1df; wrap: word-wrap; }
+            Text { text: "Quit every open map and exit the editor?"; color: Theme.text; font-size: 18px; font-weight: 600; }
+            ScrollView { vertical-stretch: 1; min-height: 90px; Text { text: root.quit-description; color: Theme.warning; wrap: word-wrap; } }
+            Text { text: "This includes hidden maps. Owned game and sound playback will stop, and owned work will be cancelled and drained. Changes after this review require a fresh review."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: root.quit-discard-required ? "Discard reviewed changes and quit all" : "Quit all reviewed documents"; enabled: !root.busy; clicked => { root.confirm-quit-all(); } }
@@ -60,8 +61,8 @@ export component OpenDocumentsWindow inherits Window {
         if !root.quit-review: ListView {
             for row in root.rows: VerticalLayout {
                 padding: 10px; spacing: 7px;
-                Text { text: row.title; color: #eef1f7; font-weight: 600; wrap: word-wrap; }
-                Text { text: row.detail; color: #b9c5d6; wrap: word-wrap; }
+                Text { text: row.title; color: Theme.text; font-weight: 600; wrap: word-wrap; }
+                Text { text: row.detail; color: Theme.text-muted; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 10px;
                     Button { text: "Show silently"; enabled: row.live && !root.busy; clicked => { root.show-silent(row.selector); } }
@@ -70,8 +71,8 @@ export component OpenDocumentsWindow inherits Window {
                 }
             }
         }
-        Text { text: root.message; color: #e8bd82; wrap: word-wrap; }
-        if !root.quit-review: Text { text: "MCP-created documents start hidden. Quit all… reviews every map before exiting. Closing the last visible map with hidden peers opens that review; cancelling keeps every map open."; color: #aab8cc; wrap: word-wrap; font-size: 12px; }
+        Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
+        if !root.quit-review: Text { text: "MCP-created documents start hidden. Quit all… reviews every map before exiting. Closing the last visible map with hidden peers opens that review; cancelling keeps every map open."; color: Theme.text-muted; wrap: word-wrap; font-size: 12px; }
         Button { text: "Close list"; clicked => { root.close-list(); } }
     }
 }

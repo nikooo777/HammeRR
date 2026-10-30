@@ -1,6 +1,8 @@
-import {Button, CheckBox, LineEdit} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button, CheckBox, LineEdit} from "widgets.slint";
 
 export component EntityPlacementWindow inherits Window {
+    background: Theme.panel;
     title: "Place entity on surface";
     preferred-width: 610px;
     preferred-height: 660px;
@@ -29,7 +31,7 @@ export component EntityPlacementWindow inherits Window {
             spacing: 14px;
             Text { text: "Place a point entity on a surface"; font-size: 20px; }
             Text { text: "Entity · " + root.classname; wrap: word-wrap; }
-            Text { text: "Pick a visible brush, terrain or model surface. Review the entity bounds before applying."; wrap: word-wrap; color: #aeb8c6; }
+            Text { text: "Pick a visible brush, terrain or model surface. Review the entity bounds before applying."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 10px;
                 Text { text: "Offset"; vertical-alignment: center; }
@@ -43,9 +45,9 @@ export component EntityPlacementWindow inherits Window {
                 Button { text: "Pick surface"; enabled: root.owned; clicked => { root.pick(); } }
                 if root.shared-draft: Button { text: "Review shared placement"; clicked => { root.review(); } }
             }
-            Text { text: root.summary; wrap: word-wrap; color: #d6deea; }
+            Text { text: root.summary; wrap: word-wrap; color: Theme.text; }
             Rectangle { vertical-stretch: 1; }
-            Text { text: root.message; wrap: word-wrap; color: #aeb8c6; min-height: 40px; }
+            Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; min-height: 40px; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

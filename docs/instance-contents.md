@@ -8,7 +8,7 @@ Inspect resolved child geometry without opening each child map.
 2. Open **Instance contents…**.
 3. Click **Refresh instance contents**.
 4. Read dependency, content and unsupported-feature diagnostics.
-5. Enable **Instance contents** in **Viewport**.
+5. Enable **Instance contents** in **Overlays**.
 6. Click **Frame instance contents** to inspect the resolved geometry.
 
 The refresh reads committed child VMFs. It does not load model assets.
@@ -21,7 +21,7 @@ Display, picking and framing load supported static-prop assets through the norma
 
 1. Save supported `prop_static` entities in the child.
 2. Return to the parent and click **Refresh instance contents**.
-3. Enable **Instance contents** in **Viewport**.
+3. Enable **Instance contents** in **Overlays**.
 4. Click a displayed prop to select its outer containing reference.
 5. Click **Frame instance contents** to include the posed model bounds.
 

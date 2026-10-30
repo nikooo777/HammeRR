@@ -1,6 +1,8 @@
-import { Button, CheckBox, LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, LineEdit } from "widgets.slint";
 
 export component ColorCorrectionWindow inherits Window {
+    background: Theme.panel;
     title: "Color correction - HammeRR";
     preferred-width: 720px;
     preferred-height: 460px;
@@ -20,7 +22,7 @@ export component ColorCorrectionWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 16px;
             Text { text: "Color correction"; font-size: 24px; font-weight: 600; }
-            Text { text: root.status; wrap: word-wrap; color: #aeb9c8; }
+            Text { text: root.status; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: "Source .raw LUT path"; font-weight: 600; }
             HorizontalLayout {
                 spacing: 10px;
@@ -32,13 +34,13 @@ export component ColorCorrectionWindow inherits Window {
                 spacing: 10px;
                 Text { text: "Weight"; vertical-alignment: center; }
                 LineEdit { text <=> root.weight; accessible-label: "Color-correction weight"; }
-                Text { text: "0 to 1"; color: #aeb9c8; vertical-alignment: center; }
+                Text { text: "0 to 1"; color: Theme.text-muted; vertical-alignment: center; }
             }
             Text {
                 text: "Load a Source .raw LUT, then set the weight and apply the preview. Loading turns the preview off.\n\nThe whole viewport is affected. HDR, volumes and multiple LUTs are unavailable.";
-                wrap: word-wrap; color: #aeb9c8; font-size: 12px;
+                wrap: word-wrap; color: Theme.text-muted; font-size: 12px;
             }
-            if root.message != "": Text { text: root.message; color: #f5b477; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
                 spacing: 10px;

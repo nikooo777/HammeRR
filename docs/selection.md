@@ -6,16 +6,16 @@ Choose objects, faces or bounded groups of visible geometry.
 
 ## Pick objects or faces
 
-1. Choose **Selection → Objects** or **Faces · materials & textures**.
+1. Choose **Objects** or **Faces** in the toolbar.
 2. Click the target.
 3. Use Ctrl+click to toggle membership.
 
-Use **Pick object types** to allow **World brushes**, **Brush entities** and **Point entities & models**.
+Use **Select → Pick world brushes**, **Pick brush entities** and **Pick point entities and models** to choose which types clicks can select.
 Alt+click cycles overlapping object hits. **Bypass groups** selects individual members.
 
 ## Show selection
 
-1. Open **Viewport**.
+1. Open **Overlays** in the viewport header.
 2. Use **Selection outlines** to show or hide selected edges.
 3. Use **Selection tint** to show or hide the surface highlight.
 
@@ -23,8 +23,8 @@ These switches keep selection and picking active.
 
 ## Save selection defaults
 
-1. Choose the types under **Pick object types**.
-2. Open **Selection defaults…** and choose **Startup defaults**.
+1. Choose the types in the **Select** menu.
+2. Choose **Edit → Preferences → Selection defaults…**, then **Startup defaults**.
 3. Compare **Current session** with **Startup defaults**.
 4. Click **Save current as defaults** to use these filters for future documents.
 5. Click **Apply saved defaults** to restore the saved filters in this document.
@@ -36,8 +36,8 @@ or explicitly replace it with **Reset saved defaults**.
 
 ## Named filter profiles
 
-1. Choose the types under **Pick object types**.
-2. Open **Selection defaults…** and choose **Named profiles**.
+1. Choose the types in the **Select** menu.
+2. Choose **Edit → Preferences → Selection defaults…**, then **Named profiles**.
 3. Enter **Profile name**, then click **Save current as profile**.
 4. Click a saved name in the list, then **Apply selected profile**.
 

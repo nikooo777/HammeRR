@@ -40,7 +40,7 @@ remain runtime lighting in the game.
 2. Enable **Bake static-prop vertex lighting**.
 3. Choose direct lighting or one to four diffuse bounces.
 4. Compile, then inspect **Static-prop vertex lighting** and **Prop vertex lighting bytes**.
-5. Use **Run Map** to see supported light switching and patterns in the game.
+5. Use **Run map** to see supported light switching and patterns in the game.
 
 Reflected reception uses the preceding lighting pass from world, terrain and
 eligible stationary **Shadows → Yes** root or assembled-child brush models.

@@ -8,7 +8,7 @@ Save build settings for later use.
 2. Choose a **Build recipe**.
 3. Click **Apply recipe**.
 4. Review the settings, then click **Close**.
-5. Click **Compile** or **Run Map**.
+5. Click **Compile** or **Run map**.
 
 **Fast preview** favors quick checks. **Final lighting** selects a lit build.
 Both leave generated reflections disabled.

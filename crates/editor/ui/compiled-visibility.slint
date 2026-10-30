@@ -1,6 +1,8 @@
-import { Button, ComboBox, LineEdit, StandardTableView, TextEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, ComboBox, LineEdit, StandardTableView, TextEdit } from "widgets.slint";
 
 export component CompiledVisibilityWindow inherits Window {
+    background: Theme.panel;
     title: "Visibility inspection - HammeRR";
     preferred-width: 1000px;
     preferred-height: 880px;
@@ -60,7 +62,7 @@ export component CompiledVisibilityWindow inherits Window {
             padding: 20px;
             spacing: 9px;
             Text { text: "Visibility inspection"; font-size: 24px; font-weight: 600; }
-            Text { text: root.build-state; wrap: word-wrap; color: #ffcb80; }
+            Text { text: root.build-state; wrap: word-wrap; color: Theme.warning; }
             Text { text: root.summary; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
@@ -73,7 +75,7 @@ export component CompiledVisibilityWindow inherits Window {
                 Button { text: "Inspect target"; clicked => { root.inspect-target(); } }
                 Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }
             }
-            if root.world-light-result != "": Text { text: root.world-light-result; wrap: word-wrap; color: #ffcb80; }
+            if root.world-light-result != "": Text { text: root.world-light-result; wrap: word-wrap; color: Theme.warning; }
             Text { text: "Stored compiler PVS/PAS describes potential visibility, not native light selection, falloff or ray visibility."; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
@@ -87,7 +89,7 @@ export component CompiledVisibilityWindow inherits Window {
                 Button { text: "Inspect position"; clicked => { root.inspect-position(); } }
                 Button { text: "Inspect camera position"; clicked => { root.inspect-camera-position(); } }
             }
-            if root.position-result != "": Text { text: root.position-result; wrap: word-wrap; color: #ffcb80; }
+            if root.position-result != "": Text { text: root.position-result; wrap: word-wrap; color: Theme.warning; }
             Text { text: root.page-label; }
             StandardTableView {
                 rows: root.rows;

@@ -1,6 +1,8 @@
-import {Button,CheckBox,ComboBox,LineEdit} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button,CheckBox,ComboBox,LineEdit} from "widgets.slint";
 
 export component PlacementWindow inherits Window {
+    background: Theme.panel;
     title:"Place on surface";preferred-width:640px;preferred-height:720px;
     in property <string> selection;
     in property <[string]> source-choices;
@@ -22,7 +24,7 @@ export component PlacementWindow inherits Window {
         VerticalLayout {
             padding:20px;spacing:14px;
             Text {text:"Place selection on a surface";font-size:20px;}
-            Text {text:root.selection+" · selected objects move together";wrap:word-wrap;color:#aeb8c6;}
+            Text {text:root.selection+" · selected objects move together";wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:10px;
                 Text {text:"Target";vertical-alignment:center;width:70px;}
@@ -30,16 +32,16 @@ export component PlacementWindow inherits Window {
             }
             if root.method==3:VerticalLayout {
                 spacing:6px;
-                Text {text:"Source corner";color:#d6deea;}
+                Text {text:"Source corner";color:Theme.text;}
                 ComboBox {model:root.source-choices;current-index<=>root.source-index;selected=>{root.choose-source(root.source-index);}}
-                if root.source-index>0:Text {text:root.source-choices[root.source-index];wrap:word-wrap;color:#aeb8c6;}
-                Text {text:root.source-error=="" ? "All selected objects translate together; no rotation, normal offset or grid rounding." : root.source-error;wrap:word-wrap;color:#aeb8c6;}
+                if root.source-index>0:Text {text:root.source-choices[root.source-index];wrap:word-wrap;color:Theme.text-muted;}
+                Text {text:root.source-error=="" ? "All selected objects translate together; no rotation, normal offset or grid rounding." : root.source-error;wrap:word-wrap;color:Theme.text-muted;}
             }
             HorizontalLayout {
                 spacing:10px;
                 Text {text:"Offset";vertical-alignment:center;width:70px;}
                 LineEdit {width:110px;enabled:root.method!=3;text<=>root.offset;input-type:decimal;edited=>{root.invalidate();}}
-                Text {text:"units away from surface";vertical-alignment:center;color:#aeb8c6;}
+                Text {text:"units away from surface";vertical-alignment:center;color:Theme.text-muted;}
             }
             CheckBox {text:"Align local up to surface";enabled:root.method!=3;checked<=>root.align;toggled=>{root.invalidate();}}
             CheckBox {text:"Keep textures attached";checked<=>root.texture-lock;toggled=>{root.invalidate();}}
@@ -48,9 +50,9 @@ export component PlacementWindow inherits Window {
                 Button {text:root.method==3 ? "Pick target corner" : root.method==2 ? "Pick surface" : "Preview placement";clicked=>{root.preview();}}
                 Button {text:"Frame preview";enabled:root.ready;clicked=>{root.frame();}}
             }
-            Text {text:root.summary;wrap:word-wrap;color:#d6deea;}
+            Text {text:root.summary;wrap:word-wrap;color:Theme.text;}
             Rectangle {vertical-stretch:1;}
-            Text {text:root.message;wrap:word-wrap;color:#aeb8c6;min-height:30px;}
+            Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:30px;}
             HorizontalLayout {
                 spacing:10px;
                 Button {text:"Cancel";clicked=>{root.cancel();}}

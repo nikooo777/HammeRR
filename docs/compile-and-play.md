@@ -11,7 +11,7 @@ The compiler remains experimental. Check diagnostics before using a build.
 2. Add a player spawn inside the sealed area.
 3. Add lights, materials and any required entities.
 4. Save the VMF.
-5. Open **Build settings…**.
+5. Choose **Build → Build settings…**.
 6. Choose **Build lighting → Direct LDR** or **Direct LDR + HDR**.
 7. Choose **Physics bodies → CS:S engine physics** for physical collision.
 8. Click **Close**, then **Compile**.
@@ -21,7 +21,7 @@ The compiler remains experimental. Check diagnostics before using a build.
 
 ![A courtyard compiled by HammeRR and displayed in CS:S](images/showcase-native-pool.png)
 
-**Run Map** builds, then launches the successful result.
+**Run map** builds, then launches the successful result.
 Game launches use `-insecure` and LAN mode (`sv_lan 1`). Steam must be running.
 Game installation paths must resolve to UTF-8 paths. Unsupported paths return an explicit error.
 
@@ -29,14 +29,14 @@ Game installation paths must resolve to UTF-8 paths. Unsupported paths return an
 
 | Control | Location | Action |
 | --- | --- | --- |
-| **Build settings…** | Toolbar | Configure the next build, including before the first build. |
+| **Build settings…** | **Build** menu | Configure the next build, including before the first build. |
 | **Compile** | Toolbar | Build without launching the game. |
-| **Run Map** | Toolbar | Build and play. |
+| **Run map** | Toolbar | Build and play. |
 | **Build details…** | Build status bar | Read progress, captured settings and diagnostics. |
 | **Play built map** | Build status bar | Launch the last successful compatible output. |
 | **Cancel build** | Build status bar | Cancel the owned job and wait for cleanup. |
-| **Stop Map** | Game controls | Stop the owned game process. |
-| **Game Log** | Game controls | Read game output. |
+| **Stop map** | Toolbar, while the game runs | Stop the owned game process. |
+| **Game log** | Toolbar | Read game output. |
 
 Changing settings does not change a running build. Failed or cancelled builds preserve the previous published BSP.
 Builds use a captured source and settings snapshot.

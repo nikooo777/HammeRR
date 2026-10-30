@@ -1,6 +1,8 @@
-import {Button,CheckBox,ComboBox,LineEdit,ListView,SpinBox} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button,CheckBox,ComboBox,LineEdit,ListView,SpinBox} from "widgets.slint";
 export struct LayerRow {id:string,label:string,detail:string,color:color}
 export component LayersWindow inherits Window {
+    background: Theme.panel;
     title:"Layers - HammeRR";
     preferred-width:1040px;
     preferred-height:780px;
@@ -50,7 +52,7 @@ export component LayersWindow inherits Window {
         VerticalLayout {
             padding:22px;spacing:12px;
             Text {text:"Layers";font-size:24px;font-weight:600;}
-            Text {text:"Organize a map into named, colored layers. Objects can belong to several layers.";color:#bac2ce;wrap:word-wrap;}
+            Text {text:"Organize a map into named, colored layers. Objects can belong to several layers.";color:Theme.text-muted;wrap:word-wrap;}
             HorizontalLayout {
                 spacing:8px;
                 Button {text:"New layer";enabled:!root.editing;clicked=>{root.begin(0);}}
@@ -71,7 +73,7 @@ export component LayersWindow inherits Window {
                             VerticalLayout {
                                 horizontal-stretch:1;spacing:3px;
                                 Button {text:(root.selected==layer.id?"● ":"")+layer.label;enabled:!root.editing;clicked=>{root.choose(layer.id);}}
-                                Text {text:layer.detail;wrap:word-wrap;color:#bac2ce;font-size:12px;}
+                                Text {text:layer.detail;wrap:word-wrap;color:Theme.text-muted;font-size:12px;}
                             }
                         }
                     }
@@ -112,7 +114,7 @@ export component LayersWindow inherits Window {
                         Text {text:"Parent layer";}
                         ComboBox {model:root.parents;current-index<=>root.parent-index;selected(value)=>{root.ready=false;}}
                     }
-                    if root.deleting: Text {text:"Delete this layer's record and memberships. Child layers move to its parent. All map objects remain.";wrap:word-wrap;color:#ffce84;}
+                    if root.deleting: Text {text:"Delete this layer's record and memberships. Child layers move to its parent. All map objects remain.";wrap:word-wrap;color:Theme.warning;}
                     Text {text:root.member-label;font-weight:600;wrap:word-wrap;}
                     ListView {
                         min-height:120px;
@@ -139,8 +141,8 @@ export component LayersWindow inherits Window {
                     }
                 }
             }
-            Text {text:"Hide also omits members from builds. A layer link on an entity-owned brush selects or hides the whole entity. Use Faces mode to assign individual owned brushes.";wrap:word-wrap;color:#bac2ce;font-size:12px;}
-            Text {text:root.message;wrap:word-wrap;color:#bac2ce;min-height:40px;}
+            Text {text:"Hide also omits members from builds. A layer link on an entity-owned brush selects or hides the whole entity. Use Faces mode to assign individual owned brushes.";wrap:word-wrap;color:Theme.text-muted;font-size:12px;}
+            Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:40px;}
             HorizontalLayout {
                 spacing:8px;
                 Button {text:"Close";clicked=>{root.close-dialog();}}

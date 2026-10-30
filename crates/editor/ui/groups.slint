@@ -1,9 +1,11 @@
-import { Button, CheckBox, ComboBox, LineEdit, ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView } from "widgets.slint";
 
 export struct ObjectGroupRow { id: string, label: string, detail: string }
 export struct ObjectGroupMemberRow { id: string, label: string, detail: string }
 
 export component ObjectGroupsWindow inherits Window {
+    background: Theme.panel;
     title: "Object groups - HammeRR";
     preferred-width: 1080px;
     preferred-height: 780px;
@@ -54,11 +56,11 @@ export component ObjectGroupsWindow inherits Window {
             padding: 22px;
             spacing: 12px;
             Text { text: "Object groups"; font-size: 24px; font-weight: 600; }
-            Text { text: "Keep objects together. Nested groups retain their own membership when you group or ungroup."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "Keep objects together. Nested groups retain their own membership when you group or ungroup."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 12px;
                 CheckBox { text: "Bypass groups"; checked <=> root.bypass; toggled => { root.bypass-changed(); } }
-                Text { text: root.bypass ? "Viewport picks individual objects" : "Viewport picks the outermost group"; vertical-alignment: center; color: #bac2ce; }
+                Text { text: root.bypass ? "Viewport picks individual objects" : "Viewport picks the outermost group"; vertical-alignment: center; color: Theme.text-muted; }
                 Rectangle { horizontal-stretch: 1; }
                 CheckBox { text: "Include hidden members"; checked <=> root.include-hidden; }
             }
@@ -80,7 +82,7 @@ export component ObjectGroupsWindow inherits Window {
                             spacing: 3px;
                             padding-bottom: 8px;
                             Button { text: (root.selected == group.id ? "● " : "") + group.label; clicked => { root.choose(group.id); } }
-                            Text { text: group.detail; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+                            Text { text: group.detail; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                         }
                     }
                     HorizontalLayout {
@@ -103,7 +105,7 @@ export component ObjectGroupsWindow inherits Window {
                     }
                     if root.editing && !root.ungrouping: VerticalLayout {
                         spacing: 6px;
-                        Text { text: "Parent group: " + root.parent-label; wrap: word-wrap; color: #bac2ce; }
+                        Text { text: "Parent group: " + root.parent-label; wrap: word-wrap; color: Theme.text-muted; }
                         HorizontalLayout {
                             spacing: 8px;
                             Button { text: "Use chosen parent"; enabled: root.selected != ""; clicked => { root.chosen-parent(); } }
@@ -119,7 +121,7 @@ export component ObjectGroupsWindow inherits Window {
                             VerticalLayout {
                                 horizontal-stretch: 1;
                                 Text { text: member.label; wrap: word-wrap; }
-                                Text { text: member.detail; color: #bac2ce; font-size: 12px; wrap: word-wrap; }
+                                Text { text: member.detail; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
                             }
                             Button { text: "Select"; clicked => { root.select-member(member.id); } }
                             if root.editing && !root.ungrouping: Button { text: "Remove"; clicked => { root.remove-member(member.id); } }
@@ -141,9 +143,9 @@ export component ObjectGroupsWindow inherits Window {
             if root.editing: Text {
                 text: root.ungrouping ? "Ungroup removes only this group. Its direct members move to its parent; nested groups remain intact." : "Choose a group on the left to add it or use it as the parent. Removed members return to the edited group's previous parent.";
                 wrap: word-wrap;
-                color: #bac2ce;
+                color: Theme.text-muted;
             }
-            Text { text: root.message; wrap: word-wrap; color: #bac2ce; min-height: 36px; }
+            Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; min-height: 36px; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Close"; clicked => { root.close-dialog(); } }

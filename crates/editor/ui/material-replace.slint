@@ -1,6 +1,8 @@
-import { Button, CheckBox, ComboBox, LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ComboBox, LineEdit } from "widgets.slint";
 
 export component MaterialReplaceWindow inherits Window {
+    background: Theme.panel;
     title: "Replace materials - HammeRR";
     preferred-width: 680px;
     preferred-height: 590px;
@@ -31,11 +33,11 @@ export component MaterialReplaceWindow inherits Window {
             padding: 24px;
             spacing: 14px;
             Text { text: "Replace materials"; font-size: 24px; font-weight: 600; }
-            Text { text: "Change a material across the map or within your selection."; color: #aeb9c8; }
+            Text { text: "Change a material across the map or within your selection."; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 12px;
                 Rectangle {
-                    width: 80px; height: 80px; background: #20252d; border-radius: 6px;
+                    width: 80px; height: 80px; background: Theme.hover; border-radius: 6px;
                     source-thumbnail := Image { width: parent.width; height: parent.height; source: root.source-preview; image-fit: contain; }
                 }
                 VerticalLayout {
@@ -55,14 +57,14 @@ export component MaterialReplaceWindow inherits Window {
                 spacing: 12px;
                 Button { text: "Find faces"; clicked => { root.find(); } }
                 Button { text: "Select matches"; enabled: root.ready; clicked => { root.select-matches(); } }
-                Text { text: "Exact path · ignores case"; color: #aeb9c8; vertical-alignment: center; }
+                Text { text: "Exact path · ignores case"; color: Theme.text-muted; vertical-alignment: center; }
             }
             Text { text: root.summary; font-weight: 600; wrap: word-wrap; }
-            Rectangle { height: 1px; background: #424a58; }
+            Rectangle { height: 1px; background: Theme.control-strong; }
             HorizontalLayout {
                 spacing: 12px;
                 Rectangle {
-                    width: 80px; height: 80px; background: #20252d; border-radius: 6px;
+                    width: 80px; height: 80px; background: Theme.hover; border-radius: 6px;
                     replacement-thumbnail := Image { width: parent.width; height: parent.height; source: root.replacement-preview; image-fit: contain; }
                 }
                 VerticalLayout {
@@ -72,7 +74,7 @@ export component MaterialReplaceWindow inherits Window {
                     Button { text: "Choose replacement…"; clicked => { root.browse(true); } }
                 }
             }
-            Text { text: "UV placement and face lighting stay as authored. Hidden faces remain hidden."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: "UV placement and face lighting stay as authored. Hidden faces remain hidden."; color: Theme.text-muted; wrap: word-wrap; }
             Text { text: root.message; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {

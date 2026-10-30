@@ -1,4 +1,5 @@
-import { Button, CheckBox, ComboBox, LineEdit, SpinBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ComboBox, LineEdit, SpinBox } from "widgets.slint";
 
 export struct LightingGroup {
     number: int,
@@ -7,6 +8,7 @@ export struct LightingGroup {
 }
 
 export component LightingWindow inherits Window {
+    background: Theme.panel;
     title: "Face lighting - HammeRR";
     preferred-width: 720px;
     preferred-height: 710px;
@@ -35,7 +37,7 @@ export component LightingWindow inherits Window {
             padding: 22px;
             spacing: 12px;
             Text { text: "Face lighting"; font-size: 24px; font-weight: 600; }
-            Text { text: root.selection-label; color: #aeb9c8; }
+            Text { text: root.selection-label; color: Theme.text-muted; }
             Text { text: "Lightmap scale · world units per lighting pixel"; font-weight: 600; }
             HorizontalLayout {
                 spacing: 10px;
@@ -45,7 +47,7 @@ export component LightingWindow inherits Window {
                     clicked => { root.lightmap-scale = "\{scale}"; root.edited(); }
                 }
             }
-            Text { text: "Smaller values give finer lighting detail. Blank keeps existing values. Range: 1–1024."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: "Smaller values give finer lighting detail. Blank keeps existing values. Range: 1–1024."; color: Theme.text-muted; wrap: word-wrap; }
             Text { text: "Smoothing groups · 1–24"; font-weight: 600; }
             for row in 3: HorizontalLayout {
                 spacing: 4px;
@@ -66,7 +68,7 @@ export component LightingWindow inherits Window {
                     toggled => { root.toggle-group(self.index, self.checked); }
                 }
             }
-            Text { text: "− means mixed membership. Toggling one group preserves the others. Shared hard-edge groups prevent smoothing; unassigned faces keep flat brush normals."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: "− means mixed membership. Toggling one group preserves the others. Shared hard-edge groups prevent smoothing; unassigned faces keep flat brush normals."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Clear all groups"; clicked => { root.clear-groups(); } }
@@ -80,9 +82,9 @@ export component LightingWindow inherits Window {
             }
             Text {
                 text: root.view-mode == 3 ? "One grid cell per lighting pixel · blue ≤8, green ≤16, orange ≤32, red >32. Magenta marks invalid values." : root.view-mode == 4 ? "Cyan marks faces in group \{root.view-group}; gray marks other faces." : "Choose a view mode to inspect surfaces in any projection.";
-                color: #aeb9c8; wrap: word-wrap;
+                color: Theme.text-muted; wrap: word-wrap;
             }
-            Text { text: "These settings are saved in the VMF. Direct LDR bakes assigned smoothing on world brushes and brush entities. Terrain uses its own smooth normals."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: "These settings are saved in the VMF. Direct LDR bakes assigned smoothing on world brushes and brush entities. Terrain uses its own smooth normals."; color: Theme.text-muted; wrap: word-wrap; }
             Text { text: root.message; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {

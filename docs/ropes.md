@@ -9,7 +9,7 @@ Show the static shape of linked rope entities.
 3. Set each source's `NextKey` to the next endpoint's name.
 4. Set `Slack`, `Width` and `Subdiv` on each source.
 5. Leave the final endpoint's `NextKey` empty.
-6. Enable **Rope preview** in **Viewport**.
+6. Enable **Rope preview** in **Overlays**.
 7. Check the span count and diagnostics.
 
 ![A rope hangs between two masonry posts](images/rope-span.png)

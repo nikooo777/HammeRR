@@ -1,4 +1,5 @@
-import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider } from "widgets.slint";
 
 export struct ComponentRow {
     key: string,
@@ -15,6 +16,7 @@ export struct ComponentCreaseRow {
 }
 
 export component ComponentsWindow inherits Window {
+    background: Theme.panel;
     title: "Brush components - HammeRR";
     preferred-width: 880px;
     preferred-height: 720px;
@@ -152,7 +154,7 @@ export component ComponentsWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 14px;
             Text { text: "Reshape a brush"; font-size: 24px; font-weight: 600; }
-            Text { text: "Move or reshape components, raise a ridge, or extrude flat pieces."; color: #aeb9c8; }
+            Text { text: "Move or reshape components, raise a ridge, or extrude flat pieces."; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 20px;
                 VerticalLayout {
@@ -179,15 +181,15 @@ export component ComponentsWindow inherits Window {
                         Button { text: "Refresh"; clicked => { root.refresh(); } }
                     }
                     Button { text: root.picking ? "Stop viewport picking" : "Pick in viewport"; enabled: (root.rows.length > 0 && !root.topology-preview) || root.picking; clicked => { root.toggle-picking(); } }
-                    if root.picking: Text { text: root.picking-summary; wrap: word-wrap; color: #9dd8f1; }
-                    Text { text: root.summary; wrap: word-wrap; color: #aeb9c8; }
+                    if root.picking: Text { text: root.picking-summary; wrap: word-wrap; color: Theme.info; }
+                    Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
                     ListView {
                         vertical-stretch: 1;
                         for row in root.rows: VerticalLayout {
                             spacing: 4px; padding-top: 5px; padding-bottom: 7px;
-                            if root.has-partition-preview: Text { text: row.label; color: #e6e8ec; }
+                            if root.has-partition-preview: Text { text: row.label; color: Theme.text; }
                             if !root.has-partition-preview: CheckBox { text: row.label; checked: row.selected; enabled: !root.topology-preview; toggled => { root.choose(row.key); } }
-                            Text { text: row.detail; wrap: word-wrap; font-size: 12px; color: #aeb9c8; }
+                            Text { text: row.detail; wrap: word-wrap; font-size: 12px; color: Theme.text-muted; }
                         }
                     }
                     HorizontalLayout {
@@ -205,8 +207,8 @@ export component ComponentsWindow inherits Window {
                     if root.operation == 0: VerticalLayout {
                     spacing: 12px;
                     CheckBox { text: "Show viewport move handles"; checked <=> root.move-handles; toggled => { root.move-options(); } }
-                    Text { text: "Drag an arrow or plane square. Release applies; Esc cancels."; wrap: word-wrap; color: #aeb9c8; }
-                    Text { text: "Offset from the current map · world units"; wrap: word-wrap; color: #aeb9c8; }
+                    Text { text: "Drag an arrow or plane square. Release applies; Esc cancels."; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: "Offset from the current map · world units"; wrap: word-wrap; color: Theme.text-muted; }
                     HorizontalLayout {
                         spacing: 10px;
                         Text { text: "X"; width: 65px; vertical-alignment: center; }
@@ -227,37 +229,37 @@ export component ComponentsWindow inherits Window {
                     }
                     if root.operation == 1: VerticalLayout {
                         spacing: 12px;
-                        Text { text: "Choose Vertices, then select at least two corners in each brush."; wrap: word-wrap; color: #aeb9c8; }
+                        Text { text: "Choose Vertices, then select at least two corners in each brush."; wrap: word-wrap; color: Theme.text-muted; }
                         Text { text: "Merge corners at"; font-weight: 600; }
                         ComboBox { model: ["Average selected corners", "Existing brush corner", "World position"]; current-index <=> root.weld-target-mode; selected => { root.choose-weld-mode(); } }
                         if root.weld-target-mode == 1: ComboBox { model: root.weld-corner-labels; current-index <=> root.weld-corner; selected => { root.edited(); } }
                         if root.weld-target-mode == 2: VerticalLayout {
                             spacing: 8px;
-                            Text { text: "Target · world units"; color: #aeb9c8; }
+                            Text { text: "Target · world units"; color: Theme.text-muted; }
                             HorizontalLayout {
                                 spacing: 8px;
-                                VerticalLayout { spacing: 4px; Text { text: "X"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.weld-x; input-type: decimal; accessible-label: "Weld target X"; edited => { root.edited(); } } }
-                                VerticalLayout { spacing: 4px; Text { text: "Y"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.weld-y; input-type: decimal; accessible-label: "Weld target Y"; edited => { root.edited(); } } }
-                                VerticalLayout { spacing: 4px; Text { text: "Z · up"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.weld-z; input-type: decimal; accessible-label: "Weld target Z"; edited => { root.edited(); } } }
+                                VerticalLayout { spacing: 4px; Text { text: "X"; color: Theme.axis-x; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.weld-x; input-type: decimal; accessible-label: "Weld target X"; edited => { root.edited(); } } }
+                                VerticalLayout { spacing: 4px; Text { text: "Y"; color: Theme.axis-y; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.weld-y; input-type: decimal; accessible-label: "Weld target Y"; edited => { root.edited(); } } }
+                                VerticalLayout { spacing: 4px; Text { text: "Z · up"; color: Theme.text-muted; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.weld-z; input-type: decimal; accessible-label: "Weld target Z"; edited => { root.edited(); } } }
                             }
                         }
-                        Text { text: "Collapsed faces are removed. The remaining brush must stay convex with flat faces."; wrap: word-wrap; color: #aeb9c8; }
+                        Text { text: "Collapsed faces are removed. The remaining brush must stay convex with flat faces."; wrap: word-wrap; color: Theme.text-muted; }
                         CheckBox { text: "Keep textures at surviving corners"; checked <=> root.texture-lock; toggled => { root.edited(); } }
-                        Text { text: root.texture-lock ? "Surviving corners keep their UVs. The merged corner averages its original UVs separately on each face." : "Textures keep their world projection. Preview shows the merged corner and removed-face count."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        Text { text: root.texture-lock ? "Surviving corners keep their UVs. The merged corner averages its original UVs separately on each face." : "Textures keep their world projection. Preview shows the merged corner and removed-face count."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                     }
                     if root.operation == 2: VerticalLayout {
                         spacing: 12px;
-                        Text { text: "Select one face or edge per brush. Its center or midpoint becomes a new corner."; wrap: word-wrap; color: #aeb9c8; }
-                        Text { text: "Raise outward · world units"; color: #aeb9c8; }
+                        Text { text: "Select one face or edge per brush. Its center or midpoint becomes a new corner."; wrap: word-wrap; color: Theme.text-muted; }
+                        Text { text: "Raise outward · world units"; color: Theme.text-muted; }
                         LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Split rise"; edited => { root.edited(); } }
                         Slider { minimum: 0.125; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
-                        Text { text: "A face rises along its normal. An edge rises between its two face normals. Existing corners stay in place."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        Text { text: "A face rises along its normal. An edge rises between its two face normals. Existing corners stay in place."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                         CheckBox { text: "Keep textures at corners"; checked <=> root.texture-lock; toggled => { root.edited(); } }
-                        Text { text: root.texture-lock ? "Each triangle keeps its original corner and center texture coordinates. Textures stretch with the raised fan." : "New faces inherit the original material and world texture projection."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        Text { text: root.texture-lock ? "Each triangle keeps its original corner and center texture coordinates. Textures stretch with the raised fan." : "New faces inherit the original material and world texture projection."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                     }
                     if root.operation == 5: VerticalLayout {
                         spacing: 10px;
-                        Text { text: "Select one face with four corners per brush. Raise two opposing edge midpoints to form a ridge."; wrap: word-wrap; color: #aeb9c8; }
+                        Text { text: "Select one face with four corners per brush. Raise two opposing edge midpoints to form a ridge."; wrap: word-wrap; color: Theme.text-muted; }
                         ListView {
                             preferred-height: 100px;
                             for row in root.crease-rows: VerticalLayout {
@@ -266,16 +268,16 @@ export component ComponentsWindow inherits Window {
                                 ComboBox { model: row.choices; current-index: row.choice; selected => { root.choose-crease-pair(row.key, self.current-index); } }
                             }
                         }
-                        Text { text: "Ridge height above the face · world units"; wrap: word-wrap; color: #aeb9c8; }
+                        Text { text: "Ridge height above the face · world units"; wrap: word-wrap; color: Theme.text-muted; }
                         LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Ridge rise"; edited => { root.edited(); } }
                         Slider { minimum: 0.125; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
                         CheckBox { text: "Keep roof texture at corners"; checked <=> root.roof-texture-lock; toggled => { root.edited(); } }
-                        Text { text: root.roof-texture-lock ? "The two roof textures stretch with their pieces. Neighboring faces keep world projection." : "All faces keep their source material and world texture projection."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
-                        Text { text: "The brush must remain convex with flat roof faces. Incompatible shapes are rejected."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        Text { text: root.roof-texture-lock ? "The two roof textures stretch with their pieces. Neighboring faces keep world projection." : "All faces keep their source material and world texture projection."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                        Text { text: "The brush must remain convex with flat roof faces. Incompatible shapes are rejected."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                     }
                     if root.operation == 6: VerticalLayout {
                         spacing: 10px;
-                        Text { text: "Divide a convex face with 3–8 corners into two pieces. Keep them, raise a ridge, or extrude highlighted pieces."; wrap: word-wrap; color: #aeb9c8; }
+                        Text { text: "Divide a convex face with 3–8 corners into two pieces. Keep them, raise a ridge, or extrude highlighted pieces."; wrap: word-wrap; color: Theme.text-muted; }
                         if !root.has-partition-preview || root.partition-mode == 0: ListView {
                             preferred-height: 90px;
                             for row in root.crease-rows: VerticalLayout {
@@ -294,14 +296,14 @@ export component ComponentsWindow inherits Window {
                                 for row in root.partition-rows: VerticalLayout {
                                     spacing: 2px;
                                     CheckBox { text: row.label; checked: row.selected; toggled => { root.choose-partition(row.key); } }
-                                    Text { text: row.detail; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                    Text { text: row.detail; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                                 }
                             }
                             Button { text: "Frame highlighted pieces"; clicked => { root.frame-partitions(); } }
                             CheckBox { text: "Planned top material"; checked <=> root.show-top-material; }
                             if root.show-top-material: VerticalLayout {
                                 spacing: 6px;
-                                Text { text: root.top-material-summary; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                Text { text: root.top-material-summary; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                                 HorizontalLayout {
                                     spacing: 6px;
                                     Image { source: root.top-material-preview; width: 40px; height: 40px; image-fit: contain; }
@@ -313,22 +315,22 @@ export component ComponentsWindow inherits Window {
                                     Button { text: "Preview material"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets && root.top-material != ""; clicked => { root.preview-partition-material(); } }
                                     Button { text: "Restore inheritance"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; clicked => { root.inherit-partition-material(); } }
                                 }
-                                Text { text: "Changes highlighted roofs or prism tops. Bases and walls keep their own materials. Return to flat to change the plan."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                Text { text: "Changes highlighted roofs or prism tops. Bases and walls keep their own materials. Return to flat to change the plan."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                             }
                             CheckBox { text: "Top texture placement"; checked <=> root.show-top-texture; }
                             if root.show-top-texture: VerticalLayout {
                                 spacing: 6px;
-                                Text { text: root.top-texture-summary; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                Text { text: root.top-texture-summary; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                                 HorizontalLayout {
                                     spacing: 8px;
                                     VerticalLayout {
                                         spacing: 4px;
-                                        Text { text: "Horizontal shift · texels"; wrap: word-wrap; color: #aeb9c8; }
+                                        Text { text: "Horizontal shift · texels"; wrap: word-wrap; color: Theme.text-muted; }
                                         LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.texture-shift-u; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Top texture horizontal shift"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; edited => { root.edited(); } }
                                     }
                                     VerticalLayout {
                                         spacing: 4px;
-                                        Text { text: "Vertical shift · texels"; wrap: word-wrap; color: #aeb9c8; }
+                                        Text { text: "Vertical shift · texels"; wrap: word-wrap; color: Theme.text-muted; }
                                         LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.texture-shift-v; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Top texture vertical shift"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; edited => { root.edited(); } }
                                     }
                                 }
@@ -336,16 +338,16 @@ export component ComponentsWindow inherits Window {
                                     spacing: 8px;
                                     VerticalLayout {
                                         spacing: 4px;
-                                        Text { text: "Horizontal scale · units/texel"; wrap: word-wrap; color: #aeb9c8; }
+                                        Text { text: "Horizontal scale · units/texel"; wrap: word-wrap; color: Theme.text-muted; }
                                         LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.texture-scale-u; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Top texture horizontal scale"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; edited => { root.edited(); } }
                                     }
                                     VerticalLayout {
                                         spacing: 4px;
-                                        Text { text: "Vertical scale · units/texel"; wrap: word-wrap; color: #aeb9c8; }
+                                        Text { text: "Vertical scale · units/texel"; wrap: word-wrap; color: Theme.text-muted; }
                                         LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.texture-scale-v; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Top texture vertical scale"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; edited => { root.edited(); } }
                                     }
                                 }
-                                Text { text: "Rotation · degrees"; color: #aeb9c8; }
+                                Text { text: "Rotation · degrees"; color: Theme.text-muted; }
                                 LineEdit { text <=> root.texture-rotation; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Top texture rotation"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; edited => { root.edited(); } }
                                 Slider { minimum: -180; maximum: 180; value: root.texture-rotation-value; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; released(value) => { root.choose-texture-rotation(value); } }
                                 HorizontalLayout {
@@ -356,59 +358,59 @@ export component ComponentsWindow inherits Window {
                                 Button { text: "Fit each piece"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; clicked => { root.fit-partition-texture(); } }
                                 HorizontalLayout {
                                     spacing: 8px;
-                                    Text { text: "Horizontal"; width: 80px; vertical-alignment: center; color: #aeb9c8; }
+                                    Text { text: "Horizontal"; width: 80px; vertical-alignment: center; color: Theme.text-muted; }
                                     ComboBox { horizontal-stretch: 1; model: ["Keep horizontal", "Left", "Center", "Right"]; current-index <=> root.texture-justify-u; accessible-label: "Horizontal justification"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; }
                                 }
                                 HorizontalLayout {
                                     spacing: 8px;
-                                    Text { text: "Vertical"; width: 80px; vertical-alignment: center; color: #aeb9c8; }
+                                    Text { text: "Vertical"; width: 80px; vertical-alignment: center; color: Theme.text-muted; }
                                     ComboBox { horizontal-stretch: 1; model: ["Keep vertical", "Top", "Center", "Bottom"]; current-index <=> root.texture-justify-v; accessible-label: "Vertical justification"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets; }
                                 }
                                 Button { text: "Preview justification"; enabled: root.partition-flat && !root.has-extrusion-preview && root.has-material-targets && (root.texture-justify-u > 0 || root.texture-justify-v > 0); clicked => { root.justify-partition-texture(); } }
-                                Text { text: "Fit and justification use each piece's bounds and material dimensions. Preview numeric changes first."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
-                                Text { text: "Changes highlighted tops. Negative scales mirror the texture. Keep at corners attaches placement when raising or extruding."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                Text { text: "Fit and justification use each piece's bounds and material dimensions. Preview numeric changes first."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                Text { text: "Changes highlighted tops. Negative scales mirror the texture. Keep at corners attaches placement when raising or extruding."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                             }
                             CheckBox { text: "Adjust dividing edge"; checked <=> root.show-cut-settings; }
                             if root.show-cut-settings: VerticalLayout {
                                 spacing: 6px;
-                                Text { text: "Cut positions · % along each chosen edge"; wrap: word-wrap; color: #aeb9c8; }
+                                Text { text: "Cut positions · % along each chosen edge"; wrap: word-wrap; color: Theme.text-muted; }
                                 HorizontalLayout {
                                     spacing: 8px;
                                     VerticalLayout {
                                         spacing: 4px;
-                                        Text { text: "Edge A · %"; color: #aeb9c8; }
+                                        Text { text: "Edge A · %"; color: Theme.text-muted; }
                                         LineEdit { min-width: 0px; preferred-width: 140px; horizontal-stretch: 1; enabled: root.partition-flat && !root.has-extrusion-preview; text <=> root.cut-first; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Partition edge A position"; edited => { root.edited(); } }
                                         Slider { enabled: root.partition-flat && !root.has-extrusion-preview; minimum: 1; maximum: 99; value: root.cut-first-value; released(value) => { root.choose-cut-position(0,value); } }
                                     }
                                     VerticalLayout {
                                         spacing: 4px;
-                                        Text { text: "Edge B · %"; color: #aeb9c8; }
+                                        Text { text: "Edge B · %"; color: Theme.text-muted; }
                                         LineEdit { min-width: 0px; preferred-width: 140px; horizontal-stretch: 1; enabled: root.partition-flat && !root.has-extrusion-preview; text <=> root.cut-second; placeholder-text: "Mixed"; input-type: decimal; accessible-label: "Partition edge B position"; edited => { root.edited(); } }
                                         Slider { enabled: root.partition-flat && !root.has-extrusion-preview; minimum: 1; maximum: 99; value: root.cut-second-value; released(value) => { root.choose-cut-position(1,value); } }
                                     }
                                 }
-                                if root.cut-first == "" || root.cut-second == "": Text { text: "Saved sources have different positions. Enter both values to adjust them together."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
-                                Text { text: "Applies to every source brush. Unequal positions can make a diagonal cut. Return to flat before adjusting."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                if root.cut-first == "" || root.cut-second == "": Text { text: "Saved sources have different positions. Enter both values to adjust them together."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                Text { text: "Applies to every source brush. Unequal positions can make a diagonal cut. Return to flat before adjusting."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                                 Button { text: "Preview cut"; enabled: root.partition-flat && !root.has-extrusion-preview; clicked => { root.preview-cut(); } }
                                 if !root.cut-is-midpoint: Button { text: "Reset cut to midpoint"; enabled: root.partition-flat && !root.has-extrusion-preview; clicked => { root.choose-cut-position(0,50); root.choose-cut-position(1,50); root.preview-cut(); } }
                             }
                             ComboBox { model: root.can-raise-partition ? ["Raise shared ridge", "Extrude highlighted pieces"] : ["Keep flat pieces", "Extrude highlighted pieces"]; current-index <=> root.partition-mode; selected => { root.edited(); } }
                             if root.partition-mode == 0 && root.can-raise-partition: VerticalLayout {
                                 spacing: 6px;
-                                if !root.cut-is-midpoint: Text { text: root.cut-first == "" || root.cut-second == "" ? "Saved sources have different cut positions" : "Cut positions · A " + root.cut-first + "% · B " + root.cut-second + "%"; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
-                                Text { text: "Shared ridge height · world units"; wrap: word-wrap; color: #aeb9c8; }
+                                if !root.cut-is-midpoint: Text { text: root.cut-first == "" || root.cut-second == "" ? "Saved sources have different cut positions" : "Cut positions · A " + root.cut-first + "% · B " + root.cut-second + "%"; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                                Text { text: "Shared ridge height · world units"; wrap: word-wrap; color: Theme.text-muted; }
                                 LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Partition ridge height"; edited => { root.edited(); } }
                                 Slider { minimum: 0; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
                                 CheckBox { text: "Keep roof texture at corners"; checked <=> root.roof-texture-lock; toggled => { root.edited(); } }
                             }
-                            if root.partition-mode == 0 && root.can-raise-partition && !root.cut-is-midpoint: Text { text: "Preview checks flat, convex roofs. Adjust the cut or extrude if needed."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                            if root.partition-mode == 0 && root.can-raise-partition && !root.cut-is-midpoint: Text { text: "Preview checks flat, convex roofs. Adjust the cut or extrude if needed."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                             if root.partition-mode == 1: VerticalLayout {
                                 spacing: 6px;
                                 ComboBox { model: ["Outward · add brushes", "Inward · cut source"]; current-index <=> root.extrusion-direction; accessible-label: "Extrusion direction"; selected => { root.edited(); } }
-                                Text { text: "Extrusion depth · world units"; color: #aeb9c8; }
+                                Text { text: "Extrusion depth · world units"; color: Theme.text-muted; }
                                 LineEdit { text <=> root.extrusion-height; input-type: decimal; accessible-label: "Extrusion depth"; edited => { root.edited(); } }
                                 Slider { minimum: 0.125; maximum: max(128, root.extrusion-height-value); value: root.extrusion-height-value; released(value) => { root.choose-extrusion-height(value); } }
-                                if root.extrusion-direction == 1: Text { text: "Cuts into the source opposite its face normal, continuing through thinner areas. Apply replaces the source with convex fragments and consumes its saved pieces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                if root.extrusion-direction == 1: Text { text: "Cuts into the source opposite its face normal, continuing through thinner areas. Apply replaces the source with convex fragments and consumes its saved pieces."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                                 CheckBox { text: root.extrusion-direction == 1 ? "Keep floor texture at corners" : "Keep top texture at corners"; checked <=> root.extrusion-texture-lock; toggled => { root.edited(); } }
                                 CheckBox { text: "Choose wall material"; checked <=> root.wall-override; toggled => { root.edited(); } }
                                 if root.wall-override: HorizontalLayout {
@@ -417,57 +419,57 @@ export component ComponentsWindow inherits Window {
                                     LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.wall-material; accessible-label: "Extrusion wall material"; edited => { root.edited(); } }
                                     Button { text: "Browse…"; clicked => { root.browse-extrusion-material(); } }
                                 }
-                                Text { text: root.extrusion-direction == 1 ? "Replaces source brushes with convex fragments and consumes their saved pieces. Undo restores both." : "Adds separate volumes. Original brushes and saved pieces remain."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                                Text { text: root.extrusion-direction == 1 ? "Replaces source brushes with convex fragments and consumes their saved pieces. Undo restores both." : "Adds separate volumes. Original brushes and saved pieces remain."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                             }
                             Button { text: "Return to flat"; enabled: !root.partition-flat || root.has-extrusion-preview; clicked => { root.flatten-partitions(); } }
                         }
-                        if !root.can-raise-partition: Text { text: "Ridges need two quad pieces. Keep these flat or extrude them."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
-                        if root.partition-mode == 0 && root.can-raise-partition: Text { text: "Raising moves the shared ridge of both pieces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
-                        Text { text: "Preview before Apply. Keep flat pieces to resume them later."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        if !root.can-raise-partition: Text { text: "Ridges need two quad pieces. Keep these flat or extrude them."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                        if root.partition-mode == 0 && root.can-raise-partition: Text { text: "Raising moves the shared ridge of both pieces."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                        Text { text: "Preview before Apply. Keep flat pieces to resume them later."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                         if !root.has-partition-preview && root.saved-partitions.length > 0: VerticalLayout {
                             spacing: 6px;
                             Text { text: "Saved flat pieces"; font-weight: 600; }
                             ComboBox { model: root.saved-partition-labels; current-index <=> root.saved-partition-index; }
-                            Text { text: root.saved-partitions[root.saved-partition-index].detail; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                            Text { text: root.saved-partitions[root.saved-partition-index].detail; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                             HorizontalLayout {
                                 spacing: 6px;
                                 Button { text: "Resume pieces"; enabled: root.saved-partitions[root.saved-partition-index].selected; clicked => { root.resume-saved-partition(); } }
                                 Button { text: "Remove saved"; clicked => { root.remove-saved-partition(); } }
                             }
                         }
-                        if root.saved-partition-error != "": Text { text: root.saved-partition-error; wrap: word-wrap; color: #ffc66d; }
+                        if root.saved-partition-error != "": Text { text: root.saved-partition-error; wrap: word-wrap; color: Theme.warning; }
                     }
                     if root.operation == 3 || root.operation == 4: VerticalLayout {
                         spacing: 10px;
                         Text { text: root.operation == 3 ? "Scale factors · 1 = original size" : "Angles · degrees around world axes"; wrap: word-wrap; font-weight: 600; }
                         HorizontalLayout {
                             spacing: 8px;
-                            VerticalLayout { spacing: 4px; Text { text: "X"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text: root.operation == 3 ? root.scale-x : root.rotate-x; input-type: decimal; accessible-label: "Component transform X"; edited(value) => { if root.operation == 3 { root.scale-x = value; } else { root.rotate-x = value; } root.edited(); } } }
-                            VerticalLayout { spacing: 4px; Text { text: "Y"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text: root.operation == 3 ? root.scale-y : root.rotate-y; input-type: decimal; accessible-label: "Component transform Y"; edited(value) => { if root.operation == 3 { root.scale-y = value; } else { root.rotate-y = value; } root.edited(); } } }
-                            VerticalLayout { spacing: 4px; Text { text: "Z · up"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text: root.operation == 3 ? root.scale-z : root.rotate-z; input-type: decimal; accessible-label: "Component transform Z"; edited(value) => { if root.operation == 3 { root.scale-z = value; } else { root.rotate-z = value; } root.edited(); } } }
+                            VerticalLayout { spacing: 4px; Text { text: "X"; color: Theme.axis-x; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text: root.operation == 3 ? root.scale-x : root.rotate-x; input-type: decimal; accessible-label: "Component transform X"; edited(value) => { if root.operation == 3 { root.scale-x = value; } else { root.rotate-x = value; } root.edited(); } } }
+                            VerticalLayout { spacing: 4px; Text { text: "Y"; color: Theme.axis-y; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text: root.operation == 3 ? root.scale-y : root.rotate-y; input-type: decimal; accessible-label: "Component transform Y"; edited(value) => { if root.operation == 3 { root.scale-y = value; } else { root.rotate-y = value; } root.edited(); } } }
+                            VerticalLayout { spacing: 4px; Text { text: "Z · up"; color: Theme.text-muted; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text: root.operation == 3 ? root.scale-z : root.rotate-z; input-type: decimal; accessible-label: "Component transform Z"; edited(value) => { if root.operation == 3 { root.scale-z = value; } else { root.rotate-z = value; } root.edited(); } } }
                         }
                         Text { text: "Pivot"; font-weight: 600; }
                         ComboBox { model: ["Center of selected components", "World position"]; current-index <=> root.pivot-mode; selected => { root.choose-pivot(); } }
-                        if root.pivot-mode == 0: Text { text: root.transform-center; wrap: word-wrap; color: #aeb9c8; }
+                        if root.pivot-mode == 0: Text { text: root.transform-center; wrap: word-wrap; color: Theme.text-muted; }
                         if root.pivot-mode == 1: HorizontalLayout {
                             spacing: 8px;
-                            VerticalLayout { spacing: 4px; Text { text: "X"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.pivot-x; input-type: decimal; accessible-label: "Component pivot X"; edited => { root.edited(); } } }
-                            VerticalLayout { spacing: 4px; Text { text: "Y"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.pivot-y; input-type: decimal; accessible-label: "Component pivot Y"; edited => { root.edited(); } } }
-                            VerticalLayout { spacing: 4px; Text { text: "Z"; color: #aeb9c8; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.pivot-z; input-type: decimal; accessible-label: "Component pivot Z"; edited => { root.edited(); } } }
+                            VerticalLayout { spacing: 4px; Text { text: "X"; color: Theme.axis-x; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.pivot-x; input-type: decimal; accessible-label: "Component pivot X"; edited => { root.edited(); } } }
+                            VerticalLayout { spacing: 4px; Text { text: "Y"; color: Theme.axis-y; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.pivot-y; input-type: decimal; accessible-label: "Component pivot Y"; edited => { root.edited(); } } }
+                            VerticalLayout { spacing: 4px; Text { text: "Z"; color: Theme.axis-z; } LineEdit { min-width: 0px; preferred-width: 80px; horizontal-stretch: 1; text <=> root.pivot-z; input-type: decimal; accessible-label: "Component pivot Z"; edited => { root.edited(); } } }
                         }
                         CheckBox { text: "Keep textures at corners"; checked <=> root.texture-lock; toggled => { root.edited(); } }
-                        Text { text: "Unselected corners stay in place. Faces must remain flat and the brush convex."; wrap: word-wrap; color: #aeb9c8; }
-                        Text { text: root.operation == 3 ? "Use positive factors. Attached textures must fit every face corner." : "Rotate in X, then Y, then Z order. Move handles pause during the preview."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                        Text { text: "Unselected corners stay in place. Faces must remain flat and the brush convex."; wrap: word-wrap; color: Theme.text-muted; }
+                        Text { text: root.operation == 3 ? "Use positive factors. Attached textures must fit every face corner." : "Rotate in X, then Y, then Z order. Move handles pause during the preview."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                     }
                     Button { text: root.operation == 6 ? (root.has-partition-preview ? (root.partition-mode == 1 ? "Preview extrusion" : (root.can-raise-partition ? "Preview ridge" : "Preview flat pieces")) : "Stage flat partition") : root.operation == 5 ? "Preview ridge" : root.operation == 3 ? "Preview scale" : root.operation == 4 ? "Preview rotation" : root.operation == 2 ? "Preview split" : root.operation == 1 ? "Preview weld" : "Preview move"; enabled: root.has-selection; clicked => { root.preview-edit(); } }
-                    Text { text: root.preview-summary; wrap: word-wrap; color: #ffc66d; }
+                    Text { text: root.preview-summary; wrap: word-wrap; color: Theme.warning; }
                     Rectangle { vertical-stretch: 1; }
-                    if !root.has-partition-preview: Text { text: root.has-partition-preview ? "Click a visible piece to highlight it. Ctrl toggles; an empty click clears. Orange outlines show highlights." : root.kind == 2 ? "Face clicks choose the visible surface. Use the list for faces behind it." : "Orange marks selected components. Blue corners and edges can be picked through surfaces."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
-                    if root.operation == 0: Text { text: "Faces must stay flat and the brush convex. Attached textures stretch or rotate with the face and must fit every corner."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                    if !root.has-partition-preview: Text { text: root.has-partition-preview ? "Click a visible piece to highlight it. Ctrl toggles; an empty click clears. Orange outlines show highlights." : root.kind == 2 ? "Face clicks choose the visible surface. Use the list for faces behind it." : "Orange marks selected components. Blue corners and edges can be picked through surfaces."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+                    if root.operation == 0: Text { text: "Faces must stay flat and the brush convex. Attached textures stretch or rotate with the face and must fit every corner."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                     }
                 }
             }
-            if root.message != "": Text { text: root.message; wrap: word-wrap; color: #ffc66d; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

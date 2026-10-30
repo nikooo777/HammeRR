@@ -1,8 +1,10 @@
-import {Button,CheckBox,ComboBox,LineEdit,ScrollView} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button,CheckBox,ComboBox,LineEdit,ScrollView} from "widgets.slint";
 
 export struct PolygonCorner { label:string, u:string, v:string, x:float, y:float }
 
 export component PolygonWindow inherits Window {
+    background: Theme.panel;
     title:"Draw polygon - HammeRR";preferred-width:900px;preferred-height:740px;
     in-out property <int> axis:2;
     in-out property <string> base:"0";
@@ -31,7 +33,7 @@ export component PolygonWindow inherits Window {
         VerticalLayout {
             padding:20px;spacing:12px;
             Text {text:"Draw a polygon, then give it depth";font-size:22px;}
-            Text {text:"Click corners in boundary order. The last corner closes to the first automatically.";wrap:word-wrap;color:#b6c1cf;}
+            Text {text:"Click corners in boundary order. The last corner closes to the first automatically.";wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:10px;
                 Text {text:"Plane";vertical-alignment:center;}
@@ -47,17 +49,17 @@ export component PolygonWindow inherits Window {
                 VerticalLayout {
                     spacing:8px;horizontal-stretch:1;
                     Rectangle {
-                        background:#141920;border-width:1px;border-color:#526074;clip:true;
+                        background:Theme.control;border-width:1px;border-color:Theme.border-strong;clip:true;
                         min-height:320px;vertical-stretch:1;
                         pad:=Rectangle {
                         width:min(parent.width,parent.height);height:self.width;
                         x:(parent.width - self.width)/2;y:(parent.height - self.height)/2;
-                        for i in 17:Rectangle {x:parent.width*i/16;y:0;width:1px;height:parent.height;background:i==8 ? #4a596a : #242f3d;}
-                        for i in 17:Rectangle {x:0;y:parent.height*i/16;width:parent.width;height:1px;background:i==8 ? #4a596a : #242f3d;}
-                        Path {width:parent.width;height:parent.height;viewbox-width:512;viewbox-height:512;commands:root.outline;stroke:#72c7ee;stroke-width:2px;fill:#386c8a30;}
+                        for i in 17:Rectangle {x:parent.width*i/16;y:0;width:1px;height:parent.height;background:i==8 ? Theme.border-strong : Theme.border;}
+                        for i in 17:Rectangle {x:0;y:parent.height*i/16;width:parent.width;height:1px;background:i==8 ? Theme.border-strong : Theme.border;}
+                        Path {width:parent.width;height:parent.height;viewbox-width:512;viewbox-height:512;commands:root.outline;stroke:Theme.info;stroke-width:2px;fill:Theme.info-soft;}
                         for corner in root.corners:Rectangle {
                             x:parent.width*corner.x - 4px;y:parent.height*corner.y - 4px;
-                            width:8px;height:8px;border-radius:4px;background:#e6d383;
+                            width:8px;height:8px;border-radius:4px;background:Theme.warning;
                         }
                         TouchArea {clicked=>{root.draw-corner(self.mouse-x/self.width,self.mouse-y/self.height);}}
                         }
@@ -98,7 +100,7 @@ export component PolygonWindow inherits Window {
                         LineEdit {width:85px;text<=>root.corner-v;input-type:decimal;}
                         Button {text:"Add corner";width:90px;clicked=>{root.add-corner();}}
                     }
-                    Text {text:"Exact corner changes use Enter. Concave outlines become several editable convex brushes.";wrap:word-wrap;color:#b6c1cf;}
+                    Text {text:"Exact corner changes use Enter. Concave outlines become several editable convex brushes.";wrap:word-wrap;color:Theme.text-muted;}
                 }
             }
             HorizontalLayout {
@@ -112,7 +114,7 @@ export component PolygonWindow inherits Window {
                 Button {text:"Browse materials…";clicked=>{root.browse-material();}}
             }
             Text {text:root.summary;wrap:word-wrap;}
-            Text {text:root.message;wrap:word-wrap;color:#b6c1cf;min-height:28px;}
+            Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:28px;}
             HorizontalLayout {
                 spacing:10px;
                 Button {text:"Cancel";clicked=>{root.cancel();}}

@@ -1,6 +1,8 @@
-import { Button, ComboBox, LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, ComboBox, LineEdit } from "widgets.slint";
 
 export component AtlasWindow inherits Window {
+    background: Theme.panel;
     title: "Fit atlas region - HammeRR";
     preferred-width: 720px;
     preferred-height: 960px;
@@ -67,7 +69,7 @@ export component AtlasWindow inherits Window {
             padding: 24px;
             spacing: 12px;
             Text { text: "Fit atlas region"; font-size: 24px; font-weight: 600; }
-            Text { text: root.selection-label; color: #bac2ce; }
+            Text { text: root.selection-label; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;
                 Text { text: "Fit mode"; vertical-alignment: center; }
@@ -95,7 +97,7 @@ export component AtlasWindow inherits Window {
                 Button { text: "Browse materials…"; clicked => { root.browse(); } }
                 Button { text: "Inspect material"; enabled: !root.stale; clicked => { root.inspect-material(); } }
             }
-            Text { text: root.details; wrap: word-wrap; color: #bac2ce; }
+            Text { text: root.details; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;
                 Text { text: "Saved region"; vertical-alignment: center; }
@@ -114,13 +116,13 @@ export component AtlasWindow inherits Window {
                 Button { text: "Rename region"; enabled: !root.stale && root.catalog-editable && root.saved-region-index >= 0 && !root.rectangle-dragging; clicked => { root.rename-region(); } }
                 Button { text: "Delete region"; enabled: !root.stale && root.catalog-editable && root.saved-region-index >= 0 && !root.rectangle-dragging; clicked => { root.delete-region(); } }
             }
-            Text { text: "The base image stays cached until Reload material assets."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "The base image stays cached until Reload material assets."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 20px;
                 Rectangle {
                     width: 320px;
                     height: 320px;
-                    background: #141923;
+                    background: Theme.control;
                     image-area := Rectangle {
                         width: root.texture-width >= root.texture-height ? parent.width : parent.height * root.texture-width / root.texture-height;
                         height: root.texture-width >= root.texture-height ? parent.width * root.texture-height / root.texture-width : parent.height;
@@ -133,8 +135,8 @@ export component AtlasWindow inherits Window {
                             width: parent.width * root.region-width;
                             height: parent.height * root.region-height;
                             border-width: 2px;
-                            border-color: #58dfff;
-                            background: #45cfff22;
+                            border-color: Theme.accent;
+                            background: Theme.info-soft;
                         }
                         if root.loaded && root.valid-usable-region && root.has-padding: Rectangle {
                             x: parent.width * root.usable-u;
@@ -142,8 +144,8 @@ export component AtlasWindow inherits Window {
                             width: parent.width * root.usable-width;
                             height: parent.height * root.usable-height;
                             border-width: 2px;
-                            border-color: #ffd66e;
-                            background: #ffd66e22;
+                            border-color: Theme.warning;
+                            background: Theme.warning-soft;
                         }
                         TouchArea {
                             width: parent.width;
@@ -171,7 +173,7 @@ export component AtlasWindow inherits Window {
                             }
                         }
                     }
-                    if !root.loaded: Text { text: "Inspect a supported material"; horizontal-alignment: center; vertical-alignment: center; color: #bac2ce; }
+                    if !root.loaded: Text { text: "Inspect a supported material"; horizontal-alignment: center; vertical-alignment: center; color: Theme.text-muted; }
                 }
                 VerticalLayout {
                     spacing: 10px;
@@ -196,15 +198,15 @@ export component AtlasWindow inherits Window {
                         Text { text: "Padding"; width: 54px; vertical-alignment: center; }
                         LineEdit { text <=> root.region-padding; input-type: number; accessible-label: "Atlas padding in source image pixels"; edited => { root.edited(); } }
                     }
-                    Text { text: "Padding insets all four edges in whole source image pixels. Zero uses the entire rectangle."; wrap: word-wrap; color: #bac2ce; }
-                    Text { text: root.usable-details; wrap: word-wrap; color: root.valid-usable-region ? #ffd66e : #ffb4a8; }
+                    Text { text: "Padding insets all four edges in whole source image pixels. Zero uses the entire rectangle."; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: root.usable-details; wrap: word-wrap; color: root.valid-usable-region ? Theme.warning : Theme.danger; }
                     Rectangle { vertical-stretch: 1; }
                 }
             }
-            Text { text: "Drag on the image or enter pixel values. Escape cancels an active drag. Cyan: rectangle; yellow: usable area after padding. Image edges start at the top-left; X grows right and Y grows down."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "Drag on the image or enter pixel values. Escape cancels an active drag. Cyan: rectangle; yellow: usable area after padding. Image edges start at the top-left; X grows right and Y grows down."; wrap: word-wrap; color: Theme.text-muted; }
             Text {
                 text: root.fit-mode == 1 ? "Same-facing coplanar faces share the reference face's direction, skew, rotation and mirroring. Their combined bounds fit once into the usable area; gaps consume image space. Other face projection frames are replaced." : "Each face fits its projected bounds into the usable area, keeping its texture direction, skew, rotation and mirroring. Polygon corners can leave parts unused.";
-                wrap: word-wrap; color: #bac2ce;
+                wrap: word-wrap; color: Theme.text-muted;
             }
             Text { text: root.message; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }

@@ -1,6 +1,8 @@
-import { Button, CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ComboBox, ScrollView } from "widgets.slint";
 
 export component FogWindow inherits Window {
+    background: Theme.panel;
     title: "Fog preview - HammeRR";
     preferred-width: 740px;
     preferred-height: 570px;
@@ -22,7 +24,7 @@ export component FogWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 16px;
             Text { text: "Fog preview"; font-size: 24px; font-weight: 600; }
-            Text { text: root.current; wrap: word-wrap; color: #aeb9c8; }
+            Text { text: root.current; wrap: word-wrap; color: Theme.text-muted; }
             CheckBox {
                 text: "Enable fog preview";
                 checked <=> root.preview-enabled;
@@ -41,11 +43,11 @@ export component FogWindow inherits Window {
                     Text { text: root.detail; wrap: word-wrap; }
                     Text {
                         text: "Preview static fog in Perspective · Textured view. Sky, background and editor helpers stay unchanged.\n\nRadial fog, directional blending, far-Z clipping and HDR/zoom scaling are unsupported. Fog volumes, transitions and runtime I/O are not evaluated. Choose the controller explicitly.";
-                        wrap: word-wrap; color: #aeb9c8; font-size: 12px;
+                        wrap: word-wrap; color: Theme.text-muted; font-size: 12px;
                     }
                 }
             }
-            if root.message != "": Text { text: root.message; color: #f5b477; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Refresh choices"; clicked => { root.refresh(); } }

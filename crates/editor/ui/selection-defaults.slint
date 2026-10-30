@@ -1,4 +1,5 @@
-import {Button, ComboBox, LineEdit, ListView} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button, ComboBox, LineEdit, ListView} from "widgets.slint";
 
 export struct SelectionDefaultRow {
     label: string,
@@ -9,6 +10,7 @@ export struct SelectionDefaultRow {
 export struct SelectionProfileRow { id: string, name: string, filters: string }
 
 export component SelectionDefaultsWindow inherits Window {
+    background: Theme.panel;
     title: "Selection defaults - HammeRR";
     preferred-width: 720px;
     preferred-height: 720px;
@@ -45,7 +47,7 @@ export component SelectionDefaultsWindow inherits Window {
             ComboBox { model: ["Startup defaults", "Named profiles"]; current-index <=> root.section; accessible-label: "Selection settings section"; }
             if root.section == 0: VerticalLayout {
                 spacing: 10px;
-                Text { text: "Choose Pick object types, then save the filters to use for future documents."; color: #b6c1cf; wrap: word-wrap; }
+                Text { text: "Choose Pick object types, then save the filters to use for future documents."; color: Theme.text-muted; wrap: word-wrap; }
                 HorizontalLayout {
                     Text { text: "Setting"; horizontal-stretch: 1; font-weight: 600; }
                     Text { text: "Current session"; width: 125px; font-weight: 600; }
@@ -59,16 +61,16 @@ export component SelectionDefaultsWindow inherits Window {
                         Text { text: row.defaults; width: 125px; vertical-alignment: center; }
                     }
                 }
-                Text { text: root.defaults; wrap: word-wrap; color: #b6c1cf; }
+                Text { text: root.defaults; wrap: word-wrap; color: Theme.text-muted; }
             }
             if root.section == 1: VerticalLayout {
                 spacing: 10px;
-                Text { text: "Save current filters under a name, then explicitly apply a profile when needed. Startup defaults stay separate."; color: #b6c1cf; wrap: word-wrap; }
+                Text { text: "Save current filters under a name, then explicitly apply a profile when needed. Startup defaults stay separate."; color: Theme.text-muted; wrap: word-wrap; }
                 ListView {
                     height: 96px;
                     for profile in root.profiles: Rectangle {
                         height: 48px;
-                        background: root.selected-profile == profile.id ? #2d4056 : #1a2430;
+                        background: root.selected-profile == profile.id ? Theme.selection : Theme.hover;
                         HorizontalLayout {
                             spacing: 10px; padding: 4px;
                             Button { text: profile.name; width: 190px; enabled: root.ready; clicked => { root.choose-profile(profile.id); } }
@@ -87,9 +89,9 @@ export component SelectionDefaultsWindow inherits Window {
                     Button { text: "Delete profile"; enabled: root.ready && root.selected-profile != ""; clicked => { root.delete-profile(); } }
                 }
             }
-            Text { text: root.storage; wrap: word-wrap; color: #b6c1cf; }
-            Text { text: root.status; wrap: word-wrap; color: #e3c597; }
-            if root.section == 0: Text { text: "New/Open retain current filters. Reset keeps the last valid profiles, or an empty list if none were loaded."; wrap: word-wrap; color: #b6c1cf; }
+            Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+            if root.section == 0: Text { text: "New/Open retain current filters. Reset keeps the last valid profiles, or an empty list if none were loaded."; wrap: word-wrap; color: Theme.text-muted; }
             Rectangle { vertical-stretch: 1; }
             Text { text: root.message; wrap: word-wrap; min-height: 34px; }
             if root.section == 0: HorizontalLayout {

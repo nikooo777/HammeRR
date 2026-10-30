@@ -4,7 +4,7 @@
 
 Reopen one of the twenty most recent maps with compatible build settings.
 
-1. Click **Recent…**.
+1. Choose **File → Recent maps…**.
 2. Select a map.
 3. Check its full path and availability.
 4. Click **Open selected map**.

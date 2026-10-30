@@ -1,9 +1,11 @@
-import {Button, ComboBox, LineEdit, ListView, ScrollView, SpinBox, TextEdit} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button, ComboBox, LineEdit, ListView, ScrollView, SpinBox, TextEdit} from "widgets.slint";
 
 export struct ModelChoiceRow { path:string, name:string, folder:string, source:string }
 export struct ModelBodygroupRow { index:int, label:string, choices:[string], selected:int }
 
 export component ModelBrowserWindow inherits Window {
+    background: Theme.panel;
     title:"Choose model — HammeRR";
     preferred-width:960px;
     preferred-height:min(900px,750px + root.bodygroups.length*58px);
@@ -66,12 +68,12 @@ export component ModelBrowserWindow inherits Window {
                     ListView {
                         for row in root.rows:Rectangle {
                             height:72px;border-radius:5px;
-                            background:root.path==row.path ? #343b49 : touch.has-hover ? #252b34 : #1d222a;
+                            background:root.path==row.path ? Theme.control-strong : touch.has-hover ? Theme.control-strong : Theme.hover;
                             VerticalLayout {
                                 padding:8px;spacing:3px;
-                                Text {text:row.name;color:#e1e4eb;overflow:elide;}
-                                Text {text:row.folder;color:#9aa5b5;font-size:11px;overflow:elide;}
-                                Text {text:row.source;color:#9aa5b5;font-size:10px;overflow:elide;}
+                                Text {text:row.name;color:Theme.text;overflow:elide;}
+                                Text {text:row.folder;color:Theme.text-faint;font-size:11px;overflow:elide;}
+                                Text {text:row.source;color:Theme.text-faint;font-size:10px;overflow:elide;}
                             }
                             touch:=TouchArea {clicked=>{root.choose(row.path);}}
                         }
@@ -79,37 +81,37 @@ export component ModelBrowserWindow inherits Window {
                     HorizontalLayout {
                         spacing:8px;
                         Button {text:"Previous";enabled:root.can-previous;clicked=>{root.page(-1);}}
-                        Text {text:root.page-info;horizontal-alignment:center;vertical-alignment:center;horizontal-stretch:1;color:#aab2bf;}
+                        Text {text:root.page-info;horizontal-alignment:center;vertical-alignment:center;horizontal-stretch:1;color:Theme.text-muted;}
                         Button {text:"Next";enabled:root.can-next;clicked=>{root.page(1);}}
                     }
                 }
                 VerticalLayout {
                     width:460px;spacing:10px;
                     Rectangle {
-                        min-height:250px;vertical-stretch:1;background:#151922;border-radius:8px;clip:true;
+                        min-height:250px;vertical-stretch:1;background:Theme.control;border-radius:8px;clip:true;
                         if root.has-preview:Image {width:parent.width;height:parent.height;source:root.preview;image-fit:contain;}
-                        if !root.has-preview:Text {width:parent.width;height:parent.height;text:"Select a model to preview it";horizontal-alignment:center;vertical-alignment:center;color:#aab2bf;}
+                        if !root.has-preview:Text {width:parent.width;height:parent.height;text:"Select a model to preview it";horizontal-alignment:center;vertical-alignment:center;color:Theme.text-muted;}
                     }
                     if root.skin-count > 1:HorizontalLayout {
                         spacing:8px;
                         Text {text:"Skin";vertical-alignment:center;}
                         SpinBox {value<=>root.skin;minimum:0;maximum:max(0,root.skin-count - 1);edited=>{root.preview-model();}}
-                        Text {text:"\{root.skin-count} skins";vertical-alignment:center;color:#aab2bf;horizontal-stretch:1;}
+                        Text {text:"\{root.skin-count} skins";vertical-alignment:center;color:Theme.text-muted;horizontal-stretch:1;}
                     }
-                    if root.skin-count <= 1:Text {text:"Default skin";color:#aab2bf;}
+                    if root.skin-count <= 1:Text {text:"Default skin";color:Theme.text-muted;}
                     if root.bodygroups.length > 0:ScrollView {
                         height:min(130px,root.bodygroups.length*58px);
                         VerticalLayout {
                             spacing:8px;
                             for group in root.bodygroups:VerticalLayout {
                                 spacing:4px;
-                                Text {text:group.label;color:#b6c0ce;}
+                                Text {text:group.label;color:Theme.text-muted;}
                                 ComboBox {model:group.choices;current-index:group.selected;selected=>{root.bodygroup-changed(group.index,self.current-index);}}
                             }
                         }
                     }
                     Text {text:root.geometry;wrap:word-wrap;}
-                    Text {text:root.dimensions;wrap:word-wrap;color:#b6c0ce;}
+                    Text {text:root.dimensions;wrap:word-wrap;color:Theme.text-muted;}
                     if root.provenance != "":TextEdit {text:root.provenance;read-only:true;height:76px;}
                     if root.material-count > 0:Button {text:root.show-materials ? "Hide materials" : "Show materials (\{root.material-count})";clicked=>{root.show-materials=!root.show-materials;root.resize-details();}}
                     if root.show-materials:TextEdit {text:root.materials;read-only:true;height:80px;}
@@ -120,12 +122,12 @@ export component ModelBrowserWindow inherits Window {
                 LineEdit {text<=>root.path;placeholder-text:"models/...mdl";horizontal-stretch:1;edited=>{root.invalidate();}accepted=>{root.preview-model();}}
                 Button {text:"Preview model";clicked=>{root.preview-model();}}
             }
-            Text {text:root.message;wrap:word-wrap;color:#b6c0ce;min-height:32px;}
+            Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:32px;}
             HorizontalLayout {
                 spacing:8px;
                 Button {text:"Cancel";clicked=>{root.cancel();}}
                 Rectangle {horizontal-stretch:1;}
-                Text {text:"Scale 1";vertical-alignment:center;color:#8e99aa;font-size:12px;}
+                Text {text:"Scale 1";vertical-alignment:center;color:Theme.text-faint;font-size:12px;}
                 Button {text:"Use model";enabled:root.can-apply;clicked=>{root.apply();}}
             }
         }

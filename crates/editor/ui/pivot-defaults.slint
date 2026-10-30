@@ -1,6 +1,8 @@
-import {Button} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button} from "widgets.slint";
 
 export component PivotDefaultsWindow inherits Window {
+    background: Theme.panel;
     title: "Transform pivot defaults - HammeRR";
     preferred-width: 690px;
     preferred-height: 660px;
@@ -26,13 +28,13 @@ export component PivotDefaultsWindow inherits Window {
             padding: 20px;
             spacing: 12px;
             Text { text: "Transform pivot defaults"; font-size: 24px; font-weight: 600; }
-            Text { text: "Save only the transform pivot you want at startup."; color: #b6c1cf; wrap: word-wrap; }
+            Text { text: "Save only the transform pivot you want at startup."; color: Theme.text-muted; wrap: word-wrap; }
             Text { text: root.current; wrap: word-wrap; font-size: 17px; }
             Text { text: root.defaults; wrap: word-wrap; font-size: 17px; }
-            Text { text: root.storage; wrap: word-wrap; color: #b6c1cf; }
-            Text { text: root.status; wrap: word-wrap; color: #e3c597; }
-            Text { text: "Save keeps this pivot for new document windows. A custom pivot is a fixed world point and does not follow a surface. New/Open in this window keep the current pivot."; wrap: word-wrap; color: #b6c1cf; }
-            Text { text: root.apply-status; wrap: word-wrap; color: #e3c597; }
+            Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+            Text { text: "Save keeps this pivot for new document windows. A custom pivot is a fixed world point and does not follow a surface. New/Open in this window keep the current pivot."; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: root.apply-status; wrap: word-wrap; color: Theme.warning; }
             Rectangle { vertical-stretch: 1; }
             Text { text: root.message; wrap: word-wrap; min-height: 34px; }
             HorizontalLayout {

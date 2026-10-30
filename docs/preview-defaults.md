@@ -4,9 +4,9 @@
 
 Choose which images and guides appear at startup.
 
-1. Set **Selection outlines**, **Selection tint**, **Entity images** and **Entity model guides** under **Viewport**.
+1. Set **Selection outlines**, **Selection tint**, **Entity images** and **Entity model guides** under **Overlays**.
 2. Set **Rope preview** and **2D sky preview** as required.
-3. Open **Preview defaults…**.
+3. Choose **Edit → Preferences → Preview defaults…**.
 4. Click **Save current as defaults**.
 
 Use **Apply saved defaults** to apply them now.

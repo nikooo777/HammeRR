@@ -1,6 +1,8 @@
-import { Button, ComboBox, LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, ComboBox, LineEdit } from "widgets.slint";
 
 export component SurfaceGroupWindow inherits Window {
+    background: Theme.panel;
     title: "Map textures together - HammeRR";
     preferred-width: 640px;
     preferred-height: 570px;
@@ -31,7 +33,7 @@ export component SurfaceGroupWindow inherits Window {
             padding: 24px;
             spacing: 14px;
             Text { text: "Map textures together"; font-size: 24px; font-weight: 600; }
-            Text { text: root.selection-label; color: #aeb9c8; }
+            Text { text: root.selection-label; color: Theme.text-muted; }
             ComboBox {
                 model: ["Fit faces together", "Project along current view"];
                 current-index <=> root.projection;
@@ -39,7 +41,7 @@ export component SurfaceGroupWindow inherits Window {
             }
             Text {
                 text: root.projection == 0 ? "Fit a continuous texture across faces on the same plane. Choose which face supplies the texture direction." : "Fit a shared texture along the viewport's viewing direction. Edge-on faces cannot receive this projection.";
-                color: #aeb9c8; wrap: word-wrap;
+                color: Theme.text-muted; wrap: word-wrap;
             }
             if root.projection == 0: HorizontalLayout {
                 spacing: 12px;
@@ -64,8 +66,8 @@ export component SurfaceGroupWindow inherits Window {
                 Text { text: "Vertical"; vertical-alignment: center; }
                 LineEdit { text <=> root.repeats-v; input-type: decimal; edited => { root.edited(); } }
             }
-            Text { text: "1 × 1 fits one tile across the combined bounds. More tiles make the texture smaller; fractions make it larger."; color: #aeb9c8; wrap: word-wrap; }
-            if root.projection == 1: Text { text: "Projection follows the view direction without perspective distortion. Preview again after moving the camera."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: "1 × 1 fits one tile across the combined bounds. More tiles make the texture smaller; fractions make it larger."; color: Theme.text-muted; wrap: word-wrap; }
+            if root.projection == 1: Text { text: "Projection follows the view direction without perspective distortion. Preview again after moving the camera."; color: Theme.text-muted; wrap: word-wrap; }
             Text { text: root.message; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {

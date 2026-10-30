@@ -1,10 +1,11 @@
-import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "widgets.slint";
 
 export component PasteWindow inherits Window {
     title: "Paste objects · HammeRR";
     preferred-width: 760px;
     preferred-height: 690px;
-    background: #202020;
+    background: Theme.hover;
     in property <string> destination;
     in property <string> payload;
     in property <string> details;
@@ -32,7 +33,7 @@ export component PasteWindow inherits Window {
             padding: 20px;
             spacing: 12px;
             Text { text: "Paste objects"; font-size: 21px; }
-            Text { text: root.destination; wrap: word-wrap; color: #aeb8c6; }
+            Text { text: root.destination; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: root.payload; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
@@ -43,7 +44,7 @@ export component PasteWindow inherits Window {
                 spacing: 10px;
                 Text { text: "Placement"; vertical-alignment: center; }
                 ComboBox { model: ["In place", "Offset"]; current-index <=> root.placement; selected => { root.invalidate(); } }
-                Text { text: "World units"; vertical-alignment: center; color: #aeb8c6; }
+                Text { text: "World units"; vertical-alignment: center; color: Theme.text-muted; }
             }
             HorizontalLayout {
                 spacing: 8px;
@@ -57,12 +58,12 @@ export component PasteWindow inherits Window {
             CheckBox { text: "Keep textures attached"; checked <=> root.texture-lock; toggled => { root.invalidate(); } }
             CheckBox { text: "Keep external links by name"; checked <=> root.keep-external; toggled => { root.invalidate(); } }
             CheckBox { text: "Restore cut names"; checked <=> root.restore-names; enabled: root.can-restore; toggled => { root.invalidate(); } }
-            Text { text: root.can-restore ? "Cut names can reconnect incoming links while this map remains unchanged." : "Copies receive unique names. Internal links follow the pasted objects."; color: #aeb8c6; wrap: word-wrap; }
+            Text { text: root.can-restore ? "Cut names can reconnect incoming links while this map remains unchanged." : "Copies receive unique names. Internal links follow the pasted objects."; color: Theme.text-muted; wrap: word-wrap; }
             ScrollView {
                 vertical-stretch: 1;
-                Text { text: root.details; wrap: word-wrap; color: #d6deea; }
+                Text { text: root.details; wrap: word-wrap; color: Theme.text; }
             }
-            Text { text: root.message; wrap: word-wrap; color: #aeb8c6; min-height: 42px; }
+            Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; min-height: 42px; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

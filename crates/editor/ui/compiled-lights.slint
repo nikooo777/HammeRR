@@ -1,4 +1,5 @@
-import { Button, ComboBox, ScrollView, StandardTableView, TextEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, ComboBox, ScrollView, StandardTableView, TextEdit } from "widgets.slint";
 
 export struct CompiledLightDetails {
     record: string,
@@ -25,11 +26,12 @@ component DetailField inherits VerticalLayout {
     in property <string> label;
     in property <string> value;
     spacing: 2px;
-    Text { text: root.label; color: #bac2ce; font-size: 12px; }
+    Text { text: root.label; color: Theme.text-muted; font-size: 12px; }
     Text { text: root.value; wrap: word-wrap; }
 }
 
 export component CompiledLightsWindow inherits Window {
+    background: Theme.panel;
     title: "Compiled lights - HammeRR";
     preferred-width: 1100px;
     preferred-height: 900px;
@@ -71,7 +73,7 @@ export component CompiledLightsWindow inherits Window {
             padding: 20px;
             spacing: 10px;
             Text { text: "Compiled lights"; font-size: 24px; font-weight: 600; }
-            Text { text: root.build-state; wrap: word-wrap; color: #ffcb80; }
+            Text { text: root.build-state; wrap: word-wrap; color: Theme.warning; }
             Text { text: root.channels; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
@@ -98,7 +100,7 @@ export component CompiledLightsWindow inherits Window {
                 Button { text: "Previous lights"; enabled: root.previous-lights; clicked => { root.page-lights(-1); } }
                 Button { text: "Next lights"; enabled: root.next-lights; clicked => { root.page-lights(1); } }
                 Rectangle { horizontal-stretch: 1; }
-                Text { text: "Native record order"; vertical-alignment: center; color: #bac2ce; }
+                Text { text: "Native record order"; vertical-alignment: center; color: Theme.text-muted; }
             }
             HorizontalLayout {
                 Text { text: root.has-selection ? "Selected record " + root.details.record : "Select a light to inspect its fields"; font-size: 18px; font-weight: 600; }
@@ -107,7 +109,7 @@ export component CompiledLightsWindow inherits Window {
                 Button { text: "Frame light"; enabled: root.can-frame; clicked => { root.frame-light(); } }
                 Button { text: root.source-selection-label; enabled: root.can-select-source; clicked => { root.select-source(); } }
             }
-            if root.has-selection && !root.can-inspect-source-visibility: Text { text: "Source visibility is available only for point, spot and surface records. Directional sky and unknown kinds have no supported source-cluster target."; wrap: word-wrap; color: #ffcb80; }
+            if root.has-selection && !root.can-inspect-source-visibility: Text { text: "Source visibility is available only for point, spot and surface records. Directional sky and unknown kinds have no supported source-cluster target."; wrap: word-wrap; color: Theme.warning; }
             if root.has-selection: ScrollView {
                 content-width: self.width;
                 min-height: 170px;
@@ -146,8 +148,8 @@ export component CompiledLightsWindow inherits Window {
                     }
                 }
             }
-            Text { text: "Surface lights are emitting-triangle centroid point approximations. Frame light frames a stored point/spot origin or surface centroid, without changing selection. Directional sky records have no frameable native point; select their authored source, then use Frame in the viewport."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
-            Text { text: "Captured sources and ordered instance occurrence paths belong to this build. Source selection replaces selection with one root face in Faces mode, or one root entity or outer containing reference in Objects mode. It does not expand groups, reveal hidden objects or open children. Native values are not screen brightness. Unapplied drafts are not baked."; wrap: word-wrap; color: #bac2ce; font-size: 12px; }
+            Text { text: "Surface lights are emitting-triangle centroid point approximations. Frame light frames a stored point/spot origin or surface centroid, without changing selection. Directional sky records have no frameable native point; select their authored source, then use Frame in the viewport."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+            Text { text: "Captured sources and ordered instance occurrence paths belong to this build. Source selection replaces selection with one root face in Faces mode, or one root entity or outer containing reference in Objects mode. It does not expand groups, reveal hidden objects or open children. Native values are not screen brightness. Unapplied drafts are not baked."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
             if root.diagnostics != "": TextEdit { text: root.diagnostics; read-only: true; wrap: word-wrap; min-height: 55px; max-height: 90px; accessible-label: "Compiled light inspection diagnostics"; }
             HorizontalLayout {
                 Rectangle { horizontal-stretch: 1; }

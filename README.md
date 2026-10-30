@@ -33,6 +33,12 @@ Connect to the live editor at `http://127.0.0.1:7377/mcp`:
 Agents can edit, render, compile and launch maps. Use `hammerr-headless` for a private session without a window.
 See the [tool index and setup](docs/mcp.md).
 
+## The editor
+
+![HammeRR with a light selected: menus, tool rail, viewport, Inspector and Agent activity](docs/images/editor-window.png)
+
+Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Editor basics](docs/basics.md).
+
 ## Feature tour
 
 | [Brush shapes](docs/brushes.md) | [Hollow rooms](docs/brush-tools.md) |

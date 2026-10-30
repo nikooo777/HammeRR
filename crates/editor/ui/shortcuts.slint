@@ -1,8 +1,10 @@
-import {Button, CheckBox, ComboBox, LineEdit, ListView} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button, CheckBox, ComboBox, LineEdit, ListView} from "widgets.slint";
 
 export struct ShortcutRow { command: string, label: string, current: string, factory: string }
 
 export component ShortcutsWindow inherits Window {
+    background: Theme.panel;
     title: "Keyboard shortcuts - HammeRR";
     preferred-width: 820px;
     preferred-height: 900px;
@@ -40,14 +42,14 @@ export component ShortcutsWindow inherits Window {
             padding: 20px;
             spacing: 12px;
             Text {text:"Keyboard shortcuts";font-size:24px;font-weight:600;}
-            Text {text:"These commands run while the viewport has keyboard focus. Text fields keep their normal editing shortcuts. Save shortcuts applies your changes now and at startup.";wrap:word-wrap;color:#b6c1cf;}
+            Text {text:"These commands run while the viewport has keyboard focus. Text fields keep their normal editing shortcuts. Save shortcuts applies your changes now and at startup.";wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing: 8px;
                 LineEdit { text <=> root.search; placeholder-text: "Label, command ID or binding"; accessible-label: "Search commands"; horizontal-stretch: 1; edited => { root.filter-commands(); } }
                 Button { text: "Clear search"; enabled: root.search != ""; clicked => { root.search = ""; root.filter-commands(); } }
                 Text { text: root.result-count; vertical-alignment: center; }
             }
-            if root.search-error != "": Text { text: root.search-error; color: #e3c597; wrap: word-wrap; }
+            if root.search-error != "": Text { text: root.search-error; color: Theme.warning; wrap: word-wrap; }
             HorizontalLayout {
                 Text {text:"Command";width:180px;font-weight:600;}
                 Text {text:"Current form";horizontal-stretch:1;font-weight:600;}
@@ -57,12 +59,12 @@ export component ShortcutsWindow inherits Window {
                 height: root.search-error == "" ? 330px : 300px;
                 for row in root.commands: Rectangle {
                     height: max(34px, row-layout.min-height);
-                    background: root.selected == row.command ? #2d4056 : #1a2430;
+                    background: root.selected == row.command ? Theme.selection : Theme.hover;
                     row-layout := HorizontalLayout {
                         spacing:8px;padding:4px;
                         Button {text:row.label;width:176px;clicked=>{root.choose(row.command);}}
                         Text {text:row.current;horizontal-stretch:1;vertical-alignment:center;}
-                        Text {text:row.factory;width:232px;vertical-alignment:center;color:#b6c1cf;}
+                        Text {text:row.factory;width:232px;vertical-alignment:center;color:Theme.text-muted;}
                     }
                 }
             }
@@ -81,10 +83,10 @@ export component ShortcutsWindow inherits Window {
                 CheckBox {enabled:root.has-matches;text:"Ctrl";checked <=> root.alternate-control;toggled=>{root.edited();}}
                 CheckBox {enabled:root.has-matches;text:"Shift";checked <=> root.alternate-shift;toggled=>{root.edited();}}
             }
-            Text {text:"Choose Unbound to remove a slot. Chords use logical keys with exact Ctrl and Shift; Alt and Meta bindings are unavailable. Duplicate chords must be changed together before Save.";wrap:word-wrap;color:#b6c1cf;}
-            Text {text:"Reserved: Escape, arrows, PageUp/PageDown, camera W/A/S/D/Q/E with or without Shift, and Ctrl+N/O/S/C/X/V. Camera movement, nudging, file and clipboard controls keep their existing bindings.";wrap:word-wrap;color:#b6c1cf;}
-            Text {text:root.storage;wrap:word-wrap;color:#b6c1cf;}
-            Text {text:root.status;wrap:word-wrap;color:#e3c597;}
+            Text {text:"Choose Unbound to remove a slot. Chords use logical keys with exact Ctrl and Shift; Alt and Meta bindings are unavailable. Duplicate chords must be changed together before Save.";wrap:word-wrap;color:Theme.text-muted;}
+            Text {text:"Reserved: Escape, arrows, PageUp/PageDown, camera W/A/S/D/Q/E with or without Shift, and Ctrl+N/O/S/C/X/V. Camera movement, nudging, file and clipboard controls keep their existing bindings.";wrap:word-wrap;color:Theme.text-muted;}
+            Text {text:root.storage;wrap:word-wrap;color:Theme.text-muted;}
+            Text {text:root.status;wrap:word-wrap;color:Theme.warning;}
             Rectangle {vertical-stretch:1;}
             Text {text:root.message;wrap:word-wrap;min-height:36px;}
             HorizontalLayout {

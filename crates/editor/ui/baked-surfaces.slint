@@ -1,6 +1,8 @@
-import { Button, CheckBox, ComboBox, ScrollView, Slider, StandardTableView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ComboBox, ScrollView, Slider, StandardTableView } from "widgets.slint";
 
 export component BakedSurfacesWindow inherits Window {
+    background: Theme.panel;
     title: "Baked surfaces - HammeRR";
     preferred-width: 780px;
     preferred-height: 840px;
@@ -53,7 +55,7 @@ export component BakedSurfacesWindow inherits Window {
             HorizontalLayout {
                 Text { text: "Baked surfaces"; font-size: 24px; font-weight: 600; }
                 Rectangle { horizontal-stretch: 1; }
-                Text { text: root.state; vertical-alignment: center; color: #ffcb80; }
+                Text { text: root.state; vertical-alignment: center; color: Theme.warning; }
             }
             Text { text: root.summary; wrap: word-wrap; }
             HorizontalLayout {
@@ -61,7 +63,7 @@ export component BakedSurfacesWindow inherits Window {
                 CheckBox { text: "Compiled static props"; checked <=> root.compiled-static-props; enabled: !root.worker-active; }
                 Text { text: "Draw LOD"; vertical-alignment: center; }
                 ComboBox { model: ["0", "1", "2", "3", "4", "5", "6", "7"]; current-index <=> root.draw-lod; enabled: !root.worker-active && root.compiled-static-props; }
-                Text { text: "Changing these options requires Prepare."; wrap: word-wrap; color: #bac2ce; horizontal-stretch: 1; }
+                Text { text: "Changing these options requires Prepare."; wrap: word-wrap; color: Theme.text-muted; horizontal-stretch: 1; }
             }
             HorizontalLayout {
                 spacing: 8px;
@@ -77,7 +79,7 @@ export component BakedSurfacesWindow inherits Window {
                 spacing: 8px;
                 Text { text: "Channel"; vertical-alignment: center; }
                 ComboBox { model: ["LDR", "HDR"]; current-index <=> root.channel-index; enabled: root.has-token && !root.worker-active; }
-                Text { text: root.channels; wrap: word-wrap; horizontal-stretch: 1; color: #bac2ce; }
+                Text { text: root.channels; wrap: word-wrap; horizontal-stretch: 1; color: Theme.text-muted; }
             }
             HorizontalLayout {
                 spacing: 8px;
@@ -98,7 +100,7 @@ export component BakedSurfacesWindow inherits Window {
                 Text { text: "\{round(root.style-gain * 100) / 100}"; width: 50px; vertical-alignment: center; }
                 Button { text: "Apply lighting"; enabled: root.has-token && !root.worker-active; clicked => { root.apply-lighting(); } }
             }
-            Text { text: "Styles affect faces: style 0 defaults to 1, others to 0. Static props have fixed baked weight 1. Runtime point/spot style contributions are not simulated. Channel and exposure apply to both."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "Styles affect faces: style 0 defaults to 1, others to 0. Static props have fixed baked weight 1. Runtime point/spot style contributions are not simulated. Channel and exposure apply to both."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;
                 Text { text: "Record kind"; vertical-alignment: center; }
@@ -128,13 +130,13 @@ export component BakedSurfacesWindow inherits Window {
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: root.record-index == 0 ? "Frame face" : "Frame static prop"; enabled: root.can-frame; clicked => { root.frame-face(); } }
             }
-            Text { text: root.face-summary; wrap: word-wrap; color: #bac2ce; }
+            Text { text: root.face-summary; wrap: word-wrap; color: Theme.text-muted; }
             ScrollView {
                 content-width: self.width;
                 min-height: 40px;
                 preferred-height: 58px;
                 max-height: 90px;
-                Text { text: root.message; wrap: word-wrap; color: #ffcb80; }
+                Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             }
             HorizontalLayout {
                 Rectangle { horizontal-stretch: 1; }

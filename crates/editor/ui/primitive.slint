@@ -1,6 +1,8 @@
-import { Button, ComboBox, LineEdit, SpinBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, ComboBox, LineEdit, SpinBox } from "widgets.slint";
 
 export component PrimitiveWindow inherits Window {
+    background: Theme.panel;
     title: "Brush shapes - HammeRR";
     preferred-width: 760px; preferred-height: 710px;
     in-out property <int> shape;
@@ -38,7 +40,7 @@ export component PrimitiveWindow inherits Window {
         VerticalLayout {
             padding: 22px; spacing: 14px;
             Text { text: "Brush shapes"; font-size: 24px; font-weight: 600; }
-            Text { text: "Build editable geometry from a few dimensions."; color: #b5c0ce; }
+            Text { text: "Build editable geometry from a few dimensions."; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 16px;
                 VerticalLayout {
@@ -73,7 +75,7 @@ export component PrimitiveWindow inherits Window {
                 }
                 Text {
                     text: root.shape == 0 ? (root.axis == 0 ? "Ramp rises along +Y; height is measured on X." : root.axis == 1 ? "Ramp rises along +X; height is measured on Y." : "Ramp rises along +X; height is measured on Z.") : root.shape == 4 ? "Bounds describe the full ellipse. The sweep chooses which part is built." : "Curves sit inside these bounds. Fewer segments create a more angular outline.";
-                    color: #9da7b5; wrap: word-wrap; font-size: 12px;
+                    color: Theme.text-faint; wrap: word-wrap; font-size: 12px;
                 }
             }
             if root.shape != 0: HorizontalLayout {
@@ -88,11 +90,11 @@ export component PrimitiveWindow inherits Window {
                     Text { text: "Latitude bands"; }
                     SpinBox { minimum: 2; maximum: 32; value <=> root.bands; edited => { root.edited(); } }
                 }
-                if root.shape == 3: Text { text: "At most 256 faces\n(sides × bands)"; color: #9da7b5; }
+                if root.shape == 3: Text { text: "At most 256 faces\n(sides × bands)"; color: Theme.text-faint; }
             }
             if (root.shape == 3 && root.segments * root.bands > 64) || (root.shape == 1 && root.segments + 2 > 64) || (root.shape == 2 && root.segments + 1 > 64): Text {
                 text: "This resolution exceeds the 64-face limit for Hollow, Carve and component editing.";
-                color: #efa47c; wrap: word-wrap;
+                color: Theme.warning; wrap: word-wrap;
             }
             if root.shape == 4: VerticalLayout {
                 spacing: 6px;
@@ -102,7 +104,7 @@ export component PrimitiveWindow inherits Window {
                     VerticalLayout { spacing: 5px; Text { text: "Start · degrees"; } LineEdit { text <=> root.start-angle; edited => { root.edited(); } } }
                     VerticalLayout { spacing: 5px; Text { text: "Sweep · degrees"; } LineEdit { text <=> root.sweep-angle; edited => { root.edited(); } } }
                 }
-                Text { text: "Inset reduces both ellipse radii. Use a 360° sweep for a complete ring."; color: #9da7b5; font-size: 12px; wrap: word-wrap; }
+                Text { text: "Inset reduces both ellipse radii. Use a 360° sweep for a complete ring."; color: Theme.text-faint; font-size: 12px; wrap: word-wrap; }
             }
             HorizontalLayout {
                 spacing: 12px;
@@ -119,10 +121,10 @@ export component PrimitiveWindow inherits Window {
             }
             Rectangle { vertical-stretch: 1; }
             Text { text: root.summary; font-size: 16px; font-weight: 600; wrap: word-wrap; }
-            if root.actual-bounds != "": Text { text: root.actual-bounds; color: #9da7b5; wrap: word-wrap; }
-            if root.feedback != "": Text { text: root.feedback; color: #efa47c; wrap: word-wrap; }
-            if root.message != "": Text { text: root.message; color: #efa47c; wrap: word-wrap; }
-            Text { text: "Preview leaves the map unchanged. Add shape creates every brush in one undo step."; color: #9da7b5; font-size: 12px; wrap: word-wrap; }
+            if root.actual-bounds != "": Text { text: root.actual-bounds; color: Theme.text-faint; wrap: word-wrap; }
+            if root.feedback != "": Text { text: root.feedback; color: Theme.warning; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
+            Text { text: "Preview leaves the map unchanged. Add shape creates every brush in one undo step."; color: Theme.text-faint; font-size: 12px; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

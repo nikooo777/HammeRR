@@ -1,7 +1,9 @@
-import { Button, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, ComboBox, LineEdit, ScrollView } from "widgets.slint";
 
 export struct ComparisonRow { title: string, detail: string }
 export component ExternalComparisonWindow inherits Window {
+    background: Theme.panel;
     title: "Compare external map - HammeRR";
     preferred-width: 940px;
     preferred-height: 820px;
@@ -41,14 +43,14 @@ export component ExternalComparisonWindow inherits Window {
             padding: 20px;
             spacing: 10px;
             Text { text: "Compare external map"; font-size: 24px; font-weight: 600; }
-            Text { text: "Compare authored world brushes and whole entities by their stored IDs. Hidden content participates. This does not merge maps or establish geometric equivalence."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "Compare authored world brushes and whole entities by their stored IDs. Hidden content participates. This does not merge maps or establish geometric equivalence."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;
                 Button { text: "Choose VMF…"; enabled: !root.busy; clicked => { root.choose-file(); } }
                 Button { text: "Compare"; enabled: !root.busy; clicked => { root.compare(); } }
                 Rectangle { horizontal-stretch: 1; }
             }
-            Text { text: root.file; wrap: word-wrap; color: #bac2ce; }
+            Text { text: root.file; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: root.summary; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
@@ -66,7 +68,7 @@ export component ExternalComparisonWindow inherits Window {
                     for row in root.rows: VerticalLayout {
                         padding: 8px;
                         Text { text: row.title; font-weight: 600; wrap: word-wrap; }
-                        Text { text: row.detail; wrap: word-wrap; color: #bac2ce; }
+                        Text { text: row.detail; wrap: word-wrap; color: Theme.text-muted; }
                     }
                 }
             }
@@ -76,8 +78,8 @@ export component ExternalComparisonWindow inherits Window {
                 Button { text: "Next page"; enabled: root.next && !root.busy && root.owned; clicked => { root.page(1); } }
                 Rectangle { horizontal-stretch: 1; }
             }
-            Text { text: "Actions use every unambiguous current object matching these filters, across all pages. External-only and ambiguous rows have no current action. Each request rechecks the original external file; captured rows are not continuously watched. Map settings and expanded instances are outside this comparison."; wrap: word-wrap; color: #bac2ce; }
-            Text { text: root.message; wrap: word-wrap; color: #ffcb80; }
+            Text { text: "Actions use every unambiguous current object matching these filters, across all pages. External-only and ambiguous rows have no current action. Each request rechecks the original external file; captured rows are not continuously watched. Map settings and expanded instances are outside this comparison."; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
                 spacing: 8px;
                 ComboBox { model: ["Replace", "Add", "Remove", "Toggle"]; current-value <=> root.mode; enabled: !root.busy; }

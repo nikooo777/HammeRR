@@ -1,6 +1,8 @@
-import {Button} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button} from "widgets.slint";
 
 export component NavigationDefaultsWindow inherits Window {
+    background: Theme.panel;
     title: "Navigation defaults - HammeRR";
     preferred-width: 720px;
     preferred-height: 700px;
@@ -25,7 +27,7 @@ export component NavigationDefaultsWindow inherits Window {
             padding: 20px;
             spacing: 12px;
             Text { text: "Navigation defaults"; font-size: 24px; font-weight: 600; }
-            Text { text: "Set Fly speed in the viewport, then explicitly save the speed you want at startup."; color: #b6c1cf; wrap: word-wrap; }
+            Text { text: "Set Fly speed in the viewport, then explicitly save the speed you want at startup."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 Text { text: "Setting"; horizontal-stretch: 1; font-weight: 600; }
                 Text { text: "Current session"; width: 145px; font-weight: 600; }
@@ -36,10 +38,10 @@ export component NavigationDefaultsWindow inherits Window {
                 Text { text: root.current; width: 145px; }
                 Text { text: root.saved; width: 145px; }
             }
-            Text { text: root.defaults; wrap: word-wrap; color: #b6c1cf; }
-            Text { text: root.storage; wrap: word-wrap; color: #b6c1cf; }
-            Text { text: root.status; wrap: word-wrap; color: #e3c597; }
-            Text { text: "25–20000 Hammer units/s · factory 600 · Shift moves 4× faster. In perspective, hold the right mouse button and scroll to change the same speed. Speed edits and wheel changes stay temporary until Save current as defaults. Camera positions and navigation sensitivities are not stored."; wrap: word-wrap; color: #b6c1cf; }
+            Text { text: root.defaults; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+            Text { text: "25–20000 Hammer units/s · factory 600 · Shift moves 4× faster. In perspective, hold the right mouse button and scroll to change the same speed. Speed edits and wheel changes stay temporary until Save current as defaults. Camera positions and navigation sensitivities are not stored."; wrap: word-wrap; color: Theme.text-muted; }
             Rectangle { vertical-stretch: 1; }
             Text { text: root.message; wrap: word-wrap; min-height: 34px; }
             HorizontalLayout {

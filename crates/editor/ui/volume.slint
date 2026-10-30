@@ -1,6 +1,8 @@
-import { Button, ComboBox, LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, ComboBox, LineEdit } from "widgets.slint";
 
 export component VolumeWindow inherits Window {
+    background: Theme.panel;
     title: "Select a volume - HammeRR";
     preferred-width: 650px;
     preferred-height: 560px;
@@ -32,7 +34,7 @@ export component VolumeWindow inherits Window {
             padding: 24px;
             spacing: 14px;
             Text { text: "Select a volume"; font-size: 24px; font-weight: 600; }
-            Text { text: "Choose objects or faces inside a box in world space."; color: #aeb9c8; }
+            Text { text: "Choose objects or faces inside a box in world space."; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 12px;
                 ComboBox { model: ["Objects", "Faces"]; current-index <=> root.target; selected => { root.edited(); } }
@@ -67,7 +69,7 @@ export component VolumeWindow inherits Window {
                 ComboBox { model: ["Replace selection", "Add to selection", "Remove from selection", "Toggle matches"]; current-index <=> root.mode; selected => { root.edited(); } }
             }
             Text { text: root.summary; font-weight: 600; wrap: word-wrap; }
-            Text { text: "Blue lines mark the box; highlights show the resulting selection. Hidden geometry is skipped. Terrain uses its supporting brush faces."; color: #aeb9c8; wrap: word-wrap; }
+            Text { text: "Blue lines mark the box; highlights show the resulting selection. Hidden geometry is skipped. Terrain uses its supporting brush faces."; color: Theme.text-muted; wrap: word-wrap; }
             Text { text: root.message; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {

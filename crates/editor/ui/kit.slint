@@ -1,0 +1,266 @@
+import { Theme } from "theme.slint";
+import { Icon } from "icons.slint";
+import { Switch } from "widgets.slint";
+
+export { Theme, Icon }
+
+export component IconButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> tooltip;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    in property <length> icon-size: 16px;
+    callback clicked();
+    width: 28px;
+    height: 28px;
+    border-radius: Theme.radius-sm + 1px;
+    background: root.checked ? Theme.active : touch.pressed ? Theme.active : touch.has-hover && root.enabled ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: root.tooltip;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { root.clicked(); }
+    Image {
+        source: root.icon;
+        width: root.icon-size;
+        height: root.icon-size;
+        colorize: !root.enabled ? Theme.text-disabled : root.checked ? Theme.accent : Theme.text-muted;
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    Tooltip {
+        text: @markdown("\{root.tooltip}");
+    }
+}
+
+export component Separator inherits Rectangle {
+    in property <bool> vertical: true;
+    width: root.vertical ? 1px : 20px;
+    height: root.vertical ? 20px : 1px;
+    background: Theme.border-strong;
+}
+
+export component SectionHeader inherits Rectangle {
+    in property <string> text;
+    in property <string> detail;
+    in-out property <bool> expanded: true;
+    in property <bool> collapsible: true;
+    height: 30px;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-expanded: root.expanded;
+    accessible-action-default => { if root.collapsible { root.expanded = !root.expanded; } }
+    HorizontalLayout {
+        padding-left: Theme.space-lg;
+        padding-right: Theme.space-lg;
+        spacing: Theme.space-sm;
+        if root.collapsible: Image {
+            y: (parent.height - self.height) / 2;
+            width: 12px;
+            height: 12px;
+            source: root.expanded ? Icon.chevron-down : Icon.chevron-right;
+            colorize: Theme.text-faint;
+        }
+        Text {
+            text: root.text;
+            color: Theme.text-faint;
+            font-size: Theme.font-small;
+            font-weight: 600;
+            letter-spacing: 0.6px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.detail;
+            color: Theme.text-faint;
+            font-size: Theme.font-small;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+    }
+    TouchArea {
+        enabled: root.collapsible;
+        clicked => { root.expanded = !root.expanded; }
+    }
+}
+
+export component FieldRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <length> label-width: 84px;
+    padding-left: Theme.space-lg;
+    padding-right: Theme.space-lg;
+    spacing: Theme.space;
+    min-height: Theme.control-height;
+    Text {
+        width: root.label-width;
+        text: root.label;
+        color: Theme.text-muted;
+        font-size: Theme.font;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    @children
+}
+
+export component Badge inherits Rectangle {
+    in property <string> text;
+    in property <color> text-color: Theme.text-muted;
+    in property <color> fill: Theme.control;
+    height: 16px;
+    width: label.preferred-width + 12px;
+    border-radius: 8px;
+    background: root.fill;
+    label := Text {
+        text: root.text;
+        color: root.text-color;
+        font-size: Theme.font-small;
+        font-weight: 600;
+    }
+}
+
+export component MutedText inherits Text {
+    color: Theme.text-faint;
+    font-size: Theme.font;
+    wrap: word-wrap;
+}
+
+export component OverlaySwitch inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in-out property <bool> checked;
+    callback toggled();
+    height: Theme.row-height;
+    HorizontalLayout {
+        padding-left: Theme.space-lg;
+        padding-right: Theme.space-lg;
+        Text {
+            text: root.text;
+            color: root.enabled ? Theme.text : Theme.text-disabled;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Switch {
+            enabled: root.enabled;
+            checked <=> root.checked;
+            accessible-label: root.text;
+            toggled => { root.toggled(); }
+        }
+    }
+}
+
+export component OverlayNote inherits HorizontalLayout {
+    in property <string> text;
+    in property <color> text-color: Theme.text-faint;
+    padding-left: Theme.space-lg;
+    padding-right: Theme.space-lg;
+    padding-bottom: 2px;
+    Text {
+        text: root.text;
+        color: root.text-color;
+        font-size: Theme.font-small;
+        wrap: word-wrap;
+    }
+}
+
+export component OverlayLink inherits Rectangle {
+    in property <string> text;
+    in property <string> status;
+    callback clicked();
+    height: Theme.row-height;
+    background: touch.has-hover ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+    HorizontalLayout {
+        padding-left: Theme.space-lg;
+        padding-right: Theme.space-lg;
+        spacing: Theme.space;
+        Text { text: root.text; color: Theme.text; vertical-alignment: center; }
+        Text {
+            text: root.status;
+            color: Theme.text-faint;
+            font-size: Theme.font-small;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Image {
+            y: (parent.height - self.height) / 2;
+            width: 12px;
+            height: 12px;
+            source: Icon.chevron-right;
+            colorize: Theme.text-faint;
+        }
+    }
+    touch := TouchArea { clicked => { root.clicked(); } }
+}
+
+export component DockTab inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked();
+    width: label.preferred-width + 20px;
+    accessible-role: tab;
+    accessible-label: root.text;
+    accessible-checked: root.active;
+    accessible-action-default => { root.clicked(); }
+    label := Text {
+        text: root.text;
+        color: root.active ? Theme.text : touch.has-hover ? Theme.text-muted : Theme.text-faint;
+        font-weight: 500;
+    }
+    Rectangle {
+        y: parent.height - 2px;
+        height: 2px;
+        background: root.active ? Theme.accent : transparent;
+    }
+    touch := TouchArea { clicked => { root.clicked(); } }
+}
+
+export component ToolTile inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> active;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 52px;
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: root.active ? Theme.accent : Theme.border-strong;
+    background: root.active ? Theme.accent-soft : touch.has-hover && root.enabled ? Theme.hover : Theme.control;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { root.clicked(); }
+    VerticalLayout {
+        alignment: center;
+        spacing: 4px;
+        Rectangle {
+            height: 16px;
+            Image {
+                width: 16px;
+                height: 16px;
+                source: root.icon;
+                colorize: !root.enabled ? Theme.text-disabled : root.active ? Theme.accent : Theme.text-muted;
+            }
+        }
+        Text {
+            text: root.text;
+            color: root.enabled ? Theme.text : Theme.text-disabled;
+            font-size: Theme.font-small;
+            horizontal-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+}

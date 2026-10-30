@@ -6,7 +6,7 @@ Compare LDR and HDR point, spot and sun lighting before a build.
 
 1. Use **Place entity** to add `light`, `light_spot` or `light_environment`.
 2. Set the light color, brightness and direction.
-3. Choose **Textured** in **Viewport**.
+3. Choose **Textured** in the viewport header.
 4. Enable **Unshadowed authored lighting**.
 5. Select **Lighting channel → LDR** or **HDR**. The default is **LDR**.
 6. Enable **Include sky ambient** to add constant, unoccluded ambient light from the eligible sun.

@@ -1,4 +1,5 @@
-import {Button} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button} from "widgets.slint";
 
 export struct PreviewDefaultRow {
     label: string,
@@ -7,6 +8,7 @@ export struct PreviewDefaultRow {
 }
 
 export component PreviewDefaultsWindow inherits Window {
+    background: Theme.panel;
     title: "Preview defaults - HammeRR";
     preferred-width: 720px;
     preferred-height: 720px;
@@ -30,7 +32,7 @@ export component PreviewDefaultsWindow inherits Window {
             padding: 20px;
             spacing: 12px;
             Text { text: "Preview defaults"; font-size: 24px; font-weight: 600; }
-            Text { text: "Choose preview and guide visibility in the viewport, then save the settings you want at startup."; color: #b6c1cf; wrap: word-wrap; }
+            Text { text: "Choose preview and guide visibility in the viewport, then save the settings you want at startup."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 Text { text: "Setting"; horizontal-stretch: 1; font-weight: 600; }
                 Text { text: "Current session"; width: 125px; font-weight: 600; }
@@ -44,10 +46,10 @@ export component PreviewDefaultsWindow inherits Window {
                     Text { text: row.defaults; width: 125px; vertical-alignment: center; }
                 }
             }
-            Text { text: root.defaults; wrap: word-wrap; color: #b6c1cf; }
-            Text { text: root.storage; wrap: word-wrap; color: #b6c1cf; }
-            Text { text: root.status; wrap: word-wrap; color: #e3c597; }
-            Text { text: "Only these five toggles are saved. Sky channel and exposure, fog, rendering mode, grid, cameras and active tools keep their own settings. Ordinary viewport changes stay temporary until Save current as defaults."; wrap: word-wrap; color: #b6c1cf; }
+            Text { text: root.defaults; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+            Text { text: "Only these five toggles are saved. Sky channel and exposure, fog, rendering mode, grid, cameras and active tools keep their own settings. Ordinary viewport changes stay temporary until Save current as defaults."; wrap: word-wrap; color: Theme.text-muted; }
             Rectangle { vertical-stretch: 1; }
             Text { text: root.message; wrap: word-wrap; min-height: 34px; }
             HorizontalLayout {

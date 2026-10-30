@@ -5,7 +5,7 @@
 Show small surface detail without adding geometry.
 
 1. Apply a supported normal-mapped material to a flat brush face.
-2. Set **Viewport** to **Textured**.
+2. Choose **Textured** in the viewport header.
 3. Enable **Normal map preview**.
 4. Check the status for unavailable materials.
 5. Move the camera to inspect the surface.

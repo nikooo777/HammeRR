@@ -1,8 +1,10 @@
-import { Button, CheckBox, ComboBox, LineEdit, ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView } from "widgets.slint";
 
 export struct CarveRow { solid: string, label: string, selected: bool, cutter: bool }
 
 export component CarveWindow inherits Window {
+    background: Theme.panel;
     title: "Carve brushes - HammeRR";
     preferred-width: 800px; preferred-height: 790px;
     in property <[CarveRow]> targets;
@@ -35,7 +37,7 @@ export component CarveWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 12px;
             Text { text: "Subtract brush shapes"; font-size: 24px; font-weight: 600; }
-            Text { text: "Choose the shapes to subtract and the target brushes to carve. Only their combined overlapping volume is removed. Cutters stay unchanged."; wrap: word-wrap; color: #aeb9c8; }
+            Text { text: "Choose the shapes to subtract and the target brushes to carve. Only their combined overlapping volume is removed. Cutters stay unchanged."; wrap: word-wrap; color: Theme.text-muted; }
             CheckBox { text: "Use multiple cutter brushes"; checked <=> root.multiple-cutters; toggled => {root.toggle-multiple();} }
             if !root.multiple-cutters: Text { text: "Cutter · shape to subtract"; font-weight: 600; }
             if !root.multiple-cutters: ComboBox { model: root.cutters; current-index <=> root.cutter; enabled: root.cutters.length > 1; selected => { root.choose-cutter(); } }
@@ -75,12 +77,12 @@ export component CarveWindow inherits Window {
                     : root.cut-material-policy == 2
                     ? "Only the new cut-face material changes. Cutter texture projection, lighting and metadata are retained. Original target faces keep their settings."
                     : "New faces copy their cutter's material, world texture projection, lighting and metadata. Nodraw cutters produce nodraw cut faces. Original target faces keep their settings.";
-                wrap: word-wrap; color: #aeb9c8;
+                wrap: word-wrap; color: Theme.text-muted;
             }
             Text { text: root.summary; font-size: 17px; font-weight: 600; wrap: word-wrap; }
-            Text { text: "Whole world brushes may disappear; removing every brush from an entity is rejected."; wrap: word-wrap; color: #aeb9c8; }
-            Text { text: "1–8 convex cutters · up to 16 targets · 256 fragments at every stage. Displacement brushes are unsupported."; wrap: word-wrap; font-size: 12px; color: #aeb9c8; }
-            if root.message != "": Text { text: root.message; wrap: word-wrap; color: #ffc66d; }
+            Text { text: "Whole world brushes may disappear; removing every brush from an entity is rejected."; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: "1–8 convex cutters · up to 16 targets · 256 fragments at every stage. Displacement brushes are unsupported."; wrap: word-wrap; font-size: 12px; color: Theme.text-muted; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

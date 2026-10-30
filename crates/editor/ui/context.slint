@@ -1,8 +1,10 @@
-import { Button, CheckBox, ComboBox, LineEdit, ScrollView, Slider, TextEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView, Slider, TextEdit } from "widgets.slint";
 
 export struct ContextRow { scope: string, summary: string, detail: string }
 
 export component ContextWindow inherits Window {
+    background: Theme.panel;
     title: "Design context - HammeRR";
     preferred-width: 1120px; preferred-height: 850px;
     in property <[ContextRow]> rows;
@@ -64,7 +66,7 @@ export component ContextWindow inherits Window {
                 VerticalLayout {
                     spacing: 4px;
                     Text { text: "Design context"; font-size: 24px; font-weight: 600; }
-                    Text { text: "Intent, constraints and observations, attached to the map."; color: #b5c0ce; }
+                    Text { text: "Intent, constraints and observations, attached to the map."; color: Theme.text-muted; }
                 }
                 CheckBox { text: "Show region guides"; checked <=> root.show-regions; toggled => { root.toggle-regions(); } }
             }
@@ -74,7 +76,7 @@ export component ContextWindow inherits Window {
                 Button { text: "Note on selection"; enabled: root.can-attach; clicked => { root.begin("selection"); } }
                 Button { text: "New region"; clicked => { root.begin("new_region"); } }
                 Rectangle { horizontal-stretch: 1; }
-                Text { text: root.budget; color: #9da7b5; }
+                Text { text: root.budget; color: Theme.text-faint; }
             }
             HorizontalLayout {
                 spacing: 20px;
@@ -88,7 +90,7 @@ export component ContextWindow inherits Window {
                     LineEdit { text <=> root.query; placeholder-text: "Search summaries and note text…"; edited => { root.page = 0; root.filter(); } }
                     if root.filter-mode >= 5: VerticalLayout {
                         spacing: 6px;
-                        Text { text: root.filter-mode == 5 ? "Point · X, Y, Z" : "Minimum corner · X, Y, Z"; color: #b5c0ce; }
+                        Text { text: root.filter-mode == 5 ? "Point · X, Y, Z" : "Minimum corner · X, Y, Z"; color: Theme.text-muted; }
                         HorizontalLayout {
                             spacing: 6px;
                             LineEdit { text <=> root.query-min-x; }
@@ -97,7 +99,7 @@ export component ContextWindow inherits Window {
                         }
                         if root.filter-mode == 6: VerticalLayout {
                             spacing: 6px;
-                            Text { text: "Maximum corner · X, Y, Z"; color: #b5c0ce; }
+                            Text { text: "Maximum corner · X, Y, Z"; color: Theme.text-muted; }
                             HorizontalLayout {
                                 spacing: 6px;
                                 LineEdit { text <=> root.query-max-x; }
@@ -119,26 +121,26 @@ export component ContextWindow inherits Window {
                             }
                         }
                     }
-                    Text { text: root.page-summary; color: #9da7b5; font-size: 12px; wrap: word-wrap; }
+                    Text { text: root.page-summary; color: Theme.text-faint; font-size: 12px; wrap: word-wrap; }
                     HorizontalLayout {
                         spacing: 8px;
                         Button { text: "Previous"; enabled: root.page > 0; clicked => { root.page -= 1; root.filter(); } }
                         Button { text: "Next"; enabled: root.has-next; clicked => { root.page += 1; root.filter(); } }
                     }
                 }
-                Rectangle { width: 1px; background: #343940; }
+                Rectangle { width: 1px; background: Theme.control-strong; }
                 VerticalLayout {
                     spacing: 10px;
                     Text { text: root.scope-label; font-size: 20px; font-weight: 600; wrap: word-wrap; }
-                    if root.source-status != "": Text { text: root.source-status; color: #b5c0ce; wrap: word-wrap; }
-                    if root.token == "": Text { text: "Choose a note, add a map brief, or attach context to a selected object. Regions describe an area without adding game geometry."; wrap: word-wrap; color: #b5c0ce; }
+                    if root.source-status != "": Text { text: root.source-status; color: Theme.text-muted; wrap: word-wrap; }
+                    if root.token == "": Text { text: "Choose a note, add a map brief, or attach context to a selected object. Regions describe an area without adding game geometry."; wrap: word-wrap; color: Theme.text-muted; }
                     if root.token != "": VerticalLayout {
                         spacing: 8px;
                         Text { text: "Summary"; font-weight: 600; }
                         LineEdit { text <=> root.summary; placeholder-text: "What should someone know about this?"; edited => { root.edit(); } }
                         Text { text: "Intent, constraints and observations"; font-weight: 600; }
                         TextEdit { text <=> root.body; wrap: word-wrap; min-height: 145px; edited => { root.edit(); } }
-                        Text { text: root.note-budget; color: #9da7b5; font-size: 12px; }
+                        Text { text: root.note-budget; color: Theme.text-faint; font-size: 12px; }
                         if root.region: VerticalLayout {
                             spacing: 8px;
                             Text { text: "Region bounds · world units"; font-weight: 600; }
@@ -164,13 +166,13 @@ export component ContextWindow inherits Window {
                                 Rectangle { width: 36px; height: 28px; border-radius: 4px; background: rgb(root.red, root.green, root.blue); }
                                 VerticalLayout {
                                     spacing: 3px;
-                                    HorizontalLayout { Text { text: "R"; color: #ff9898; } Slider { minimum: 0; maximum: 255; value <=> root.red; changed => { root.edit(); } } }
-                                    HorizontalLayout { Text { text: "G"; color: #91dba8; } Slider { minimum: 0; maximum: 255; value <=> root.green; changed => { root.edit(); } } }
-                                    HorizontalLayout { Text { text: "B"; color: #9ebefa; } Slider { minimum: 0; maximum: 255; value <=> root.blue; changed => { root.edit(); } } }
+                                    HorizontalLayout { Text { text: "R"; color: Theme.danger; } Slider { minimum: 0; maximum: 255; value <=> root.red; changed => { root.edit(); } } }
+                                    HorizontalLayout { Text { text: "G"; color: Theme.success; } Slider { minimum: 0; maximum: 255; value <=> root.green; changed => { root.edit(); } } }
+                                    HorizontalLayout { Text { text: "B"; color: Theme.info; } Slider { minimum: 0; maximum: 255; value <=> root.blue; changed => { root.edit(); } } }
                                 }
                             }
                         }
-                        if root.feedback != "": Text { text: root.feedback; color: #efa47c; wrap: word-wrap; }
+                        if root.feedback != "": Text { text: root.feedback; color: Theme.warning; wrap: word-wrap; }
                         HorizontalLayout {
                             spacing: 8px;
                             Button { text: "Focus in map"; enabled: root.can-focus; clicked => { root.focus-note(); } }
@@ -187,8 +189,8 @@ export component ContextWindow inherits Window {
                     if root.token == "": Rectangle { vertical-stretch: 1; }
                 }
             }
-            if root.message != "": Text { text: root.message; color: #efa47c; wrap: word-wrap; }
-            Text { text: "Editor-only notes. Keep durable context here; consolidate existing notes instead of adding activity logs. Current instructions take precedence."; color: #9da7b5; wrap: word-wrap; font-size: 12px; }
+            if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
+            Text { text: "Editor-only notes. Keep durable context here; consolidate existing notes instead of adding activity logs. Current instructions take precedence."; color: Theme.text-faint; wrap: word-wrap; font-size: 12px; }
             Button { text: "Cancel / close"; clicked => { root.cancel(); } }
         }
     }

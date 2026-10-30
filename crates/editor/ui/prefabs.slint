@@ -1,4 +1,5 @@
-import {Button,CheckBox,ComboBox,LineEdit,ScrollView} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button,CheckBox,ComboBox,LineEdit,ScrollView} from "widgets.slint";
 export struct PrefabRow {name:string,detail:string,thumbnail:image,has-image:bool,status:string}
 export struct PrefabGalleryRow {first:PrefabRow,second:PrefabRow,has-second:bool}
 component PrefabCard inherits Rectangle {
@@ -12,17 +13,17 @@ component PrefabCard inherits Rectangle {
     accessible-enabled:root.enabled;
     accessible-action-default=>{if root.enabled {root.choose();}}
     height:166px;horizontal-stretch:1;border-radius:8px;
-    background:root.selected?#303e52:touch.has-hover?#252f3e:#1c2430;
-    border-width:1px;border-color:root.selected||card-focus.has-focus?#82b5f7:#354252;
+    background:root.selected?Theme.selection:touch.has-hover?Theme.control-strong:Theme.hover;
+    border-width:1px;border-color:root.selected||card-focus.has-focus?Theme.accent:Theme.border-strong;
     VerticalLayout {
         padding:7px;spacing:5px;
         Rectangle {
-            height:106px;background:#141c27;border-radius:5px;clip:true;
+            height:106px;background:Theme.control;border-radius:5px;clip:true;
             if root.entry.has-image:Image {source:root.entry.thumbnail;image-fit:contain;width:parent.width;height:parent.height;}
-            if !root.entry.has-image:Text {text:root.entry.status==""?"Render page":root.entry.status;width:parent.width;height:parent.height;horizontal-alignment:center;vertical-alignment:center;wrap:word-wrap;color:#95a6bc;font-size:11px;}
+            if !root.entry.has-image:Text {text:root.entry.status==""?"Render page":root.entry.status;width:parent.width;height:parent.height;horizontal-alignment:center;vertical-alignment:center;wrap:word-wrap;color:Theme.text-faint;font-size:11px;}
         }
-        Text {text:root.entry.name;overflow:elide;font-size:12px;font-weight:600;color:#e6ecf5;}
-        Text {text:root.entry.detail;overflow:elide;font-size:10px;color:#a4b2c6;}
+        Text {text:root.entry.name;overflow:elide;font-size:12px;font-weight:600;color:Theme.text;}
+        Text {text:root.entry.detail;overflow:elide;font-size:10px;color:Theme.text-muted;}
     }
     card-focus:=FocusScope {
         width:0px;height:0px;enabled:root.enabled;
@@ -31,6 +32,7 @@ component PrefabCard inherits Rectangle {
     touch:=TouchArea {enabled:root.enabled;mouse-cursor:pointer;clicked=>{card-focus.focus();root.choose();}}
 }
 export component PrefabsWindow inherits Window {
+    background: Theme.panel;
     title:"Prefab library - HammeRR";
     preferred-width:1000px;preferred-height:880px;
     in property <[PrefabRow]> entries;
@@ -95,7 +97,7 @@ export component PrefabsWindow inherits Window {
         VerticalLayout {
             padding:22px;spacing:12px;
             Text {text:"Prefab library";font-size:24px;font-weight:600;}
-            Text {text:"Reuse brush and entity assemblies. Review placement in the map before applying.";wrap:word-wrap;color:#bac2ce;}
+            Text {text:"Reuse brush and entity assemblies. Review placement in the map before applying.";wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:8px;
                 Button {text:"Save selection…";enabled:root.can-save&&!root.editing;clicked=>{root.begin-save();}}
@@ -126,7 +128,7 @@ export component PrefabsWindow inherits Window {
                             }
                         }
                     }
-                    Text {text:root.gallery-status;wrap:word-wrap;color:#a4b2c6;font-size:11px;}
+                    Text {text:root.gallery-status;wrap:word-wrap;color:Theme.text-muted;font-size:11px;}
                     HorizontalLayout {
                         spacing:6px;
                         Button {text:"Previous";enabled:root.previous&&!root.editing;clicked=>{root.page(-1);}}
@@ -141,26 +143,26 @@ export component PrefabsWindow inherits Window {
                         spacing:8px;
                         Text {text:"Prefab name";}
                         LineEdit {text<=>root.prefab-name;placeholder-text:"Corridor lights";}
-                        Text {text:root.renaming?"Changes the library filename and preserves VMF bytes, object IDs and asset references. Existing placement reviews from this entry become stale; choose the renamed prefab and preview again. Existing names are never overwritten.":"Captures committed whole objects, groups, layers, supported links and object notes. Existing files are never overwritten.";wrap:word-wrap;color:#bac2ce;}
+                        Text {text:root.renaming?"Changes the library filename and preserves VMF bytes, object IDs and asset references. Existing placement reviews from this entry become stale; choose the renamed prefab and preview again. Existing names are never overwritten.":"Captures committed whole objects, groups, layers, supported links and object notes. Existing files are never overwritten.";wrap:word-wrap;color:Theme.text-muted;}
                     }
-                    if root.deleting: Text {text:"Removes this VMF from the library. Placed copies stay in the map. Library deletion is not part of map Undo.";wrap:word-wrap;color:#ffce84;}
+                    if root.deleting: Text {text:"Removes this VMF from the library. Placed copies stay in the map. Library deletion is not part of map Undo.";wrap:word-wrap;color:Theme.warning;}
                     if !root.editing: ScrollView {
                       vertical-stretch:1;
                       VerticalLayout {
                         spacing:8px;
                         if !root.gallery-rendered:Rectangle {
-                            height:240px;horizontal-stretch:1;background:#202733;border-radius:8px;
+                            height:240px;horizontal-stretch:1;background:Theme.control-strong;border-radius:8px;
                             if root.has-thumbnail: Image {source:root.thumbnail;image-fit:contain;}
-                            if !root.has-thumbnail: Text {text:root.selected==""?"Choose a prefab to inspect its shape":root.thumbnail-style==0?"Render a flat geometry thumbnail":"Render a textured thumbnail";horizontal-alignment:center;vertical-alignment:center;wrap:word-wrap;color:#919aaa;}
+                            if !root.has-thumbnail: Text {text:root.selected==""?"Choose a prefab to inspect its shape":root.thumbnail-style==0?"Render a flat geometry thumbnail":"Render a textured thumbnail";horizontal-alignment:center;vertical-alignment:center;wrap:word-wrap;color:Theme.text-faint;}
                         }
                         HorizontalLayout {
                             spacing:8px;
-                            Text {text:"Selected thumbnail";color:#bac2ce;vertical-alignment:center;}
-                            Text {text:"320 × 240";color:#bac2ce;vertical-alignment:center;horizontal-stretch:1;}
+                            Text {text:"Selected thumbnail";color:Theme.text-muted;vertical-alignment:center;}
+                            Text {text:"320 × 240";color:Theme.text-muted;vertical-alignment:center;horizontal-stretch:1;}
                             Button {text:root.has-thumbnail?"Refresh thumbnail":"Render thumbnail";enabled:root.can-render-thumbnail||(root.thumbnail-style==1&&root.selected!="");clicked=>{root.render-thumbnail();}}
                         }
-                        Text {text:root.thumbnail-status;wrap:word-wrap;color:#bac2ce;}
-                        Text {text:root.detail;wrap:word-wrap;color:#bac2ce;}
+                        Text {text:root.thumbnail-status;wrap:word-wrap;color:Theme.text-muted;}
+                        Text {text:root.detail;wrap:word-wrap;color:Theme.text-muted;}
                         Text {text:"Placement position · world units";font-weight:600;}
                         HorizontalLayout {
                             spacing:8px;
@@ -205,17 +207,17 @@ export component PrefabsWindow inherits Window {
                             Text {text:"Z";vertical-alignment:center;}
                             LineEdit {text<=>root.pivot-z;input-type:decimal;}
                         }
-                        Text {text:"Scale, then rotate about the source pivot; move that pivot to the placement position. Scaling requires only brushes or brush entities. Textures stay attached.";wrap:word-wrap;color:#bac2ce;}
+                        Text {text:"Scale, then rotate about the source pivot; move that pivot to the placement position. Scaling requires only brushes or brush entities. Textures stay attached.";wrap:word-wrap;color:Theme.text-muted;}
                         CheckBox {text:"Keep external links by name";checked<=>root.keep-external;}
                       }
                     }
                     if !root.editing: Button {text:"Preview placement…";enabled:root.can-preview;clicked=>{root.preview();}}
-                    if !root.editing: Text {text:"Opens the shared Paste review. Apply records one Undo step; Cancel discards the placement. Names and native IDs are remapped safely.";wrap:word-wrap;color:#bac2ce;}
+                    if !root.editing: Text {text:"Opens the shared Paste review. Apply records one Undo step; Cancel discards the placement. Names and native IDs are remapped safely.";wrap:word-wrap;color:Theme.text-muted;}
                     if root.editing: Rectangle {vertical-stretch:1;}
                 }
             }
-            Text {text:"Library folder: "+root.directory;wrap:word-wrap;color:#919aaa;font-size:12px;}
-            Text {text:root.message;wrap:word-wrap;color:#bac2ce;min-height:36px;}
+            Text {text:"Library folder: "+root.directory;wrap:word-wrap;color:Theme.text-faint;font-size:12px;}
+            Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:36px;}
             HorizontalLayout {
                 spacing:8px;
                 Button {text:"Close";clicked=>{root.close-dialog();}}

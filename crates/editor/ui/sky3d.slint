@@ -1,6 +1,8 @@
-import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "widgets.slint";
 
 export component Sky3dWindow inherits Window {
+    background: Theme.panel;
     title: "3D sky preview - HammeRR";
     preferred-width: 760px;
     preferred-height: 650px;
@@ -29,7 +31,7 @@ export component Sky3dWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 12px;
             Text { text: "3D sky preview"; font-size: 24px; font-weight: 600; }
-            Text { text: root.summary; wrap: word-wrap; color: #aeb9c8; }
+            Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: "Sky camera"; font-weight: 600; }
             ComboBox {
                 accessible-label: "3D sky camera";
@@ -57,15 +59,15 @@ export component Sky3dWindow inherits Window {
                 VerticalLayout {
                     spacing: 12px;
                     Text { text: root.detail; wrap: word-wrap; }
-                    if root.diagnostics != "": Text { text: root.diagnostics; wrap: word-wrap; color: #f5b477; }
+                    if root.diagnostics != "": Text { text: root.diagnostics; wrap: word-wrap; color: Theme.warning; }
                     Text {
                         text: "Perspective · Textured. Choose an authored sky_camera explicitly, then prepare its sealed world/func_detail region. Preparation runs in the background. Source, material or visibility changes require another preparation.\n\nOnly 3D sky surfaces display the miniature; SKY2D keeps its 2D path. Projected scenery does not change picking or editing. Sky fog, transparency, models, terrain, instances, water, portal boundaries and runtime effects are unavailable. This is an editor preview; native area/PVS and mixed-sky fidelity are not reproduced.";
-                        wrap: word-wrap; color: #aeb9c8; font-size: 12px;
+                        wrap: word-wrap; color: Theme.text-muted; font-size: 12px;
                     }
-                    Text { text: root.limits; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
+                    Text { text: root.limits; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
                 }
             }
-            if root.message != "": Text { text: root.message; color: #f5b477; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Refresh status"; clicked => { root.refresh(); } }

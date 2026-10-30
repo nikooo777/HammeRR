@@ -4,7 +4,7 @@
 
 Transfer a detached set of objects within or between maps.
 
-1. Choose **Objects** under **Selection**.
+1. Choose **Objects** in the toolbar.
 2. Select the objects.
 3. Click **Copy** or **Cut**.
 4. Open the destination map if required.

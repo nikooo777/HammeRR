@@ -47,7 +47,7 @@ Terrain is excluded from wrapping.
 
 ## Paint a stroke
 
-1. Sample a face, then choose **Paint texture** in the viewport toolbar.
+1. Sample a face, then choose **Paint texture** in the tool rail.
 2. Choose **Material only** or **Copy projection**.
 3. Set **Radius** and drag over visible faces.
 4. Release to apply the stroke.

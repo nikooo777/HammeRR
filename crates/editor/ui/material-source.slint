@@ -1,6 +1,8 @@
-import { Button, TextEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, TextEdit } from "widgets.slint";
 
 export component MaterialSourceWindow inherits Window {
+    background: Theme.panel;
     title: "Material source - HammeRR";
     preferred-width: 900px;
     preferred-height: 820px;
@@ -28,13 +30,13 @@ export component MaterialSourceWindow inherits Window {
         Text { text: "Mounted source and Patch includes"; font-weight: 600; }
         TextEdit { text: root.provenance; read-only: true; wrap: word-wrap; height: 145px; accessible-label: "Material source provenance"; }
         TextEdit { text: root.resolved; read-only: true; wrap: word-wrap; height: 180px; accessible-label: "Resolved material declarations"; }
-        Text { text: root.status; wrap: word-wrap; color: #bac2ce; }
+        Text { text: root.status; wrap: word-wrap; color: Theme.text-muted; }
         Text { text: "Selected VMT source"; font-weight: 600; }
         TextEdit { text: root.source; read-only: true; font-family: "monospace"; wrap: word-wrap; vertical-stretch: 1; accessible-label: "Raw VMT source"; }
         Text {
             text: "Read-only inspection of current mounted files. Ordinary shader and texture names are declarations. The Water section checks a bounded SDK-qualified file inventory and VTF headers, not rendering or map portability. Material previews refresh separately through Reload material assets.";
             wrap: word-wrap;
-            color: #bac2ce;
+            color: Theme.text-muted;
             font-size: 12px;
         }
         HorizontalLayout {

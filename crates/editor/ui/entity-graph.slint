@@ -1,7 +1,9 @@
-import { Button, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, ComboBox, LineEdit, ScrollView } from "widgets.slint";
 
 export struct EntityGraphRow { title: string, details: string }
 export component EntityGraphWindow inherits Window {
+    background: Theme.panel;
     title: "Entity graph - HammeRR";
     preferred-width: 960px;
     preferred-height: 900px;
@@ -40,16 +42,16 @@ export component EntityGraphWindow inherits Window {
             padding: 20px;
             spacing: 10px;
             Text { text: "Entity graph"; font-size: 24px; font-weight: 600; }
-            Text { text: "Inspect applied I/O between authored entities in this map, excluding saved Hide. Unapplied drafts and expanded instance contents are excluded."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "Inspect applied I/O between authored entities in this map, excluding saved Hide. Unapplied drafts and expanded instance contents are excluded."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;
                 Button { text: "Use selected entities"; clicked => { root.roots-from-selection(); } }
-                Text { text: "Captured roots stay fixed when graph selection changes."; wrap: word-wrap; color: #bac2ce; }
+                Text { text: "Captured roots stay fixed when graph selection changes."; wrap: word-wrap; color: Theme.text-muted; }
             }
             Text { text: root.root-summary; wrap: word-wrap; font-weight: 600; }
             HorizontalLayout {
                 spacing: 8px;
-                Text { text: "Root IDs (advanced)"; vertical-alignment: center; color: #bac2ce; font-size: 12px; }
+                Text { text: "Root IDs (advanced)"; vertical-alignment: center; color: Theme.text-muted; font-size: 12px; }
                 LineEdit { text <=> root.roots; placeholder-text: "entity:12, entity:34"; edited => { root.fields-changed(); } accessible-label: "Graph root entity IDs"; }
             }
             HorizontalLayout {
@@ -79,7 +81,7 @@ export component EntityGraphWindow inherits Window {
                         padding: 8px;
                         spacing: 4px;
                         Text { text: row.title; font-weight: 600; wrap: word-wrap; }
-                        Text { text: row.details; wrap: word-wrap; color: #bac2ce; }
+                        Text { text: row.details; wrap: word-wrap; color: Theme.text-muted; }
                     }
                 }
             }
@@ -89,8 +91,8 @@ export component EntityGraphWindow inherits Window {
                 Button { text: "Next page"; enabled: root.has-next; clicked => { root.page(1); } }
                 Rectangle { horizontal-stretch: 1; }
             }
-            Text { text: "Exact names fan out to every matching visible entity. Runtime, class and wildcard candidates remain unresolved. Actions use all reached nodes within the depth, including roots, independent of search and pages."; wrap: word-wrap; color: #bac2ce; }
-            Text { text: root.message; wrap: word-wrap; color: #ffcb80; }
+            Text { text: "Exact names fan out to every matching visible entity. Runtime, class and wildcard candidates remain unresolved. Actions use all reached nodes within the depth, including roots, independent of search and pages."; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
                 spacing: 8px;
                 ComboBox { model: ["Replace", "Add", "Remove", "Toggle"]; current-value <=> root.mode; }

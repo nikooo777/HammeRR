@@ -67,7 +67,7 @@ Choose **World axes** or **Local axes** for handle orientation.
 
 ## Exact transforms
 
-1. Enable **Transform selection**.
+1. Select the objects and expand **Transform** in the Inspector.
 2. Choose **Move**, **Rotate**, **Scale**, **Mirror** or **Shear**.
 3. Enter the values.
 4. For rotation, scale, mirror or shear, choose **Selection center**, **World origin** or **Custom** under **Pivot**.
@@ -112,7 +112,7 @@ or save startup defaults.
 ### Save pivot defaults
 
 1. Choose **Selection center**, **World origin** or a **Custom** point under **Pivot**.
-2. Open **Transform pivot defaults…** under **VIEWPORT**.
+2. Choose **Edit → Preferences → Transform pivot defaults…**.
 3. Compare **Current document** with the saved defaults.
 4. Click **Save current as defaults** to use this pivot in new document windows.
 5. Click **Apply saved defaults** to use the saved pivot in this document.
@@ -127,8 +127,8 @@ Finish active tools, previews, builds and launches before Apply.
 
 ### Snap objects to grid
 
-1. Set **Grid**.
-2. Enable **Transform selection**.
+1. Set **Grid** in the toolbar.
+2. Expand **Transform** in the Inspector.
 3. Under **Snap**, choose **Selection** or **Each object**.
 4. Click **Preview snap to grid** and inspect the movement.
 5. Click **Apply transform**, or **Cancel** to discard the preview.

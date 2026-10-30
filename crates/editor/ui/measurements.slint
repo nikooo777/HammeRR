@@ -1,8 +1,10 @@
-import { Button, CheckBox, LineEdit, ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, LineEdit, ScrollView } from "widgets.slint";
 
 export struct MeasurementRow { id: string, name: string, detail: string }
 
 export component MeasurementsWindow inherits Window {
+    background: Theme.panel;
     title: "Measurements - HammeRR";
     preferred-width: 860px;
     preferred-height: 940px;
@@ -73,9 +75,9 @@ export component MeasurementsWindow inherits Window {
                 Rectangle { horizontal-stretch: 1; }
                 CheckBox { text: "Show guides"; checked <=> root.show-guides; toggled => { root.view-changed(); } }
             }
-            Text { text: "Persistent rulers · world points, entity origins or rigid entity-local points · X red, Y green, Z blue"; color: #b6c1cf; wrap: word-wrap; }
+            Text { text: "Persistent rulers · world points, entity origins or rigid entity-local points · X red, Y green, Z blue"; color: Theme.text-muted; wrap: word-wrap; }
             Rectangle {
-                background: #191f28;
+                background: Theme.hover;
                 border-radius: 6px;
                 VerticalLayout {
                     padding: 10px;
@@ -94,7 +96,7 @@ export component MeasurementsWindow inherits Window {
                                 vertical-stretch: 0;
                                 clicked => { root.choose(measurement.id); }
                             }
-                            if root.measurements.length == 0: Text { text: "No saved measurements. Enter two endpoints, then Preview."; color: #b6c1cf; wrap: word-wrap; }
+                            if root.measurements.length == 0: Text { text: "No saved measurements. Enter two endpoints, then Preview."; color: Theme.text-muted; wrap: word-wrap; }
                         }
                     }
                     HorizontalLayout {
@@ -113,9 +115,9 @@ export component MeasurementsWindow inherits Window {
             HorizontalLayout {
                 spacing: 10px;
                 Rectangle { width: 50px; }
-                Text { horizontal-stretch: 1; text: "X"; color: #eb6e6e; }
-                Text { horizontal-stretch: 1; text: "Y"; color: #78d77d; }
-                Text { horizontal-stretch: 1; text: "Z"; color: #73a5f5; }
+                Text { horizontal-stretch: 1; text: "X"; color: Theme.axis-x; }
+                Text { horizontal-stretch: 1; text: "Y"; color: Theme.axis-y; }
+                Text { horizontal-stretch: 1; text: "Z"; color: Theme.axis-z; }
             }
             HorizontalLayout {
                 spacing: 10px;
@@ -139,7 +141,7 @@ export component MeasurementsWindow inherits Window {
                 Button { text: "Detach start"; enabled: root.can-attach && root.start-attached; clicked => { root.detach-start-origin(); } }
                 Button { text: "Use start world"; enabled: root.can-attach && root.start-attached; clicked => { root.world-start(); } }
             }
-            Text { text: root.start-origin-status; color: #b6c1cf; wrap: word-wrap; }
+            Text { text: root.start-origin-status; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 8px;
                 LineEdit { text <=> root.end-origin-object; placeholder-text: "entity:<id> or selection"; accessible-label: "End origin object"; enabled: root.can-attach; }
@@ -148,19 +150,19 @@ export component MeasurementsWindow inherits Window {
                 Button { text: "Detach end"; enabled: root.can-attach && root.end-attached; clicked => { root.detach-end-origin(); } }
                 Button { text: "Use end world"; enabled: root.can-attach && root.end-attached; clicked => { root.world-end(); } }
             }
-            Text { text: root.end-origin-status; color: #b6c1cf; wrap: word-wrap; }
+            Text { text: root.end-origin-status; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Pick start"; enabled: root.can-pick && !root.start-attached; clicked => { root.pick-start(); } }
                 Button { text: "Pick end"; enabled: root.can-pick && !root.end-attached; clicked => { root.pick-end(); } }
                 if root.picking: Button { text: "Cancel picking"; clicked => { root.cancel-pick(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Text { text: "Preview first · visible surfaces · no snapping"; color: #b6c1cf; wrap: word-wrap; }
+                Text { text: "Preview first · visible surfaces · no snapping"; color: Theme.text-muted; wrap: word-wrap; }
             }
             Text { text: root.result; font-size: 17px; font-weight: 600; min-height: 45px; wrap: word-wrap; }
             Text { text: root.preview-status; min-height: 40px; wrap: word-wrap; }
-            Text { text: root.message; color: #b6c1cf; min-height: 36px; wrap: word-wrap; }
-            Text { text: "128 rulers · 80 characters per name · ±65536 per coordinate · Guides cannot be picked and ignore object visibility."; color: #b6c1cf; font-size: 12px; wrap: word-wrap; }
+            Text { text: root.message; color: Theme.text-muted; min-height: 36px; wrap: word-wrap; }
+            Text { text: "128 rulers · 80 characters per name · ±65536 per coordinate · Guides cannot be picked and ignore object visibility."; color: Theme.text-muted; font-size: 12px; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

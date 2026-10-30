@@ -1,6 +1,8 @@
-import {Button} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button} from "widgets.slint";
 
 export component GridDefaultsWindow inherits Window {
+    background: Theme.panel;
     title: "Grid defaults - HammeRR";
     preferred-width: 690px;
     preferred-height: 660px;
@@ -24,12 +26,12 @@ export component GridDefaultsWindow inherits Window {
             padding: 20px;
             spacing: 12px;
             Text { text: "Grid defaults"; font-size: 24px; font-weight: 600; }
-            Text { text: "Save only the grid size, snapping and grid visibility you want at startup."; color: #b6c1cf; wrap: word-wrap; }
+            Text { text: "Save only the grid size, snapping and grid visibility you want at startup."; color: Theme.text-muted; wrap: word-wrap; }
             Text { text: root.current; wrap: word-wrap; font-size: 17px; }
             Text { text: root.defaults; wrap: word-wrap; font-size: 17px; }
-            Text { text: root.storage; wrap: word-wrap; color: #b6c1cf; }
-            Text { text: root.status; wrap: word-wrap; color: #e3c597; }
-            Text { text: "Temporary grid changes stay in this session until Save current as defaults. Workplanes, brush depth, preview toggles and active tools are not saved."; wrap: word-wrap; color: #b6c1cf; }
+            Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+            Text { text: "Temporary grid changes stay in this session until Save current as defaults. Workplanes, brush depth, preview toggles and active tools are not saved."; wrap: word-wrap; color: Theme.text-muted; }
             Rectangle { vertical-stretch: 1; }
             Text { text: root.message; wrap: word-wrap; min-height: 34px; }
             HorizontalLayout {

@@ -1,8 +1,10 @@
-import { Button, CheckBox, ListView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ListView } from "widgets.slint";
 
 export struct MergeRow { solid: string, label: string, selected: bool }
 
 export component MergeWindow inherits Window {
+    background: Theme.panel;
     title: "Merge brushes - HammeRR";
     preferred-width: 780px; preferred-height: 580px;
     in property <[MergeRow]> sources;
@@ -25,7 +27,7 @@ export component MergeWindow inherits Window {
         VerticalLayout {
             padding: 24px; spacing: 14px;
             Text { text: "Merge into one convex brush"; font-size: 24px; font-weight: 600; }
-            Text { text: "Choose brushes whose combined shape is convex and has no gaps. Preview checks the complete volume before replacing the source brushes."; wrap: word-wrap; color: #aeb9c8; }
+            Text { text: "Choose brushes whose combined shape is convex and has no gaps. Preview checks the complete volume before replacing the source brushes."; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: "Source brushes"; font-size: 18px; font-weight: 600; }
             ListView {
                 vertical-stretch: 1; min-height: 150px;
@@ -37,9 +39,9 @@ export component MergeWindow inherits Window {
                 }
             }
             Text { text: root.summary; font-size: 17px; font-weight: 600; wrap: word-wrap; }
-            Text { text: "The lowest brush ID keeps its ID and brush metadata. Outer faces keep their original material, world texture projection and lighting. On shared planes, the lowest brush ID wins."; wrap: word-wrap; color: #aeb9c8; }
-            Text { text: "2–16 convex brushes · world brushes or one brush entity · no displacements. Nonconvex shapes and gaps are rejected."; wrap: word-wrap; color: #aeb9c8; font-size: 12px; }
-            if root.message != "": Text { text: root.message; wrap: word-wrap; color: #ffc66d; }
+            Text { text: "The lowest brush ID keeps its ID and brush metadata. Outer faces keep their original material, world texture projection and lighting. On shared planes, the lowest brush ID wins."; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: "2–16 convex brushes · world brushes or one brush entity · no displacements. Nonconvex shapes and gaps are rejected."; wrap: word-wrap; color: Theme.text-muted; font-size: 12px; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

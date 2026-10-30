@@ -1,6 +1,8 @@
-import { Button, CheckBox, LineEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { Button, CheckBox, LineEdit } from "widgets.slint";
 
 export component WorkingRegionWindow inherits Window {
+    background: Theme.panel;
     title: "Working region - HammeRR";
     preferred-width: 680px;
     preferred-height: 460px;
@@ -24,9 +26,9 @@ export component WorkingRegionWindow inherits Window {
         VerticalLayout {
             padding: 20px; spacing: 12px;
             Text { text: "Working region visibility"; font-size: 24px; font-weight: 600; }
-            Text { text: root.summary; wrap: word-wrap; color: #bac2ce; }
+            Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
             CheckBox { text: "Enabled"; checked <=> root.region-enabled; }
-            Text { text: "Whole objects touching these bounds stay visible. Hidden objects stay hidden. This changes only the editor view; saved visibility and compilation are unaffected."; wrap: word-wrap; color: #bac2ce; }
+            Text { text: "Whole objects touching these bounds stay visible. Hidden objects stay hidden. This changes only the editor view; saved visibility and compilation are unaffected."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 10px;
                 Text { width: 80px; text: ""; }
@@ -49,7 +51,7 @@ export component WorkingRegionWindow inherits Window {
                 LineEdit { text <=> root.max-z; input-type: decimal; accessible-label: "Working region maximum Z"; }
             }
             Button { text: "Use selection bounds"; clicked => { root.use-bounds(); } }
-            Text { text: root.message; wrap: word-wrap; color: #f2c487; }
+            Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
                 spacing: 10px;

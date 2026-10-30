@@ -4,6 +4,10 @@
 
 Turn solid geometry into rooms, openings and cut shapes.
 
+Select brushes to show **Brush tools** in the Inspector. The same commands are in the **Brush** menu.
+
+![Brush tools in the Inspector](images/inspector-brush.png)
+
 ## Hollow
 
 1. Select the source brushes.

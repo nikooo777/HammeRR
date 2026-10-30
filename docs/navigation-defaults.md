@@ -4,7 +4,7 @@
 
 Set camera flight speed without changing the map.
 
-1. Enter **Fly speed** under **Viewport**.
+1. Enter **Fly speed** under **Overlays → Camera**.
 2. Press Enter.
 3. Hold the right mouse button to fly with WASD/QE.
 
@@ -14,7 +14,7 @@ Scroll while flying to adjust the same setting.
 
 ## Save the speed
 
-1. Open **Navigation defaults…**.
+1. Choose **Edit → Preferences → Navigation defaults…**.
 2. Click **Save current as defaults**.
 
 Use **Apply saved defaults** to restore saved speed now.

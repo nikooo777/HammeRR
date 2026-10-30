@@ -1,0 +1,93 @@
+// Copyright © SixtyFPS GmbH <info@slint.dev>
+// SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
+
+import { ColorSchemeSelector } from "color-scheme.slint";
+import { Theme } from "../../theme.slint";
+
+export struct TextStyle {
+    font-size: relative-font-size,
+    font-weight: int,
+}
+
+export global FluentFontSettings {
+    out property <TextStyle> body-strong: { font-size: 14pt * 1rem / 14pt, font-weight: FontWeight.semi-bold };
+    out property <TextStyle> title: { font-size: 28pt * 1rem / 14pt, font-weight: FontWeight.semi-bold };
+}
+
+export global FluentPalette {
+    in-out property <ColorScheme> color-scheme: ColorSchemeSelector.color-scheme;
+
+    out property <brush> background: Theme.panel;
+    out property <brush> foreground: Theme.text;
+    out property <brush> alternate-background: Theme.control;
+    out property <brush> alternate-foreground: Theme.text;
+    out property <brush> control-background: Theme.control;
+    out property <brush> control-foreground: Theme.text;
+    out property <brush> accent-background: Theme.accent;
+    out property <brush> accent-foreground: Theme.accent-text;
+    out property <brush> selection-background: Theme.selection;
+    out property <brush> selection-foreground: Theme.text;
+    out property <brush> border: Theme.border-strong;
+
+    out property <brush> secondary-accent-background: Theme.accent-hover;
+    out property <brush> tertiary-accent-background: Theme.accent-pressed;
+    out property <brush> accent-disabled: Theme.control-strong;
+    out property <brush> accent-control-border: transparent;
+    out property <brush> control-border: Theme.border-strong;
+    out property <brush> text-accent-foreground-secondary: Theme.accent-text;
+    out property <brush> text-accent-foreground-disabled: Theme.text-faint;
+    out property <brush> text-secondary: Theme.text-muted;
+    out property <brush> text-tertiary: Theme.text-faint;
+    out property <brush> text-disabled: Theme.text-disabled;
+    out property <brush> text-control-border: Theme.border-strong;
+    out property <brush> control-secondary: Theme.hover;
+    out property <brush> control-tertiary: Theme.active;
+    out property <brush> control-disabled: Theme.panel;
+    out property <brush> control-alt-secondary: Theme.field;
+    out property <brush> control-alt-tertiary: Theme.hover;
+    out property <brush> control-alt-quaternary: Theme.active;
+    out property <brush> control-alt-disabled: transparent;
+    out property <brush> control-strong-stroke: Theme.text-faint;
+    out property <brush> control-strong-stroke-disabled: Theme.control-strong;
+    out property <brush> control-solid: Theme.control-strong;
+    out property <brush> circle-border: Theme.border-strong;
+    out property <brush> control-input-active: Theme.field;
+    out property <brush> focus-stroke-inner: Theme.base;
+    out property <brush> focus-stroke-outer: Theme.accent;
+    out property <brush> control-background-stroke-flyout: Theme.border-strong;
+    out property <brush> sub-title-secondary: Theme.hover;
+    out property <brush> sub-title-tertiary: Theme.active;
+    out property <brush> shadow: #00000066;
+    out property <brush> subtle: Theme.hover;
+    out property <brush> subtle-secondary: Theme.hover;
+    out property <brush> subtle-tertiary: Theme.active;
+    out property <brush> divider: Theme.border;
+    out property <brush> layer-on-mica-base-alt: Theme.panel;
+    out property <brush> layer-on-mica-base-alt-secondary: Theme.hover;
+    out property <brush> card-stroke: Theme.border;
+    out property <brush> state: #ffffff;
+    out property <brush> state-secondary: #000000;
+}
+
+export global Icons {
+    out property <image> arrow-down: @image-url("_arrow-down.svg");
+    out property <image> arrow-up: @image-url("_arrow-up.svg");
+    out property <image> check-mark: @image-url("_check-mark.svg");
+    out property <image> chevron-down: @image-url("_chevron-down.svg");
+    out property <image> chevron-up: @image-url("_chevron-up.svg");
+    out property <image> down: @image-url("_down.svg");
+    out property <image> dropdown: @image-url("_dropdown.svg");
+    out property <image> left: @image-url("_left.svg");
+    out property <image> right: @image-url("_right.svg");
+    out property <image> up: @image-url("_up.svg");
+    out property <image> keyboard: @image-url("_keyboard.svg");
+    out property <image> clock: @image-url("_clock.svg");
+    out property <image> arrow-back: @image-url("_arrow_back.svg");
+    out property <image> arrow-forward: @image-url("_arrow_forward.svg");
+    out property <image> edit: @image-url("_edit.svg");
+    out property <image> calendar: @image-url("_calendar.svg");
+}
+
+export global FluentSizeSettings {
+    out property <length> item-height: 28px;
+}

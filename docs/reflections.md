@@ -13,7 +13,7 @@ Capture scene cubemaps and pack them into the published BSP.
 5. Choose **Direct LDR** or **Direct LDR + HDR**.
 6. Enable **Generate reflections**.
 7. Check the capture runtime readiness message.
-8. Close settings, then click **Compile** or **Run Map**.
+8. Close settings, then click **Compile** or **Run map**.
 9. Read capture and verification progress in **Build details…**.
 
 LDR builds capture LDR. Dual-channel builds capture LDR, then HDR.

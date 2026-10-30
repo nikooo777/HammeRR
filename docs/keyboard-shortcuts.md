@@ -4,7 +4,7 @@
 
 Assign up to two bindings to each viewport command.
 
-1. Click **Viewport → Keyboard shortcuts…**.
+1. Choose **Edit → Preferences → Keyboard shortcuts…**.
 2. Enter a label, command ID or binding in **Search commands**.
 3. Select a command.
 4. Set **Primary** and **Alternate**.

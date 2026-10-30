@@ -1,6 +1,8 @@
-import {Button, CheckBox, ComboBox, ListView} from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import {Button, CheckBox, ComboBox, ListView} from "widgets.slint";
 
 export component ModelWindow inherits Window {
+    background: Theme.panel;
     title:"Model details";
     preferred-width:620px;
     preferred-height:min(850px, 340px + root.materials.length * 20px + root.bodygroups.length * 40px + (root.attachments.length>0 ? 170px : 0px));
@@ -30,27 +32,27 @@ export component ModelWindow inherits Window {
             Text {text:root.model-path;wrap:word-wrap;font-size:17px;}
             Text {text:root.geometry;wrap:word-wrap;}
             Text {text:root.skin-info;wrap:word-wrap;}
-            Text {text:root.bounds;wrap:word-wrap;color:#b6bac3;}
+            Text {text:root.bounds;wrap:word-wrap;color:Theme.text-muted;}
             Text {text:"Skin materials";}
-            ListView {vertical-stretch:1;for material in root.materials:Text {text:material;wrap:word-wrap;color:#b6bac3;}}
+            ListView {vertical-stretch:1;for material in root.materials:Text {text:material;wrap:word-wrap;color:Theme.text-muted;}}
             if root.bodygroups.length > 0:VerticalLayout {
                 spacing:6px;
-                for group in root.bodygroups:Text {text:group;wrap:word-wrap;color:#b6bac3;}
+                for group in root.bodygroups:Text {text:group;wrap:word-wrap;color:Theme.text-muted;}
             }
             if root.attachments.length > 0:VerticalLayout {
                 spacing:8px;
                 Text {text:"Attachment";}
                 ComboBox {model:root.attachments;current-index<=>root.attachment-index;selected=>{root.attachment-changed();}}
-                Text {text:root.attachment-info;wrap:word-wrap;color:#b6bac3;}
+                Text {text:root.attachment-info;wrap:word-wrap;color:Theme.text-muted;}
                 HorizontalLayout {
                     spacing:8px;
                     CheckBox {text:"Show attachment axes";checked<=>root.show-axes;toggled=>{root.show-attachment();}}
                     Button {text:"Frame attachment";clicked=>{root.frame-attachment();}}
                 }
-                Text {text:"Reference pose · X red · Y green · Z blue";font-size:12px;color:#a7adb8;}
+                Text {text:"Reference pose · X red · Y green · Z blue";font-size:12px;color:Theme.text-faint;}
             }
-            Text {text:root.pose-info;wrap:word-wrap;font-size:12px;color:#b6bac3;}
-            Text {text:root.message;wrap:word-wrap;color:#a7adb8;}
+            Text {text:root.pose-info;wrap:word-wrap;font-size:12px;color:Theme.text-muted;}
+            Text {text:root.message;wrap:word-wrap;color:Theme.text-faint;}
             HorizontalLayout {
                 spacing:8px;
                 Button {text:"Cancel";clicked=>{root.cancel();}}

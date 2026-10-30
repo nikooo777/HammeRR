@@ -762,28 +762,41 @@ World policy uses the same draft: set `_hammerr_emission_exact_visibility` to
 field. `get_compile_settings.material_emission_exact_visibility` reports the
 effective value or validation error, source and shadow scope, and refusal policy.
 It supports uniquely owned world/detail or eligible stationary Shadows Yes
-`func_brush` emitting faces, at root or assembled-child scope. The actual native
-face must be exactly planar and convex, with nonzero area and certified fan
-coverage oriented outward relative to the retained posed brush plane.
-Source facing uses its actual plane. The retained posed brush plane keeps
+`func_brush` emitting faces, at root or assembled-child scope. Sources use the
+ordinary native fan anchored at the first native surface corner, without
+primitive overrides or displacement. Its projection must be simple and convex,
+with unique projected corners. Each nondegenerate original native triangle must
+have positive projected area and point outward relative to the retained brush
+plane. These checks admit eligible planar and nonplanar fans, not arbitrary
+nonplanar polygons. Each triangle uses its actual plane for facing, support,
+clipping and the finite-area kernel. All original coordinates remain intact.
+The retained posed brush plane keeps
 original side/hull custody and native direct-emission semantics;
 all applicable owning hulls still block light, including real self-occlusion.
 
-Nonzero residual from the retained plane permits uniform radiance, textures that
-preserve original native triangles, or generated texture partitions with exact
-coverage. The generated actual binary64 triangles must have exact actual-plane
-support, positive outward area, containment in the original face, pairwise
-disjoint interiors and total projected area exactly equal to the original face.
+Planar nonzero-residual texture partitions keep their exact face-coverage proof.
+For nonplanar textures, exact subcoverage is proved separately against each
+original native fan triangle before RGB groups merge. The parent fan covers the
+surface once; each subcoverage must cover its original native triangle once.
+Each generated binary64
+triangle must have exact support on its coverage target's plane, positive outward
+area, target containment, pairwise disjoint interiors and total projected area
+exactly equal to that target.
 Shared edges and vertices are allowed. The proof includes every RGB group,
 including black, before radiance shortcuts. No floating coverage allowance is
 accepted. `texture_partition_certificate` reports this scope and its requirements.
-The zero-residual texture path is unchanged.
+The planar zero-residual texture path is unchanged.
+
+`receiver_policy` reports the existing whole-emitting-BSP-face exclusion: its fan
+triangles do not exchange that face's emission. Receiver grids stay unchanged;
+brush receivers keep retained-plane sampling. Other receivers retain all original
+owning-hull shadows.
 
 Colour selection keeps nearest mip0 RGB and binary64 UV semantics. The coverage
 proof does not certify real-arithmetic UV boundaries or native filtering parity.
 `source_support_certificate` reports face requirements and scopes.
-Converted binary64 kernel vertices must lie exactly on the actual
-source plane. All converted coverage must stay inside the exact visible region;
+Converted binary64 kernel vertices must lie exactly on each actual source
+triangle plane. All converted coverage must stay inside the exact visible region;
 `fragment_conversion` reports this contract.
 Every applicable opaque brush hull must be certified closed, bounded and convex
 from its final planes, including oblique casters. Original materials and
@@ -801,8 +814,8 @@ its shadow geometry. Receiver `disableselfshadowing:1` omits only that prop's
 own triangles; other providers still block light. Terrain and MDL emission
 sources remain unavailable.
 
-Nonplanar or uncertified actual source faces, nonzero-residual texture partitions
-that fail exact coverage, unrepresentable on-plane fragment vertices,
+Uncertified native fans or projections, primitive overrides, displacement
+sources, failed required texture coverage, unrepresentable on-plane fragment vertices,
 moving/parented/unrequested brush-model emitting sources, sky, alpha, unknown or
 missing materials, unsupported prop models, zero-area mesh triangles,
 uncertified hulls and exhausted numeric/resource bounds reject without sampled

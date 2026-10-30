@@ -69,10 +69,8 @@ not the complete shader. Use one mode per material across LDR and HDR records.
 4. Set **Pitch Yaw Roll (Y Z X)** for an initial rotation, if needed.
 5. Apply a declared emission material to its source faces, then compile.
 
-For **Exact emission visibility**, the final emitting face can be axis-aligned
-or oblique. The compiler must certify its actual planar geometry and conversion
-of the visible fragments. At nonzero residual from the retained posed plane,
-generated texture partitions also require exact coverage of the original face.
+For **Exact emission visibility**, the compiler must certify the native outward
+triangle fan, each triangle's actual plane and the required texture coverage.
 The source uses its compiled initial pose. Other solids in the same model
 still block light. Supported child models use their assembled pose once.
 See [stationary shadow sources](brush-texture-shadows.md#cast-from-a-stationary-root-brush-model)
@@ -139,29 +137,32 @@ Resolve opaque brush, terrain and static prop shadows across the source area.
 
 Exact mode supports uniquely owned world/detail and eligible stationary
 **Shadows → Yes** `func_brush` emitting faces, at root or in supported assemblies.
-The actual native face must be exactly planar and convex, with nonzero area.
-Its triangle fan must point outward relative to the retained posed brush plane.
-The face can be axis-aligned or oblique. Source facing uses its actual plane, which
-can differ from the retained plane. The retained plane keeps the original side
+The source must use an ordinary native outward triangle fan with a simple
+convex projection. Eligible faces can be planar or nonplanar; this does not
+admit arbitrary warped polygons. Primitive overrides and displacement sources
+are unsupported. Each nondegenerate native triangle uses its actual plane for
+facing, support, clipping and the finite-area kernel. All original source
+coordinates stay unchanged. The retained brush plane keeps the original side
 and hull identity and the normal used by native direct emission.
 Every owning hull still blocks light, so real self-occlusion can darken a source.
 
-At nonzero residual from the retained plane, uniform records and textures that
-preserve the original native triangles are supported. Generated texture
-partitions must pass an exact coverage proof. Every actual binary64 triangle
-must lie on the actual source plane, point outward with positive area and stay
-inside the original face. Triangle interiors must not overlap, and their total
-projected area must equal the original face area. Shared edges and vertices are
-allowed. The proof includes all RGB groups, including black, before zero-light
-shortcuts. It accepts no floating coverage allowance.
+The whole emitting BSP face excludes its own emission. Its fan triangles do not
+light one another. Receiver grids stay unchanged; brush receivers keep their
+retained-plane sampling.
+
+Planar texture partitions at nonzero residual keep their exact face-coverage
+proof. Nonplanar textures must prove exact coverage of each original native fan
+triangle before colour groups combine. The fan and its pieces must cover the
+actual surface once, including black groups, without gaps, interior overlaps or
+a floating coverage allowance. Shared edges and vertices are allowed.
 
 The proof checks the generated geometry. Colour selection still uses nearest
 mip0 RGB and binary64 UV calculations. Exact real-arithmetic UV boundaries and
 native filtering parity are not certified. The zero-residual texture path is
 unchanged.
 
-Converted binary64 kernel vertices must stay exactly on the actual source
-plane. All converted coverage must stay inside the exact visible region.
+Converted binary64 kernel vertices must stay exactly on each actual source
+triangle plane. All converted coverage must stay inside the exact visible region.
 The compiler rejects faces that cannot meet these checks.
 Opaque brush casters may have oblique planes when their final hull is certified
 closed, bounded and convex. Every applicable original hull participates,
@@ -200,8 +201,8 @@ quantization or native image error bound.
 **Native direct emission** keeps its separate point approximation.
 Disable **Exact emission visibility** to use the original sampled bake.
 
-Exact mode rejects nonplanar or uncertified source faces, nonzero-residual
-texture partitions that fail the exact coverage proof, unrepresentable
+Exact mode rejects uncertified native fans or projections, primitive overrides,
+displacement sources, failed required texture coverage, unrepresentable
 on-plane fragment vertices, moving/parented/unrequested brush-model emitting
 sources, sky/alpha/unknown materials, unsupported prop models, zero-area mesh
 triangles and uncertified hulls. Checked arithmetic, fragment and conditioning
@@ -210,10 +211,10 @@ limits also apply.
 
 ## Limits
 
-- Sources: drawn opaque flat world, `func_detail` or eligible **Shadows → Yes**
-  `func_brush` faces. Moving, unrequested and MDL models, terrain, liquid,
-  transparent and merged sources with multiple original contributors are
-  unavailable. Sources are checked before compile-region filtering.
+- Sources: drawn opaque brush faces from world, `func_detail` or eligible
+  **Shadows → Yes** `func_brush` models. Moving, unrequested and MDL models,
+  terrain, liquid, transparent and merged sources with multiple original
+  contributors are unavailable. Sources are checked before compile-region filtering.
 - Existing supported baked receivers and diffuse bounces receive emission.
   Dynamic models use indexed ambient by default; **Native direct emission** opts
   into the separately described runtime approximation. No shader glow is added.

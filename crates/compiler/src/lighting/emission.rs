@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 use std::f64::consts::PI;
 use std::ops::ControlFlow;
 use std::rc::Rc;
@@ -681,6 +681,8 @@ impl Declarations {
     }
 }
 
+type SourceFragments = BTreeMap<[u8; 3], Vec<[DVec3; 3]>>;
+
 struct Source {
     face: usize,
     material: Option<Arc<str>>,
@@ -891,6 +893,9 @@ pub(super) fn prepare(
                     "Emission source does not retain its exact outward plane identity".into(),
                 );
             }
+            if declarations.exact_enabled && face.primitive_count != 0 {
+                return Err("Exact emission sources require the ordinary native surface fan without primitive overrides".into());
+            }
             if map.brushes[owner].contents & source_formats::bsp::contents::SOLID == 0 {
                 return Err(
                     "Emission source owner is missing from the ordinary solid shadow scope".into(),
@@ -1036,14 +1041,29 @@ pub(super) fn prepare(
             }
             let fragments = if let Some(texture) = texture {
                 stats.textured_source_faces += 1;
-                texture::partition(
-                    texture,
-                    triangles,
-                    &texture_triangles,
-                    &mut texture_work,
-                    budget,
-                    &mut allocation,
-                )?
+                if exact_face
+                    .as_ref()
+                    .is_some_and(|certificate| !certificate.planar())
+                {
+                    partition_native_fan(
+                        texture,
+                        triangles,
+                        &texture_triangles,
+                        plane,
+                        &mut texture_work,
+                        budget,
+                        &mut allocation,
+                    )?
+                } else {
+                    texture::partition(
+                        texture,
+                        triangles,
+                        &texture_triangles,
+                        &mut texture_work,
+                        budget,
+                        &mut allocation,
+                    )?
+                }
             } else {
                 texture_work.triangles(triangles.len())?;
                 BTreeMap::from([([255; 3], triangles)])
@@ -1051,21 +1071,10 @@ pub(super) fn prepare(
             let generated_partition = texture.is_some_and(|texture| texture.rectangles() != 1);
             if generated_partition
                 && let Some(certificate) = &exact_face
+                && certificate.planar()
                 && !certificate.supports_retained_plane()
             {
-                budget.consume(fragments.len())?;
-                let triangle_count = fragments.values().try_fold(0usize, |count, triangles| {
-                    count
-                        .checked_add(triangles.len())
-                        .filter(|count| *count <= MAX_TRIANGLES)
-                        .ok_or("Exact emission partition exceeds 262144 source triangles")
-                })?;
-                certificate.partition(
-                    &points,
-                    fragments.values().flatten().copied(),
-                    triangle_count,
-                    budget,
-                )?;
+                certify_source_partition(certificate, &points, &fragments, budget)?;
             }
             let location = source_location(instances, map.brushes[owner].id, *id);
             if declaration.textured {
@@ -1095,14 +1104,16 @@ pub(super) fn prepare(
                 if declarations.exact_enabled && texture.is_some() {
                     let certificate = exact_face
                         .as_ref()
-                        .ok_or("Exact emission source lost its planar face certificate")?;
-                    if certificate.supports_retained_plane() {
-                        for &triangle in &triangles {
-                            exact::source_support(triangle, plane, budget)?;
-                        }
-                    } else if !generated_partition {
-                        for &triangle in &triangles {
-                            certificate.support(triangle, budget)?;
+                        .ok_or("Exact emission source lost its native face certificate")?;
+                    if certificate.planar() {
+                        if certificate.supports_retained_plane() {
+                            for &triangle in &triangles {
+                                exact::source_support(triangle, plane, budget)?;
+                            }
+                        } else if !generated_partition {
+                            for &triangle in &triangles {
+                                certificate.support(triangle, budget)?;
+                            }
                         }
                     }
                 }
@@ -1174,6 +1185,87 @@ pub(super) fn prepare(
         total_conversion_error: Cell::new(0.0),
         _allocation: allocation,
     })
+}
+
+fn certify_source_partition(
+    certificate: &exact::SourceFace,
+    points: &[DVec3],
+    fragments: &SourceFragments,
+    budget: &mut Budget<'_>,
+) -> Result<(), String> {
+    budget.consume(fragments.len())?;
+    let triangle_count = fragments.values().try_fold(0usize, |count, triangles| {
+        count
+            .checked_add(triangles.len())
+            .filter(|count| *count <= MAX_TRIANGLES)
+            .ok_or("Exact emission partition exceeds 262144 source triangles")
+    })?;
+    certificate.partition(
+        points,
+        fragments.values().flatten().copied(),
+        triangle_count,
+        budget,
+    )
+}
+
+fn partition_native_fan(
+    texture: &texture::Texture,
+    triangles: Vec<[DVec3; 3]>,
+    coordinates: &[[DVec2; 3]],
+    plane: map_core::Plane,
+    counters: &mut texture::Counters,
+    budget: &mut Budget<'_>,
+    allocation: &mut Allocation,
+) -> Result<SourceFragments, String> {
+    if triangles.len() != coordinates.len() {
+        return Err("Texture emission source lost its native texture coordinates".into());
+    }
+    let mut fragments = BTreeMap::new();
+    for (triangle, coordinates) in triangles.into_iter().zip(coordinates) {
+        budget.consume(1)?;
+        let winding = [triangle[0], triangle[2], triangle[1]];
+        let certificate = exact::SourceFace::new(&winding, plane, budget)?;
+        allocation.grow(budget, size_of::<[DVec3; 3]>())?;
+        let partition = texture::partition(
+            texture,
+            vec![triangle],
+            std::slice::from_ref(coordinates),
+            counters,
+            budget,
+            allocation,
+        )?;
+        certify_source_partition(&certificate, &winding, &partition, budget)?;
+        for (rgb, mut pieces) in partition {
+            budget.consume(1)?;
+            match fragments.entry(rgb) {
+                Entry::Vacant(entry) => {
+                    allocation.grow(budget, 256)?;
+                    entry.insert(pieces);
+                }
+                Entry::Occupied(entry) => {
+                    budget.consume(pieces.len())?;
+                    let group = entry.into_mut();
+                    let required = group
+                        .len()
+                        .checked_add(pieces.len())
+                        .filter(|count| *count <= MAX_TRIANGLES)
+                        .ok_or("Exact emission partition exceeds 262144 source triangles")?;
+                    if required > group.capacity() {
+                        let additional_bytes = (required - group.capacity())
+                            .checked_mul(size_of::<[DVec3; 3]>())
+                            .ok_or("Exact emission partition allocation overflow")?;
+                        let _reallocation = budget.reserve::<[DVec3; 3]>(group.capacity())?;
+                        allocation.grow(budget, additional_bytes)?;
+                        group
+                            .try_reserve_exact(required - group.len())
+                            .map_err(|_| "Exact emission partition cannot be allocated")?;
+                    }
+                    group.append(&mut pieces);
+                }
+            }
+        }
+    }
+    Ok(fragments)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1662,12 +1754,20 @@ impl Prepared {
                 let certificate = source
                     .exact_face
                     .as_ref()
-                    .ok_or("Exact emission source lost its planar face certificate")?;
-                if certificate.front(sample.point, budget)? != Ordering::Greater {
+                    .ok_or("Exact emission source lost its native face certificate")?;
+                if certificate.planar()
+                    && certificate.front(sample.point, budget)? != Ordering::Greater
+                {
                     return Ok(0.0);
                 }
                 let mut integral = 0.0;
                 for &triangle in &source.triangles {
+                    if !certificate.planar()
+                        && exact::triangle_front(triangle, sample.point, budget)?
+                            != Ordering::Greater
+                    {
+                        continue;
+                    }
                     let mut visibility = exact::Visibility::new(triangle, sample.origin, budget)?;
                     for index in std::iter::once(context.shadows).chain(context.model) {
                         for hull in index.objects() {

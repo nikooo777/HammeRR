@@ -742,11 +742,32 @@ pub(super) fn source_support(
     Ok(())
 }
 
+pub(super) fn triangle_front(
+    points: [DVec3; 3],
+    point: DVec3,
+    budget: &mut Budget<'_>,
+) -> Result<Ordering, String> {
+    budget.consume(256 * ARITHMETIC_WORK_SCALE)?;
+    let source = [vector(points[0])?, vector(points[1])?, vector(points[2])?];
+    let normal = triangle_normal(source)?;
+    if normal.iter().all(|value| *value == Rational::ZERO) {
+        return Err("Exact emission source facing requires a positive actual triangle".into());
+    }
+    let point = vector(point)?;
+    let delta = [
+        point[0].sub(source[0][0])?,
+        point[1].sub(source[0][1])?,
+        point[2].sub(source[0][2])?,
+    ];
+    Ok(dot(normal, delta)?.sign())
+}
+
 pub(super) struct SourceFace {
     normal: [Rational; 3],
     distance: Rational,
     axis: usize,
     orientation: Ordering,
+    planar: bool,
     retained_support: bool,
     fan: Storage<bool>,
     _allocation: Allocation,
@@ -789,13 +810,12 @@ impl SourceFace {
         if dot(normal, retained_normal)?.sign() != orientation {
             return Err("Exact emission actual native face must point outward relative to its retained plane".into());
         }
+        let mut planar = true;
         let mut retained_support = true;
         for &point in &source.values {
             work.charge(128, budget)?;
             if dot(normal, point)? != distance {
-                return Err(
-                    "Exact emission requires exactly planar actual native source corners".into(),
-                );
+                planar = false;
             }
             if dot(retained_normal, point)? != retained_distance {
                 retained_support = false;
@@ -806,13 +826,18 @@ impl SourceFace {
             let b = Point(axes.map(|axis| source.values[(index + 1) % source.values.len()][axis]));
             for (other, &point) in source.values.iter().enumerate() {
                 work.charge(64, budget)?;
-                if other != index && source.values[index] == point {
-                    return Err("Exact emission actual native face repeats a source corner".into());
+                let point = Point(axes.map(|axis| point[axis]));
+                if other != index && a == point {
+                    return Err(
+                        "Exact emission actual native face repeats a projected source corner"
+                            .into(),
+                    );
                 }
-                let side = turn(a, b, Point(axes.map(|axis| point[axis])))?.sign();
+                let side = turn(a, b, point)?.sign();
                 if side != Ordering::Equal && side != orientation.reverse() {
                     return Err(
-                        "Exact emission requires a simple convex actual native source face".into(),
+                        "Exact emission requires a simple convex actual native source projection"
+                            .into(),
                     );
                 }
             }
@@ -827,6 +852,17 @@ impl SourceFace {
                 Point(axes.map(|axis| pair[0][axis])),
             )?
             .sign();
+            if !planar {
+                work.charge(192, budget)?;
+                let actual = triangle_normal([source.values[0], pair[1], pair[0]])?;
+                let positive = actual.iter().any(|value| *value != Rational::ZERO);
+                if positive != (side != Ordering::Equal) {
+                    return Err("Exact emission native fan projection must preserve every positive actual triangle".into());
+                }
+                if positive && dot(actual, retained_normal)?.sign() != Ordering::Greater {
+                    return Err("Exact emission requires each actual native fan triangle to point outward relative to its retained plane".into());
+                }
+            }
             if side != Ordering::Equal && side != orientation {
                 return Err(
                     "Exact emission actual native fan does not cover its outward face".into(),
@@ -839,6 +875,7 @@ impl SourceFace {
             distance,
             axis,
             orientation,
+            planar,
             retained_support,
             fan,
             _allocation: allocation,
@@ -847,6 +884,20 @@ impl SourceFace {
 
     pub(super) fn supports_retained_plane(&self) -> bool {
         self.retained_support
+    }
+
+    pub(super) fn planar(&self) -> bool {
+        self.planar
+    }
+
+    fn require_planar(&self) -> Result<(), String> {
+        if !self.planar {
+            return Err(
+                "Exact emission requires a planar certificate for whole-face source operations"
+                    .into(),
+            );
+        }
+        Ok(())
     }
 
     pub(super) fn fan_triangle(
@@ -864,6 +915,7 @@ impl SourceFace {
 
     pub(super) fn front(&self, point: DVec3, budget: &mut Budget<'_>) -> Result<Ordering, String> {
         budget.consume(64 * ARITHMETIC_WORK_SCALE)?;
+        self.require_planar()?;
         let side = dot(self.normal, vector(point)?)?.sub(self.distance)?.sign();
         Ok(if self.orientation == Ordering::Less {
             side.reverse()
@@ -878,6 +930,7 @@ impl SourceFace {
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
         budget.consume(192 * ARITHMETIC_WORK_SCALE)?;
+        self.require_planar()?;
         for point in points {
             self.supported_point(point)?;
         }
@@ -899,6 +952,7 @@ impl SourceFace {
         triangle_count: usize,
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
+        self.require_planar()?;
         if points.len() != self.fan.values.len() + 2 || triangle_count == 0 {
             return Err(
                 "Exact emission texture partition lost its actual native face or positive pieces"

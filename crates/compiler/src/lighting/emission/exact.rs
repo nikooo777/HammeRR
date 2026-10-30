@@ -7,6 +7,8 @@ use map_core::Plane;
 use super::super::bake::{Allocation, Budget};
 
 pub(super) const MAX_HULL_PLANES: usize = 128;
+const TRIANGLE_PLANES: usize = 5;
+const TRIANGLE_CONSTRAINTS: usize = 4;
 const MAX_CONSTRAINTS: usize = MAX_HULL_PLANES * MAX_HULL_PLANES / 4 + MAX_HULL_PLANES;
 const MAX_FRAGMENTS: usize = 4096;
 const MAX_VERTICES: usize = 65_536;
@@ -835,19 +837,108 @@ impl Visibility {
         if count == 0 || count > MAX_HULL_PLANES {
             return Err("Exact emission requires 1 to 128 planes for one original hull".into());
         }
+        self.subtract_equations(
+            planes
+                .iter()
+                .map(|plane| Ok((vector(plane.normal)?, Rational::from_f64(plane.dist)?))),
+            budget,
+        )
+    }
+
+    pub(super) fn subtract_triangle(
+        &mut self,
+        points: [DVec3; 3],
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
+        self.work.charge(256, budget)?;
+        let points = [vector(points[0])?, vector(points[1])?, vector(points[2])?];
+        let mut edges = [[Rational::ZERO; 3]; 3];
+        for index in 0..3 {
+            for coordinate in 0..3 {
+                edges[index][coordinate] =
+                    points[(index + 1) % 3][coordinate].sub(points[index][coordinate])?;
+            }
+        }
+        let normal = hull_cross(edges[0], edges[1])?;
+        if normal.iter().all(|value| *value == Rational::ZERO) {
+            return Err("Exact emission requires a positive-area opaque terrain triangle".into());
+        }
+        let distance = dot(normal, points[0])?;
+        let mut planes = [([Rational::ZERO; 3], Rational::ZERO); TRIANGLE_PLANES];
+        planes[0] = (normal, distance);
+        planes[1] = (normal.map(Rational::neg), distance.neg());
+        for index in 0..3 {
+            self.work.charge(128, budget)?;
+            let outward = hull_cross(edges[index], normal)?;
+            planes[index + 2] = (outward, dot(outward, points[index])?);
+        }
+        self.work.charge(256, budget)?;
+        let (values, b) = self.segment_values(normal, distance)?;
+        if b == Rational::ZERO {
+            return self.subtract_equations(planes.into_iter().map(Ok), budget);
+        }
+        let a = [
+            values[1].sub(values[0])?,
+            values[2].sub(values[0])?,
+            values[0],
+        ];
+        let negative = b.sign() == Ordering::Less;
+        let mut endpoint = [a[0].neg(), a[1].neg(), b.sub(a[2])?];
+        if negative {
+            endpoint = endpoint.map(Rational::neg);
+        }
+        let mut constraints = Storage::new(TRIANGLE_CONSTRAINTS, budget)?;
+        constraints.push((Halfplane::new(endpoint, &mut self.work, budget)?, true))?;
+        for &(normal, distance) in &planes[2..] {
+            self.work.charge(384, budget)?;
+            let (values, scale) = self.segment_values(normal, distance)?;
+            let other = [
+                values[1].sub(values[0])?,
+                values[2].sub(values[0])?,
+                values[0],
+            ];
+            let mut coefficients = [
+                b.mul(other[0])?.sub(scale.mul(a[0])?)?,
+                b.mul(other[1])?.sub(scale.mul(a[1])?)?,
+                b.mul(other[2])?.sub(scale.mul(a[2])?)?,
+            ];
+            if negative {
+                coefficients = coefficients.map(Rational::neg);
+            }
+            constraints.push((Halfplane::new(coefficients, &mut self.work, budget)?, false))?;
+        }
+        self.subtract_constraints(&constraints.values, budget)
+    }
+
+    fn segment_values(
+        &self,
+        normal: [Rational; 3],
+        distance: Rational,
+    ) -> Result<([Rational; 3], Rational), String> {
+        let origin = dot(normal, self.origin)?;
+        Ok((
+            [
+                dot(normal, self.source[0])?.sub(origin)?,
+                dot(normal, self.source[1])?.sub(origin)?,
+                dot(normal, self.source[2])?.sub(origin)?,
+            ],
+            distance.sub(origin)?,
+        ))
+    }
+
+    fn subtract_equations(
+        &mut self,
+        planes: impl ExactSizeIterator<Item = Result<([Rational; 3], Rational), String>>,
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
+        let count = planes.len();
         let mut lower = Storage::new(count, budget)?;
         let mut upper = Storage::new(count, budget)?;
         let mut parallel = Storage::new(count, budget)?;
         for plane in planes {
             self.work.charge(256, budget)?;
-            let normal = vector(plane.normal)?;
-            let origin = dot(normal, self.origin)?;
-            let b = Rational::from_f64(plane.dist)?.sub(origin)?;
-            let values = [
-                dot(normal, self.source[0])?.sub(origin)?,
-                dot(normal, self.source[1])?.sub(origin)?,
-                dot(normal, self.source[2])?.sub(origin)?,
-            ];
+            let (normal, distance) = plane?;
+            let (values, b) = self.segment_values(normal, distance)?;
             self.work.charge(32, budget)?;
             if (b.sign() == Ordering::Less
                 && values
@@ -901,7 +992,15 @@ impl Visibility {
                 ))?;
             }
         }
-        for &(halfplane, strict) in &constraints.values {
+        self.subtract_constraints(&constraints.values, budget)
+    }
+
+    fn subtract_constraints(
+        &mut self,
+        constraints: &[(Halfplane, bool)],
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
+        for &(halfplane, strict) in constraints {
             self.work.charge(1, budget)?;
             if halfplane.constant()
                 && (halfplane.0[2] > n!(0) || (strict && halfplane.0[2].is_zero()))
@@ -911,19 +1010,42 @@ impl Visibility {
         }
         let mut next = Polygons::new(budget)?;
         for polygon in self.fragments.polygons.values.drain(..) {
-            let mut inside = Some(polygon);
-            for &(halfplane, _) in &constraints.values {
+            let start = next.polygons.values.len();
+            let vertices = next.vertices;
+            let mut inside: Option<TopoPolygon> = None;
+            for &(halfplane, _) in constraints {
                 self.work.charge(1, budget)?;
                 if halfplane.constant() {
                     continue;
                 }
-                let Some(polygon) = inside.take() else {
-                    break;
-                };
-                if let Some(outside) = clip(&polygon, halfplane.neg(), &mut self.work, budget)? {
-                    next.push(outside)?;
+                let current = inside.as_ref().unwrap_or(&polygon);
+                let mut negative = false;
+                let mut positive = false;
+                for vertex in &current.values {
+                    self.work.charge(48, budget)?;
+                    match halfplane.evaluate(vertex.point)?.sign() {
+                        Ordering::Less => negative = true,
+                        Ordering::Equal => (),
+                        Ordering::Greater => positive = true,
+                    }
                 }
-                inside = clip(&polygon, halfplane, &mut self.work, budget)?;
+                if !positive {
+                    continue;
+                }
+                inside = if negative {
+                    if let Some(outside) = clip(current, halfplane.neg(), &mut self.work, budget)? {
+                        next.push(outside)?;
+                    }
+                    clip(current, halfplane, &mut self.work, budget)?
+                } else {
+                    None
+                };
+                if inside.is_none() {
+                    next.polygons.values.truncate(start);
+                    next.vertices = vertices;
+                    next.push(polygon)?;
+                    break;
+                }
             }
         }
         self.fragments = next;

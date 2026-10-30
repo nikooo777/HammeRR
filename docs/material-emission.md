@@ -121,15 +121,18 @@ existing indexed-ambient policy. **Fullbright** validates the configuration but
 does not emit native surface-light records. Child declarations cannot activate
 the policy.
 
-## Exact brush shadows
+<a id="exact-brush-shadows"></a>
 
-Resolve brush shadows across the source area instead of sampling segments.
+## Exact brush and terrain shadows
+
+Resolve opaque brush and terrain shadows across the source area.
 
 1. Open **World settings…** and set **Emission file**.
 2. Enable **Exact emission visibility**, then click **Apply properties**.
 3. Compile with **Direct LDR** or **Direct LDR + HDR**.
 4. Open **Build details…**. **Emission visibility policy** should read
-   **Exact opaque convex hulls**. Check **Emission conversion bounds (dimensionless)**.
+   **Exact opaque hulls and terrain triangles**. Check
+   **Emission conversion bounds (dimensionless)**.
 
 Exact mode supports uniquely owned world/detail and eligible stationary
 **Shadows → Yes** `func_brush` emitting faces, at root or in supported assemblies.
@@ -138,6 +141,14 @@ on its native plane. Opaque brush casters may have oblique planes when their
 final hull is certified closed, bounded and convex. Every applicable original
 hull participates, including invisible boundaries. Eligible stationary brush
 models retain their existing global or same-model shadow scope.
+
+Terrain with a supported opaque material casts from its actual triangles.
+Casters require opaque **LightmappedGeneric**, **UnlitGeneric**, or a supported
+**Patch** chain. Terrain blend shaders are unsupported in exact mode.
+Each triangle blocks from both sides, including its edges. Only contacts between
+the shadow segment endpoints block light. Collision settings do not disable
+these shadows. Exact mode checks each original terrain material.
+
 Unsupported casters, source support or numeric bounds stop the build.
 The previous BSP stays intact. The compiler does not switch to sampled shadows.
 Receivers beside a panel use its finite hull; crossing the panel's extended
@@ -153,8 +164,9 @@ Disable **Exact emission visibility** to use the original sampled bake.
 
 Exact mode rejects oblique final emitting faces, nonzero native-plane support
 residuals, moving/parented/unrequested brush-model emitting sources,
-sky/alpha/unknown materials, terrain and prop shadow providers, and uncertified
-hulls. Checked arithmetic, fragment and conditioning limits also apply.
+sky/alpha/unknown materials, prop shadow providers, zero-area terrain triangles
+and uncertified hulls. Checked arithmetic, fragment and conditioning limits also
+apply.
 **Fullbright** checks the setting and declarations without exact shadow admission.
 
 ## Limits

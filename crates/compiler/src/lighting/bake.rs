@@ -1322,6 +1322,7 @@ fn bake_inner(
                 settings.fs,
                 &shadows,
                 &model_shadows,
+                &terrain_shadows,
                 budget,
             )
         })

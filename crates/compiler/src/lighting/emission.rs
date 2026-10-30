@@ -1,7 +1,8 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
@@ -11,7 +12,7 @@ use source_formats::vmf::{Entity, Properties, Solid};
 
 use super::bake::{Allocation, Budget};
 use super::radiance::SourceBoundary;
-use super::shadows::ShadowIndex;
+use super::shadows::{ShadowIndex, ShadowObject};
 use super::terrain_shadows::TerrainTriangle;
 use super::transport::Scene;
 use super::{Occluder, ReceiverAngularMode};
@@ -493,7 +494,7 @@ pub(crate) fn preflight<'a>(
         channel_rays: [0; 2],
         native_surface_lights: [0; 2],
         visibility_policy: if exact_enabled {
-            "exact_opaque_convex_hull_topology_bounded_kernel_conversion"
+            "exact_opaque_convex_hull_and_terrain_triangle_topology_bounded_kernel_conversion"
         } else {
             "sampled_segments"
         },
@@ -506,7 +507,7 @@ pub(crate) fn preflight<'a>(
         },
     };
     let visibility = if exact_enabled {
-        "Exact emission visibility requests complete certified original opaque-convex-hull shadow topology with bounded kernel conversion; unsupported providers, sources, arithmetic or exhausted resources fail the request"
+        "Exact emission visibility requests complete certified original opaque convex-hull and native terrain-triangle shadow topology with bounded kernel conversion; unsupported providers, sources, arithmetic or exhausted resources fail the request"
     } else {
         "Material emission uses sampled segment shadows"
     };
@@ -740,6 +741,7 @@ pub(super) fn prepare(
     fs: &GameFs,
     shadows: &ShadowIndex<Occluder>,
     model_shadows: &[Option<ShadowIndex<Occluder>>],
+    terrain_shadows: &ShadowIndex<TerrainTriangle>,
     budget: &mut Budget<'_>,
 ) -> Result<Prepared, String> {
     budget.consume(0)?;
@@ -779,13 +781,15 @@ pub(super) fn prepare(
         return Err("Emission face contributors disagree with emitted geometry".into());
     }
     if declarations.exact_enabled {
-        admit_exact_hulls(
+        admit_exact_providers(
             declarations,
             map,
             scopes,
             fs,
             shadows,
             model_shadows,
+            terrain_shadows,
+            instances,
             budget,
         )?;
     }
@@ -1132,13 +1136,15 @@ pub(super) fn prepare(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn admit_exact_hulls(
+fn admit_exact_providers(
     declarations: &Declarations,
     map: &Map<'_>,
     scopes: &[super::models::Scope],
     fs: &GameFs,
     shadows: &ShadowIndex<Occluder>,
     model_shadows: &[Option<ShadowIndex<Occluder>>],
+    terrain_shadows: &ShadowIndex<TerrainTriangle>,
+    instances: &crate::instances::Prepared<'_>,
     budget: &mut Budget<'_>,
 ) -> Result<(), String> {
     let mut assets = super::props::Assets::for_brushes(fs, &declarations.sources);
@@ -1223,24 +1229,14 @@ fn admit_exact_hulls(
                     for &point in &winding.0 {
                         interior += point;
                     }
-                    let material = map.materials.get(original.material);
-                    budget.consume(1 + material.name.len().div_ceil(64))?;
-                    if !crate::instances::brush_models::ordinary(material) {
-                        return Err(format!(
-                            "Exact emission visibility requires retained ordinary opaque material {} on every original nonbevel boundary",
-                            material.name
-                        ));
-                    }
-                    if !checked.contains(&original.material) {
-                        checked_allocation.grow(budget, 1024)?;
-                        let _parsed = budget.reserve_bytes(
-                            crate::MAX_BRUSH_SHADOW_MATERIAL_BYTES
-                                * 128
-                                * (source_formats::vmt::MAX_PATCH_DEPTH + 1),
-                        )?;
-                        assets.brush_opaque_material(&material.name, budget)?;
-                        checked.insert(original.material);
-                    }
+                    admit_exact_material(
+                        original.material,
+                        map,
+                        &mut assets,
+                        &mut checked,
+                        &mut checked_allocation,
+                        budget,
+                    )?;
                 }
                 if originals.next().is_some() || vertices == 0 {
                     return Err(
@@ -1258,7 +1254,90 @@ fn admit_exact_hulls(
                 .map_err(|error| format!("Exact material emission solid:{}: {error}", brush.id))?;
         }
     }
+    let mut triangles = terrain_shadows.objects().iter().enumerate();
+    for (patch, terrain) in map.terrains.iter().enumerate() {
+        budget.consume(1)?;
+        let result = (|| {
+            if terrain.info.contents & !bsp::contents::DETAIL != bsp::contents::SOLID {
+                return Err(
+                    "Exact emission visibility requires ordinary opaque terrain contents".into(),
+                );
+            }
+            admit_exact_material(
+                terrain.material,
+                map,
+                &mut assets,
+                &mut checked,
+                &mut checked_allocation,
+                budget,
+            )?;
+            for triangle in 0..terrain.indices.len() {
+                budget.consume(4)?;
+                let (slot, provider) = triangles
+                    .next()
+                    .ok_or("Exact emission terrain lost an original native triangle")?;
+                if provider.source() != (patch, triangle) || provider.event_slot() != slot {
+                    return Err(
+                        "Exact emission terrain lost its original patch or triangle identity"
+                            .into(),
+                    );
+                }
+                let (mins, maxs) = provider.bounds();
+                if !mins.is_finite()
+                    || !maxs.is_finite()
+                    || !mins.cmple(maxs).all()
+                    || provider.positions().iter().any(|point| {
+                        !point.is_finite() || !mins.cmple(*point).all() || !point.cmple(maxs).all()
+                    })
+                {
+                    return Err(
+                        "Exact emission terrain bounds do not enclose its actual native triangle"
+                            .into(),
+                    );
+                }
+            }
+            Ok::<(), String>(())
+        })();
+        result.map_err(|error| {
+            format!(
+                "Exact material emission {}: {error}",
+                source_location(instances, terrain.solid, terrain.side)
+            )
+        })?;
+    }
+    if triangles.next().is_some() {
+        return Err("Exact emission terrain index has no original native triangle identity".into());
+    }
     budget.consume(0)
+}
+
+fn admit_exact_material(
+    index: usize,
+    map: &Map<'_>,
+    assets: &mut super::props::Assets<'_, '_>,
+    checked: &mut BTreeSet<usize>,
+    allocation: &mut Allocation,
+    budget: &mut Budget<'_>,
+) -> Result<(), String> {
+    let material = map.materials.get(index);
+    budget.consume(1 + material.name.len().div_ceil(64))?;
+    if !crate::instances::brush_models::ordinary(material) {
+        return Err(format!(
+            "Exact emission visibility requires retained ordinary opaque material {} on every original boundary and terrain patch",
+            material.name
+        ));
+    }
+    if !checked.contains(&index) {
+        allocation.grow(budget, 1024)?;
+        let _parsed = budget.reserve_bytes(
+            crate::MAX_BRUSH_SHADOW_MATERIAL_BYTES
+                * 128
+                * (source_formats::vmt::MAX_PATCH_DEPTH + 1),
+        )?;
+        assets.brush_opaque_material(&material.name, budget)?;
+        checked.insert(index);
+    }
+    Ok(())
 }
 
 fn unit(value: DVec3) -> Result<DVec3, String> {
@@ -1503,12 +1582,6 @@ impl Prepared {
                 budget.consume(1 + hull.planes.len())?;
             }
         }
-        if !context.terrain.objects().is_empty() {
-            budget.consume(1)?;
-            return Err(
-                "Exact emission visibility does not support terrain shadow providers".into(),
-            );
-        }
         for triangle in context.props.objects() {
             budget.consume(1)?;
             if !triangle.owned_by(context.skip_owner) {
@@ -1539,6 +1612,32 @@ impl Prepared {
                         for hull in index.objects() {
                             budget.consume(1)?;
                             visibility.subtract(&hull.planes, budget)?;
+                        }
+                    }
+                    budget.consume(triangle.len() + 1)?;
+                    let (mins, maxs) = triangle
+                        .iter()
+                        .fold((sample.origin, sample.origin), |(mins, maxs), &point| {
+                            (mins.min(point), maxs.max(point))
+                        });
+                    {
+                        let work = RefCell::new(&mut *budget);
+                        let enumeration = context.terrain.visit_bounds(
+                            mins,
+                            maxs,
+                            &mut |amount| work.borrow_mut().consume(amount),
+                            &mut |_, provider| {
+                                visibility.subtract_triangle(
+                                    provider.positions(),
+                                    &mut work.borrow_mut(),
+                                )?;
+                                Ok(ControlFlow::Continue(()))
+                            },
+                        )?;
+                        if enumeration.is_break() {
+                            return Err(
+                                "Exact emission terrain enumeration did not complete".into()
+                            );
                         }
                     }
                     let fragments = visibility.finish(sample.point, budget)?;

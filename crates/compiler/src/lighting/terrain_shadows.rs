@@ -75,6 +75,11 @@ impl TerrainTriangle {
         )
     }
 
+    pub(super) fn positions(&self) -> [DVec3; 3] {
+        self.topology.indices[self.slot as usize]
+            .map(|vertex| self.topology.positions[vertex as usize])
+    }
+
     pub(super) fn point(&self, weights: [f64; 3]) -> DVec3 {
         self.triangle.point(weights)
     }

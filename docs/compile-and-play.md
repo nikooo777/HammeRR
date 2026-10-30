@@ -144,7 +144,8 @@ world/detail surfaces through **World settings… → Emission file**.
 The default-off [**Exact emission visibility**](material-emission.md#exact-brush-shadows)
 World control supports uniquely owned world/detail and eligible stationary
 **Shadows → Yes** `func_brush` emitters with final axis-aligned faces. Shadow
-casters use certified closed convex opaque brush hulls, including oblique hulls.
+casters use certified closed convex opaque brush hulls, including oblique hulls,
+and actual opaque terrain triangles.
 Unsupported sources, geometry or numeric bounds stop the build.
 The default-off **Native direct emission** World control adds a separately
 described runtime centroid approximation; static previews remain static.

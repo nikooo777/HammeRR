@@ -28,7 +28,7 @@ Commands that open a dialog end with "…". Hover a toolbar or rail icon to see 
 2. Type part of a command, menu name, object ID, class, name or material.
 3. Use the arrow keys to choose a result, then press Enter.
 
-Commands run exactly like their menu items. Unavailable commands appear dimmed.
+Commands run exactly like their menu items and show their current keyboard shortcut. Unavailable commands appear dimmed.
 Objects select and frame the chosen object. Escape or a click outside closes the search.
 
 ## Browse objects

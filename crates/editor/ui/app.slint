@@ -2000,6 +2000,7 @@ export struct PaletteRow {
     id: string,
     title: string,
     detail: string,
+    keys: string,
     enabled: bool,
 }
 
@@ -4012,7 +4013,17 @@ export component AppWindow inherits Window {
                             colorize: !row.enabled ? Theme.text-disabled : row.object ? Theme.warning : Theme.text-muted;
                         }
                         Text { text: row.title; color: row.enabled ? Theme.text : Theme.text-disabled; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                        Text { text: row.object ? row.id : row.detail; color: Theme.text-faint; font-size: Theme.font-small; vertical-alignment: center; }
+                        if row.keys != "": Rectangle {
+                            y: (parent.height - self.height) / 2;
+                            width: keycap.preferred-width + 12px;
+                            height: 18px;
+                            border-radius: 3px;
+                            border-width: 1px;
+                            border-color: Theme.border-strong;
+                            background: Theme.field;
+                            keycap := Text { text: row.keys; color: row.enabled ? Theme.text-muted : Theme.text-disabled; font-size: 10.5px; font-family: "monospace"; }
+                        }
+                        Text { width: 118px; text: row.object ? row.id : row.detail; color: Theme.text-faint; font-size: Theme.font-small; horizontal-alignment: right; vertical-alignment: center; overflow: elide; }
                     }
                     row-touch := TouchArea {
                         moved => { root.palette-index = index; }

@@ -1,3 +1,4 @@
+use editor_core::shortcuts::{Bindings, Chord, Command};
 use slint::{Model, ModelRc, VecModel};
 
 use crate::identity::parse_id;
@@ -7,7 +8,61 @@ use crate::{AppWindow, PaletteRow};
 
 const OBJECT_ROWS: usize = 8;
 
-fn command_rows(app: &AppWindow, query: &str) -> Vec<PaletteRow> {
+fn shortcut_command(id: &str) -> Option<Command> {
+    Some(match id {
+        "undo" => Command::Undo,
+        "redo" => Command::Redo,
+        "frame-selection" => Command::FrameSelection,
+        "delete" => Command::DeleteSelection,
+        "perspective" => Command::Perspective,
+        "top" => Command::Top,
+        "front" => Command::Front,
+        "side" => Command::Side,
+        "objects" => Command::Objects,
+        "faces" => Command::Faces,
+        "show-grid" => Command::ShowGrid,
+        "snap" => Command::SnapToGrid,
+        "tool-textures" => Command::ToolTextures,
+        "selection-outlines" => Command::SelectionOutlines,
+        "select-tool" => Command::SelectTool,
+        "move-tool" => Command::MoveTool,
+        "rotate-tool" => Command::RotateTool,
+        "scale-tool" => Command::ScaleTool,
+        "block" => Command::DrawBrush,
+        "clip" => Command::ClipMode,
+        "hide-editor" => Command::HideSelectionInEditor,
+        "show-editor-hidden" => Command::ShowAllEditorHidden,
+        _ => return None,
+    })
+}
+
+fn command_keys(bindings: &Bindings, id: &str) -> String {
+    let fixed = match id {
+        "new-map" => "Ctrl+N",
+        "open-map" => "Ctrl+O",
+        "save-map" => "Ctrl+S",
+        "save-map-as" => "Ctrl+Shift+S",
+        "copy" => "Ctrl+C",
+        "cut" => "Ctrl+X",
+        "paste" => "Ctrl+V",
+        _ => "",
+    };
+    if !fixed.is_empty() {
+        return fixed.to_owned();
+    }
+    shortcut_command(id).map_or_else(String::new, |command| {
+        bindings
+            .slots(command)
+            .iter()
+            .flatten()
+            .map(Chord::label)
+            .collect::<Vec<_>>()
+            .join(" · ")
+    })
+}
+
+fn command_rows(app: &AppWindow, session: &Session, query: &str) -> Vec<PaletteRow> {
+    let bindings = session.keyboard_shortcuts_snapshot().current;
     let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
     let mut ranked: Vec<(bool, PaletteRow)> = app
         .get_palette_commands()
@@ -24,6 +79,7 @@ fn command_rows(app: &AppWindow, query: &str) -> Vec<PaletteRow> {
                         .is_some_and(|word| title.starts_with(word.as_str()));
                     let row = PaletteRow {
                         object: false,
+                        keys: command_keys(&bindings, &command.id).into(),
                         id: command.id,
                         title: command.title,
                         detail: command.group,
@@ -66,6 +122,7 @@ fn object_rows(session: &Session, query: &str) -> Vec<PaletteRow> {
                     id: object.id.into(),
                     title: title.into(),
                     detail: object.kind.into(),
+                    keys: Default::default(),
                     enabled: true,
                 }
             })
@@ -75,6 +132,7 @@ fn object_rows(session: &Session, query: &str) -> Vec<PaletteRow> {
             id: Default::default(),
             title: error.into(),
             detail: Default::default(),
+            keys: Default::default(),
             enabled: false,
         }],
     }
@@ -91,7 +149,7 @@ pub(super) fn bind(app: &AppWindow, access: &DocumentAccess) {
         let callback = super::admission::SessionCallback::new(app, access);
         move |query| {
             callback.input(|app, session| {
-                let mut rows = command_rows(&app, &query);
+                let mut rows = command_rows(&app, session, &query);
                 rows.extend(object_rows(session, &query));
                 app.set_palette_rows(ModelRc::new(VecModel::from(rows)));
             });

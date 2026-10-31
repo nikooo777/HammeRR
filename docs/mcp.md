@@ -799,9 +799,12 @@ Converted binary64 kernel vertices must lie exactly on each actual source
 triangle plane. All converted coverage must stay inside the exact visible region;
 `fragment_conversion` reports this contract.
 `fragment_conversion_candidates` reports the projected search first. If it cannot
-certify an oblique source triangle's conversion, bounded dyadic native-triangle
-weights are tried. Those weights map exactly through the original source triangle;
-all three coordinates must round-trip through binary64 exactly.
+certify an oblique source triangle's conversion, bounded common absolute dyadic
+world-grid candidates are tried before bounded dyadic native-triangle weights.
+The world grid applies only to converted fragments. Native weights map exactly
+through the original source triangle. Every accepted candidate must lie exactly
+on the actual source triangle plane, with all three coordinates exactly
+representable in binary64.
 Existing containment, orientation, area-loss, conditioning and error guards still
 decide acceptance. Source coordinates stay unchanged; complex cuts can still fail.
 Arithmetic and resource errors stop the build.

@@ -236,6 +236,15 @@ impl Rational {
         Self::ratio(integer, denominator)
     }
 
+    fn round_signed_dyadic(self, power: u32) -> Result<Self, String> {
+        let rounded = self.abs().round_dyadic(power)?;
+        Ok(if self.sign() == Ordering::Less {
+            rounded.neg()
+        } else {
+            rounded
+        })
+    }
+
     fn upper(self) -> Result<f64, String> {
         let mut value = self.approximate();
         for _ in 0..8 {
@@ -1316,6 +1325,22 @@ fn dyadic_precision(
         .filter(|precision| *precision > 0))
 }
 
+fn world_grid_precision(
+    source: &[[Rational; 3]; 3],
+    work: &mut Work,
+    budget: &mut Budget<'_>,
+) -> Result<u32, String> {
+    work.charge(128, budget)?;
+    let mut exponent = 0;
+    for value in source.iter().flatten() {
+        if !value.numerator.is_zero() {
+            let bits = I1024::BITS - value.numerator.abs().leading_zeros();
+            exponent = exponent.max(bits as i32 - value.denominator.trailing_zeros() as i32);
+        }
+    }
+    Ok((f64::MANTISSA_DIGITS as i32 - exponent - 2).clamp(0, f64::MANTISSA_DIGITS as i32) as u32)
+}
+
 pub(super) struct Visibility {
     source: [[Rational; 3]; 3],
     origin: [Rational; 3],
@@ -1728,13 +1753,18 @@ impl Visibility {
             let center = center.ok_or("Exact emission cannot condition a positive fragment")?;
             let mut converted = None;
             let mut rejection = "no conversion candidate";
-            for family in 0..2 {
-                let barycentric = if family == 0 {
+            for family in 0..3 {
+                if family != 0 && !oblique {
+                    break;
+                }
+                let world_power = if family == 1 {
+                    Some(world_grid_precision(&self.source, &mut self.work, budget)?)
+                } else {
+                    None
+                };
+                let barycentric = if family != 2 {
                     None
                 } else {
-                    if !oblique {
-                        break;
-                    }
                     let Some(precision) = dyadic_precision(&self.source, &mut self.work, budget)?
                     else {
                         rejection =
@@ -1803,6 +1833,25 @@ impl Visibility {
                                 }
                             }
                             candidate.push(Point(self.axes.map(|axis| native[axis])))?;
+                        }
+                    } else if let Some(power) = world_power {
+                        for &point in &world.values {
+                            self.work.charge(128, budget)?;
+                            let point = Point([
+                                point.0[0]
+                                    .add(center.0[0].sub(point.0[0])?.mul(fraction)?)?
+                                    .round_signed_dyadic(power)?,
+                                point.0[1]
+                                    .add(center.0[1].sub(point.0[1])?.mul(fraction)?)?
+                                    .round_signed_dyadic(power)?,
+                            ]);
+                            for coordinate in self.lift(point)? {
+                                if Rational::from_f64(coordinate.approximate())? != coordinate {
+                                    rejection = "common world-grid source lift is not exactly representable in binary64";
+                                    continue 'conversion;
+                                }
+                            }
+                            candidate.push(point)?;
                         }
                     } else {
                         for &point in &world.values {

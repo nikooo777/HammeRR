@@ -214,6 +214,8 @@ Receivers beside a panel use its finite hull; crossing the panel's extended
 plane alone does not stop the build.
 For larger bakes, open **Build settings…**, increase **Lighting work limit
 (millions)**, then click **Apply work limit**. Numeric and memory limits still apply.
+Exact mode also limits each source triangle to 32 million work units.
+Increasing the build work limit does not raise this fixed limit.
 
 Clipping uses exact rational arithmetic. Exact mode removes redundant cuts
 between visible regions when their exact union is convex. Shadow boundaries stay

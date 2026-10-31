@@ -411,6 +411,12 @@ fn conversion_error(
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Halfplane([I1024; 3]);
 
+const SOURCE_BOUNDARIES: [Halfplane; 3] = [
+    Halfplane([n!(-1), n!(0), n!(0)]),
+    Halfplane([n!(0), n!(-1), n!(0)]),
+    Halfplane([n!(1), n!(1), n!(-1)]),
+];
+
 impl Halfplane {
     fn new(
         values: [Rational; 3],
@@ -481,6 +487,10 @@ impl Halfplane {
     fn constant(self) -> bool {
         self.0[0].is_zero() && self.0[1].is_zero()
     }
+
+    fn rejects_all(self, strict: bool) -> bool {
+        self.constant() && (self.0[2] > n!(0) || (strict && self.0[2].is_zero()))
+    }
 }
 
 fn integer_minor(a: I1024, b: I1024, c: I1024, d: I1024) -> Result<I1024, String> {
@@ -527,7 +537,102 @@ impl<T> Storage<T> {
 type Polygon = Storage<Point>;
 type TopoPolygon = Storage<TopoVertex>;
 
+fn source_polygon(budget: &mut Budget<'_>) -> Result<TopoPolygon, String> {
+    let mut triangle = TopoPolygon::new(3, budget)?;
+    for (point, incoming) in [
+        Point([Rational::ZERO, Rational::ZERO]),
+        Point([Rational::ONE, Rational::ZERO]),
+        Point([Rational::ZERO, Rational::ONE]),
+    ]
+    .into_iter()
+    .zip(SOURCE_BOUNDARIES)
+    {
+        triangle.push(TopoVertex { point, incoming })?;
+    }
+    Ok(triangle)
+}
+
+#[derive(Clone, Copy)]
+struct SourceBounds {
+    mins: Point,
+    maxs: Point,
+}
+
+impl SourceBounds {
+    fn classify(
+        &self,
+        halfplane: Halfplane,
+        work: &mut Work,
+        budget: &mut Budget<'_>,
+    ) -> Result<Option<Split>, String> {
+        let maximum = Point(std::array::from_fn(|axis| {
+            if halfplane.0[axis] < n!(0) {
+                self.mins.0[axis]
+            } else {
+                self.maxs.0[axis]
+            }
+        }));
+        work.charge(48, budget)?;
+        if halfplane.evaluate(maximum)?.sign() != Ordering::Greater {
+            return Ok(Some(Split::Inside));
+        }
+        let minimum = Point(std::array::from_fn(|axis| {
+            if halfplane.0[axis] < n!(0) {
+                self.maxs.0[axis]
+            } else {
+                self.mins.0[axis]
+            }
+        }));
+        work.charge(48, budget)?;
+        if halfplane.evaluate(minimum)?.sign() != Ordering::Less {
+            return Ok(Some(Split::Outside));
+        }
+        Ok(None)
+    }
+
+    fn disjoint(
+        &self,
+        other: &Self,
+        work: &mut Work,
+        budget: &mut Budget<'_>,
+    ) -> Result<bool, String> {
+        for axis in 0..2 {
+            work.charge(32, budget)?;
+            if self.maxs.0[axis].compare(other.mins.0[axis]) == Ordering::Less
+                || other.maxs.0[axis].compare(self.mins.0[axis]) == Ordering::Less
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
 impl TopoPolygon {
+    fn bounds(&self, work: &mut Work, budget: &mut Budget<'_>) -> Result<SourceBounds, String> {
+        let point = self
+            .values
+            .first()
+            .ok_or("Exact emission cannot bound an empty polygon")?
+            .point;
+        let mut bounds = SourceBounds {
+            mins: point,
+            maxs: point,
+        };
+        for vertex in &self.values[1..] {
+            work.charge(64, budget)?;
+            for axis in 0..2 {
+                if vertex.point.0[axis].compare(bounds.mins.0[axis]) == Ordering::Less {
+                    bounds.mins.0[axis] = vertex.point.0[axis];
+                }
+                if vertex.point.0[axis].compare(bounds.maxs.0[axis]) == Ordering::Greater {
+                    bounds.maxs.0[axis] = vertex.point.0[axis];
+                }
+            }
+        }
+        Ok(bounds)
+    }
+
     fn push_vertex(&mut self, vertex: TopoVertex) -> Result<(), String> {
         if self
             .values
@@ -614,8 +719,31 @@ impl TopoPolygon {
     }
 }
 
+struct Fragment {
+    polygon: TopoPolygon,
+    bounds: Option<Storage<SourceBounds>>,
+}
+
+impl Fragment {
+    fn bounds(
+        &mut self,
+        work: &mut Work,
+        budget: &mut Budget<'_>,
+    ) -> Result<&SourceBounds, String> {
+        if self.bounds.is_none() {
+            let mut bounds = Storage::new(1, budget)?;
+            bounds.push(self.polygon.bounds(work, budget)?)?;
+            self.bounds = Some(bounds);
+        }
+        self.bounds
+            .as_ref()
+            .and_then(|bounds| bounds.values.first())
+            .ok_or_else(|| "Exact emission fragment lost its charged bounds".into())
+    }
+}
+
 struct Polygons {
-    polygons: Storage<TopoPolygon>,
+    polygons: Storage<Fragment>,
     vertices: usize,
 }
 
@@ -628,44 +756,87 @@ impl Polygons {
     }
 
     fn push(&mut self, polygon: TopoPolygon) -> Result<(), String> {
+        self.push_fragment(Fragment {
+            polygon,
+            bounds: None,
+        })
+    }
+
+    fn push_fragment(&mut self, fragment: Fragment) -> Result<(), String> {
         if self.polygons.values.len() >= MAX_FRAGMENTS {
             return Err("Exact emission exceeds 4096 visible fragments".into());
         }
         let vertices = self
             .vertices
-            .checked_add(polygon.values.len())
+            .checked_add(fragment.polygon.values.len())
             .filter(|vertices| *vertices <= MAX_VERTICES)
             .ok_or("Exact emission exceeds 65536 visible vertices")?;
-        self.polygons.push(polygon)?;
+        self.polygons.push(fragment)?;
         self.vertices = vertices;
         Ok(())
     }
 
     fn coalesce(&mut self, work: &mut Work, budget: &mut Budget<'_>) -> Result<(), String> {
-        for polygon in &mut self.polygons.values {
-            let previous = polygon.values.len();
-            polygon.remove_collinear(work, budget)?;
-            self.vertices -= previous - polygon.values.len();
+        for fragment in &mut self.polygons.values {
+            let previous = fragment.polygon.values.len();
+            fragment.polygon.remove_collinear(work, budget)?;
+            fragment.bounds = None;
+            self.vertices -= previous - fragment.polygon.values.len();
+        }
+        let count = self.polygons.values.len();
+        let words = count.div_ceil(u64::BITS as usize);
+        let mut unchanged = Storage::new(count * words, budget)?;
+        let mut slots = Storage::new(count, budget)?;
+        work.charge(count * words + count, budget)?;
+        for _ in 0..count * words {
+            unchanged.push(0u64)?;
+        }
+        for slot in 0..count {
+            slots.push(slot)?;
         }
         loop {
             let mut changed = false;
             'pairs: for left in 0..self.polygons.values.len() {
                 for right in left + 1..self.polygons.values.len() {
                     work.charge(1, budget)?;
-                    if let Some(merged) = self.polygons.values[left].merged(
-                        &self.polygons.values[right],
+                    let left_slot = slots.values[left];
+                    let right_slot = slots.values[right];
+                    let pair = left_slot * words + right_slot / u64::BITS as usize;
+                    let bit = 1u64 << (right_slot % u64::BITS as usize);
+                    if unchanged.values[pair] & bit != 0 {
+                        continue;
+                    }
+                    if let Some(merged) = self.polygons.values[left].polygon.merged(
+                        &self.polygons.values[right].polygon,
                         work,
                         budget,
                     )? {
-                        self.vertices -= self.polygons.values[left].values.len()
-                            + self.polygons.values[right].values.len()
+                        self.vertices -= self.polygons.values[left].polygon.values.len()
+                            + self.polygons.values[right].polygon.values.len()
                             - merged.values.len();
-                        self.polygons.values[left] = merged;
-                        work.charge((self.polygons.values.len() - right) * 4, budget)?;
+                        self.polygons.values[left] = Fragment {
+                            polygon: merged,
+                            bounds: None,
+                        };
+                        // Only pairs involving the changed polygon need another merge check.
+                        work.charge(words + count, budget)?;
+                        unchanged.values[left_slot * words..(left_slot + 1) * words].fill(0);
+                        for row in 0..count {
+                            unchanged.values[row * words + left_slot / u64::BITS as usize] &=
+                                !(1u64 << (left_slot % u64::BITS as usize));
+                        }
+                        work.charge(
+                            (self.polygons.values.len() - right)
+                                * (size_of::<Fragment>() + size_of::<usize>())
+                                    .div_ceil(size_of::<usize>()),
+                            budget,
+                        )?;
                         self.polygons.values.remove(right);
+                        slots.values.remove(right);
                         changed = true;
                         break 'pairs;
                     }
+                    unchanged.values[pair] |= bit;
                 }
             }
             if !changed {
@@ -1588,21 +1759,8 @@ impl Visibility {
         if orientation == Ordering::Equal {
             return Err("Exact emission requires a positive-area source triangle".into());
         }
-        let mut triangle = TopoPolygon::new(3, budget)?;
-        triangle.push(TopoVertex {
-            point: Point([Rational::ZERO, Rational::ZERO]),
-            incoming: Halfplane([n!(-1), n!(0), n!(0)]),
-        })?;
-        triangle.push(TopoVertex {
-            point: Point([Rational::ONE, Rational::ZERO]),
-            incoming: Halfplane([n!(0), n!(-1), n!(0)]),
-        })?;
-        triangle.push(TopoVertex {
-            point: Point([Rational::ZERO, Rational::ONE]),
-            incoming: Halfplane([n!(1), n!(1), n!(-1)]),
-        })?;
         let mut fragments = Polygons::new(budget)?;
-        fragments.push(triangle)?;
+        fragments.push(source_polygon(budget)?)?;
         Ok(Self {
             source,
             origin: vector(origin)?,
@@ -1809,6 +1967,13 @@ impl Visibility {
             .filter(|count| *count <= MAX_RECTANGLE_VISITS)
             .ok_or("Exact cutout exceeds 1048576 candidate rectangle visits")?;
         self.work.charge(candidates, budget)?;
+        if let [region] = regions.rectangles.as_slice() {
+            return if region.value {
+                self.subtract_patch(plane, boundaries, budget)
+            } else {
+                Ok(())
+            };
+        }
         let projection = self.patch_projection(plane, budget)?;
         let base = if let Some(projection) = &projection {
             self.project_constraints(projection, boundaries, budget)?
@@ -1887,7 +2052,7 @@ impl Visibility {
                             let constraint = self.project_boundary(projection, boundary, budget)?;
                             constraints.push((constraint, strict))?;
                         }
-                        self.subtract_constraints(&constraints.values, budget)?;
+                        self.subtract_mask_constraints(&constraints.values, budget)?;
                     } else {
                         let mut equations =
                             Storage::new(boundaries.len() + clipped.values.len(), budget)?;
@@ -2082,21 +2247,63 @@ impl Visibility {
         self.subtract_constraints(&constraints.values, budget)
     }
 
+    fn subtract_mask_constraints(
+        &mut self,
+        constraints: &[(Halfplane, bool)],
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
+        self.work.charge(16, budget)?;
+        let mut shadow = source_polygon(budget)?;
+        for &(halfplane, strict) in constraints {
+            self.work.charge(1, budget)?;
+            if halfplane.rejects_all(strict) {
+                return Ok(());
+            }
+            if halfplane.constant() {
+                continue;
+            }
+            match split(&shadow, halfplane, &mut self.work, budget)? {
+                Split::Inside => (),
+                Split::Outside => return Ok(()),
+                Split::Cut { inside, .. } => shadow = inside,
+            }
+        }
+        let bounds = shadow.bounds(&mut self.work, budget)?;
+        self.subtract_bounded_constraints(constraints, Some(bounds), budget)
+    }
+
     fn subtract_constraints(
         &mut self,
         constraints: &[(Halfplane, bool)],
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
+        self.subtract_bounded_constraints(constraints, None, budget)
+    }
+
+    fn subtract_bounded_constraints(
+        &mut self,
+        constraints: &[(Halfplane, bool)],
+        bounds: Option<SourceBounds>,
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
         for &(halfplane, strict) in constraints {
             self.work.charge(1, budget)?;
-            if halfplane.constant()
-                && (halfplane.0[2] > n!(0) || (strict && halfplane.0[2].is_zero()))
-            {
+            if halfplane.rejects_all(strict) {
                 return Ok(());
             }
         }
         let mut next = Polygons::new(budget)?;
-        for polygon in self.fragments.polygons.values.drain(..) {
+        for mut fragment in self.fragments.polygons.values.drain(..) {
+            if let Some(bounds) = &bounds
+                && bounds.disjoint(
+                    fragment.bounds(&mut self.work, budget)?,
+                    &mut self.work,
+                    budget,
+                )?
+            {
+                next.push_fragment(fragment)?;
+                continue;
+            }
             let start = next.polygons.values.len();
             let vertices = next.vertices;
             let mut inside: Option<TopoPolygon> = None;
@@ -2105,13 +2312,30 @@ impl Visibility {
                 if halfplane.constant() {
                     continue;
                 }
-                let current = inside.as_ref().unwrap_or(&polygon);
-                match split(current, halfplane, &mut self.work, budget)? {
+                let classification = if bounds.is_some() && inside.is_none() {
+                    fragment.bounds(&mut self.work, budget)?.classify(
+                        halfplane,
+                        &mut self.work,
+                        budget,
+                    )?
+                } else {
+                    None
+                };
+                let split = match classification {
+                    Some(split) => split,
+                    None => split(
+                        inside.as_ref().unwrap_or(&fragment.polygon),
+                        halfplane,
+                        &mut self.work,
+                        budget,
+                    )?,
+                };
+                match split {
                     Split::Inside => (),
                     Split::Outside => {
                         next.polygons.values.truncate(start);
                         next.vertices = vertices;
-                        next.push(polygon)?;
+                        next.push_fragment(fragment)?;
                         break;
                     }
                     Split::Cut {
@@ -2211,7 +2435,7 @@ impl Visibility {
         let mut coarse_error = 0.0;
         let mut error = 0.0;
         for index in 0..self.fragments.polygons.values.len() {
-            let polygon = &self.fragments.polygons.values[index];
+            let polygon = &self.fragments.polygons.values[index].polygon;
             self.work.charge(polygon.values.len() * 64, budget)?;
             let mut world = Polygon::new(polygon.values.len(), budget)?;
             for vertex in &polygon.values {

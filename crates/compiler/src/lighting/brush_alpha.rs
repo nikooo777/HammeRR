@@ -20,6 +20,10 @@ pub(super) struct Face {
 }
 
 impl Face {
+    pub(super) fn exact_mapping(&self) -> (&alpha::Material, [[f32; 4]; 2]) {
+        (&self.material, self.projection)
+    }
+
     pub(super) fn fractional(&self) -> bool {
         self.material.fractional()
     }

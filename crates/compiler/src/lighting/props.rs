@@ -124,9 +124,8 @@ impl PropTriangle {
         let source = self
             .exact
             .as_ref()
-            .ok_or("Exact emission prop triangle lacks original opaque model/material admission")?;
-        if self.alpha.is_some()
-            || source.owner != self.primitive.owner
+            .ok_or("Exact emission prop triangle lacks original model/material admission")?;
+        if source.owner != self.primitive.owner
             || source.model.is_empty()
             || source.material.is_empty()
         {
@@ -136,6 +135,12 @@ impl PropTriangle {
             ));
         }
         Ok(self.triangle.positions())
+    }
+
+    pub(super) fn exact_alpha(&self) -> Option<(&alpha::Material, [DVec2; 3])> {
+        self.alpha
+            .as_ref()
+            .map(|(material, coordinates)| (material.as_ref(), *coordinates))
     }
 
     pub(super) fn set_alpha(
@@ -582,6 +587,7 @@ impl<'fs, 'tracking> Assets<'fs, 'tracking> {
             }
             let path = source_formats::vmt::material_path(&candidate);
             let mut terminal = false;
+            let mut opaque_contract = None;
             let material = Material::load_with_reader(&path, &mut |path| {
                 let data = self
                     .read_material(path, budget)
@@ -591,13 +597,16 @@ impl<'fs, 'tracking> Assets<'fs, 'tracking> {
                         .consume(data.len().div_ceil(64) + 1)
                         .map_err(std::io::Error::other)?;
                     let _parsed = budget
-                        .reserve_bytes(data.len() * 4 + 4096)
+                        .reserve_bytes(MAX_MATERIAL_BYTES * 128)
                         .map_err(std::io::Error::other)?;
-                    let dependency = crate::static_prop_assets::material_dependency(path, data)?;
-                    terminal |= matches!(
-                        dependency,
-                        crate::static_prop_assets::MaterialDependency::Texture(_)
-                    );
+                    terminal |= crate::brush_shadow_casters::static_material_raw(
+                        path,
+                        data,
+                        &["vertexlitgeneric", "unlitgeneric"],
+                    )?;
+                    if let Err(error) = crate::static_prop_assets::material_dependency(path, data) {
+                        opaque_contract.get_or_insert_with(|| error.to_string());
+                    }
                 }
                 Ok(data)
             })
@@ -605,11 +614,16 @@ impl<'fs, 'tracking> Assets<'fs, 'tracking> {
             if let Some(material) = material {
                 if exact
                     && (!terminal
-                        || material.shader != "vertexlitgeneric"
-                        || needs_material_warning(&material))
+                        || (!material.alpha_test()
+                            && (opaque_contract.is_some()
+                                || material.shader != "vertexlitgeneric"
+                                || needs_material_warning(&material))))
                 {
                     return Err(format!(
-                        "Exact emission prop material {path} requires checked original plain opaque VertexLitGeneric/Patch"
+                        "Exact emission prop material {path} requires checked original plain opaque VertexLitGeneric/Patch or supported static binary-cutout material: {}",
+                        opaque_contract
+                            .as_deref()
+                            .unwrap_or("unsupported effective material")
                     ));
                 }
                 return Ok(Some((path, material)));
@@ -926,6 +940,15 @@ pub(super) fn build(
                                     },
                                 )?
                             } else {
+                                if exact
+                                    && loaded
+                                        .as_ref()
+                                        .is_some_and(|(_, material)| material.alpha_test())
+                                {
+                                    return Err(format!(
+                                        "{path}: exact binary-cutout shadows require the original MDL CAST_TEXTURE_SHADOWS request"
+                                    ));
+                                }
                                 match loaded {
                                 Some((_, material)) if !needs_material_warning(&material) => {}
                                 Some(_) => report.diagnostics.push(Diagnostic::warning(

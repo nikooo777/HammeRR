@@ -19,6 +19,7 @@ mod normals;
 pub mod preview;
 mod probes;
 mod progress;
+mod texture_regions;
 pub use progress::{
     LightingChannel, LightingContributor, LightingInstanceSource, LightingPhase,
     LightingPhaseProgress, LightingProgress, MAX_LIGHTING_CONTRIBUTORS,

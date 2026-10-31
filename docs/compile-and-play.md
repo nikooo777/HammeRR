@@ -153,9 +153,9 @@ The whole emitting BSP face excludes its own emission; receiver grids stay
 unchanged. Other receivers retain all owning-hull shadows. Converted binary64
 kernel vertices must stay on each actual source triangle plane, with all
 converted coverage inside the exact visible region.
-Shadow casters use certified closed convex opaque brush hulls, including oblique
-hulls, actual opaque terrain triangles and strictly admitted opaque static-prop
-meshes. Uncertified fans or projections, primitive overrides, displacement
+Shadow casters use certified closed convex opaque or binary-cutout brush hulls,
+including oblique hulls, and actual opaque or binary-cutout terrain and admitted
+static-prop triangles. Uncertified fans or projections, primitive overrides, displacement
 sources and failed required texture coverage remain unsupported.
 Unsupported sources, geometry or numeric bounds stop the build.
 The default-off **Native direct emission** World control adds a separately

@@ -5,26 +5,18 @@ use source_formats::gamefs::GameFs;
 use source_formats::vmt::Material;
 use source_formats::vtf::{ImageFormat, RgbaImage, Vtf};
 
+use super::super::texture_regions::{self, MAX_ABS_UV, MAX_RECTANGLE_VISITS, MAX_VISITED_TEXELS};
 use super::{Allocation, Budget};
 use crate::asset_sources::{BuildMaterialSources, CapturedBuildAsset};
 
 const MAX_ENCODED_BYTES: usize = 64 * 1024 * 1024 + 4096;
 const MAX_TEXTURE_EDGE: u32 = 4096;
-const MAX_IMAGE_RECTANGLES: usize = 65_536;
-const MAX_RECTANGLE_VISITS: usize = 1_048_576;
-const MAX_VISITED_TEXELS: usize = 8_388_608;
-const MAX_ABS_UV: f64 = 16_777_216.0;
 const INITIAL_CAPACITY: usize = 4;
 const CLAMP_S: u32 = 0x4;
 const CLAMP_T: u32 = 0x8;
 const DATA_FLAGS: u32 = 0x80 | 0x800 | 0x4000 | 0x8000 | 0x1_0000 | 0x800_0000;
 
-#[derive(Clone, Copy)]
-struct Rectangle {
-    x: [usize; 2],
-    y: [usize; 2],
-    rgb: [u8; 3],
-}
+type Rectangle = texture_regions::Rectangle<[u8; 3]>;
 
 pub(super) struct Texture {
     dimensions: [usize; 2],
@@ -169,50 +161,16 @@ fn rectangles(
     budget: &mut Budget<'_>,
     allocation: &mut Allocation,
 ) -> Result<Vec<Rectangle>, String> {
-    let width = image.width as usize;
-    let _rows = budget.reserve_bytes(width * 256)?;
-    let mut rectangles: Vec<Rectangle> = Vec::new();
-    let mut previous: BTreeMap<(usize, usize, [u8; 3]), usize> = BTreeMap::new();
-    for y in 0..image.height as usize {
-        let mut current = BTreeMap::new();
-        let mut x = 0;
-        while x < width {
-            budget.consume(1)?;
-            let begin = x;
-            let pixel = (y * width + x) * 4;
-            let rgb: [u8; 3] = image.pixels[pixel..pixel + 3].try_into().unwrap();
-            x += 1;
-            while x < width {
-                budget.consume(1)?;
-                let pixel = (y * width + x) * 4;
-                if image.pixels[pixel..pixel + 3] != rgb {
-                    break;
-                }
-                x += 1;
-            }
-            let key = (begin, x, rgb);
-            let index = if let Some(&index) = previous.get(&key) {
-                rectangles[index].y[1] = y + 1;
-                index
-            } else {
-                if rectangles.len() == MAX_IMAGE_RECTANGLES {
-                    return Err(
-                        "Texture emission exceeds 65536 constant-color image rectangles".into(),
-                    );
-                }
-                grow(&mut rectangles, budget, allocation)?;
-                rectangles.push(Rectangle {
-                    x: [begin, x],
-                    y: [y, y + 1],
-                    rgb,
-                });
-                rectangles.len() - 1
-            };
-            current.insert(key, index);
-        }
-        previous = current;
-    }
-    Ok(rectangles)
+    let dimensions = [image.width as usize, image.height as usize];
+    texture_regions::rectangles(
+        dimensions,
+        |x, y| {
+            let pixel = (y * dimensions[0] + x) * 4;
+            image.pixels[pixel..pixel + 3].try_into().unwrap()
+        },
+        budget,
+        allocation,
+    )
 }
 
 fn grow<T>(
@@ -339,14 +297,6 @@ fn clip(
     Ok(())
 }
 
-fn axis_overlap(bounds: [f64; 2], region: [f64; 2]) -> bool {
-    if bounds[0] == bounds[1] {
-        bounds[0] >= region[0] && bounds[0] < region[1]
-    } else {
-        bounds[1] > region[0] && bounds[0] < region[1]
-    }
-}
-
 fn world_area(points: [DVec3; 3]) -> f64 {
     (points[1] - points[0])
         .cross(points[2] - points[0])
@@ -376,7 +326,7 @@ pub(super) fn partition(
     allocation.grow(budget, 256)?;
     if let [rectangle] = texture.rectangles.as_slice() {
         counters.triangles(triangles.len())?;
-        return Ok(BTreeMap::from([(rectangle.rgb, triangles)]));
+        return Ok(BTreeMap::from([(rectangle.value, triangles)]));
     }
     let _clipping = budget.reserve_bytes(2 * 24 * size_of::<Vertex>())?;
     let mut polygon = Vec::with_capacity(24);
@@ -461,7 +411,11 @@ pub(super) fn partition(
                             extent.map(|value| (value as i64 + offset) as f64)
                         }
                     });
-                    if !axis_overlap(bounds[0], region[0]) || !axis_overlap(bounds[1], region[1]) {
+                    if !texture_regions::axis_overlap(bounds[0], region[0], false, |a, b| {
+                        a.total_cmp(&b)
+                    }) || !texture_regions::axis_overlap(bounds[1], region[1], false, |a, b| {
+                        a.total_cmp(&b)
+                    }) {
                         continue;
                     }
                     polygon.clear();
@@ -496,7 +450,7 @@ pub(super) fn partition(
                             );
                         }
                         counters.triangles(1)?;
-                        let group = match fragments.entry(rectangle.rgb) {
+                        let group = match fragments.entry(rectangle.value) {
                             Entry::Occupied(entry) => entry.into_mut(),
                             Entry::Vacant(entry) => {
                                 allocation.grow(budget, 256)?;

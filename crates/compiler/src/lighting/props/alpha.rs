@@ -109,7 +109,39 @@ pub(in crate::lighting) struct Material {
     fractional: bool,
 }
 
+pub(in crate::lighting) struct BinaryMask<'a> {
+    pub dimensions: [usize; 2],
+    pub clamp: [bool; 2],
+    pub transform: [[f64; 3]; 2],
+    material: &'a Material,
+}
+
+impl BinaryMask<'_> {
+    pub(in crate::lighting) fn opaque(&self, x: usize, y: usize) -> bool {
+        self.material
+            .opaque(self.material.texture.alpha[y * self.dimensions[0] + x])
+    }
+}
+
 impl Material {
+    fn opaque(&self, alpha: u8) -> bool {
+        f64::from(alpha) / 255.0 >= self.reference
+    }
+
+    pub(in crate::lighting) fn binary_mask(&self) -> Result<BinaryMask<'_>, String> {
+        if self.fractional {
+            return Err(
+                "Exact emission visibility does not support fractional or colored transmission"
+                    .into(),
+            );
+        }
+        Ok(BinaryMask {
+            dimensions: self.texture.dimensions,
+            clamp: self.texture.clamp,
+            transform: self.transform,
+            material: self,
+        })
+    }
     pub(in crate::lighting) fn dimensions(&self) -> [usize; 2] {
         self.texture.dimensions
     }
@@ -148,7 +180,7 @@ impl Material {
                 Colored::Disabled => Coverage::scalar(alpha),
                 Colored::Unavailable(problem) => return Err(problem.message()),
             }
-        } else if f64::from(alpha) / 255.0 >= self.reference {
+        } else if self.opaque(alpha) {
             Coverage::OPAQUE
         } else {
             Coverage::CLEAR

@@ -103,6 +103,19 @@ Eligible **Shadows → Yes** child models also supply reflected light from their
 
 Texture opacity affects only lit receivers in the same model when the global Shadows field is absent or zero. Only an eligible **Shadows → Yes** request extends casting into world or other-model lighting. Malformed Shadows values reject. The parent reference preview remains unavailable.
 
+## Exact emission shadows
+
+1. Set **Emission file** in **World settings…**.
+2. Enable **Exact emission visibility**, then click **Apply properties**.
+3. Keep **Brush texture shadows** enabled in **Build settings…** and compile in **Direct LDR** or **Direct LDR + HDR**.
+
+Supported binary masks cast exact finite-area emission shadows from world,
+detail, terrain and eligible stationary brush models. Brush hull entry/exit,
+coincident boundary maximum and current model scopes remain in effect. Terrain
+uses its actual triangles; cutouts do not create collision holes. Fractional and
+colored transmission remain unsupported in exact mode. See [material emission](material-emission.md#exact-brush-shadows)
+for exact geometry and resource limits.
+
 ## Limits
 
 - World and `func_detail` brush and terrain surfaces are supported. Terrain sheets do not seal the map or become runtime brush-model terrain.

@@ -126,13 +126,13 @@ the policy.
 
 ## Exact brush, terrain and prop shadows
 
-Resolve opaque brush, terrain and static prop shadows across the source area.
+Resolve opaque and binary-cutout brush, terrain and static prop shadows across the source area.
 
 1. Open **World settings…** and set **Emission file**.
 2. Enable **Exact emission visibility**, then click **Apply properties**.
 3. Compile with **Direct LDR** or **Direct LDR + HDR**.
 4. Open **Build details…**. **Emission visibility policy** should read
-   **Exact opaque hulls and mesh triangles**. Check
+   **Exact opaque and cutout hulls and mesh triangles**. Check
    **Emission conversion bounds (dimensionless)**.
 
 Exact mode supports uniquely owned world/detail and eligible stationary
@@ -170,15 +170,39 @@ including invisible boundaries.
 Eligible stationary brush models retain their existing global or same-model
 shadow scope.
 
-Terrain with a supported opaque material casts from its actual triangles.
-Terrain materials require opaque **LightmappedGeneric**, **UnlitGeneric**, or a
-supported **Patch** chain. Terrain blend shaders are unsupported in exact mode.
-Collision settings do not disable terrain shadows.
+Terrain with a supported opaque or binary-cutout material casts from its actual
+native triangles. Opaque materials require **LightmappedGeneric**,
+**UnlitGeneric**, or a supported **Patch** chain. Cutouts require the supported
+static **LightmappedGeneric** form and **Brush texture shadows**.
+Terrain blend shaders are unsupported. Masked regions affect light transport;
+they do not create physical holes. Collision settings do not disable shadows.
 
 Eligible static props cast from actual triangles in body 0 and LOD 0, with
-the selected skin at the compiled pose. Materials require plain opaque
-**VertexLitGeneric** or supported **Patch** chains. Supported referenced props
-use their assembled pose. See [prop shadow controls](static-props.md#cast-exact-emission-shadows).
+the selected skin at the compiled pose. Opaque materials require plain
+**VertexLitGeneric** or supported **Patch** chains. Binary cutouts use supported
+static **VertexLitGeneric** or **UnlitGeneric** materials and Patch chains;
+the original model must request texture shadows with `$casttextureshadows`.
+Supported referenced props use their assembled pose. See [prop shadow controls](static-props.md#cast-exact-emission-shadows).
+
+To use cutout brush or terrain casters:
+
+1. Apply a supported static alpha-test material described in [Brush texture shadows](brush-texture-shadows.md).
+2. Open **Build settings…** and enable **Brush texture shadows**.
+3. Keep **Exact emission visibility** enabled in **World settings…**, then compile.
+
+The compiler borrows the original loaded alpha texture and cutoff. Masks use
+nearest mip0 texels, the checked material transform and VTF clamp/repeat flags.
+It resolves texel regions on the actual provider plane with half-open texel
+ownership, including constant and rank-deficient UVs. No clipped caster geometry
+is rounded to a substitute mesh. Settings are never enabled automatically.
+Brush cutouts keep their full original hull: entry and exit events contribute,
+exactly coincident boundary faces use maximum coverage, and only strict segment
+interior events block. Mask enumeration uses certified bounds derived from the
+final hull halfspaces. Ordinary sampled tracing keeps its separate near-tie
+bands. Eligible brush models keep their global or same-model scope.
+Fractional and colored transmission, animation and general shader effects remain
+unsupported in exact mode; disable **Exact emission visibility** to use supported
+sampled fractional or colored shadows.
 
 Terrain and prop triangles block from both sides, including their edges.
 Only contacts between the shadow segment endpoints block light. Exact mode
@@ -207,7 +231,7 @@ Disable **Exact emission visibility** to use the original sampled bake.
 Exact mode rejects uncertified native fans or projections, primitive overrides,
 displacement sources, failed required texture coverage, unrepresentable
 on-plane fragment vertices, moving/parented/unrequested brush-model emitting
-sources, sky/alpha/unknown materials, unsupported prop models, zero-area mesh
+sources, sky/unknown materials, fractional or colored transmission, unsupported prop models, zero-area mesh
 triangles and uncertified hulls. Checked arithmetic, fragment and conditioning
 limits also apply.
 **Fullbright** checks the setting and declarations without exact shadow admission.

@@ -814,15 +814,26 @@ and source-incidence cosine upper bounds refine the whole accumulated bound.
 The Jacobian replaces the coarse L1 surface scale. The cosine uses the unbiased
 kernel point and a distance lower bound over the whole original source triangle.
 Accepted coarse bounds and error caps stay unchanged.
-Every applicable opaque brush hull must be certified closed, bounded and convex
+Every applicable opaque or binary-cutout brush hull must be certified closed, bounded and convex
 from its final planes, including oblique casters. Original materials and
 existing global/model shadow scopes still apply.
 
 Terrain and eligible static props cast from their actual two-sided triangles,
 including edges. Props use body 0, LOD 0, selected skin and the compiled
-pose, including supported assembled placements. Prop materials require plain
-opaque `VertexLitGeneric` or supported `Patch` chains. Exact mode checks the
-original model and material inputs before gathering light.
+pose, including supported assembled placements. Opaque prop materials require
+plain `VertexLitGeneric` or supported `Patch` chains. Binary masks also admit
+the current static `VertexLitGeneric`/`UnlitGeneric` alpha sampler and supported
+Patch chains, with checked transform, cutoff and nearest-mip0 clamp/repeat.
+The original MDL `CAST_TEXTURE_SHADOWS` flag is required. Brush and terrain
+cutouts require `brush_texture_shadows:true` through `set_compile_settings`;
+no prerequisite is enabled automatically. Exact mode checks original model and
+material inputs before gathering light.
+
+`cutout_shadow_contract` reports the binary-mask scope. Masks are exact affine
+UV regions on original provider planes, including half-open constant/rank-deficient
+texel ownership. Brush masks retain actual hull entry/exit events, maximum at
+exactly coincident boundary faces and strict endpoints. Sampled near-tie bands
+remain separate. Terrain masks do not change collision.
 
 Only contacts between the shadow segment endpoints block light. Collision
 settings do not disable terrain shadows. A prop's `disableshadows:1` removes
@@ -832,7 +843,7 @@ sources remain unavailable.
 
 Uncertified native fans or projections, primitive overrides, displacement
 sources, failed required texture coverage, unrepresentable on-plane fragment vertices,
-moving/parented/unrequested brush-model emitting sources, sky, alpha, unknown or
+moving/parented/unrequested brush-model emitting sources, sky, fractional/colored transmission, unknown or
 missing materials, unsupported prop models, zero-area mesh triangles,
 uncertified hulls and exhausted numeric/resource bounds reject without sampled
 fallback or replacement of the previous BSP. Fullbright validates the policy,

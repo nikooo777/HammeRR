@@ -121,6 +121,11 @@ fn geometry(entity: &Entity, control: &Control) -> Result<(), String> {
 }
 
 fn opaque_raw(path: &str, bytes: &[u8]) -> io::Result<()> {
+    static_material_raw(path, bytes, &["lightmappedgeneric", "unlitgeneric"])?;
+    Ok(())
+}
+
+pub(crate) fn static_material_raw(path: &str, bytes: &[u8], shaders: &[&str]) -> io::Result<bool> {
     let invalid =
         |message: &str| io::Error::new(io::ErrorKind::InvalidData, format!("{path}: {message}"));
     let text = std::str::from_utf8(bytes).map_err(|_| invalid("material must be UTF-8"))?;
@@ -135,13 +140,11 @@ fn opaque_raw(path: &str, bytes: &[u8]) -> io::Result<()> {
         .ok_or_else(|| invalid("requires a shader block"))?;
     let patch = root.key.eq_ignore_ascii_case("patch");
     if !patch
-        && !["lightmappedgeneric", "unlitgeneric"]
+        && !shaders
             .iter()
             .any(|shader| root.key.eq_ignore_ascii_case(shader))
     {
-        return Err(invalid(
-            "requires LightmappedGeneric, UnlitGeneric or Patch",
-        ));
+        return Err(invalid("requires an admitted static shader or Patch"));
     }
     fn scalars(nodes: &[keyvalues::Node]) -> bool {
         let mut seen = BTreeSet::new();
@@ -188,7 +191,7 @@ fn opaque_raw(path: &str, bytes: &[u8]) -> io::Result<()> {
     {
         return Err(invalid("raw and resolved material parsers disagree"));
     }
-    Ok(())
+    Ok(!patch)
 }
 
 pub(crate) fn validate_material(

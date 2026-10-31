@@ -52,6 +52,20 @@ pub(super) struct TerrainContact {
 }
 
 impl TerrainTriangle {
+    pub(super) fn exact_alpha(&self) -> Option<&Face> {
+        self.topology.patches[usize::from(self.patch)]
+            .alpha
+            .as_ref()
+    }
+
+    pub(super) fn texture_positions(&self) -> [DVec3; 3] {
+        std::array::from_fn(|vertex| {
+            let mut weights = [0.0; 3];
+            weights[vertex] = 1.0;
+            self.texture_point(weights)
+        })
+    }
+
     fn contact_matches(&self, contact: &TerrainContact) -> bool {
         if !Arc::ptr_eq(&self.topology, &contact.topology) {
             return false;

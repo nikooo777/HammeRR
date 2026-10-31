@@ -24,6 +24,11 @@ these shadows. If a source or its lookup changes, the old build cannot replace
 the BSP or start through **Play built map**. This check also applies when vertex
 lighting and asset packing are off. It covers the sources used by the build.
 
+For finite-area material emission, enable [**Exact emission visibility**](material-emission.md#exact-brush-shadows)
+to resolve supported binary masks on the actual mesh triangles. The original
+model texture-shadow request remains required; fractional and colored transport
+remain limited to the ordinary sampled path.
+
 ## Limits
 
 - Static LOD0 geometry only; runtime animation is not baked.

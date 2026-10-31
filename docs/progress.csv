@@ -1,0 +1,108 @@
+id,group,implemented_percent
+V01,Orthographic editing,100
+V02,Coordinated views,35
+V03,Configurable grid and snapping,90
+V04,Spatial guides,65
+V05,View modes,100
+V06,Camera bookmarks and framing,100
+V07,Area and paint selection,100
+V08,Selection rules and overlapping hits,85
+V09,Working-region visibility,40
+V10,Reference images (++),0
+G01,Interactive brush creation,100
+G02,Additional brush primitives,100
+G03,Full numeric transforms,80
+G04,Transform handles (++),100
+G05,Transform pivots (++),75
+G06,"Vertex, edge and face geometry editing",80
+G07,Plane clipping,80
+G08,Hollowing and carving,80
+G09,Polygon-based brush drawing (++),100
+G10,Convex brush merging (++),100
+G11,Surface placement and alignment (++),100
+G12,Precision-preserving geometry (++),65
+O01,Grouping and nested selection,100
+O02,Visibility sets / layers,65
+O03,"Hide, isolate and restore",100
+O04,Search and entity reporting,100
+O05,Locate IDs and inspect map statistics,100
+O06,Cut/copy/paste,60
+O07,Repeated placement,65
+O08,Partial-map build regions,60
+O09,Selection filters and bulk workflows,65
+T01,Face selection and material painting,100
+T02,UV parameter editing,100
+T03,"Fit, justify and seam alignment",100
+T04,World/face alignment and grouped faces,100
+T05,Texture-lock modes,80
+T06,Lightmap scale and smoothing,100
+T07,Material replacement,100
+T08,Material exploration,85
+T09,Direct UV vectors and skew (++),100
+T10,Atlas-aware texturing (++),75
+T11,Decal and overlay authoring,60
+E01,World properties,100
+E02,Multi-entity property editing,100
+E03,Input/output connection authoring,100
+E04,Reference inspection and safe renaming,100
+E05,General FGD visual helpers,60
+E06,Reset properties to defaults (++),100
+E07,Contextual entity placement,100
+E08,Path and linked-entity authoring,50
+E09,Extended FGD compatibility (++),60
+E10,Advanced color workflows (++),85
+E11,AI-first entity graph operations,60
+E12,Point-entity gallery,0
+R01,Prefab library,75
+R02,Referenced map instances,60
+R03,Create and edit instances in context (++),25
+R04,Instance collapse with shared preparation rules,70
+D01,Create and remove displacements,100
+D02,Terrain sculpting,100
+D03,Sew and subdivide,70
+D04,Material blend painting,100
+D05,Collision and triangle tags,55
+D06,Terrain selection and masks,100
+A01,Source model support and selection,65
+A02,Sound exploration,100
+A03,Particle exploration (++),100
+P01,Live lighting preview (++),55
+P02,Source material fidelity,25
+P03,2D sky rendering (++),100
+P04,3D skybox preview (++),25
+P05,Fog preview (++),25
+P06,Rope preview (++),45
+P07,Particle preview (++),0
+P08,Model/entity appearance preview (++),60
+P09,Helper visibility and selection presentation,60
+P10,Lighting diagnostics (++),80
+P11,Reload changed assets (++),40
+P12,Physics-assisted arrangement (++),0
+P13,Editor annotations and spatial design context (++),85
+P14,Color-correction preview (++),100
+Q01,Whole-map problem checking,65
+Q02,"Inspect, focus and fix issues",100
+Q03,Pointfile controls,100
+Q04,Compiler-owned visibility inspection,100
+Q05,External map comparison,100
+C01,Visibility compilation,75
+C02,Lighting compilation,75
+C03,Production collision,75
+C04,Static props,65
+C05,Displacements,75
+C06,Water and related spatial data,60
+C07,Overlay compilation,65
+C08,Cubemaps and lighting origins,70
+C09,Visibility controls and areas,70
+C10,Brush entity origins and behavior,60
+C11,Detail prop generation,75
+C12,Instance expansion,60
+C13,Build recipes and quality settings,70
+C14,Build progress and cancellation,100
+W01,"Autosave, backup and recovery",100
+W02,Multiple open documents,55
+W03,Persistent preferences,70
+W04,Configurable shortcuts (++),55
+W05,Game/content profiles,20
+W06,Recent files and project context,55
+W07,History inspection,100

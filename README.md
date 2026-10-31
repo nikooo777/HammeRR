@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Capability groups: 42 of 107 closed (39.3%); 61 partial, 4 missing](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 75.1% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 

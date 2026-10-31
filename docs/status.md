@@ -7,10 +7,11 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 
 ## Group completion
 
-![Capability groups: 42 of 107 closed (39.3%); 61 partial, 4 missing](images/roadmap-progress.svg)
+![Estimated implementation: 75.1% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
-The percentage is closed groups divided by all groups. Each group has equal weight.
-Striped groups are partially implemented.
+The bar averages the [per-group implementation estimates](progress.csv).
+Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
+Scores reflect supported workflows and open gaps. Amber counts only the implemented part of partial groups; grey is unfinished scope.
 
 ## Editor
 

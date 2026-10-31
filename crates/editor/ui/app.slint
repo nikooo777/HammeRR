@@ -2071,6 +2071,7 @@ component TransformVector inherits HorizontalLayout {
 
 export component AppWindow inherits Window {
     title: (root.background-display ? "HammeRR background: " : "") + root.map-title + " - HammeRR";
+    icon: @image-url("../../../assets/branding/hammerr-icon-impact.png");
     in property <bool> background-display;
     preferred-width: 1600px;
     preferred-height: 960px;

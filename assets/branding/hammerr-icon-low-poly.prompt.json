@@ -1,0 +1,7 @@
+{
+  "asset": "hammerr-icon-low-poly.png",
+  "generation_mode": "built-in imagegen",
+  "reference": "hammerr-icon.png",
+  "transparent_background": true,
+  "prompt": "Use case: style-transfer / logo-brand.\nEdit target: the supplied HammeRR desktop app icon.\nMake this same icon distinctly more low-poly: sculpt the hammer from a small number of bold, angular polygon planes with visible triangular facets and flat-shaded color changes. Make it feel like beautifully designed low-poly 3D game geometry, with clean matte surfaces and crisp geometric intersections. Simplify the bevels, collars and handle into chunky polygonal forms. Remove brushed-metal grain, realistic surface texture, glossy reflections and fine mechanical detailing. Use broad, solid-color faces with intentionally sharp light-to-dark transitions, preserving the volume and easily recognizable hammer silhouette.\nKeep the existing diagonal composition, centered hammer, dark navy rounded-square tile, subtle 3D construction grid and cube background, and the established vivid cyan / electric blue / magenta / orange palette. Keep it futuristic and colorful. Retain a little clean luminous edge emphasis, but reduce bloom so the polygon shapes read clearly at small icon sizes. Do not add a literal polygon mesh overlay or triangulation lines: the shapes themselves should be low-poly.\nPreserve the original icon's proportions, orientation, safe padding, square aspect ratio, and genuine alpha transparency outside the rounded tile. One finished icon, no text, no new objects, no watermark."
+}

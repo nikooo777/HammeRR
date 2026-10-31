@@ -1,0 +1,54 @@
+HammeRR GitHub Actions signing credentials
+
+Repository: https://github.com/nikooo777/HammeRR
+Secrets: https://github.com/nikooo777/HammeRR/settings/secrets/actions
+
+Two Actions repository secrets are configured:
+WINDOWS_SIGNING_PFX_BASE64 contains the password-protected PFX encoded as Base64.
+WINDOWS_SIGNING_PFX_PASSWORD contains its cryptographically random password.
+GitHub encrypts the secret values; Base64 itself is only a transport encoding.
+
+Map these secrets to environment variables in the Windows signing step:
+
+env:
+  WINDOWS_SIGNING_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+  WINDOWS_SIGNING_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PFX_PASSWORD }}
+
+Build the executables first. In the signing step, decode the PFX into the
+runner's temporary directory, import it into Cert:\CurrentUser\My using its
+password, and use SignTool with the imported certificate's thumbprint.
+Use SHA256 for the file digest and the RFC 3161 timestamp digest.
+The timestamp service used for the local sharing build is:
+http://timestamp.digicert.com
+
+Use the secrets only in the trusted Windows signing step. Clean up the temporary
+PFX and imported private key when signing finishes. Export only the public CER
+into the sharing bundle, then generate checksums and create the ZIP.
+
+CI certificate identity
+Subject: CN=HammeRR
+Thumbprint (SHA1): 4A89EF43BA09AFC52000D6B8BF1F1587F89B9D31
+Certificate SHA256: 23C47055385698F2821BFBE163AF0F6EE4006C6F30FDDAAB5EFC3FCF0CFB3D9B
+Expires: 31 October 2029, 19:46 CET
+Local certificate store: Cert:\CurrentUser\My
+Local friendly name: HammeRR GitHub Actions code signing
+Public certificate: dist\certificates\HammeRR-GitHub-Actions.cer
+
+This is a dedicated CI identity. The earlier locally shared ZIP uses a separate
+non-exportable certificate, BC1132F95D429695DC3D808D1CE43FD0F223054B.
+Future Actions bundles must include the public certificate exported from their
+actual CI signing certificate.
+
+The PFX/password pair was validated by importing it into an ephemeral in-memory
+certificate and checking a signing operation before uploading through gh stdin.
+No PFX or password file was created. The CI certificate is also retained in the
+developer's Windows certificate store for future re-export or rotation.
+
+No Actions workflow currently exists in the repository. These credentials are
+ready for a future Windows workflow; the secrets alone do not run a build.
+Self-signing does not establish public publisher trust or remove SmartScreen
+warnings.
+
+References:
+https://cli.github.com/manual/gh_secret_set
+https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets

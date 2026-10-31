@@ -1,6 +1,6 @@
 # HammeRR
 
-**An AI-first Counter-Strike: Source map editor and compiler for Linux.**
+**An AI-first Counter-Strike: Source map editor and compiler for Linux and Windows.**
 
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
@@ -13,7 +13,7 @@ Humans and AI agents share the same editing operations, previews and Undo histor
 
 ## Quick start
 
-Requires Linux, Rust 1.92+, a C++20 compiler, Vulkan and Counter-Strike: Source installed through Steam.
+Requires Rust 1.92+, a C++20 toolchain, a compatible GPU driver and Counter-Strike: Source installed through Steam.
 
 ```sh
 cargo build --release -j8 -p editor -p editor-core -p compiler -p native-runtime
@@ -23,6 +23,14 @@ cargo build --release -j8 -p editor -p editor-core -p compiler -p native-runtime
 Omit the map path for a new map. Game content is found through Steam.
 See [Getting started](docs/getting-started.md) for custom content and launch options.
 The compiler is experimental; see [Status](docs/status.md).
+
+On Windows, install Rust's MSVC toolchain and Visual Studio C++ Build Tools with a Windows SDK, then run:
+
+```powershell
+.\run-windows.ps1
+```
+
+The script builds the editor and helpers, then starts the editor. Pass a map filename to open it, or `-Release` for an optimized build. You can also launch `target\debug\editor.exe` directly after building. Windows support includes editing, VMF saving, asset discovery, rendering, BSP compilation without engine physics, and game launching. Native reflection capture and engine physics remain Linux-only; see [Getting started](docs/getting-started.md#windows).
 
 ## MCP
 

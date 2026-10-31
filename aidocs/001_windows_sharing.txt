@@ -1,0 +1,39 @@
+HammeRR 0.1.0 - Windows x64 preview
+
+Extract the complete ZIP, then run HammeRR.exe from the extracted folder.
+Keep the helper executables and vcruntime140.dll beside HammeRR.exe.
+Rust, Cargo and Visual Studio are not needed to run this bundle.
+
+Requirements
+Windows 10 or 11, 64-bit, with a current Direct3D 12 or Vulkan graphics driver.
+Counter-Strike: Source must be installed through Steam for game assets and play.
+Game assets are supplied by the recipient's Steam installation.
+FFmpeg and ffplay on PATH are optional dependencies for editor sound previews.
+
+Signing
+The four HammeRR executables use SHA-256 Authenticode signatures and RFC 3161
+timestamps. The publisher is CN=HammeRR, using a self-signed development
+certificate. SIGNING-INFO.json records the certificate fingerprint and expiry.
+HammeRR-selfsigned.cer is the public certificate for inspecting this identity.
+Only the public certificate is included; private signing keys are excluded.
+vcruntime140.dll retains Microsoft's original signature.
+
+Self-signing does not establish public publisher trust or remove SmartScreen
+warnings. Windows may report an untrusted certificate root. This package does
+not install its certificate or alter Windows trust or security settings.
+
+Verify file hashes against SHA256SUMS.txt after extraction. Obtain the ZIP's
+SHA-256 checksum from the sender through a channel you already trust.
+
+Windows preview limits
+Engine physics and native reflection capture require Linux.
+Leave physics at No physics bodies and generated reflections disabled.
+Desktop HTTP MCP is available at http://127.0.0.1:7377/mcp.
+Headless stdio MCP and Hyprland silent background-window display are unavailable.
+
+Rebuilding produces new unsigned executables. Sign the final distribution
+copies again after each build, retaining the same local signing identity.
+
+Project: https://github.com/nikooo777/HammeRR
+Windows signing guidance:
+https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation

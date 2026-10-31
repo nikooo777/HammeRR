@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 
+#[cfg(windows)]
+pub mod windows;
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DirectoryBinding {
     requested: PathBuf,
@@ -14,6 +17,8 @@ pub struct DirectoryBinding {
     reload: &'static str,
     #[cfg(unix)]
     identity: (u64, u64),
+    #[cfg(windows)]
+    identity: FileIdentity,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -23,6 +28,13 @@ pub struct FileIdentity {
 }
 
 impl FileIdentity {
+    pub fn from_file(file: &File) -> io::Result<Self> {
+        #[cfg(windows)]
+        return windows::file_identity(file);
+        #[cfg(not(windows))]
+        Ok(Self::capture(&file.metadata()?))
+    }
+
     #[cfg(unix)]
     fn capture(metadata: &fs::Metadata) -> Self {
         use std::os::unix::fs::MetadataExt;
@@ -97,7 +109,7 @@ impl Directory {
         Ok(directory)
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     fn capture(_path: &Path) -> io::Result<Self> {
         Err(io::Error::other("Bound file publication requires Linux"))
     }
@@ -105,6 +117,14 @@ impl Directory {
     fn verify(&self) -> io::Result<()> {
         self.binding.verify().map_err(io::Error::other)?;
         if let Some(opened) = &self.opened {
+            #[cfg(windows)]
+            if FileIdentity::from_file(&windows::open_directory(&self.requested)?)?
+                != FileIdentity::from_file(opened)?
+            {
+                return Err(io::Error::other(
+                    "File destination directory changed identity",
+                ));
+            }
             let current = fs::metadata(&self.requested)?;
             if !current.is_dir()
                 || FileIdentity::capture(&current) != FileIdentity::capture(&opened.metadata()?)
@@ -151,7 +171,7 @@ impl Directory {
         Ok(bound)
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     fn bind(&self) -> io::Result<Self> {
         Err(io::Error::other("Bound file publication requires Linux"))
     }
@@ -174,8 +194,13 @@ impl Directory {
             ),
         };
         Ok(FileSlot {
-            parent: FileIdentity::capture(&parent.metadata()?),
-            leaf: suffix.join(leaf),
+            parent: FileIdentity::from_file(parent)?,
+            leaf: {
+                let leaf = suffix.join(leaf);
+                #[cfg(windows)]
+                let leaf = PathBuf::from(leaf.as_os_str().to_ascii_lowercase());
+                leaf
+            },
         })
     }
 }
@@ -190,6 +215,12 @@ struct EntryStamp {
 }
 
 impl EntryStamp {
+    fn from_file(file: &File) -> io::Result<Self> {
+        let mut stamp = Self::capture(&file.metadata()?);
+        stamp.identity = FileIdentity::from_file(file)?;
+        Ok(stamp)
+    }
+
     fn capture(metadata: &fs::Metadata) -> Self {
         Self {
             identity: FileIdentity::capture(metadata),
@@ -242,7 +273,7 @@ impl Observation {
         Ok(Some(Self { file, stamp }))
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     fn capture(
         _directory: &Directory,
         _leaf: &std::ffi::OsStr,
@@ -390,7 +421,7 @@ impl BoundDestination {
             return Ok(None);
         };
         let mut bytes = Vec::new();
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             use std::io::Read;
             let reader = Observation::capture(&self.directory, &self.leaf, true)?
@@ -426,13 +457,13 @@ impl BoundDestination {
                 }
                 bytes.extend_from_slice(&buffer[..count]);
             }
-            if EntryStamp::capture(&reader.file.metadata()?) != existing.stamp
+            if EntryStamp::from_file(&reader.file)? != existing.stamp
                 || bytes.len() as u64 != existing.stamp.length
             {
                 return Err(io::Error::other("File destination changed while reading"));
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         return Err(io::Error::other("Bound file reads require Linux"));
         self.verify()?;
         Ok(Some(bytes))
@@ -535,7 +566,7 @@ impl StagedFile {
         Ok(stage)
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     fn new(_destination: BoundDestination) -> io::Result<Self> {
         Err(io::Error::other("Bound file staging requires Linux"))
     }
@@ -552,7 +583,7 @@ impl StagedFile {
         self.file().sync_all()
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     pub fn retarget_output(&mut self, destination: &BoundDestination) -> io::Result<()> {
         if self.destination.policy != Policy::ReplaceEntry
             || destination.policy != Policy::ReplaceEntry
@@ -563,9 +594,8 @@ impl StagedFile {
         }
         self.destination.verify()?;
         let destination = destination.bind_parent()?;
-        let current_parent =
-            FileIdentity::capture(&self.destination.directory.handle()?.metadata()?);
-        let next_parent = FileIdentity::capture(&destination.directory.handle()?.metadata()?);
+        let current_parent = FileIdentity::from_file(self.destination.directory.handle()?)?;
+        let next_parent = FileIdentity::from_file(destination.directory.handle()?)?;
         if current_parent != next_parent || destination.leaf == self.basename {
             return Err(io::Error::other(
                 "Output staging destination must remain in its physical parent",
@@ -580,7 +610,7 @@ impl StagedFile {
         Ok(())
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     pub fn retarget_output(&mut self, _destination: &BoundDestination) -> io::Result<()> {
         Err(io::Error::other("Bound output retargeting requires Linux"))
     }
@@ -603,7 +633,7 @@ impl StagedFile {
         self.commit_with(|| {}, || {})
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     fn commit_with(
         mut self,
         after_verify: impl FnOnce(),
@@ -612,7 +642,7 @@ impl StagedFile {
         self.sync_all()?;
         self.destination.verify()?;
         let file = Arc::new(self.file().try_clone()?);
-        let stamp = EntryStamp::capture(&file.metadata()?);
+        let stamp = EntryStamp::from_file(&file)?;
         let destination = self.destination.published(Observation { file, stamp });
         after_verify();
         if !self.owned()? {
@@ -620,12 +650,15 @@ impl StagedFile {
                 "File staging name was replaced; unrelated entry preserved",
             ));
         }
+        #[cfg(target_os = "linux")]
         rustix::fs::renameat(
             self.destination.directory.handle()?,
             &self.basename,
             self.destination.directory.handle()?,
             &self.destination.leaf,
         )?;
+        #[cfg(windows)]
+        fs::rename(self.temporary.path(), &self.destination.physical)?;
         self.committed = true;
         after_rename();
         let warning = destination.verify().err().map(|error| {
@@ -639,7 +672,7 @@ impl StagedFile {
         })
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     fn commit_with(
         self,
         _after_verify: impl FnOnce(),
@@ -667,6 +700,10 @@ impl Drop for StagedFile {
         {
             let _ = rustix::fs::unlinkat(parent, &self.basename, rustix::fs::AtFlags::empty());
         }
+        #[cfg(windows)]
+        if !self.committed && matches!(self.owned(), Ok(true)) {
+            let _ = fs::remove_file(self.temporary.path());
+        }
     }
 }
 
@@ -688,7 +725,7 @@ impl DirectoryBinding {
     ) -> Result<Self, String> {
         let requested = std::path::absolute(directory).map_err(|error| error.to_string())?;
         let mut ancestor = requested.clone();
-        let metadata = loop {
+        let _metadata = loop {
             match fs::metadata(&ancestor) {
                 Ok(metadata) if metadata.is_dir() => break metadata,
                 Ok(_) => return Err(format!("{label} directory must be a directory")),
@@ -701,6 +738,11 @@ impl DirectoryBinding {
             }
         };
         let physical = ancestor.canonicalize().map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        let identity = FileIdentity::from_file(
+            &windows::open_directory(&physical).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
         let binding = Self {
             requested,
             ancestor,
@@ -710,8 +752,10 @@ impl DirectoryBinding {
             #[cfg(unix)]
             identity: {
                 use std::os::unix::fs::MetadataExt;
-                (metadata.dev(), metadata.ino())
+                (_metadata.dev(), _metadata.ino())
             },
+            #[cfg(windows)]
+            identity,
         };
         binding.verify()?;
         Ok(binding)
@@ -730,6 +774,13 @@ impl DirectoryBinding {
             use std::os::unix::fs::MetadataExt;
             same && (metadata.dev(), metadata.ino()) == self.identity
         };
+        #[cfg(windows)]
+        let same = same
+            && FileIdentity::from_file(
+                &windows::open_directory(&self.ancestor).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?
+                == self.identity;
         if !same {
             return Err(format!("{} directory changed; {}", self.label, self.reload));
         }

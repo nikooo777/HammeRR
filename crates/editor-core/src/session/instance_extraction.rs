@@ -10,6 +10,10 @@ use super::worker::{Slot, Ticket};
 use super::*;
 
 mod admission;
+#[cfg(not(windows))]
+mod staging;
+#[cfg(windows)]
+#[path = "instance_extraction/staging_windows.rs"]
 mod staging;
 use staging::Stage;
 

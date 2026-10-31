@@ -267,6 +267,9 @@ impl AssetSourcePaths {
         let mut current = PathBuf::new();
         for component in std::path::absolute(path)?.components() {
             current.push(component);
+            if matches!(component, std::path::Component::Prefix(_)) {
+                continue;
+            }
             let Some(metadata) = existing(&current, fs::symlink_metadata(&current))? else {
                 if let Some(parent) = current.parent() {
                     self.lookup_directories.push(parent.to_path_buf());

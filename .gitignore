@@ -1,4 +1,7 @@
 /target
+/dist
 # Upstream Hammer++ build kept locally for reference only; not redistributable.
 /hammerplusplus_tf2_build8872/
 *.zip
+*.pfx
+*.p12

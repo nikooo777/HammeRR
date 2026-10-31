@@ -8,6 +8,7 @@ use source_formats::keyvalues::{self, Node};
 
 const CSS_GAMEINFO: &str = "steamapps/common/Counter-Strike Source/cstrike/gameinfo.txt";
 
+#[cfg(not(windows))]
 fn steam_roots() -> Vec<PathBuf> {
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
         return Vec::new();
@@ -21,6 +22,62 @@ fn steam_roots() -> Vec<PathBuf> {
     .map(|p| home.join(p))
     .filter(|p| p.is_dir())
     .collect()
+}
+
+#[cfg(windows)]
+fn steam_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    roots.extend(std::env::var_os("STEAM_DIR").map(PathBuf::from));
+    roots.extend(windows_steam_root());
+    for variable in ["ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"] {
+        roots.extend(std::env::var_os(variable).map(|path| PathBuf::from(path).join("Steam")));
+    }
+    roots.retain(|path| path.is_dir());
+    roots
+}
+
+#[cfg(windows)]
+fn windows_steam_root() -> Option<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
+
+    let key: Vec<u16> = "Software\\Valve\\Steam\0".encode_utf16().collect();
+    let value: Vec<u16> = "SteamPath\0".encode_utf16().collect();
+    let mut length = 0u32;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut length,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+    let mut buffer = vec![0u16; (length as usize).div_ceil(std::mem::size_of::<u16>())];
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            buffer.as_mut_ptr().cast(),
+            &mut length,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+    buffer.truncate(length as usize / std::mem::size_of::<u16>());
+    let path = buffer.strip_suffix(&[0]).unwrap_or(&buffer);
+    Some(PathBuf::from(OsString::from_wide(path)))
 }
 
 /// Every Steam library: each root plus the extra folders listed in its

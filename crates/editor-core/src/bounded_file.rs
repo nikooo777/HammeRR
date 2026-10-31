@@ -41,7 +41,12 @@ fn open_target(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn open_target(path: &Path) -> io::Result<File> {
+    source_formats::file_publication::windows::open_file(path)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn open_target(_path: &Path) -> io::Result<File> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,

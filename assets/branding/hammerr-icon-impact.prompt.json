@@ -1,0 +1,25 @@
+{
+  "asset": "hammerr-icon-impact.png",
+  "master": "hammerr-icon-impact-master.png",
+  "windows_icon": "hammerr-icon-impact.ico",
+  "png_dimensions": [
+    1024,
+    1024
+  ],
+  "ico_sizes": [
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    64,
+    128,
+    256
+  ],
+  "generation_mode": "built-in imagegen",
+  "export": "PNG resizing and Windows ICO packaging with System.Drawing; alpha preserved",
+  "reference": "grok-image-91f7ae97-bcc0-494b-aecc-96d301c268d4.jpg",
+  "transparent_background": true,
+  "prompt": "Use case: precise-object-edit / logo-brand.\nEdit target: the attached colorful low-poly hammer striking a cube. Regenerate this design as a finished HammeRR desktop application icon, staying very close to this reference rather than introducing a different concept.\nPreserve: the large faceted futuristic hammer descending from the upper center toward a central isometric cube; the handle extending diagonally toward the lower right; glowing cyan angular inlays; blue and violet polygon faces; a vivid orange/yellow/magenta impact burst; a small number of floating geometric shards; the stepped block pedestal and subtle neon construction grid; the rich midnight-navy rounded-square tile. Preserve the reference's dramatic energy, visual identity, polygonal rendering style and vibrant palette.\nIcon-ready changes: recompose everything within a square canvas, with balanced margins and a strong hammer-and-cube silhouette. Show the entire hammer including the handle butt, fully inside the tile with comfortable clearance from every edge. Keep the impact point as the central warm focal accent. Simplify the tiniest background particles and finest mesh details enough for a clear 32–64 pixel thumbnail, without losing the distinctive scene. Keep the background grid subdued so the hammer and cube remain dominant.\nOutput requirements: a single square high-resolution PNG app icon, preferably 1024x1024. The dark navy rounded-square tile is part of the artwork. EVERYTHING outside the rounded tile must be genuinely transparent alpha, including all four corners and the slim outer padding: remove the reference's opaque black outer background, no black or white matte, no fake checkerboard. Smooth clean alpha edges, no external shadow or detached glow beyond the tile. No text, logo lettering, labels, watermark, mockup, extra panels, or alternative concepts."
+}

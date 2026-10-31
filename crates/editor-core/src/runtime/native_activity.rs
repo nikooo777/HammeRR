@@ -1,4 +1,4 @@
-use std::fs::{File, Metadata};
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
@@ -47,7 +47,17 @@ fn open_binding(path: &Path) -> std::io::Result<File> {
     .map_err(Into::into)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(windows)]
+fn open_binding(path: &Path) -> std::io::Result<File> {
+    use source_formats::file_publication::windows::{open_directory, open_file};
+    if path.is_dir() {
+        open_directory(path)
+    } else {
+        open_file(path)
+    }
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
 fn open_binding(_path: &Path) -> std::io::Result<File> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
@@ -55,15 +65,10 @@ fn open_binding(_path: &Path) -> std::io::Result<File> {
     ))
 }
 
-#[cfg(unix)]
-fn physical_identity(metadata: &Metadata) -> Result<(u64, u64), String> {
-    use std::os::unix::fs::MetadataExt;
-    Ok((metadata.dev(), metadata.ino()))
-}
-
-#[cfg(not(unix))]
-fn physical_identity(_metadata: &Metadata) -> Result<(u64, u64), String> {
-    Err("Opened native installation identity requires Unix".into())
+fn physical_identity(file: &File) -> Result<(u64, u64), String> {
+    let identity = source_formats::file_publication::FileIdentity::from_file(file)
+        .map_err(|error| error.to_string())?;
+    Ok((identity.device, identity.inode))
 }
 
 impl Binding {
@@ -89,12 +94,13 @@ impl Binding {
                 canonical.display()
             ));
         }
+        let identity = physical_identity(&file)?;
         let binding = Self {
             requested,
             canonical,
             file: Arc::new(file),
             executable,
-            identity: physical_identity(&metadata)?,
+            identity,
             length: metadata.len(),
             modified: metadata.modified().map_err(|error| error.to_string())?,
         };
@@ -109,10 +115,10 @@ impl Binding {
                 self.requested.display()
             )
         })?;
-        let expected = self.file.metadata().map_err(|error| error.to_string())?;
+        let actual_file = open_binding(&current).map_err(|error| error.to_string())?;
         let actual = std::fs::metadata(&current).map_err(|error| error.to_string())?;
         if current != self.canonical
-            || physical_identity(&expected)? != physical_identity(&actual)?
+            || physical_identity(&self.file)? != physical_identity(&actual_file)?
             || (self.executable
                 && (actual.len() != self.length
                     || actual.modified().map_err(|error| error.to_string())? != self.modified))

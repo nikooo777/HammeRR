@@ -25,3 +25,6 @@ serde_json = "1.0.151"
 slint.workspace = true
 source-formats.workspace = true
 tokio = { version = "1.53.2", features = ["sync", "net", "io-util", "time"] }
+
+[build-dependencies]
+winresource = "0.1.31"

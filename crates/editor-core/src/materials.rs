@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use source_formats::gamefs::{AssetOrigin, GameFs, Mount};
 
@@ -11,11 +11,63 @@ pub const MAX_CATALOG_SOURCES: usize = 256;
 pub const MAX_QUERY_BYTES: usize = 256;
 pub const MAX_GROUP_BYTES: usize = 1024;
 pub const MAX_MATERIAL_PAGE: usize = 200;
+pub const MAX_SHADER_BYTES: usize = 128;
+const MAX_REGEX_BYTES: usize = 1024 * 1024;
+const MAX_REGEX_DEPTH: u32 = 32;
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum NameMatch {
+    #[default]
+    Substring,
+    Prefix,
+    Regex,
+}
+
+pub(crate) enum NameMatcher {
+    Substring(String),
+    Prefix(String),
+    Regex(regex::Regex),
+}
+
+impl NameMatcher {
+    pub(crate) fn new(query: &str, mode: NameMatch) -> Result<Self, String> {
+        if query.len() > MAX_QUERY_BYTES {
+            return Err(format!(
+                "Material queries are limited to {MAX_QUERY_BYTES} bytes"
+            ));
+        }
+        match mode {
+            NameMatch::Substring => Ok(Self::Substring(query.trim().to_ascii_lowercase())),
+            NameMatch::Prefix => Ok(Self::Prefix(query.trim().to_ascii_lowercase())),
+            NameMatch::Regex => regex::RegexBuilder::new(query)
+                .case_insensitive(true)
+                .size_limit(MAX_REGEX_BYTES)
+                .dfa_size_limit(MAX_REGEX_BYTES)
+                .nest_limit(MAX_REGEX_DEPTH)
+                .build()
+                .map(Self::Regex)
+                .map_err(|error| format!("Invalid or over-budget material regex: {error}")),
+        }
+    }
+
+    pub(crate) fn matches(&self, name: &str) -> bool {
+        match self {
+            Self::Substring(query) => name.contains(query),
+            Self::Prefix(query) => name.starts_with(query),
+            Self::Regex(pattern) => pattern.is_match(name),
+        }
+    }
+}
 
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct CatalogFilter {
     pub source: Option<String>,
     pub exclude_generated_map_materials: bool,
+    pub match_mode: NameMatch,
+    pub shader: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -117,6 +169,8 @@ pub struct Entry {
     pub category: String,
     pub used: bool,
     pub favorite: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classification: Option<ShaderClassification>,
     #[serde(flatten)]
     pub provenance: Provenance,
 }
@@ -138,6 +192,39 @@ pub struct Catalog {
     pub sources: Vec<Source>,
     pub filter: CatalogFilter,
     pub provenance_scope: &'static str,
+    pub shader_scan: ShaderScan,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ShaderClassification {
+    pub shader: Option<String>,
+    pub material_identity: Option<String>,
+    pub error: Option<String>,
+    #[serde(flatten)]
+    pub provenance: Provenance,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct ShaderScan {
+    pub required: bool,
+    pub complete: bool,
+    pub matches_complete: bool,
+    pub candidates: usize,
+    pub classified: usize,
+    pub failed: usize,
+    pub failures: Vec<ShaderFailure>,
+    pub failures_truncated: bool,
+    pub attempted_this_call: usize,
+    pub bytes_read_this_call: usize,
+    pub materials_per_call: usize,
+    pub bytes_per_call: usize,
+    pub cache_policy: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ShaderFailure {
+    pub material: String,
+    pub error: String,
 }
 
 pub fn category(name: &str) -> &'static str {
@@ -191,6 +278,7 @@ pub fn browse(
             category: category(&name).into(),
             used: used.contains(&name),
             favorite: favorites.contains(&name),
+            classification: None,
             provenance: Provenance::default(),
             name,
         })
@@ -277,5 +365,6 @@ pub fn browse(
         sources: Vec::new(),
         filter: CatalogFilter::default(),
         provenance_scope: "current_winning_vmt; display previews have independent cached identities",
+        shader_scan: ShaderScan::default(),
     })
 }

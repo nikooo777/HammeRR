@@ -34,6 +34,7 @@ mod root_callbacks;
 use root_callbacks::root_callback;
 mod input;
 use input::*;
+mod magnetic_snapping;
 mod manipulation;
 use manipulation::*;
 mod materials;
@@ -115,6 +116,7 @@ struct Ui {
     compile_region: Option<compile_region_ui::Controller>,
     fog: Option<fog_ui::Controller>,
     color_correction: Option<color_correction_ui::Controller>,
+    reference_images: Option<reference_images_ui::Controller>,
     sky3d: Option<sky3d_ui::Controller>,
     working_region: Option<working_region_ui::Controller>,
     overlay: Option<overlay_ui::Controller>,
@@ -244,6 +246,7 @@ impl Ui {
             compile_region: None,
             fog: None,
             color_correction: None,
+            reference_images: None,
             sky3d: None,
             working_region: None,
             overlay: None,
@@ -310,6 +313,7 @@ fn session_of(ui: &SharedUi) -> SharedSession {
 }
 
 fn refresh_view_controls(app: &AppWindow, session: &Session) {
+    app.set_reference_images_status(session.reference_images_summary().into());
     app.set_color_correction_status(
         session.color_correction_report()["summary"]
             .as_str()
@@ -344,6 +348,10 @@ fn refresh_view_controls(app: &AppWindow, session: &Session) {
     app.set_selection_tint(session.view().selection_tint);
     app.set_entity_images(session.view().entity_images);
     app.set_entity_model_guides(session.view().entity_model_guides);
+    app.set_authored_models(session.view().authored_models);
+    app.set_sprite_resources(session.view().sprite_resources);
+    app.set_entity_helpers(session.view().entity_helpers);
+    app.set_selection_bounds(session.view().selection_bounds);
     app.set_instance_contents(session.view().instance_contents);
     app.set_instance_contents_status(
         session.instance_contents_rendered_report()["summary"]
@@ -403,6 +411,7 @@ fn prepare_scene_refresh(
 ) -> Option<render::SceneKey> {
     session.preflight_instance_contents();
     session.poll_color_correction();
+    session.poll_reference_images();
     session.preflight_compiled_visibility();
     session.preflight_compiled_details();
     session.preflight_baked_surfaces();
@@ -446,6 +455,11 @@ fn apply_view_controls(app: AppWindow, shared: &SharedSession) {
         normal_maps: Some(app.get_normal_maps()),
         surface_shading: Some(app.get_surface_shading()),
         additive_sprite_guides: Some(app.get_additive_sprite_guides()),
+        entity_images: Some(app.get_entity_images()),
+        authored_models: Some(app.get_authored_models()),
+        sprite_resources: Some(app.get_sprite_resources()),
+        entity_helpers: Some(app.get_entity_helpers()),
+        selection_bounds: Some(app.get_selection_bounds()),
         ..Default::default()
     }) {
         Ok(view) => view,
@@ -510,6 +524,15 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_launching(session.launching());
     app.set_game_running(session.game_running());
     app.set_has_selection(!session.selection().is_empty());
+    let presentation = session.selection_presentation(session.view());
+    app.set_selection_presentation(presentation.summary.into());
+    let helpers = session.helper_presentation(session.view());
+    let errors = helpers["reported_errors"].as_u64().unwrap_or_default();
+    app.set_helper_presentation_status(if errors == 0 {
+        "Display switches preserve picking and bounds".into()
+    } else {
+        format!("{errors} reported visual-resource errors · amber markers retained").into()
+    });
     app.set_can_reshape(session.can_reshape_selection());
     app.set_whole_object_selection(
         !session.selection().is_empty()
@@ -912,6 +935,28 @@ fn create_document_window(
             .as_ref()
             .unwrap()
             .show(&mut lock(&ui.session))
+        {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_reference_images, |app| {
+        let mut ui = ui.borrow_mut();
+        let aspect =
+            app.unwrap().get_viewport_width() / app.unwrap().get_viewport_height().max(1.0);
+        if ui.reference_images.is_none() {
+            match reference_images_ui::Controller::new_with_access(&ui.document_access()) {
+                Ok(controller) => ui.reference_images = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        if let Err(error) = ui
+            .reference_images
+            .as_ref()
+            .unwrap()
+            .show(&mut lock(&ui.session), aspect)
         {
             app.unwrap().set_message(error.to_string().into());
         }
@@ -2988,6 +3033,18 @@ fn create_document_window(
                         previous_scene,
                         &mut ui.viewport.options,
                     ) {
+                        if scene_key.reference_images_serial
+                            != previous_scene.reference_images_serial
+                        {
+                            app.set_reference_images_status(
+                                session.reference_images_summary().into(),
+                            );
+                            if let Some(controller) = &ui.reference_images
+                                && controller.window.window().is_visible()
+                            {
+                                controller.refresh_status(&mut session);
+                            }
+                        }
                         if session.scene_serial() != ui.seen_scene.serial {
                             ui.brush_drag = None;
                         }
@@ -3117,6 +3174,11 @@ fn create_document_window(
                         selection_filters::refresh(&app, &session);
                     }
                     if session.view_serial() != ui.seen_view {
+                        if let Some(controller) = &ui.reference_images
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh_status(&mut session);
+                        }
                         app.set_sky3d_preview_status(
                             session.sky3d_preview_state()["summary"]
                                 .as_str()

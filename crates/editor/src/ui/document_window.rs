@@ -235,6 +235,7 @@ impl Ui {
             compile_region,
             fog,
             color_correction,
+            reference_images,
             sky3d,
             working_region,
             overlay,

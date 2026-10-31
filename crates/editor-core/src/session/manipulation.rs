@@ -2,7 +2,7 @@ use super::previews;
 use glam::{DMat3, DVec2, DVec3, Vec2};
 use map_core::edit::Transform;
 use map_core::region::{Match, Selection};
-use map_core::{Document, ObjectId, query};
+use map_core::{Document, ObjectId, query, query::Ray};
 use render::Camera;
 use render::handles::{self, Guide, Handle, Mode};
 
@@ -66,6 +66,7 @@ pub struct TransformPreview {
     pub ids: Vec<ObjectId>,
     pub transform: Transform,
     pub grid_snap: Option<GridSnapPreview>,
+    pub magnetic: Option<super::placement::magnetic::Report>,
     pub actor: Actor,
     generation: u64,
     revision: u64,
@@ -681,7 +682,17 @@ impl Session {
         transform: Transform,
         pivot: Option<DVec3>,
     ) -> Result<DVec3, String> {
-        self.preview_transform_owned(actor, ids, transform, pivot, None)
+        let pivot = self.preview_transform_owned(actor, ids, transform, pivot, None)?;
+        if self
+            .geometry
+            .transform_preview
+            .as_mut()
+            .is_some_and(|preview| preview.magnetic.take().is_some())
+        {
+            self.scene_serial += 1;
+            self.view_serial += 1;
+        }
+        Ok(pivot)
     }
 
     pub(super) fn preview_surface_transform(
@@ -766,6 +777,7 @@ impl Session {
             ids: ids.to_vec(),
             transform,
             grid_snap,
+            magnetic: None,
             actor,
             generation: self.document_generation,
             revision: self.document.revision(),
@@ -787,6 +799,17 @@ impl Session {
     }
 
     pub fn commit_transform_preview(&mut self, actor: Actor) -> Result<DVec3, String> {
+        if self
+            .geometry
+            .transform_preview
+            .as_ref()
+            .and_then(|preview| preview.magnetic.as_ref())
+            .is_some_and(|report| self.magnetic_preview_stale(report))
+        {
+            return Err(
+                "Magnetic source, target or visibility changed; preview movement again".into(),
+            );
+        }
         let preview = self
             .geometry
             .transform_preview
@@ -914,8 +937,33 @@ impl Session {
         match result {
             Ok(transform) => {
                 let ids = self.transform_drag.as_ref().unwrap().ids.clone();
-                self.preview_transform(Actor::User, &ids, transform, Some(transform.pivot))?;
-                Ok(transform)
+                if let Some(pointer) = pointer.filter(|_| {
+                    self.magnetic_snapping_enabled()
+                        && self
+                            .transform_drag
+                            .as_ref()
+                            .is_some_and(|drag| drag.mode == Mode::Move)
+                }) {
+                    let drag = self.transform_drag.as_ref().unwrap();
+                    let ndc = pointer.ndc();
+                    let (origin, direction) = drag.camera.ray(
+                        ndc.x as f32,
+                        ndc.y as f32,
+                        pointer.size.0 as f32 / pointer.size.1 as f32,
+                    );
+                    self.preview_magnetic_transform(
+                        Actor::User,
+                        &ids,
+                        transform,
+                        Ray {
+                            origin: origin.as_dvec3(),
+                            direction: direction.as_dvec3(),
+                        },
+                    )
+                } else {
+                    self.preview_transform(Actor::User, &ids, transform, Some(transform.pivot))?;
+                    Ok(transform)
+                }
             }
             Err(error) => Err(error),
         }

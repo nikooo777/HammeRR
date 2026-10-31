@@ -1,7 +1,116 @@
 use super::super::*;
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MagneticSourceArgs {
+    solid: u32,
+    sides: Vec<u32>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MagneticSettingsArgs {
+    enabled: bool,
+    radius: f64,
+    source_corner: Option<MagneticSourceArgs>,
+    snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MagneticPreviewArgs {
+    translation: [f64; 3],
+    ray_origin: [f64; 3],
+    ray_direction: [f64; 3],
+    snapshot: String,
+}
+
 #[tool_router(router = materials_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
+    #[tool(
+        description = "Inspect opt-in magnetic Move snapping, world-unit radius, chosen source corner, source staleness, exact current snapshot and current preview token/result. Captures the nearest real corner of the first visible brush face or prepared terrain/model hit triangle only inside radius from the source after ordinary constrained/grid movement. Reports captured, outside_radius or no_surface with requested/final translation, target identity/provenance and distance. Capturing may leave the handle axis/plane; no through-wall or scene-wide search. Settings remain temporary and do not save automatically.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_magnetic_snapping(&self) -> ToolResult {
+        ok(self.session().magnetic_snapping())
+    }
+
+    #[tool(
+        description = "List the same explicit Source corner choices as Magnetic snapping in the Inspector. Uses current selection, including individual entity children, whole world/brush entities and point/model companions. Only visible flat brushes supply source corners. Reuses checked topology/precise intersections and whole-selection bounds admission. Returns current snapshot and up to 256 source brushes/4096 corners with owner, solid, incident sides and authored position. Does not alter selection/source/history/previews.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_magnetic_snap_sources(&self) -> ToolResult {
+        run(|| self.session().magnetic_snap_sources())
+    }
+
+    #[tool(
+        description = "Apply the shared temporary magnetic settings using latest get_magnetic_snap_sources.snapshot (or get_magnetic_snapping.snapshot for the same current source). Required enabled/radius/snapshot; source_corner={solid,sides} is required when enabling. Radius is 0.125–1024 world units, default 16. All selected roots/individual children translate together; source must belong to them, and mixed owner/child selections reject. Selected hidden roots, invalid source topology/identity/bounds or stale snapshots reject without altering settings or previews. Actual setting changes retire active magnetic/Move gestures; no-op settings preserve them. UI: Magnetic snapping… → Refresh magnetic sources / Source corner / Magnetic snapping / Capture radius / Apply magnetic settings."
+    )]
+    pub(in crate::mcp) fn set_magnetic_snapping(
+        &self,
+        Parameters(args): Parameters<MagneticSettingsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().set_magnetic_snapping(
+                Actor::Agent,
+                args.enabled,
+                args.radius,
+                args.source_corner
+                    .map(|source| map_core::subobject::Component {
+                        solid: source.solid,
+                        sides: source.sides,
+                    }),
+                &args.snapshot,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Preview a rigid translation of the current root/child selection using the same magnetic planner as pointer-driven Move handles. Pass translation in world units, explicit target ray and latest get_magnetic_snapping.snapshot. The supplied translation is the ordinary requested result; this operation performs no additional grid rounding. Returns an exact preview token plus captured/outside_radius/no_surface and final offset. Invalid rays/source/target geometry preserve the previous preview. Excludes moving objects/brushes from targets, validates all source/final bounds, and changes no source/history. Apply with commit_magnetic_translation/token (or shared Apply transform); Cancel uses cancel_magnetic_translation/token. Source/selection/visibility/assets/settings changes prevent stale Apply."
+    )]
+    pub(in crate::mcp) fn preview_magnetic_translation(
+        &self,
+        Parameters(args): Parameters<MagneticPreviewArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().preview_magnetic_translation(
+                Actor::Agent,
+                vec3(args.translation),
+                Ray {
+                    origin: vec3(args.ray_origin),
+                    direction: vec3(args.ray_direction),
+                },
+                &args.snapshot,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Apply exactly the current magnetic preview token through the shared transform commit, in one Undo step. Stale/replaced tokens and changed source/target/visibility/settings reject; an identical final pose creates no history. UI: Apply transform or releasing the Move handle."
+    )]
+    pub(in crate::mcp) fn commit_magnetic_translation(
+        &self,
+        Parameters(args): Parameters<VolumeTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .commit_magnetic_translation(Actor::Agent, parse_token(&args.token)?)
+        })
+    }
+
+    #[tool(
+        description = "Cancel the exact current magnetic preview token without changing source/history or settings. Stale but still owned previews can be cancelled; an old token cannot cancel replacement work. UI: Cancel transform / Escape."
+    )]
+    pub(in crate::mcp) fn cancel_magnetic_translation(
+        &self,
+        Parameters(args): Parameters<VolumeTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .cancel_magnetic_translation(parse_token(&args.token)?)
+        })
+    }
+
     #[tool(
         description = "Inspect the same bounded committed visible source-corner choices as Place on surface… → Snap selected corner → Source corner. Optional whole-root ids default to the selection; inspection never changes selection, map, history or active drafts. Returns canonical ids, sources with owner ID, numeric solid, complete incident sides and exact unrounded world position, committed_geometry provenance and limits of 256 visible flat brushes / 4096 checked corners. Source eligibility shares the human chooser's topology, whole-root, identity, visibility and bounds checks. Point/model companions can move but supply no source corner. Invalid roots or exceeded limits return an error without a partial list or draft mutation. Pass one returned solid/sides pair as source_corner to the existing shared placement preview or pick operation.",
         annotations(read_only_hint = true)
@@ -612,7 +721,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Browse the shared material catalog, bounded to 200 entries per page and 256 game mounts. Entries report the current winning VMT directory/VPK origin and exact source ID; source filters select these winners, never shadowed copies. Sources are physical mounts, not a stock-content guarantee. Optionally exclude all maps/... materials (including authored ones). Groups include all, used, recent, favorites, folder:<path> and category:<label>; counts reflect search and source/path filters. Display thumbnails retain their separate cached identity until Reload material assets.",
+        description = "Browse the shared material catalog, bounded to 200 entries per page and 256 game mounts. match_mode is substring (default), literal prefix or regex over material names, case-insensitive by default. Regex uses the regex crate syntax, at most 256 pattern bytes, depth 32 and 1 MiB compiler/DFA budgets; invalid/unsupported patterns reject. Optional shader is an exact case-insensitive resolved shader name, including Patch resolution. Each shader query classifies at most 128 materials and reads at most 16 MiB; repeat the same query while shader_scan.complete is false. Counts/pages include confirmed matches so far; shader_scan.matches_complete is true only after the complete scan without unresolved materials. Failures include total counts and the first 16 material/error rows, never silent nonmatches. Classified entries report shader, declaration identity and its captured VMT origin. Shader declarations remain cached until Reload material assets; current source metadata is separate and observed mount changes invalidate classifications. Sources select current winning VMT directory/VPK origins, never shadowed copies or assumed stock content. Optionally exclude all maps/... paths, including authored ones. Groups include all, used, recent, favorites, folder:<path> and category:<label>. UI: Browse materials → Name match / Shader. No map/history/selection/camera/draft changes.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn browse_materials(
@@ -628,6 +737,8 @@ impl EditorServer {
                 &crate::materials::CatalogFilter {
                     source: args.source,
                     exclude_generated_map_materials: args.exclude_generated_map_materials,
+                    match_mode: args.match_mode,
+                    shader: args.shader,
                 },
             )?;
             serde_json::to_value(catalog).map_err(|error| error.to_string())
@@ -701,7 +812,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Search the shared material catalog by case-insensitive substring, with bounded pagination, winning source filters and optional exclusion of every maps/... material. Returns compatible material names plus provenance entries, exact physical-mount source IDs, total and paging. VPK or mount names do not establish stock content. Origins describe current VMT winners, not cached display pixels.",
+        description = "Search the same catalog as Browse materials. match_mode selects substring (default), literal prefix or bounded regex; shader optionally selects an exact resolved shader name, including Patch materials. Returns compatible material names plus provenance/classification entries, sources and shader_scan. Repeat while shader_scan.complete is false: each operation classifies at most 128 candidates / 16 MiB. Before completion counts/pages describe confirmed matches only; failed classifications stay explicit and make matches_complete false. Queries cap at 256 bytes; regex depth and compiler/DFA memory are bounded. Winning-source and maps-path filters compose with both matchers. Cached shader declarations refresh with Reload material assets; current VMT provenance does not describe cached display pixels. No map/history/selection/camera/draft changes.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn search_materials(
@@ -717,6 +828,8 @@ impl EditorServer {
                 &crate::materials::CatalogFilter {
                     source: args.source,
                     exclude_generated_map_materials: args.exclude_generated_map_materials,
+                    match_mode: args.match_mode,
+                    shader: args.shader,
                 },
             )?;
             let names = catalog
@@ -727,27 +840,34 @@ impl EditorServer {
             Ok(
                 json!({ "materials": names, "entries":catalog.entries, "sources":catalog.sources,
                 "total":catalog.total,"offset":catalog.offset,"filter":catalog.filter,
+                "shader_scan":catalog.shader_scan,
                 "provenance_scope":catalog.provenance_scope }),
             )
         })
     }
 
     #[tool(
-        description = "Inspect the material browser's selected image as a CPU PNG. Optional channel=color (default, unchanged RGBA) or alpha (source alpha bytes as opaque grayscale). Reports original dimensions, missing/tool state, decoded-mip alpha range and the display texture path/resolved VMT identity captured with those pixels. Cached display data stays paired until Reload material assets; uncached materials use one current load. No fresh VMT is paired with an old base image. This inspects the editor display image, not shader opacity or a second layer. Missing images produce no substitute PNG; read/decode errors fail explicitly. No graphics startup or map/history/camera/selection/draft changes.",
+        description = "Inspect the material browser's selected image as a CPU PNG. Optional layer=1 (default editor display) or layer=2 (actual WorldVertexTransition $basetexture2). Layer 2 reports its own original dimensions, mip and texture path captured with the cached declaration/image; absent, unsupported or unavailable second layers reject and never substitute layer 1. channel=color (default) returns unchanged RGBA; alpha shows source alpha bytes as opaque grayscale. Reports decoded-mip alpha range and the resolved VMT identity captured with those pixels. Cached display data stays paired until Reload material assets; uncached materials use one current load. No fresh VMT is paired with an old image. This inspects individual image data, not shader opacity, layer mixing, transforms or animation. Missing primary images produce no substitute PNG; read/decode errors fail explicitly. UI: Browse materials → Layer 1 / Layer 2 and Color / Alpha. No graphics startup or map/history/camera/selection/draft changes.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn preview_material(
         &self,
         Parameters(args): Parameters<MaterialPreviewArgs>,
     ) -> ToolResult {
-        let preview = match self
-            .session()
-            .material_preview_channel(&args.material, args.channel.unwrap_or_default())
+        let layer = match crate::session::MaterialPreviewLayer::from_number(args.layer.unwrap_or(1))
         {
+            Ok(layer) => layer,
+            Err(error) => return fail(error),
+        };
+        let preview = match self.session().material_preview_layer_channel(
+            &args.material,
+            layer,
+            args.channel.unwrap_or_default(),
+        ) {
             Ok(preview) => preview,
             Err(error) => return fail(error),
         };
-        let mut content = vec![ContentBlock::text(json!({"material": preview.name, "width": preview.width, "height": preview.height, "missing": preview.missing, "tool": preview.tool, "channel":preview.channel, "source":preview.source, "alpha_range":preview.alpha_range,"physical_origin":null,"physical_origin_status":"unavailable: physical paths were not captured with these display pixels"}).to_string())];
+        let mut content = vec![ContentBlock::text(json!({"material": preview.name, "width": preview.width, "height": preview.height, "missing": preview.missing, "tool": preview.tool, "channel":preview.channel, "layer":preview.layer.number(), "source":preview.source, "alpha_range":preview.alpha_range,"physical_origin":null,"physical_origin_status":"unavailable: physical paths were not captured with these display pixels"}).to_string())];
         if let Some(image) = preview.image {
             let mut bytes = Vec::new();
             let mut encoder = png::Encoder::new(Cursor::new(&mut bytes), image.width, image.height);

@@ -113,6 +113,7 @@ pub struct SceneMesh {
     pub skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
     pub sky3d: Option<std::sync::Arc<crate::sky3d::Scene>>,
     pub icons: Vec<crate::icons::Instance>,
+    pub reference_images: Vec<crate::reference_images::Plane>,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub batches: Vec<Batch>,
@@ -214,6 +215,7 @@ pub struct FaceOverlay {
 
 struct Builder<'a> {
     authored_surfaces: bool,
+    entity_helpers: bool,
     issues: SceneIssues,
     tool_textures: bool,
     selection_tint: bool,
@@ -685,19 +687,19 @@ impl Builder<'_> {
             self.add_model(instance, selected);
             return;
         }
-        if self.add_light(entity, selected) {
+        if self.entity_helpers && self.add_light(entity, selected) {
             return;
         }
         let helper = self.helpers.get(&ObjectId::Entity(entity.id));
-        let [r, g, b] = if selected && self.selection_tint {
-            SELECTED_EDGE[..3].try_into().expect("three channels")
-        } else if helper.is_some_and(|helper| !helper.errors.is_empty())
+        let diagnostic = helper.is_some_and(|helper| !helper.errors.is_empty())
             || self
                 .icons
                 .get(&entity.id)
-                .is_some_and(|icon| icon.asset.material.is_none())
-        {
+                .is_some_and(|icon| icon.asset.material.is_none());
+        let [r, g, b] = if diagnostic {
             INVALID_HELPER_COLOR
+        } else if selected && self.selection_tint {
+            SELECTED_EDGE[..3].try_into().expect("three channels")
         } else {
             helper
                 .and_then(|helper| helper.color)
@@ -725,7 +727,7 @@ impl Builder<'_> {
         if let Some(icon) = &icon {
             self.displayed_icons.push(icon.clone());
         }
-        let resource_guide = icon.is_some() || model_guide;
+        let resource_guide = icon.is_some() || model_guide || !self.entity_helpers && !diagnostic;
         if resource_guide {
             self.helper_bounds.extend([mins.as_vec3(), maxs.as_vec3()]);
         }
@@ -1484,6 +1486,7 @@ impl SceneMesh {
             lighting,
             reference_models,
             true,
+            true,
             include,
         )
     }
@@ -1510,6 +1513,7 @@ impl SceneMesh {
         lighting: bool,
         reference_models: &[crate::models::Instance],
         authored_surfaces: bool,
+        entity_helpers: bool,
         include: impl Fn(ObjectId) -> bool,
     ) -> Self {
         let (icons, model_guides) = guides;
@@ -1522,6 +1526,7 @@ impl SceneMesh {
         }
         let mut builder = Builder {
             authored_surfaces,
+            entity_helpers,
             issues,
             tool_textures,
             selection_tint,
@@ -1669,6 +1674,7 @@ impl SceneMesh {
             lighting: builder.lighting,
             normal_maps: builder.normal_maps,
             icons: builder.displayed_icons,
+            reference_images: Vec::new(),
             issues: builder.issues,
             skybox,
             sky3d: None,

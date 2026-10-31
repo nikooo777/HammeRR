@@ -19,6 +19,8 @@ mod sprites;
 #[derive(Debug, Serialize)]
 pub struct Report {
     pub status: String,
+    pub base_displayed: bool,
+    pub authored_model_error: Option<String>,
     pub bounds_source: &'static str,
     pub invalid_size: bool,
     pub world_bounds: Option<[[f64; 3]; 2]>,
@@ -157,6 +159,22 @@ impl Session {
             "brush" => "Brush geometry".into(),
             _ => "Default editor helper box".into(),
         };
+        let base_displayed = if bounds_source == "brush" {
+            true
+        } else if model.is_some() {
+            self.view.authored_models
+        } else {
+            self.view.entity_helpers || !appearance.errors.is_empty()
+        };
+        if model.is_some() && !self.view.authored_models {
+            status = "Authored model hidden; exact model bounds retained as a wire marker".into();
+        } else if !base_displayed {
+            status += ". Entity helpers hidden; selection outlines and picking bounds retained";
+        }
+        let authored_model_error = evaluation.models.issues.get(&id).cloned();
+        if let Some(error) = &authored_model_error {
+            status += &format!(". Authored model error: {error}");
+        }
         if !appearance.errors.is_empty() {
             status += &format!(". FGD helper error: {}", appearance.errors.join("; "));
         }
@@ -379,6 +397,8 @@ impl Session {
         }
         Ok(Report {
             status,
+            base_displayed,
+            authored_model_error,
             spheres,
             sphere_limits: spheres::LIMITS,
             icon_sprite,
@@ -411,5 +431,33 @@ impl Session {
                 .collect(),
             limits: "size() is an origin-relative, world-aligned editor box in Source units; angles and modelscale do not transform it. This is not an engine collision hull. Three integer dimensions or six ordered integer coordinates, with local box coordinates within ±65536; positive volume required. Malformed definitions retain the default box with a visible diagnostic. Includes, inheritance and extensions resolve before evaluation; per-helper file/line provenance is not retained. Sphere, targetname line, literal icon and literal studio/studioprop model guides are reported separately and never change these object bounds; other FGD helper declarations are not evaluated here. Existing authored model, light and rope previews remain independent.",
         })
+    }
+}
+
+impl Session {
+    pub(super) fn helper_presentation_errors(
+        &self,
+        document: &Document,
+        view: render::ViewOptions,
+    ) -> BTreeMap<u32, String> {
+        let evaluation = self.working_evaluation(document);
+        let mut errors = evaluation.models.issues.clone();
+        for (&object, appearance) in &evaluation.helpers {
+            if let ObjectId::Entity(id) = object
+                && !appearance.errors.is_empty()
+            {
+                errors
+                    .entry(id)
+                    .or_insert_with(|| appearance.errors.join("; "));
+            }
+        }
+        for (id, error) in self
+            .image_errors(document, &evaluation, view)
+            .into_iter()
+            .chain(self.model_guide_errors(document, &evaluation, view.entity_model_guides))
+        {
+            errors.entry(id).or_insert(error);
+        }
+        errors
     }
 }

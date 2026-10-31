@@ -1274,6 +1274,7 @@ dependencies = [
  "map-core",
  "native-runtime",
  "png",
+ "regex",
  "render",
  "rmcp",
  "rustix 1.1.5",

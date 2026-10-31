@@ -97,6 +97,7 @@ pub mod pivot_preferences;
 pub mod placement;
 pub mod pointfiles;
 pub mod prefabs;
+pub mod presentation;
 pub mod preview_preferences;
 pub mod primitives;
 mod recent;
@@ -134,6 +135,7 @@ pub use recovery::RecoveryRequest;
 pub use surfaces::GroupProjection;
 mod connections;
 pub use connections::{ConnectionDraft, ConnectionFields, ConnectionRecord};
+pub mod reference_images;
 mod references;
 pub use references::RenameDraft;
 mod manipulation;
@@ -156,7 +158,9 @@ struct FacePreview {
     atlas: Option<atlas_texturing::PreviewGuard>,
 }
 
-pub use material_preview::{Channel as MaterialPreviewChannel, MaterialPreview};
+pub use material_preview::{
+    Channel as MaterialPreviewChannel, Layer as MaterialPreviewLayer, MaterialPreview,
+};
 
 #[derive(Clone)]
 struct Snapshot {
@@ -273,6 +277,7 @@ pub enum SelectMode {
 }
 
 pub struct Session {
+    reference_images: reference_images::State,
     color_correction: color_correction::State,
     file_claims: crate::path_claims::Binding,
     instance_contents: instance_contents::State,
@@ -338,6 +343,7 @@ pub struct Session {
     area_mode: SelectMode,
     interaction_epoch: u64,
     material_index: Option<Vec<String>>,
+    material_shaders: material_catalog::ShaderIndex,
     material_reload: Option<material_assets::Report>,
     material_favorites: favorites::Binding,
     color_palette: color_palette::Binding,
@@ -600,6 +606,7 @@ impl Session {
     pub(crate) fn with_shared_content(content: SessionContent) -> Self {
         Self {
             color_correction: color_correction::State::default(),
+            reference_images: reference_images::State::default(),
             file_claims: crate::path_claims::Binding::default(),
             instance_contents: instance_contents::State::default(),
             geometry: previews::State::default(),
@@ -664,6 +671,7 @@ impl Session {
             area_mode: SelectMode::Replace,
             interaction_epoch: 0,
             material_index: None,
+            material_shaders: material_catalog::ShaderIndex::default(),
             material_reload: None,
             material_favorites: favorites::Binding::default(),
             color_palette: color_palette::Binding::default(),
@@ -1553,6 +1561,7 @@ impl Session {
     }
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
+        self.reference_images = reference_images::State::default();
         self.clear_external_comparison();
         self.reset_instance_contents();
         self.reset_compiled_details();
@@ -1970,6 +1979,10 @@ impl Session {
         without_resource_changes.entity_images = previous.entity_images;
         without_resource_changes.additive_sprite_guides = previous.additive_sprite_guides;
         without_resource_changes.entity_model_guides = previous.entity_model_guides;
+        without_resource_changes.authored_models = previous.authored_models;
+        without_resource_changes.sprite_resources = previous.sprite_resources;
+        without_resource_changes.entity_helpers = previous.entity_helpers;
+        without_resource_changes.selection_bounds = previous.selection_bounds;
         without_resource_changes.normal_maps = previous.normal_maps;
         without_resource_changes.surface_shading = previous.surface_shading;
         without_resource_changes.lighting_preview = previous.lighting_preview;
@@ -2739,165 +2752,35 @@ impl Session {
         self.preflight_compiled_prop_leaf_bounds();
         let sky3d = self.sky3d_preview_scene();
         let skybox = self.skybox_preview_for(view);
-        let selected: HashSet<ObjectId> = self.geometry.clip_preview.as_ref().map_or_else(
-            || self.selection.iter().copied().collect(),
-            |preview| preview.result.objects.iter().copied().collect(),
-        );
-        let selected = self
-            .geometry
-            .primitives
-            .preview
-            .as_ref()
-            .map_or(selected, |preview| preview.ids.iter().copied().collect());
-        let selected = self
-            .geometry
-            .repeat
-            .preview
-            .as_ref()
-            .map_or(selected, |preview| {
-                preview.result.objects().into_iter().collect()
-            });
-        let selected = self
-            .geometry
-            .clipboard
-            .preview
-            .as_ref()
-            .map_or(selected, |preview| {
-                preview.result.objects.iter().copied().collect()
-            });
-        let selected = self
-            .geometry
-            .instance_collapse
-            .selection()
-            .map_or(selected, |ids| ids.iter().copied().collect());
-        let selected = self
-            .area_preview
-            .as_ref()
-            .map_or(selected.clone(), |preview| {
-                self.grouped_preview_selection(&selected, &preview.matches.objects, preview.mode)
-            });
-        let selected = self
-            .entity_placement_preview_id()
-            .map_or(selected, |id| [id].into_iter().collect());
-        let selected_faces: HashSet<FaceId> = self.face_selection.iter().copied().collect();
-        let selected_faces = self.area_preview.as_ref().map_or_else(
-            || selected_faces.clone(),
-            |preview| {
-                manipulation::combined_selection(
-                    &selected_faces,
-                    &preview.matches.faces,
-                    preview.mode,
-                )
-            },
-        );
-        let (selected, selected_faces) = if let Some(preview) = self.volume_preview() {
-            if preview.spec.faces {
-                (
-                    HashSet::new(),
-                    manipulation::combined_selection(
-                        &selected_faces,
-                        &preview.matches.faces,
-                        preview.spec.mode,
-                    ),
-                )
-            } else {
-                (
-                    self.grouped_preview_selection(
-                        &selected,
-                        &preview.matches.objects,
-                        preview.spec.mode,
-                    ),
-                    HashSet::new(),
-                )
-            }
-        } else {
-            (selected, selected_faces)
-        };
-        let (selected, selected_faces) = if let Some(stroke) = self.paint_stroke() {
-            if stroke.spec.faces {
-                (
-                    HashSet::new(),
-                    manipulation::combined_selection(
-                        &selected_faces,
-                        &stroke.faces.iter().copied().collect::<Vec<_>>(),
-                        stroke.spec.mode,
-                    ),
-                )
-            } else {
-                (
-                    self.grouped_preview_selection(
-                        &selected,
-                        &stroke.objects.iter().copied().collect::<Vec<_>>(),
-                        stroke.spec.mode,
-                    ),
-                    HashSet::new(),
-                )
-            }
-        } else {
-            (selected, selected_faces)
-        };
-        let selected = self
-            .geometry
-            .merging
-            .preview
-            .as_ref()
-            .map_or(selected, |preview| {
-                [preview.result.object].into_iter().collect()
-            });
-        let selected = self
-            .geometry
-            .carving
-            .preview
-            .as_ref()
-            .map_or(selected, |preview| {
-                preview.result.objects.iter().copied().collect()
-            });
-        let selected = self
-            .geometry
-            .hollowing
-            .preview
-            .as_ref()
-            .map_or(selected, |preview| {
-                preview.result.objects.iter().copied().collect()
-            });
-        let selected_faces = if self.geometry.primitives.preview.is_some() {
-            HashSet::new()
-        } else {
-            selected_faces
-        };
+        let (selected, selected_faces) = self.displayed_selection();
         let overlays = self.partition_face_overlays();
         let mut references = self.instance_contents_preview(view.instance_contents);
         let document = self.geometry.document(&self.document);
-        let selected = if self.geometry.components.selection.is_empty()
-            && self.component_picking().is_none()
-        {
-            selected
-        } else {
-            HashSet::new()
-        };
         let evaluation = self.working_evaluation(document);
         let icons = self.fgd_icon_instances(
             document,
             &evaluation,
             view.entity_images,
+            view.sprite_resources,
             view.additive_sprite_guides,
         );
         let model_guides = self.fgd_model_guides(document, &evaluation, view.entity_model_guides);
         let mut lighting = lighting_preview::prepare(document.vmf(), &evaluation.objects, view);
         let baked_surfaces = self.baked_surfaces_visible();
-        let root_models = baked_surfaces.then(|| {
+        let root_models = (baked_surfaces || !view.authored_models).then(|| {
             let mut models = evaluation.models.instances.clone();
             for instance in &mut models {
-                instance.draw_surface = !self.baked_static_prop_replaces(|origin| {
-                    matches!(origin, compiler::entity_origins::Origin::Root { entity }
+                instance.draw_surface = view.authored_models
+                    && !self.baked_static_prop_replaces(|origin| {
+                        matches!(origin, compiler::entity_origins::Origin::Root { entity }
                         if instance.id == map_core::ObjectId::Entity(*entity))
-                });
+                    });
             }
             models
         });
         for (instance, source) in references.models.iter_mut().zip(&references.model_sources) {
-            instance.draw_surface =
-                !self.baked_static_prop_replaces(|origin| source.matches(origin));
+            instance.draw_surface = view.authored_models
+                && !self.baked_static_prop_replaces(|origin| source.matches(origin));
         }
         let mut mesh = SceneMesh::build_with_reference_models_and_surfaces_filtered(
             document.vmf(),
@@ -2919,6 +2802,7 @@ impl Session {
             view.lighting_preview && view.surface == render::SurfaceView::Textured,
             &references.models,
             !baked_surfaces,
+            view.entity_helpers,
             |id| evaluation.objects.contains(&id),
         );
         mesh.normal_maps.requested = view.normal_maps;
@@ -2985,21 +2869,39 @@ impl Session {
         if let Some(points) = self.pointfile_points() {
             mesh.set_leak_path(points);
         }
-        self.append_fgd_sphere_guides(&mut mesh);
-        self.append_fgd_line_guides(&mut mesh);
-        self.append_source_projector_guides(&mut mesh);
-        self.append_fgd_frustum_guides(&mut mesh);
+        if view.entity_helpers {
+            self.append_fgd_sphere_guides(&mut mesh);
+            self.append_fgd_line_guides(&mut mesh);
+            self.append_source_projector_guides(&mut mesh);
+            self.append_fgd_frustum_guides(&mut mesh);
+        }
+        if !view.authored_models {
+            for instance in references
+                .models
+                .iter()
+                .filter(|instance| instance.has_geometry())
+            {
+                let (low, high) = instance.bounds();
+                mesh.add_bounds_lines(low, high, [130, 155, 180, 255]);
+            }
+        }
+        self.append_presentation_guides(&mut mesh, view);
         self.append_context_guides(&mut mesh);
         self.append_measurement_guides(&mut mesh);
         self.append_model_attachment_guide(&mut mesh);
         self.append_surface_placement_guide(&mut mesh);
+        self.append_magnetic_snapping_guide(&mut mesh);
         self.append_entity_placement_guide(&mut mesh);
         self.append_entity_gallery_guides(&mut mesh);
         self.append_volume_guide(&mut mesh);
         self.append_compile_region_guide(&mut mesh);
         self.append_compiled_visibility_guide(&mut mesh);
         self.append_compiled_details(&mut mesh);
-        if baked_surfaces && self.append_baked_surfaces(&mut mesh).is_err() {
+        if baked_surfaces
+            && self
+                .append_baked_surfaces(&mut mesh, view.authored_models)
+                .is_err()
+        {
             return self.build_scene_for_view(view);
         }
         self.append_compiled_prop_leaf_bounds(&mut mesh);
@@ -3008,6 +2910,7 @@ impl Session {
         self.append_terrain_triangle_guides(&mut mesh);
         self.append_terrain_stroke_guides(&mut mesh);
         self.append_clip_points(&mut mesh);
+        self.append_reference_images(&mut mesh);
         mesh
     }
 

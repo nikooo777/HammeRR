@@ -1,0 +1,96 @@
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "widgets.slint";
+import { FieldRow, MutedText } from "kit.slint";
+
+export component ReferenceImagesWindow inherits Window {
+    title: "Reference images - HammeRR";
+    background: Theme.panel;
+    preferred-width: 760px;
+    preferred-height: 720px;
+    in property <[string]> images;
+    in-out property <int> image-index: -1;
+    in property <bool> selected;
+    in property <string> status;
+    in property <string> source-status;
+    in property <string> message;
+    in property <float> viewport-aspect: 1;
+    in-out property <string> path;
+    in-out property <string> image-name;
+    in-out property <string> position: "0 0 0";
+    in-out property <string> rotation: "0 0 0";
+    in-out property <string> size: "256 256";
+    in-out property <string> image-opacity: "0.5";
+    in-out property <bool> flip-x;
+    in-out property <bool> flip-y;
+    in-out property <bool> top: true;
+    in-out property <bool> front: true;
+    in-out property <bool> side: true;
+    in-out property <bool> perspective: true;
+    callback choose();
+    callback refresh();
+    callback add();
+    callback apply();
+    callback reload();
+    callback delete();
+    callback frame();
+    callback dismiss();
+    forward-focus: keys;
+    keys := FocusScope {
+        width: parent.width; height: parent.height;
+        key-pressed(event) => { if event.text == Key.Escape { root.dismiss(); accept } else { reject } }
+        VerticalLayout {
+            padding: Theme.space-xl; spacing: Theme.space-lg;
+            Text { text: "Reference images"; font-size: Theme.font-display; font-weight: 600; }
+            Text { text: root.status; color: Theme.text-muted; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                ComboBox { model: root.images; current-index <=> root.image-index; selected => { root.choose(); } horizontal-stretch: 1; accessible-label: "Reference image"; }
+                Button { text: "Refresh list"; clicked => { root.refresh(); } }
+            }
+            ScrollView {
+                vertical-stretch: 1; content-width: self.width;
+                VerticalLayout {
+                    spacing: Theme.space-lg;
+                    FieldRow { label: "Name"; LineEdit { text <=> root.image-name; accessible-label: "Reference image name"; } }
+                    FieldRow { label: "PNG path"; LineEdit { text <=> root.path; accessible-label: "Reference PNG path"; } }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Add image"; clicked => { root.add(); } }
+                        Button { text: "Reload image"; enabled: root.selected; clicked => { root.reload(); } }
+                        Button { text: "Delete image"; enabled: root.selected; clicked => { root.delete(); } }
+                    }
+                    Text { text: root.source-status; color: Theme.text-muted; wrap: word-wrap; }
+                    FieldRow { label: "Position XYZ"; label-width: 108px; LineEdit { text <=> root.position; accessible-label: "Reference image position XYZ"; } }
+                    FieldRow { label: "Rotation XYZ"; label-width: 108px; LineEdit { text <=> root.rotation; accessible-label: "Reference image rotation XYZ degrees"; } }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Top plane"; clicked => { root.rotation = "0 0 0"; } }
+                        Button { text: "Front plane"; clicked => { root.rotation = "90 0 0"; } }
+                        Button { text: "Side plane"; clicked => { root.rotation = "90 90 0"; } }
+                    }
+                    FieldRow { label: "Width / height"; label-width: 108px; LineEdit { text <=> root.size; accessible-label: "Reference image width and height in units"; } }
+                    FieldRow { label: "Opacity 0–1"; label-width: 108px; LineEdit { text <=> root.image-opacity; accessible-label: "Reference image opacity"; } }
+                    HorizontalLayout { spacing: Theme.space-lg; CheckBox { text: "Flip horizontally"; checked <=> root.flip-x; } CheckBox { text: "Flip vertically"; checked <=> root.flip-y; } }
+                    HorizontalLayout {
+                        spacing: Theme.space-lg;
+                        Text { text: "Show in"; color: Theme.text-muted; vertical-alignment: center; }
+                        CheckBox { text: "Top"; checked <=> root.top; }
+                        CheckBox { text: "Front"; checked <=> root.front; }
+                        CheckBox { text: "Side"; checked <=> root.side; }
+                        CheckBox { text: "Perspective"; checked <=> root.perspective; }
+                    }
+                    MutedText { text: "Position and size use Source units; rotation uses XYZ Euler degrees. Plane presets change the rotation fields. Apply settings to keep changes."; }
+                    MutedText { text: "Images stay external and editor-only. Save the map to keep references. Missing or changed PNG files require Reload image; they are never substituted or packaged into the game."; }
+                }
+            }
+            Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Frame image"; enabled: root.selected; clicked => { root.frame(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply settings"; enabled: root.selected; clicked => { root.apply(); } }
+                Button { text: "Close"; clicked => { root.dismiss(); } }
+            }
+        }
+    }
+}

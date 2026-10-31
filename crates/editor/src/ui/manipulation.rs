@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) fn refresh_interaction(app: &AppWindow, session: &Session) {
+    super::magnetic_snapping::refresh(app, session);
     let tool = session.transform_tool();
     let index = match tool.mode {
         None => 0,
@@ -359,6 +360,7 @@ pub(super) fn bind_manipulation_controls_with_access(
     app: &AppWindow,
     access: &runtime::DocumentAccess,
 ) {
+    super::magnetic_snapping::bind(app, access);
     app.on_preview_snap_to_grid({
         let callback = admission::SessionCallback::new(app, access);
         move || {

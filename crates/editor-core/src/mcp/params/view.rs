@@ -281,7 +281,7 @@ pub struct FacePreviewArgs {
 }
 
 pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
-    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_channel":view.lighting_channel.name(),"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"surface_shading":view.surface_shading,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"selection_tint":view.selection_tint,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_channel":view.lighting_channel.name(),"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"surface_shading":view.surface_shading,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"selection_tint":view.selection_tint,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"authored_models":view.authored_models,"sprite_resources":view.sprite_resources,"entity_helpers":view.entity_helpers,"selection_bounds":view.selection_bounds,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
@@ -406,10 +406,18 @@ pub struct SetViewArgs {
     pub selection_outlines: Option<bool>,
     /// Tint selected brush faces and models without changing selection or outlines.
     pub selection_tint: Option<bool>,
-    /// Show literal FGD icons and static Sprite resource guides; false keeps ordinary boxes without image admission.
+    /// Show literal FGD icons. Also sets sprite_resources when that option is omitted, preserving older combined-image requests.
     pub entity_images: Option<bool>,
     /// Show literal FGD studio/studioprop editor meshes; false keeps ordinary boxes.
     pub entity_model_guides: Option<bool>,
+    /// Display authored MDL meshes; false retains exact model bounds as wire markers. Picking and diagnostics stay unchanged.
+    pub authored_models: Option<bool>,
+    /// Display supported static Sprite resource images independently of literal FGD icons. No runtime animation or FX simulation.
+    pub sprite_resources: Option<bool>,
+    /// Display ordinary point/light helpers and FGD sphere/line/projector/frustum guides. Selected outlines and error markers remain.
+    pub entity_helpers: Option<bool>,
+    /// Display aggregate selected bounds, center and XYZ extents. Exact selected object/face identities stay unchanged.
+    pub selection_bounds: Option<bool>,
     /// Draw clip, trigger, nodraw and skybox brushes.
     pub tool_textures: Option<bool>,
     /// Preview the selected world sky on sky surfaces in perspective textured views. Requires all six supported faces of the explicit editor sky channel.
@@ -453,10 +461,18 @@ pub struct RenderArgs {
     pub selection_outlines: Option<bool>,
     /// Tint selected brush faces and models without changing selection or outlines.
     pub selection_tint: Option<bool>,
-    /// Show literal FGD icons and static Sprite resource guides; false keeps ordinary boxes without image admission.
+    /// Show literal FGD icons. Also sets sprite_resources when that option is omitted, preserving older combined-image requests.
     pub entity_images: Option<bool>,
     /// Show literal FGD studio/studioprop editor meshes; false keeps ordinary boxes.
     pub entity_model_guides: Option<bool>,
+    /// Display authored MDL meshes; false retains exact model bounds as wire markers. Picking and diagnostics stay unchanged.
+    pub authored_models: Option<bool>,
+    /// Display supported static Sprite resource images independently of literal FGD icons. No runtime animation or FX simulation.
+    pub sprite_resources: Option<bool>,
+    /// Display ordinary point/light helpers and FGD sphere/line/projector/frustum guides. Selected outlines and error markers remain.
+    pub entity_helpers: Option<bool>,
+    /// Display aggregate selected bounds, center and XYZ extents. Exact selected object/face identities stay unchanged.
+    pub selection_bounds: Option<bool>,
     /// Camera overrides; defaults to the user's current view.
     pub camera: Option<CameraSpec>,
     /// Image size in pixels (default 1024x576).
@@ -574,6 +590,10 @@ macro_rules! view_update {
                     selection_tint: self.selection_tint,
                     entity_images: self.entity_images,
                     entity_model_guides: self.entity_model_guides,
+                    authored_models: self.authored_models,
+                    sprite_resources: self.sprite_resources,
+                    entity_helpers: self.entity_helpers,
+                    selection_bounds: self.selection_bounds,
                     sky_channel: self.sky_channel.as_deref(),
                     sky_exposure_ev: self.sky_exposure_ev,
                 }

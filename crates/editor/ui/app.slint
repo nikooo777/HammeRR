@@ -19,6 +19,7 @@ export { WorkingRegionWindow } from "working-region.slint";
 export { CompileRegionWindow } from "compile-region.slint";
 export { FogWindow } from "fog.slint";
 export { ColorCorrectionWindow } from "color-correction.slint";
+export { ReferenceImagesWindow } from "reference-images.slint";
 export { Sky3dWindow } from "sky3d.slint";
 export { OverlayWindow, OverlayTargetRow } from "overlay.slint";
 export { CubemapFacesWindow, CubemapFaceRow } from "cubemap-faces.slint";
@@ -709,7 +710,7 @@ export component ColorWindow inherits Window {
 }
 
 export struct MaterialGroup { id: string, label: string }
-export struct MaterialTile { name: string, preview: image, favorite: bool, source: string }
+export struct MaterialTile { name: string, preview: image, favorite: bool, source: string, preview-error: string }
 export struct MaterialTileRow { tiles: [MaterialTile] }
 
 export component MaterialWindow inherits Window {
@@ -719,6 +720,10 @@ export component MaterialWindow inherits Window {
     preferred-width: 1180px;
     preferred-height: 760px;
     in-out property <string> filter;
+    in-out property <int> match-mode;
+    in-out property <string> shader-filter;
+    in property <string> shader-scan-status;
+    in property <bool> shader-scan-pending;
     in-out property <string> material;
     in-out property <string> group: "all";
     in-out property <int> offset;
@@ -738,16 +743,24 @@ export component MaterialWindow inherits Window {
     in property <bool> favorite;
     in property <image> preview;
     in-out property <int> preview-channel;
+    in-out property <int> preview-layer;
     in property <string> detail;
     in property <bool> available;
     callback search();
     callback preview-material();
+    callback preview-layer-changed();
+    callback continue-shader-scan();
     callback use-material();
     callback toggle-favorite();
     callback reload-favorites();
     callback reload-material-assets();
     callback inspect-source();
     callback cancel();
+    Timer {
+        interval: 100ms;
+        running: root.shader-scan-pending;
+        triggered => { root.continue-shader-scan(); }
+    }
     forward-focus: dialog-focus;
     dialog-focus := FocusScope {
         width: parent.width;
@@ -760,10 +773,22 @@ export component MaterialWindow inherits Window {
             spacing: 12px;
             LineEdit { placeholder-text: "Search materials across folders and categories"; text <=> root.filter; edited => { root.offset = 0; root.search(); } }
             HorizontalLayout {
+                spacing: Theme.space;
+                Text { text: "Name match"; vertical-alignment: center; }
+                ComboBox { model: ["Substring", "Prefix", "Regex"]; current-index <=> root.match-mode; selected => { root.offset = 0; root.search(); } }
+                Text { text: "Shader"; vertical-alignment: center; }
+                LineEdit { text <=> root.shader-filter; placeholder-text: "All shaders · e.g. WorldVertexTransition"; accessible-label: "Exact resolved shader filter"; edited => { root.offset = 0; root.search(); } }
+            }
+            HorizontalLayout {
                 spacing: 12px;
                 Text { text: "Winning VMT source"; vertical-alignment: center; }
                 ComboBox { horizontal-stretch: 1; model: root.source-labels; current-index <=> root.source-index; selected => { root.offset = 0; root.search(); } }
                 CheckBox { text: "Exclude maps/ materials"; checked <=> root.exclude-generated-map-materials; toggled => { root.offset = 0; root.search(); } }
+            }
+            if root.shader-scan-status != "": ScrollView {
+                height: 64px;
+                content-width: self.visible-width;
+                Text { text: root.shader-scan-status; wrap: word-wrap; color: root.shader-scan-pending ? Theme.warning : Theme.text-muted; }
             }
             HorizontalLayout {
                 spacing: 16px;
@@ -790,12 +815,16 @@ export component MaterialWindow inherits Window {
                                 background: root.material == tile.name ? Theme.selection : Theme.control-strong;
                                 border-radius: 6px;
                                 accessible-role: button;
-                                accessible-label: tile.name;
+                                accessible-label: tile.name + (tile.preview-error == "" ? "" : ": " + tile.preview-error);
                                 accessible-action-default => { root.material = tile.name; root.preview-material(); }
                                 VerticalLayout {
                                     padding: 8px;
                                     spacing: 6px;
-                                    Image { height: 110px; source: tile.preview; image-fit: contain; }
+                                    Rectangle {
+                                        height: 110px;
+                                        Image { width: parent.width; height: parent.height; source: tile.preview; image-fit: contain; }
+                                        if tile.preview-error != "": Text { text: root.preview-layer == 1 ? "Layer 2 unavailable" : "Image unavailable"; color: Theme.warning; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+                                    }
                                     Text { text: (tile.favorite ? "★ " : "") + tile.name; wrap: word-wrap; font-size: Theme.font-small; }
                                     Text { text: tile.source; overflow: elide; font-size: 10px; color: Theme.text-muted; }
                                 }
@@ -812,6 +841,7 @@ export component MaterialWindow inherits Window {
                 VerticalLayout {
                     width: 230px;
                     spacing: 10px;
+                    ComboBox { model: ["Layer 1 · Editor display", "Layer 2 · $basetexture2"]; current-index <=> root.preview-layer; selected => { root.preview-layer-changed(); } }
                     Rectangle {
                         height: 220px;
                         background: Theme.control-strong;
@@ -2110,6 +2140,14 @@ export component AppWindow inherits Window {
     in-out property <bool> show-transform;
     in-out property <int> transform-mode;
     in-out property <int> grid-snap-mode;
+    in-out property <bool> magnetic-enabled;
+    in-out property <string> magnetic-radius: "16";
+    in property <[string]> magnetic-source-choices;
+    in-out property <int> magnetic-source-index;
+    in-out property <string> magnetic-settings-revision;
+    in property <string> magnetic-status;
+    callback magnetic-refresh-sources();
+    callback magnetic-apply-settings();
     in-out property <int> transform-pivot-mode;
     in-out property <string> transform-x: "0";
     in-out property <string> transform-y: "0";
@@ -2190,10 +2228,17 @@ export component AppWindow inherits Window {
     in-out property <bool> entity-images: true;
     in-out property <bool> additive-sprite-guides: false;
     in-out property <bool> entity-model-guides: true;
+    in-out property <bool> authored-models: true;
+    in-out property <bool> sprite-resources: true;
+    in-out property <bool> entity-helpers: true;
+    in-out property <bool> selection-bounds;
+    in property <string> helper-presentation-status;
     in property <string> rope-preview-status: "Rope preview is off";
     in property <string> fog-preview-status: "Fog preview is off";
     callback fog-preview();
     callback color-correction-preview();
+    callback reference-images();
+    in property <string> reference-images-status;
     in property <string> color-correction-status: "Color correction is off";
     in property <string> color-correction-error;
     callback sky3d-preview();
@@ -2207,6 +2252,7 @@ export component AppWindow inherits Window {
 
     in property <string> selection-title: "Nothing selected";
     in property <string> selection-detail;
+    in property <string> selection-presentation;
     in property <bool> entity-selected;
     in property <string> entity-helper-status;
     in property <bool> has-fgd-model-guide;
@@ -2433,6 +2479,7 @@ export component AppWindow inherits Window {
         { id: "sky3d", title: "3D sky preview…", group: "View", enabled: true },
         { id: "fog", title: "Fog preview…", group: "View", enabled: true },
         { id: "color-correction", title: "Color correction…", group: "View", enabled: true },
+        { id: "reference-images", title: "Reference images…", group: "View", enabled: true },
         { id: "instance-contents", title: "Instance contents…", group: "View", enabled: true },
         { id: "working-region", title: "Working region…", group: "View", enabled: true },
         { id: "clear-working-region", title: "Clear working region", group: "View", enabled: root.working-region-active },
@@ -2462,6 +2509,7 @@ export component AppWindow inherits Window {
         { id: "carve", title: "Carve brushes…", group: "Brush", enabled: root.can-clip },
         { id: "merge", title: "Merge brushes…", group: "Brush", enabled: root.can-clip },
         { id: "reshape", title: "Reshape brushes…", group: "Brush", enabled: root.can-reshape },
+        { id: "magnetic-snapping", title: "Magnetic snapping…", group: "Brush", enabled: root.has-selection },
         { id: "place-on-surface", title: "Place on surface…", group: "Brush", enabled: root.whole-object-selection },
         { id: "repeat-array", title: "Repeat array…", group: "Brush", enabled: root.whole-object-selection },
         { id: "tie", title: "Tie to entity…", group: "Brush", enabled: root.can-tie },
@@ -2597,6 +2645,7 @@ export component AppWindow inherits Window {
         else if id == "sky3d" { root.sky3d-preview(); }
         else if id == "fog" { root.fog-preview(); }
         else if id == "color-correction" { root.color-correction-preview(); }
+        else if id == "reference-images" { root.reference-images(); }
         else if id == "instance-contents" { root.inspect-instance-contents(); }
         else if id == "working-region" { root.working-region(); }
         else if id == "clear-working-region" { root.clear-working-region(); }
@@ -2626,6 +2675,7 @@ export component AppWindow inherits Window {
         else if id == "carve" { root.carve-brushes(); }
         else if id == "merge" { root.merge-brushes(); }
         else if id == "reshape" { root.brush-components(); }
+        else if id == "magnetic-snapping" { root.show-transform = true; root.dock-tab = 0; root.magnetic-refresh-sources(); }
         else if id == "place-on-surface" { root.place-on-surface(); }
         else if id == "repeat-array" { root.repeat-array(); }
         else if id == "tie" { root.tie-entity(); }
@@ -2735,6 +2785,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "3D sky preview…"; activated => { root.sky3d-preview(); } }
             MenuItem { title: "Fog preview…"; activated => { root.fog-preview(); } }
             MenuItem { title: "Color correction…"; activated => { root.color-correction-preview(); } }
+            MenuItem { title: "Reference images…"; activated => { root.reference-images(); } }
             MenuItem { title: "Instance contents…"; activated => { root.inspect-instance-contents(); } }
             MenuSeparator { }
             MenuItem { title: "Working region…"; activated => { root.working-region(); } }
@@ -2774,6 +2825,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Carve brushes…"; enabled: root.can-clip; activated => { root.carve-brushes(); } }
             MenuItem { title: "Merge brushes…"; enabled: root.can-clip; activated => { root.merge-brushes(); } }
             MenuItem { title: "Reshape brushes…"; enabled: root.can-reshape; activated => { root.brush-components(); } }
+            MenuItem { title: "Magnetic snapping…"; enabled: root.has-selection; activated => { root.show-transform = true; root.dock-tab = 0; root.magnetic-refresh-sources(); } }
             MenuSeparator { }
             MenuItem { title: "Place on surface…"; enabled: root.whole-object-selection; activated => { root.place-on-surface(); } }
             MenuItem { title: "Repeat array…"; enabled: root.whole-object-selection; activated => { root.repeat-array(); } }
@@ -3272,11 +3324,16 @@ export component AppWindow inherits Window {
                                     OverlaySwitch { text: "Show grid"; checked <=> root.grid-visible; toggled => { root.spatial-changed(); } }
                                     OverlaySwitch { text: "Selection tint"; checked <=> root.selection-tint; toggled => { root.options-changed(); } }
                                     OverlaySwitch { text: "Selection outlines"; checked <=> root.selection-outlines; toggled => { root.options-changed(); } }
+                                    OverlaySwitch { text: "Selection bounds"; checked <=> root.selection-bounds; toggled => { root.options-changed(); } }
                                     SectionHeader { text: "ENTITIES"; collapsible: false; }
+                                    OverlaySwitch { text: "Authored models"; checked <=> root.authored-models; toggled => { root.options-changed(); } }
+                                    OverlaySwitch { text: "Sprite resources"; checked <=> root.sprite-resources; toggled => { root.options-changed(); } }
+                                    OverlaySwitch { text: "Entity helpers"; checked <=> root.entity-helpers; toggled => { root.options-changed(); } }
                                     OverlaySwitch { text: "Entity images"; checked <=> root.entity-images; toggled => { root.options-changed(); } }
-                                    OverlaySwitch { text: "Additive sprite guides"; enabled: root.entity-images; checked <=> root.additive-sprite-guides; toggled => { root.options-changed(); } }
+                                    OverlaySwitch { text: "Additive sprite guides"; enabled: root.sprite-resources; checked <=> root.additive-sprite-guides; toggled => { root.options-changed(); } }
                                     OverlaySwitch { text: "Entity model guides"; checked <=> root.entity-model-guides; toggled => { root.options-changed(); } }
-                                    OverlayNote { text: "FGD resource guides · boxes remain when off"; }
+                                    OverlayNote { text: root.helper-presentation-status; }
+                                    OverlayNote { text: "Static editor resources · runtime animation/FX unavailable"; }
                                     SectionHeader { text: "SURFACES"; collapsible: false; }
                                     OverlaySwitch { text: "Normal map preview"; checked <=> root.normal-maps; toggled => { root.options-changed(); } }
                                     if root.normal-maps: OverlayNote { text: root.normal-map-status + (root.lighting-preview ? " · unshadowed authored lights" : " · fixed editor light"); }
@@ -3324,6 +3381,7 @@ export component AppWindow inherits Window {
                                     if root.sky3d-render-error != "": OverlayNote { text: root.sky3d-render-error; text-color: Theme.warning; }
                                     OverlayLink { text: "Fog"; status: root.fog-preview-status; clicked => { root.overlays-open = false; root.fog-preview(); } }
                                     OverlayLink { text: "Color correction"; status: root.color-correction-status; clicked => { root.overlays-open = false; root.color-correction-preview(); } }
+                                    OverlayLink { text: "Reference images"; status: root.reference-images-status; clicked => { root.overlays-open = false; root.reference-images(); } }
                                     if root.color-correction-error != "": OverlayNote { text: root.color-correction-error; text-color: Theme.warning; }
                                     OverlayLink { text: "Instance contents"; status: "Inspect…"; clicked => { root.overlays-open = false; root.inspect-instance-contents(); } }
                                 }
@@ -3377,6 +3435,7 @@ export component AppWindow inherits Window {
                                         spacing: 2px;
                                         Text { text: root.selection-title; color: Theme.text; font-size: Theme.font-title; font-weight: 600; wrap: word-wrap; }
                                         if root.selection-detail != "": Text { text: root.selection-detail; color: Theme.text-faint; font-size: Theme.font-small; wrap: word-wrap; }
+                                        if root.selection-presentation != "": Text { text: root.selection-presentation; color: Theme.text-muted; font-size: Theme.font-small; wrap: word-wrap; }
                                     }
                                 }
 
@@ -3523,6 +3582,20 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                     Button { text: "Preview snap to grid"; enabled: !root.has-transform-preview; clicked => { root.preview-snap-to-grid(); } }
+                                    Text { text: "Magnetic snapping"; font-weight: 600; color: Theme.text; }
+                                    Button { text: "Refresh magnetic sources"; clicked => { root.magnetic-refresh-sources(); } }
+                                    FieldRow {
+                                        label: "Source corner";
+                                        ComboBox { accessible-label: "Magnetic Source corner"; model: root.magnetic-source-choices; current-index <=> root.magnetic-source-index; }
+                                    }
+                                    CheckBox { text: "Magnetic snapping"; checked <=> root.magnetic-enabled; }
+                                    FieldRow {
+                                        label: "Capture radius";
+                                        LineEdit { accessible-label: "Magnetic capture radius in world units"; text <=> root.magnetic-radius; input-type: decimal; }
+                                        Text { text: "world units"; color: Theme.text-muted; vertical-alignment: center; }
+                                    }
+                                    Button { text: "Apply magnetic settings"; clicked => { root.magnetic-apply-settings(); } }
+                                    MutedText { text: root.magnetic-status; wrap: word-wrap; }
                                     MutedText { text: root.grid-snap-mode == 1 ? "Anchors each object's bounds minimum. Group members snap separately; brush entities stay together." : "Anchors the selection bounds minimum. Relative positions and brush shapes stay fixed."; font-size: Theme.font-small; }
                                 }
 

@@ -8,7 +8,7 @@ Show a sprite image at its authored size while editing.
 2. Click **Browse…** beside **Sprite Name**.
 3. Choose a supported Sprite material, then click **Use material**.
 4. Under **Advanced properties**, enter a positive **Scale**.
-5. Enable **Entity images** in **Overlays**.
+5. Enable **Sprite resources** in **Overlays**.
 6. Check the helper status for resource or sizing errors.
 
 For an additive guide:

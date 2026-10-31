@@ -46,8 +46,10 @@ For reusable child maps, see [light colors per reference](instances.md#light-col
 
 ![A selected spotlight with its cone guide](images/spotlight-guide.png)
 
-The **Entity images** and **Entity model guides** viewport switches control resource guides.
-Editable helper boxes remain when resources are hidden or unavailable.
+The **Entity images**, **Sprite resources** and **Entity model guides** viewport switches control resource guides independently.
+**Authored models** and **Entity helpers** control mesh and ordinary guide display.
+Selection outlines, exact bounds and known error markers remain available.
+See [Helpers and selection presentation](selection-presentation.md).
 
 ### Inspect a property radius
 

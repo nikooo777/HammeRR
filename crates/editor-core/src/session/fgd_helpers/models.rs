@@ -47,6 +47,7 @@ impl Session {
         evaluation: &Evaluation,
         inspected: Option<u32>,
         enabled: bool,
+        admit: bool,
     ) -> BTreeMap<u32, (Report, Option<Instance>)> {
         let mut rows = BTreeMap::new();
         let mut preceding_assets = Vec::new();
@@ -138,8 +139,19 @@ impl Session {
             } else {
                 None
             };
+            if report.declaration_supported
+                && (report.suppression_reason == Some("view_disabled")
+                    || report.suppression_reason.is_none() && !admit)
+                && let Some(error) = self
+                    .models
+                    .borrow()
+                    .cached_error(report.path.as_deref().unwrap())
+            {
+                report.state = "unavailable";
+                report.error = Some(error);
+            }
             let mut displayed = None;
-            if report.declaration_supported && report.suppression_reason.is_none() {
+            if report.declaration_supported && report.suppression_reason.is_none() && admit {
                 evaluated += 1;
                 let result = self
                     .models
@@ -197,7 +209,9 @@ impl Session {
             {
                 preceding_assets.push(instance.asset.clone());
             }
-            if inspected == Some(id) || inspected.is_none() && displayed.is_some() {
+            if inspected == Some(id)
+                || inspected.is_none() && (displayed.is_some() || report.error.is_some())
+            {
                 rows.insert(id, (report, displayed));
             }
         }
@@ -212,9 +226,30 @@ impl Session {
             &evaluation,
             Some(id),
             self.view().entity_model_guides,
+            true,
         )
         .remove(&id)
         .map(|(report, _)| report)
+    }
+
+    pub(super) fn model_guide_errors(
+        &self,
+        document: &Document,
+        evaluation: &Evaluation,
+        enabled: bool,
+    ) -> BTreeMap<u32, String> {
+        self.fgd_model_rows(document, evaluation, None, enabled, false)
+            .into_iter()
+            .filter_map(|(id, (report, _))| {
+                if report.declaration_supported
+                    && matches!(report.suppression_reason, None | Some("view_disabled"))
+                {
+                    report.error.map(|error| (id, error))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     pub(in crate::session) fn fgd_model_guides(
@@ -226,7 +261,7 @@ impl Session {
         if !enabled {
             return Vec::new();
         }
-        self.fgd_model_rows(document, evaluation, None, enabled)
+        self.fgd_model_rows(document, evaluation, None, enabled, true)
             .into_values()
             .filter_map(|(_, instance)| instance)
             .collect()

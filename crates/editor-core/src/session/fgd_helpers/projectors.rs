@@ -196,8 +196,17 @@ impl Session {
     pub(super) fn inspected_projector(&self, id: u32) -> Option<Report> {
         let document = self.render_document();
         let evaluation = self.working_evaluation(document);
-        self.projector_reports(document, &evaluation, Some(id))
-            .remove(&id)
+        let mut row = self
+            .projector_reports(document, &evaluation, Some(id))
+            .remove(&id);
+        if !self.view.entity_helpers
+            && let Some(row) = &mut row
+            && row.displayed
+        {
+            row.displayed = false;
+            row.suppression_reason = Some("view_disabled");
+        }
+        row
     }
 
     pub(in crate::session) fn append_source_projector_guides(&self, mesh: &mut render::SceneMesh) {

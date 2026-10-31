@@ -1018,7 +1018,11 @@ impl Session {
             })
     }
 
-    pub(super) fn append_baked_surfaces(&mut self, mesh: &mut SceneMesh) -> Result<(), String> {
+    pub(super) fn append_baked_surfaces(
+        &mut self,
+        mesh: &mut SceneMesh,
+        authored_models: bool,
+    ) -> Result<(), String> {
         let ready = self
             .baked_surfaces
             .ready
@@ -1037,7 +1041,9 @@ impl Session {
                 self.baked_surface_in_region(surface)
             })
             .and_then(|()| {
-                if let Some(props) = &ready.props {
+                if let Some(props) = &ready.props
+                    && authored_models
+                {
                     let decoded = props
                         .materials
                         .iter()

@@ -239,7 +239,7 @@ pub(super) fn row(
     class: &Class,
     entity: &Entity,
     facts: &Facts,
-    view: (bool, bool),
+    view: (bool, bool, bool),
     displayed: usize,
 ) -> (Report, Option<Instance>) {
     let (report, mut instance) = resolve(session, class, entity, facts, view, displayed);
@@ -278,10 +278,10 @@ fn resolve(
     class: &Class,
     entity: &Entity,
     facts: &Facts,
-    view: (bool, bool),
+    view: (bool, bool, bool),
     displayed: usize,
 ) -> (Report, Option<Instance>) {
-    let (enabled, additive) = view;
+    let (enabled, additive, admit) = view;
     let declarations = class
         .helpers
         .iter()
@@ -397,6 +397,32 @@ fn resolve(
     };
     if report.suppression_reason.is_some() {
         report.state = "suppressed";
+        if report.suppression_reason == Some("view_disabled")
+            && let Some(image) = session
+                .materials
+                .icons
+                .cached_material_report(report.resolved_vmt.as_deref().unwrap())
+            && image.error.is_some()
+        {
+            report.state = "unavailable";
+            report.error.clone_from(&image.error);
+            report.image = Some(image);
+        }
+        return (report, None);
+    }
+    if !admit {
+        if let Some(image) = session
+            .materials
+            .icons
+            .cached_material_report(report.resolved_vmt.as_deref().unwrap())
+        {
+            report.state = image.status;
+            report.error.clone_from(&image.error);
+            report.image = Some(image);
+        } else {
+            report.state = "not_loaded";
+            report.suppression_reason = Some("admission_deferred");
+        }
         return (report, None);
     }
     let asset = session

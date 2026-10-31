@@ -35,6 +35,11 @@ pub struct BrowseMaterialsArgs {
     /// Exclude every maps/... material, including generated patches and cubemap variants. This path filter also excludes authored materials under maps/.
     #[serde(default)]
     pub exclude_generated_map_materials: bool,
+    /// Case-insensitive substring (default), literal prefix, or regex over the material name. Regex is bounded to 256 pattern bytes, depth 32 and 1 MiB compiler/DFA budgets.
+    #[serde(default)]
+    pub match_mode: crate::materials::NameMatch,
+    /// Exact case-insensitive resolved shader name; empty means all. Shader scans advance at most 128 materials / 16 MiB per call; inspect shader_scan and repeat until complete.
+    pub shader: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -201,6 +206,11 @@ pub struct SearchMaterialsArgs {
     /// Exclude every maps/... material, including generated patches and cubemap variants. Also excludes authored materials under maps/.
     #[serde(default)]
     pub exclude_generated_map_materials: bool,
+    /// Case-insensitive substring (default), prefix, or bounded regex matching on material names.
+    #[serde(default)]
+    pub match_mode: crate::materials::NameMatch,
+    /// Exact resolved shader name, case-insensitive. Inspect shader_scan progress/failures and repeat this query to complete a bounded scan.
+    pub shader: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -208,6 +218,9 @@ pub struct MaterialPreviewArgs {
     /// Material path without materials/ or .vmt, e.g. concrete/concretefloor001a.
     pub material: String,
     pub channel: Option<crate::session::MaterialPreviewChannel>,
+    /// Image layer 1 (default editor display) or 2 (actual WorldVertexTransition $basetexture2, never primary fallback).
+    #[schemars(range(min = 1, max = 2))]
+    pub layer: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

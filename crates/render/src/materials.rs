@@ -23,6 +23,7 @@ pub struct MaterialInfo {
     pub model_lighting_error: Option<String>,
     pub normal: Option<Arc<crate::normal_maps::Asset>>,
     pub display_texture: Option<String>,
+    pub blend_texture: Option<String>,
     material_identity: Option<u64>,
     /// Material name as used in the map, lowercase (`de_cbble/cobbleroad01`).
     pub name: String,
@@ -147,6 +148,10 @@ impl MaterialInfo {
                 },
             ),
             display_texture,
+            blend_texture: material
+                .filter(|material| material.shader == "worldvertextransition")
+                .and_then(|material| material.get("$basetexture2"))
+                .map(texture_path),
             normal: None,
             error: None,
             missing: base.is_none(),
@@ -172,6 +177,7 @@ impl MaterialInfo {
             terrain_lighting_error: Some("Editor helper or unavailable material".into()),
             model_lighting_error: Some("Editor helper or unavailable material".into()),
             display_texture: None,
+            blend_texture: None,
             normal: None,
             name: name.to_owned(),
             base: None,

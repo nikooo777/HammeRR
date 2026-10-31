@@ -275,6 +275,41 @@ material pages contain 1–200.
 Material preview pixels have no physical-source provenance; catalog provenance
 describes the current VMT lookup separately.
 
+### Material matching and image layers
+
+Material calls accept `match_mode:"substring"`, `"prefix"` or `"regex"`, plus
+an exact case-insensitive `shader`. Repeat the same request until
+`shader_scan.complete`; counts include confirmed matches so far. Check
+`matches_complete` and reported classification failures before treating the
+result as exhaustive. Reload material assets after external VMT/include edits.
+
+`preview_material` accepts `layer:1|2` and `channel:"color"|"alpha"`.
+Layer 1 is the captured editor display image. Layer 2 is the actual
+WorldVertexTransition `$basetexture2`, with its own dimensions and source metadata.
+Absent or unsupported Layer 2 fails; it never substitutes Layer 1.
+
+### Reference images
+
+Read `get_reference_images`, then pass its snapshot to `add_reference_image`,
+`update_reference_image`, `reload_reference_image` or `delete_reference_image`.
+`frame_reference_image` uses the saved plane bounds. These operations edit only
+map-local editor metadata. See [Reference images](reference-images.md) for
+settings, PNG limits and external-source handling.
+
+### Magnetic movement and selection guides
+
+Read `get_magnetic_snap_sources`, choose a `source_corner`, then call
+`set_magnetic_snapping` with its snapshot, `enabled` and world-unit `radius`.
+`preview_magnetic_translation` takes a proposed translation, target ray and
+current snapshot. Inspect its captured/outside-radius/no-surface result; use
+its exact token with `commit_magnetic_translation` or `cancel_magnetic_translation`.
+Pointer Move handles use the same planner. See [Magnetic translation](placement.md#magnetic-translation).
+
+`set_view` and `render_view` accept `authored_models`, `sprite_resources`,
+`entity_helpers` and `selection_bounds`. `get_selection_presentation` reports
+complete counts and bounds; `get_helper_presentation` reports category state and
+relevant cached errors. Display switches preserve source, selection and picking.
+
 ## Preview ownership
 
 Tokens identify one specific draft. Snapshots identify the state that was inspected.
@@ -941,6 +976,9 @@ These groups locate the available operations.
 | [Entity properties and connections](entities.md) | `begin_connection_edit`, `begin_entity_rename`, `begin_property_edit`, `cancel_connection_edit`, `cancel_entity_rename`, `cancel_property_edit`, `commit_connection_edit`, `commit_entity_rename`, `commit_property_edit`, `convert_color`, `create_entity`, `delete_entity_connection`, `get_connection_choices`, `get_entity_class`, `get_entity_connections`, `inspect_entity_graph`, `select_entity_graph`, `frame_entity_graph`, `get_entity_definitions`, `get_entity_inspector`, `get_entity_references`, `get_property_edit`, `get_property_inspector`, `load_entity_definitions`, `move_to_world`, `search_entity_classes`, `set_entity_color`, `set_entity_color_space`, `set_entity_properties`, `tie_to_entity`, `update_connection_draft`, `update_entity_rename`, `update_property_edit` |
 | [Entity placement](entities.md) | `apply_entity_placement`, `begin_entity_placement`, `cancel_entity_placement`, `get_entity_placement`, `pick_entity_placement`, `review_entity_placement` |
 | [Map files](getting-started.md) | `clear_recent_maps`, `close_document`, `find_objects`, `get_map_info`, `get_map_statistics`, `get_objects`, `get_recent_maps`, `new_map`, `open_map`, `open_recent_map`, `redo`, `reload_recent_maps`, `remove_recent_map`, `save_map`, `undo` |
+| [Reference images](reference-images.md) | `add_reference_image`, `delete_reference_image`, `frame_reference_image`, `get_reference_images`, `reload_reference_image`, `update_reference_image` |
+| [Magnetic movement](placement.md#magnetic-translation) | `cancel_magnetic_translation`, `commit_magnetic_translation`, `get_magnetic_snap_sources`, `get_magnetic_snapping`, `preview_magnetic_translation`, `set_magnetic_snapping` |
+| [Helpers and selection](selection-presentation.md) | `get_helper_presentation`, `get_selection_presentation` |
 | [External map comparison](map-comparison.md) | `external_map_comparison`, `get_external_map_comparison` |
 | [Brush geometry and transforms](brushes.md) | `begin_clip_drag`, `cancel_block_preview`, `cancel_carve`, `cancel_clip_drag`, `cancel_clip_preview`, `cancel_hollow`, `cancel_merge`, `cancel_primitive_preview`, `clip_brushes`, `commit_carve`, `commit_clip_preview`, `commit_hollow`, `commit_merge`, `commit_primitive_preview`, `create_block`, `create_blocks`, `create_polygon_brush`, `create_primitive`, `draw_block`, `finish_clip_drag`, `frame_primitive_preview`, `get_carve_preview`, `get_clip_handles`, `get_clip_preview`, `get_hollow_preview`, `get_merge_preview`, `get_primitive_preview`, `look_inside_hollow`, `pick_clip_point`, `preview_carve`, `preview_carve_many`, `preview_hollow`, `preview_merge`, `set_clip_handle_options`, `set_clip_points`, `set_clip_tool`, `set_spatial_settings`, `update_clip_drag` |
 | [Grid defaults](basics.md) | `get_grid_defaults`, `set_grid_defaults` |

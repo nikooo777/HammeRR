@@ -236,6 +236,10 @@ pub struct ViewOptions {
     pub entity_images: bool,
     pub additive_sprite_guides: bool,
     pub entity_model_guides: bool,
+    pub authored_models: bool,
+    pub sprite_resources: bool,
+    pub entity_helpers: bool,
+    pub selection_bounds: bool,
     pub fog: Option<crate::fog::Fog>,
     pub leak_path: bool,
     pub grid_visible: bool,
@@ -273,6 +277,10 @@ impl Default for ViewOptions {
             entity_images: true,
             additive_sprite_guides: false,
             entity_model_guides: true,
+            authored_models: true,
+            sprite_resources: true,
+            entity_helpers: true,
+            selection_bounds: false,
             fog: None,
             leak_path: true,
             grid_visible: true,
@@ -291,11 +299,16 @@ impl Default for ViewOptions {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SceneKey {
     pub serial: u64,
+    pub reference_images_serial: u64,
     pub instance_contents_serial: u64,
     selection_tint: bool,
     sky_channel: crate::sky::Channel,
     entity_images: bool,
     entity_model_guides: bool,
+    authored_models: bool,
+    sprite_resources: bool,
+    entity_helpers: bool,
+    selection_bounds: bool,
     normal_maps: bool,
     normal_maps_textured: bool,
     lighting_preview: bool,
@@ -332,11 +345,16 @@ impl ViewOptions {
     pub fn scene_key(self, serial: u64) -> SceneKey {
         SceneKey {
             serial,
+            reference_images_serial: 0,
             instance_contents_serial: 0,
             selection_tint: self.selection_tint,
             sky_channel: self.sky_channel,
             entity_images: self.entity_images,
             entity_model_guides: self.entity_model_guides,
+            authored_models: self.authored_models,
+            sprite_resources: self.sprite_resources,
+            entity_helpers: self.entity_helpers,
+            selection_bounds: self.selection_bounds,
             normal_maps: self.normal_maps,
             normal_maps_textured: self.normal_maps && self.surface == SurfaceView::Textured,
             lighting_preview: self.lighting_preview,
@@ -387,12 +405,14 @@ struct IconVertex {
     center: [f32; 3],
     offset: [f32; 2],
     uv: [f32; 2],
+    opacity: f32,
 }
 struct IconDraw {
     center: glam::Vec3,
     first_vertex: u32,
     binding: wgpu::BindGroup,
     blend: crate::icons::Blend,
+    views: [bool; 4],
 }
 
 /// Geometry uploaded by a [`Renderer`]; draw it with the same renderer.
@@ -441,6 +461,7 @@ pub struct Renderer {
     icon_pipeline: wgpu::RenderPipeline,
     additive_icon_pipeline: wgpu::RenderPipeline,
     icon_bindings: std::collections::HashMap<u64, wgpu::BindGroup>,
+    reference_image_bindings: std::collections::HashMap<String, wgpu::BindGroup>,
     opaque_pipeline: wgpu::RenderPipeline,
     translucent_pipeline: wgpu::RenderPipeline,
     baked_surface_pipeline: wgpu::RenderPipeline,
@@ -480,6 +501,7 @@ impl Renderer {
         self.materials.clear();
         self.skyboxes.clear();
         self.icon_bindings.clear();
+        self.reference_image_bindings.clear();
     }
 
     pub fn new(ctx: &GpuContext) -> Self {
@@ -796,7 +818,7 @@ impl Renderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: size_of::<IconVertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32],
                 })],
             },
             primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
@@ -902,6 +924,7 @@ impl Renderer {
             icon_pipeline,
             additive_icon_pipeline,
             icon_bindings: std::collections::HashMap::new(),
+            reference_image_bindings: std::collections::HashMap::new(),
             opaque_pipeline,
             translucent_pipeline,
             baked_surface_pipeline,
@@ -1107,6 +1130,7 @@ impl Renderer {
                     center: instance.center,
                     offset,
                     uv,
+                    opacity: 1.0,
                 });
             }
             icon_draws.push(IconDraw {
@@ -1114,6 +1138,72 @@ impl Renderer {
                 first_vertex,
                 binding: self.icon_bindings[&id].clone(),
                 blend: instance.blend,
+                views: [true; 4],
+            });
+        }
+        self.reference_image_bindings.retain(|identity, _| {
+            mesh.reference_images
+                .iter()
+                .any(|plane| plane.asset.sha256 == *identity)
+        });
+        for plane in &mesh.reference_images {
+            let identity = &plane.asset.sha256;
+            if !self.reference_image_bindings.contains_key(identity) {
+                let image = &plane.asset.image;
+                let texture = texture_2d(
+                    ctx,
+                    "Reference image",
+                    (image.width, image.height),
+                    1,
+                    wgpu::TextureFormat::Rgba8UnormSrgb,
+                );
+                write_mip(
+                    ctx,
+                    &texture,
+                    0,
+                    &image.pixels,
+                    image.width * 4,
+                    image.height,
+                    (image.width, image.height),
+                );
+                let material = MaterialInfo::untextured("Reference image");
+                let binding = self.material_bind_group_with_base(
+                    ctx,
+                    &material,
+                    true,
+                    &self.icon_sampler,
+                    texture,
+                );
+                self.reference_image_bindings
+                    .insert(identity.clone(), binding);
+            }
+            let first_vertex = icon_vertices.len() as u32;
+            for (corner, mut uv) in [
+                (0, [0.0, 0.0]),
+                (1, [0.0, 1.0]),
+                (2, [1.0, 1.0]),
+                (0, [0.0, 0.0]),
+                (2, [1.0, 1.0]),
+                (3, [1.0, 0.0]),
+            ] {
+                for (coordinate, flip) in uv.iter_mut().zip(plane.flip) {
+                    if flip {
+                        *coordinate = 1.0 - *coordinate;
+                    }
+                }
+                icon_vertices.push(IconVertex {
+                    center: plane.corners[corner],
+                    offset: [0.0; 2],
+                    uv,
+                    opacity: plane.opacity,
+                });
+            }
+            icon_draws.push(IconDraw {
+                center: plane.center.into(),
+                first_vertex,
+                binding: self.reference_image_bindings[identity].clone(),
+                blend: crate::icons::Blend::Alpha,
+                views: plane.views,
             });
         }
         let icons = (!icon_vertices.is_empty()).then(|| {
@@ -1661,7 +1751,16 @@ impl Renderer {
                     |draw: &&IconDraw| (draw.center - camera.position).dot(camera.forward());
                 draws.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
                 let mut blend = crate::icons::Blend::Alpha;
+                let view = match camera.projection {
+                    crate::Projection::Top => 0,
+                    crate::Projection::Front => 1,
+                    crate::Projection::Side => 2,
+                    crate::Projection::Perspective => 3,
+                };
                 for draw in draws {
+                    if !draw.views[view] {
+                        continue;
+                    }
                     if draw.blend != blend {
                         pass.set_pipeline(match draw.blend {
                             crate::icons::Blend::Alpha => &self.icon_pipeline,

@@ -23,6 +23,10 @@ pub struct ViewUpdate<'a> {
     pub entity_images: Option<bool>,
     pub additive_sprite_guides: Option<bool>,
     pub entity_model_guides: Option<bool>,
+    pub authored_models: Option<bool>,
+    pub sprite_resources: Option<bool>,
+    pub entity_helpers: Option<bool>,
+    pub selection_bounds: Option<bool>,
     pub sky_channel: Option<&'a str>,
     pub sky_exposure_ev: Option<f64>,
 }
@@ -31,6 +35,7 @@ impl Session {
     pub fn render_scene_key(&self, view: ViewOptions) -> render::SceneKey {
         let mut key = view.scene_key(self.scene_serial());
         key.instance_contents_serial = self.instance_contents_serial();
+        key.reference_images_serial = self.reference_images_serial();
         key
     }
 
@@ -76,6 +81,21 @@ impl Session {
         }
         if let Some(value) = update.entity_images {
             view.entity_images = value;
+            if update.sprite_resources.is_none() {
+                view.sprite_resources = value;
+            }
+        }
+        if let Some(value) = update.authored_models {
+            view.authored_models = value;
+        }
+        if let Some(value) = update.sprite_resources {
+            view.sprite_resources = value;
+        }
+        if let Some(value) = update.entity_helpers {
+            view.entity_helpers = value;
+        }
+        if let Some(value) = update.selection_bounds {
+            view.selection_bounds = value;
         }
         if let Some(value) = update.additive_sprite_guides {
             view.additive_sprite_guides = value;

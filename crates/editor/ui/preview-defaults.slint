@@ -11,9 +11,9 @@ export component PreviewDefaultsWindow inherits Window {
     background: Theme.panel;
     title: "Preview defaults - HammeRR";
     preferred-width: 720px;
-    preferred-height: 720px;
+    preferred-height: 820px;
     min-width: 650px;
-    min-height: 680px;
+    min-height: 780px;
     in property <[PreviewDefaultRow]> rows;
     in property <string> defaults;
     in property <string> storage;
@@ -49,7 +49,7 @@ export component PreviewDefaultsWindow inherits Window {
             Text { text: root.defaults; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
-            Text { text: "Only these five toggles are saved. Sky channel and exposure, fog, rendering mode, grid, cameras and active tools keep their own settings. Ordinary viewport changes stay temporary until Save current as defaults."; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: "Only these ten toggles are saved. Sky channel and exposure, fog, rendering mode, grid, cameras and active tools keep their own settings. Ordinary viewport changes stay temporary until Save current as defaults."; wrap: word-wrap; color: Theme.text-muted; }
             Rectangle { vertical-stretch: 1; }
             Text { text: root.message; wrap: word-wrap; min-height: 34px; }
             HorizontalLayout {

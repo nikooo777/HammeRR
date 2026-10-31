@@ -39,6 +39,7 @@ mod placement;
 mod preview_preferences;
 mod prop_leaf_bounds;
 mod recovery;
+mod reference_images;
 mod selection;
 mod shortcuts;
 mod sky3d_preview;

@@ -22,6 +22,30 @@ impl Channel {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Layer {
+    #[default]
+    Primary,
+    Secondary,
+}
+
+impl Layer {
+    pub fn from_number(layer: u32) -> Result<Self, String> {
+        match layer {
+            1 => Ok(Self::Primary),
+            2 => Ok(Self::Secondary),
+            _ => Err("Choose material image layer 1 or 2".into()),
+        }
+    }
+
+    pub fn number(self) -> u32 {
+        match self {
+            Self::Primary => 1,
+            Self::Secondary => 2,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct Source {
     pub texture: String,
@@ -40,6 +64,7 @@ pub struct MaterialPreview {
     pub missing: bool,
     pub tool: bool,
     pub channel: Channel,
+    pub layer: Layer,
     pub source: Option<Source>,
     pub alpha_range: Option<[u8; 2]>,
     pub image: Option<RgbaImage>,
@@ -49,6 +74,15 @@ impl Session {
     pub fn material_preview_channel(
         &self,
         name: &str,
+        channel: Channel,
+    ) -> Result<MaterialPreview, String> {
+        self.material_preview_layer_channel(name, Layer::Primary, channel)
+    }
+
+    pub fn material_preview_layer_channel(
+        &self,
+        name: &str,
+        layer: Layer,
         channel: Channel,
     ) -> Result<MaterialPreview, String> {
         let name = name.trim();
@@ -66,15 +100,21 @@ impl Session {
         if let Some(error) = &material.error {
             return Err(error.clone());
         }
-        let mut image = material
-            .base
-            .as_ref()
+        let (texture, texture_path) = match layer {
+            Layer::Primary => (material.base.as_ref(), material.display_texture.as_ref()),
+            Layer::Secondary => {
+                let path = material.blend_texture.as_ref().ok_or("Layer 2 requires a WorldVertexTransition material with an explicit $basetexture2; the primary image is not a substitute")?;
+                let texture = material.blend.as_ref().ok_or("The captured $basetexture2 image is unavailable. Reload material assets after repairing the source; layer 1 is not substituted")?;
+                (Some(texture), Some(path))
+            }
+        };
+        let mut image = texture
             .map(|texture| texture.decode_rgba8(texture.mip_for_size(256), 0, 0))
             .transpose()
             .map_err(|error| error.to_string())?;
-        let source = material.base.as_ref().and_then(|texture| {
+        let source = texture.and_then(|texture| {
             Some(Source {
-                texture: material.display_texture.clone()?,
+                texture: texture_path.cloned()?,
                 material_identity: format!("{:016x}", material.source_identity()?),
                 cached: cached.is_some(),
                 mip: texture.mip_for_size(256),
@@ -96,11 +136,15 @@ impl Session {
         });
         Ok(MaterialPreview {
             name: material.name.clone(),
-            width: material.width,
-            height: material.height,
-            missing: material.missing,
+            width: texture.map_or(material.width, |texture| texture.width),
+            height: texture.map_or(material.height, |texture| texture.height),
+            missing: match layer {
+                Layer::Primary => material.missing,
+                Layer::Secondary => false,
+            },
             tool: material.tool,
             channel,
+            layer,
             source,
             alpha_range,
             image,

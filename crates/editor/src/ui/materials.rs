@@ -72,14 +72,19 @@ fn refresh_material_window_with_favorites(
     } else {
         session::MaterialPreviewChannel::Color
     };
+    let layer = if window.get_preview_layer() == 1 {
+        session::MaterialPreviewLayer::Secondary
+    } else {
+        session::MaterialPreviewLayer::Primary
+    };
     match material_picker_reference(window, &window.get_material())
-        .and_then(|material| session.material_preview_channel(&material, channel))
+        .and_then(|material| session.material_preview_layer_channel(&material, layer, channel))
     {
         Ok(preview) => {
             window.set_available(preview.image.is_some());
             window.set_preview(preview_image(&preview));
             let mut detail = format!(
-                "{}\n{} × {}{}\n{}",
+                "{}\n{} × {}{}\nLayer {} · {}",
                 preview.name,
                 preview.width,
                 preview.height,
@@ -90,6 +95,7 @@ fn refresh_material_window_with_favorites(
                 } else {
                     ""
                 },
+                preview.layer.number(),
                 preview.channel.label(),
             );
             if let Some([low, high]) = preview.alpha_range {
@@ -147,12 +153,24 @@ fn with_material_window<R>(
         Ok(result) => Some(result),
         Err(error) => {
             window.set_detail(error.into());
+            window.set_shader_scan_pending(false);
             None
         }
     }
 }
 
 fn bind_material_preview_with_access(window: &MaterialWindow, access: &DocumentAccess) {
+    window.on_preview_layer_changed({
+        let window = window.as_weak();
+        let target = access.downgrade();
+        move || {
+            with_material_window(&window, &target, |window, shared| {
+                let mut session = lock(shared);
+                refresh_material_catalog(window, &mut session);
+                refresh_material_window(window, &mut session);
+            });
+        }
+    });
     window.on_preview_material({
         let window = window.as_weak();
         let target = access.downgrade();
@@ -169,6 +187,24 @@ fn bind_material_search_with_access(
     access: &DocumentAccess,
     alive: impl Fn() -> bool + 'static,
 ) {
+    let alive: Rc<dyn Fn() -> bool> = Rc::new(alive);
+    window.on_continue_shader_scan({
+        let window = window.as_weak();
+        let target = access.downgrade();
+        let alive = alive.clone();
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            if !alive() || !window.window().is_visible() {
+                window.set_shader_scan_pending(false);
+                return;
+            }
+            with_material_window(&window.as_weak(), &target, |window, shared| {
+                refresh_material_catalog(window, &mut lock(shared));
+            });
+        }
+    });
     window.on_search({
         let window = window.as_weak();
         let target = access.downgrade();
@@ -177,6 +213,7 @@ fn bind_material_search_with_access(
                 return;
             };
             if !alive() {
+                window.set_shader_scan_pending(false);
                 return;
             }
             with_material_window(&window.as_weak(), &target, |window, shared| {
@@ -953,6 +990,12 @@ fn refresh_material_catalog_with_favorites(
     let filter = editor_core::materials::CatalogFilter {
         source: Some(source.clone()),
         exclude_generated_map_materials: window.get_exclude_generated_map_materials(),
+        match_mode: match window.get_match_mode() {
+            0 => editor_core::materials::NameMatch::Substring,
+            1 => editor_core::materials::NameMatch::Prefix,
+            _ => editor_core::materials::NameMatch::Regex,
+        },
+        shader: Some(window.get_shader_filter().to_string()),
     };
     let loaded = session
         .material_catalog_filtered_with_favorites(
@@ -986,12 +1029,40 @@ fn refresh_material_catalog_with_favorites(
             window.set_groups(ModelRc::new(VecModel::from(Vec::<MaterialGroup>::new())));
             window.set_total(0);
             window.set_catalog_label("Material catalog unavailable".into());
+            window.set_shader_scan_pending(false);
+            window.set_shader_scan_status(error.clone().into());
             window.set_available(false);
             window.set_preview(slint::Image::default());
             window.set_detail(error.into());
             return;
         }
     };
+    window.set_shader_scan_pending(catalog.shader_scan.required && !catalog.shader_scan.complete);
+    let scan = &catalog.shader_scan;
+    let status = if scan.required {
+        let mut status = format!(
+            "Shader scan: {} / {} materials · {} unavailable{}",
+            scan.classified,
+            scan.candidates,
+            scan.failed,
+            if scan.complete {
+                ""
+            } else {
+                " · scanning; counts are partial"
+            }
+        );
+        for failure in &scan.failures {
+            status.push_str(&format!("\n{}: {}", failure.material, failure.error));
+        }
+        if scan.failures_truncated {
+            status.push_str("\nFurther classification failures omitted; refine the name/source filters to inspect them.");
+        }
+        status.push_str("\nShader declarations stay cached until Reload material assets; unresolved materials are not assumed to match.");
+        status
+    } else {
+        String::new()
+    };
+    window.set_shader_scan_status(status.into());
     let mut source_ids = vec![
         "all".into(),
         "directory".into(),
@@ -1027,31 +1098,62 @@ fn refresh_material_catalog_with_favorites(
     window.set_groups(ModelRc::new(VecModel::from(groups)));
     window.set_total(catalog.total as i32);
     window.set_catalog_label(if catalog.total == 0 {
-        "No matching materials".into()
+        if catalog.shader_scan.required && !catalog.shader_scan.matches_complete {
+            "No confirmed material matches; shader scan details above".into()
+        } else {
+            "No matching materials".into()
+        }
     } else {
         format!(
-            "{}–{} of {} materials",
+            "{}–{} of {} materials{}",
             catalog.offset + 1,
             catalog.offset + catalog.entries.len(),
-            catalog.total
+            catalog.total,
+            if catalog.shader_scan.required && !catalog.shader_scan.matches_complete {
+                " · confirmed matches"
+            } else {
+                ""
+            }
         )
         .into()
     });
+    let layer = if window.get_preview_layer() == 1 {
+        session::MaterialPreviewLayer::Secondary
+    } else {
+        session::MaterialPreviewLayer::Primary
+    };
     let tiles = catalog
         .entries
         .into_iter()
-        .map(|entry| MaterialTile {
-            preview: material_picker_reference(window, &entry.name)
-                .and_then(|material| session.material_preview(&material))
-                .ok()
-                .map(|preview| preview_image(&preview))
-                .unwrap_or_default(),
-            name: entry.name.into(),
-            favorite: entry.favorite,
-            source: entry.provenance.source.as_ref().map_or_else(
-                || "Current VMT source unavailable".into(),
-                |source| format!("Current VMT: {} · {}", source.kind, source.mount).into(),
-            ),
+        .map(|entry| {
+            let preview = material_picker_reference(window, &entry.name).and_then(|material| {
+                session.material_preview_layer_channel(
+                    &material,
+                    layer,
+                    session::MaterialPreviewChannel::Color,
+                )
+            });
+            let (image, preview_error) = match preview {
+                Ok(preview) => (
+                    preview_image(&preview),
+                    if preview.image.is_none() {
+                        "No display image".into()
+                    } else {
+                        slint::SharedString::default()
+                    },
+                ),
+                Err(error) => (slint::Image::default(), error.into()),
+            };
+            MaterialTile {
+                preview: image,
+                preview_error,
+                name: entry.name.into(),
+                favorite: entry.favorite,
+                source: entry.provenance.source.as_ref().map_or_else(
+                    || "Current VMT source unavailable".into(),
+                    |source| format!("Current VMT: {} · {}", source.kind, source.mount).into(),
+                ),
+            }
         })
         .collect::<Vec<_>>();
     let rows = tiles

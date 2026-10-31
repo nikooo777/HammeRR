@@ -43,6 +43,7 @@ mod preview_defaults_ui;
 mod primitive_ui;
 mod recent_maps_ui;
 mod recovery_ui;
+mod reference_images_ui;
 mod rename_ui;
 mod repeat_ui;
 mod saved_views_ui;

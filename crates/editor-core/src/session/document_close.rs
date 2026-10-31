@@ -21,7 +21,14 @@ pub struct DocumentCloseReview {
 
 impl DocumentCloseReview {
     pub(super) fn first_draft_except(&self, kind: &str) -> Option<&'static str> {
-        self.drafts.keys().copied().find(|draft| *draft != kind)
+        self.first_draft_outside(&[kind])
+    }
+
+    pub(super) fn first_draft_outside(&self, allowed: &[&str]) -> Option<&'static str> {
+        self.drafts
+            .keys()
+            .copied()
+            .find(|draft| !allowed.contains(draft))
     }
 
     pub fn requires_discard(&self) -> bool {

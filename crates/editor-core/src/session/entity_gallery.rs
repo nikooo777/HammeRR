@@ -108,7 +108,8 @@ fn helper_summary(report: super::fgd_helpers::Report) -> Value {
 impl Session {
     pub fn entity_gallery_snapshot(&self) -> String {
         format!(
-            "gallery:{}:{}:{}:{}:{}",
+            "gallery:{}:{}:{}:{}:{}:{}",
+            self.buffer_review_scope,
             self.document_generation,
             self.document.revision(),
             self.definitions_serial,
@@ -303,6 +304,7 @@ impl Session {
         let images = self.fgd_icon_instances(
             &document,
             &evaluation,
+            true,
             true,
             self.view.additive_sprite_guides,
         );

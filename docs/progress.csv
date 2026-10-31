@@ -1,14 +1,14 @@
 id,group,implemented_percent
 V01,Orthographic editing,100
 V02,Coordinated views,35
-V03,Configurable grid and snapping,90
+V03,Configurable grid and snapping,100
 V04,Spatial guides,65
 V05,View modes,100
 V06,Camera bookmarks and framing,100
 V07,Area and paint selection,100
 V08,Selection rules and overlapping hits,100
 V09,Working-region visibility,40
-V10,Reference images (++),0
+V10,Reference images (++),100
 G01,Interactive brush creation,100
 G02,Additional brush primitives,100
 G03,Full numeric transforms,80
@@ -37,7 +37,7 @@ T04,World/face alignment and grouped faces,100
 T05,Texture-lock modes,80
 T06,Lightmap scale and smoothing,100
 T07,Material replacement,100
-T08,Material exploration,85
+T08,Material exploration,100
 T09,Direct UV vectors and skew (++),100
 T10,Atlas-aware texturing (++),100
 T11,Decal and overlay authoring,60
@@ -74,7 +74,7 @@ P05,Fog preview (++),25
 P06,Rope preview (++),45
 P07,Particle preview (++),0
 P08,Model/entity appearance preview (++),60
-P09,Helper visibility and selection presentation,60
+P09,Helper visibility and selection presentation,100
 P10,Lighting diagnostics (++),80
 P11,Reload changed assets (++),40
 P12,Physics-assisted arrangement (++),0

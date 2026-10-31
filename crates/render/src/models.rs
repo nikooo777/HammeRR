@@ -261,6 +261,14 @@ impl Library {
         self.get_with_materials(fs, path, true)
     }
 
+    pub fn cached_error(&self, path: &str) -> Option<String> {
+        let path = model_path(path).ok()?;
+        self.entries
+            .get(&path)
+            .and_then(|entry| entry.result.as_ref().err())
+            .cloned()
+    }
+
     pub fn get_geometry(&mut self, fs: &GameFs, path: &str) -> Result<Arc<Asset>, String> {
         self.get_with_materials(fs, path, false)
     }

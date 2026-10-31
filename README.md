@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 76.6% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 78.1% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -61,7 +61,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | [Materials](docs/textures.md) | [Normal maps](docs/normal-maps.md) |
 | --- | --- |
 | ![Different materials on one brush](docs/images/face-materials.png) | ![Normal-map surface detail on brick](docs/images/normal-maps-on.png) |
-| Apply, paint, wrap and fit native materials. | Inspect supported surface detail before compiling. |
+| Filter native materials and inspect both blend-image layers. | Inspect supported surface detail before compiling. |
 
 | [Atlas texturing](docs/atlas-texturing.md) | [Grid snapping](docs/brushes.md#snap-objects-to-grid) |
 | --- | --- |
@@ -87,6 +87,11 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | --- | --- |
 | ![Real FGD light, player and prop examples before placement](docs/images/entity-gallery.png) | ![One child brush selected inside a brush entity](docs/images/solid-selection.png) |
 | Preview loaded classes and place reviewed batches in one Undo step. | Pick groups, whole objects or individual brushes inside entities. |
+
+| [Reference images](docs/reference-images.md) | [Magnetic snapping](docs/placement.md#magnetic-translation) |
+| --- | --- |
+| ![Editor-only image planes with pose, opacity and flips](docs/images/reference-images.png) | ![Brush corners joined through magnetic capture](docs/images/magnetic-snapping.png) |
+| Trace PNG references with shared pose and display controls. | Capture visible brush, terrain and model vertices while moving. |
 
 | [Water and slime](docs/water.md) | [Ropes](docs/ropes.md) |
 | --- | --- |

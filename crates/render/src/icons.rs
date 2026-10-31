@@ -128,6 +128,28 @@ impl Library {
         self.0.get_mut().entries.clear();
         self.0.get_mut().bytes = 0;
     }
+    pub fn cached_report(&self, name: &str) -> Option<Report> {
+        if name.len() > 256 {
+            return None;
+        }
+        let key = canonical(name, false)
+            .unwrap_or_else(|_| format!("invalid:{}", name.to_ascii_lowercase()));
+        self.0
+            .borrow()
+            .entries
+            .get(&key)
+            .map(|asset| asset.report.clone())
+    }
+
+    pub fn cached_material_report(&self, path: &str) -> Option<Report> {
+        let path = asset_relative(path).ok()?;
+        self.0
+            .borrow()
+            .entries
+            .get(&path)
+            .map(|asset| asset.report.clone())
+    }
+
     pub fn load(&self, fs: &GameFs, name: &str) -> Arc<Asset> {
         if name.len() > 256 {
             return Arc::new(Asset {

@@ -165,9 +165,19 @@ impl Session {
     pub(super) fn inspected_lines(&self, id: u32) -> Vec<Report> {
         let document = self.render_document();
         let evaluation = self.working_evaluation(document);
-        self.line_reports(document, &evaluation, Some(id))
+        let mut rows = self
+            .line_reports(document, &evaluation, Some(id))
             .remove(&id)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if !self.view.entity_helpers {
+            for row in &mut rows {
+                if row.displayed {
+                    row.displayed = false;
+                    row.suppression_reason = Some("view_disabled");
+                }
+            }
+        }
+        rows
     }
 
     pub(in crate::session) fn append_fgd_line_guides(&self, mesh: &mut render::SceneMesh) {

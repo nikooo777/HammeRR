@@ -29,6 +29,7 @@ pub mod plane;
 pub mod polygon;
 pub mod primitive;
 pub mod query;
+pub mod reference_images;
 pub mod references;
 pub mod region;
 pub mod repeat;

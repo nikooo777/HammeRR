@@ -24,6 +24,27 @@ ones. A lower-priority source does not reveal a shadowed copy.
 Source labels describe the current VMT lookup. Cached preview pixels do not
 carry physical-source provenance; use **Reload material assets** after changes.
 
+## Explore material names and shaders
+
+1. Open **Browse materials…** and enter the material-name query.
+2. Choose **Name match → Substring**, **Prefix** or **Regex**. Prefix starts at the beginning of the material path. Regex supports expressions such as `^nature/blend.*(grass|dirt)`.
+3. Optionally enter an exact **Shader**, such as `WorldVertexTransition` or `Water`. Leave it blank for all shaders.
+4. Combine these choices with **Winning VMT source**, **Exclude maps/ materials**, folders, categories, used materials or favorites.
+5. Read **Shader scan** while the browser classifies declarations in bounded batches. The scan continues while the browser is visible; counts and pages show confirmed matches so far.
+6. Check unavailable-material errors before relying on the complete results. Repair sources and choose **Reload material assets** to retry them.
+
+Name matching is case-insensitive by default. Regex uses the Rust regex syntax, including anchors, character classes and alternation; backreferences and look-around are unsupported. Invalid or over-budget patterns show an error. Queries are limited to 256 bytes, regex nesting to 32, and compiled-expression/DFA memory to 1 MiB each.
+
+Shader matching resolves Patch includes through the same material loader as the editor. Each scan step attempts at most 128 materials and reads at most 16 MiB, with existing per-file and include limits. A completed scan can still report unavailable declarations; these are not assumed to match. Shader declarations and their original VMT identities stay cached until **Reload material assets**. The current source labels remain separate from that cached declaration and the preview pixels.
+
+The scan reports the first 16 failures and the full failure count. Narrow the name or source filter to inspect further failures. The shader cache holds at most 250,000 entries and 64 MiB of text; an exceeded budget reports an error. Narrow the query and reload before retrying.
+
+See [material source](material-source.md#inspect-image-layers-and-alpha) to inspect either blend image and its alpha channel before applying a material.
+
+| Default display image | Actual second blend image |
+| --- | --- |
+| ![Native blend material display image](images/blend-layer-1.png) | ![Declared basetexture2 image](images/blend-layer-2.png) |
+
 ## Edit face textures
 
 1. Select faces and open **Edit face textures…**.

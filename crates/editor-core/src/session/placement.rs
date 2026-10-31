@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use glam::{DQuat, DVec3, EulerRot};
@@ -11,6 +12,8 @@ use serde_json::{Value, json};
 use source_formats::vmf::Solid;
 
 use super::{Actor, Session};
+
+pub mod magnetic;
 
 const MAX_POINTS: usize = 1_000_000;
 const CORNER_SNAP_ROUNDOFF_ULPS: f64 = 4.0;
@@ -71,6 +74,7 @@ pub struct SourceCorner {
 pub(super) struct State {
     serial: u64,
     draft: Option<Draft>,
+    magnetic: magnetic::State,
 }
 
 struct Draft {
@@ -215,6 +219,25 @@ fn precise_corner(solid: &Solid, component: &Component, approximate: DVec3) -> O
     Some(point)
 }
 
+fn corner_translation(source: DVec3, position: DVec3, grid: f64) -> DVec3 {
+    let mut delta = position - source;
+    for axis in 0..3 {
+        let scale = source[axis].abs().max(position[axis].abs()).max(grid);
+        if delta[axis].abs() <= CORNER_SNAP_ROUNDOFF_ULPS * f64::EPSILON * scale {
+            delta[axis] = 0.0;
+        }
+    }
+    delta
+}
+
+fn compare_surface_hits(a: &query::Hit, b: &query::Hit) -> Ordering {
+    a.distance
+        .total_cmp(&b.distance)
+        .then(a.object.cmp(&b.object))
+        .then(a.solid.cmp(&b.solid))
+        .then(a.side.cmp(&b.side))
+}
+
 fn push(
     points: &mut Vec<SupportPoint>,
     point: DVec3,
@@ -274,24 +297,35 @@ impl Session {
         let Some(component) = &options.source_corner else {
             return Ok(None);
         };
-        if !(3..=subobject::MAX_SIDES).contains(&component.sides.len()) {
-            return Err("A source corner needs 3–64 unique incident face IDs".into());
-        }
         if options.align || options.offset != 0.0 {
             return Err("Corner snapping needs zero offset and no alignment".into());
         }
-        self.corner_placement_roots(ids)?;
+        self.translation_source_corner(ids, component, false)
+            .map(Some)
+    }
+
+    fn translation_source_corner(
+        &mut self,
+        ids: &[ObjectId],
+        component: &Component,
+        children: bool,
+    ) -> Result<DVec3, String> {
+        if !(3..=subobject::MAX_SIDES).contains(&component.sides.len()) {
+            return Err("A source corner needs 3–64 unique incident face IDs".into());
+        }
+        self.translation_objects(ids, children)?;
+        self.object_translation_bounds(ids, DVec3::ZERO)?;
         let hidden = self.hidden_brushes_for(false);
         let (owner, solid) =
             subobject::solid(&self.document, component.solid).map_err(|error| error.to_string())?;
-        if !ids.contains(&owner)
+        if !(ids.contains(&owner) || children && ids.contains(&ObjectId::Solid(solid.id)))
             || hidden.contains(&solid.id)
             || solid.hidden
             || matches!(owner, ObjectId::Entity(id) if self.document.entity(id).is_none_or(|entity| entity.hidden))
             || solid.sides.iter().any(|side| side.displacement.is_some())
         {
             return Err(
-                "Choose a visible flat source brush corner belonging to a selected whole owner"
+                "Choose a visible flat source brush corner belonging to the selected brush or owner"
                     .into(),
             );
         }
@@ -303,16 +337,14 @@ impl Session {
             return Err("Choose exactly one real source corner, rather than a face or edge".into());
         }
         precise_corner(solid, component, topology.vertices[indices[0]].position)
-            .map(Some)
             .ok_or("Source corner planes have no finite intersection".into())
     }
 
-    fn corner_placement_roots(&self, ids: &[ObjectId]) -> Result<(), String> {
-        self.whole_translation_roots(ids)?;
-        self.object_translation_bounds(ids, DVec3::ZERO)
+    pub(super) fn whole_translation_roots(&self, ids: &[ObjectId]) -> Result<(), String> {
+        self.translation_objects(ids, false)
     }
 
-    pub(super) fn whole_translation_roots(&self, ids: &[ObjectId]) -> Result<(), String> {
+    fn translation_objects(&self, ids: &[ObjectId], children: bool) -> Result<(), String> {
         if ids.is_empty() {
             return Err("Select whole objects to snap".into());
         }
@@ -321,13 +353,17 @@ impl Session {
                 ObjectId::Solid(solid) => {
                     let (owner, brush) = subobject::solid(&self.document, solid)
                         .map_err(|error| error.to_string())?;
-                    if owner != id {
+                    if owner != id && (!children || ids.contains(&owner)) {
                         return Err(
                             "Select whole brush entities rather than their child brushes".into(),
                         );
                     }
                     if brush.hidden {
                         return Err("Show selected brushes before placing them".into());
+                    }
+                    if matches!(owner, ObjectId::Entity(entity) if self.document.entity(entity).is_none_or(|entity|entity.hidden))
+                    {
+                        return Err("Show the owning entity before moving its brush".into());
                     }
                 }
                 ObjectId::Entity(entity) => {
@@ -358,7 +394,16 @@ impl Session {
         &mut self,
         ids: &[ObjectId],
     ) -> Result<Vec<SourceCorner>, String> {
-        self.corner_placement_roots(ids)?;
+        self.translation_source_corners(ids, false)
+    }
+
+    fn translation_source_corners(
+        &mut self,
+        ids: &[ObjectId],
+        children: bool,
+    ) -> Result<Vec<SourceCorner>, String> {
+        self.translation_objects(ids, children)?;
+        self.object_translation_bounds(ids, DVec3::ZERO)?;
         let hidden = self.hidden_brushes_for(false);
         let mut corners = Vec::new();
         let mut brushes = 0;
@@ -367,7 +412,7 @@ impl Session {
                 .document
                 .owner_of_solid(brush.id)
                 .ok_or("Source owner is missing")?;
-            if !ids.contains(&owner)
+            if !(ids.contains(&owner) || children && ids.contains(&ObjectId::Solid(brush.id)))
                 || hidden.contains(&brush.id)
                 || brush.hidden
                 || brush.sides.iter().any(|side| side.displacement.is_some())
@@ -429,9 +474,11 @@ impl Session {
         let mut points = Vec::new();
         for &owner in ids {
             let brushes = match owner {
-                ObjectId::Solid(id) => {
-                    std::slice::from_ref(self.document.solid(id).ok_or("Source brush is missing")?)
-                }
+                ObjectId::Solid(id) => std::slice::from_ref(
+                    subobject::solid(&self.document, id)
+                        .map_err(|error| error.to_string())?
+                        .1,
+                ),
                 ObjectId::Entity(id) => {
                     let entity = self.document.entity(id).ok_or("Source owner is missing")?;
                     if entity.properties.get("origin").is_some() || entity.solids.is_empty() {
@@ -650,6 +697,16 @@ impl Session {
         ray: Ray,
         reject_ambiguous: bool,
     ) -> Result<PickedSurface, String> {
+        self.placement_surface_candidate(ids, ray, reject_ambiguous)?
+            .ok_or("The ray did not hit a visible brush, terrain sheet or supported model".into())
+    }
+
+    fn placement_surface_candidate(
+        &mut self,
+        ids: &[ObjectId],
+        ray: Ray,
+        reject_ambiguous: bool,
+    ) -> Result<Option<PickedSurface>, String> {
         let direction = ray
             .direction
             .try_normalize()
@@ -679,16 +736,14 @@ impl Session {
         let ordinary = query::pick_surface(&self.document, &ray, |solid| {
             !solids.contains(&solid.id) && !hidden.contains(&solid.id)
         });
-        if reject_ambiguous
-            && ordinary.is_none()
-            && query::pick_face(&self.document, &ray, |solid| {
+        let invalid = if reject_ambiguous && ordinary.is_none() {
+            query::pick_face(&self.document, &ray, |solid| {
                 !solids.contains(&solid.id) && !hidden.contains(&solid.id)
             })
-            .is_some()
-        {
-            return Err("The first visible brush hit has ambiguous or invalid geometry".into());
-        }
-        ordinary
+        } else {
+            None
+        };
+        let candidate = ordinary
             .into_iter()
             .map(|surface| PickedSurface {
                 surface,
@@ -724,8 +779,52 @@ impl Session {
                         })
                     }),
             )
-            .min_by(|a, b| a.surface.hit.distance.total_cmp(&b.surface.hit.distance))
-            .ok_or("The ray did not hit a visible brush, terrain sheet or supported model".into())
+            .min_by(|a, b| compare_surface_hits(&a.surface.hit, &b.surface.hit));
+        if invalid.is_some_and(|hit| {
+            candidate
+                .as_ref()
+                .is_none_or(|picked| compare_surface_hits(&hit, &picked.surface.hit).is_le())
+        }) {
+            return Err("The first visible brush hit has ambiguous or invalid geometry".into());
+        }
+        Ok(candidate)
+    }
+
+    fn placement_corner_target(
+        &self,
+        picked: PickedSurface,
+    ) -> Result<(CornerTarget, DVec3), String> {
+        let PickedSurface { surface, model } = picked;
+        let (target, position) = if let Some(target) = model {
+            if self
+                .document
+                .vmf()
+                .entities
+                .iter()
+                .filter(|entity| ObjectId::Entity(entity.id) == target.entity)
+                .count()
+                != 1
+            {
+                return Err("The first visible model has an ambiguous entity identity".into());
+            }
+            let position = target.position;
+            (CornerTarget::Model(target), position)
+        } else if let Some(vertex) = surface.terrain_vertex {
+            (CornerTarget::Terrain(vertex), vertex.position)
+        } else {
+            let (target, approximate) = query::face_corner(&self.document, &surface.hit).ok_or(
+                "The first visible hit must have unambiguous brush, terrain or model mesh geometry",
+            )?;
+            let (_, solid) = subobject::solid(&self.document, target.solid)
+                .map_err(|error| error.to_string())?;
+            let position = precise_corner(solid, &target, approximate)
+                .ok_or("Target corner planes have no finite intersection")?;
+            (CornerTarget::Brush(target), position)
+        };
+        if !position.is_finite() || position.abs().max_element() > crate::spatial::MAX_EXTENT {
+            return Err("Target vertex must be finite and within ±65536 units".into());
+        }
+        Ok((target, position))
     }
 
     fn plan_placement(
@@ -747,45 +846,10 @@ impl Session {
         if method == Method::BrushCorner {
             let source = self.placement_source_corner(ids, options)?.unwrap();
             let ray = ray.ok_or("Supply a ray or pick a target corner in the viewport")?;
-            let PickedSurface { surface, model } = self.picked_placement_surface(ids, ray, true)?;
-            let (target, position) = if let Some(target) = model {
-                if self
-                    .document
-                    .vmf()
-                    .entities
-                    .iter()
-                    .filter(|entity| ObjectId::Entity(entity.id) == target.entity)
-                    .count()
-                    != 1
-                {
-                    return Err("The first visible model has an ambiguous entity identity".into());
-                }
-                let position = target.position;
-                (CornerTarget::Model(target), position)
-            } else if let Some(vertex) = surface.terrain_vertex {
-                (CornerTarget::Terrain(vertex), vertex.position)
-            } else {
-                let (target, approximate) = query::face_corner(&self.document, &surface.hit)
-                    .ok_or("The first visible hit must have unambiguous brush, terrain or model mesh geometry")?;
-                let (_, solid) = subobject::solid(&self.document, target.solid)
-                    .map_err(|error| error.to_string())?;
-                let position = precise_corner(solid, &target, approximate)
-                    .ok_or("Target corner planes have no finite intersection")?;
-                (CornerTarget::Brush(target), position)
-            };
-            if !position.is_finite() || position.abs().max_element() > crate::spatial::MAX_EXTENT {
-                return Err("Target vertex must be finite and within ±65536 units".into());
-            }
-            let mut delta = position - source;
-            for axis in 0..3 {
-                let scale = source[axis]
-                    .abs()
-                    .max(position[axis].abs())
-                    .max(self.spatial.grid_size);
-                if delta[axis].abs() <= CORNER_SNAP_ROUNDOFF_ULPS * f64::EPSILON * scale {
-                    delta[axis] = 0.0;
-                }
-            }
+            let picked = self.picked_placement_surface(ids, ray, true)?;
+            let surface = picked.surface;
+            let (target, position) = self.placement_corner_target(picked)?;
+            let delta = corner_translation(source, position, self.spatial.grid_size);
             self.object_translation_bounds(ids, delta)?;
             return Ok(Plan {
                 method,

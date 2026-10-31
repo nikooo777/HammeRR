@@ -190,7 +190,16 @@ impl Session {
         let document = self.render_document();
         let evaluation = self.working_evaluation(document);
         let (mut reports, omitted) = self.frustum_reports(document, &evaluation, Some(id));
-        (reports.remove(&id).unwrap_or_default(), omitted)
+        let mut rows = reports.remove(&id).unwrap_or_default();
+        if !self.view.entity_helpers {
+            for row in &mut rows {
+                if row.displayed {
+                    row.displayed = false;
+                    row.suppression_reason = Some("view_disabled");
+                }
+            }
+        }
+        (rows, omitted)
     }
 
     pub(in crate::session) fn append_fgd_frustum_guides(&self, mesh: &mut render::SceneMesh) {

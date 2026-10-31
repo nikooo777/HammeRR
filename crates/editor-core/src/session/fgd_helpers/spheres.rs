@@ -127,9 +127,19 @@ impl Session {
     pub(super) fn inspected_spheres(&self, id: u32) -> Vec<Report> {
         let document = self.render_document();
         let evaluation = self.working_evaluation(document);
-        self.sphere_reports(document, &evaluation, Some(id))
+        let mut rows = self
+            .sphere_reports(document, &evaluation, Some(id))
             .remove(&id)
-            .unwrap_or_default()
+            .unwrap_or_default();
+        if !self.view.entity_helpers {
+            for row in &mut rows {
+                if row.displayed {
+                    row.displayed = false;
+                    row.suppression_reason = Some("view_disabled");
+                }
+            }
+        }
+        rows
     }
 
     pub(in crate::session) fn append_fgd_sphere_guides(&self, mesh: &mut render::SceneMesh) {

@@ -296,8 +296,8 @@ impl Session {
         if ["hide", "show", "isolate"].contains(&action) && ids.is_empty() {
             return Err("Select at least one object".into());
         }
-        if let Some(id) = ids.iter().find(|&&id| !self.document.contains(id)) {
-            return Err(format!("{id} does not exist"));
+        if ["hide", "show", "isolate"].contains(&action) {
+            self.require_root_objects(ids)?;
         }
         let before = self.visibility_snapshot();
         let after = if action == "restore" {

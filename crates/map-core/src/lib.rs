@@ -5,6 +5,7 @@ pub mod brush;
 pub mod carve;
 pub mod checks;
 pub mod clip;
+pub mod color_palette;
 pub mod comparison;
 pub mod compile_region;
 pub mod connections;

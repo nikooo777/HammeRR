@@ -22,21 +22,36 @@ fn enabled(value: &Value) -> slint::SharedString {
     }
 }
 
+fn mode_label(value: &Value) -> slint::SharedString {
+    match value.as_str() {
+        Some("groups") => "Groups".into(),
+        Some("objects") => "Objects".into(),
+        Some("solids") => "Solids".into(),
+        _ => "Unavailable".into(),
+    }
+}
+
 fn refresh(window: &SelectionDefaultsWindow, session: &Session, snapshot: &RefCell<String>) {
     let state = session.selection_profiles_state();
     *snapshot.borrow_mut() = state["snapshot"].as_str().unwrap().into();
-    let rows: Vec<_> = [
-        ("world_brushes", "World brushes"),
-        ("brush_entities", "Brush entities"),
-        ("point_entities", "Point entities & models"),
-    ]
-    .into_iter()
-    .map(|(key, label)| SelectionDefaultRow {
-        label: label.into(),
-        current: enabled(&state["current"][key]),
-        defaults: enabled(&state["defaults"][key]),
-    })
-    .collect();
+    let mut rows = vec![SelectionDefaultRow {
+        label: "Object selection".into(),
+        current: mode_label(&state["current_mode"]),
+        defaults: mode_label(&state["defaults_mode"]),
+    }];
+    rows.extend(
+        [
+            ("world_brushes", "World brushes"),
+            ("brush_entities", "Brush entities"),
+            ("point_entities", "Point entities & models"),
+        ]
+        .into_iter()
+        .map(|(key, label)| SelectionDefaultRow {
+            label: label.into(),
+            current: enabled(&state["current"][key]),
+            defaults: enabled(&state["defaults"][key]),
+        }),
+    );
     window.set_rows(Rc::new(VecModel::from(rows)).into());
     let profiles: Vec<_> = state["profiles"]
         .as_array()
@@ -46,7 +61,8 @@ fn refresh(window: &SelectionDefaultsWindow, session: &Session, snapshot: &RefCe
             id: profile["id"].as_str().unwrap().into(),
             name: profile["name"].as_str().unwrap().into(),
             filters: format!(
-                "World {} · brush entities {} · points {}",
+                "{} · World {} · brush entities {} · points {}",
+                mode_label(&profile["mode"]),
                 enabled(&profile["filters"]["world_brushes"]),
                 enabled(&profile["filters"]["brush_entities"]),
                 enabled(&profile["filters"]["point_entities"])
@@ -101,10 +117,10 @@ fn act(
         Ok(state) if state["write_committed"] == true && state["ready"] != true => window.set_message("Selection defaults were written but could not reload. Review the storage error before continuing.".into()),
         Ok(_) => window.set_message(
             match action {
-                "save" => "Current selection filters saved for future documents.",
-                "apply" => "Saved selection filters applied to this document.",
+                "save" => "Current selection rules saved for future documents.",
+                "apply" => "Saved selection rules applied to this document.",
                 "reset" => "Factory defaults saved. Apply saved defaults to use them now.",
-                _ => "Selection defaults reloaded. Current filters are unchanged.",
+                _ => "Selection defaults reloaded. Current rules are unchanged.",
             }
             .into(),
         ),
@@ -139,7 +155,7 @@ fn profile_act(
             } else if action == "apply" {
                 "Selected profile applied to this document. Startup defaults are unchanged."
             } else {
-                "Selection profiles saved. Current filters and startup defaults are unchanged."
+                "Selection profiles saved. Current rules and startup defaults are unchanged."
             }.into());
         }
         Err(error) => window.set_message(error.into()),

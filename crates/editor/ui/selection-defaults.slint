@@ -47,7 +47,7 @@ export component SelectionDefaultsWindow inherits Window {
             ComboBox { model: ["Startup defaults", "Named profiles"]; current-index <=> root.section; accessible-label: "Selection settings section"; }
             if root.section == 0: VerticalLayout {
                 spacing: 10px;
-                Text { text: "Choose Pick object types, then save the filters to use for future documents."; color: Theme.text-muted; wrap: word-wrap; }
+                Text { text: "Choose Object selection and the type switches in Select, then save them for future documents."; color: Theme.text-muted; wrap: word-wrap; }
                 HorizontalLayout {
                     Text { text: "Setting"; horizontal-stretch: 1; font-weight: 600; }
                     Text { text: "Current session"; width: 125px; font-weight: 600; }
@@ -65,7 +65,7 @@ export component SelectionDefaultsWindow inherits Window {
             }
             if root.section == 1: VerticalLayout {
                 spacing: 10px;
-                Text { text: "Save current filters under a name, then explicitly apply a profile when needed. Startup defaults stay separate."; color: Theme.text-muted; wrap: word-wrap; }
+                Text { text: "Save current selection mode and type switches under a name, then apply a profile when needed. Startup defaults stay separate."; color: Theme.text-muted; wrap: word-wrap; }
                 ListView {
                     height: 96px;
                     for profile in root.profiles: Rectangle {
@@ -91,7 +91,7 @@ export component SelectionDefaultsWindow inherits Window {
             }
             Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
-            if root.section == 0: Text { text: "New/Open retain current filters. Reset keeps the last valid profiles, or an empty list if none were loaded."; wrap: word-wrap; color: Theme.text-muted; }
+            if root.section == 0: Text { text: "New/Open retain current rules. Reset saves Groups with all types enabled and keeps the last valid profiles, or an empty list if none were loaded."; wrap: word-wrap; color: Theme.text-muted; }
             Rectangle { vertical-stretch: 1; }
             Text { text: root.message; wrap: word-wrap; min-height: 34px; }
             if root.section == 0: HorizontalLayout {

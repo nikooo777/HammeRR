@@ -321,6 +321,20 @@ pub(super) fn command_key(
             cancel_clip(app, &mut session);
             return true;
         }
+        let gallery = session.get_entity_gallery();
+        if let Some(token) = gallery["draft"]["token"].as_u64() {
+            if gallery["draft"]["owner"] == Actor::User.label() {
+                if let Err(error) = session.cancel_entity_gallery(Actor::User, token) {
+                    app.set_message(error.into());
+                }
+            } else {
+                app.set_message(
+                    "Review shared gallery in Entity → Point-entity gallery… before cancelling it."
+                        .into(),
+                );
+            }
+            return true;
+        }
         if session.primitive_preview().is_some() {
             session.clear_primitive_preview();
             return true;

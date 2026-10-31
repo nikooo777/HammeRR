@@ -12,6 +12,8 @@ mod components;
 pub(super) use components::*;
 mod cubemap_bindings;
 pub(super) use cubemap_bindings::*;
+mod entity_gallery;
+pub(super) use entity_gallery::*;
 mod entity_graph;
 pub(super) use entity_graph::*;
 mod entity_placement;

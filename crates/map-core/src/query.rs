@@ -415,7 +415,7 @@ pub fn entity_bounds(entity: &Entity) -> Option<(DVec3, DVec3)> {
 
 pub fn bounds(doc: &Document, id: ObjectId) -> Option<(DVec3, DVec3)> {
     match id {
-        ObjectId::Solid(id) => solid_bounds(doc.solid(id)?),
+        ObjectId::Solid(id) => solid_bounds(crate::subobject::solid(doc, id).ok()?.1),
         ObjectId::Entity(id) => entity_bounds(doc.entity(id)?),
     }
 }
@@ -456,7 +456,7 @@ pub fn point_entity_angles(entity: &Entity) -> Option<DVec3> {
 
 pub fn local_basis(doc: &Document, id: ObjectId) -> Option<glam::DMat3> {
     let solid = match id {
-        ObjectId::Solid(id) => doc.solid(id)?,
+        ObjectId::Solid(id) => crate::subobject::solid(doc, id).ok()?.1,
         ObjectId::Entity(id) => {
             let entity = doc.entity(id)?;
             if entity.solids.is_empty() {
@@ -488,7 +488,7 @@ pub fn bounds_in_basis(
     let mut points = Vec::new();
     for id in ids {
         let solids: Vec<_> = match *id {
-            ObjectId::Solid(id) => vec![doc.solid(id)?],
+            ObjectId::Solid(id) => vec![crate::subobject::solid(doc, id).ok()?.1],
             ObjectId::Entity(id) => {
                 let entity = doc.entity(id)?;
                 if entity.solids.is_empty() {

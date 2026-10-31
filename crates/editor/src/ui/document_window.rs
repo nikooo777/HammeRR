@@ -227,6 +227,7 @@ impl Ui {
             particles,
             placement,
             entity_placement,
+            entity_gallery,
             repeat,
             clipboard,
             object_groups,

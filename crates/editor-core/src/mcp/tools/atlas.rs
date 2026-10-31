@@ -121,25 +121,35 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview flat brush faces fitted into one material-atlas rectangle. mode per_face (default) fits each face independently and preserves its frame. mode together requires explicit reference {solid,side} belonging to targets: same-facing coplanar faces share that reference's axes, skew, rotation and mirroring; combined bounds fit once, including gaps, replacing other target frames. Reference is only allowed with together. Pass material, latest inspect_material_atlas snapshot and integer rectangle {x,y,width,height} in original source-image edge pixels (top-left origin). Optional nonnegative integer padding (default 0) insets all four edges in source-image pixels and must leave positive usable width/height. The outer rectangle must stay within the actual image. Omitted faces use selection; 1–256 world/brush-entity faces. Geometry and nonprojection metadata are preserved. Terrain, noncoplanar/opposite-facing together targets, invalid regions, references and collapsed mappings reject atomically without replacing a valid preview. Pass token to revise your own atlas draft; foreign previews reject. Review returned usable UV bounds and get_face_selection.atlas; nonzero padding adds padding/usable_rectangle, together adds mode/reference. Default responses retain their former shape. Finish with commit_face_preview/cancel_face_preview and exact token. Apply adds one Undo step. Stale assets block commit; the owner can still Cancel. Foreign actors cannot commit or cancel. No texture-file or shader edits."
+        description = "Preview flat brush faces fitted into one existing material-atlas rectangle. mode per_face (default) fits each face independently and preserves its frame. mode together requires explicit reference {solid,side} belonging to targets: same-facing coplanar faces share that reference's axes, skew, rotation and mirroring; combined bounds fit once, including gaps, replacing other target frames. Reference is only allowed with together. mode pack requires packing {scale,padding?}: deterministic nonrotating rectangular packing of one UV island per face, multiplying both current projected texel spans by finite positive scale and reserving integer packing.padding pixels around each island. Packing preserves relative sizes, aspect, skew and mirroring; it never silently shrinks islands. Insufficient area or no layout found rejects atomically; reduce scale/padding or enlarge the region. packing is only allowed with pack. Pass material, latest inspect_material_atlas snapshot and integer rectangle {x,y,width,height} in original source-image edge pixels (top-left origin). Optional top-level nonnegative integer padding (default 0) insets the outer region in all modes and must leave positive usable size. The outer rectangle must stay within the actual image. Omitted faces use selection; 1–256 world/brush-entity faces. Geometry and nonprojection metadata are preserved. Terrain, invalid projections, regions or references reject without replacing a valid preview. Pass token to revise your own atlas draft; foreign previews reject. Review returned usable UV bounds and get_face_selection.atlas; pack additionally reports image_identity, packing and islands with face identities, allocated/usable rectangles, exact texel sizes and UV bounds. Other modes retain their former response shape. Finish with commit_face_preview/cancel_face_preview and exact token. Apply adds one Undo step. Stale assets block commit; the owner can still Cancel. Foreign actors cannot commit or cancel. Packs UVs into the inspected image; does not generate, resize, crop or write image/material files."
     )]
     pub(in crate::mcp) fn preview_atlas_fit(
         &self,
         Parameters(args): Parameters<PreviewAtlasFitArgs>,
     ) -> ToolResult {
         run(|| {
-            use crate::session::atlas_texturing::{FitMode, FitOptions};
+            use crate::session::atlas_texturing::{FitMode, FitOptions, PackOptions};
 
-            let mode = match (args.mode, args.reference.as_ref()) {
-                (AtlasFitModeArgs::PerFace, None) => FitMode::PerFace,
-                (AtlasFitModeArgs::Together, Some(reference)) => FitMode::Together {
+            let mode = match (args.mode, args.reference.as_ref(), args.packing.as_ref()) {
+                (AtlasFitModeArgs::PerFace, None, None) => FitMode::PerFace,
+                (AtlasFitModeArgs::Together, Some(reference), None) => FitMode::Together {
                     reference: face_id(reference),
                 },
-                (AtlasFitModeArgs::Together, None) => {
-                    return Err("Together atlas fitting requires an explicit reference face".into());
-                }
-                (AtlasFitModeArgs::PerFace, Some(_)) => {
+                (AtlasFitModeArgs::Pack, None, Some(packing)) => FitMode::Pack(PackOptions {
+                    scale: packing.scale,
+                    padding: packing.padding,
+                }),
+                (AtlasFitModeArgs::Pack, Some(_), _) | (AtlasFitModeArgs::PerFace, Some(_), _) => {
                     return Err("An atlas reference face is only valid with mode together".into());
+                }
+                (AtlasFitModeArgs::Pack, None, None) => {
+                    return Err("Atlas packing requires packing {scale,padding?}".into());
+                }
+                (_, _, Some(_)) => {
+                    return Err("Atlas packing options are only valid with mode pack".into());
+                }
+                (AtlasFitModeArgs::Together, None, None) => {
+                    return Err("Together atlas fitting requires an explicit reference face".into());
                 }
             };
             let mut session = self.session();

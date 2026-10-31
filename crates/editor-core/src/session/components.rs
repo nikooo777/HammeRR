@@ -128,6 +128,17 @@ pub fn transform_json(
 }
 
 impl Session {
+    pub fn can_reshape_selection(&self) -> bool {
+        !self.selection.is_empty()
+            && self.selection.iter().all(|id| match id {
+                ObjectId::Solid(solid) => subobject::solid(&self.document, *solid).is_ok(),
+                ObjectId::Entity(entity) => self
+                    .document
+                    .entity(*entity)
+                    .is_some_and(|entity| !entity.solids.is_empty()),
+            })
+    }
+
     pub fn component_stamp(&self) -> String {
         format!(
             "{}:{}:{}:{}",

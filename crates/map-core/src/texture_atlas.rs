@@ -3,7 +3,12 @@ use glam::{DVec2, DVec3};
 use crate::surface::{self, FaceId, Projection, SurfaceEdit, placed_projection};
 use crate::{Document, EditError, surface_group};
 
+mod packing;
 pub mod regions;
+
+pub use packing::{PackOptions, PackedIsland};
+
+pub const MAX_FACES: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rectangle {
@@ -19,16 +24,23 @@ pub struct FitRegion {
     pub padding: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FitMode {
     PerFace,
     Together { reference: FaceId },
+    Pack(PackOptions),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FitOptions {
     pub region: FitRegion,
     pub mode: FitMode,
+}
+
+#[derive(Debug)]
+pub struct FitPlan {
+    pub edits: Vec<(FaceId, SurfaceEdit)>,
+    pub islands: Vec<PackedIsland>,
 }
 
 impl FitRegion {
@@ -130,6 +142,20 @@ pub fn plan_fit(
     options: FitOptions,
     size: [u32; 2],
 ) -> Result<Vec<(FaceId, SurfaceEdit)>, EditError> {
+    Ok(plan_layout(document, faces, options, size)?.edits)
+}
+
+pub fn plan_layout(
+    document: &Document,
+    faces: &[FaceId],
+    options: FitOptions,
+    size: [u32; 2],
+) -> Result<FitPlan, EditError> {
+    if matches!(options.mode, FitMode::Pack(_)) && (faces.is_empty() || faces.len() > MAX_FACES) {
+        return Err(EditError::Invalid(format!(
+            "Atlas packing needs between 1 and {MAX_FACES} flat faces"
+        )));
+    }
     let usable = options.region.usable_rectangle(size)?;
     let samples = faces
         .iter()
@@ -140,7 +166,7 @@ pub fn plan_fit(
             "Atlas fit supports flat brush polygons; terrain faces are unsupported".into(),
         ));
     }
-    match options.mode {
+    let edits = match options.mode {
         FitMode::PerFace => samples
             .iter()
             .map(|sample| {
@@ -158,7 +184,7 @@ pub fn plan_fit(
                     },
                 ))
             })
-            .collect(),
+            .collect::<Result<Vec<_>, EditError>>(),
         FitMode::Together { reference } => {
             let mut edits = surface_group::project(
                 document,
@@ -174,5 +200,10 @@ pub fn plan_fit(
             }
             Ok(edits)
         }
-    }
+        FitMode::Pack(options) => return packing::plan(&samples, usable, options),
+    }?;
+    Ok(FitPlan {
+        edits,
+        islands: Vec::new(),
+    })
 }

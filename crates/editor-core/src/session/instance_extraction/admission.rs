@@ -108,6 +108,7 @@ pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result
     if session.selection.is_empty() || session.selection.len() > MAX_OBJECTS {
         return Err("Select 1–64 complete world brushes or ordinary func_detail owners".into());
     }
+    session.require_root_objects(&session.selected_ids())?;
     if instances::requires_source(vmf) {
         return Err("Extracting a parent with existing visible instance references is not supported; compiler brush order must remain unchanged".into());
     }

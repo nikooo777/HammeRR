@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{Actor, Session, selection_filters::SelectionFilters};
+use super::{
+    Actor, Session,
+    selection_filters::{ObjectSelectionMode, SelectionFilters},
+};
 use crate::saved_defaults::{Binding, Snapshot};
 use crate::selection_preferences::{Edit, SelectionDefaults, Store};
 
@@ -41,8 +44,9 @@ impl Session {
         self.selection_preferences.started = true;
         let saved = self.selection_preferences.binding.authority().snapshot();
         if saved.loaded {
+            let settings = saved.saved.unwrap_or_default();
             if let Err(error) =
-                self.set_selection_filters(Actor::System, saved.saved.unwrap_or_default().filters)
+                self.set_selection_rules(Actor::System, settings.filters, settings.mode)
             {
                 self.log(
                     Actor::System,
@@ -86,8 +90,12 @@ impl Session {
             "saved":filters,"stored":saved.loaded && saved.saved.is_some(),"ready":saved.loaded,
             "error":saved.error,"storage_error":saved.storage_error,"path":saved.path,
             "factory_defaults":SelectionFilters::default(),
+            "current_mode":self.object_selection_mode(),
+            "defaults_mode":saved.loaded.then(||saved.saved.as_ref().map(|settings|settings.mode).unwrap_or_default()),
+            "saved_mode":saved.saved.as_ref().map(|settings|settings.mode),
+            "factory_mode":ObjectSelectionMode::default(),
             "limits":{"file_bytes":crate::selection_preferences::MAX_FILE_BYTES},
-            "persistence":"Startup defaults and named profiles share one file. Startup applies only defaults once per Session. Saving, replacing, renaming, deleting, reloading or resetting never applies filters. Apply changes only this Session through the ordinary filter setter. New/Open retain current filters. Reset saves factory startup filters and preserves retained valid profiles; unreadable profiles with no valid retained copy cannot be recovered by Reset. Selection, visibility, map source and history are unchanged."
+            "persistence":"Startup defaults and named profiles save the object-selection mode and type filters in one file. Startup applies defaults once per Session. Saving, replacing, renaming, deleting, reloading or resetting never applies rules. Apply changes both atomically only in this Session. New/Open retain current rules. Reset saves Groups with all types enabled and preserves retained valid profiles; unreadable profiles with no valid retained copy cannot be recovered by Reset. Selection, visibility, map source and history are unchanged."
         })
     }
 
@@ -130,13 +138,12 @@ impl Session {
                 .authority()
                 .reload(saved.serial, STALE)?,
             "apply" => {
-                let filters = self
+                let settings = self
                     .selection_preferences
                     .binding
                     .authority()
-                    .checked_value(saved.serial, STALE)?
-                    .filters;
-                self.set_selection_filters(actor, filters)?;
+                    .checked_value(saved.serial, STALE)?;
+                self.set_selection_rules(actor, settings.filters, settings.mode)?;
                 self.log(actor, "applied saved selection defaults");
             }
             "save" | "reset" => {
@@ -145,6 +152,11 @@ impl Session {
                 } else {
                     self.selection_filters()
                 };
+                let mode = if action == "reset" {
+                    ObjectSelectionMode::default()
+                } else {
+                    self.object_selection_mode()
+                };
                 self.selection_preferences.binding.authority().update(
                     saved.serial,
                     STALE,
@@ -152,6 +164,7 @@ impl Session {
                     |saved| {
                         let mut settings = saved.cloned().unwrap_or_default();
                         settings.filters = filters;
+                        settings.mode = mode;
                         Ok(settings)
                     },
                 )?;
@@ -186,6 +199,7 @@ impl Session {
             return Err(STALE.into());
         }
         let filters = self.selection_filters();
+        let mode = self.object_selection_mode();
         let (profile_id, write_committed, observed) = match action {
             ProfileAction::Apply { id } => {
                 let settings = self
@@ -194,7 +208,7 @@ impl Session {
                     .authority()
                     .checked_value(saved.serial, STALE)?;
                 let profile = settings.profile(&id)?;
-                self.set_selection_filters(actor, profile.filters)?;
+                self.set_selection_rules(actor, profile.filters, profile.mode)?;
                 self.log(actor, format!("applied selection profile {}", profile.name));
                 (Some(id), false, saved)
             }
@@ -217,11 +231,13 @@ impl Session {
                                 name,
                                 replace: None,
                                 filters,
+                                mode,
                             },
                             ProfileAction::Replace { id } => Edit::Save {
                                 name: replace_name.as_deref().unwrap(),
                                 replace: Some(id),
                                 filters,
+                                mode,
                             },
                             ProfileAction::Rename { id, name } => Edit::Rename { id, name },
                             ProfileAction::Delete { id } => Edit::Delete { id },

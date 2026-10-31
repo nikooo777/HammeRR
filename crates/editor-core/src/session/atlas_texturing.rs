@@ -1,8 +1,11 @@
 use std::collections::BTreeSet;
 
 use map_core::surface::FaceId;
+use map_core::texture_atlas::PackedIsland;
 use map_core::texture_atlas::regions::MAX_TEXTURE_AXIS;
-pub use map_core::texture_atlas::{FitMode, FitOptions, FitRegion, Rectangle};
+pub use map_core::texture_atlas::{
+    FitMode, FitOptions, FitRegion, MAX_FACES, PackOptions, Rectangle,
+};
 use render::materials::{material_identity, resolved_material_limited};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -12,7 +15,6 @@ use source_formats::vtf::{RgbaImage, Vtf};
 
 use super::{Actor, Session, material_search};
 
-pub const MAX_FACES: usize = 256;
 pub const MAX_PREVIEW_SIDE: u32 = 256;
 pub const MAX_TEXTURE_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_MATERIAL_BYTES: usize = 1024 * 1024;
@@ -35,6 +37,8 @@ pub(super) struct PreviewGuard {
     snapshot: String,
     options: FitOptions,
     dimensions: [u32; 2],
+    image_identity: String,
+    islands: Vec<PackedIsland>,
 }
 
 fn texture_reference(value: &str) -> Result<String, String> {
@@ -82,6 +86,24 @@ fn atlas_texture(material: &Material) -> Result<String, String> {
 
 fn rectangle_json(rectangle: Rectangle) -> Value {
     json!({"x":rectangle.x,"y":rectangle.y,"width":rectangle.width,"height":rectangle.height})
+}
+
+fn island_json(island: &PackedIsland, dimensions: [u32; 2]) -> Value {
+    let usable = island
+        .region
+        .usable_rectangle(dimensions)
+        .expect("validated island region");
+    let start = [f64::from(usable.x), f64::from(usable.y)];
+    let uv_bounds: [[f64; 2]; 2] = [
+        std::array::from_fn(|axis| start[axis] / f64::from(dimensions[axis])),
+        std::array::from_fn(|axis| {
+            (start[axis] + island.texel_size[axis]) / f64::from(dimensions[axis])
+        }),
+    ];
+    json!({"face":{"solid":island.face.solid,"side":island.face.side},
+        "rectangle":rectangle_json(island.region.rectangle),
+        "usable_rectangle":rectangle_json(usable),"texel_size":island.texel_size,
+        "uv_bounds":uv_bounds})
 }
 
 fn thumbnail(texture: &Vtf) -> Result<RgbaImage, String> {
@@ -294,13 +316,13 @@ impl Session {
         ];
         let material = atlas.report["material"].as_str().unwrap().to_owned();
         let faces: Vec<_> = faces.into_iter().collect();
-        let mut edits =
-            map_core::texture_atlas::plan_fit(&self.document, &faces, options, dimensions)
+        let mut plan =
+            map_core::texture_atlas::plan_layout(&self.document, &faces, options, dimensions)
                 .map_err(|error| error.to_string())?;
-        for (_, edit) in &mut edits {
+        for (_, edit) in &mut plan.edits {
             edit.material = Some(material.clone());
         }
-        self.preview_or_apply_faces(actor, edits, true)?;
+        self.preview_or_apply_faces(actor, plan.edits, true)?;
         self.geometry
             .face_preview
             .as_mut()
@@ -311,6 +333,8 @@ impl Session {
             snapshot: snapshot.to_owned(),
             options,
             dimensions,
+            image_identity: atlas.report["image_identity"].as_str().unwrap().to_owned(),
+            islands: plan.islands,
         });
         Ok(self.atlas_fit_state())
     }
@@ -339,6 +363,18 @@ impl Session {
             state["preview"]["mode"] = json!("together");
             state["preview"]["reference"] = json!({"solid":reference.solid,"side":reference.side});
         }
+        if let FitMode::Pack(options) = guard.options.mode {
+            state["preview"]["mode"] = json!("pack");
+            state["preview"]["packing"] = json!({"scale":options.scale,"padding":options.padding});
+            state["preview"]["image_identity"] = json!(guard.image_identity);
+            state["preview"]["islands"] = json!(
+                guard
+                    .islands
+                    .iter()
+                    .map(|island| island_json(island, guard.dimensions))
+                    .collect::<Vec<_>>()
+            );
+        }
         state
     }
 
@@ -360,6 +396,9 @@ impl Session {
                 "Atlas assets changed after Preview. Preview the atlas fit again before applying."
                     .into(),
             );
+        }
+        if atlas.report["image_identity"].as_str() != Some(guard.image_identity.as_str()) {
+            return Err("Atlas image identity changed after Preview. Inspect and preview the atlas again before applying.".into());
         }
         Ok(())
     }

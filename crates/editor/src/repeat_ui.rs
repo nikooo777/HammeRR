@@ -280,6 +280,7 @@ impl Controller {
         if ids.is_empty() || ids.len() > map_core::repeat::MAX_SOURCES {
             return Err("Select 1–16 objects to repeat".into());
         }
+        session.require_root_objects(&ids)?;
         let report = session.repeat_array();
         let expected = ids
             .iter()

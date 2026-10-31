@@ -21,6 +21,17 @@ pub(in crate::mcp) enum AtlasFitModeArgs {
     #[default]
     PerFace,
     Together,
+    Pack,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct AtlasPackingArgs {
+    /// Common multiplier of every face's current projected texel width and height; finite and positive.
+    pub scale: f64,
+    /// Whole source-image pixels reserved on every side of each island, inside the outer region padding.
+    #[serde(default)]
+    pub padding: u32,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -33,6 +44,7 @@ pub(in crate::mcp) struct PreviewAtlasFitArgs {
     #[serde(default)]
     pub mode: AtlasFitModeArgs,
     pub reference: Option<FaceRef>,
+    pub packing: Option<AtlasPackingArgs>,
     pub snapshot: String,
     pub faces: Option<Vec<FaceRef>>,
     pub token: Option<String>,

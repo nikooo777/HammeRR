@@ -13,6 +13,7 @@ export component ObjectGroupsWindow inherits Window {
     in property <[ObjectGroupMemberRow]> members;
     in property <string> selected;
     in property <bool> available: true;
+    in property <bool> can-group-selection;
     in property <bool> editing;
     in property <bool> ungrouping;
     in property <bool> ready;
@@ -27,6 +28,7 @@ export component ObjectGroupsWindow inherits Window {
     in property <string> message;
     in-out property <string> group-name;
     in-out property <bool> bypass;
+    in property <string> selection-rule;
     in-out property <bool> include-hidden;
     in-out property <int> selection-mode;
     callback choose(string);
@@ -60,13 +62,13 @@ export component ObjectGroupsWindow inherits Window {
             HorizontalLayout {
                 spacing: 12px;
                 CheckBox { text: "Bypass groups"; checked <=> root.bypass; toggled => { root.bypass-changed(); } }
-                Text { text: root.bypass ? "Viewport picks individual objects" : "Viewport picks the outermost group"; vertical-alignment: center; color: Theme.text-muted; }
+                Text { text: root.selection-rule; vertical-alignment: center; color: Theme.text-muted; }
                 Rectangle { horizontal-stretch: 1; }
                 CheckBox { text: "Include hidden members"; checked <=> root.include-hidden; }
             }
             HorizontalLayout {
                 spacing: 8px;
-                Button { text: "New from selection"; enabled: root.available && !root.editing; clicked => { root.begin-new(); } }
+                Button { text: "New from selection"; enabled: root.available && !root.editing && root.can-group-selection; clicked => { root.begin-new(); } }
                 Button { text: "Edit group"; enabled: root.available && !root.editing && root.selected != ""; clicked => { root.begin-edit(); } }
                 Button { text: "Ungroup…"; enabled: root.available && !root.editing && root.selected != ""; clicked => { root.begin-ungroup(); } }
             }
@@ -135,7 +137,7 @@ export component ObjectGroupsWindow inherits Window {
                     }
                     if root.editing && !root.ungrouping: HorizontalLayout {
                         spacing: 8px;
-                        Button { text: "Add current selection"; clicked => { root.add-selection(); } }
+                        Button { text: "Add current selection"; enabled: root.can-group-selection; clicked => { root.add-selection(); } }
                         Button { text: "Add chosen group"; enabled: root.selected != ""; clicked => { root.add-chosen-group(); } }
                     }
                 }

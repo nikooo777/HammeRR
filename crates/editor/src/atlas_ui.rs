@@ -1,13 +1,15 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use editor_core::session::atlas_texturing::{FitMode, FitOptions, FitRegion, Rectangle};
+use editor_core::session::atlas_texturing::{
+    FitMode, FitOptions, FitRegion, PackOptions, Rectangle,
+};
 use serde_json::Value;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
 use crate::session::{Actor, Session};
-use crate::{AtlasWindow, face_edit_ui};
+use crate::{AtlasIslandOverlay, AtlasWindow, face_edit_ui};
 
 pub struct Controller {
     pub window: AtlasWindow,
@@ -52,7 +54,7 @@ impl Target {
 
 fn fields(window: &AtlasWindow) -> String {
     format!(
-        "{}|{}|{}|{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
         window.get_material(),
         window.get_region_x(),
         window.get_region_y(),
@@ -60,7 +62,9 @@ fn fields(window: &AtlasWindow) -> String {
         window.get_region_pixels_high(),
         window.get_region_padding(),
         window.get_fit_mode(),
-        window.get_reference_index()
+        window.get_reference_index(),
+        window.get_island_scale(),
+        window.get_island_padding()
     )
 }
 
@@ -137,6 +141,7 @@ fn rectangle_pointer(
             start,
         });
         window.set_ready(false);
+        clear_packing_layout(window);
         window.set_rectangle_dragging(true);
         window.set_message(
             "Drag to choose pixel edges. Escape restores the previous rectangle.".into(),
@@ -231,6 +236,18 @@ fn options(window: &AtlasWindow, target: &Target) -> Result<FitOptions, String> 
                 .copied()
                 .ok_or("Choose a reference face from the target selection")?,
         },
+        2 => FitMode::Pack(PackOptions {
+            scale: window
+                .get_island_scale()
+                .trim()
+                .parse()
+                .map_err(|_| "Enter a positive Island UV size multiplier")?,
+            padding: window
+                .get_island_padding()
+                .trim()
+                .parse()
+                .map_err(|_| "Enter nonnegative whole-pixel island padding")?,
+        }),
         _ => return Err("Choose an atlas fit mode".into()),
     };
     Ok(FitOptions {
@@ -240,6 +257,7 @@ fn options(window: &AtlasWindow, target: &Target) -> Result<FitOptions, String> 
 }
 
 fn show_rectangle(window: &AtlasWindow) {
+    clear_packing_layout(window);
     let size = [
         window.get_texture_width() as u32,
         window.get_texture_height() as u32,
@@ -284,7 +302,47 @@ fn show_rectangle(window: &AtlasWindow) {
     }
 }
 
+fn clear_packing_layout(window: &AtlasWindow) {
+    window.set_packed_islands(ModelRc::default());
+    window.set_packing_summary("".into());
+}
+
+fn show_packing_layout(window: &AtlasWindow, state: &Value) {
+    clear_packing_layout(window);
+    let Some(islands) = state["preview"]["islands"].as_array() else {
+        return;
+    };
+    let rows = islands
+        .iter()
+        .map(|island| {
+            let rectangle = &island["rectangle"];
+            let usable = &island["usable_rectangle"];
+            let [x, y, width, height] =
+                ["x", "y", "width", "height"].map(|field| rectangle[field].as_f64().unwrap());
+            AtlasIslandOverlay {
+                u: x as f32 / window.get_texture_width(),
+                v: y as f32 / window.get_texture_height(),
+                width: width as f32 / window.get_texture_width(),
+                height: height as f32 / window.get_texture_height(),
+                content_u: ((usable["x"].as_f64().unwrap() - x) / width) as f32,
+                content_v: ((usable["y"].as_f64().unwrap() - y) / height) as f32,
+                content_width: (island["texel_size"][0].as_f64().unwrap() / width) as f32,
+                content_height: (island["texel_size"][1].as_f64().unwrap() / height) as f32,
+                label: format!("{}:{}", island["face"]["solid"], island["face"]["side"]).into(),
+                detail: format!(
+                    "Brush {} face {} · allocation X {x}, Y {y}, {width} × {height} source pixels",
+                    island["face"]["solid"], island["face"]["side"]
+                )
+                .into(),
+            }
+        })
+        .collect::<Vec<_>>();
+    window.set_packed_islands(ModelRc::new(VecModel::from(rows)));
+    window.set_packing_summary(format!("{} face islands · UV size {}× · {} px padding on each island edge. Review the green layout and face preview before Apply.", islands.len(), state["preview"]["packing"]["scale"], state["preview"]["packing"]["padding"]).into());
+}
+
 fn inspect(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> Result<(), String> {
+    clear_packing_layout(window);
     cancel_rectangle(window, target);
     target.check(session)?;
     let atlas = session.inspect_material_atlas(&window.get_material())?;
@@ -491,6 +549,7 @@ fn preview(window: &AtlasWindow, target: &mut Target, session: &mut Session) -> 
     )?;
     target.token = session.face_preview_token();
     target.reviewed = Some(fields(window));
+    show_packing_layout(window, &state);
     window.set_ready(true);
     window.set_catalog_editable(false);
     window.set_message(
@@ -594,6 +653,7 @@ impl Controller {
                         let result =
                             rectangle_pointer(window, target, &mut lock(shared), phase, [x, y]);
                         if let Err(error) = result {
+                            clear_packing_layout(window);
                             cancel_rectangle(window, target);
                             window.set_message(error.into());
                         }
@@ -641,6 +701,7 @@ impl Controller {
                     if let Some(target) = target.borrow_mut().as_mut() {
                         let result = preview(window, target, &mut lock(shared));
                         if let Err(error) = result {
+                            clear_packing_layout(window);
                             window.set_ready(false);
                             window.set_message(error.into());
                         }
@@ -761,6 +822,9 @@ impl Controller {
             format!("Fit {} selected flat faces", target.context.faces.len()).into(),
         );
         self.window.set_fit_mode(0);
+        self.window.set_island_scale("1".into());
+        self.window.set_island_padding("0".into());
+        clear_packing_layout(&self.window);
         self.window.set_reference_index(0);
         self.window.set_references(ModelRc::new(VecModel::from(
             target
@@ -839,6 +903,7 @@ impl Controller {
             });
             self.window.set_stale(target.check(session).is_err());
             if let Some(error) = invalid {
+                clear_packing_layout(&self.window);
                 cancel_rectangle(&self.window, target);
                 self.window.set_ready(false);
                 if assets_changed {

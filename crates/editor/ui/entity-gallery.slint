@@ -1,0 +1,136 @@
+import { Theme } from "theme.slint";
+import { Button, CheckBox, LineEdit, ScrollView } from "widgets.slint";
+import { Icon, IconButton, SectionHeader } from "kit.slint";
+
+export struct EntityGalleryClassRow {
+    classname: string,
+    description: string,
+    detail: string,
+    checked: bool,
+    available: bool,
+    has-model: bool,
+    model: string,
+}
+export struct EntityGalleryPreviewRow { title: string, detail: string }
+
+export component EntityGalleryWindow inherits Window {
+    background: Theme.panel;
+    title: "Point-entity gallery - HammeRR";
+    preferred-width: 760px;
+    preferred-height: 850px;
+    min-width: 620px;
+    min-height: 600px;
+    in-out property <string> search;
+    in-out property <string> origin-x: "0";
+    in-out property <string> origin-y: "0";
+    in-out property <string> origin-z: "0";
+    in-out property <string> columns: "4";
+    in-out property <string> gap: "64";
+    in property <[EntityGalleryClassRow]> classes;
+    in property <[EntityGalleryPreviewRow]> examples;
+    in property <string> page-summary;
+    in property <string> selection-summary;
+    in property <string> preview-summary;
+    in property <string> message;
+    in property <bool> has-previous;
+    in property <bool> has-next;
+    in property <bool> owned: true;
+    in property <bool> shared-draft;
+    in property <bool> ready;
+    callback browse();
+    callback page(int);
+    callback toggle-class(string, bool);
+    callback set-model(string, string);
+    callback select-page();
+    callback clear-selection();
+    callback invalidate();
+    callback preview();
+    callback review();
+    callback frame(int);
+    callback apply();
+    callback cancel-preview();
+    callback close-dialog();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); return accept; }
+            return reject;
+        }
+        VerticalLayout {
+            padding: Theme.space-lg;
+            spacing: Theme.space;
+            HorizontalLayout {
+                Image { source: Icon.entity; width: 20px; height: 20px; colorize: Theme.accent; }
+                Text { text: "Point-entity gallery"; font-size: Theme.font-heading; font-weight: 600; }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            Text { text: "Choose FGD classes, preview their actual editor examples in the viewport, then place the reviewed batch."; color: Theme.text-muted; wrap: word-wrap; }
+            HorizontalLayout {
+                LineEdit { text <=> root.search; placeholder-text: "Search class or description"; accepted => { root.browse(); } accessible-label: "Search point classes"; }
+                Button { text: "Search"; clicked => { root.browse(); } }
+            }
+            Text { text: root.page-summary; color: Theme.text-muted; wrap: word-wrap; }
+            ScrollView {
+                content-width: self.width;
+                vertical-stretch: 2;
+                min-height: 130px;
+                VerticalLayout {
+                    spacing: Theme.space;
+                    for row in root.classes: VerticalLayout {
+                        spacing: Theme.space-xs;
+                        CheckBox { text: row.classname; checked: row.checked; enabled: row.available && root.owned; toggled => { root.toggle-class(row.classname, self.checked); } }
+                        Text { text: row.description; color: Theme.text-muted; wrap: word-wrap; }
+                        Text { text: row.detail; color: row.available ? Theme.text-faint : Theme.warning; wrap: word-wrap; font-size: Theme.font-small; }
+                        if row.has-model: LineEdit { text: row.model; placeholder-text: "Example model · models/…mdl"; enabled: root.owned && row.checked; edited => { root.set-model(row.classname, self.text); } accessible-label: "Example model for " + row.classname; }
+                    }
+                }
+            }
+            HorizontalLayout {
+                Button { text: "Previous"; enabled: root.has-previous; clicked => { root.page(-1); } }
+                Button { text: "Next"; enabled: root.has-next; clicked => { root.page(1); } }
+                Button { text: "Select page"; enabled: root.owned; clicked => { root.select-page(); } }
+                Button { text: "Clear selection"; enabled: root.owned; clicked => { root.clear-selection(); } }
+            }
+            Text { text: root.selection-summary; wrap: word-wrap; }
+            HorizontalLayout {
+                Text { text: "First cell X/Y/Z"; vertical-alignment: center; }
+                LineEdit { text <=> root.origin-x; edited => { root.invalidate(); } accessible-label: "Gallery cell X"; }
+                LineEdit { text <=> root.origin-y; edited => { root.invalidate(); } accessible-label: "Gallery cell Y"; }
+                LineEdit { text <=> root.origin-z; edited => { root.invalidate(); } accessible-label: "Gallery cell bottom Z"; }
+            }
+            HorizontalLayout {
+                Text { text: "Columns"; vertical-alignment: center; }
+                LineEdit { text <=> root.columns; preferred-width: 60px; edited => { root.invalidate(); } accessible-label: "Gallery columns"; }
+                Text { text: "Gap"; vertical-alignment: center; }
+                LineEdit { text <=> root.gap; preferred-width: 70px; edited => { root.invalidate(); } accessible-label: "Gallery visual cell gap"; }
+                Button { text: "Preview selected"; enabled: root.owned; clicked => { root.preview(); } }
+                IconButton { icon: Icon.frame; tooltip: "Frame preview"; enabled: root.ready; clicked => { root.frame(-1); } }
+            }
+            SectionHeader { text: "REVIEWED EXAMPLES"; collapsible: false; }
+            Text { text: root.preview-summary; wrap: word-wrap; color: Theme.text-muted; }
+            ScrollView {
+                content-width: self.width;
+                vertical-stretch: 1;
+                min-height: 100px;
+                VerticalLayout {
+                    spacing: Theme.space;
+                    for row[index] in root.examples: HorizontalLayout {
+                        VerticalLayout {
+                            Text { text: row.title; font-weight: 600; wrap: word-wrap; }
+                            Text { text: row.detail; color: Theme.text-muted; wrap: word-wrap; font-size: Theme.font-small; }
+                        }
+                        IconButton { icon: Icon.frame; tooltip: "Frame example"; enabled: root.ready; clicked => { root.frame(index); } }
+                    }
+                }
+            }
+            Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
+            HorizontalLayout {
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+                Button { text: "Cancel preview"; enabled: root.owned; clicked => { root.cancel-preview(); } }
+                if root.shared-draft: Button { text: "Review shared gallery"; clicked => { root.review(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Place reviewed examples"; enabled: root.ready && root.owned; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

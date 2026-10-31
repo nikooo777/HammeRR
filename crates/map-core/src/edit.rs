@@ -350,14 +350,18 @@ pub fn duplicate(
     for &id in ids {
         let copy = match id {
             ObjectId::Solid(id) => {
-                let mut solid = tx
-                    .document()
-                    .solid(id)
-                    .ok_or(EditError::NotFound(ObjectId::Solid(id)))?
-                    .clone();
+                let (owner, solid) = crate::subobject::solid(tx.document(), id)?;
+                let mut solid = solid.clone();
                 renumber_solid(tx, &mut solid, &mut mapping)?;
                 translate_solid(&mut solid, offset, true)?;
-                tx.add_solid(solid)?
+                match owner {
+                    ObjectId::Solid(_) => tx.add_solid(solid)?,
+                    ObjectId::Entity(entity) => {
+                        let copy = ObjectId::Solid(solid.id);
+                        tx.entity_mut(entity)?.solids.push(solid);
+                        copy
+                    }
+                }
             }
             ObjectId::Entity(id) => {
                 let mut entity = tx
@@ -447,6 +451,13 @@ pub fn tie_to_entity(
 ) -> Result<ObjectId, EditError> {
     if solids.is_empty() {
         return Err(invalid("no brushes to tie"));
+    }
+    for &id in solids {
+        if tx.document().solid(id).is_none() {
+            return Err(invalid(format!(
+                "Brush {id} is not a world brush; select its whole owning entity"
+            )));
+        }
     }
     let mut taken = Vec::with_capacity(solids.len());
     for &id in solids {

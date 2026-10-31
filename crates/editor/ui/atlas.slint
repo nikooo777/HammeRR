@@ -1,5 +1,19 @@
 import { Theme } from "theme.slint";
-import { Button, ComboBox, LineEdit } from "widgets.slint";
+import { Button, ComboBox, LineEdit, ScrollView } from "widgets.slint";
+import { FieldRow, MutedText } from "kit.slint";
+
+export struct AtlasIslandOverlay {
+    u: float,
+    v: float,
+    width: float,
+    height: float,
+    content-u: float,
+    content-v: float,
+    content-width: float,
+    content-height: float,
+    label: string,
+    detail: string,
+}
 
 export component AtlasWindow inherits Window {
     background: Theme.panel;
@@ -31,6 +45,8 @@ export component AtlasWindow inherits Window {
     in property <[string]> references;
     in property <[string]> saved-regions;
     in property <bool> catalog-editable;
+    in property <[AtlasIslandOverlay]> packed-islands;
+    in property <string> packing-summary;
     in-out property <int> saved-region-index: -1;
     in-out property <string> saved-region-name;
     in-out property <int> fit-mode;
@@ -41,6 +57,8 @@ export component AtlasWindow inherits Window {
     in-out property <string> region-pixels-wide: "1";
     in-out property <string> region-pixels-high: "1";
     in-out property <string> region-padding: "0";
+    in-out property <string> island-scale: "1";
+    in-out property <string> island-padding: "0";
     callback edited();
     callback inspect-material();
     callback browse();
@@ -70,143 +88,186 @@ export component AtlasWindow inherits Window {
             spacing: 12px;
             Text { text: "Fit atlas region"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.selection-label; color: Theme.text-muted; }
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Fit mode"; vertical-alignment: center; }
-                ComboBox {
-                    model: ["Each face independently", "Fit coplanar faces together"];
-                    current-index <=> root.fit-mode;
-                    selected => { root.edited(); }
-                    horizontal-stretch: 1;
-                }
-            }
-            if root.fit-mode == 1: HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Reference face"; vertical-alignment: center; }
-                ComboBox {
-                    model: root.references;
-                    current-index <=> root.reference-index;
-                    selected => { root.edited(); }
-                    horizontal-stretch: 1;
-                }
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Material"; vertical-alignment: center; }
-                LineEdit { text <=> root.material; horizontal-stretch: 1; edited => { root.edited(); } }
-                Button { text: "Browse materials…"; clicked => { root.browse(); } }
-                Button { text: "Inspect material"; enabled: !root.stale; clicked => { root.inspect-material(); } }
-            }
-            Text { text: root.details; wrap: word-wrap; color: Theme.text-muted; }
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Saved region"; vertical-alignment: center; }
-                ComboBox {
-                    model: root.saved-regions;
-                    current-index <=> root.saved-region-index;
-                    selected => { root.select-saved-region(); }
-                    horizontal-stretch: 1;
-                }
-                Button { text: "Use saved region"; enabled: !root.stale && root.loaded && root.saved-region-index >= 0 && !root.rectangle-dragging; clicked => { root.choose-saved-region(); } }
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                LineEdit { text <=> root.saved-region-name; placeholder-text: "Region name"; accessible-label: "Atlas region name"; horizontal-stretch: 1; }
-                Button { text: "Save region"; enabled: !root.stale && root.loaded && root.catalog-editable && !root.rectangle-dragging; clicked => { root.save-region(); } }
-                Button { text: "Rename region"; enabled: !root.stale && root.catalog-editable && root.saved-region-index >= 0 && !root.rectangle-dragging; clicked => { root.rename-region(); } }
-                Button { text: "Delete region"; enabled: !root.stale && root.catalog-editable && root.saved-region-index >= 0 && !root.rectangle-dragging; clicked => { root.delete-region(); } }
-            }
-            Text { text: "The base image stays cached until Reload material assets."; wrap: word-wrap; color: Theme.text-muted; }
-            HorizontalLayout {
-                spacing: 20px;
-                Rectangle {
-                    width: 320px;
-                    height: 320px;
-                    background: Theme.control;
-                    image-area := Rectangle {
-                        width: root.texture-width >= root.texture-height ? parent.width : parent.height * root.texture-width / root.texture-height;
-                        height: root.texture-width >= root.texture-height ? parent.width * root.texture-height / root.texture-width : parent.height;
-                        x: (parent.width - self.width) / 2;
-                        y: (parent.height - self.height) / 2;
-                        if root.loaded: Image { source: root.preview; width: parent.width; height: parent.height; image-fit: fill; }
-                        if root.loaded && root.valid-region: Rectangle {
-                            x: parent.width * root.region-u;
-                            y: parent.height * root.region-v;
-                            width: parent.width * root.region-width;
-                            height: parent.height * root.region-height;
-                            border-width: 2px;
-                            border-color: Theme.accent;
-                            background: Theme.info-soft;
+            ScrollView {
+                content-width: self.width;
+                vertical-stretch: 1;
+                min-height: 400px;
+                VerticalLayout {
+                    spacing: 12px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "Fit mode"; vertical-alignment: center; }
+                        ComboBox {
+                            model: ["Each face independently", "Fit coplanar faces together", "Pack face islands"];
+                            current-index <=> root.fit-mode;
+                            selected => { root.edited(); }
+                            horizontal-stretch: 1;
                         }
-                        if root.loaded && root.valid-usable-region && root.has-padding: Rectangle {
-                            x: parent.width * root.usable-u;
-                            y: parent.height * root.usable-v;
-                            width: parent.width * root.usable-width;
-                            height: parent.height * root.usable-height;
-                            border-width: 2px;
-                            border-color: Theme.warning;
-                            background: Theme.warning-soft;
+                    }
+                    if root.fit-mode == 1: HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "Reference face"; vertical-alignment: center; }
+                        ComboBox {
+                            model: root.references;
+                            current-index <=> root.reference-index;
+                            selected => { root.edited(); }
+                            horizontal-stretch: 1;
                         }
-                        TouchArea {
-                            width: parent.width;
-                            height: parent.height;
-                            enabled: root.loaded && !root.stale;
-                            mouse-cursor: crosshair;
-                            accessible-role: image;
-                            accessible-label: "Atlas image rectangle";
-                            pointer-event(event) => {
-                                if event.kind == PointerEventKind.cancel {
-                                    root.cancel-rectangle();
-                                } else if event.button == PointerEventButton.left {
-                                    if event.kind == PointerEventKind.down {
-                                        keys.focus();
-                                        root.rectangle-pointer(0, self.mouse-x / self.width, self.mouse-y / self.height);
-                                    } else if event.kind == PointerEventKind.up {
-                                        root.rectangle-pointer(2, self.mouse-x / self.width, self.mouse-y / self.height);
+                    }
+                    if root.fit-mode == 2: HorizontalLayout {
+                        spacing: Theme.space;
+                        FieldRow {
+                            label: "Island UV size";
+                            label-width: 86px;
+                            LineEdit { text <=> root.island-scale; accessible-label: "Island UV size multiplier of current texels"; edited => { root.edited(); } }
+                            Text { text: "×"; color: Theme.text-muted; vertical-alignment: center; }
+                        }
+                        FieldRow {
+                            label: "Island padding";
+                            label-width: 94px;
+                            LineEdit { text <=> root.island-padding; input-type: number; accessible-label: "Island padding in source image pixels"; edited => { root.edited(); } }
+                            Text { text: "px"; color: Theme.text-muted; vertical-alignment: center; }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "Material"; vertical-alignment: center; }
+                        LineEdit { text <=> root.material; horizontal-stretch: 1; edited => { root.edited(); } }
+                        Button { text: "Browse materials…"; clicked => { root.browse(); } }
+                        Button { text: "Inspect material"; enabled: !root.stale; clicked => { root.inspect-material(); } }
+                    }
+                    Text { text: root.details; wrap: word-wrap; color: Theme.text-muted; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "Saved region"; vertical-alignment: center; }
+                        ComboBox {
+                            model: root.saved-regions;
+                            current-index <=> root.saved-region-index;
+                            selected => { root.select-saved-region(); }
+                            horizontal-stretch: 1;
+                        }
+                        Button { text: "Use saved region"; enabled: !root.stale && root.loaded && root.saved-region-index >= 0 && !root.rectangle-dragging; clicked => { root.choose-saved-region(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit { text <=> root.saved-region-name; placeholder-text: "Region name"; accessible-label: "Atlas region name"; horizontal-stretch: 1; }
+                        Button { text: "Save region"; enabled: !root.stale && root.loaded && root.catalog-editable && !root.rectangle-dragging; clicked => { root.save-region(); } }
+                        Button { text: "Rename region"; enabled: !root.stale && root.catalog-editable && root.saved-region-index >= 0 && !root.rectangle-dragging; clicked => { root.rename-region(); } }
+                        Button { text: "Delete region"; enabled: !root.stale && root.catalog-editable && root.saved-region-index >= 0 && !root.rectangle-dragging; clicked => { root.delete-region(); } }
+                    }
+                    Text { text: "The base image stays cached until Reload material assets."; wrap: word-wrap; color: Theme.text-muted; }
+                    HorizontalLayout {
+                        spacing: 20px;
+                        Rectangle {
+                            width: 320px;
+                            height: 320px;
+                            background: Theme.control;
+                            image-area := Rectangle {
+                                width: root.texture-width >= root.texture-height ? parent.width : parent.height * root.texture-width / root.texture-height;
+                                height: root.texture-width >= root.texture-height ? parent.width * root.texture-height / root.texture-width : parent.height;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                if root.loaded: Image { source: root.preview; width: parent.width; height: parent.height; image-fit: fill; }
+                                if root.loaded && root.valid-region: Rectangle {
+                                    x: parent.width * root.region-u;
+                                    y: parent.height * root.region-v;
+                                    width: parent.width * root.region-width;
+                                    height: parent.height * root.region-height;
+                                    border-width: 2px;
+                                    border-color: Theme.accent;
+                                    background: root.fit-mode == 2 ? transparent : Theme.info-soft;
+                                }
+                                if root.loaded && root.valid-usable-region && root.has-padding: Rectangle {
+                                    x: parent.width * root.usable-u;
+                                    y: parent.height * root.usable-v;
+                                    width: parent.width * root.usable-width;
+                                    height: parent.height * root.usable-height;
+                                    border-width: 2px;
+                                    border-color: Theme.warning;
+                                    background: root.fit-mode == 2 ? transparent : Theme.warning-soft;
+                                }
+                                for island in root.packed-islands: Rectangle {
+                                    x: parent.width * island.u;
+                                    y: parent.height * island.v;
+                                    width: parent.width * island.width;
+                                    height: parent.height * island.height;
+                                    border-width: 1px;
+                                    border-color: Theme.success;
+                                    accessible-role: image;
+                                    accessible-label: island.detail;
+                                    Rectangle {
+                                        x: parent.width * island.content-u;
+                                        y: parent.height * island.content-v;
+                                        width: parent.width * island.content-width;
+                                        height: parent.height * island.content-height;
+                                        border-width: 1px;
+                                        border-color: Theme.success;
+                                        Text { text: island.label; color: Theme.success; font-size: Theme.font-small; overflow: elide; }
+                                    }
+                                }
+                                TouchArea {
+                                    width: parent.width;
+                                    height: parent.height;
+                                    enabled: root.loaded && !root.stale;
+                                    mouse-cursor: crosshair;
+                                    accessible-role: image;
+                                    accessible-label: "Atlas image rectangle";
+                                    pointer-event(event) => {
+                                        if event.kind == PointerEventKind.cancel {
+                                            root.cancel-rectangle();
+                                        } else if event.button == PointerEventButton.left {
+                                            if event.kind == PointerEventKind.down {
+                                                keys.focus();
+                                                root.rectangle-pointer(0, self.mouse-x / self.width, self.mouse-y / self.height);
+                                            } else if event.kind == PointerEventKind.up {
+                                                root.rectangle-pointer(2, self.mouse-x / self.width, self.mouse-y / self.height);
+                                            }
+                                        }
+                                    }
+                                    moved => {
+                                        if root.rectangle-dragging {
+                                            root.rectangle-pointer(1, self.mouse-x / self.width, self.mouse-y / self.height);
+                                        }
                                     }
                                 }
                             }
-                            moved => {
-                                if root.rectangle-dragging {
-                                    root.rectangle-pointer(1, self.mouse-x / self.width, self.mouse-y / self.height);
-                                }
+                            if !root.loaded: Text { text: "Inspect a supported material"; horizontal-alignment: center; vertical-alignment: center; color: Theme.text-muted; }
+                        }
+                        VerticalLayout {
+                            spacing: 10px;
+                            Text { text: "Rectangle · source image pixels"; font-weight: 600; }
+                            HorizontalLayout {
+                                Text { text: "X"; width: 54px; vertical-alignment: center; }
+                                LineEdit { text <=> root.region-x; input-type: number; accessible-label: "Atlas X"; edited => { root.edited(); } }
                             }
+                            HorizontalLayout {
+                                Text { text: "Y"; width: 54px; vertical-alignment: center; }
+                                LineEdit { text <=> root.region-y; input-type: number; accessible-label: "Atlas Y"; edited => { root.edited(); } }
+                            }
+                            HorizontalLayout {
+                                Text { text: "Width"; width: 54px; vertical-alignment: center; }
+                                LineEdit { text <=> root.region-pixels-wide; input-type: number; accessible-label: "Atlas width"; edited => { root.edited(); } }
+                            }
+                            HorizontalLayout {
+                                Text { text: "Height"; width: 54px; vertical-alignment: center; }
+                                LineEdit { text <=> root.region-pixels-high; input-type: number; accessible-label: "Atlas height"; edited => { root.edited(); } }
+                            }
+                            HorizontalLayout {
+                                Text { text: "Padding"; width: 54px; vertical-alignment: center; }
+                                LineEdit { text <=> root.region-padding; input-type: number; accessible-label: "Atlas padding in source image pixels"; edited => { root.edited(); } }
+                            }
+                            Text { text: root.fit-mode == 2 ? "Padding insets the outer region. Island padding reserves pixels around each packed face inside that usable area." : "Padding insets all four edges in whole source image pixels. Zero uses the entire rectangle."; wrap: word-wrap; color: Theme.text-muted; }
+                            Text { text: root.usable-details; wrap: word-wrap; color: root.valid-usable-region ? Theme.warning : Theme.danger; }
+                            Rectangle { vertical-stretch: 1; }
                         }
                     }
-                    if !root.loaded: Text { text: "Inspect a supported material"; horizontal-alignment: center; vertical-alignment: center; color: Theme.text-muted; }
+                    Text { text: "Drag on the image or enter pixel values. Escape cancels an active drag. Cyan: rectangle; yellow: usable area after padding. Image edges start at the top-left; X grows right and Y grows down."; wrap: word-wrap; color: Theme.text-muted; }
+                    Text {
+                        text: root.fit-mode == 2 ? "Each face is one island. UV size multiplies both current texel spans uniformly. Green outlines show allocations and their face bounds; labels are brush:face IDs. Islands never rotate or shrink automatically. This lays out UVs in the existing image; it does not copy or create image pixels." : root.fit-mode == 1 ? "Same-facing coplanar faces share the reference face's direction, skew, rotation and mirroring. Their combined bounds fit once into the usable area; gaps consume image space. Other face projection frames are replaced." : "Each face fits its projected bounds into the usable area, keeping its texture direction, skew, rotation and mirroring. Polygon corners can leave parts unused.";
+                        wrap: word-wrap; color: Theme.text-muted;
+                    }
+                    if root.packing-summary != "": MutedText { text: root.packing-summary; }
                 }
-                VerticalLayout {
-                    spacing: 10px;
-                    Text { text: "Rectangle · source image pixels"; font-weight: 600; }
-                    HorizontalLayout {
-                        Text { text: "X"; width: 54px; vertical-alignment: center; }
-                        LineEdit { text <=> root.region-x; input-type: number; accessible-label: "Atlas X"; edited => { root.edited(); } }
-                    }
-                    HorizontalLayout {
-                        Text { text: "Y"; width: 54px; vertical-alignment: center; }
-                        LineEdit { text <=> root.region-y; input-type: number; accessible-label: "Atlas Y"; edited => { root.edited(); } }
-                    }
-                    HorizontalLayout {
-                        Text { text: "Width"; width: 54px; vertical-alignment: center; }
-                        LineEdit { text <=> root.region-pixels-wide; input-type: number; accessible-label: "Atlas width"; edited => { root.edited(); } }
-                    }
-                    HorizontalLayout {
-                        Text { text: "Height"; width: 54px; vertical-alignment: center; }
-                        LineEdit { text <=> root.region-pixels-high; input-type: number; accessible-label: "Atlas height"; edited => { root.edited(); } }
-                    }
-                    HorizontalLayout {
-                        Text { text: "Padding"; width: 54px; vertical-alignment: center; }
-                        LineEdit { text <=> root.region-padding; input-type: number; accessible-label: "Atlas padding in source image pixels"; edited => { root.edited(); } }
-                    }
-                    Text { text: "Padding insets all four edges in whole source image pixels. Zero uses the entire rectangle."; wrap: word-wrap; color: Theme.text-muted; }
-                    Text { text: root.usable-details; wrap: word-wrap; color: root.valid-usable-region ? Theme.warning : Theme.danger; }
-                    Rectangle { vertical-stretch: 1; }
-                }
-            }
-            Text { text: "Drag on the image or enter pixel values. Escape cancels an active drag. Cyan: rectangle; yellow: usable area after padding. Image edges start at the top-left; X grows right and Y grows down."; wrap: word-wrap; color: Theme.text-muted; }
-            Text {
-                text: root.fit-mode == 1 ? "Same-facing coplanar faces share the reference face's direction, skew, rotation and mirroring. Their combined bounds fit once into the usable area; gaps consume image space. Other face projection frames are replaced." : "Each face fits its projected bounds into the usable area, keeping its texture direction, skew, rotation and mirroring. Polygon corners can leave parts unused.";
-                wrap: word-wrap; color: Theme.text-muted;
             }
             Text { text: root.message; wrap: word-wrap; }
             Rectangle { vertical-stretch: 1; }

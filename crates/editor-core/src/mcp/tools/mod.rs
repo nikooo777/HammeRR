@@ -12,6 +12,7 @@ mod components;
 mod context;
 mod cubemap_bindings;
 mod entities;
+mod entity_gallery;
 mod entity_graph;
 mod entity_placement;
 mod external_comparison;

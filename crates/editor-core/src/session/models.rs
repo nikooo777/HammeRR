@@ -395,10 +395,13 @@ impl Session {
         } else {
             self.presentation_bounds_in(&self.document, None)
         };
-        let mut matches = region.select_with_entity_bounds(
+        let mut matches = region.select_with_entity_bounds_and_solids(
             &self.document,
             rule,
             faces,
+            !faces
+                && self.object_selection_mode()
+                    == super::selection_filters::ObjectSelectionMode::Solids,
             |solid| !hidden.contains(&solid.id),
             |entity| {
                 if !evaluation.objects.contains(&ObjectId::Entity(entity.id)) {

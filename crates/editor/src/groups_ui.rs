@@ -9,7 +9,7 @@ use crate::session::{Actor, SelectMode, Session, groups::parse_member};
 use crate::{ObjectGroupMemberRow, ObjectGroupRow, ObjectGroupsWindow};
 
 const PAGE_SIZE: usize = 100;
-type Stamp = (u64, u64, u64, u64);
+type Stamp = (u64, u64, u64, u64, u64);
 
 #[derive(Default)]
 struct Form {
@@ -74,6 +74,7 @@ fn refresh(window: &ObjectGroupsWindow, session: &Session, state: &RefCell<Form>
         session.document().revision(),
         session.scene_serial(),
         session.view_serial(),
+        session.selection_filter_revision(),
     );
     if !force && form.seen == Some(stamp) {
         return;
@@ -87,6 +88,19 @@ fn refresh(window: &ObjectGroupsWindow, session: &Session, state: &RefCell<Form>
     }
     form.seen = Some(stamp);
     window.set_bypass(session.group_selection_bypass());
+    window.set_selection_rule(
+        format!(
+            "Object selection: {}",
+            session.object_selection_mode().label()
+        )
+        .into(),
+    );
+    window.set_can_group_selection(
+        !session.selection().is_empty()
+            && session
+                .require_root_objects(&session.selected_ids())
+                .is_ok(),
+    );
     let report = match session.object_groups(None, form.offset, PAGE_SIZE) {
         Ok(report) => report,
         Err(error) => {
@@ -464,7 +478,11 @@ impl Controller {
             let (window, target) = (window.as_weak(), target.clone());
             move || {
                 callback(&window, &target, |window, shared| {
-                    lock(shared).set_group_selection_bypass(Actor::User, window.get_bypass())
+                    if let Err(error) =
+                        lock(shared).set_group_selection_bypass(Actor::User, window.get_bypass())
+                    {
+                        window.set_message(error.into());
+                    }
                 })
             }
         });

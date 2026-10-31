@@ -99,7 +99,7 @@ impl Session {
                 let display = self.display_bounds_in(&self.document);
                 let mut bounds = Vec::with_capacity(ids.len());
                 for id in ids {
-                    if !self.document.contains(id) {
+                    if !self.selection_contains(id) {
                         return Err(format!("{id} does not exist"));
                     }
                     let (mins, maxs) = display

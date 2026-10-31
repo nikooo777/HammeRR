@@ -49,6 +49,7 @@ See [Status](status.md) for supported features and limits.
 ## Entities and organization
 
 - [Entities and logic](entities.md)
+- [Point-entity gallery](entity-gallery.md)
 - [Linked paths](path-authoring.md)
 - [Overlays](overlays.md)
 - [Groups](groups.md)

@@ -1597,7 +1597,7 @@ impl SceneMesh {
             for solid in entity.solids.iter().filter(|s| !s.hidden) {
                 builder.add_solid(
                     solid,
-                    is_selected,
+                    is_selected || selected.contains(&ObjectId::Solid(solid.id)),
                     entity.classname() == Some("func_detail"),
                 );
             }

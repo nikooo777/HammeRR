@@ -75,8 +75,7 @@ pub(super) fn selection_summary(session: &Session) -> (String, String, Option<Ve
             (title, detail, Some(rows))
         }
         [ObjectId::Solid(n)] => {
-            let materials: Vec<String> = doc
-                .solid(n)
+            let materials: Vec<String> = map_core::surface::solid(doc, n)
                 .map(|s| {
                     let mut m: Vec<String> = s
                         .sides
@@ -93,7 +92,15 @@ pub(super) fn selection_summary(session: &Session) -> (String, String, Option<Ve
                 size_text(query::bounds(doc, ids[0])),
                 materials.join(", ")
             );
-            (format!("Brush · {}", id_string(ids[0])), detail, None)
+            let owner = match doc.owner_of_solid(n) {
+                Some(ObjectId::Entity(entity)) => format!(" · entity:{entity}"),
+                _ => String::new(),
+            };
+            (
+                format!("Brush · {}{owner}", id_string(ids[0])),
+                detail,
+                None,
+            )
         }
         _ => (
             format!("{} objects", ids.len()),

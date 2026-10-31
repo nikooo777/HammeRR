@@ -372,6 +372,7 @@ fn bind_color(
                     let field = property.field;
                     field.color.ok_or("Property is not a color")?;
                     crate::color_ui::load(&window, &field.kind, &field.value)?;
+                    window.set_palette_property_token(token.to_string().into());
                     crate::color_ui::refresh_palette(&window, session);
                     *target.borrow_mut() = Some((token, key.into(), field.kind == "color1"));
                     window.set_field_label(field.label.into());

@@ -320,7 +320,15 @@ impl EditorServer {
     pub(in crate::mcp) fn get_objects(&self, Parameters(args): Parameters<IdsArgs>) -> ToolResult {
         run(|| {
             let session = self.session();
-            let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            let ids = match args.ids.as_deref() {
+                Some([]) => {
+                    return Err(
+                        "explicit ids must not be empty; omit ids to use the selection".into(),
+                    );
+                }
+                Some(ids) => parse_ids(ids)?,
+                None => ids_or_selection(&session, None)?,
+            };
             let model_bounds = session.presentation_bounds_in(session.document(), None);
             let objects = ids
                 .iter()

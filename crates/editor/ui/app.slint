@@ -1,11 +1,12 @@
 import { Theme } from "theme.slint";
 import { IconButton, Separator, SectionHeader, FieldRow, Badge, MutedText, OverlaySwitch, OverlayNote, OverlayLink, DockTab, ToolTile, Icon } from "kit.slint";
 export { ExternalComparisonWindow, ComparisonRow } from "external-comparison.slint";
+export { EntityGalleryWindow, EntityGalleryClassRow, EntityGalleryPreviewRow } from "entity-gallery.slint";
 export { EntityGraphWindow, EntityGraphRow } from "entity-graph.slint";
 export { OpenDocumentsWindow, OpenDocumentRow } from "open-documents.slint";
 export { InstanceContentsWindow } from "instance-contents.slint";
 export { MaterialSourceWindow } from "material-source.slint";
-export { AtlasWindow } from "atlas.slint";
+export { AtlasWindow, AtlasIslandOverlay } from "atlas.slint";
 export { SkyAssetsWindow, SkyAssetFaceRow } from "sky-assets.slint";
 export { HistoryWindow, HistoryRow } from "history.slint";
 export { GridDefaultsWindow } from "grid-defaults.slint";
@@ -559,6 +560,8 @@ export component ColorWindow inherits Window {
     in-out property <float> saturation-value;
     in-out property <float> level-value;
     in property <[string]> palette-names;
+    in-out property <int> palette-source-index;
+    in-out property <string> palette-property-token;
     in-out property <int> palette-index;
     in-out property <string> palette-name;
     in-out property <string> palette-snapshot;
@@ -566,6 +569,7 @@ export component ColorWindow inherits Window {
     in property <bool> palette-reload-available;
     in property <string> palette-status;
     callback palette-choice();
+    callback palette-source-choice();
     callback palette-action(string);
     callback select-model(int);
     callback rgb-changed();
@@ -656,6 +660,16 @@ export component ColorWindow inherits Window {
             VerticalLayout {
                 spacing: 8px;
                 Text { text: "Saved colors"; font-weight: 600; }
+                FieldRow {
+                    label: "Palette source";
+                    label-width: 100px;
+                    ComboBox {
+                        accessible-label: "Palette source";
+                        model: ["User palette", "Map palette"];
+                        current-index <=> root.palette-source-index;
+                        selected => { root.palette-source-choice(); }
+                    }
+                }
                 HorizontalLayout {
                     spacing: 8px;
                     ComboBox {
@@ -679,7 +693,7 @@ export component ColorWindow inherits Window {
                 }
                 HorizontalLayout {
                     spacing: 8px;
-                    Button { text: "Reload palette"; enabled: root.palette-reload-available; clicked => { root.palette-action("reload"); } }
+                    Button { text: root.palette-source-index == 1 ? "Refresh palette" : "Reload palette"; enabled: root.palette-reload-available; clicked => { root.palette-action("reload"); } }
                     Text { text: "16 named colors · brightness stays unchanged"; vertical-alignment: center; wrap: word-wrap; }
                 }
                 ScrollView { height: 64px; Text { text: root.palette-status; wrap: word-wrap; color: root.palette-ready ? Theme.text-muted : Theme.warning; } }
@@ -2068,10 +2082,12 @@ export component AppWindow inherits Window {
     in property <bool> launching;
     in property <bool> game-running;
     in property <bool> has-selection;
+    in property <bool> whole-object-selection;
     in property <bool> face-mode;
     in property <bool> has-faces;
     in property <bool> can-sample-face;
     in property <bool> can-clip;
+    in property <bool> can-reshape;
     in property <bool> clipping;
     in property <bool> has-clip-preview;
     in property <string> clip-summary;
@@ -2290,6 +2306,8 @@ export component AppWindow inherits Window {
     in-out property <bool> pick-brush-entities: true;
     in-out property <bool> pick-point-entities: true;
     callback selection-filters-changed();
+    in property <int> object-selection-mode;
+    callback object-selection-mode-changed(int);
     callback selection-defaults();
     in property <bool> selection-defaults-error;
     in property <int> editor-hidden-count;
@@ -2319,6 +2337,7 @@ export component AppWindow inherits Window {
     callback property-removed(key: string);
     callback flag-toggled(key: string, flag: string, checked: bool);
     callback place-entity();
+    callback entity-gallery();
     callback entity-graph();
     callback external-comparison();
     callback edit-connections();
@@ -2382,8 +2401,8 @@ export component AppWindow inherits Window {
         { id: "undo", title: "Undo", group: "Edit", enabled: root.can-undo },
         { id: "redo", title: "Redo", group: "Edit", enabled: root.can-redo },
         { id: "history", title: "History…", group: "Edit", enabled: true },
-        { id: "cut", title: "Cut", group: "Edit", enabled: root.has-selection },
-        { id: "copy", title: "Copy", group: "Edit", enabled: root.has-selection },
+        { id: "cut", title: "Cut", group: "Edit", enabled: root.whole-object-selection },
+        { id: "copy", title: "Copy", group: "Edit", enabled: root.whole-object-selection },
         { id: "paste", title: "Paste…", group: "Edit", enabled: true },
         { id: "delete", title: "Delete selection", group: "Edit", enabled: root.has-selection },
         { id: "grid-defaults", title: "Grid defaults…", group: "Edit › Preferences", enabled: true },
@@ -2421,6 +2440,9 @@ export component AppWindow inherits Window {
         { id: "show-editor-hidden", title: "Show all editor-hidden", group: "View", enabled: root.editor-hidden-count > 0 },
         { id: "objects", title: "Select objects", group: "Select", enabled: true },
         { id: "faces", title: "Select faces", group: "Select", enabled: true },
+        { id: "select-groups-mode", title: "Select groups", group: "Select › Object selection", enabled: true },
+        { id: "select-objects-mode", title: "Select whole objects", group: "Select › Object selection", enabled: true },
+        { id: "select-solids-mode", title: "Select individual solids", group: "Select › Object selection", enabled: true },
         { id: "select-volume", title: "Select a volume…", group: "Select", enabled: true },
         { id: "object-report", title: "Object report…", group: "Select", enabled: true },
         { id: "object-groups", title: "Object groups…", group: "Select", enabled: true },
@@ -2439,9 +2461,9 @@ export component AppWindow inherits Window {
         { id: "hollow", title: "Hollow brushes…", group: "Brush", enabled: root.can-clip },
         { id: "carve", title: "Carve brushes…", group: "Brush", enabled: root.can-clip },
         { id: "merge", title: "Merge brushes…", group: "Brush", enabled: root.can-clip },
-        { id: "reshape", title: "Reshape brushes…", group: "Brush", enabled: root.can-clip },
-        { id: "place-on-surface", title: "Place on surface…", group: "Brush", enabled: root.has-selection },
-        { id: "repeat-array", title: "Repeat array…", group: "Brush", enabled: root.has-selection },
+        { id: "reshape", title: "Reshape brushes…", group: "Brush", enabled: root.can-reshape },
+        { id: "place-on-surface", title: "Place on surface…", group: "Brush", enabled: root.whole-object-selection },
+        { id: "repeat-array", title: "Repeat array…", group: "Brush", enabled: root.whole-object-selection },
         { id: "tie", title: "Tie to entity…", group: "Brush", enabled: root.can-tie },
         { id: "move-to-world", title: "Move to world", group: "Brush", enabled: root.brush-entity-selected },
         { id: "browse-materials", title: "Browse materials…", group: "Brush › Materials", enabled: true },
@@ -2458,9 +2480,10 @@ export component AppWindow inherits Window {
         { id: "model-details", title: "Model details…", group: "Entity", enabled: root.can-inspect-model },
         { id: "cubemap-faces", title: "Cubemap faces…", group: "Entity", enabled: root.can-cubemap-faces },
         { id: "reload-models", title: "Reload models", group: "Entity", enabled: root.has-fgd-model-guide },
+        { id: "entity-gallery", title: "Point-entity gallery…", group: "Entity", enabled: true },
         { id: "entity-graph", title: "Entity graph…", group: "Entity", enabled: true },
         { id: "prefabs", title: "Prefabs…", group: "Entity", enabled: true },
-        { id: "extract-instance", title: "Extract selection to instance…", group: "Entity", enabled: true },
+        { id: "extract-instance", title: "Extract selection to instance…", group: "Entity", enabled: root.whole-object-selection },
         { id: "instance-reference", title: "Instance reference…", group: "Entity", enabled: true },
         { id: "edit-instance-reference", title: "Edit instance reference…", group: "Entity", enabled: root.can-edit-instance-reference },
         { id: "world-settings", title: "World settings…", group: "Map", enabled: true },
@@ -2581,6 +2604,9 @@ export component AppWindow inherits Window {
         else if id == "show-editor-hidden" { root.show-all-editor-hidden(); }
         else if id == "objects" { root.selection-mode-changed(0); }
         else if id == "faces" { root.selection-mode-changed(1); }
+        else if id == "select-groups-mode" { root.object-selection-mode-changed(0); }
+        else if id == "select-objects-mode" { root.object-selection-mode-changed(1); }
+        else if id == "select-solids-mode" { root.object-selection-mode-changed(2); }
         else if id == "select-volume" { root.select-volume(); }
         else if id == "object-report" { root.object-report(); }
         else if id == "object-groups" { root.object-groups(); }
@@ -2618,6 +2644,7 @@ export component AppWindow inherits Window {
         else if id == "model-details" { root.inspect-model(); }
         else if id == "cubemap-faces" { root.cubemap-faces(); }
         else if id == "reload-models" { root.reload-model-guides(); }
+        else if id == "entity-gallery" { root.entity-gallery(); }
         else if id == "entity-graph" { root.entity-graph(); }
         else if id == "prefabs" { root.prefabs(); }
         else if id == "extract-instance" { root.extract-instance(); }
@@ -2663,8 +2690,8 @@ export component AppWindow inherits Window {
             MenuItem { title: "Redo"; enabled: root.can-redo; activated => { root.redo(); } }
             MenuItem { title: "History…"; activated => { root.history(); } }
             MenuSeparator { }
-            MenuItem { title: "Cut"; enabled: root.has-selection; activated => { root.cut-objects(); } }
-            MenuItem { title: "Copy"; enabled: root.has-selection; activated => { root.copy-objects(); } }
+            MenuItem { title: "Cut"; enabled: root.whole-object-selection; activated => { root.cut-objects(); } }
+            MenuItem { title: "Copy"; enabled: root.whole-object-selection; activated => { root.copy-objects(); } }
             MenuItem { title: "Paste…"; activated => { root.paste-objects(); } }
             MenuItem { title: "Delete"; enabled: root.has-selection; activated => { root.delete-selection(); } }
             MenuSeparator { }
@@ -2719,6 +2746,12 @@ export component AppWindow inherits Window {
             title: "Select";
             MenuItem { title: "Objects"; checked: !root.face-mode; activated => { root.selection-mode-changed(0); } }
             MenuItem { title: "Faces"; checked: root.face-mode; activated => { root.selection-mode-changed(1); } }
+            Menu {
+                title: "Object selection";
+                MenuItem { title: "Groups"; checked: root.object-selection-mode == 0; activated => { root.object-selection-mode-changed(0); } }
+                MenuItem { title: "Objects"; checked: root.object-selection-mode == 1; activated => { root.object-selection-mode-changed(1); } }
+                MenuItem { title: "Solids"; checked: root.object-selection-mode == 2; activated => { root.object-selection-mode-changed(2); } }
+            }
             MenuSeparator { }
             MenuItem { title: "Pick world brushes"; checkable: true; enabled: !root.face-mode; checked <=> root.pick-world-brushes; activated => { root.selection-filters-changed(); } }
             MenuItem { title: "Pick brush entities"; checkable: true; enabled: !root.face-mode; checked <=> root.pick-brush-entities; activated => { root.selection-filters-changed(); } }
@@ -2740,10 +2773,10 @@ export component AppWindow inherits Window {
             MenuItem { title: "Hollow brushes…"; enabled: root.can-clip; activated => { root.hollow-brushes(); } }
             MenuItem { title: "Carve brushes…"; enabled: root.can-clip; activated => { root.carve-brushes(); } }
             MenuItem { title: "Merge brushes…"; enabled: root.can-clip; activated => { root.merge-brushes(); } }
-            MenuItem { title: "Reshape brushes…"; enabled: root.can-clip; activated => { root.brush-components(); } }
+            MenuItem { title: "Reshape brushes…"; enabled: root.can-reshape; activated => { root.brush-components(); } }
             MenuSeparator { }
-            MenuItem { title: "Place on surface…"; enabled: root.has-selection; activated => { root.place-on-surface(); } }
-            MenuItem { title: "Repeat array…"; enabled: root.has-selection; activated => { root.repeat-array(); } }
+            MenuItem { title: "Place on surface…"; enabled: root.whole-object-selection; activated => { root.place-on-surface(); } }
+            MenuItem { title: "Repeat array…"; enabled: root.whole-object-selection; activated => { root.repeat-array(); } }
             MenuItem { title: "Tie to entity…"; enabled: root.can-tie; activated => { root.tie-entity(); } }
             MenuItem { title: "Move to world"; enabled: root.brush-entity-selected; activated => { root.move-to-world(); } }
             MenuSeparator { }
@@ -2768,10 +2801,11 @@ export component AppWindow inherits Window {
             MenuItem { title: "Cubemap faces…"; enabled: root.can-cubemap-faces; activated => { root.cubemap-faces(); } }
             MenuItem { title: "Reload models"; enabled: root.has-fgd-model-guide; activated => { root.reload-model-guides(); } }
             MenuSeparator { }
+            MenuItem { title: "Point-entity gallery…"; activated => { root.entity-gallery(); } }
             MenuItem { title: "Entity graph…"; activated => { root.entity-graph(); } }
             MenuItem { title: "Prefabs…"; activated => { root.prefabs(); } }
             MenuSeparator { }
-            MenuItem { title: "Extract selection to instance…"; activated => { root.extract-instance(); } }
+            MenuItem { title: "Extract selection to instance…"; enabled: root.whole-object-selection; activated => { root.extract-instance(); } }
             MenuItem { title: "Instance reference…"; activated => { root.create-instance-reference(); } }
             MenuItem { title: "Edit instance reference…"; enabled: root.can-edit-instance-reference; activated => { root.edit-instance-reference(); } }
         }
@@ -3061,7 +3095,7 @@ export component AppWindow inherits Window {
                         IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.cylinder; tooltip: "Brush shapes"; clicked => { root.brush-shapes(); } }
                         IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.polygon; tooltip: "Draw polygon"; clicked => { root.draw-polygon(); } }
                         IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.clip; tooltip: "Clip selected brushes"; checked: root.clipping; enabled: root.can-clip || root.clipping; clicked => { if !root.clipping { root.start-clip(); } } }
-                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.reshape; tooltip: "Reshape brushes"; enabled: root.can-clip; clicked => { root.brush-components(); } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.reshape; tooltip: "Reshape brushes"; enabled: root.can-reshape; clicked => { root.brush-components(); } }
                         Rectangle { height: 9px; Separator { vertical: false; } }
                         IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.entity; tooltip: "Place entity"; clicked => { root.place-entity(); } }
                         IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.overlay; tooltip: "Overlay"; clicked => { root.create-overlay(); } }
@@ -3353,9 +3387,13 @@ export component AppWindow inherits Window {
                                     spacing: 2px;
                                     IconButton { icon: Icon.frame; tooltip: "Frame selection"; clicked => { root.frame-selection(); } }
                                     IconButton { icon: Icon.eye-off; tooltip: "Hide in editor"; enabled: root.can-hide-editor-selection; clicked => { root.hide-editor-selection(); } }
-                                    IconButton { icon: Icon.copy; tooltip: "Copy"; clicked => { root.copy-objects(); } }
+                                    IconButton { icon: Icon.copy; tooltip: root.whole-object-selection ? "Copy" : "Copy requires whole objects"; enabled: root.whole-object-selection; clicked => { root.copy-objects(); } }
                                     IconButton { icon: Icon.paste; tooltip: "Paste"; clicked => { root.paste-objects(); } }
                                     IconButton { icon: Icon.trash; tooltip: "Delete"; clicked => { root.delete-selection(); } }
+                                }
+                                if root.has-selection && !root.whole-object-selection: MutedText {
+                                    text: "Individual brushes selected. Use Objects or Groups to copy, place or repeat whole objects.";
+                                    wrap: word-wrap;
                                 }
                                 if root.editor-hidden-count > 0: HorizontalLayout {
                                     padding-left: Theme.space-lg;
@@ -3578,12 +3616,12 @@ export component AppWindow inherits Window {
                                     }
                                 }
 
-                                if root.can-clip: SectionHeader { text: "BRUSH TOOLS"; }
-                                if root.can-clip: VerticalLayout {
+                                if root.can-reshape: SectionHeader { text: "BRUSH TOOLS"; }
+                                if root.can-reshape: VerticalLayout {
                                     padding-left: Theme.space-lg;
                                     padding-right: Theme.space-lg;
                                     spacing: Theme.space-sm;
-                                    HorizontalLayout {
+                                    if root.can-clip: HorizontalLayout {
                                         spacing: Theme.space-sm;
                                         ToolTile { text: "Hollow"; icon: Icon.hollow; clicked => { root.hollow-brushes(); } }
                                         ToolTile { text: "Carve"; icon: Icon.carve; clicked => { root.carve-brushes(); } }
@@ -3591,14 +3629,14 @@ export component AppWindow inherits Window {
                                     }
                                     HorizontalLayout {
                                         spacing: Theme.space-sm;
-                                        ToolTile { text: "Clip"; icon: Icon.clip; active: root.clipping; clicked => { if !root.clipping { root.start-clip(); } } }
+                                        ToolTile { text: "Clip"; icon: Icon.clip; enabled: root.can-clip; active: root.clipping; clicked => { if !root.clipping { root.start-clip(); } } }
                                         ToolTile { text: "Reshape"; icon: Icon.reshape; clicked => { root.brush-components(); } }
-                                        ToolTile { text: "Repeat"; icon: Icon.instances; clicked => { root.repeat-array(); } }
+                                        ToolTile { text: "Repeat"; icon: Icon.instances; enabled: root.whole-object-selection; clicked => { root.repeat-array(); } }
                                     }
                                 }
 
-                                if root.has-selection: SectionHeader { text: "PLACEMENT"; }
-                                if root.has-selection: VerticalLayout {
+                                if root.whole-object-selection: SectionHeader { text: "PLACEMENT"; }
+                                if root.whole-object-selection: VerticalLayout {
                                     padding-left: Theme.space-lg;
                                     padding-right: Theme.space-lg;
                                     spacing: Theme.space-sm;

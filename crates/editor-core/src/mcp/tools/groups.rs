@@ -128,7 +128,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Temporarily bypass native object groups for ordinary object selection. false restores outermost-group selection. Shared session setting only; map source/history and current selection are preserved. Explicit group/member selection works in either setting. UI: Object groups… → Bypass groups."
+        description = "Compatibility setter for object selection rules: true chooses Objects (whole world brushes/entities without groups), false chooses Groups (outermost native groups). To select individual entity brushes choose Solids through set_object_selection_mode. Shared Session setting; current selection and source/history are preserved, pending object gestures retire. Explicit group/member selection works in every mode. UI: Object groups… → Bypass groups."
     )]
     pub(in crate::mcp) fn set_group_selection_bypass(
         &self,
@@ -136,7 +136,7 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             self.session()
-                .set_group_selection_bypass(Actor::Agent, args.bypass);
+                .set_group_selection_bypass(Actor::Agent, args.bypass)?;
             Ok(json!({"bypass":args.bypass}))
         })
     }

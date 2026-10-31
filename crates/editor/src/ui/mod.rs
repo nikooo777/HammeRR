@@ -72,6 +72,7 @@ struct Ui {
     game_log_window: Option<GameLogWindow>,
     last_log_refresh: Instant,
     entity_window: Option<EntityWindow>,
+    entity_gallery: Option<entity_gallery_ui::Controller>,
     entity_graph: Option<entity_graph_ui::Form>,
     external_comparison: Option<Rc<external_comparison::Controller>>,
     connection_window: Option<ConnectionWindow>,
@@ -200,6 +201,7 @@ impl Ui {
             game_log_window: None,
             last_log_refresh: Instant::now(),
             entity_window: None,
+            entity_gallery: None,
             entity_graph: None,
             external_comparison: None,
             connection_window: None,
@@ -508,6 +510,13 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_launching(session.launching());
     app.set_game_running(session.game_running());
     app.set_has_selection(!session.selection().is_empty());
+    app.set_can_reshape(session.can_reshape_selection());
+    app.set_whole_object_selection(
+        !session.selection().is_empty()
+            && session
+                .require_root_objects(&session.selected_ids())
+                .is_ok(),
+    );
     app.set_face_mode(session.face_mode());
     app.set_has_faces(!session.selected_faces().is_empty());
     refresh_terrain_controls(app, session);
@@ -528,7 +537,9 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
             map_core::surface::side(doc, *face)
         } else {
             match session.selected_ids().as_slice() {
-                [ObjectId::Solid(id)] => doc.solid(*id).and_then(|solid| solid.sides.first()),
+                [ObjectId::Solid(id)] => {
+                    map_core::surface::solid(doc, *id).and_then(|solid| solid.sides.first())
+                }
                 [ObjectId::Entity(id)] => doc
                     .entity(*id)
                     .and_then(|entity| entity.solids.first())
@@ -586,7 +597,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
             && session
                 .selection()
                 .iter()
-                .all(|id| matches!(id, ObjectId::Solid(_))),
+                .all(|id| matches!(id, ObjectId::Solid(solid) if doc.solid(*solid).is_some())),
     );
     app.set_can_apply_material(
         !session.selected_faces().is_empty()
@@ -1348,6 +1359,29 @@ fn create_document_window(
             .as_ref()
             .unwrap()
             .show(aspect)
+        {
+            app.set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_entity_gallery, |app| {
+        let app = app.unwrap();
+        if ui.borrow().entity_gallery.is_none() {
+            match entity_gallery_ui::Controller::new_with_access(&file_access(&ui)) {
+                Ok(controller) => ui.borrow_mut().entity_gallery = Some(controller),
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let shared = session_of(&ui);
+        let aspect = (app.get_viewport_width() / app.get_viewport_height().max(1.0)).max(0.01);
+        if let Err(error) = ui
+            .borrow()
+            .entity_gallery
+            .as_ref()
+            .unwrap()
+            .show(&lock(&shared), aspect)
         {
             app.set_message(error.to_string().into());
         }
@@ -2605,9 +2639,9 @@ fn create_document_window(
                 }
             } else {
                 match (hit, click.control) {
-                    (Some(hit), true) => session.select_grouped(&[hit.object], SelectMode::Toggle),
+                    (Some(hit), true) => session.select_picked_objects(&[hit.object], SelectMode::Toggle),
                     (Some(hit), false) => {
-                        session.select_grouped(&[hit.object], SelectMode::Replace)
+                        session.select_picked_objects(&[hit.object], SelectMode::Replace)
                     }
                     (None, true) => Ok(()),
                     (None, false) => session.select(&[], SelectMode::Replace),
@@ -3196,6 +3230,13 @@ fn create_document_window(
                             );
                         }
                         panel_dirty = true;
+                    }
+                    if let Some(controller) = &ui.entity_gallery {
+                        controller.refresh(
+                            &session,
+                            (app.get_viewport_width() / app.get_viewport_height().max(1.0))
+                                .max(0.01),
+                        );
                     }
                     if let Some(form) = &ui.entity_graph {
                         form.refresh_visible(

@@ -18,6 +18,7 @@ impl Session {
     pub fn can_hide_selected_in_editor(&self) -> bool {
         !self.closing
             && !self.selection.is_empty()
+            && self.selection.iter().all(|id| self.document.contains(*id))
             && std::ptr::eq(self.render_document(), &self.document)
             && self
                 .selection

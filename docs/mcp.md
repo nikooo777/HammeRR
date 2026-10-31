@@ -52,6 +52,17 @@ Use `--game <gameinfo.txt>` and `--fgd <file.fgd>` for other content.
 The standalone server uses stdio. It does not open a window or HTTP endpoint.
 A render request starts graphics when needed.
 
+## Saved colors
+
+1. Call `get_color_palette` with `source:"user"` (the default) or `source:"map"`.
+2. Supply that report's `snapshot` and the same `source` to `set_color_palette`.
+3. Use `action:"save"` with a new `name` and `color:{"space":"rgb1","channels":[0.1,0.2,0.3]}`. `replace` requires an existing name and color; `rename` requires an existing name and an unused `new_name`; `delete` requires an existing name. Names and colors use the same limits as the [color picker](entities.md#colors).
+4. Use `action:"use"` to retrieve `{color,palette}` without changing a map or draft. Apply the returned normalized color separately with `set_entity_color_space` or the property draft operations.
+
+Map writes are independent undoable metadata edits. `save_map` persists them in the VMF; `undo`/`redo` restores them, and new/replaced documents use their own palette. If a property draft exists, map writes require its current `property_token`. That matching draft keeps its token and pending edits while its revision advances. Missing, stale or replaced tokens refuse without changes. Other drafts and active geometry/viewport gestures also refuse map writes. User palette actions do not accept `property_token` and retain existing immediate shared-preference persistence and external-source checks.
+
+`action:"reload"` refreshes user storage or current map metadata; it accepts no name, color, new name or property token. `use` also forbids a property token. Invalid map metadata reports `ready:false`, `entries:null` and an explicit `error`; it is preserved and blocks Use/writes. Cancelling a color/property draft does not undo explicit palette edits. Neither source stores brightness.
+
 ## Start a task
 
 1. Call `list_documents` to identify the target map.
@@ -66,9 +77,45 @@ A render request starts graphics when needed.
 Object tools use the selection when `ids` is omitted. An explicit `ids: []`
 rejects. Use `select` with `ids: []` to clear the selection.
 
+Use `get_object_selection_mode` and `set_object_selection_mode` with
+`mode:"groups"`, `"objects"` or `"solids"` for the shared click, overlap, area,
+volume and paint rules. Type filters still classify each seed by its owning type.
+`set_selection_mode` independently switches Objects/Faces.
+
+For an exact brush selection, call `select_solids` with numeric `solids` and
+optional `mode:"replace"`, `"add"`, `"remove"` or `"toggle"`. Entity reports from
+`get_objects` list child solid IDs; selected brush reports include `owner` and
+bounds. `get_objects` can also inspect a child directly as `solid:<n>`.
+`frame_selection`, move, transform, material editing, duplicate and delete use
+the shared selected brush IDs when `ids` is omitted and preserve owning entities through Undo.
+Child duplicates stay in their original entity. Root-only operations such as
+Copy/Cut, repeat, surface placement, instance extraction and editor hiding reject
+child IDs before replacing drafts or writing. Existing `select` still accepts
+world-brush/entity root IDs and expands groups only in **Groups** mode.
+Explicit object-edit `ids` retain their root-only contract; use `select_solids`
+then omit `ids` to edit selected children.
+For a spatial child-brush query, choose Solids and call `select_volume` with
+`preview:true`; `get_volume_selection` pages the exact brush IDs without changing
+the selection. Resolve those IDs through `get_objects` for owners and bounds.
+
 `render_view.preview_issues` identifies omitted brushes and invalid terrain.
 Each issue includes `brush`, optional `face`, and `message`.
 At most 64 details are returned; `preview_issues_omitted` counts the rest.
+
+## Point-entity gallery
+
+Use `browse_entity_gallery` to page through all loaded FGD point classes, including
+unavailable entries and their reasons. `preview_entity_gallery` takes the current
+snapshot, 1–32 explicit class/property examples, an origin and optional columns/gap.
+Actual helper/model/icon examples appear in the shared `render_view` scene without
+changing source contents or history. `get_entity_gallery` reports each example's
+properties, bounds and missing/unsupported visual diagnostics.
+
+Use `frame_entity_gallery` for the complete arrangement or one example. Review
+before calling `apply_entity_gallery`, which creates the entire owned batch in
+one Undo step. `cancel_entity_gallery` discards it; `review_entity_gallery` takes
+ownership with a replacement token. Save/compile/play refuse pending galleries.
+See [Point-entity gallery](entity-gallery.md) for arrangement and resource limits.
 
 ## Compare an external VMF
 
@@ -252,7 +299,10 @@ Nonzero padding returns `padding` and `usable_rectangle`; `uv_bounds` describes 
 The default `mode:"per_face"` fits each face independently.
 Set `mode:"together"` and `reference:{solid,side}` to fit same-facing coplanar faces continuously using that selected face's projection frame.
 Together drafts additionally return `mode` and `reference`; their `uv_bounds` describes the combined usable target, including gaps between faces.
-Together requires a reference from the targets. Per-face mode rejects a reference parameter.
+Together requires a reference from the targets. Other modes reject a reference parameter.
+Set `mode:"pack"` with `packing:{"scale":1,"padding":2}` for automatic face-island packing.
+Scale multiplies current texel spans while preserving aspect, skew and mirroring.
+Island padding and outer region padding use source-image pixels; the preview reports each allocation and actual UV bounds.
 The outer rectangle must fit the actual image, and padding must leave positive width and height.
 Invalid updates preserve the current draft. Apply or cancel with its exact token through `commit_face_preview` or `cancel_face_preview`.
 
@@ -346,12 +396,12 @@ entities and unsupported metadata refuse the whole batch.
 ## Selection defaults
 
 Selection defaults use `get_selection_defaults` and `set_selection_defaults`.
-Save records current filters; Apply affects only the selected document. Reload and Reset do not apply filters.
+Save records the current object-selection mode and type filters; Apply affects only the selected document. Reload and Reset do not apply rules. Reset saves Groups with all types enabled.
 
 Use `get_selection_profiles` to list named profiles and their stable IDs.
-Call `set_selection_profile` with the latest snapshot and `operation:{action:"save",name:"Props"}` to save current filters.
+Call `set_selection_profile` with the latest snapshot and `operation:{action:"save",name:"Props"}` to save the current mode and filters.
 Use a profile ID for `replace`, `apply`, `rename` or `delete`; `rename` also needs `name`.
-Only `apply` changes current filters. Profile edits leave startup defaults unchanged; default Save/Reset retain profiles.
+Only `apply` changes current rules. Profile edits leave startup defaults unchanged; default Save/Reset retain profiles. Version 1/2 files remain readable with Groups mode; explicit saves publish version 3 through the same authority and conflict guards.
 
 ## Pivot grid snapping
 
@@ -910,7 +960,7 @@ These groups locate the available operations.
 | [Surface placement](placement.md) | `apply_repeat_array`, `cancel_repeat_array`, `get_repeat_array`, `preview_repeat_array` |
 | [Preview defaults](preview-defaults.md) | `get_preview_defaults`, `set_preview_defaults` |
 | [Recovery](map-tools.md) | `create_recovery_snapshot`, `delete_recovery_snapshot`, `get_recovery`, `reload_recovery_settings`, `restore_recovery_snapshot`, `set_recovery_settings` |
-| [Selection](selection.md) | `begin_paint_selection`, `begin_transform_drag`, `cancel_area_selection`, `cancel_paint_selection`, `cancel_transform_preview`, `cancel_volume_selection`, `commit_area_selection`, `commit_paint_selection`, `commit_transform_preview`, `commit_volume_selection`, `delete_objects`, `duplicate_objects`, `frame_selection`, `frame_volume_selection`, `get_area_selection`, `get_paint_selection`, `get_selection`, `get_selection_defaults`, `get_selection_filters`, `get_selection_profiles`, `get_transform_handles`, `get_volume_selection`, `move_objects`, `preview_snap_to_grid`, `select`, `select_area`, `select_volume`, `set_area_selection_options`, `set_paint_tool`, `set_selection_defaults`, `set_selection_filters`, `set_selection_profile`, `set_selection_mode`, `set_transform_tool`, `transform_objects`, `update_paint_selection`, `update_transform_drag` |
+| [Selection](selection.md) | `begin_paint_selection`, `begin_transform_drag`, `cancel_area_selection`, `cancel_paint_selection`, `cancel_transform_preview`, `cancel_volume_selection`, `commit_area_selection`, `commit_paint_selection`, `commit_transform_preview`, `commit_volume_selection`, `delete_objects`, `duplicate_objects`, `frame_selection`, `frame_volume_selection`, `get_area_selection`, `get_object_selection_mode`, `get_paint_selection`, `get_selection`, `get_selection_defaults`, `get_selection_filters`, `get_selection_profiles`, `get_transform_handles`, `get_volume_selection`, `move_objects`, `preview_snap_to_grid`, `select`, `select_area`, `select_solids`, `select_volume`, `set_area_selection_options`, `set_object_selection_mode`, `set_paint_tool`, `set_selection_defaults`, `set_selection_filters`, `set_selection_profile`, `set_selection_mode`, `set_transform_tool`, `transform_objects`, `update_paint_selection`, `update_transform_drag` |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | `execute_editor_command`, `find_editor_commands`, `get_keyboard_shortcuts`, `set_keyboard_shortcuts` |
 | [3D sky preview](sky.md) | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |

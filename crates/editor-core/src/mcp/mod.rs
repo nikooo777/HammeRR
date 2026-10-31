@@ -93,6 +93,10 @@ Keep brush coordinates inside +-16384. set_spatial_settings configures the share
 Objects are addressed as 'solid:<id>' (world brushes) and 'entity:<id>' (point or brush \
 entities; a brush entity owns its brushes). Tools that take ids default to the current \
 selection when ids are omitted, and creation tools select what they create.\n\
+Use set_object_selection_mode for groups/objects/solids picking, area, volume and paint. \
+For entity children, inspect get_objects on the entity, select_solids with numeric brush IDs, \
+then omit ids for move/transform/duplicate/delete; explicit object-edit ids remain root-only. \
+get_objects can inspect a child solid:<id> directly and reports its owner.\n\
 Materials are paths under materials/ without extension, e.g. 'tools/toolsnodraw', \
 'tools/toolsskybox', 'dev/dev_measuregeneric01'; find more with search_materials. \
 Sprite Name fields are model-resource references: a material choice must be authored \
@@ -211,7 +215,11 @@ fn ids_or_selection(session: &Session, ids: Option<&[String]>) -> Result<Vec<Obj
         Some([]) => {
             return Err("explicit ids must not be empty; omit ids to use the selection".into());
         }
-        Some(ids) => parse_ids(ids)?,
+        Some(ids) => {
+            let ids = parse_ids(ids)?;
+            session.require_root_objects(&ids)?;
+            ids
+        }
         None => session.selected_ids(),
     };
     if ids.is_empty() {
@@ -253,8 +261,11 @@ fn summary(doc: &Document, id: ObjectId) -> Value {
     let bounds = bounds_json(query::bounds(doc, id));
     match id {
         ObjectId::Solid(n) => {
-            let materials = doc.solid(n).map(|s| materials_of([s])).unwrap_or_default();
-            json!({ "id": id_string(id), "kind": "solid", "bounds": bounds, "materials": materials })
+            let resolved = map_core::subobject::solid(doc, n).ok();
+            let materials = resolved
+                .map(|(_, solid)| materials_of([solid]))
+                .unwrap_or_default();
+            json!({ "id": id_string(id), "kind": "solid", "owner":resolved.map(|(owner,_)|id_string(owner)), "bounds": bounds, "materials": materials })
         }
         ObjectId::Entity(n) => {
             let Some(e) = doc.entity(n) else {
@@ -327,7 +338,11 @@ fn entity_detail(entity: &Entity) -> Value {
 fn detail(doc: &Document, id: ObjectId) -> Result<Value, String> {
     let mut value = summary(doc, id);
     let extra = match id {
-        ObjectId::Solid(n) => solid_detail(doc.solid(n).ok_or(format!("{id} does not exist"))?),
+        ObjectId::Solid(n) => solid_detail(
+            map_core::subobject::solid(doc, n)
+                .map_err(|error| error.to_string())?
+                .1,
+        ),
         ObjectId::Entity(n) => entity_detail(doc.entity(n).ok_or(format!("{id} does not exist"))?),
     };
     if let (Value::Object(base), Value::Object(extra)) = (&mut value, extra) {
@@ -532,7 +547,7 @@ fn single_entity(session: &Session, id: Option<&str>) -> Result<u32, String> {
     };
     match id {
         ObjectId::Entity(n) => Ok(n),
-        ObjectId::Solid(_) => Err(format!("{} is a world brush, not an entity", id_string(id))),
+        ObjectId::Solid(_) => Err(format!("{} is a brush, not an entity", id_string(id))),
     }
 }
 
@@ -729,6 +744,7 @@ impl EditorServer {
             + Self::context_tools()
             + Self::cubemap_bindings_tools()
             + Self::entities_tools()
+            + Self::entity_gallery_tools()
             + Self::entity_placement_tools()
             + Self::files_tools()
             + Self::geometry_tools()

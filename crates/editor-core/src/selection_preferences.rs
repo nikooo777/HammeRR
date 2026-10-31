@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::preference_file::{
     CoordinatedFile, ObservedSource, Publication, SaveError, Source, named_preference,
 };
-pub use crate::session::selection_filters::SelectionFilters;
+pub use crate::session::selection_filters::{ObjectSelectionMode, SelectionFilters};
 
 pub const FILE_NAME: &str = "selection-defaults.json";
 pub const MAX_FILE_BYTES: u64 = 16_384;
@@ -13,7 +13,8 @@ pub const MAX_PROFILES: usize = 32;
 pub const MAX_NAME_BYTES: usize = 80;
 const LEGACY_MAX_FILE_BYTES: u64 = 4096;
 const LEGACY_VERSION: u32 = 1;
-const FORMAT_VERSION: u32 = 2;
+const PROFILE_VERSION: u32 = 2;
+const FORMAT_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -21,11 +22,13 @@ pub struct Profile {
     pub id: String,
     pub name: String,
     pub filters: SelectionFilters,
+    pub mode: ObjectSelectionMode,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SelectionDefaults {
     pub filters: SelectionFilters,
+    pub mode: ObjectSelectionMode,
     pub profiles: Vec<Profile>,
     next_id: u64,
 }
@@ -34,6 +37,7 @@ impl Default for SelectionDefaults {
     fn default() -> Self {
         Self {
             filters: SelectionFilters::default(),
+            mode: ObjectSelectionMode::default(),
             profiles: Vec::new(),
             next_id: 1,
         }
@@ -54,6 +58,7 @@ pub enum Edit<'a> {
         name: &'a str,
         replace: Option<&'a str>,
         filters: SelectionFilters,
+        mode: ObjectSelectionMode,
     },
     Rename {
         id: &'a str,
@@ -107,6 +112,7 @@ impl SelectionDefaults {
                 name,
                 replace,
                 filters,
+                mode,
             } => {
                 let name = named_preference(name, MAX_NAME_BYTES, "Selection profile")?;
                 if self.profiles.iter().any(|profile| {
@@ -124,6 +130,7 @@ impl SelectionDefaults {
                             .ok_or("Selection profile no longer exists; refresh the list")?;
                         profile.name = name;
                         profile.filters = filters;
+                        profile.mode = mode;
                         id.to_owned()
                     }
                     None => {
@@ -139,6 +146,7 @@ impl SelectionDefaults {
                             id: id.clone(),
                             name,
                             filters,
+                            mode,
                         });
                         self.next_id = next;
                         id
@@ -191,8 +199,26 @@ struct LegacyPreferences {
 struct Preferences {
     version: u32,
     filters: SelectionFilters,
+    mode: ObjectSelectionMode,
     next_id: u64,
     profiles: Vec<Profile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyProfile {
+    id: String,
+    name: String,
+    filters: SelectionFilters,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyProfiles {
+    version: u32,
+    filters: SelectionFilters,
+    next_id: u64,
+    profiles: Vec<LegacyProfile>,
 }
 
 pub struct Store {
@@ -258,11 +284,34 @@ impl Store {
                 }
                 SelectionDefaults::from(legacy.filters)
             }
+            PROFILE_VERSION => {
+                let preferences: LegacyProfiles = serde_json::from_slice(bytes)
+                    .map_err(|error| format!("{}: {error}", self.path().display()))?;
+                if preferences.version != PROFILE_VERSION {
+                    return Err("Invalid selection defaults version".into());
+                }
+                SelectionDefaults {
+                    filters: preferences.filters,
+                    mode: ObjectSelectionMode::default(),
+                    profiles: preferences
+                        .profiles
+                        .into_iter()
+                        .map(|profile| Profile {
+                            id: profile.id,
+                            name: profile.name,
+                            filters: profile.filters,
+                            mode: ObjectSelectionMode::default(),
+                        })
+                        .collect(),
+                    next_id: preferences.next_id,
+                }
+            }
             FORMAT_VERSION => {
                 let preferences: Preferences = serde_json::from_slice(bytes)
                     .map_err(|error| format!("{}: {error}", self.path().display()))?;
                 SelectionDefaults {
                     filters: preferences.filters,
+                    mode: preferences.mode,
                     profiles: preferences.profiles,
                     next_id: preferences.next_id,
                 }
@@ -286,6 +335,9 @@ impl Store {
         }
         .unwrap_or_default();
         settings.filters = filters;
+        if reset {
+            settings.mode = ObjectSelectionMode::default();
+        }
         self.save_checked(settings, reset, &source)
             .map_err(|error| error.message)?
             .source
@@ -305,6 +357,7 @@ impl Store {
         let data = serde_json::to_vec_pretty(&Preferences {
             version: FORMAT_VERSION,
             filters: settings.filters,
+            mode: settings.mode,
             next_id: settings.next_id,
             profiles: settings.profiles,
         })

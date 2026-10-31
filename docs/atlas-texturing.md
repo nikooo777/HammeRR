@@ -2,7 +2,7 @@
 
 # Atlas-region texturing
 
-Fit flat faces independently or together into a rectangular part of a material image, with optional padding inside its edges.
+Fit flat faces independently or together, or automatically pack separate face UV islands into a rectangular part of an existing material image.
 
 1. Select faces under **Selection → Faces · materials & textures**.
 2. Open **Edit face textures…**, then **Fit atlas region…**.
@@ -40,6 +40,30 @@ Changing **Fit mode** or **Reference face** requires another preview before appl
 
 ![One image spans two faces; the center edge does not restart the mapping](images/atlas-continuity.png)
 
+## Pack face islands
+
+1. Select flat faces, then open **Fit atlas region…**.
+2. Under **Fit mode**, choose **Pack face islands**.
+3. Inspect **Material** and choose the destination rectangle.
+4. Set **Padding** for the outer region, in source image pixels.
+5. Set **Island UV size**. Use `1` to keep current texel sizes; `0.5` halves both dimensions.
+6. Set **Island padding** in whole source image pixels.
+7. Click **Preview atlas fit**. Check the green allocations and face mapping.
+8. Click **Apply atlas fit**, or **Cancel**. Apply creates one Undo step.
+
+![Three face islands packed into one Source trim sheet](images/atlas-packing.png)
+
+Each flat face is one island. Packing preserves aspect, axes, skew, rotation and mirroring.
+Use **Fit coplanar faces together** for continuous surfaces.
+
+Large islands are placed first. Reordering the same faces gives the same layout.
+Islands keep their requested size and orientation. If no layout fits, reduce
+**Island UV size** or **Island padding**, or choose a larger region.
+A rejected update keeps the previous preview.
+
+Packing reuses the chosen atlas image. Image and material generation remain separate.
+Fractional texel spans reserve enough whole pixels; the projection keeps its aspect.
+
 ## Save and reuse named regions
 
 1. Inspect the material, then draw or enter the rectangle and **Padding**.
@@ -48,7 +72,7 @@ Changing **Fit mode** or **Reference face** requires another preview before appl
 4. Check the restored rectangle and padding, choose **Fit mode** and **Reference face** as needed, then click **Preview atlas fit**.
 5. Inspect the faces, then click **Apply atlas fit**, or **Cancel** to discard the face preview.
 
-Saved regions stay in this map, including after saving and reopening it. Each region keeps the canonical material, original image dimensions and identity, rectangle and padding. Fit mode and reference face remain current fitting choices.
+Saved regions stay in this map, including after saving and reopening it. Each region keeps the canonical material, original image dimensions and identity, rectangle and padding. Fit mode, reference face, island UV size and island padding remain current fitting choices.
 Names are unique for each material, ignoring case. Up to 128 regions can be saved in a map, with names up to 80 characters.
 Saved child VMFs can retain valid catalogs when used as [compiled assemblies](instances.md). Their regions remain in the child and do not become parent regions or compiled map data.
 
@@ -60,8 +84,9 @@ After **Reload material assets**, unchanged images can reuse their regions. Chan
 
 - Flat world, detail and brush-entity faces only; terrain and collapsed projections reject.
 - One static base image with a supported `LightmappedGeneric` or `UnlitGeneric` declaration.
-- No tool overrides, proxies, extra layers, packing or image editing.
+- No tool overrides, proxies, extra layers or image editing.
 - The rectangle must have positive size and stay inside the original image.
 - Padding must leave a positive usable width and height; invalid updates preserve the existing preview.
 - Together fitting requires a reference from the target selection and same-facing coplanar faces. It does not unfold across corners.
+- Packing uses one unrotated rectangular allocation per face, including unused polygon corners; it does not preserve continuity across islands. Allocation search is bounded to 1024 free rectangles and fails explicitly if that budget is exceeded.
 - Up to 256 faces. Padding changes the fit, not the image. Choose suitable image gutters and padding for the material's filtering and mipmaps.

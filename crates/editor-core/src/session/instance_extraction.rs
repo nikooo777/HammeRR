@@ -386,6 +386,7 @@ impl Session {
         pivot: Pivot,
     ) -> Result<Request, String> {
         self.instance_extraction_context()?;
+        self.require_root_objects(&self.selected_ids())?;
         if self.instance_extraction.worker.busy() {
             return Err("Wait for the cancelled extraction worker to finish".into());
         }

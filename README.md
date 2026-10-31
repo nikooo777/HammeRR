@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 75.1% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 76.6% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -65,8 +65,8 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Atlas texturing](docs/atlas-texturing.md) | [Grid snapping](docs/brushes.md#snap-objects-to-grid) |
 | --- | --- |
-| ![Equal faces show full-image mapping and a padded atlas region](docs/images/atlas-padding.png) | ![Separate objects aligned to the grid](docs/images/independent-grid-snapping.png) |
-| Save named image regions and fit padded areas across faces. | Align objects together or snap each object separately. |
+| ![Face islands automatically packed into one Source trim sheet](docs/images/atlas-packing.png) | ![Separate objects aligned to the grid](docs/images/independent-grid-snapping.png) |
+| Pack face islands and fit named, padded atlas regions. | Align objects together or snap each object separately. |
 
 | [Terrain](docs/terrain.md) | [Compiled terrain](docs/terrain.md#compile-split-borders) |
 | --- | --- |
@@ -82,6 +82,11 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | --- | --- |
 | ![A model at three scales](docs/images/model-scales.png) | ![A barrel aligned with a sloping surface](docs/images/slope-placement.png) |
 | Choose skins, bodygroups, scale, tint and opacity. | Place objects on floors, ceilings or picked surfaces. |
+
+| [Point-entity gallery](docs/entity-gallery.md) | [Selection modes](docs/selection.md#choose-the-object-selection-unit) |
+| --- | --- |
+| ![Real FGD light, player and prop examples before placement](docs/images/entity-gallery.png) | ![One child brush selected inside a brush entity](docs/images/solid-selection.png) |
+| Preview loaded classes and place reviewed batches in one Undo step. | Pick groups, whole objects or individual brushes inside entities. |
 
 | [Water and slime](docs/water.md) | [Ropes](docs/ropes.md) |
 | --- | --- |

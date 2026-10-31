@@ -132,6 +132,25 @@ impl Region {
         include: impl Fn(&Solid) -> bool,
         entity_bounds: impl Fn(&Entity) -> Option<(DVec3, DVec3)>,
     ) -> Selection {
+        self.select_with_entity_bounds_and_solids(
+            document,
+            rule,
+            faces,
+            false,
+            include,
+            entity_bounds,
+        )
+    }
+
+    pub fn select_with_entity_bounds_and_solids(
+        &self,
+        document: &Document,
+        rule: Match,
+        faces: bool,
+        individual_solids: bool,
+        include: impl Fn(&Solid) -> bool,
+        entity_bounds: impl Fn(&Entity) -> Option<(DVec3, DVec3)>,
+    ) -> Selection {
         let mut result = Selection::default();
         let terrain = crate::displacement::surface::prepare(document.vmf());
         for id in document.objects() {
@@ -197,20 +216,25 @@ impl Region {
                                 }),
                         );
                     } else {
-                        matches.push(
-                            !surfaces.is_empty()
-                                && if rule == Match::Contained {
-                                    surfaces.len()
-                                        == solid
-                                            .sides
-                                            .iter()
-                                            .filter(|side| side.displacement.is_some())
-                                            .count()
-                                        && surfaces.iter().all(|(_, mesh)| surface_matches(mesh))
-                                } else {
-                                    surfaces.iter().any(|(_, mesh)| surface_matches(mesh))
-                                },
-                        );
+                        let matched = !surfaces.is_empty()
+                            && if rule == Match::Contained {
+                                surfaces.len()
+                                    == solid
+                                        .sides
+                                        .iter()
+                                        .filter(|side| side.displacement.is_some())
+                                        .count()
+                                    && surfaces.iter().all(|(_, mesh)| surface_matches(mesh))
+                            } else {
+                                surfaces.iter().any(|(_, mesh)| surface_matches(mesh))
+                            };
+                        if individual_solids {
+                            if matched {
+                                result.objects.push(ObjectId::Solid(solid.id));
+                            }
+                        } else {
+                            matches.push(matched);
+                        }
                     }
                     continue;
                 }
@@ -224,7 +248,14 @@ impl Region {
                         }
                     }
                 } else {
-                    matches.push(self.brush_matches(solid, &shape, rule));
+                    let matched = self.brush_matches(solid, &shape, rule);
+                    if individual_solids {
+                        if matched {
+                            result.objects.push(ObjectId::Solid(solid.id));
+                        }
+                    } else {
+                        matches.push(matched);
+                    }
                 }
             }
             if !matches.is_empty()

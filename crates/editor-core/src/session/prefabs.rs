@@ -200,6 +200,7 @@ impl Session {
         stamp: &str,
     ) -> Result<Value, String> {
         let snapshot = self.checked_prefabs(stamp)?;
+        self.require_root_objects(ids)?;
         let payload = transfer::Payload::capture(&self.document, ids, &self.definitions)
             .map_err(|error| error.to_string())?;
         let committed = self.prefabs.binding.authority().change(

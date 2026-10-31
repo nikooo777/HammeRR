@@ -75,10 +75,12 @@ impl Session {
             .collect::<HashSet<_>>();
         let mut owners = BTreeMap::<ObjectId, Hit>::new();
         let filters = self.selection_filters();
-        let mut retain = |hit: Hit| {
+        let mode = self.object_selection_mode();
+        let mut retain = |mut hit: Hit| {
             if !filters.allows(document, hit.object) {
                 return;
             }
+            hit.object = mode.hit_object(hit);
             let old = owners.entry(hit.object).or_insert(hit);
             if compare_hits(&hit, old).is_lt() {
                 *old = hit;
@@ -160,7 +162,10 @@ impl Session {
         let candidates = candidates.iter().map(|candidate| {
             let hit = candidate.hit;
             let label = match hit.object {
-                ObjectId::Solid(id) => format!("World brush {id}"),
+                ObjectId::Solid(id) => match self.document.owner_of_solid(id) {
+                    Some(ObjectId::Entity(entity)) => format!("Brush {id} · entity {entity}"),
+                    _ => format!("World brush {id}"),
+                },
                 ObjectId::Entity(id) => self.document.entity(id).map_or_else(
                     || format!("Entity {id}"),
                     |entity| {
@@ -172,6 +177,7 @@ impl Session {
             };
             json!({
                 "object":crate::identity::id_string(hit.object),"solid":hit.solid,"side":hit.side,
+                "owner":hit.solid.and_then(|solid|self.document.owner_of_solid(solid)).map(crate::identity::id_string),
                 "distance":hit.distance,"point":hit.point.to_array(),"label":label,
                 "selection_unit":candidate.unit.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>(),
             })
@@ -208,7 +214,13 @@ impl Session {
 
     pub fn cycle_object_hit(&mut self, actor: Actor, ray: &Ray) -> Result<Value, String> {
         let (candidates, total) = self.object_candidates(ray)?;
-        let selected = self.selected_ids();
+        let selected = self.selection.iter().copied().collect();
+        let selected = self
+            .selection_in_mode(&selected, self.object_selection_mode())
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
         let chosen = if candidates.is_empty() {
             None
         } else {
@@ -220,7 +232,7 @@ impl Session {
             )
         };
         if let Some(index) = chosen {
-            self.select(&candidates[index].unit, SelectMode::Replace)?;
+            self.select_picked_objects(&candidates[index].unit, SelectMode::Replace)?;
         }
         let report = self.object_candidate_report(&candidates, total, chosen);
         if chosen.is_some() {

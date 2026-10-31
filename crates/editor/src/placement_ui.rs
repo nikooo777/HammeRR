@@ -348,6 +348,7 @@ impl Controller {
         if ids.is_empty() {
             return Err("Select objects to place".into());
         }
+        session.require_root_objects(&ids)?;
         let report = session.surface_placement();
         let expected = serde_json::json!(
             ids.iter()

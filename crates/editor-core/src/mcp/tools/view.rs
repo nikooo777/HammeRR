@@ -592,7 +592,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect depth-ordered object hits along an explicit world ray without changing selection or history. Returns at most 64 candidates, exact total/truncation, actual hit object/brush/side/point/distance, and each expanded selection unit. Visible brush children deduplicate to owners, then outer object groups unless bypassed, before the cap. Usable model triangles replace helper boxes; hidden/tool filters match ordinary picking. Stable IDs break equal-depth ties. Objects mode only; active specialized tools and geometry previews reject.",
+        description = "Inspect depth-ordered object hits along an explicit world ray without changing selection/history. Returns at most 64 candidates, exact total/truncation, hit object/brush/side/point/distance, brush owner and selection_unit. Shared mode deduplicates to outermost visible nested groups, whole objects or individual solids before the cap; Solids keeps individual brush-entity children. Type/hidden/tool filters match ordinary selection. Usable model triangles replace helper boxes. Stable IDs break equal-depth ties. Requires viewport Objects mode; specialized tools and geometry previews reject.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_object_hit_candidates(
@@ -608,7 +608,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Cycle object selection along an explicit world ray through the shared Alt-click operation. Replace-only and stateless: if the exact current selection equals a candidate's expanded owner/group unit, select the next candidate and wrap; otherwise select the nearest. Empty rays leave selection unchanged. Recomputes current visible brush/model geometry and group bypass each call; returns chosen zero-based index plus candidates/total/truncation. Limited to the nearest 64 deduplicated units. No geometry or Undo edit; incompatible modes/tools/previews reject."
+        description = "Cycle object selection along an explicit world ray through the shared Alt-click operation. Replace-only and stateless: if the current selection interpreted in the active groups/objects/solids mode equals a candidate unit, advance and wrap; otherwise select the nearest. Empty rays preserve selection. Recomputes visible brush/model geometry, type filters and selection rules each call; returns chosen zero-based index plus candidates/total/truncation. Solids mode distinguishes brush-entity children and reports their owner. Limited to the nearest 64 deduplicated units. No source/Undo edit; incompatible tools/previews reject."
     )]
     pub(in crate::mcp) fn cycle_object_hit(
         &self,

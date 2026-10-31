@@ -427,13 +427,13 @@ impl Session {
                 .iter()
                 .all(|id| evaluation.objects.contains(id));
         }
-        self.selection
+        self.selection.iter().all(|id| match id {
+            ObjectId::Solid(solid) => evaluation.solids.contains(solid),
+            ObjectId::Entity(_) => evaluation.objects.contains(id),
+        }) && self
+            .face_selection
             .iter()
-            .all(|id| evaluation.objects.contains(id))
-            && self
-                .face_selection
-                .iter()
-                .all(|face| evaluation.solids.contains(&face.solid))
+            .all(|face| evaluation.solids.contains(&face.solid))
     }
 
     pub fn working_region_selection_bounds(&self) -> Result<[DVec3; 2], String> {

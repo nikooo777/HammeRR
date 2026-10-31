@@ -93,7 +93,7 @@ impl Session {
     }
 
     pub fn entity_helper_report(&self, id: u32) -> Result<Report, String> {
-        let document = self.document();
+        let document = self.render_document();
         let entity = document
             .entity(id)
             .ok_or_else(|| format!("no entity:{id}"))?;

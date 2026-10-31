@@ -26,13 +26,16 @@ Blank mixed fields preserve each entity's value. Click **Apply properties** to c
 
 ### Colors
 
-Choose **RGB**, **HSV** or **HSL** in the color picker.
-Adjust channels, then click **Apply color** or **Cancel**.
-In a property draft, the color is staged until **Apply properties**.
+1. Open a color picker in the inspector or **Edit selected entity properties…**.
+2. Choose **RGB**, **HSV** or **HSL**, then adjust the channels. **Brightness** stays separate.
+3. Under **Saved colors**, choose **Palette source → User palette** for colors shared across maps, or **Map palette** for colors carried in this VMF.
+4. Enter **Saved color name**, then click **Save new color**. To change a selected entry, use **Replace saved color**, **Rename saved color** or **Delete saved color**. Renaming uses the new text in **Saved color name**.
+5. Select an entry and click **Use saved color** to load its exact color into the picker. Click **Apply color** to apply it, or **Cancel** to leave the entity unchanged. In a property draft, finish with **Apply properties**.
+6. Save the map to persist its **Map palette**. **Undo** and **Redo** restore map palette changes independently of color/property changes. **User palette** writes persist immediately.
 
-Use **Saved color name → Save new color** to retain a color.
-**Use saved color**, **Replace saved color**, **Rename saved color**, **Delete saved color** and **Reload palette** manage the palette.
-Palette changes persist independently of cancelling a property draft.
+Cancelling a color or property draft keeps explicit palette edits. Switching **Palette source** and using saved colors preserve brightness. Each source supports 16 colors, with exact case-sensitive names of 1–48 characters and at most 128 UTF-8 bytes, without surrounding whitespace or control characters.
+
+Use **Reload palette** after external changes to user storage. **Refresh palette** rereads the current map choices after map/history changes. Malformed or unsupported palette data stays preserved and unavailable; it is never replaced with an empty palette. Finish other drafts and viewport gestures before changing the map palette. Its own current property picker can save palette changes while retaining the pending property edits; ordinary history navigation can make those property edits stale.
 
 ## Lights and helpers
 

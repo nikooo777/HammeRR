@@ -7,7 +7,6 @@ use super::*;
 pub(super) struct State {
     pub draft: Option<Draft>,
     serial: u64,
-    bypass: bool,
 }
 
 #[derive(Clone)]
@@ -85,8 +84,11 @@ impl Session {
         }
     }
 
-    fn group_object_selectable(&self, id: ObjectId) -> bool {
-        if !self.working_object_visible(&self.document, id) {
+    pub(super) fn group_object_selectable(&self, id: ObjectId) -> bool {
+        if !match id {
+            ObjectId::Solid(solid) => self.working_solid_visible(&self.document, solid),
+            ObjectId::Entity(_) => self.working_object_visible(&self.document, id),
+        } {
             return false;
         }
         let visible = |solid: &source_formats::vmf::Solid| {
@@ -99,7 +101,9 @@ impl Session {
                     }))
         };
         match id {
-            ObjectId::Solid(id) => self.document.solid(id).is_some_and(visible),
+            ObjectId::Solid(id) => map_core::subobject::solid(&self.document, id).is_ok_and(|(owner, solid)| {
+                visible(solid) && !matches!(owner, ObjectId::Entity(entity) if self.document.entity(entity).is_none_or(|entity| entity.hidden))
+            }),
             ObjectId::Entity(id) => self.document.entity(id).is_some_and(|entity| {
                 !entity.hidden && (entity.solids.is_empty() || entity.solids.iter().any(visible))
             }),
@@ -107,7 +111,9 @@ impl Session {
     }
 
     pub(super) fn group_selection_index(&self) -> Option<SelectionIndex> {
-        if self.groups.bypass || self.document.vmf().world.groups.is_empty() {
+        if self.object_selection_mode() != selection_filters::ObjectSelectionMode::Groups
+            || self.document.vmf().world.groups.is_empty()
+        {
             return None;
         }
         let graph = self.group_graph().ok()?;
@@ -160,6 +166,7 @@ impl Session {
         ids: &[ObjectId],
         mode: SelectMode,
     ) -> HashSet<ObjectId> {
+        let selected = self.selection_in_mode(selected, self.object_selection_mode());
         let units = self.group_selection_units(ids);
         let mut result = if mode == SelectMode::Replace {
             HashSet::new()
@@ -181,25 +188,22 @@ impl Session {
     }
 
     pub fn group_selection_bypass(&self) -> bool {
-        self.groups.bypass
+        self.object_selection_mode() != selection_filters::ObjectSelectionMode::Groups
     }
 
-    pub fn set_group_selection_bypass(&mut self, actor: Actor, bypass: bool) {
-        if self.groups.bypass != bypass {
-            self.cancel_area_selection();
-            self.clear_volume_selection();
-            self.clear_paint_stroke();
-            self.groups.bypass = bypass;
-            self.view_serial += 1;
-            self.log(
-                actor,
-                if bypass {
-                    "bypass object groups"
-                } else {
-                    "select outer object groups"
-                },
-            );
-        }
+    pub fn set_group_selection_bypass(
+        &mut self,
+        actor: Actor,
+        bypass: bool,
+    ) -> Result<Value, String> {
+        self.set_object_selection_mode(
+            actor,
+            if bypass {
+                selection_filters::ObjectSelectionMode::Objects
+            } else {
+                selection_filters::ObjectSelectionMode::Groups
+            },
+        )
     }
 
     fn group_member_json(&self, graph: &Graph, member: Member) -> Value {
@@ -275,7 +279,7 @@ impl Session {
         };
         Ok(
             json!({"generation":self.document_generation, "revision":self.document.revision(),
-            "bypass":self.groups.bypass, "groups":rows.iter().skip(offset).take(limit).collect::<Vec<_>>(),
+            "bypass":self.group_selection_bypass(), "selection_mode":self.object_selection_mode(), "groups":rows.iter().skip(offset).take(limit).collect::<Vec<_>>(),
             "total":rows.len(), "offset":offset, "next_offset":if offset.saturating_add(limit) < rows.len() {Some(offset + limit)} else {None},
             "detail":detail, "draft":self.group_edit_report(),
             "limits":{"groups":groups::MAX_GROUPS,"members":groups::MAX_MEMBERS,"depth":groups::MAX_DEPTH,"name_characters":groups::MAX_NAME_CHARS}}),
@@ -346,6 +350,7 @@ impl Session {
             if ungroup {
                 return Err("Choose a group to ungroup".into());
             }
+            self.require_root_objects(&self.selected_ids())?;
             Edit {
                 group: None,
                 name: String::new(),
@@ -413,6 +418,7 @@ impl Session {
     }
 
     pub fn add_selection_to_group_edit(&mut self, token: u64) -> Result<Value, String> {
+        self.require_root_objects(&self.selected_ids())?;
         let graph = self.group_graph()?;
         let draft = self.check_group_draft(token, false)?;
         let mut members = graph.selection_members(&self.selected_ids());

@@ -132,6 +132,7 @@ impl Session {
         if snapshot != self.repeat_stamp() {
             return Err("Map, selection or preview changed; inspect the repeat array again".into());
         }
+        self.require_root_objects(sources)?;
         self.ensure_partitions_resolved()?;
         options.basis = self.transform_basis(sources, local)?;
         let mut document = self.document.preview_snapshot();

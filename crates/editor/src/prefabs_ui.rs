@@ -275,7 +275,12 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
     {
         window.set_message("".into());
     }
-    window.set_can_save(!session.selected_ids().is_empty());
+    window.set_can_save(
+        !session.selected_ids().is_empty()
+            && session
+                .require_root_objects(&session.selected_ids())
+                .is_ok(),
+    );
     window.set_can_preview(!report["selected"].is_null() && form.action.is_none());
     window.set_editing(form.action.is_some());
     window.set_saving(

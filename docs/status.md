@@ -7,7 +7,7 @@ The integrated compiler is experimental. File operations, BSP publication and ga
 
 ## Group completion
 
-![Estimated implementation: 75.1% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 76.6% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -22,17 +22,18 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [VMF and recovery](map-tools.md) | Preserved imported fields, checked Save, recovery snapshots and map checks. | Other-editor round trips; general automatic repairs. |
 | [History](history.md) | Shared Undo/Redo and change summaries. | Persistent history and full property diffs. |
 | [External map comparison](map-comparison.md) | Bounded authored world-brush/whole-entity comparison by stored IDs, categorized pages and complete filtered current selection/framing. | No merge, map-settings comparison, recursive-instance expansion or geometric-equivalence claim. |
-| [Selection](selection.md) | Type filters, independent selection tint/outlines, startup defaults, named profiles, overlap cycling, area, volume and paint selection. | Separate solid/group modes. |
+| [Selection](selection.md) | Groups/Objects/Solids, owner-preserving child-brush edits, type filters, independent selection tint/outlines, startup defaults, named profiles, overlap cycling, area, volume and paint selection. | Whole-object commands require complete brush owners. |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | Configurable viewport commands, including temporary editor hide/show. | File, clipboard, physical-key and multi-key bindings. |
 | [Brushes](brushes.md) | Shapes, atomic block-batch import, handles, exact transforms, selection or per-object grid snapping, pivots with grid snapping and saved defaults, mirror and shear. | Magnetic snapping and surface-attached pivots. |
 | [Brush tools](brush-tools.md) | Hollow, carve with explicit cut-material policies, clip, convex merge and polygon extrusion. | Concave merge and holes. |
 | [Components](components.md) | Move, rotate, scale, weld, split, ridges and partitions. | General topology editing and arbitrary dividing lines. |
-| [Materials](textures.md) | Grouped browsing, winning-source filters, maps-path exclusion, favorites, mapping, painting, wrapping, replacement, saved named atlas regions, padded image fitting with coplanar continuity, face lighting and checked native texture mip chains. | Full native shader preview. |
+| [Materials](textures.md) | Grouped browsing, winning-source filters, maps-path exclusion, favorites, mapping, painting, wrapping, replacement, saved named atlas regions, automatic face-island packing, padded image fitting with coplanar continuity, face lighting and checked native texture mip chains. | Full native shader preview. |
 | [Normal maps](normal-maps.md) | Supported flat-brush normal textures. | Terrain/model normal maps and special encodings. |
 | [Lighting preview](lighting-preview.md) | Unshadowed LDR/HDR point, spot, sun and optional constant sky ambient on checked opaque brush, terrain and model receivers. | Baked emission, shadows, sky visibility, bounce, styles, native exposure adaptation and brightness match. |
 | [Color correction](color-correction.md) | One explicit Source RGB8 `.raw` LUT, shared enable/weight controls and complete viewport display-color preview. | Native HDR, tone mapping, entities/volumes and multiple-LUT composition. |
 | [Terrain](terrain.md) | Creation, exact XYZ/Z vertex batches, height CSV import, sculpting, blending, masks, handles, resizing, sewing and full/half-edge subdivision. | Holes, triangle removal and general fractional joins. |
-| [Entities](entities.md) | Typed properties, exact/substring class selection, colors, FGD helpers, connections, bounded I/O graph queries/connected selection/framing, batch edits and safe rename. | General graph canvas layouts and runtime simulation. |
+| [Entities](entities.md) | Typed properties, exact/substring class selection, user/map color palettes, FGD helpers, connections, bounded I/O graph queries/connected selection/framing, batch edits and safe rename. | General graph canvas layouts and runtime simulation. |
+| [Point-entity gallery](entity-gallery.md) | Paged FGD point classes, actual helper/icon/model examples and reviewed bulk placement with one Undo step. | 1–32 distinct loaded classes per preview; static/reference-pose visual support and mounted asset limits. |
 | [Models](models.md) | Winning-source filters, captured file origins, meshes, reference poses, skins, bodygroups, dynamic scale, tint, opacity and attachments. | Animation, procedural poses, attachment parenting and physics preview. |
 | [Resource previews](sprite-guides.md) | Supported sprites, [static ropes with sag-aware framing and selection bounds](ropes.md), fog and LDR/HDR/3D skies. | Complete native effects and runtime behavior. |
 | [Particles](particles.md) | Active manifest metadata and effect assignment. | Particle rendering and animation. |

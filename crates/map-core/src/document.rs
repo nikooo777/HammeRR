@@ -15,8 +15,8 @@ use source_formats::keyvalues::Node;
 
 use source_formats::vmf::{Entity, Group, Properties, Solid, VisGroup, Vmf, World};
 
-/// A selectable top-level object. Brushes inside a brush entity belong to
-/// their entity and are addressed through it.
+/// Root objects and individual brush identities. Child-brush operations resolve
+/// their owning entity; Document root lookup and enumeration stay root-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ObjectId {
     Solid(u32),
@@ -640,14 +640,19 @@ impl Transaction<'_> {
     }
 
     pub fn solid_mut(&mut self, id: u32) -> Result<&mut Solid, EditError> {
-        self.touch(ObjectId::Solid(id));
-        self.doc
-            .vmf
-            .world
-            .solids
-            .iter_mut()
-            .find(|s| s.id == id)
-            .ok_or(EditError::NotFound(ObjectId::Solid(id)))
+        let (owner, _) = crate::subobject::solid(self.doc, id)?;
+        self.touch(owner);
+        match owner {
+            ObjectId::Solid(_) => self.doc.vmf.world.solids.iter_mut().find(|s| s.id == id),
+            ObjectId::Entity(entity) => self
+                .doc
+                .vmf
+                .entities
+                .iter_mut()
+                .find(|record| record.id == entity)
+                .and_then(|record| record.solids.iter_mut().find(|solid| solid.id == id)),
+        }
+        .ok_or(EditError::NotFound(ObjectId::Solid(id)))
     }
 
     pub fn entity_mut(&mut self, id: u32) -> Result<&mut Entity, EditError> {
@@ -715,6 +720,17 @@ impl Transaction<'_> {
     }
 
     pub fn remove(&mut self, id: ObjectId) -> Result<Object, EditError> {
+        if let ObjectId::Solid(solid) = id
+            && let (ObjectId::Entity(entity), _) = crate::subobject::solid(self.doc, solid)?
+        {
+            let owner = self.entity_mut(entity)?;
+            let index = owner
+                .solids
+                .iter()
+                .position(|record| record.id == solid)
+                .ok_or(EditError::NotFound(id))?;
+            return Ok(Object::Solid(owner.solids.remove(index)));
+        }
         self.capture_object_order();
         self.touch(id);
         self.doc.take(id).ok_or(EditError::NotFound(id))

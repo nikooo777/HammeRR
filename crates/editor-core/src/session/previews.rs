@@ -3,6 +3,7 @@ use super::*;
 #[derive(Default)]
 pub(super) struct State {
     pub(super) instance_collapse: instance_collapse::State,
+    pub(super) entity_gallery: entity_gallery::State,
     pub(super) entity_placement: entity_placement::State,
     pub(super) primitives: primitives::State,
     pub(super) repeat: repeat::State,
@@ -23,6 +24,7 @@ impl State {
         self.instance_collapse
             .document()
             .or_else(|| self.entity_placement.document())
+            .or_else(|| self.entity_gallery.document())
             .or_else(|| {
                 self.primitives
                     .preview
@@ -93,6 +95,7 @@ impl State {
 pub(super) enum Kind {
     InstanceCollapse,
     EntityPlacement,
+    EntityGallery,
     Paste,
     Repeat,
     LinkedPath,
@@ -119,7 +122,7 @@ impl Session {
         Self::edit_handle("face_preview", self.face_preview_token())
     }
 
-    fn feedback_handles(&self) -> Vec<serde_json::Value> {
+    pub(super) fn feedback_handles(&self) -> Vec<serde_json::Value> {
         [
             self.hollow_handle(),
             self.carve_handle(),
@@ -137,6 +140,7 @@ impl Session {
         ids: &[ObjectId],
         mode: SelectMode,
     ) -> Result<serde_json::Value, String> {
+        self.require_root_objects(ids)?;
         let before = self.feedback_handles();
         self.select_grouped(ids, mode)?;
         let after = self.feedback_handles();
@@ -154,6 +158,9 @@ impl Session {
     pub(super) fn clear_geometry_previews_except(&mut self, retained: &[Kind]) {
         if !retained.contains(&Kind::InstanceCollapse) {
             self.clear_instance_collapse();
+        }
+        if !retained.contains(&Kind::EntityGallery) {
+            self.clear_entity_gallery();
         }
         if !retained.contains(&Kind::EntityPlacement) {
             self.clear_entity_placement();

@@ -602,7 +602,7 @@ impl Session {
             return Err("Select objects to snap to the grid".into());
         }
         for &id in ids {
-            if !self.document.contains(id) {
+            if !self.selection_contains(id) {
                 return Err(format!("{id} does not exist"));
             }
         }
@@ -1128,7 +1128,7 @@ impl Session {
         if preview.faces {
             self.select_faces(&preview.matches.faces, preview.mode)?;
         } else {
-            self.select_grouped(&preview.matches.objects, preview.mode)?;
+            self.select_picked_objects(&preview.matches.objects, preview.mode)?;
         }
         Ok(preview.matches)
     }

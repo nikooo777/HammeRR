@@ -15,6 +15,35 @@ pub const MAX_NAME_BYTES: usize = 128;
 pub const MAX_FILE_BYTES: u64 = 16 * 1024;
 const MAX_ERROR_BYTES: usize = 512;
 const VERSION: u32 = 1;
+pub(crate) type Entries = BTreeMap<String, [f64; 3]>;
+
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PaletteSource {
+    #[default]
+    User,
+    Map,
+}
+
+impl PaletteSource {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Map => "map",
+        }
+    }
+}
+
+pub struct PaletteChange<'a> {
+    pub action: &'a str,
+    pub snapshot: &'a str,
+    pub name: Option<&'a str>,
+    pub color: Option<Input>,
+    pub new_name: Option<&'a str>,
+    pub property_token: Option<u64>,
+}
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -62,22 +91,12 @@ impl Store {
         if preferences.version != VERSION {
             return Err("Unsupported color palette version; file is preserved".into());
         }
-        if preferences.entries.len() > MAX_ENTRIES {
-            return Err(format!(
-                "Color palette contains more than {MAX_ENTRIES} colors"
-            ));
-        }
-        let mut entries = BTreeMap::new();
-        for entry in preferences.entries {
-            validate_name(&entry.name)?;
-            let color = crate::color::convert(Input {
-                space: Space::Rgb1,
-                channels: entry.rgb1,
-            })?;
-            if entries.insert(entry.name, color.rgb1).is_some() {
-                return Err("Color palette has duplicate names; file is preserved".into());
-            }
-        }
+        let entries = validated_entries(
+            preferences
+                .entries
+                .into_iter()
+                .map(|entry| (entry.name, entry.rgb1)),
+        )?;
         Ok((entries, source))
     }
 
@@ -114,6 +133,122 @@ pub fn validate_name(name: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+pub(crate) fn validated_entries(
+    colors: impl IntoIterator<Item = (String, [f64; 3])>,
+) -> Result<BTreeMap<String, [f64; 3]>, String> {
+    let mut entries = BTreeMap::new();
+    for (name, rgb1) in colors {
+        if entries.len() == MAX_ENTRIES {
+            return Err(format!(
+                "Color palette contains more than {MAX_ENTRIES} colors"
+            ));
+        }
+        validate_name(&name)?;
+        let color = crate::color::convert(Input {
+            space: Space::Rgb1,
+            channels: rgb1,
+        })?;
+        if entries.insert(name, color.rgb1).is_some() {
+            return Err("Color palette has duplicate names; stored data is preserved".into());
+        }
+    }
+    Ok(entries)
+}
+
+pub(crate) fn prepare_change(
+    action: &str,
+    name: Option<&str>,
+    input: Option<Input>,
+    new_name: Option<&str>,
+) -> Result<Option<Converted>, String> {
+    if action == "reload" {
+        if name.is_some() || input.is_some() || new_name.is_some() {
+            return Err("Reload accepts only action, source and snapshot".into());
+        }
+        return Ok(None);
+    }
+    let name = name.ok_or("Choose a saved color name")?;
+    validate_name(name)?;
+    if action == "rename" {
+        let new_name = new_name.ok_or("Enter a new saved color name")?;
+        validate_name(new_name)?;
+        if new_name == name {
+            return Err("Choose a different saved color name".into());
+        }
+    } else if new_name.is_some() {
+        return Err("Only Rename accepts a new saved color name".into());
+    }
+    match action {
+        "save" | "replace" => {
+            crate::color::convert(input.ok_or("Save and Replace require a color")?).map(Some)
+        }
+        "delete" | "use" | "rename" if input.is_none() => Ok(None),
+        "delete" | "use" | "rename" => Err("Use, Delete and Rename do not accept a color".into()),
+        _ => Err("Choose Save, Replace, Rename, Delete, Reload or Use".into()),
+    }
+}
+
+pub(crate) fn change_entries(
+    entries: &mut BTreeMap<String, [f64; 3]>,
+    action: &str,
+    name: &str,
+    converted: Option<Converted>,
+    new_name: Option<&str>,
+) -> Result<(), String> {
+    match action {
+        "save" => {
+            if entries.contains_key(name) {
+                return Err("This color name exists; choose Replace saved color explicitly".into());
+            }
+            if entries.len() == MAX_ENTRIES {
+                return Err(format!(
+                    "Keep at most {MAX_ENTRIES} saved colors; replace or delete one"
+                ));
+            }
+            entries.insert(name.into(), converted.expect("Save has a color").rgb1);
+        }
+        "replace" => {
+            let entry = entries
+                .get_mut(name)
+                .ok_or("Choose an existing color to replace")?;
+            *entry = converted.expect("Replace has a color").rgb1;
+        }
+        "delete" => {
+            entries
+                .remove(name)
+                .ok_or("Choose an existing color to delete")?;
+        }
+        "rename" => {
+            let new_name = new_name.expect("Rename has a new name");
+            if entries.contains_key(new_name) {
+                return Err("This color name exists; choose a different saved color name".into());
+            }
+            let color = entries
+                .remove(name)
+                .ok_or("Choose an existing color to rename")?;
+            entries.insert(new_name.into(), color);
+        }
+        _ => unreachable!(),
+    }
+    Ok(())
+}
+
+pub(crate) fn entries_report(entries: &BTreeMap<String, [f64; 3]>) -> Vec<Value> {
+    entries
+        .iter()
+        .map(|(name, rgb1)| {
+            let Converted {
+                rgb255, hsv, hsl, ..
+            } = crate::color::convert(Input {
+                space: Space::Rgb1,
+                channels: *rgb1,
+            })
+            .expect("Saved palette colors are validated");
+            json!({"name":name,"rgb1":rgb1,"rgb255":rgb255,"hsv":hsv,"hsl":hsl})
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -187,7 +322,7 @@ impl Authority {
         self.change_named("rename", snapshot, Some(name), None, Some(new_name))
     }
 
-    fn change_named(
+    pub(crate) fn change_named(
         &self,
         action: &str,
         snapshot: &str,
@@ -195,34 +330,14 @@ impl Authority {
         input: Option<Input>,
         new_name: Option<&str>,
     ) -> Result<Value, String> {
+        let converted = prepare_change(action, name, input, new_name)?;
         if action == "reload" {
-            if name.is_some() || input.is_some() {
-                return Err("Reload accepts only action and snapshot".into());
-            }
             let mut state = self.lock();
             state.check_snapshot(snapshot)?;
             state.reload()?;
             return Ok(state.report());
         }
-        let name = name.ok_or("Choose a saved color name")?;
-        validate_name(name)?;
-        if action == "rename" {
-            let new_name = new_name.ok_or("Enter a new saved color name")?;
-            validate_name(new_name)?;
-            if new_name == name {
-                return Err("Choose a different saved color name".into());
-            }
-        }
-        let converted = match action {
-            "save" | "replace" => Some(crate::color::convert(
-                input.ok_or("Save and Replace require a color")?,
-            )?),
-            "delete" | "use" | "rename" if input.is_none() => None,
-            "delete" | "use" | "rename" => {
-                return Err("Use, Delete and Rename do not accept a color".into());
-            }
-            _ => return Err("Choose Save, Replace, Rename, Delete, Reload or Use".into()),
-        };
+        let name = name.expect("Palette action has a name");
         let mut state = self.lock();
         state.check_snapshot(snapshot)?;
         state.check_source()?;
@@ -238,45 +353,7 @@ impl Authority {
             return Ok(json!({"color":color,"palette":state.report()}));
         }
         let mut entries = state.entries.clone();
-        match action {
-            "save" => {
-                if entries.contains_key(name) {
-                    return Err(
-                        "This color name exists; choose Replace saved color explicitly".into(),
-                    );
-                }
-                if entries.len() == MAX_ENTRIES {
-                    return Err(format!(
-                        "Keep at most {MAX_ENTRIES} saved colors; replace or delete one"
-                    ));
-                }
-                entries.insert(name.into(), converted.expect("Save has a color").rgb1);
-            }
-            "replace" => {
-                let entry = entries
-                    .get_mut(name)
-                    .ok_or("Choose an existing color to replace")?;
-                *entry = converted.expect("Replace has a color").rgb1;
-            }
-            "delete" => {
-                entries
-                    .remove(name)
-                    .ok_or("Choose an existing color to delete")?;
-            }
-            "rename" => {
-                let new_name = new_name.expect("Rename has a new name");
-                if entries.contains_key(new_name) {
-                    return Err(
-                        "This color name exists; choose a different saved color name".into(),
-                    );
-                }
-                let color = entries
-                    .remove(name)
-                    .ok_or("Choose an existing color to rename")?;
-                entries.insert(new_name.into(), color);
-            }
-            _ => unreachable!(),
-        }
+        change_entries(&mut entries, action, name, converted, new_name)?;
         state.write_committed = false;
         let publication = {
             let store = state.store.as_ref().map_err(Clone::clone)?;
@@ -392,25 +469,12 @@ impl State {
     }
 
     fn report(&self) -> Value {
-        let entries = self
-            .entries
-            .iter()
-            .map(|(name, rgb1)| {
-                let Converted {
-                    rgb255, hsv, hsl, ..
-                } = crate::color::convert(Input {
-                    space: Space::Rgb1,
-                    channels: *rgb1,
-                })
-                .expect("Saved palette colors are validated");
-                json!({"name":name,"rgb1":rgb1,"rgb255":rgb255,"hsv":hsv,"hsl":hsl})
-            })
-            .collect::<Vec<_>>();
-        json!({"snapshot":self.snapshot(),"entries":entries,"ready":self.ready,
+        let entries = entries_report(&self.entries);
+        json!({"source":"user","snapshot":self.snapshot(),"entries":entries,"ready":self.ready,
             "stored":matches!(self.source.as_ref().map(|source|&source.source),Some(Source::File{..})),
             "error":self.error(),"path":self.store.as_ref().ok().map(|store|store.directory.join(FILE_NAME).display().to_string()),
             "reload_available":self.store.is_ok(),"write_committed":self.write_committed,
             "limits":{"entries":MAX_ENTRIES,"name_characters":MAX_NAME_CHARACTERS,"name_bytes":MAX_NAME_BYTES,"file_bytes":MAX_FILE_BYTES},
-            "policy":"One shared user palette of exact normalized RGB colors. Brightness is independent. Explicit palette writes persist even when a map color draft is Cancelled. No map palette, gamma conversion or automatic file reload. Participating Linux writers coordinate; external changes require Reload palette."})
+            "policy":"One shared user palette of exact normalized RGB colors. Choose the map source for undoable map-local saved colors. Brightness is independent. Explicit palette writes persist even when a map color draft is Cancelled. No gamma conversion or automatic file reload. Participating Linux writers coordinate; external changes require Reload palette."})
     }
 }

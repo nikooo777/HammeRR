@@ -34,10 +34,59 @@ pub struct SelectionProfileArgs {
     operation: crate::session::selection_preferences::ProfileAction,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectSelectionModeArgs {
+    mode: crate::session::selection_filters::ObjectSelectionMode,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SelectSolidsArgs {
+    solids: Vec<u32>,
+    mode: Option<String>,
+}
+
 #[tool_router(router = selection_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect session-local object-selection seed filters. Startup uses saved selection defaults, or all types enabled when no file exists. Objects remain visible. Filters affect ordinary object clicks, overlap candidates/cycling, object marquee/volume and object paint. Enabled hits seed complete visible groups; fully-contained groups still need all visible members geometrically inside. Faces, components, geometric raycast/pick_at_pixel and explicit IDs/report/group/layer selection bypass. Current selection is retained. No map/history/compiler or preference writes. Inspect get_selection_defaults for saved values, readiness and explicit default actions.",
+        description = "Inspect shared object selection rules. mode=groups selects each outermost visible nested group, objects selects whole world brushes/entities without groups, solids selects individual world/brush-entity brushes plus individual point/model/helper/rope/instance entities. Click, overlap cycling, marquee, volume and paint share these units. Type filters classify brush children by their owning entity. Fully inside needs every visible member of a unit inside. Faces and geometric queries bypass these rules. Selection is retained when rules change; the next selection gesture interprets retained owners/children as the active units. New/Open retain the mode. Explicit saved defaults/profiles persist it.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_object_selection_mode(&self) -> ToolResult {
+        ok(self.session().selection_filter_state())
+    }
+
+    #[tool(
+        description = "Set shared object-selection mode: groups, objects or solids. UI: Select → Object selection → Groups / Objects / Solids. Preserves current selection, visibility, source/history and camera. Retires object-selection previews and invalidates held object gestures through the same checked revision as type filters; face/texture work remains intact. Does not enter Objects/Faces mode or write preferences automatically. set_group_selection_bypass maps true to objects and false to groups."
+    )]
+    pub(in crate::mcp) fn set_object_selection_mode(
+        &self,
+        Parameters(args): Parameters<ObjectSelectionModeArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .set_object_selection_mode(Actor::Agent, args.mode)
+        })
+    }
+
+    #[tool(
+        description = "Select exact individual brushes by numeric solid IDs, including children of brush entities; use get_objects on an entity to discover child solid IDs. solids is required and [] clears with replace. mode=replace/add/remove/toggle(default replace). Validates the entire batch before changing selection, bypasses groups/type filters/visibility, retains entity identity/properties and never changes source/history. Add/remove/toggle interprets existing whole brush-entity selection as its visible individual brushes. Does not change the active selection rules. get_selection reports exact solid IDs and owners. Basic move/transform/material/component operations support selected children; operations requiring whole roots refuse partial owners. Existing select keeps its root-only contract."
+    )]
+    pub(in crate::mcp) fn select_solids(
+        &self,
+        Parameters(args): Parameters<SelectSolidsArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().select_solids(
+                &args.solids,
+                parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Inspect shared object-selection seed filters and groups/objects/solids mode. Startup uses saved defaults, or Groups with all types enabled when no file exists. Filters affect clicks, overlap cycling, marquee, volume and paint; children classify by owning brush entity. Enabled hits seed whole visible units in the active mode, and fully-contained matching needs the entire unit inside. Faces, components, geometric raycast/pick_at_pixel and explicit ID/report/group/layer selection bypass filters. Objects remain visible and current selection is retained. No map/history/compiler or preference writes. get_selection_defaults reports saved values and explicit actions.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_selection_filters(&self) -> ToolResult {
@@ -55,7 +104,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect shared saved selection-filter defaults, the originating Session's current filters, factory defaults, storage readiness/errors and an action snapshot. Same state as Selection → Selection defaults…. Only world_brushes, brush_entities and point_entities are saved; all false is valid. Shared saved changes never replace current filters in other documents. No graphics, source, history or preference writes.",
+        description = "Inspect shared saved selection defaults, the originating Session's current type filters and object-selection mode, factory defaults, storage readiness/errors and an action snapshot. UI: Edit → Preferences → Selection defaults…. current/defaults/saved/factory_defaults keep their three-filter shape; current_mode/defaults_mode/saved_mode/factory_mode report groups/objects/solids. All type switches false is valid. Shared saved changes never apply to other documents. No graphics, source, history or preference writes.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_selection_defaults(&self) -> ToolResult {
@@ -63,7 +112,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Manage selection-filter defaults using the latest get_selection_defaults.snapshot. save writes current filters; apply changes only this Session through set_selection_filters, retiring its stale object-selection gestures without pruning selection; reload reads storage without applying; reset writes all-enabled factory defaults without applying. Only save/reset write bounded atomic selection-defaults.json. Save/Apply/Reset recheck exact source/directory observations; conflicts require Reload. Malformed/unsupported files stay intact until explicit Reset. Participating Linux writers coordinate under the existing physical-destination lock; unrelated writers remain outside that guarantee. write_committed=true with ready=false explicitly reports publication followed by verification failure; inspect error before continuing. UI labels: Save current as defaults / Apply saved defaults / Reload defaults / Reset saved defaults. New/Open retain current filters; startup applies defaults once per Session."
+        description = "Manage selection defaults using the latest get_selection_defaults.snapshot. save writes current filters and object-selection mode; apply atomically changes both only in this Session through the shared rule setter, retiring stale object gestures without pruning selection; reload reads storage without applying; reset writes Groups with all types enabled without applying, preserving valid profiles. Only save/reset write bounded atomic selection-defaults.json version 3; strict versions 1/2 load with Groups without migration writes. Save/Apply/Reset recheck exact source/directory observations; conflicts require Reload. Malformed/unsupported files stay intact until explicit Reset. Participating Linux writers coordinate under the existing physical-destination lock; unrelated writers remain outside that guarantee. write_committed=true with ready=false reports publication followed by verification failure; inspect error before continuing. UI: Save current as defaults / Apply saved defaults / Reload defaults / Reset saved defaults. New/Open retain current rules; startup applies defaults once per Session."
     )]
     pub(in crate::mcp) fn set_selection_defaults(
         &self,
@@ -79,7 +128,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect named object-selection filter profiles, their stable IDs, current filters, independent startup defaults, shared storage readiness/errors and an action snapshot. Same catalogue as Selection defaults… → Named profiles. Profiles do not apply automatically or change startup defaults. Up to 32 profiles with case-insensitively unique names of 1–80 UTF-8 bytes share the bounded selection-defaults.json authority. No graphics, source, history or preference writes.",
+        description = "Inspect named object-selection profiles with their stable IDs, mode and type filters, current rules, independent startup defaults, shared storage readiness/errors and an action snapshot. Same catalogue as Selection defaults… → Named profiles. Profiles do not apply automatically or change startup defaults. Up to 32 profiles with case-insensitively unique names of 1–80 UTF-8 bytes share the bounded selection-defaults.json authority. No graphics, source, history or preference writes.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_selection_profiles(&self) -> ToolResult {
@@ -87,7 +136,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Manage named selection-filter profiles through the shared Session operation. Requires latest get_selection_profiles.snapshot and operation: {action:save,name} saves current filters as a new profile; {action:replace,id} replaces that profile's filters while retaining its name/ID; {action:rename,id,name} renames; {action:delete,id} removes; {action:apply,id} applies only to this Session through the ordinary filter setter. Only explicit apply changes active filters or retires object-selection gestures. Profile writes never change startup defaults or any other document's filters, selection, source/history or camera. The catalogue shares exact-source/directory guards, participating writer locks, errors and explicit Reload defaults with startup defaults. Stale forms/conflicts reject. write_committed=true with ready=false means the file was written but verification failed. UI: Save current as profile / Replace selected profile / Apply selected profile / Rename profile / Delete profile."
+        description = "Manage named selection profiles through the shared Session operation. Requires latest get_selection_profiles.snapshot and operation: {action:save,name} saves current mode/filters as a new profile; {action:replace,id} replaces that profile's rules while retaining name/ID; {action:rename,id,name} renames; {action:delete,id} removes; {action:apply,id} atomically applies mode/filters only to this Session through the shared rule setter. Only explicit apply changes active rules or retires object gestures. Profile writes never change startup defaults or another document. The catalogue shares exact-source/directory guards, participating writer locks, errors and explicit Reload defaults with startup defaults. Stale forms/conflicts reject. write_committed=true with ready=false means publication succeeded but verification failed. UI: Save current as profile / Replace selected profile / Apply selected profile / Rename profile / Delete profile."
     )]
     pub(in crate::mcp) fn set_selection_profile(
         &self,
@@ -643,7 +692,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Select objects or faces through a viewport rectangle, matching the human marquee in perspective/top/front/side views. Uses actual brush/face geometry, point-entity bounds, hidden-object and tool-texture filters; includes geometry through depth. Brush entities select as owners. Contained requires the entire visible object/face inside; intersecting accepts overlap. preview=true leaves selection/history unchanged and shows candidate highlights. Camera overrides do not move the user."
+        description = "Select objects or faces through a viewport rectangle, matching the human marquee in perspective/top/front/side views. Actual brush/face geometry and point-entity bounds include depth, visibility and tool/type filters. Object units follow shared groups/objects/solids mode; Solids can match individual entity brushes. Contained requires the entire visible unit or face inside; intersecting accepts overlap. preview=true preserves selection/history and shows candidate highlights. Camera overrides preserve the user's camera; rule changes invalidate pending object previews."
     )]
     pub(in crate::mcp) fn select_area(&self, Parameters(args): Parameters<AreaArgs>) -> ToolResult {
         run(|| {

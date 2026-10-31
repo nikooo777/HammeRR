@@ -875,6 +875,7 @@ impl Session {
         ray: Option<Ray>,
         options: Options,
     ) -> Result<Value, String> {
+        self.require_root_objects(ids)?;
         self.placement_context()?;
         let ids = ids
             .iter()
@@ -891,6 +892,7 @@ impl Session {
         ids: &[ObjectId],
         options: Options,
     ) -> Result<Value, String> {
+        self.require_root_objects(ids)?;
         self.placement_context()?;
         let ids = ids
             .iter()

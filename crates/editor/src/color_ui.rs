@@ -1,8 +1,10 @@
 use crate::runtime::{DocumentAccess, DocumentContinuation};
 use editor_core::color::{Converted, Input, Space};
+use editor_core::color_palette::{PaletteChange, PaletteSource};
 use slint::{ComponentHandle, Model, VecModel};
 use std::rc::Rc;
 
+use crate::session::Actor;
 use crate::{ColorWindow, Session};
 
 fn components(window: &ColorWindow) -> [String; 3] {
@@ -117,6 +119,7 @@ pub fn load(window: &ColorWindow, kind: &str, value: &str) -> Result<(), String>
     window.set_model_index(0);
     window.set_component_model(0);
     window.set_normalized(kind == "color1");
+    window.set_palette_property_token("".into());
     store(window, &color);
     display(window, &color);
     Ok(())
@@ -203,15 +206,14 @@ pub fn bind(window: &ColorWindow) {
 }
 
 pub fn refresh_palette(window: &ColorWindow, session: &Session) {
-    let state = session.color_palette_state();
+    let state = session.color_palette_state_for(palette_source(window));
     let selected = palette_selection(window);
-    let entries = state["entries"]
-        .as_array()
-        .expect("Palette entries are an array");
+    let entries = state["entries"].as_array();
     let mut names = vec![slint::SharedString::from("Choose a saved color")];
     names.extend(
         entries
-            .iter()
+            .into_iter()
+            .flatten()
             .map(|entry| entry["name"].as_str().unwrap().into()),
     );
     let index = selected
@@ -223,15 +225,19 @@ pub fn refresh_palette(window: &ColorWindow, session: &Session) {
     window.set_palette_snapshot(state["snapshot"].as_str().unwrap().into());
     window.set_palette_ready(state["ready"] == true);
     window.set_palette_reload_available(state["reload_available"] == true);
-    let mut status = format!(
-        "{} / 16 saved colors · {}",
-        entries.len(),
-        if state["ready"] == true {
-            "Palette ready"
-        } else {
-            "Palette unavailable"
-        }
-    );
+    let mut status = if let Some(entries) = entries {
+        format!(
+            "{} / 16 saved colors · {}",
+            entries.len(),
+            if state["ready"] == true {
+                "Palette ready"
+            } else {
+                "Palette unavailable"
+            }
+        )
+    } else {
+        "Map palette unavailable".to_owned()
+    };
     if let Some(path) = state["path"].as_str() {
         status.push_str(&format!("\n{path}"));
     }
@@ -243,7 +249,18 @@ pub fn refresh_palette(window: &ColorWindow, session: &Session) {
             "\nThe palette was written but could not be verified. Reload palette before using it.",
         );
     }
+    if palette_source(window) == PaletteSource::Map {
+        status.push_str("\nMap palette edits use Undo/Redo. Save the map to keep them.");
+    }
     window.set_palette_status(status.into());
+}
+
+fn palette_source(window: &ColorWindow) -> PaletteSource {
+    if window.get_palette_source_index() == 1 {
+        PaletteSource::Map
+    } else {
+        PaletteSource::User
+    }
 }
 
 fn palette_selection(window: &ColorWindow) -> Option<slint::SharedString> {
@@ -280,6 +297,18 @@ fn palette_callback(
 }
 
 pub fn bind_palette(window: &ColorWindow, access: &DocumentAccess) {
+    window.on_palette_source_choice({
+        let (window, target) = (window.as_weak(), access.downgrade());
+        move || {
+            palette_callback(&window, &target, |window, session| {
+                window.set_palette_index(0);
+                window.set_palette_name("".into());
+                refresh_palette(window, session);
+                window.set_message("".into());
+                Ok(())
+            });
+        }
+    });
     window.on_palette_choice({
         let window = window.as_weak();
         move || {
@@ -302,6 +331,7 @@ pub fn bind_palette(window: &ColorWindow, access: &DocumentAccess) {
 }
 
 fn change_palette(window: &ColorWindow, session: &mut Session, action: &str) -> Result<(), String> {
+    let source = palette_source(window);
     let name = match action {
         "save" => Some(window.get_palette_name()),
         "reload" => None,
@@ -320,21 +350,33 @@ fn change_palette(window: &ColorWindow, session: &mut Session, action: &str) -> 
     } else {
         name.clone()
     };
-    let result = if action == "rename" {
-        session.rename_color_palette(
-            &window.get_palette_snapshot(),
-            name.as_deref()
-                .ok_or("Choose an existing color to rename")?,
-            &window.get_palette_name(),
-        )
+    let new_name = window.get_palette_name();
+    let property_token = if source == PaletteSource::Map && !matches!(action, "use" | "reload") {
+        let token = window.get_palette_property_token();
+        if token.is_empty() {
+            None
+        } else {
+            Some(
+                token
+                    .parse::<u64>()
+                    .map_err(|_| "Property color picker is stale; reopen it")?,
+            )
+        }
     } else {
-        session.change_color_palette(
-            action,
-            &window.get_palette_snapshot(),
-            name.as_deref(),
-            color,
-        )
+        None
     };
+    let result = session.change_color_palette_for(
+        Actor::User,
+        source,
+        PaletteChange {
+            action,
+            snapshot: &window.get_palette_snapshot(),
+            name: name.as_deref(),
+            color,
+            new_name: (action == "rename").then_some(new_name.as_str()),
+            property_token,
+        },
+    );
     refresh_palette(window, session);
     let result = result?;
     if action == "use" {
@@ -356,11 +398,15 @@ fn change_palette(window: &ColorWindow, session: &mut Session, action: &str) -> 
             window.set_palette_index(index as i32);
         }
     }
-    window.set_message(match action {
-        "save" | "replace" => "Saved in your user palette. Palette writes remain saved if you Cancel this color edit.",
-        "delete" => "Deleted the saved color. The current color stays unchanged.",
-        "rename" => "Renamed the saved color. The current color and brightness stay unchanged.",
-        "reload" => "Reloaded the user palette. The current color stays unchanged.",
+    window.set_message(match (source, action) {
+        (PaletteSource::Map, "save" | "replace") => "Saved in this map's palette. Save the map to keep it; Undo restores the previous palette.",
+        (PaletteSource::Map, "delete") => "Deleted the map palette color. Undo restores it; the current color stays unchanged.",
+        (PaletteSource::Map, "rename") => "Renamed the map palette color. Undo restores its name; the current color stays unchanged.",
+        (PaletteSource::Map, "reload") => "Refreshed this map's palette. The current color stays unchanged.",
+        (_, "save" | "replace") => "Saved in your user palette. Palette writes remain saved if you Cancel this color edit.",
+        (_, "delete") => "Deleted the saved color. The current color stays unchanged.",
+        (_, "rename") => "Renamed the saved color. The current color and brightness stay unchanged.",
+        (_, "reload") => "Reloaded the user palette. The current color stays unchanged.",
         _ => "Loaded the saved color locally. Apply color to use it; brightness stays unchanged.",
     }.into());
     Ok(())

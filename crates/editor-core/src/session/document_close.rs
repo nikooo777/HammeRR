@@ -20,6 +20,10 @@ pub struct DocumentCloseReview {
 }
 
 impl DocumentCloseReview {
+    pub(super) fn first_draft_except(&self, kind: &str) -> Option<&'static str> {
+        self.drafts.keys().copied().find(|draft| *draft != kind)
+    }
+
     pub fn requires_discard(&self) -> bool {
         self.dirty || !self.drafts.is_empty()
     }
@@ -68,6 +72,7 @@ impl Session {
     pub fn document_close_review(&self) -> DocumentCloseReview {
         let mut drafts = BTreeMap::new();
         for (kind, state) in [
+            ("entity_gallery", self.geometry.entity_gallery.close_draft()),
             (
                 "entity_placement",
                 self.geometry.entity_placement.close_draft(),

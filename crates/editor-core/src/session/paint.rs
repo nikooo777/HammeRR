@@ -79,6 +79,7 @@ pub struct Stroke {
     revision: u64,
     shared_camera: Camera,
     groups: Option<super::groups::SelectionIndex>,
+    object_mode: super::selection_filters::ObjectSelectionMode,
 }
 
 pub struct State {
@@ -390,6 +391,7 @@ impl Session {
             generation: self.document_generation,
             revision: self.document.revision(),
             shared_camera: self.camera,
+            object_mode: self.object_selection_mode(),
             groups: if spec.faces {
                 None
             } else {
@@ -485,7 +487,7 @@ impl Session {
         if stroke.spec.faces {
             self.select_faces(&matches.faces, stroke.spec.mode)?;
         } else {
-            self.select_grouped(&matches.objects, stroke.spec.mode)?;
+            self.select_picked_objects(&matches.objects, stroke.spec.mode)?;
         }
         self.log(
             actor,
@@ -580,10 +582,11 @@ fn update_stroke(
                     faces.insert(FaceId { solid, side });
                 }
             } else {
+                let object = stroke.object_mode.hit_object(hit);
                 if let Some(groups) = &stroke.groups {
-                    objects.extend(groups.members(hit.object));
+                    objects.extend(groups.members(object));
                 } else {
-                    objects.insert(hit.object);
+                    objects.insert(object);
                 }
             }
         }

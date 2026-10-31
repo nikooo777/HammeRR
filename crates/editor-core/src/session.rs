@@ -57,6 +57,7 @@ pub mod components;
 pub mod context;
 pub mod cubemap_bindings;
 pub mod definitions;
+pub mod entity_gallery;
 pub mod entity_graph;
 pub mod entity_placement;
 pub mod external_comparison;
@@ -340,6 +341,7 @@ pub struct Session {
     material_reload: Option<material_assets::Report>,
     material_favorites: favorites::Binding,
     color_palette: color_palette::Binding,
+    map_palette_scope: String,
     material_recent: VecDeque<String>,
     camera: Camera,
     view: ViewOptions,
@@ -665,6 +667,7 @@ impl Session {
             material_reload: None,
             material_favorites: favorites::Binding::default(),
             color_palette: color_palette::Binding::default(),
+            map_palette_scope: crate::recovery::unique_id(),
             material_recent: VecDeque::new(),
             camera: Camera::looking_at(
                 DVec3::new(-512.0, -512.0, 384.0).as_vec3(),
@@ -1410,6 +1413,7 @@ impl Session {
         classname: &str,
         properties: BTreeMap<String, String>,
     ) -> Result<ObjectId, String> {
+        self.require_root_objects(ids)?;
         let solids = ids
             .iter()
             .map(|id| match id {
@@ -1679,6 +1683,7 @@ impl Session {
         self.ensure_not_closing()?;
         self.ensure_partitions_resolved()?;
         self.ensure_entity_placement_resolved()?;
+        self.ensure_entity_gallery_resolved()?;
         let explicit_destination = path.is_some();
         let path = path
             .map(Path::to_owned)
@@ -1793,7 +1798,10 @@ impl Session {
     fn prune_selection(&mut self) {
         self.prune_editor_visibility();
         let doc = &self.document;
-        self.selection.retain(|&id| doc.contains(id));
+        self.selection.retain(|&id| match id {
+            ObjectId::Solid(solid) => map_core::subobject::solid(doc, solid).is_ok(),
+            ObjectId::Entity(_) => doc.contains(id),
+        });
         self.face_selection
             .retain(|face| surface::side(doc, *face).is_some());
     }
@@ -1829,7 +1837,7 @@ impl Session {
         mode: SelectMode,
     ) -> Result<(), String> {
         let ids: BTreeSet<_> = units.iter().flatten().copied().collect();
-        if let Some(missing) = ids.iter().find(|&&id| !self.document.contains(id)) {
+        if let Some(missing) = ids.iter().find(|&&id| !self.selection_contains(id)) {
             return Err(format!("{missing} does not exist"));
         }
         self.clear_component_edit();
@@ -1853,6 +1861,16 @@ impl Session {
                 }
             }),
         }
+        let owners = self
+            .selection
+            .iter()
+            .filter_map(|id| match id {
+                ObjectId::Entity(id) => Some(*id),
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        self.selection.retain(|id| !matches!(id, ObjectId::Solid(solid)
+            if matches!(self.document.owner_of_solid(*solid), Some(ObjectId::Entity(entity)) if owners.contains(&entity))));
         if self.selection != before || was_face_mode {
             self.changed();
         }
@@ -2176,7 +2194,7 @@ impl Session {
             return Err("Select objects to transform".into());
         }
         for &id in ids {
-            if !self.document.contains(id) {
+            if !self.selection_contains(id) {
                 return Err(format!("{id} does not exist"));
             }
         }
@@ -2255,6 +2273,7 @@ impl Session {
     fn compiled_launch_readiness(&self) -> Result<&Path, String> {
         self.ensure_partitions_resolved()?;
         self.ensure_entity_placement_resolved()?;
+        self.ensure_entity_gallery_resolved()?;
         if self.closing {
             return Err("the editor is closing".into());
         }
@@ -2655,6 +2674,12 @@ impl Session {
                         .total_cmp(&b.distance)
                         .then(a.object.cmp(&b.object))
                 })
+                .map(|mut hit| {
+                    if selection_only {
+                        hit.object = self.object_selection_mode().hit_object(hit);
+                    }
+                    hit
+                })
         }
     }
 
@@ -2969,6 +2994,7 @@ impl Session {
         self.append_model_attachment_guide(&mut mesh);
         self.append_surface_placement_guide(&mut mesh);
         self.append_entity_placement_guide(&mut mesh);
+        self.append_entity_gallery_guides(&mut mesh);
         self.append_volume_guide(&mut mesh);
         self.append_compile_region_guide(&mut mesh);
         self.append_compiled_visibility_guide(&mut mesh);

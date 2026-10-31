@@ -195,6 +195,7 @@ impl Session {
         system: bool,
     ) -> Result<Value, String> {
         self.check_clipboard_stamp(snapshot)?;
+        self.require_root_objects(sources)?;
         self.ensure_partitions_resolved()?;
         let payload = transfer::Payload::capture(&self.document, sources, &self.definitions)
             .map_err(|error| error.to_string())?;

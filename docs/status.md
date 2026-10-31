@@ -5,6 +5,13 @@
 HammeRR supports brush-map authoring through the editor and MCP.
 The integrated compiler is experimental. File operations, BSP publication and game launching require Linux.
 
+## Group completion
+
+![Capability groups: 42 of 107 closed (39.3%); 61 partial, 4 missing](images/roadmap-progress.svg)
+
+The percentage is closed groups divided by all groups. Each group has equal weight.
+Striped groups are partially implemented.
+
 ## Editor
 
 | Area | Works | Not yet / limits |

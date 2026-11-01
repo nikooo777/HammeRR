@@ -91,8 +91,9 @@ export component SectionHeader inherits Rectangle {
 export component FieldRow inherits HorizontalLayout {
     in property <string> label;
     in property <length> label-width: 84px;
-    padding-left: Theme.space-lg;
-    padding-right: Theme.space-lg;
+    in property <bool> inset: true;
+    padding-left: root.inset ? Theme.space-lg : 0px;
+    padding-right: root.inset ? Theme.space-lg : 0px;
     spacing: Theme.space;
     min-height: Theme.control-height;
     Text {
@@ -257,6 +258,7 @@ export component ToolTile inherits Rectangle {
             color: root.enabled ? Theme.text : Theme.text-disabled;
             font-size: Theme.font-small;
             horizontal-alignment: center;
+            overflow: elide;
         }
     }
     touch := TouchArea {

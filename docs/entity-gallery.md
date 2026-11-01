@@ -23,7 +23,7 @@ models, FGD helper geometry, icons and property defaults as ordinary placement.
    at X/Y and rests on Z. Further cells run along positive X, then positive Y.
    Cell dimensions fit the largest model, icon or helper box, with the chosen gap.
 6. Choose **Preview selected**. The main viewport frames the arrangement.
-   **REVIEWED EXAMPLES** identifies every class, row, column, origin and visual
+   **Reviewed examples** identifies every class, row, column, origin and visual
    diagnostic. Use **Frame preview** or an example's **Frame example** button
    to inspect it again. Ordinary viewport navigation still works.
 7. Review missing resources, unsupported helpers and suppressed visuals.

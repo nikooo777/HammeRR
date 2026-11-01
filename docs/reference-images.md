@@ -6,7 +6,7 @@ Place external PNG images as editor-only tracing planes.
 
 1. Open **View → Reference images…**.
 2. Enter **Name** and **PNG path**, then click **Add image**.
-3. Select the entry under **Reference image**. Set **Position XYZ**,
+3. Choose the entry in **Reference image**. Set **Position XYZ**,
    **Rotation XYZ**, **Width / height** and **Opacity 0–1**. Separate vector values with spaces.
 4. Use **Top plane**, **Front plane** or **Side plane** for standard rotations.
    Set **Flip horizontally**, **Flip vertically** and the **Show in** projections.

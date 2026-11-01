@@ -529,7 +529,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     let helpers = session.helper_presentation(session.view());
     let errors = helpers["reported_errors"].as_u64().unwrap_or_default();
     app.set_helper_presentation_status(if errors == 0 {
-        "Display switches preserve picking and bounds".into()
+        "".into()
     } else {
         format!("{errors} reported visual-resource errors · amber markers retained").into()
     });

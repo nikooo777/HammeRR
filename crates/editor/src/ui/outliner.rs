@@ -89,7 +89,18 @@ fn rebuild(app: &AppWindow, session: &Session, toggle: Option<&str>) {
             return;
         }
     };
-    let selected: BTreeSet<_> = session.selected_ids().into_iter().collect();
+    let document = session.document();
+    let selected: BTreeSet<_> = session
+        .selected_ids()
+        .into_iter()
+        .flat_map(|id| {
+            let owner = match id {
+                map_core::ObjectId::Solid(solid) => document.owner_of_solid(solid),
+                map_core::ObjectId::Entity(_) => None,
+            };
+            std::iter::once(id).chain(owner)
+        })
+        .collect();
     let mut world = Vec::new();
     let mut classes: BTreeMap<&str, Vec<&ObjectReport>> = BTreeMap::new();
     for object in &objects {

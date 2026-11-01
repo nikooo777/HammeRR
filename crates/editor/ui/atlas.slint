@@ -93,6 +93,8 @@ export component AtlasWindow inherits Window {
                 vertical-stretch: 1;
                 min-height: 400px;
                 VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
                     spacing: 12px;
                     HorizontalLayout {
                         spacing: 8px;
@@ -117,12 +119,14 @@ export component AtlasWindow inherits Window {
                     if root.fit-mode == 2: HorizontalLayout {
                         spacing: Theme.space;
                         FieldRow {
+                            inset: false;
                             label: "Island UV size";
                             label-width: 86px;
                             LineEdit { text <=> root.island-scale; accessible-label: "Island UV size multiplier of current texels"; edited => { root.edited(); } }
                             Text { text: "×"; color: Theme.text-muted; vertical-alignment: center; }
                         }
                         FieldRow {
+                            inset: false;
                             label: "Island padding";
                             label-width: 94px;
                             LineEdit { text <=> root.island-padding; input-type: number; accessible-label: "Island padding in source image pixels"; edited => { root.edited(); } }
@@ -270,7 +274,6 @@ export component AtlasWindow inherits Window {
                 }
             }
             Text { text: root.message; wrap: word-wrap; }
-            Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

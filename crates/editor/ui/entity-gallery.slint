@@ -1,6 +1,6 @@
 import { Theme } from "theme.slint";
 import { Button, CheckBox, LineEdit, ScrollView } from "widgets.slint";
-import { Icon, IconButton, SectionHeader } from "kit.slint";
+import { FieldRow, Icon, IconButton } from "kit.slint";
 
 export struct EntityGalleryClassRow {
     classname: string,
@@ -57,15 +57,12 @@ export component EntityGalleryWindow inherits Window {
             return reject;
         }
         VerticalLayout {
-            padding: Theme.space-lg;
-            spacing: Theme.space;
-            HorizontalLayout {
-                Image { source: Icon.entity; width: 20px; height: 20px; colorize: Theme.accent; }
-                Text { text: "Point-entity gallery"; font-size: Theme.font-heading; font-weight: 600; }
-                Rectangle { horizontal-stretch: 1; }
-            }
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: "Point-entity gallery"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: "Choose FGD classes, preview their actual editor examples in the viewport, then place the reviewed batch."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
+                spacing: Theme.space;
                 LineEdit { text <=> root.search; placeholder-text: "Search class or description"; accepted => { root.browse(); } accessible-label: "Search point classes"; }
                 Button { text: "Search"; clicked => { root.browse(); } }
             }
@@ -75,7 +72,9 @@ export component EntityGalleryWindow inherits Window {
                 vertical-stretch: 2;
                 min-height: 130px;
                 VerticalLayout {
-                    spacing: Theme.space;
+                    alignment: start;
+                    padding-right: Theme.space-lg;
+                    spacing: Theme.space-lg;
                     for row in root.classes: VerticalLayout {
                         spacing: Theme.space-xs;
                         CheckBox { text: row.classname; checked: row.checked; enabled: row.available && root.owned; toggled => { root.toggle-class(row.classname, self.checked); } }
@@ -86,36 +85,48 @@ export component EntityGalleryWindow inherits Window {
                 }
             }
             HorizontalLayout {
+                spacing: Theme.space;
                 Button { text: "Previous"; enabled: root.has-previous; clicked => { root.page(-1); } }
                 Button { text: "Next"; enabled: root.has-next; clicked => { root.page(1); } }
+                Rectangle { horizontal-stretch: 1; }
                 Button { text: "Select page"; enabled: root.owned; clicked => { root.select-page(); } }
                 Button { text: "Clear selection"; enabled: root.owned; clicked => { root.clear-selection(); } }
             }
             Text { text: root.selection-summary; wrap: word-wrap; }
-            HorizontalLayout {
-                Text { text: "First cell X/Y/Z"; vertical-alignment: center; }
+            FieldRow {
+                inset: false;
+                label: "First cell X/Y/Z";
+                label-width: 104px;
                 LineEdit { text <=> root.origin-x; edited => { root.invalidate(); } accessible-label: "Gallery cell X"; }
                 LineEdit { text <=> root.origin-y; edited => { root.invalidate(); } accessible-label: "Gallery cell Y"; }
                 LineEdit { text <=> root.origin-z; edited => { root.invalidate(); } accessible-label: "Gallery cell bottom Z"; }
             }
-            HorizontalLayout {
-                Text { text: "Columns"; vertical-alignment: center; }
-                LineEdit { text <=> root.columns; preferred-width: 60px; edited => { root.invalidate(); } accessible-label: "Gallery columns"; }
-                Text { text: "Gap"; vertical-alignment: center; }
-                LineEdit { text <=> root.gap; preferred-width: 70px; edited => { root.invalidate(); } accessible-label: "Gallery visual cell gap"; }
+            FieldRow {
+                inset: false;
+                label: "Columns";
+                label-width: 104px;
+                LineEdit { text <=> root.columns; width: 64px; edited => { root.invalidate(); } accessible-label: "Gallery columns"; }
+                Text { text: "Gap"; color: Theme.text-muted; vertical-alignment: center; }
+                LineEdit { text <=> root.gap; width: 64px; edited => { root.invalidate(); } accessible-label: "Gallery visual cell gap"; }
+                Rectangle { horizontal-stretch: 1; }
                 Button { text: "Preview selected"; enabled: root.owned; clicked => { root.preview(); } }
                 IconButton { icon: Icon.frame; tooltip: "Frame preview"; enabled: root.ready; clicked => { root.frame(-1); } }
             }
-            SectionHeader { text: "REVIEWED EXAMPLES"; collapsible: false; }
+            Text { text: "Reviewed examples"; font-weight: 600; }
             Text { text: root.preview-summary; wrap: word-wrap; color: Theme.text-muted; }
             ScrollView {
                 content-width: self.width;
                 vertical-stretch: 1;
                 min-height: 100px;
                 VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
                     spacing: Theme.space;
                     for row[index] in root.examples: HorizontalLayout {
+                        spacing: Theme.space;
                         VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 2px;
                             Text { text: row.title; font-weight: 600; wrap: word-wrap; }
                             Text { text: row.detail; color: Theme.text-muted; wrap: word-wrap; font-size: Theme.font-small; }
                         }
@@ -123,8 +134,9 @@ export component EntityGalleryWindow inherits Window {
                     }
                 }
             }
-            Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
             HorizontalLayout {
+                spacing: Theme.space;
                 Button { text: "Close"; clicked => { root.close-dialog(); } }
                 Button { text: "Cancel preview"; enabled: root.owned; clicked => { root.cancel-preview(); } }
                 if root.shared-draft: Button { text: "Review shared gallery"; clicked => { root.review(); } }

@@ -37,7 +37,7 @@ The selection translates as one group, without grid rounding or rotation.
 
 1. Select the objects or individual brush-entity solids to move, including a flat brush.
 2. Choose **Brush → Magnetic snapping…**.
-3. Click **Refresh magnetic sources**, then choose a **Source corner**.
+3. Click **Refresh magnetic sources** (the refresh button beside **Source corner**), then choose a corner.
 4. Enable **Magnetic snapping**, enter **Capture radius**, then click **Apply magnetic settings**.
 5. Choose **Move** handles and drag an axis, plane or view handle over a visible target.
 6. Review **Captured**, **Outside radius** or **No target surface** in the Inspector.

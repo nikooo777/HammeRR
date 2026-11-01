@@ -662,6 +662,7 @@ export component ColorWindow inherits Window {
                 spacing: 8px;
                 Text { text: "Saved colors"; font-weight: 600; }
                 FieldRow {
+                    inset: false;
                     label: "Palette source";
                     label-width: 100px;
                     ComboBox {
@@ -3332,8 +3333,8 @@ export component AppWindow inherits Window {
                                     OverlaySwitch { text: "Entity images"; checked <=> root.entity-images; toggled => { root.options-changed(); } }
                                     OverlaySwitch { text: "Additive sprite guides"; enabled: root.sprite-resources; checked <=> root.additive-sprite-guides; toggled => { root.options-changed(); } }
                                     OverlaySwitch { text: "Entity model guides"; checked <=> root.entity-model-guides; toggled => { root.options-changed(); } }
-                                    OverlayNote { text: root.helper-presentation-status; }
-                                    OverlayNote { text: "Static editor resources · runtime animation/FX unavailable"; }
+                                    OverlayNote { text: "Static editor resources · hidden guides keep picking and bounds"; }
+                                    if root.helper-presentation-status != "": OverlayNote { text: root.helper-presentation-status; text-color: Theme.warning; }
                                     SectionHeader { text: "SURFACES"; collapsible: false; }
                                     OverlaySwitch { text: "Normal map preview"; checked <=> root.normal-maps; toggled => { root.options-changed(); } }
                                     if root.normal-maps: OverlayNote { text: root.normal-map-status + (root.lighting-preview ? " · unshadowed authored lights" : " · fixed editor light"); }
@@ -3450,9 +3451,10 @@ export component AppWindow inherits Window {
                                     IconButton { icon: Icon.paste; tooltip: "Paste"; clicked => { root.paste-objects(); } }
                                     IconButton { icon: Icon.trash; tooltip: "Delete"; clicked => { root.delete-selection(); } }
                                 }
-                                if root.has-selection && !root.whole-object-selection: MutedText {
-                                    text: "Individual brushes selected. Use Objects or Groups to copy, place or repeat whole objects.";
-                                    wrap: word-wrap;
+                                if root.has-selection && !root.whole-object-selection: VerticalLayout {
+                                    padding-left: Theme.space-lg;
+                                    padding-right: Theme.space-lg;
+                                    MutedText { text: "Individual brushes selected. Use Objects or Groups to copy, place or repeat whole objects."; font-size: Theme.font-small; }
                                 }
                                 if root.editor-hidden-count > 0: HorizontalLayout {
                                     padding-left: Theme.space-lg;
@@ -3582,21 +3584,23 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                     Button { text: "Preview snap to grid"; enabled: !root.has-transform-preview; clicked => { root.preview-snap-to-grid(); } }
-                                    Text { text: "Magnetic snapping"; font-weight: 600; color: Theme.text; }
-                                    Button { text: "Refresh magnetic sources"; clicked => { root.magnetic-refresh-sources(); } }
-                                    FieldRow {
-                                        label: "Source corner";
-                                        ComboBox { accessible-label: "Magnetic Source corner"; model: root.magnetic-source-choices; current-index <=> root.magnetic-source-index; }
-                                    }
+                                    MutedText { text: root.grid-snap-mode == 1 ? "Anchors each object's bounds minimum. Group members snap separately; brush entities stay together." : "Anchors the selection bounds minimum. Relative positions and brush shapes stay fixed."; font-size: Theme.font-small; }
+                                    Rectangle { height: 1px; background: Theme.border; }
                                     CheckBox { text: "Magnetic snapping"; checked <=> root.magnetic-enabled; }
                                     FieldRow {
+                                        inset: false;
+                                        label: "Source corner";
+                                        ComboBox { horizontal-stretch: 1; accessible-label: "Magnetic source corner"; model: root.magnetic-source-choices; current-index <=> root.magnetic-source-index; }
+                                        IconButton { icon: Icon.refresh; tooltip: "Refresh magnetic sources"; clicked => { root.magnetic-refresh-sources(); } }
+                                    }
+                                    FieldRow {
+                                        inset: false;
                                         label: "Capture radius";
-                                        LineEdit { accessible-label: "Magnetic capture radius in world units"; text <=> root.magnetic-radius; input-type: decimal; }
-                                        Text { text: "world units"; color: Theme.text-muted; vertical-alignment: center; }
+                                        LineEdit { horizontal-stretch: 1; accessible-label: "Magnetic capture radius in world units"; text <=> root.magnetic-radius; input-type: decimal; accepted => { root.magnetic-apply-settings(); } }
+                                        Text { text: "units"; color: Theme.text-muted; vertical-alignment: center; }
                                     }
                                     Button { text: "Apply magnetic settings"; clicked => { root.magnetic-apply-settings(); } }
-                                    MutedText { text: root.magnetic-status; wrap: word-wrap; }
-                                    MutedText { text: root.grid-snap-mode == 1 ? "Anchors each object's bounds minimum. Group members snap separately; brush entities stay together." : "Anchors the selection bounds minimum. Relative positions and brush shapes stay fixed."; font-size: Theme.font-small; }
+                                    if root.magnetic-status != "": MutedText { text: root.magnetic-status; font-size: Theme.font-small; }
                                 }
 
                                 if root.has-faces: SectionHeader { text: "TERRAIN"; }

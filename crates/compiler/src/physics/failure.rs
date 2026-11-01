@@ -62,6 +62,7 @@ impl Failure {
         }
     }
 
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     pub fn shape(stage: Stage, tag: u32, message: impl Into<String>) -> Self {
         Self {
             tag: Some(tag),
@@ -69,12 +70,14 @@ impl Failure {
         }
     }
 
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     pub fn context(mut self, model: usize, body: usize) -> Self {
         self.model = Some(model);
         self.body = Some(body);
         self
     }
 
+    #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
     pub fn stage(mut self, stage: Stage) -> Self {
         self.stage = stage;
         self

@@ -8,6 +8,10 @@ use std::{
     path::PathBuf,
     time::SystemTime,
 };
+#[cfg(not(windows))]
+mod directory;
+#[cfg(windows)]
+#[path = "prefabs/directory_windows.rs"]
 mod directory;
 use directory::Directory;
 pub const MAX_ENTRIES: usize = 128;
@@ -24,15 +28,17 @@ pub struct Entry {
     modified: SystemTime,
     #[cfg(unix)]
     identity: (u64, u64),
+    #[cfg(windows)]
+    identity: source_formats::file_publication::FileIdentity,
     directory: directory::SourceDirectory,
 }
 impl Entry {
     fn same_file(&self, other: &Self) -> bool {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             self.identity == other.identity
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = other;
             false
@@ -125,6 +131,11 @@ impl Store {
                     modified: meta.modified().map_err(|error| error.to_string())?,
                     #[cfg(unix)]
                     identity: (meta.dev(), meta.ino()),
+                    #[cfg(windows)]
+                    identity: source_formats::file_publication::FileIdentity::from_file(
+                        &directory.open(&filename)?,
+                    )
+                    .map_err(|error| error.to_string())?,
                     directory: directory.source()?,
                 });
             }
@@ -143,7 +154,7 @@ impl Store {
             entry.name.hash(&mut hash);
             entry.bytes.hash(&mut hash);
             entry.modified.hash(&mut hash);
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             entry.identity.hash(&mut hash);
         }
         directory.verify()?;
@@ -223,6 +234,13 @@ impl Store {
         let meta = file.metadata().map_err(|error| error.to_string())?;
         #[cfg(unix)]
         if (meta.dev(), meta.ino()) != entry.identity {
+            return Err("Prefab was replaced while reading".into());
+        }
+        #[cfg(windows)]
+        if source_formats::file_publication::FileIdentity::from_file(&file)
+            .map_err(|error| error.to_string())?
+            != entry.identity
+        {
             return Err("Prefab was replaced while reading".into());
         }
         if !meta.is_file()

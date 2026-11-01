@@ -1,0 +1,67 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+    paths: &build_paths
+      - 'crates/**'
+      - 'assets/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - '.github/workflows/build.yml'
+      - 'run-windows.ps1'
+  pull_request:
+    paths: *build_paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_BUILD_JOBS: 8
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        id: toolchain
+        with:
+          components: clippy, rustfmt
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libfontconfig1-dev libudev-dev libssl-dev
+      - name: Cache Cargo dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug/deps
+            target/debug/build
+            target/debug/.fingerprint
+          key: ${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-cargo-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-${{ steps.toolchain.outputs.cachekey }}-cargo-
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+      - name: Lint production targets
+        run: cargo clippy --locked --workspace --lib --bins --features editor-core/mcp -- -D warnings
+      - name: Build executables
+        run: cargo build --locked --workspace --bins --features editor-core/mcp

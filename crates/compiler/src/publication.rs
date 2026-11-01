@@ -49,6 +49,8 @@ pub struct FileStamp {
     stamp: Option<Stamp>,
     container: bool,
     kind: u8,
+    #[cfg(windows)]
+    identity: Option<source_formats::file_publication::FileIdentity>,
 }
 
 impl FileStamp {
@@ -60,6 +62,10 @@ impl FileStamp {
         #[cfg(unix)]
         if let (Some(a), Some(b)) = (&self.stamp, &other.stamp) {
             return a.identity[..2] == b.identity[..2];
+        }
+        #[cfg(windows)]
+        if let (Some(a), Some(b)) = (self.identity, other.identity) {
+            return a == b;
         }
         self.path == other.path
     }
@@ -80,6 +86,8 @@ impl FileStamp {
         let same = same
             && self.stamp.as_ref().map(|stamp| &stamp.identity[..2])
                 == current.stamp.as_ref().map(|stamp| &stamp.identity[..2]);
+        #[cfg(windows)]
+        let same = same && self.identity == current.identity;
         if !same {
             return Err(io::Error::other(
                 "Instance referring directory changed identity",
@@ -94,7 +102,7 @@ impl FileStamp {
         }
         let current = Self::capture_kind(&self.requested, true)?;
         let same = self.path == current.path && current.kind == 2 && self.same_file(&current);
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         let same = same && self.stamp == current.stamp;
         if !same {
             return Err(io::Error::other(format!(
@@ -139,12 +147,29 @@ impl FileStamp {
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(error),
         };
+        #[cfg(windows)]
+        let identity = if current.is_some() {
+            use source_formats::file_publication::{
+                FileIdentity,
+                windows::{open_directory, open_file},
+            };
+            let file = if kind == 2 {
+                open_directory(&path)?
+            } else {
+                open_file(&path)?
+            };
+            Some(FileIdentity::from_file(&file)?)
+        } else {
+            None
+        };
         Ok(Self {
             requested,
             path,
             stamp: current,
             container,
             kind,
+            #[cfg(windows)]
+            identity,
         })
     }
 
@@ -373,14 +398,19 @@ impl OutputLease {
             .and_then(|name| name.to_str())
             .ok_or_else(|| io::Error::other("Reflection output requires a UTF-8 file name"))?;
         let lock_path = destination.with_file_name(format!(".hammerr-reflection-{name}.lock"));
+        #[cfg(not(windows))]
         let mut options = OpenOptions::new();
+        #[cfg(not(windows))]
         options.read(true).write(true).create(true).truncate(false);
         #[cfg(all(target_os = "linux", target_pointer_width = "64"))]
         {
             use std::os::unix::fs::OpenOptionsExt;
             options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
         }
+        #[cfg(not(windows))]
         let lock = options.open(lock_path)?;
+        #[cfg(windows)]
+        let lock = source_formats::file_publication::windows::lock_file(&lock_path)?;
         if !lock.metadata()?.is_file() {
             return Err(io::Error::other(
                 "Reflection output lease is not a regular file",
@@ -395,7 +425,7 @@ impl OutputLease {
                 ));
             }
         }
-        #[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
+        #[cfg(not(any(all(target_os = "linux", target_pointer_width = "64"), windows)))]
         {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,

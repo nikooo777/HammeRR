@@ -3,6 +3,7 @@
 # Generated reflections
 
 Capture scene cubemaps and pack them into the published BSP.
+Native capture requires Linux; it is unavailable on Windows.
 
 ## Generate reflections
 

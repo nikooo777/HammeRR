@@ -26,17 +26,24 @@ pub struct Install {
 
 impl Install {
     pub fn from_game(fs: &GameFs) -> Result<Self, String> {
+        #[cfg(not(windows))]
         let game = fs.game_dir.canonicalize().map_err(|e| e.to_string())?;
+        #[cfg(windows)]
+        let game = dunce::canonicalize(&fs.game_dir).map_err(|e| e.to_string())?;
         let root = game
             .parent()
             .ok_or("game directory has no parent")?
             .to_owned();
+        #[cfg(not(windows))]
         let executable = root.join("cstrike_linux64");
+        #[cfg(windows)]
+        let executable = ["cstrike_win64.exe", "cstrike.exe", "hl2.exe"]
+            .into_iter()
+            .map(|name| root.join(name))
+            .find(|path| path.is_file())
+            .unwrap_or_else(|| root.join("cstrike_win64.exe"));
         if !executable.is_file() {
-            return Err(format!(
-                "Linux CS:S client not found at {}",
-                executable.display()
-            ));
+            return Err(format!("CS:S client not found at {}", executable.display()));
         }
         let binding = Target::play(&root, &fs.game_dir, &executable)?;
         Ok(Self {

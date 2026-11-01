@@ -1,6 +1,6 @@
 # HammeRR
 
-**An AI-first Counter-Strike: Source map editor and compiler for Linux.**
+**An AI-first Counter-Strike: Source map editor and compiler for Linux and Windows.**
 
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
@@ -13,7 +13,7 @@ Humans and AI agents share the same editing operations, previews and Undo histor
 
 ## Quick start
 
-Requires Linux, Rust 1.92+, a C++20 compiler, Vulkan and Counter-Strike: Source installed through Steam.
+Requires Rust 1.92+, a C++20 toolchain, a compatible GPU driver and Counter-Strike: Source installed through Steam.
 
 ```sh
 cargo build --release -j8 -p editor -p editor-core -p compiler -p native-runtime
@@ -24,6 +24,14 @@ Omit the map path for a new map. Game content is found through Steam.
 See [Getting started](docs/getting-started.md) for custom content and launch options.
 The compiler is experimental; see [Status](docs/status.md).
 
+On Windows, use Rust MSVC and Visual Studio C++ Build Tools with a Windows SDK:
+
+```powershell
+.\run-windows.ps1
+```
+
+See [Windows setup and limits](docs/getting-started.md#windows).
+
 ## MCP
 
 Connect to the live editor at `http://127.0.0.1:7377/mcp`:
@@ -32,7 +40,7 @@ Connect to the live editor at `http://127.0.0.1:7377/mcp`:
 {"mcpServers":{"hammerr":{"url":"http://127.0.0.1:7377/mcp"}}}
 ```
 
-Agents can edit, render, compile and launch maps. Use `hammerr-headless` for a private session without a window.
+Agents can edit, render, compile and launch maps. On Linux, use `hammerr-headless` for a private session without a window.
 See the [tool index and setup](docs/mcp.md).
 
 ## The editor

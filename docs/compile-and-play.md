@@ -13,7 +13,7 @@ The compiler remains experimental. Check diagnostics before using a build.
 4. Save the VMF.
 5. Choose **Build → Build settings…**.
 6. Choose **Build lighting → Direct LDR** or **Direct LDR + HDR**.
-7. Choose **Physics bodies → CS:S engine physics** for physical collision.
+7. On Linux, choose **Physics bodies → CS:S engine physics** for physical collision. On Windows, use **No physics bodies** and leave **Generate reflections** off.
 8. Click **Close**, then **Compile**.
 9. Open **Build details…** in the bar below the toolbar.
 10. Read **Diagnostics** and repair errors.

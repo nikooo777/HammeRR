@@ -3,7 +3,7 @@
 # AI agents and MCP
 
 Agents use the same map, operations, previews and Undo history as the editor.
-They can also work without a window.
+On Linux, they can also work without a window.
 
 ![Courtyard created and rendered through MCP](images/showcase-editor.png)
 
@@ -20,6 +20,7 @@ Add this entry to your MCP client:
 ```
 
 Start the editor before connecting.
+The HTTP endpoint is available on Linux and Windows.
 Use `--mcp-port <port>` to change the port.
 Use `--no-mcp` to disable HTTP access.
 
@@ -27,6 +28,8 @@ The **Agent** panel in the editor shows each agent action with the tool that mad
 Agent transform previews appear in the viewport as **Agent preview**, with the same Apply and Cancel controls as your own.
 
 ## Without a window
+
+This transport requires Linux. On Windows, use the desktop HTTP endpoint above.
 
 1. Build the standalone server:
 

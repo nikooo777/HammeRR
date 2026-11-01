@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use source_formats::file_publication::{BoundDestination, CommittedReceipt};
+use source_formats::file_publication::{BoundDestination, CommittedReceipt, FileIdentity};
 
 pub(crate) fn named_preference(
     name: &str,
@@ -28,8 +28,7 @@ pub(crate) enum Source {
         bytes: Vec<u8>,
         length: u64,
         modified: std::time::SystemTime,
-        #[cfg(unix)]
-        identity: (u64, u64),
+        identity: FileIdentity,
     },
 }
 
@@ -44,7 +43,9 @@ pub(crate) fn read_source(path: &Path, max_file_bytes: u64, label: &str) -> Resu
     if !metadata.is_file() {
         return Err(format!("{} must be a regular file", path.display()));
     }
+    #[cfg(not(windows))]
     let mut options = fs::OpenOptions::new();
+    #[cfg(not(windows))]
     options.read(true);
     #[cfg(target_os = "linux")]
     {
@@ -53,8 +54,12 @@ pub(crate) fn read_source(path: &Path, max_file_bytes: u64, label: &str) -> Resu
             (rustix::fs::OFlags::NONBLOCK | rustix::fs::OFlags::NOFOLLOW).bits() as i32,
         );
     }
+    #[cfg(not(windows))]
     let file = options
         .open(path)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    #[cfg(windows)]
+    let file = source_formats::file_publication::windows::open_file(path)
         .map_err(|error| format!("{}: {error}", path.display()))?;
     let opened = file.metadata().map_err(|error| error.to_string())?;
     #[cfg(unix)]
@@ -89,11 +94,7 @@ pub(crate) fn read_source(path: &Path, max_file_bytes: u64, label: &str) -> Resu
         bytes,
         length: metadata.len(),
         modified,
-        #[cfg(unix)]
-        identity: {
-            use std::os::unix::fs::MetadataExt;
-            (metadata.dev(), metadata.ino())
-        },
+        identity: FileIdentity::from_file(&file).map_err(|error| error.to_string())?,
     })
 }
 
@@ -183,7 +184,39 @@ impl WriteLock {
         Ok(guard)
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    pub(crate) fn acquire(
+        directory: &Path,
+        lock_name: &str,
+        label: &'static str,
+        reload: &'static str,
+    ) -> Result<Self, String> {
+        use source_formats::file_publication::windows::{lock_file, open_directory};
+
+        fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+        let requested_directory =
+            std::path::absolute(directory).map_err(|error| error.to_string())?;
+        let directory = directory
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        let parent = open_directory(&directory).map_err(|error| error.to_string())?;
+        let path = directory.join(lock_name);
+        let file =
+            lock_file(&path).map_err(|error| format!("{label} lock unavailable: {error}"))?;
+        let guard = Self {
+            file,
+            parent,
+            directory,
+            requested_directory,
+            path,
+            label,
+            reload,
+        };
+        guard.verify()?;
+        Ok(guard)
+    }
+
+    #[cfg(not(any(target_os = "linux", windows)))]
     pub(crate) fn acquire(
         _directory: &Path,
         _lock_name: &str,
@@ -267,7 +300,7 @@ impl<N: AsRef<OsStr>> CoordinatedFile<'_, N> {
         })
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     pub fn observe_following(&self) -> Result<ObservedSource, String> {
         use source_formats::file_publication::Policy;
 
@@ -285,7 +318,7 @@ impl<N: AsRef<OsStr>> CoordinatedFile<'_, N> {
         })
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", windows)))]
     pub fn observe_following(&self) -> Result<ObservedSource, String> {
         let directory = DirectoryBinding::capture(self.directory, self.label, self.reload)?;
         let path = self.path();
@@ -363,7 +396,7 @@ impl<N: AsRef<OsStr>> CoordinatedFile<'_, N> {
     ) -> Result<Publication, SaveError> {
         let label = self.label;
         let reload = self.reload;
-        if !cfg!(target_os = "linux") {
+        if !cfg!(any(target_os = "linux", windows)) {
             return Err(SaveError::failure(format!(
                 "Coordinated {label} writes require Linux"
             )));

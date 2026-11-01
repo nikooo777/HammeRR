@@ -301,9 +301,12 @@ fn select_directory(
 }
 
 pub fn default_directory() -> Result<PathBuf, String> {
+    let state = std::env::var_os("XDG_STATE_HOME");
+    #[cfg(windows)]
+    let state = state.or_else(|| std::env::var_os("LOCALAPPDATA"));
     select_directory(
         std::env::var_os("HAMMERR_RECOVERY_DIR"),
-        std::env::var_os("XDG_STATE_HOME"),
+        state,
         std::env::var_os("HOME"),
     )
 }

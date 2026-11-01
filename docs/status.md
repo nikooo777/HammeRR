@@ -3,7 +3,7 @@
 # Status
 
 HammeRR supports brush-map authoring through the editor and MCP.
-The integrated compiler is experimental. File operations, BSP publication and game launching require Linux.
+The integrated compiler is experimental. Editing, file operations, rendering, BSP publication and game launching support Linux and Windows. Engine physics, native reflection capture and headless stdio MCP require Linux. Silent document display requires Hyprland.
 
 ## Group completion
 
@@ -66,7 +66,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [Visibility helpers](occluders.md) | Occluders and eligible visibility-cluster volumes. | Unsupported memberships and dynamic child control. |
 | [Baked surfaces](baked-surfaces.md) | Final world/detail, terrain and initial-pose brush-model geometry with supported plain cutout/translucent materials; optional static-prop vertex lighting with exact skins, hardware LODs and cutouts; LDR/HDR, exposure and supported compiled materials; display alongside final details. | Prop lightmaps, runtime poses, animated effects, intersecting translucent-batch ordering, native adaptation and exact game appearance. |
 | [Inspection](baked-lightmaps.md) | Owned face lightmaps, prop vertex bytes and native lights with captured point/spot, sun/sky, emitting-face/material and prop sources, including exact instance routes; [frame current light origins and surface centroids](compiled-lights.md), select a root source face/entity or containing reference, frame compiled faces and [native prop origins](baked-prop-vertices.md), and show complete native prop leaf bounds. | Surface lights remain centroid point approximations; directional sky has no frameable native point. Ambiguous or unavailable metadata stays explicit. Unreportable paths show stale provenance; routes describe captured sources only. |
-| [Publication](compile-regions.md) | Captured build scope, consumed material-source guards, explicit split errors, cancellation, checked output writes and private game launch. | General cross-platform file/runtime support. |
+| [Publication](compile-regions.md) | Linux/Windows output writes and private game launch; captured build scope, consumed material-source guards, explicit split errors and cancellation. | Windows engine physics and native reflection capture. |
 
 Unsupported input and exceeded resource budgets fail explicitly.
 A failed build preserves the previous published output.

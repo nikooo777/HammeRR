@@ -10,6 +10,8 @@ pub(crate) struct Source {
     target: PathBuf,
     metadata: Metadata,
     limit: u64,
+    #[cfg(windows)]
+    identity: source_formats::file_publication::FileIdentity,
 }
 
 fn same_metadata(before: &Metadata, after: &Metadata) -> bool {
@@ -41,7 +43,12 @@ fn open_target(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn open_target(path: &Path) -> io::Result<File> {
+    source_formats::file_publication::windows::open_file(path)
+}
+
+#[cfg(not(any(unix, windows)))]
 fn open_target(_path: &Path) -> io::Result<File> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -53,6 +60,12 @@ impl Source {
     pub(crate) fn verify(&self) -> io::Result<()> {
         if self.requested.canonicalize()? != self.target
             || !same_metadata(&self.metadata, &fs::symlink_metadata(&self.target)?)
+        {
+            return Err(io::Error::other("File changed since it was loaded"));
+        }
+        #[cfg(windows)]
+        if source_formats::file_publication::FileIdentity::from_file(&open_target(&self.target)?)?
+            != self.identity
         {
             return Err(io::Error::other("File changed since it was loaded"));
         }
@@ -68,12 +81,20 @@ impl Source {
                 "Choose a regular file no larger than {limit} bytes"
             )));
         }
-        Ok(Self {
+        #[cfg(windows)]
+        let identity =
+            source_formats::file_publication::FileIdentity::from_file(&open_target(&target)?)?;
+        let source = Self {
             requested,
             target,
             metadata,
             limit,
-        })
+            #[cfg(windows)]
+            identity,
+        };
+        #[cfg(windows)]
+        source.verify()?;
+        Ok(source)
     }
 
     pub(crate) fn read(self) -> io::Result<Vec<u8>> {
@@ -87,6 +108,10 @@ impl Source {
         checkpoint()?;
         let file = open_target(&self.target)?;
         if !same_metadata(&self.metadata, &file.metadata()?) {
+            return Err(io::Error::other("File changed while opening"));
+        }
+        #[cfg(windows)]
+        if source_formats::file_publication::FileIdentity::from_file(&file)? != self.identity {
             return Err(io::Error::other("File changed while opening"));
         }
         let maximum = self
@@ -122,11 +147,10 @@ impl Source {
         }
         if bytes.len() as u64 != self.metadata.len()
             || !same_metadata(&self.metadata, &file.metadata()?)
-            || !same_metadata(&self.metadata, &fs::symlink_metadata(&self.target)?)
-            || self.requested.canonicalize()? != self.target
         {
             return Err(io::Error::other("File changed while reading"));
         }
+        self.verify()?;
         checkpoint()?;
         Ok(bytes)
     }

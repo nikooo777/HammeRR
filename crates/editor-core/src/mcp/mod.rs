@@ -660,6 +660,13 @@ impl ServerHandler for EditorServer {
 
 /// Serves MCP over stdin/stdout until the client disconnects.
 pub fn serve_stdio(mut server: EditorServer) -> Result<(), String> {
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::needless_late_init,
+            reason = "Keep the Unix stream guard alive until after runtime shutdown"
+        )
+    )]
     let flags;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

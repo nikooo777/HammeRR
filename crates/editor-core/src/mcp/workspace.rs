@@ -887,6 +887,13 @@ fn drain_workspace(workspace: &Workspace, runtime: &tokio::runtime::Runtime) {
 }
 
 pub fn serve_workspace_stdio(server: WorkspaceServer) -> Result<(), String> {
+    #[cfg_attr(
+        not(unix),
+        expect(
+            clippy::needless_late_init,
+            reason = "Keep the Unix stream guard alive until after runtime shutdown"
+        )
+    )]
     let flags;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

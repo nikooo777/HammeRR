@@ -1,6 +1,6 @@
 [package]
 name = "editor-ui"
-version = "0.1.0"
+version.workspace = true
 description = "Slint UI facade for the HammeRR desktop editor"
 edition.workspace = true
 rust-version.workspace = true

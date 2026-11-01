@@ -1,6 +1,6 @@
 [package]
 name = "source-formats"
-version = "0.1.0"
+version.workspace = true
 description = "Readers and writers for Source engine file formats (KeyValues, VMF, ...)"
 edition.workspace = true
 rust-version.workspace = true

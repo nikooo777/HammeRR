@@ -1,6 +1,6 @@
 [package]
 name = "render"
-version = "0.1.0"
+version.workspace = true
 description = "wgpu renderer for Source maps, independent of the editor UI"
 edition.workspace = true
 rust-version.workspace = true

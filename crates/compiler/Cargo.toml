@@ -1,6 +1,6 @@
 [package]
 name = "compiler"
-version = "0.1.0"
+version.workspace = true
 description = "Compiles VMF maps into Source engine BSP files"
 edition.workspace = true
 rust-version.workspace = true

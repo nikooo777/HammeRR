@@ -1,6 +1,6 @@
 [package]
 name = "editor-core"
-version = "0.1.0"
+version.workspace = true
 description = "Shared HammeRR application, editing session and optional MCP service"
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "native-runtime"
-version = "0.1.0"
+version.workspace = true
 description = "Private supervised Source client capture runtime"
 edition.workspace = true
 rust-version.workspace = true

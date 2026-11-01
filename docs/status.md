@@ -5,6 +5,8 @@
 HammeRR supports brush-map authoring through the editor and MCP.
 The integrated compiler is experimental. Editing, file operations, rendering, BSP publication and game launching support Linux and Windows. Engine physics, native reflection capture and headless stdio MCP require Linux. Silent document display requires Hyprland.
 
+Release tags use `vYYYY.M.PATCH`, such as `v2026.11.0`. The patch counter starts at zero each month.
+
 ## Group completion
 
 ![Estimated implementation: 78.1% across 107 equally weighted capability groups](images/roadmap-progress.svg)

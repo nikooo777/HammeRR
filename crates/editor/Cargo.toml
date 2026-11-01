@@ -1,6 +1,6 @@
 [package]
 name = "editor"
-version = "0.1.0"
+version.workspace = true
 description = "HammeRR, a map editor for Source engine games"
 edition.workspace = true
 rust-version.workspace = true

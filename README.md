@@ -13,7 +13,7 @@ Humans and AI agents share the same editing operations, previews and Undo histor
 
 ## Quick start
 
-Requires Rust 1.92+, a C++20 toolchain, a compatible GPU driver and Counter-Strike: Source installed through Steam.
+[Download a tagged build](https://github.com/nikooo777/HammeRR/releases) or build from source with Rust 1.92+ and a C++20 toolchain. Requires a compatible GPU driver and Counter-Strike: Source installed through Steam.
 
 ```sh
 cargo build --release -j8 -p editor -p editor-core -p compiler -p native-runtime

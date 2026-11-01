@@ -6,13 +6,26 @@ Create, edit and compile Counter-Strike: Source maps on Linux or Windows.
 
 ## Requirements
 
-- Rust 1.92 or later, and a C++20 compiler. On Windows, use the MSVC Rust toolchain and Visual Studio C++ Build Tools with a Windows SDK.
 - Counter-Strike: Source installed through Steam.
 - A compatible graphics driver for the editor and rendered views (Vulkan on Linux; Direct3D 12 or Vulkan on Windows).
 - FFmpeg and ffplay for [sound previews](sounds.md).
 - On Linux: Cage, grim, Bubblewrap and running Steam for [reflection capture](reflections.md).
+- For source builds: Rust 1.92 or later, and a C++20 compiler. On Windows, use the MSVC Rust toolchain and Visual Studio C++ Build Tools with a Windows SDK.
 
 Editing and compilation without rendered views do not need a GPU.
+
+## Download a build
+
+1. Open [Releases](https://github.com/nikooo777/HammeRR/releases) and select a CalVer release (`vYYYY.M.PATCH`).
+2. Download the Linux x86_64 `.tar.gz` or Windows x86_64 `.zip` archive. Compare its SHA-256 hash with `SHA256SUMS` before extraction.
+3. Extract the whole archive. Keep the programs together in that folder.
+4. Start `./editor` on Linux or `editor.exe` on Windows. Rust is not required for these downloads.
+
+Linux builds need glibc 2.39 or later, libstdc++, Fontconfig and the Wayland/X11 libraries. If Windows reports a missing VC++ runtime, install the [Microsoft Visual C++ v14 x64 runtime](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist). The game and optional external tools are not included.
+
+Windows executables have timestamped, self-signed Authenticode signatures. The ZIP includes the public certificate, `HammeRR-signing.cer`. Self-signing does not remove publisher-trust or SmartScreen warnings.
+
+Each release includes a complete `CHANGELOG.md`. The release page shows up to 40 recent commits. See [Windows limits](#windows) before compiling a map.
 
 ## Build and launch
 

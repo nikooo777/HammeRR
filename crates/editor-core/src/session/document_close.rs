@@ -20,6 +20,9 @@ pub struct DocumentCloseReview {
 }
 
 impl DocumentCloseReview {
+    pub(super) fn replacement_drafts(&self) -> BTreeMap<&'static str, Value> {
+        self.drafts.clone()
+    }
     pub(super) fn first_draft_except(&self, kind: &str) -> Option<&'static str> {
         self.first_draft_outside(&[kind])
     }
@@ -204,6 +207,7 @@ impl Session {
                 "collapse": self.geometry.instance_collapse.close_work(),
                 "definitions": self.definitions_load.close_work(),
                 "content_profiles": self.content_profile_close_work(),
+                "recent_maps": self.recent_map_close_work(),
                 "recovery": self.recovery.close_work(),
                 "native_cleanup_error": self.native_cleanup_error,
                 "native": self.native_activity.as_ref().map(|client| client.close_work()),

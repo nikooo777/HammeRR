@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use source_formats::file_publication::{BoundDestination, Policy};
 
 mod authority;
 pub use authority::{Authority, Snapshot};
@@ -13,7 +14,7 @@ use crate::preference_file::{CoordinatedFile, Publication, SaveError, Source};
 
 pub const MAX_RECENT_MAPS: usize = 20;
 pub const MAX_PATH_BYTES: usize = 4096;
-pub const MAX_FILE_BYTES: u64 = 192 * 1024;
+pub const MAX_FILE_BYTES: u64 = 1536 * 1024;
 pub const FILE_NAME: &str = "recent-maps.json";
 const LOCK_FILE_NAME: &str = ".recent-maps.lock";
 pub const MAX_ERROR_BYTES: usize = 512;
@@ -29,6 +30,8 @@ pub struct Entry {
     pub reopen_path: Option<PathBuf>,
     pub game_directory: Option<PathBuf>,
     pub build_settings: BuildSettings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<crate::content_profiles::Config>,
 }
 
 impl Entry {
@@ -42,7 +45,30 @@ impl Entry {
         if let Some(path) = &self.game_directory {
             validate_path(path)?;
         }
-        self.build_settings.validate()
+        self.build_settings.validate()?;
+        if let Some(content) = &self.content {
+            content.validate()?;
+            if content.build != self.build_settings {
+                return Err("Recent map content and legacy build settings must agree".into());
+            }
+        }
+        Ok(())
+    }
+
+    fn content_differs(&self, other: &Self) -> bool {
+        if self.game_directory != other.game_directory {
+            return true;
+        }
+        match (&self.content, &other.content) {
+            (Some(saved), Some(current)) => {
+                saved.gameinfo != current.gameinfo
+                    || saved.fgd != current.fgd
+                    || saved.engine_root != current.engine_root
+                    || saved.steam_root != current.steam_root
+            }
+            (Some(_), None) => true,
+            _ => false,
+        }
     }
 }
 
@@ -87,10 +113,15 @@ pub fn absolute_path(path: &Path) -> Result<PathBuf, String> {
 }
 
 pub(crate) fn source_paths(path: &Path) -> Result<(PathBuf, Option<PathBuf>), String> {
-    use source_formats::file_publication::{BoundDestination, Policy};
-
     let destination = BoundDestination::capture(path, Policy::FollowSource)
         .map_err(|error| format!("{}: {error}", path.display()))?;
+    bound_source_paths(&destination)
+}
+
+fn bound_source_paths(
+    destination: &BoundDestination,
+) -> Result<(PathBuf, Option<PathBuf>), String> {
+    destination.verify().map_err(|error| error.to_string())?;
     let physical = destination.physical_path();
     let authored = destination.authored_path();
     validate_path(physical)?;
@@ -99,6 +130,49 @@ pub(crate) fn source_paths(path: &Path) -> Result<(PathBuf, Option<PathBuf>), St
         physical.to_owned(),
         (authored != physical).then(|| authored.to_owned()),
     ))
+}
+
+fn relocation_paths(destination: &BoundDestination) -> Result<(PathBuf, Option<PathBuf>), String> {
+    let paths = bound_source_paths(destination)?;
+    if !destination
+        .authored_path()
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("vmf"))
+    {
+        return Err("Choose an existing .vmf file for the recent map".into());
+    }
+    let metadata = fs::symlink_metadata(destination.physical_path())
+        .map_err(|error| format!("{}: {error}", destination.physical_path().display()))?;
+    if !metadata.is_file() || destination.file_identities().is_empty() {
+        return Err("Choose an existing regular .vmf file for the recent map".into());
+    }
+    destination.verify().map_err(|error| error.to_string())?;
+    Ok(paths)
+}
+
+fn relocation_duplicates(destination: &BoundDestination, entry: &Entry) -> Result<bool, String> {
+    let identity = destination.file_identities().last().copied();
+    for path in [entry.path.as_path(), entry.reopen_path()] {
+        if path == destination.physical_path() || path == destination.authored_path() {
+            return Ok(true);
+        }
+        let existing = match BoundDestination::capture(path, Policy::FollowSource) {
+            Ok(existing) => existing,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "Cannot check the existing recent map at {} for a duplicate: {error}",
+                    path.display()
+                ));
+            }
+        };
+        if existing.physical_path() == destination.physical_path()
+            || identity.is_some_and(|identity| existing.file_identities().last() == Some(&identity))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 impl Store {

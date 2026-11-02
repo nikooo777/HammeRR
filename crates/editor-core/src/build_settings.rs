@@ -116,8 +116,25 @@ impl BuildSettings {
 
     pub fn description(&self) -> Result<String, String> {
         let options = self.options()?;
-        Ok(format!(
-            "{} · {} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
+        let enabled = [
+            (options.refine_ambient_probes, "ambient probe refinement"),
+            (options.brush_texture_shadows, "brush texture shadows"),
+            (options.colored_texture_shadows, "colored texture shadows"),
+            (
+                options.bake_static_prop_vertices,
+                "static-prop vertex lighting",
+            ),
+            (options.reflect_static_props, "reflected static-prop light"),
+            (options.generate_reflections, "reflection capture"),
+            (options.pack_sky_assets, "sky packing"),
+            (options.pack_water_assets, "liquid packing"),
+            (options.pack_static_prop_assets, "static-prop packing"),
+        ]
+        .into_iter()
+        .filter_map(|(enabled, label)| enabled.then_some(label))
+        .collect::<Vec<_>>();
+        let mut description = format!(
+            "{} · {} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units",
             options.lighting.label(),
             options.physics.label(),
             options.postprocess_order.label(),
@@ -126,48 +143,12 @@ impl BuildSettings {
             compiler::bounce_label(options.bounces),
             options.smoothing_angle,
             options.lighting_work_limit,
-            if options.refine_ambient_probes {
-                "on"
-            } else {
-                "off"
-            },
-            if options.brush_texture_shadows {
-                "on"
-            } else {
-                "off"
-            },
-            if options.colored_texture_shadows {
-                "on"
-            } else {
-                "off"
-            },
-            if options.bake_static_prop_vertices {
-                "on"
-            } else {
-                "off"
-            },
-            if options.reflect_static_props {
-                "on"
-            } else {
-                "off"
-            },
-            if options.generate_reflections {
-                "on"
-            } else {
-                "off"
-            },
-            if options.pack_sky_assets { "on" } else { "off" },
-            if options.pack_water_assets {
-                "on"
-            } else {
-                "off"
-            },
-            if options.pack_static_prop_assets {
-                "on"
-            } else {
-                "off"
-            }
-        ))
+        );
+        if !enabled.is_empty() {
+            description.push_str(" · ");
+            description.push_str(&enabled.join(", "));
+        }
+        Ok(description)
     }
 
     pub fn validate(&self) -> Result<(), String> {

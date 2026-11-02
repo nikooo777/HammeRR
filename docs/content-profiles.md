@@ -51,5 +51,7 @@ A refused Apply keeps the previous content and map.
 - Outside file changes block stale actions. Use **Reload** before trying again.
 - Loading a profile does not launch a game or change map entities.
 
+Use [Recent maps](recent-maps.md) to reopen a map with its captured context.
+
 MCP: `get_content_profiles`, `save_content_profile`, `apply_content_profile`,
 `remove_content_profile` and `reload_content_profiles`.

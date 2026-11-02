@@ -32,6 +32,8 @@ mod measurements;
 pub(super) use measurements::*;
 mod overlay;
 pub(super) use overlay::*;
+mod recent_maps;
+pub(super) use recent_maps::*;
 mod terrain;
 pub(super) use terrain::*;
 mod view;

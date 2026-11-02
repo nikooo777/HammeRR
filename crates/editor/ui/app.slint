@@ -1630,22 +1630,37 @@ export struct RecentMapRow { path: string, title: string, detail: string }
 export component RecentMapsWindow inherits Window {
     background: Theme.panel;
     title: "Recent maps - HammeRR";
-    preferred-width: 760px;
-    preferred-height: 720px;
+    default-font-size: Theme.font;
+    preferred-width: 820px;
+    preferred-height: 820px;
+    min-width: 640px;
+    min-height: 620px;
     in property <[RecentMapRow]> rows;
     in property <string> summary;
     in property <string> selected-detail;
     in property <bool> selected-available;
     in property <bool> writable;
     in property <bool> dirty-map;
+    in property <bool> busy;
+    in property <bool> picking;
+    in property <bool> can-cancel-work;
+    in property <bool> selected-relocatable;
+    in property <bool> selection-stale;
+    in property <string> progress;
     in property <string> warning;
     in property <string> message;
     in-out property <string> selected-path;
     in-out property <string> map-guard;
+    in-out property <string> list-serial;
+    in-out property <string> worker-token;
+    in-out property <string> worker-action;
     in-out property <bool> discard-changes;
     in-out property <bool> confirm-clear;
     callback select-map(string);
     callback open-selected();
+    callback locate-selected();
+    callback cancel-work();
+    callback worker-finished();
     callback remove-selected();
     callback clear-list();
     callback refresh();
@@ -1655,37 +1670,58 @@ export component RecentMapsWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: Theme.space-xl; spacing: 10px;
+            padding: Theme.space-xl; spacing: Theme.space;
             Text { text: "Recent maps"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: "Reopen a map with its retained build settings. Game content stays mounted from this editor session."; wrap: word-wrap; color: Theme.text-muted; }
+            MutedText { text: "Reopen a map with its remembered content, definitions, Build settings and launch paths."; }
             HorizontalLayout {
                 Text { text: root.summary; horizontal-stretch: 1; vertical-alignment: center; }
-                Button { text: "Reload saved list"; clicked => { root.refresh(); } }
+                Button { text: "Reload saved list"; enabled: !root.busy; clicked => { root.refresh(); } }
             }
             ListView {
                 min-height: 140px;
+                preferred-height: 220px;
+                vertical-stretch: 1;
                 for row in root.rows: VerticalLayout {
-                    spacing: 3px; padding-bottom: 10px;
-                    Button { text: row.title + (root.selected-path == row.path ? " · selected" : ""); clicked => { root.select-map(row.path); } }
+                    spacing: Theme.space-xs; padding-bottom: Theme.space;
+                    Button { text: row.title + (root.selected-path == row.path ? " · selected" : ""); enabled: !root.busy; clicked => { root.select-map(row.path); } }
                     Text { text: row.path; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
-                    Text { text: row.detail; color: Theme.text-muted; font-size: Theme.font; }
+                    Text { text: row.detail; color: Theme.text-muted; font-size: Theme.font; wrap: word-wrap; }
                 }
             }
-            Text { text: root.selected-detail; wrap: word-wrap; color: Theme.text-muted; }
-            if root.dirty-map: CheckBox { text: "Discard current unsaved edits when opening"; checked <=> root.discard-changes; }
+            Text { text: "Remembered context"; color: Theme.text; font-weight: 600; }
+            ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                min-height: 140px;
+                preferred-height: 240px;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding-right: Theme.space;
+                    Text { text: root.selected-detail; wrap: word-wrap; color: Theme.text-muted; }
+                }
+            }
+            if root.selection-stale: Text { text: "The saved list changed. Select the map again or reload before opening or locating it."; color: Theme.warning; wrap: word-wrap; }
+            if root.dirty-map: CheckBox { text: "Discard current unsaved edits and drafts when opening"; enabled: !root.busy; checked <=> root.discard-changes; }
             HorizontalLayout {
-                spacing: 10px;
-                Button { text: "Open selected map"; enabled: root.selected-available && (!root.dirty-map || root.discard-changes); clicked => { root.open-selected(); } }
-                Button { text: "Remove from list"; enabled: root.writable && root.selected-path != ""; clicked => { root.remove-selected(); } }
+                spacing: Theme.space;
+                Button { text: "Open selected map"; primary: true; enabled: !root.busy && !root.selection-stale && root.selected-available && (!root.dirty-map || root.discard-changes); clicked => { root.open-selected(); } }
+                Button { text: "Locate moved map…"; enabled: !root.busy && !root.selection-stale && root.writable && root.selected-relocatable; clicked => { root.locate-selected(); } }
+                Button { text: "Remove from list"; enabled: !root.busy && !root.selection-stale && root.writable && root.selected-path != ""; clicked => { root.remove-selected(); } }
             }
             HorizontalLayout {
-                spacing: 10px;
-                CheckBox { text: "Confirm clear list"; checked <=> root.confirm-clear; }
-                Button { text: "Clear list"; enabled: root.writable && root.confirm-clear && root.rows.length > 0; clicked => { root.clear-list(); } }
+                spacing: Theme.space;
+                CheckBox { text: "Confirm clear list"; enabled: !root.busy; checked <=> root.confirm-clear; }
+                Button { text: "Clear list"; enabled: !root.busy && root.writable && root.confirm-clear && root.rows.length > 0; clicked => { root.clear-list(); } }
             }
             if root.warning != "": Text { text: root.warning; wrap: word-wrap; color: Theme.warning; }
             if root.message != "": Text { text: root.message; wrap: word-wrap; }
-            Button { text: "Cancel / close"; clicked => { root.cancel(); } }
+            if root.progress != "": Text { text: root.progress; color: Theme.info; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Cancel / close"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+                if root.can-cancel-work: Button { text: "Cancel operation"; clicked => { root.cancel-work(); } }
+            }
         }
     }
 }

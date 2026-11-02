@@ -93,6 +93,32 @@ impl Authority {
             .cloned()
     }
 
+    pub(crate) fn find(
+        &self,
+        path: &Path,
+        expected: Option<u64>,
+    ) -> Result<(Entry, Snapshot), String> {
+        self.use_entry(path, expected, |entry, snapshot| Ok((entry, snapshot)))
+    }
+
+    pub(crate) fn use_entry<T>(
+        &self,
+        path: &Path,
+        expected: Option<u64>,
+        use_entry: impl FnOnce(Entry, Snapshot) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut state = self.lock();
+        state.check_serial(expected)?;
+        state.check_current()?;
+        let entry = state
+            .entries
+            .iter()
+            .find(|entry| entry.path == path)
+            .cloned()
+            .ok_or("This map is no longer in Recent maps; refresh the list")?;
+        use_entry(entry, state.snapshot())
+    }
+
     pub(crate) fn report_error(&self, error: String) -> String {
         self.lock().error(error)
     }
@@ -142,10 +168,11 @@ impl Authority {
             entry.reopen_path = existing.reopen_path.clone();
         }
         if let Some(existing) = existing.filter(|existing| {
-            compiling || (preserve_incompatible && existing.game_directory != entry.game_directory)
+            compiling || (preserve_incompatible && existing.content_differs(&entry))
         }) {
             entry.game_directory = existing.game_directory.clone();
             entry.build_settings = existing.build_settings.clone();
+            entry.content = existing.content.clone();
         }
         let mut entries = state.entries.clone();
         if reorder {
@@ -162,6 +189,43 @@ impl Authority {
             return Ok(());
         }
         state.publish(entries)
+    }
+
+    pub(crate) fn relocate(
+        &self,
+        path: &Path,
+        destination: &BoundDestination,
+        expected: Option<u64>,
+    ) -> Result<(Entry, Snapshot), String> {
+        let mut state = self.lock();
+        state.check_serial(expected)?;
+        state.check_current()?;
+        let index = state
+            .entries
+            .iter()
+            .position(|entry| entry.path == path)
+            .ok_or("This map is no longer in Recent maps; refresh the list")?;
+        let (path, reopen_path) = relocation_paths(destination)?;
+        for (other, entry) in state.entries.iter().enumerate() {
+            if other != index && relocation_duplicates(destination, entry)? {
+                return Err("The chosen file is already represented by another recent map; remove the duplicate explicitly before relocating".into());
+            }
+        }
+        let mut entries = state.entries.clone();
+        let entry = &mut entries[index];
+        entry.path = path;
+        entry.reopen_path = reopen_path;
+        let entry = entry.clone();
+        destination.verify().map_err(|error| error.to_string())?;
+        if entries != state.entries {
+            state.publish(entries)?;
+        }
+        destination.verify().map_err(|error| {
+            state.error(format!(
+                "Recent map location was saved but the selected file changed; locate it again: {error}"
+            ))
+        })?;
+        Ok((entry, state.snapshot()))
     }
 
     pub(crate) fn remove(&self, path: &Path) -> Result<(), String> {
@@ -216,8 +280,40 @@ impl State {
         Ok(())
     }
 
+    fn check_serial(&self, expected: Option<u64>) -> Result<(), String> {
+        if expected.is_some_and(|serial| serial != self.serial) {
+            return Err("Recent maps changed; refresh the list before applying this action".into());
+        }
+        Ok(())
+    }
+
+    fn check_current(&mut self) -> Result<(), String> {
+        self.ensure_writable()?;
+        let Some(store) = &self.store else {
+            return Ok(());
+        };
+        let expected = self
+            .source
+            .as_ref()
+            .ok_or("Reload saved list before using recent maps")?;
+        let current = store.target().observe_from(expected);
+        let error = match current {
+            Ok(current) if current.source == expected.source => return Ok(()),
+            Ok(_) => {
+                "Recent maps changed on disk; Reload saved list before using recent maps".into()
+            }
+            Err(error) => format!(
+                "Recent maps could not verify the saved list; Reload saved list before using recent maps: {error}"
+            ),
+        };
+        self.source = None;
+        self.load_failed = true;
+        Err(self.error(error))
+    }
+
     fn publish(&mut self, entries: Vec<Entry>) -> Result<(), String> {
         self.ensure_writable()?;
+        validate_entries(&entries)?;
         if let Some(store) = &self.store {
             let expected = self
                 .source

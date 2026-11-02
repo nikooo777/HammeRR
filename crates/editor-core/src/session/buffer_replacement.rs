@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BufferReplacementReview {
@@ -7,18 +8,24 @@ pub struct BufferReplacementReview {
     revision: u64,
     save_serial: u64,
     partition: Option<u64>,
+    content: u64,
+    drafts: BTreeMap<&'static str, serde_json::Value>,
 }
 
 impl BufferReplacementReview {
     pub fn token(&self) -> String {
+        let drafts = serde_json::to_vec(&self.drafts).expect("Draft identity is serializable");
+        let digest = Sha256::digest(&drafts);
         format!(
-            "buffer-v1:{}:{}:{}:{}:{}",
+            "buffer-v2:{}:{}:{}:{}:{}:{}:{:x}",
             self.scope,
             self.generation,
             self.revision,
             self.save_serial,
             self.partition
-                .map_or_else(|| "none".into(), |token| token.to_string())
+                .map_or_else(|| "none".into(), |token| token.to_string()),
+            self.content,
+            digest,
         )
     }
 }
@@ -31,6 +38,8 @@ impl Session {
             revision: self.document.revision(),
             save_serial: self.history_save_serial,
             partition: self.partition_preview_token(),
+            content: self.content_profile_intent(),
+            drafts: self.document_close_review().replacement_drafts(),
         }
     }
 
@@ -88,7 +97,12 @@ impl Session {
         review: &BufferReplacementReview,
     ) -> Result<String, String> {
         self.ensure_buffer_replacement_review(review)?;
-        self.open_recent_map(actor, path, discard_changes)
+        let request = self.begin_open_recent_map(path, discard_changes, review, None)?;
+        let report = self.finish_recent_map(actor, request.run())?;
+        Ok(report["message"]
+            .as_str()
+            .unwrap_or("Opened recent map")
+            .into())
     }
 
     pub fn restore_recovery_snapshot_reviewed(

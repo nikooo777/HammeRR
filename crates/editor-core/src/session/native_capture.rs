@@ -124,6 +124,7 @@ impl Session {
             *self.native_capture.cache.borrow_mut() = None;
             self.advance_content_epoch();
             self.log(actor, "Changed native reflection capture runtime");
+            self.remember_current_map_context();
         }
         Ok(self.native_capture_runtime())
     }

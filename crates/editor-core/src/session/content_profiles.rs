@@ -141,7 +141,7 @@ impl Directory {
     }
 }
 
-struct Candidate {
+pub(super) struct Candidate {
     game: Arc<GameFs>,
     catalog: Catalog,
     options: compiler::Options,
@@ -162,7 +162,7 @@ fn mount_layout(game: &GameFs) -> Vec<(Vec<String>, PathBuf)> {
 }
 
 impl Candidate {
-    fn load(config: &Config, control: &compiler::Control) -> Result<Self, String> {
+    pub(super) fn load(config: &Config, control: &compiler::Control) -> Result<Self, String> {
         control.checkpoint()?;
         config.validate()?;
         let options = config.build.options()?;
@@ -260,7 +260,7 @@ impl Candidate {
         Ok(candidate)
     }
 
-    fn verify(&self) -> Result<(), String> {
+    pub(super) fn verify(&self) -> Result<(), String> {
         for mount in &self.game.mounts {
             if let Mount::Pak(vpk) = &mount.mount {
                 vpk.verify_index().map_err(|error| error.to_string())?;
@@ -286,7 +286,7 @@ impl Session {
         self.content_profiles.active = None;
     }
 
-    fn current_content_profile_config(&self) -> Option<Config> {
+    pub(super) fn current_content_profile_config(&self) -> Option<Config> {
         let mut config = self.content_profiles.current.clone()?;
         config.build = BuildSettings::from_options(self.compile_options());
         config.engine_root = self.native_capture.engine_root().map(Path::to_owned);
@@ -294,7 +294,7 @@ impl Session {
         Some(config)
     }
 
-    fn content_profile_intent(&self) -> u64 {
+    pub(super) fn content_profile_intent(&self) -> u64 {
         let intent = Intent {
             config: self.current_content_profile_config(),
             definitions: self.definitions_serial,
@@ -316,6 +316,16 @@ impl Session {
     }
 
     fn ensure_content_profile_apply_available(&self) -> Result<(), String> {
+        if self.recent_map_worker_busy() {
+            return Err("Wait for the recent-map worker before applying a content profile".into());
+        }
+        self.ensure_content_transition_available(false)
+    }
+
+    pub(super) fn ensure_content_transition_available(
+        &self,
+        discard_drafts: bool,
+    ) -> Result<(), String> {
         self.ensure_not_closing()?;
         self.native_cleanup_result()?;
         if self.compiling() || self.launching() || self.game_running() {
@@ -340,7 +350,9 @@ impl Session {
         if !self.sounds.close_playback()["playback"].is_null() {
             return Err("Stop the sound preview before applying a content profile".into());
         }
-        if let Some(kind) = self.document_close_review().first_draft_except("") {
+        if let Some(kind) = self.document_close_review().first_draft_except("")
+            && !discard_drafts
+        {
             return Err(format!(
                 "Apply or cancel the pending {kind} draft before applying a content profile"
             ));
@@ -589,6 +601,7 @@ impl Session {
                         Ok((profile, snapshot))
                     })?;
                 self.log(actor, format!("Applied content profile {}", profile.name));
+                self.remember_current_map_context();
                 Ok((snapshot, profile, true))
             }
         }
@@ -622,19 +635,26 @@ impl Session {
     }
 
     fn adopt_content_profile(&mut self, candidate: Candidate, profile: Profile) {
+        self.adopt_prepared_content(candidate, profile.config.clone(), Some(profile));
+    }
+
+    pub(super) fn adopt_prepared_content(
+        &mut self,
+        candidate: Candidate,
+        config: Config,
+        active: Option<Profile>,
+    ) {
         self.game = candidate.game;
         self.game_error = None;
         self.definitions = candidate.catalog;
         self.definitions_error = None;
         self.definitions_serial += 1;
-        self.native_capture.adopt(
-            profile.config.engine_root.clone(),
-            profile.config.steam_root.clone(),
-        );
+        self.native_capture
+            .adopt(config.engine_root.clone(), config.steam_root.clone());
         self.adopt_profile_build_settings(candidate.options);
         self.reset_mounted_content_assets();
-        self.content_profiles.current = Some(profile.config.clone());
-        self.content_profiles.active = Some(profile);
+        self.content_profiles.current = Some(config);
+        self.content_profiles.active = active;
     }
 
     pub fn remove_content_profile(

@@ -182,43 +182,111 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "List up to 20 recent maps, most recent first, with file availability, retained game directory and build settings, context compatibility, persistence status and storage errors. Read only; missing files remain in the list until explicitly removed.",
+        description = "List up to 20 recent maps with exact paths, file availability, frozen gameinfo/FGD/engine/Steam paths and build settings, context compatibility, list serial, worker status and storage errors. Legacy entries report their compatible-build restore behavior. Missing files remain until explicitly removed or relocated. Does not reload storage, open a map or switch content.",
         annotations(read_only_hint = true)
     )]
-    pub(in crate::mcp) fn get_recent_maps(&self) -> ToolResult {
+    pub(in crate::mcp) fn get_recent_maps(
+        &self,
+        Parameters(_args): Parameters<RecentMapsInspectArgs>,
+    ) -> ToolResult {
         ok(self.session().recent_maps())
     }
 
     #[tool(
         description = "Reload the saved Recent maps list through the same Session operation as Reload saved list in the editor. Clears a stale-writer conflict only after a successful bounded read and validation. Failed Reload preserves the previous valid list and exposes the storage error. Does not open/save a map, restore build settings, change selection/camera/history, or apply/cancel drafts. get_recent_maps only inspects the current list."
     )]
-    pub(in crate::mcp) fn reload_recent_maps(&self) -> ToolResult {
+    pub(in crate::mcp) fn reload_recent_maps(
+        &self,
+        Parameters(_args): Parameters<RecentMapsInspectArgs>,
+    ) -> ToolResult {
         run(|| self.session().reload_recent_maps())
     }
 
     #[tool(
-        description = "Reopen an exact path from get_recent_maps through the normal map validation and dirty/discard guards. Restores retained build settings only for matching mounted game content and while no compile is active. Does not switch game content. Failed opens preserve the map, history and recent list."
+        description = "Reopen an exact listed path using get_recent_maps.serial and optional get_map_info.replacement_review. Prepares the map and remembered game/FGD/build/launch context in the background, then adopts them together after buffer review, discard consent, source and list freshness checks. Legacy entries retain compatible idle build-setting restoration. A failed selected context restore refuses without fallback and preserves current map/content. Does not launch a game."
     )]
-    pub(in crate::mcp) fn open_recent_map(
+    pub(in crate::mcp) async fn open_recent_map(
         &self,
-        Parameters(args): Parameters<OpenMapArgs>,
+        Parameters(args): Parameters<OpenRecentMapArgs>,
     ) -> ToolResult {
-        run(|| {
+        let request = {
             let mut session = self.session();
             let review = match args.expected_review.as_deref() {
-                Some(token) => session.buffer_replacement_review_from_token(token)?,
+                Some(token) => match session.buffer_replacement_review_from_token(token) {
+                    Ok(review) => review,
+                    Err(error) => return fail(error),
+                },
                 None => session.buffer_replacement_review(),
             };
-            let message = session.open_recent_map_reviewed(
-                Actor::Agent,
+            match session.begin_open_recent_map(
                 Path::new(&args.path),
                 args.discard_changes,
                 &review,
-            )?;
-            Ok(
-                json!({"message": message, "recent_maps": session.recent_maps(), "build_settings": session.compile_settings()}),
-            )
-        })
+                Some(args.serial),
+            ) {
+                Ok(request) => request,
+                Err(error) => return fail(error),
+            }
+        };
+        let token = request.token();
+        let server = self.clone();
+        match tokio::task::spawn_blocking(self.worker(move || {
+            let completed = request.run();
+            server.session().finish_recent_map(Actor::Agent, completed)
+        }))
+        .await
+        {
+            Ok(Ok(value)) => ok(value),
+            Ok(Err(error)) => fail(error),
+            Err(error) => {
+                let message = format!("Recent map open worker failed: {error}");
+                self.session().fail_recent_map(token, message.clone());
+                fail(message)
+            }
+        }
+    }
+
+    #[tool(
+        description = "Relocate one exact Recent maps record to an explicit existing VMF path using get_recent_maps.serial. The shared Session operation validates the destination and preserves the record's remembered content context. Changed list/source records, duplicate destinations and invalid targets refuse explicitly. Does not move map/assets, guess a path, open the destination or change the current map."
+    )]
+    pub(in crate::mcp) async fn relocate_recent_map(
+        &self,
+        Parameters(args): Parameters<RelocateRecentMapArgs>,
+    ) -> ToolResult {
+        let request = match self.session().begin_relocate_recent_map(
+            Path::new(&args.old_path),
+            Path::new(&args.new_path),
+            Some(args.serial),
+        ) {
+            Ok(request) => request,
+            Err(error) => return fail(error),
+        };
+        let token = request.token();
+        let server = self.clone();
+        match tokio::task::spawn_blocking(self.worker(move || {
+            let completed = request.run();
+            server.session().finish_recent_map(Actor::Agent, completed)
+        }))
+        .await
+        {
+            Ok(Ok(value)) => ok(value),
+            Ok(Err(error)) => fail(error),
+            Err(error) => {
+                let message = format!("Recent map relocation worker failed: {error}");
+                self.session().fail_recent_map(token, message.clone());
+                fail(message)
+            }
+        }
+    }
+
+    #[tool(
+        description = "Cancel the exact recent-map open or relocation worker identified by get_recent_maps.worker_token. Uses the same shared cancellation as Recent maps…. Validation drains before another request can start; cancelled work does not replace the current map/content or relocate a record."
+    )]
+    pub(in crate::mcp) fn cancel_recent_map(
+        &self,
+        Parameters(args): Parameters<CancelRecentMapArgs>,
+    ) -> ToolResult {
+        run(|| self.session().cancel_recent_map(Actor::Agent, args.token))
     }
 
     #[tool(
@@ -238,7 +306,10 @@ impl EditorServer {
     #[tool(
         description = "Clear the retained recent-map list and its saved per-map build context. Does not delete map files or edit the current map. Failed storage writes preserve the previous list."
     )]
-    pub(in crate::mcp) fn clear_recent_maps(&self) -> ToolResult {
+    pub(in crate::mcp) fn clear_recent_maps(
+        &self,
+        Parameters(_args): Parameters<RecentMapsInspectArgs>,
+    ) -> ToolResult {
         run(|| {
             let mut session = self.session();
             session.clear_recent_maps()?;

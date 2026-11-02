@@ -533,6 +533,23 @@ after client disconnection. `complete:false` and `isError:true` report retained
 cleanup failures. Service shutdown follows the local response-output check;
 this does not prove that the remote client read the response.
 
+### Recent maps
+
+`get_recent_maps` reports a shared `serial`, saved source paths, availability
+errors and each entry's `content` and `context_mode`.
+`open_recent_map` needs the exact listed `path` and `serial`. Pass
+`expected_review` from `get_map_info.replacement_review` to guard the current
+buffer; `discard_changes:true` authorizes discarding only that reviewed state.
+Full saved content restores atomically with the map. Invalid sources or changed
+intent reject without substituting the current configuration.
+
+`relocate_recent_map` needs `old_path`, an explicit existing `new_path` and
+`serial`. It preserves saved context and rejects duplicate physical destinations.
+It does not move files or open the map. `cancel_recent_map` takes the exact
+`worker_token` from inspection. Cancellation drains before another request starts.
+Legacy entries retain their declared compatible, idle-build restoration behavior.
+See [Recent maps](recent-maps.md).
+
 ### Content profiles
 
 `get_content_profiles` reports the shared saved list, current configuration,
@@ -1432,7 +1449,7 @@ These groups locate the available operations.
 | [Reflection bindings](cubemap-faces.md) | `get_cubemap_bindings`, `set_cubemap_bindings` |
 | [Entity properties and connections](entities.md) | `begin_connection_edit`, `begin_entity_rename`, `begin_property_edit`, `cancel_connection_edit`, `cancel_entity_rename`, `cancel_property_edit`, `commit_connection_edit`, `commit_entity_rename`, `commit_property_edit`, `convert_color`, `create_entity`, `delete_entity_connection`, `get_connection_choices`, `get_entity_class`, `get_entity_connections`, `inspect_entity_graph`, `select_entity_graph`, `frame_entity_graph`, `get_entity_definitions`, `get_entity_inspector`, `get_entity_references`, `get_property_edit`, `get_property_inspector`, `load_entity_definitions`, `move_to_world`, `search_entity_classes`, `set_entity_color`, `set_entity_color_space`, `set_entity_properties`, `tie_to_entity`, `update_connection_draft`, `update_entity_rename`, `update_property_edit` |
 | [Entity placement](entities.md) | `apply_entity_placement`, `begin_entity_placement`, `cancel_entity_placement`, `get_entity_placement`, `pick_entity_placement`, `review_entity_placement` |
-| [Map files](getting-started.md) | `clear_recent_maps`, `close_document`, `find_objects`, `get_map_info`, `get_map_statistics`, `get_objects`, `get_recent_maps`, `new_map`, `open_map`, `open_recent_map`, `redo`, `reload_recent_maps`, `remove_recent_map`, `save_map`, `undo` |
+| [Map files](getting-started.md) | `clear_recent_maps`, `close_document`, `find_objects`, `get_map_info`, `get_map_statistics`, `get_objects`, `get_recent_maps`, `new_map`, `open_map`, `open_recent_map`, `relocate_recent_map`, `cancel_recent_map`, `redo`, `reload_recent_maps`, `remove_recent_map`, `save_map`, `undo` |
 | [Reference images](reference-images.md) | `add_reference_image`, `delete_reference_image`, `frame_reference_image`, `get_reference_images`, `reload_reference_image`, `update_reference_image` |
 | [Magnetic movement](placement.md#magnetic-translation) | `cancel_magnetic_translation`, `commit_magnetic_translation`, `get_magnetic_snap_sources`, `get_magnetic_snapping`, `preview_magnetic_translation`, `set_magnetic_snapping` |
 | [Helpers and selection](selection-presentation.md) | `get_helper_presentation`, `get_selection_presentation` |

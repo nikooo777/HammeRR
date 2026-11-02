@@ -101,7 +101,7 @@ struct Ui {
     seen_context: (u64, u64),
     seen_checks: (u64, u64, u64),
     seen_recovery: (u64, u64),
-    seen_recent_maps: (u64, u64),
+    seen_recent_maps: (u64, u64, u64),
     seen_management: (u64, u64, u64),
     rename_window: Option<RenameWindow>,
     seen_rename: (u64, u64, u64),
@@ -235,7 +235,7 @@ impl Ui {
             seen_context: (0, 0),
             seen_checks: (0, 0, 0),
             seen_recovery: (0, 0),
-            seen_recent_maps: (0, 0),
+            seen_recent_maps: (0, 0, 0),
             seen_management: (0, 0, 0),
             rename_window: None,
             seen_rename: (0, 0, 0),
@@ -3459,7 +3459,11 @@ fn create_document_window(
                         }
                     }
                     let recovery = (session.recovery_serial(), session.scene_serial());
-                    let recent_maps = (session.recent_maps_serial(), session.scene_serial());
+                    let recent_maps = (
+                        session.recent_maps_serial(),
+                        session.scene_serial(),
+                        session.view_serial(),
+                    );
                     if recent_maps != ui.seen_recent_maps {
                         ui.seen_recent_maps = recent_maps;
                         if let Some(window) = &ui.recent_maps_window

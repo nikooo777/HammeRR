@@ -101,7 +101,7 @@ pub mod prefabs;
 pub mod presentation;
 pub mod preview_preferences;
 pub mod primitives;
-mod recent;
+pub mod recent;
 pub mod selection_filters;
 pub mod selection_preferences;
 pub mod shortcuts;
@@ -322,6 +322,7 @@ pub struct Session {
     surface_sample: Option<surface::SurfaceSample>,
     recovery: recovery::State,
     recent_maps: recent::Binding,
+    recent_operation: recent::State,
     checks: checks::State,
     material_search: material_search::State,
     context: context::State,
@@ -653,6 +654,7 @@ impl Session {
             surface_sample: None,
             recovery: recovery::State::default(),
             recent_maps: recent::Binding::default(),
+            recent_operation: recent::State::default(),
             checks: checks::State::default(),
             material_search: material_search::State::default(),
             context: context::State::default(),
@@ -1198,6 +1200,7 @@ impl Session {
         self.definitions_serial += 1;
         self.changed();
         self.log(actor, format!("loaded {count} entity classes"));
+        self.remember_current_map_context();
     }
 
     pub fn report_definitions_error(&mut self, error: String) {
@@ -1579,17 +1582,31 @@ impl Session {
         path: Option<PathBuf>,
         camera: Option<Camera>,
     ) -> Result<(), String> {
+        let camera = self.replacement_camera(&document, camera)?;
+        self.adopt_document(document, path, camera);
+        Ok(())
+    }
+
+    fn replacement_camera(
+        &self,
+        document: &Document,
+        camera: Option<Camera>,
+    ) -> Result<Camera, String> {
         let camera = match camera {
             Some(camera) => camera,
             None => Camera::from_vmf(document.vmf())?.unwrap_or_else(|| {
                 let bounds =
-                    self.object_bounds_in(&document, &document.objects().collect::<Vec<_>>());
+                    self.object_bounds_in(document, &document.objects().collect::<Vec<_>>());
                 bounds.map_or(self.camera, |(lo, hi)| {
                     Camera::overview(lo.as_vec3(), hi.as_vec3())
                 })
             }),
         };
         camera.validate(1.0)?;
+        Ok(camera)
+    }
+
+    fn adopt_document(&mut self, document: Document, path: Option<PathBuf>, camera: Camera) {
         self.retire_terrain_move_handles();
         self.reset_transform_pivot_attachment();
         self.reference_images = reference_images::State::default();
@@ -1632,7 +1649,6 @@ impl Session {
         self.face_selection.clear();
         self.camera_serial += 1;
         self.changed();
-        Ok(())
     }
 
     pub fn open(
@@ -1670,32 +1686,17 @@ impl Session {
         if expected_physical.is_some_and(|expected| destination.physical_path() != expected) {
             return Err("Recent map alias changed its destination; open the intended map explicitly before remembering it again".into());
         }
-        let recovery_path = recovery::PathMetadata::from_destination(&destination)?;
         let claim = self.file_claims.source(destination.clone())?;
-        let bytes = destination
-            .read_existing()
-            .map_err(|error| format!("{}: {error}", path.display()))?
-            .ok_or_else(|| format!("{}: source map does not exist", path.display()))?;
-        let text =
-            String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))?;
-        let vmf = Vmf::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-        let document =
-            Document::try_new(vmf).map_err(|error| format!("{}: {error}", path.display()))?;
-        document
-            .context()
-            .map_err(|error| format!("{}: {error}", path.display()))?;
-        destination
-            .verify()
-            .map_err(|error| format!("{}: {error}", path.display()))?;
+        let prepared = recent::PreparedMap::load(destination, &compiler::Control::default())?;
         let message = format!(
             "opened {} ({} brushes, {} entities) in {:.0?}",
             path.display(),
-            document.vmf().world.solids.len(),
-            document.vmf().entities.len(),
+            prepared.document.vmf().world.solids.len(),
+            prepared.document.vmf().entities.len(),
             start.elapsed()
         );
-        self.replace_document(document, Some(path.to_owned()), None)?;
-        self.update_recovery_path(recovery_path);
+        self.replace_document(prepared.document, Some(path.to_owned()), prepared.camera)?;
+        self.update_recovery_path(prepared.recovery);
         self.file_claims.source = Some(claim);
         self.restore_recent_map_context(path, remember);
         if remember {
@@ -2613,6 +2614,7 @@ impl Session {
         }
         self.shutdown_definitions_load();
         self.shutdown_content_profile();
+        self.shutdown_recent_map();
         self.reset_instance_contents();
         self.reset_compiled_details();
         self.reset_baked_surfaces();
@@ -2638,7 +2640,9 @@ impl Session {
     }
 
     pub(crate) fn instance_workers_busy(&self) -> bool {
-        self.content_profile_worker_busy() || self.content_workers_busy()
+        self.content_profile_worker_busy()
+            || self.recent_map_worker_busy()
+            || self.content_workers_busy()
     }
 
     fn content_workers_busy(&self) -> bool {

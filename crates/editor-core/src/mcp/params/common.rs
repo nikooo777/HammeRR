@@ -37,6 +37,7 @@ pub struct NewMapArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RecentMapPathArgs {
     /// Exact absolute path returned by get_recent_maps.
     pub path: String,

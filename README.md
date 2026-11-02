@@ -45,7 +45,7 @@ See the [tool index and setup](docs/mcp.md).
 
 ## The editor
 
-![HammeRR with a light selected: menus, tool rail, viewport, Inspector and Agent activity](docs/images/editor-window.png)
+![HammeRR with detail brushes selected: menus, tool rail, viewport, Inspector and Agent activity](docs/images/editor-window.png)
 
 Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Editor basics](docs/basics.md).
 
@@ -98,7 +98,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Reference images](docs/reference-images.md) | [Magnetic snapping](docs/placement.md#magnetic-translation) |
 | --- | --- |
-| ![Editor-only image planes with pose, opacity and flips](docs/images/reference-images.png) | ![Brush corners joined through magnetic capture](docs/images/magnetic-snapping.png) |
+| ![A blueprint reference plane standing behind the compound](docs/images/reference-images.png) | ![Brush corners joined through magnetic capture](docs/images/magnetic-snapping.png) |
 | Trace PNG references with shared pose and display controls. | Capture visible brush, terrain and model vertices while moving. |
 
 | [Water and slime](docs/water.md) | [Ropes](docs/ropes.md) |
@@ -143,7 +143,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Prefab library](docs/prefabs.md) | [Coordinated views](docs/basics.md#coordinated-views) |
 | --- | --- |
-| ![A reusable brush and model assembly at three scales](docs/images/prefab-assemblies.png) | ![Four interactive views share selected columns](docs/images/coordinated-views.png) |
+| ![A reusable brush and model assembly at three scales](docs/images/prefab-assemblies.png) | ![Four interactive views share the selected bridges](docs/images/coordinated-views.png) |
 | Organize saved assemblies, replace their content and place scaled copies. | Edit through independent cameras with linked orthographic navigation. |
 
 | [Linked paths and trains](docs/path-authoring.md) |

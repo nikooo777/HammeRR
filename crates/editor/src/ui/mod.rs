@@ -532,6 +532,54 @@ fn apply_view_controls(app: AppWindow, shared: &SharedSession) {
     refresh_sky_preview_status(&app, &mut session);
 }
 
+fn plural(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
+fn selection_presentation_text(session: &Session) -> String {
+    let presentation = session.selection_presentation(session.view());
+    if !presentation.counts_complete {
+        return presentation.summary;
+    }
+    let counts = &presentation.counts;
+    let mut categories: Vec<String> = [
+        (counts.world_brushes, "world brush", "world brushes"),
+        (counts.brush_entities, "brush entity", "brush entities"),
+        (counts.point_entities, "point entity", "point entities"),
+        (counts.faces, "face", "faces"),
+        (counts.components, "component", "components"),
+    ]
+    .into_iter()
+    .filter(|(count, _, _)| *count > 0)
+    .map(|(count, one, many)| plural(count, one, many))
+    .collect();
+    if counts.child_brushes > 0 {
+        categories.push(format!(
+            "{} in {}",
+            plural(counts.child_brushes, "child brush", "child brushes"),
+            plural(counts.child_owners, "owner", "owners")
+        ));
+    }
+    let mut lines = Vec::new();
+    if categories.len() > 1 {
+        lines.push(categories.join(" · "));
+    }
+    if let Some(size) = presentation.dimensions {
+        let [x, y, z] = size.map(|value| (value * 1000.0).round() / 1000.0);
+        lines.push(format!("Size · X {x} · Y {y} · Z {z}"));
+    }
+    if counts.hidden_or_outside_region > 0 {
+        lines.push(format!(
+            "In region {} · hidden/outside {}",
+            counts.in_region, counts.hidden_or_outside_region
+        ));
+    }
+    if let Some(error) = presentation.bounds_error {
+        lines.push(error);
+    }
+    lines.join("\n")
+}
+
 fn refresh_panel(app: &AppWindow, session: &mut Session) {
     refresh_clip(app, session);
     refresh_view_controls(app, session);
@@ -552,8 +600,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     app.set_launching(session.launching());
     app.set_game_running(session.game_running());
     app.set_has_selection(!session.selection().is_empty());
-    let presentation = session.selection_presentation(session.view());
-    app.set_selection_presentation(presentation.summary.into());
+    app.set_selection_presentation(selection_presentation_text(session).into());
     let helpers = session.helper_presentation(session.view());
     let errors = helpers["reported_errors"].as_u64().unwrap_or_default();
     app.set_helper_presentation_status(if errors == 0 {

@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use source_formats::file_publication::{BoundDestination, Policy};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -30,6 +31,7 @@ pub struct Entry {
     pub name: String,
     pub bytes: u64,
     pub organization: Result<Organization, String>,
+    digest: [u8; 32],
     modified: SystemTime,
     #[cfg(unix)]
     identity: (u64, u64),
@@ -93,36 +95,50 @@ impl Store {
         }
     }
 
-    fn organization(
-        &self,
-        directory: &Directory,
-        entry: &Entry,
-    ) -> Result<Result<Organization, String>, String> {
+    fn observe_entry(&self, directory: &Directory, mut entry: Entry) -> Result<Entry, String> {
         {
             let cache = self.organizations.lock().map_err(
                 |_| "Prefab organization cache lock is poisoned; restart the application",
             )?;
-            if let Some(cached) = cache.iter().find(|cached| cached.same_source(entry)) {
-                return Ok(cached.organization.clone());
+            if let Some(cached) = cache.iter().find(|cached| cached.same_source(&entry)) {
+                return Ok(cached.clone());
             }
         }
-        let loaded = read_entry_bytes(directory, entry);
+        let loaded = read_entry_bytes(directory, &entry);
         let mut cache = self
             .organizations
             .lock()
             .map_err(|_| "Prefab organization cache lock is poisoned; restart the application")?;
         cache.retain(|cached| cached.name != entry.name);
         let bytes = loaded?;
-        let organization = String::from_utf8(bytes)
+        entry.digest = Sha256::digest(&bytes).into();
+        entry.organization = String::from_utf8(bytes)
             .map_err(|_| "Prefab VMF must contain UTF-8 text".to_owned())
             .and_then(|text| organization::parse(&text));
         if cache.len() == MAX_ENTRIES {
             cache.remove(0);
         }
-        let mut observed = entry.clone();
-        observed.organization = organization.clone();
-        cache.push(observed);
-        Ok(organization)
+        cache.push(entry.clone());
+        Ok(entry)
+    }
+
+    fn checked_entry_bytes(&self, directory: &Directory, entry: &Entry) -> Result<Vec<u8>, String> {
+        let result = read_entry_bytes(directory, entry).and_then(|bytes| {
+            let digest: [u8; 32] = Sha256::digest(&bytes).into();
+            if digest != entry.digest {
+                return Err(
+                    "Prefab content changed; refresh the library and review it again".into(),
+                );
+            }
+            Ok(bytes)
+        });
+        if result.is_err() {
+            self.organizations
+                .lock()
+                .map_err(|_| "Prefab organization cache lock is poisoned; restart the application")?
+                .retain(|cached| !cached.same_source(entry));
+        }
+        result
     }
 
     fn root(&self) -> Result<bool, String> {
@@ -178,10 +194,11 @@ impl Store {
                 if entries.len() >= MAX_ENTRIES || bytes > MAX_TOTAL_BYTES {
                     return Err("Prefab storage exceeds 128 VMFs or 64 MiB".into());
                 }
-                let mut entry = Entry {
+                let entry = Entry {
                     name: stem.into(),
                     bytes: meta.len(),
                     organization: Err("Prefab organization has not been read".into()),
+                    digest: [0; 32],
                     modified: meta.modified().map_err(|error| error.to_string())?,
                     #[cfg(unix)]
                     identity: (meta.dev(), meta.ino()),
@@ -192,8 +209,8 @@ impl Store {
                     .map_err(|error| error.to_string())?,
                     directory: directory.source()?,
                 };
-                entry.organization = self
-                    .organization(&directory, &entry)
+                let entry = self
+                    .observe_entry(&directory, entry)
                     .map_err(|error| format!("Prefab {stem}: {error}"))?;
                 entries.push(entry);
             }
@@ -213,6 +230,7 @@ impl Store {
             entry.bytes.hash(&mut hash);
             entry.modified.hash(&mut hash);
             entry.organization.hash(&mut hash);
+            entry.digest.hash(&mut hash);
             #[cfg(any(unix, windows))]
             entry.identity.hash(&mut hash);
         }
@@ -250,6 +268,7 @@ impl Store {
             if current != source {
                 return Err("Prefab source changed; choose it in Prefabs and preview again".into());
             }
+            self.checked_entry_bytes(&snapshot.directory, source)?;
         } else if let Some(renamed) = snapshot
             .entries
             .iter()
@@ -266,9 +285,11 @@ impl Store {
         name(value)?;
         name(new_name)?;
         let snapshot = self.checked(stamp)?;
-        if !snapshot.entries.iter().any(|entry| entry.name == value) {
-            return Err("Prefab no longer exists".into());
-        }
+        let entry = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.name == value)
+            .ok_or("Prefab no longer exists")?;
         if value == new_name {
             return Err("Choose a different prefab name".into());
         }
@@ -278,6 +299,7 @@ impl Store {
             return Err("A prefab with that name already exists; choose another name".into());
         }
         self.checked(stamp)?;
+        self.checked_entry_bytes(&snapshot.directory, entry)?;
         snapshot.directory.verify()?;
         snapshot
             .directory
@@ -292,8 +314,9 @@ impl Store {
             .iter()
             .find(|entry| entry.name == value)
             .ok_or("Prefab no longer exists")?;
+        let bytes = self.checked_entry_bytes(&snapshot.directory, entry)?;
         entry.organization.as_ref().map_err(Clone::clone)?;
-        let text = read_entry(&snapshot.directory, entry)?;
+        let text = String::from_utf8(bytes).map_err(|_| "Prefab VMF must contain UTF-8 text")?;
         self.checked(stamp)?;
         snapshot.directory.verify()?;
         Ok(text)
@@ -397,7 +420,7 @@ impl Store {
             .write_all(text.as_bytes())
             .map_err(|error| error.to_string())?;
         self.check_entries(&snapshot)?;
-        if read_entry(&snapshot.directory, entry)? != previous {
+        if self.checked_entry_bytes(&snapshot.directory, entry)? != previous.as_bytes() {
             return Err(
                 "Prefab content changed; review it again before changing the library".into(),
             );
@@ -428,19 +451,17 @@ impl Store {
     pub fn remove(&self, value: &str, stamp: &str) -> Result<Mutation, String> {
         name(value)?;
         let snapshot = self.checked(stamp)?;
-        if !snapshot.entries.iter().any(|entry| entry.name == value) {
-            return Err("Prefab no longer exists".into());
-        }
+        let entry = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.name == value)
+            .ok_or("Prefab no longer exists")?;
         self.checked(stamp)?;
+        self.checked_entry_bytes(&snapshot.directory, entry)?;
         snapshot.directory.verify()?;
         snapshot.directory.remove(&format!("{value}.vmf"))?;
         Ok(snapshot.directory.publication("deleted"))
     }
-}
-
-fn read_entry(directory: &Directory, entry: &Entry) -> Result<String, String> {
-    String::from_utf8(read_entry_bytes(directory, entry)?)
-        .map_err(|_| "Prefab VMF must contain UTF-8 text".into())
 }
 
 fn read_entry_bytes(directory: &Directory, entry: &Entry) -> Result<Vec<u8>, String> {

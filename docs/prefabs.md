@@ -46,6 +46,7 @@ Categories and tags stay with the library VMF. Rename keeps them.
 
 Replacement keeps the name, category and tags. Placed copies stay unchanged.
 Library edits are separate from map Undo. **Cancel** preserves the saved assembly.
+If the source file changes, refresh the library and review it again before editing.
 
 ## Place an assembly
 

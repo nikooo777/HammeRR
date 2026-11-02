@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 78.7% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 79.0% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -111,10 +111,10 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | ![Distance fog in the courtyard](docs/images/fog-on.png) | ![A height guide at a doorway](docs/images/doorway-measurement.png) |
 | Inspect an authored static fog controller. | Save rulers and attach endpoints to entity frames. |
 
-| [Color correction](docs/color-correction.md) |
-| --- |
-| ![A map viewport with color correction](docs/images/color-correction-preview.png) |
-| Preview one Source color LUT with an adjustable weight. |
+| [Color correction](docs/color-correction.md) | [Visibility profiles](docs/working-region.md#saved-rule-profiles) |
+| --- | --- |
+| ![A map viewport with color correction](docs/images/color-correction-preview.png) | ![A saved Architecture profile showing detail owners](docs/images/visibility-profile.png) |
+| Preview one Source color LUT with an adjustable weight. | Save queries that isolate the parts of a map you need. |
 
 | [Overlays](docs/overlays.md) | [Assemblies](docs/instances.md) |
 | --- | --- |

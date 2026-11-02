@@ -36,6 +36,7 @@ pub(super) struct State {
     pub bounds: Option<[DVec3; 2]>,
     pub(super) options: Options,
     pub(super) serial: u64,
+    pub(super) query_serial: u64,
     pub(super) editor_hidden: Arc<HashSet<ObjectId>>,
     cache: RefCell<Option<(Key, Arc<Evaluation>)>>,
 }
@@ -187,12 +188,9 @@ fn records(
         .iter()
         .map(|instance| (instance.id, instance))
         .collect::<HashMap<_, _>>();
-    let filter = session
-        .working_region
-        .options
-        .filter
-        .as_ref()
-        .map(|filter| (filter, session.display_bounds_with_models(document, models)));
+    let report_bounds = session
+        .working_region_query_active()
+        .then(|| session.display_bounds_with_models(document, models));
     let vmf = document.vmf();
     let sources = vmf
         .world
@@ -269,23 +267,43 @@ fn records(
             }
         };
         let spatial = session.working_region_spatial_eligibility(bounds);
-        let filtered = filter.as_ref().is_some_and(|(filter, report_bounds)| {
-            let bounds = models::object_bounds(document, id, report_bounds);
-            let report = match object {
-                Source::Solid(solid) => ObjectReport::from_solid(solid, bounds),
-                Source::Entity(entity) => ObjectReport::from_entity(entity, bounds),
-            };
-            !filter.matches(&report)
-        });
+        let (filtered, excluded_rule) =
+            report_bounds
+                .as_ref()
+                .map_or((false, false), |report_bounds| {
+                    let bounds = models::object_bounds(document, id, report_bounds);
+                    let report = match object {
+                        Source::Solid(solid) => ObjectReport::from_solid(solid, bounds),
+                        Source::Entity(entity) => ObjectReport::from_entity(entity, bounds),
+                    };
+                    (
+                        session
+                            .working_region
+                            .options
+                            .filter
+                            .as_ref()
+                            .is_some_and(|filter| !filter.matches(&report)),
+                        session
+                            .working_region
+                            .options
+                            .exclusions
+                            .iter()
+                            .any(|filter| filter.matches(&report)),
+                    )
+                });
         let no_visible_children =
             !children.is_empty() && children.iter().all(|(child, _)| child.hidden);
-        let included = !hidden && spatial.included() && !filtered && !no_visible_children;
+        let included =
+            !hidden && spatial.included() && !filtered && !excluded_rule && !no_visible_children;
         let mut reasons = spatial.reasons();
         if hidden || no_visible_children {
             reasons.push("authored_hidden");
         }
         if filtered {
             reasons.push("object_filter");
+        }
+        if excluded_rule {
+            reasons.push("excluded_rule");
         }
         if bounds.is_none() && !no_visible_children {
             reasons.push("unresolved_bounds");
@@ -309,6 +327,9 @@ fn records(
             }
             if filtered {
                 reasons.push("object_filter");
+            }
+            if excluded_rule {
+                reasons.push("excluded_rule");
             }
             if bounds.is_none() {
                 reasons.push("unresolved_bounds");
@@ -437,7 +458,12 @@ impl Session {
     pub fn working_region_enabled(&self) -> bool {
         self.working_region.enabled
             || self.working_region.options.draw_distance.is_some()
-            || self.working_region.options.filter.is_some()
+            || self.working_region_query_active()
+    }
+
+    pub(super) fn working_region_query_active(&self) -> bool {
+        self.working_region.options.filter.is_some()
+            || !self.working_region.options.exclusions.is_empty()
     }
 
     pub(super) fn working_evaluation(&self, document: &Document) -> Arc<Evaluation> {
@@ -544,12 +570,16 @@ impl Session {
     }
 
     pub(super) fn working_region_filter_matches(&self, document: &Document, id: ObjectId) -> bool {
-        self.working_region.options.filter.is_none()
+        !self.working_region_query_active()
             || self
                 .working_evaluation(document)
                 .records
                 .iter()
-                .any(|record| record.id == id && !record.reasons.contains(&"object_filter"))
+                .any(|record| {
+                    record.id == id
+                        && !record.reasons.contains(&"object_filter")
+                        && !record.reasons.contains(&"excluded_rule")
+                })
     }
 
     pub(super) fn working_solid_visible(&self, document: &Document, id: u32) -> bool {
@@ -635,7 +665,7 @@ impl Session {
         report["selected_excluded"] = json!(counts.map(|counts| counts.1));
         report["counts_scope"] = json!("working_region_authored_and_editor_visibility");
         report["policy"] = json!(
-            "Session-only whole-owner intersection with the effective box, camera distance sphere and shared object filter. Unknown display bounds stay visible to spatial filters. Source, selection, history and compilation are unchanged."
+            "Session-only whole-owner intersection with the effective box, camera distance sphere and inclusion filter, minus any matching exclusion rule. Unknown display bounds stay visible to spatial filters. Source, selection, history and compilation are unchanged."
         );
         report
     }
@@ -685,11 +715,22 @@ impl Session {
                 .serial
                 .checked_add(1)
                 .ok_or("Working region revision exhausted")?;
+            let query_serial = if self.working_region.options.filter != next.2.filter
+                || self.working_region.options.exclusions != next.2.exclusions
+            {
+                self.working_region
+                    .query_serial
+                    .checked_add(1)
+                    .ok_or("Visibility rules revision exhausted")?
+            } else {
+                self.working_region.query_serial
+            };
             self.invalidate_display_visibility_gestures();
             self.working_region.enabled = next.0;
             self.working_region.bounds = next.1;
             self.working_region.options = next.2;
             self.working_region.serial = serial;
+            self.working_region.query_serial = query_serial;
             self.preflight_sky3d_preview();
             self.scene_serial += 1;
             self.view_serial += 1;

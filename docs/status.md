@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 78.7% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 79.0% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -45,7 +45,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [Resource previews](sprite-guides.md) | Supported sprites, [static ropes with sag-aware framing and selection bounds](ropes.md), fog and LDR/HDR/3D skies. | Complete native effects and runtime behavior. |
 | [Particles](particles.md) | Active manifest metadata and effect assignment. | Particle rendering and animation. |
 | [Sounds](sounds.md) | File/script browsing, short audition and assignment, with malformed-script warnings and playback errors. | Game mixing, soundscapes and sentence synthesis. |
-| [Organization](layers.md) | Groups, layers, clipboard, prefabs, notes and saved views. | Automatic category rules and embedded prefab assets. |
+| [Organization](layers.md) | Groups, native layers, automatic kind/class categories, current exclusions, map-local saved query profiles, clipboard, prefabs, notes and saved views. | Prefab assets stay external. |
 | [Measurements](measurements.md) | Saved rulers, surface picks and origin/local entity attachments. | Surface attachments, parenting and animated bones. |
 | [Instances](instance-authoring.md) | Saved references, checked brush/terrain and static-prop mesh previews, nested light bindings, static child fog, saved child atlas regions and bounded extraction with chosen local pivots. | In-place child editing, child illumination and general replacement parameters. |
 

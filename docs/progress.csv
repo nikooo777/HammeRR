@@ -22,7 +22,7 @@ G10,Convex brush merging (++),100
 G11,Surface placement and alignment (++),100
 G12,Precision-preserving geometry (++),65
 O01,Grouping and nested selection,100
-O02,Visibility sets / layers,65
+O02,Visibility sets / layers,100
 O03,"Hide, isolate and restore",100
 O04,Search and entity reporting,100
 O05,Locate IDs and inspect map statistics,100

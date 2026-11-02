@@ -5,6 +5,7 @@ pub(super) fn admit(child: &Vmf) -> Result<(), String> {
     if child.extra.iter().any(|node| {
         node.key != KEY
             && node.key != map_core::color_palette::KEY
+            && node.key != map_core::visibility_profiles::KEY
             && node.key != map_core::reference_images::KEY
             && !node.key.eq_ignore_ascii_case("cordons")
     }) {
@@ -16,5 +17,7 @@ pub(super) fn admit(child: &Vmf) -> Result<(), String> {
         .map_err(|error| format!("Instance child reference image metadata: {error}"))?;
     map_core::color_palette::Metadata::parse(child)
         .map_err(|error| format!("Instance child color palette metadata: {error}"))?;
+    map_core::visibility_profiles::Metadata::parse(child)
+        .map_err(|error| format!("Instance child visibility profile metadata: {error}"))?;
     Ok(())
 }

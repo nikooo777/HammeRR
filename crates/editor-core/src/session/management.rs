@@ -72,17 +72,19 @@ impl ObjectFilter {
                     .iter()
                     .any(|material| contains(material, &self.material))
             })
-            && contains(
-                &format!(
-                    "{} {} {} {} {}",
-                    report.id,
-                    report.kind,
-                    report.classname,
-                    report.targetname,
-                    report.materials.join(" ")
-                ),
-                &self.query,
-            )
+            && self.query.as_ref().is_none_or(|_| {
+                contains(
+                    &format!(
+                        "{} {} {} {} {}",
+                        report.id,
+                        report.kind,
+                        report.classname,
+                        report.targetname,
+                        report.materials.join(" ")
+                    ),
+                    &self.query,
+                )
+            })
             && self.within.is_none_or(|[lo, hi]| {
                 report.bounds.is_some_and(|[a, b]| {
                     DVec3::from_array(a).cmple(DVec3::from_array(hi)).all()

@@ -407,7 +407,7 @@ impl Session {
     }
 
     fn detail_suppression_reason(&self) -> Option<&'static str> {
-        if self.working_region.options.filter.is_some() {
+        if self.working_region_query_active() {
             return Some(
                 "Clear the working-region query filter to show compiled details; final native props have no authored object identity",
             );

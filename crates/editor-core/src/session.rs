@@ -125,6 +125,8 @@ pub mod terrain_triangles;
 pub mod terrain_vertices;
 pub mod transform_pivot;
 mod uv_variation;
+pub mod visibility_categories;
+pub mod visibility_profiles;
 pub mod volume;
 pub mod working_region;
 pub use clipping::ClipPreview;

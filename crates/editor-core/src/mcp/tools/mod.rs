@@ -35,6 +35,7 @@ mod particles;
 mod partitions;
 mod pivot_preferences;
 mod placement;
+mod visibility_rules;
 
 mod preview_preferences;
 mod prop_leaf_bounds;

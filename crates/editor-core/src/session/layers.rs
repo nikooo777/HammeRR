@@ -64,7 +64,7 @@ impl Session {
         member_offset: usize,
     ) -> Value {
         let draft=self.layers.draft.as_ref().map(|draft|json!({"token":draft.token,"version":draft.version,"id":draft.edit.id,"name":draft.edit.name,"color":draft.edit.color,"parent":draft.edit.parent,"members":objects(&draft.edit.members),"delete":draft.edit.delete,"error":draft.error,"valid":draft.error.is_none()&&draft.generation==self.document_generation&&draft.revision==self.document.revision()}));
-        let mut result = json!({"snapshot":self.layer_stamp(),"draft":draft,"limits":{"layers":layers::MAX_LAYERS,"depth":layers::MAX_DEPTH,"links":layers::MAX_LINKS,"edit_members":layers::MAX_EDIT_MEMBERS,"name_characters":layers::MAX_NAME_CHARS},"visibility_policy":"Hide/show uses normal map visibility and compiler omission. Owned-brush hits select or hide their whole entity. Separate editor-only layer filters and automatic categories are unavailable."});
+        let mut result = json!({"snapshot":self.layer_stamp(),"draft":draft,"limits":{"layers":layers::MAX_LAYERS,"depth":layers::MAX_DEPTH,"links":layers::MAX_LINKS,"edit_members":layers::MAX_EDIT_MEMBERS,"name_characters":layers::MAX_NAME_CHARS},"visibility_policy":"Layer Hide/show uses saved map visibility and compiler omission. Owned-brush hits select or hide their whole entity. Automatic categories and visibility exclusion rules are separate editor-only filters; they preserve map source, history and builds."});
         match Graph::read(&self.document) {
             Err(error) => {
                 result["error"] = json!(error.to_string());

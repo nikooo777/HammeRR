@@ -29,6 +29,23 @@ Cancel discards pending changes.
 Layer visibility is saved in the map.
 [Temporary editor visibility](selection.md#temporary-editor-visibility) is separate.
 
+## Automatic categories and saved rules
+
+Use [Working region](working-region.md) for automatic object-type and exact
+entity-class categories, custom exclusions, and map-local rule profiles.
+
+1. Open **View → Working region…**.
+2. Choose **Categories and exclusions**, find a category, then click
+   **Exclude category**. This affects editor display and picking immediately.
+3. Choose **Saved rule profiles** to save the applied inclusion filter and
+   exclusions with **Save applied as profile**.
+4. Use **Clear working region** to restore otherwise-visible objects.
+
+Categories follow authored map content; they do not change named-layer
+membership. Saved profiles store rules, not copies of member objects.
+Profile metadata is saved in the map; applying it does not change compilation
+or saved hidden state.
+
 ## Limits
 
 - 2048 layers, 64 nesting levels and 32768 distinct memberships.

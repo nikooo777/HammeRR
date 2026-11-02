@@ -2,6 +2,10 @@ import { Theme } from "theme.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "widgets.slint";
 import { FieldRow } from "kit.slint";
 
+export struct VisibilityCategoryRow { id: string, label: string, detail: string, excluded: bool }
+export struct VisibilityExclusionRow { index: int, summary: string }
+export struct VisibilityProfileRow { name: string, detail: string }
+
 component BoundsFields inherits VerticalLayout {
     in property <string> label-prefix;
     in property <bool> fields-enabled: true;
@@ -71,10 +75,38 @@ export component WorkingRegionWindow inherits Window {
     in property <string> summary;
     in property <string> effective-box;
     in property <string> message;
+    in-out property <int> section;
+    in-out property <string> category-query;
+    in property <[VisibilityCategoryRow]> categories;
+    in property <string> category-summary;
+    in property <string> category-message;
+    in property <bool> categories-ready;
+    in property <bool> category-previous;
+    in property <bool> category-next;
+    in property <[VisibilityExclusionRow]> exclusions;
+    in property <string> exclusion-summary;
+    in property <[VisibilityProfileRow]> profiles;
+    in property <bool> profiles-ready;
+    in property <string> profile-message;
+    in property <string> profile-summary;
+    in-out property <string> selected-profile;
+    in property <string> selected-profile-detail;
+    in-out property <string> profile-name;
     callback use-bounds();
     callback apply();
     callback clear();
     callback cancel();
+    callback category-query-changed();
+    callback category-page(int);
+    callback category-exclusion(string, bool);
+    callback exclude-matches();
+    callback remove-exclusion(int);
+    callback choose-profile(string);
+    callback save-profile(bool);
+    callback rename-profile();
+    callback delete-profile();
+    callback apply-profile();
+    callback refresh-rules();
     forward-focus: keys;
     keys := FocusScope {
         width: parent.width; height: parent.height;
@@ -84,12 +116,17 @@ export component WorkingRegionWindow inherits Window {
             spacing: Theme.space-lg;
             Text { text: "Working region visibility"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: "Active filters combine with AND. Matching objects stay whole; hidden objects stay hidden."; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: "Box, distance and inclusion filters combine with AND. Matches to any exclusion stay hidden. Objects stay whole."; wrap: word-wrap; color: Theme.text-muted; }
+            ComboBox {
+                model: ["Box and filters", "Categories and exclusions", "Saved rule profiles"];
+                current-index <=> root.section;
+                accessible-label: "Working region section";
+            }
             ScrollView {
                 content-width: self.width;
                 horizontal-scrollbar-policy: always-off;
                 vertical-stretch: 1;
-                VerticalLayout {
+                if root.section == 0: VerticalLayout {
                     padding-right: Theme.space-xl;
                     spacing: Theme.space-lg;
                     Text { text: "Box · world units"; color: Theme.text; font-weight: 600; }
@@ -146,9 +183,84 @@ export component WorkingRegionWindow inherits Window {
                         min-x <=> root.filter-min-x; min-y <=> root.filter-min-y; min-z <=> root.filter-min-z;
                         max-x <=> root.filter-max-x; max-y <=> root.filter-max-y; max-z <=> root.filter-max-z;
                     }
+                    Button { text: "Exclude these matches"; enabled: root.filter-enabled; clicked => { root.exclude-matches(); } }
+                    Text { text: "Exclude these matches immediately adds this query to the exclusions and clears the inclusion filter."; wrap: word-wrap; color: Theme.text-muted; }
                     Text { text: "Changes affect editor display and picking. Saved visibility, selection, Undo history and compilation stay unchanged."; wrap: word-wrap; color: Theme.text-muted; }
                 }
+                if root.section == 1: VerticalLayout {
+                    padding-right: Theme.space-xl;
+                    spacing: Theme.space-lg;
+                    Text { text: "Automatic categories"; color: Theme.text; font-weight: 600; }
+                    Text { text: "Categories follow the map's object types and exact entity classes. Counts include saved-hidden owners. Category buttons apply immediately."; wrap: word-wrap; color: Theme.text-muted; }
+                    LineEdit { text <=> root.category-query; placeholder-text: "Find categories by type or class…"; accessible-label: "Find visibility categories"; edited => { root.category-query-changed(); } }
+                    Text { text: root.category-message; wrap: word-wrap; color: Theme.warning; }
+                    Text { text: root.category-summary; wrap: word-wrap; color: Theme.text-muted; }
+                    for category in root.categories: VerticalLayout {
+                        spacing: Theme.space-xs;
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Text { text: category.label; color: Theme.text; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; }
+                            Button { text: category.excluded ? "Remove category exclusion" : "Exclude category"; enabled: root.categories-ready; clicked => { root.category-exclusion(category.id, !category.excluded); } }
+                        }
+                        Text { text: category.detail; wrap: word-wrap; color: Theme.text-faint; }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Previous"; enabled: root.categories-ready && root.category-previous; clicked => { root.category-page(-1); } }
+                        Button { text: "Next"; enabled: root.categories-ready && root.category-next; clicked => { root.category-page(1); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button { text: "Refresh rules"; clicked => { root.refresh-rules(); } }
+                    }
+                    Rectangle { height: 1px; background: Theme.border; }
+                    Text { text: "Active exclusions"; color: Theme.text; font-weight: 600; }
+                    Text { text: root.exclusion-summary; wrap: word-wrap; color: Theme.text-muted; }
+                    for exclusion in root.exclusions: VerticalLayout {
+                        spacing: Theme.space;
+                        Text { text: exclusion.summary; wrap: word-wrap; color: Theme.text; }
+                        Button { text: "Remove exclusion"; clicked => { root.remove-exclusion(exclusion.index); } }
+                        Rectangle { height: 1px; background: Theme.border; }
+                    }
+                    Text { text: "Removing an exclusion applies immediately. Other overlapping rules, spatial filters and hidden state can still exclude its objects. Add custom exclusions from Box and filters."; wrap: word-wrap; color: Theme.text-muted; }
+                }
+                if root.section == 2: VerticalLayout {
+                    padding-right: Theme.space-xl;
+                    spacing: Theme.space-lg;
+                    Text { text: "Saved rule profiles"; color: Theme.text; font-weight: 600; }
+                    Text { text: "Profiles store the applied inclusion filter and exclusions in this map. Save, replace, rename and delete are undoable map edits. Apply selected profile changes rules immediately and keeps spatial settings."; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: root.profile-message; wrap: word-wrap; color: Theme.warning; }
+                    Text { text: root.profile-summary; wrap: word-wrap; color: Theme.text-muted; }
+                    for profile in root.profiles: Rectangle {
+                        background: root.selected-profile == profile.name ? Theme.selection : Theme.panel;
+                        height: profile-row.preferred-height;
+                        profile-row := VerticalLayout {
+                            padding: Theme.space;
+                            spacing: Theme.space-xs;
+                            Button { text: profile.name; enabled: root.profiles-ready; clicked => { root.choose-profile(profile.name); } }
+                            Text { text: profile.detail; color: Theme.text-muted; wrap: word-wrap; }
+                        }
+                    }
+                    if root.selected-profile != "": Text { text: root.selected-profile-detail; wrap: word-wrap; color: Theme.text-muted; }
+                    FieldRow {
+                        label: "Profile name"; inset: false;
+                        LineEdit { text <=> root.profile-name; placeholder-text: "Name for a new or renamed profile"; accessible-label: "Visibility profile name"; }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Save applied as profile"; enabled: root.profiles-ready; clicked => { root.save-profile(false); } }
+                        Button { text: "Apply selected profile"; enabled: root.profiles-ready && root.selected-profile != ""; clicked => { root.apply-profile(); } }
+                    }
+                    Button { text: "Replace selected profile"; enabled: root.profiles-ready && root.selected-profile != ""; clicked => { root.save-profile(true); } }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Rename profile"; enabled: root.profiles-ready && root.selected-profile != ""; clicked => { root.rename-profile(); } }
+                        Button { text: "Delete profile"; enabled: root.profiles-ready && root.selected-profile != ""; clicked => { root.delete-profile(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button { text: "Refresh rules"; clicked => { root.refresh-rules(); } }
+                    }
+                    Text { text: "Apply field changes before saving or replacing a profile. Clear working region removes active filters and keeps saved profiles."; wrap: word-wrap; color: Theme.text-muted; }
+                }
             }
+            Text { text: "Apply updates box, distance and inclusion. Other action buttons take effect immediately; Cancel closes this panel."; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
                 spacing: Theme.space;

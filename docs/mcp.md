@@ -190,9 +190,10 @@ Point lights use ordinary entity markers. Their marker is not an illumination pr
    inclusion reasons and bounds sources. Counts cover all display filters.
 
 `options` accepts `draw_distance` (a positive finite distance, or `null` to
-disable), `follow_camera` (default `false`) and `filter` (an object-report filter,
-or `null` to disable). Omitted fields reset to their defaults when options are
-supplied. For example:
+disable), `follow_camera` (default `false`), `filter` (an object-report inclusion
+filter, or `null` to disable) and `exclusions` (up to 32 object-report filters,
+default `[]`). Omitted fields reset to their defaults when options are supplied.
+For example:
 
 ```json
 {
@@ -205,8 +206,9 @@ supplied. For example:
 }
 ```
 
-The enabled box, draw distance and query filter combine with AND for whole
-owners. Distance and query filters can operate without an enabled box.
+The enabled box, draw distance and inclusion filter combine with AND for whole
+owners; an owner must also match none of the exclusion filters. Distance and
+query filters can operate without an enabled box.
 Distance uses the closest point on each owner's bounds. `camera_anchor` is the
 perspective eye or orthographic view center; both spatial filters use it.
 `follow_camera:true` centers the enabled box's saved dimensions on the camera;
@@ -218,8 +220,8 @@ case-insensitive substring `query`, `classname`, `targetname` and `material`;
 state; `within:[[min_x,min_y,min_z],[max_x,max_y,max_z]]` tests bounds
 intersection. Every specified rule must match. Unknown display bounds stay
 visible to box/distance filters and report `unresolved_bounds`; `within` requires
-known bounds. Exclusions report `outside_working_region`, `outside_draw_distance`
-or `object_filter`. Saved Hide, editor-hidden exclusions and tool-texture
+known bounds. Exclusions report `outside_working_region`, `outside_draw_distance`,
+`object_filter` or `excluded_rule`. Saved Hide, editor-hidden exclusions and tool-texture
 filtering still apply independently.
 
 Unknown fields, fields incompatible with the action, stale snapshots and
@@ -227,6 +229,51 @@ invalid values reject the whole request. Changes affect rendering and spatial
 picking while preserving map source, selection, Undo, compile scope and owned
 geometry/overlay drafts. Active spatial gestures are cancelled. `clear` remains
 available when every object is excluded. See [Working region](working-region.md).
+
+## Visibility categories and profiles
+
+Call `get_visibility_categories` with optional `query` (default empty,
+ASCII-case-insensitive substring of ID/label, at most 256 bytes), `offset`
+(default 0) and `limit` (default 50, range 1–200). Category rows contain `id`,
+`label`, `filter`, `total` and `excluded`. Stable IDs are `kind:solid`,
+`kind:point_entity`, `kind:brush_entity` and `class:<ASCII-lowercase-class>`.
+Class filters use `kind:"entity"` and `exact_class:true`. Empty categories are
+omitted; at most 4,096 classes of 256 bytes each are admitted. Automatic
+categories classify whole root owners using the shared object-report rules.
+They are editor-only; native layers and saved Hide/Show affect compilation.
+
+Use that report's `snapshot` with these calls:
+
+| Tool | Additional fields | Effect |
+| --- | --- | --- |
+| `set_visibility_category` | `id`, `excluded` | `true` adds the canonical category exclusion; `false` removes only that exact rule. Inclusion and overlapping exclusions remain. |
+| `exclude_visibility_filter` | `filter` | Add an exclusion once and clear the inclusion filter. Every rule uses the ObjectFilter fields described above. |
+| `remove_visibility_exclusion` | `index` | Remove the exclusion at this zero-based index; other rules remain. Inspect applied rules in `get_working_region.options`. |
+
+These calls preserve box, draw distance and camera following. Removing one
+exclusion may leave owners hidden by overlapping rules or other display filters.
+They change no source, selection, Undo history or compile scope. Use
+`set_working_region` with `action:"clear"` to reset the box and all options.
+
+Call `get_visibility_profiles` with `{}` to inspect the current map's `snapshot`,
+`entries` (`name`, `rules`) and `limits`. Each `rules` object contains `filter`
+and `exclusions`. Pass its snapshot to `set_visibility_profile`:
+
+| `action` | Additional fields | Effect |
+| --- | --- | --- |
+| `save` | `name`; optional `replace` (default `false`) | Capture applied inclusion/exclusions. Existing names require `replace:true`. |
+| `rename` | `name`, `new_name` | Rename a saved profile. |
+| `delete` | `name` | Delete a saved profile. |
+| `apply` | `name` | Replace session inclusion/exclusions, preserving box, distance and camera following. |
+
+Save/Rename/Delete are undoable map metadata edits, persisted by `save_map` and
+restored on reopen. Apply changes no source or history. Profiles store rules
+only; they do not store spatial options or hidden root IDs. Limits are 64
+profiles, 64 characters/256 UTF-8 bytes per name, Unicode-lowercase name
+uniqueness/lookup and 256 KiB of encoded metadata. Each profile admits at most 32
+exclusions. Malformed/unsupported metadata reports unavailable and stays
+preserved. Unknown/incompatible fields, stale snapshots and invalid values
+reject atomically.
 
 ## Preview authored lighting
 
@@ -1065,7 +1112,7 @@ These groups locate the available operations.
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `preview_terrain_vertex_set`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_pick`, `transform_pivot_grid` |
 | [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `get_view`, `inspect_baked_lightmaps`, `inspect_baked_surfaces`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_baked_surfaces`, `set_camera`, `set_fog_preview`, `set_view` |
-| [Working region](working-region.md) | `get_editor_visibility`, `get_working_region`, `set_editor_visibility`, `set_working_region` |
+| [Working region](working-region.md) | `exclude_visibility_filter`, `get_editor_visibility`, `get_visibility_categories`, `get_visibility_profiles`, `get_working_region`, `remove_visibility_exclusion`, `set_editor_visibility`, `set_visibility_category`, `set_visibility_profile`, `set_working_region` |
 | [Prop leaf bounds](baked-prop-vertices.md) | `get_compiled_prop_leaf_bounds`, `set_compiled_prop_leaf_bounds` |
 | [Compiled visibility](visibility.md) | `frame_compiled_visibility`, `inspect_compiled_visibility`, `set_compiled_visibility_overlay` |
 

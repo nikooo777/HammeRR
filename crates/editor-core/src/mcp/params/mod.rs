@@ -39,3 +39,5 @@ mod working_region;
 pub(super) use working_region::*;
 mod visibility_rules;
 pub(super) use visibility_rules::*;
+mod workspace_preferences;
+pub(super) use workspace_preferences::*;

@@ -337,6 +337,7 @@ impl Session {
         self.configure_grid_preferences(directory.clone());
         self.configure_pivot_preferences(directory.clone());
         self.configure_preview_preferences(directory.clone());
+        self.configure_workspace_preferences(directory.clone());
         self.configure_navigation_preferences(directory.clone());
         self.configure_selection_preferences(directory.clone());
         self.configure_shortcuts(directory.clone());

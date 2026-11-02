@@ -16,6 +16,8 @@ impl Session {
         self.pivot_preferences.binding = Binding::Application(defaults.pivot);
         self.apply_startup_pivot_preferences();
         self.preview_preferences = Binding::Application(defaults.preview);
+        self.workspace_preferences.binding = Binding::Application(defaults.workspace);
+        self.apply_startup_workspace_preferences();
         self.navigation_preferences = Binding::Application(defaults.navigation);
         self.selection_preferences.binding = Binding::Application(defaults.selection);
         self.apply_startup_selection_preferences();

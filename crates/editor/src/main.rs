@@ -57,6 +57,7 @@ mod surface_group_ui;
 mod terrain_triangles_ui;
 mod terrain_ui;
 mod working_region_ui;
+mod workspace_defaults_ui;
 
 mod ui;
 mod viewport;

@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import {Button} from "widgets.slint";
+import { Button, ScrollView } from "widgets.slint";
 
 export struct PreviewDefaultRow {
     label: string,
@@ -13,7 +13,7 @@ export component PreviewDefaultsWindow inherits Window {
     preferred-width: 720px;
     preferred-height: 820px;
     min-width: 650px;
-    min-height: 780px;
+    min-height: Theme.preferences-dialog-min-height;
     in property <[PreviewDefaultRow]> rows;
     in property <string> defaults;
     in property <string> storage;
@@ -32,25 +32,34 @@ export component PreviewDefaultsWindow inherits Window {
             padding: Theme.space-xl;
             spacing: 12px;
             Text { text: "Preview defaults"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: "Choose preview and guide visibility in the viewport, then save the settings you want at startup."; color: Theme.text-muted; wrap: word-wrap; }
+            Text { text: "Choose viewport display, preview and guide settings, then save the settings you want at startup."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
+                padding-right: Theme.space-xl;
                 Text { text: "Setting"; horizontal-stretch: 1; font-weight: 600; }
                 Text { text: "Current session"; width: 125px; font-weight: 600; }
                 Text { text: "Startup defaults"; width: 125px; font-weight: 600; }
             }
-            for row in root.rows: Rectangle {
-                height: 28px;
-                HorizontalLayout {
-                    Text { text: row.label; horizontal-stretch: 1; vertical-alignment: center; }
-                    Text { text: row.current; width: 125px; vertical-alignment: center; }
-                    Text { text: row.defaults; width: 125px; vertical-alignment: center; }
+            ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding-right: Theme.space-xl;
+                    spacing: Theme.space-xs;
+                    for row in root.rows: Rectangle {
+                        height: Theme.row-height;
+                        HorizontalLayout {
+                            Text { text: row.label; color: Theme.text; horizontal-stretch: 1; vertical-alignment: center; }
+                            Text { text: row.current; color: Theme.text; width: 125px; vertical-alignment: center; }
+                            Text { text: row.defaults; color: Theme.text; width: 125px; vertical-alignment: center; }
+                        }
+                    }
+                    Text { text: root.defaults; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+                    Text { text: "These 13 settings are saved. Sky channel and exposure, fog, grid, cameras and active tools keep their own settings. Ordinary viewport changes stay temporary until Save current as defaults."; wrap: word-wrap; color: Theme.text-muted; }
                 }
             }
-            Text { text: root.defaults; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
-            Text { text: "Only these ten toggles are saved. Sky channel and exposure, fog, rendering mode, grid, cameras and active tools keep their own settings. Ordinary viewport changes stay temporary until Save current as defaults."; wrap: word-wrap; color: Theme.text-muted; }
-            Rectangle { vertical-stretch: 1; }
             Text { text: root.message; wrap: word-wrap; min-height: 34px; }
             HorizontalLayout {
                 spacing: 10px;

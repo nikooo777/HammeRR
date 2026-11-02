@@ -759,6 +759,7 @@ impl EditorServer {
             + Self::grid_preferences_tools()
             + Self::preview_preferences_tools()
             + Self::navigation_preferences_tools()
+            + Self::workspace_preferences_tools()
             + Self::pivot_preferences_tools()
             + Self::shortcut_tools()
             + Self::history_tools()

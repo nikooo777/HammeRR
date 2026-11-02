@@ -1,0 +1,107 @@
+import { Theme } from "theme.slint";
+import { Button, CheckBox, ScrollView, SpinBox } from "widgets.slint";
+import { FieldRow } from "kit.slint";
+
+export struct WorkspaceDefaultRow { label: string, current: string, defaults: string }
+
+export component WorkspaceDefaultsWindow inherits Window {
+    background: Theme.panel;
+    title: "Workspace layout - HammeRR";
+    default-font-size: Theme.font;
+    preferred-width: Theme.workspace-dialog-width;
+    preferred-height: Theme.workspace-dialog-height;
+    min-width: Theme.workspace-dialog-min-width;
+    min-height: Theme.preferences-dialog-min-height;
+    in-out property <bool> dock-visible: true;
+    in-out property <int> dock-width: 344;
+    in-out property <bool> agent-visible: true;
+    in-out property <int> agent-height: 250;
+    in-out property <bool> tool-rail-visible: true;
+    in property <[WorkspaceDefaultRow]> rows;
+    in property <string> defaults;
+    in property <string> storage;
+    in property <string> status;
+    in property <string> fit;
+    in property <string> message;
+    in property <bool> ready;
+    out property <bool> editing-size: dock-size.has-focus || agent-size.has-focus;
+    callback apply-layout();
+    callback reload-layout();
+    callback save();
+    callback apply();
+    callback reload();
+    callback reset();
+    callback cancel();
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: "Workspace layout"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
+            Text { text: "Choose panels and preferred sizes, then Apply layout. Save current as defaults stores the applied layout for future document windows."; color: Theme.text-muted; wrap: word-wrap; }
+            ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding-right: Theme.space-xl;
+                    spacing: Theme.space-lg;
+                    CheckBox { text: "Show dock"; checked <=> root.dock-visible; }
+                    FieldRow {
+                        label: "Preferred dock width"; label-width: Theme.workspace-field-label-width; inset: false;
+                        dock-size := SpinBox { minimum: 240; maximum: 640; value <=> root.dock-width; accessible-label: "Preferred dock width in logical pixels"; }
+                        Text { text: "logical pixels"; color: Theme.text-muted; vertical-alignment: center; }
+                    }
+                    CheckBox { text: "Show Agent feed"; checked <=> root.agent-visible; }
+                    FieldRow {
+                        label: "Preferred Agent height"; label-width: Theme.workspace-field-label-width; inset: false;
+                        agent-size := SpinBox { minimum: 96; maximum: 480; value <=> root.agent-height; accessible-label: "Preferred Agent height in logical pixels"; }
+                        Text { text: "logical pixels"; color: Theme.text-muted; vertical-alignment: center; }
+                    }
+                    CheckBox { text: "Show tool rail"; checked <=> root.tool-rail-visible; }
+                    Text { text: "The Agent feed lives inside the dock. Preferred sizes shrink to fit the window and leave space for the viewport and Inspector. Window placement stays under your desktop's control."; color: Theme.text-muted; wrap: word-wrap; }
+                    Text { text: root.fit; color: Theme.text-faint; wrap: word-wrap; }
+                    Rectangle { height: 1px; background: Theme.border; }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Text { text: "Setting"; color: Theme.text; font-weight: 600; horizontal-stretch: 1; }
+                        Text { text: "Applied layout"; color: Theme.text; font-weight: 600; width: Theme.workspace-summary-column-width; }
+                        Text { text: "Saved defaults"; color: Theme.text; font-weight: 600; width: Theme.workspace-summary-column-width; }
+                    }
+                    for row in root.rows: HorizontalLayout {
+                        spacing: Theme.space;
+                        min-height: Theme.row-height;
+                        Text { text: row.label; color: Theme.text-muted; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; }
+                        Text { text: row.current; color: Theme.text; width: Theme.workspace-summary-column-width; vertical-alignment: center; }
+                        Text { text: row.defaults; color: Theme.text; width: Theme.workspace-summary-column-width; vertical-alignment: center; }
+                    }
+                    Text { text: root.defaults; color: Theme.text-muted; wrap: word-wrap; }
+                    Text { text: root.storage; color: Theme.text-muted; wrap: word-wrap; }
+                    Text { text: root.status; color: Theme.warning; wrap: word-wrap; }
+                    Text { text: "Apply layout changes this window without saving. Cancel closes this panel without applying its field changes. Layout settings do not change the map, camera or Undo history."; color: Theme.text-muted; wrap: word-wrap; }
+                }
+            }
+            Text { text: root.message; color: Theme.text-muted; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Reload defaults"; clicked => { root.reload(); } }
+                Button { text: "Reset saved defaults"; clicked => { root.reset(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Save current as defaults"; enabled: root.ready; clicked => { root.save(); } }
+                Button { text: "Apply saved defaults"; enabled: root.ready; clicked => { root.apply(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Reload current layout"; clicked => { root.reload-layout(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply layout"; clicked => { root.apply-layout(); } }
+            }
+        }
+    }
+}

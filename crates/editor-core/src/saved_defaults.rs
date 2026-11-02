@@ -13,6 +13,7 @@ pub struct SavedDefaults {
     pub(crate) preview: Authority<crate::preview_preferences::Store>,
     pub(crate) navigation: Authority<crate::navigation_preferences::Store>,
     pub(crate) selection: Authority<crate::selection_preferences::Store>,
+    pub(crate) workspace: Authority<crate::workspace_preferences::Store>,
 }
 
 impl SavedDefaults {
@@ -22,7 +23,8 @@ impl SavedDefaults {
         let _ = defaults.pivot.configure(directory.clone());
         let _ = defaults.preview.configure(directory.clone());
         let _ = defaults.navigation.configure(directory.clone());
-        let _ = defaults.selection.configure(directory);
+        let _ = defaults.selection.configure(directory.clone());
+        let _ = defaults.workspace.configure(directory);
         defaults
     }
 }
@@ -104,6 +106,12 @@ store!(
     SelectionDefaults,
     "Selection defaults",
     "Saved selection defaults changed outside this session; Reload defaults before using them"
+);
+store!(
+    workspace_preferences,
+    Layout,
+    "Workspace defaults",
+    "Saved workspace defaults changed outside this session; Reload defaults before using them"
 );
 
 store!(

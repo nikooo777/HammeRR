@@ -11,6 +11,9 @@ const FORMAT_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct Preview {
+    pub surface: render::SurfaceView,
+    pub tool_textures: bool,
+    pub surface_shading: bool,
     pub selection_outlines: bool,
     pub selection_tint: bool,
     pub entity_images: bool,
@@ -23,15 +26,21 @@ pub struct Preview {
     pub sky_preview: bool,
 }
 
-fn selection_tint_default() -> bool {
+fn enabled_default() -> bool {
     true
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PreviewValues {
+    #[serde(default)]
+    surface: render::SurfaceView,
+    #[serde(default = "enabled_default")]
+    tool_textures: bool,
+    #[serde(default)]
+    surface_shading: bool,
     selection_outlines: bool,
-    #[serde(default = "selection_tint_default")]
+    #[serde(default = "enabled_default")]
     selection_tint: bool,
     entity_images: bool,
     entity_model_guides: bool,
@@ -57,6 +66,9 @@ impl<'de> Deserialize<'de> for Preview {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let values = PreviewValues::deserialize(deserializer)?;
         Ok(Self {
+            surface: values.surface,
+            tool_textures: values.tool_textures,
+            surface_shading: values.surface_shading,
             selection_outlines: values.selection_outlines,
             selection_tint: values.selection_tint,
             entity_images: values.entity_images,
@@ -80,6 +92,9 @@ impl Default for Preview {
 impl From<render::ViewOptions> for Preview {
     fn from(view: render::ViewOptions) -> Self {
         Self {
+            surface: view.surface,
+            tool_textures: view.tool_textures,
+            surface_shading: view.surface_shading,
             selection_outlines: view.selection_outlines,
             selection_tint: view.selection_tint,
             entity_images: view.entity_images,
@@ -97,6 +112,9 @@ impl From<render::ViewOptions> for Preview {
 impl Preview {
     pub fn update(self) -> crate::session::ViewUpdate<'static> {
         crate::session::ViewUpdate {
+            surface: Some(self.surface.name()),
+            tool_textures: Some(self.tool_textures),
+            surface_shading: Some(self.surface_shading),
             selection_outlines: Some(self.selection_outlines),
             selection_tint: Some(self.selection_tint),
             entity_images: Some(self.entity_images),

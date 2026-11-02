@@ -13,6 +13,7 @@ export { GridDefaultsWindow } from "grid-defaults.slint";
 export { PivotDefaultsWindow } from "pivot-defaults.slint";
 export { NavigationDefaultsWindow } from "navigation-defaults.slint";
 export { PreviewDefaultsWindow, PreviewDefaultRow } from "preview-defaults.slint";
+export { WorkspaceDefaultsWindow, WorkspaceDefaultRow } from "workspace-defaults.slint";
 export { SelectionDefaultsWindow, SelectionDefaultRow, SelectionProfileRow } from "selection-defaults.slint";
 export { ShortcutsWindow, ShortcutRow } from "shortcuts.slint";
 export { WorkingRegionWindow, VisibilityCategoryRow, VisibilityExclusionRow, VisibilityProfileRow } from "working-region.slint";
@@ -2302,6 +2303,16 @@ export component AppWindow inherits Window {
     in property <bool> navigation-defaults-error;
     callback preview-defaults();
     in property <bool> preview-defaults-error;
+    callback workspace-defaults();
+    in property <bool> workspace-defaults-error;
+    in property <bool> workspace-dock-visible: true;
+    in property <int> workspace-dock-width: 344;
+    in property <bool> workspace-agent-visible: true;
+    in property <int> workspace-agent-height: 250;
+    in property <bool> workspace-tool-rail-visible: true;
+    out property <length> workspace-dock-actual-width: root.workspace-dock-visible
+        ? min(root.workspace-dock-width * 1px, max(0px, workspace-area.width - (root.workspace-tool-rail-visible ? Theme.workspace-tool-rail-width : 0px) - Theme.workspace-viewport-reserve)) : 0px;
+    out property <length> workspace-agent-actual-height: root.workspace-dock-visible && root.workspace-agent-visible ? agent-feed.height : 0px;
     callback keyboard-shortcuts();
     in property <bool> shortcuts-error;
     in property <string> frame-shortcut: "F";
@@ -2421,7 +2432,7 @@ export component AppWindow inherits Window {
     property <bool> overlays-open;
     in property <[OutlinerRow]> outliner-rows;
     in-out property <string> outliner-filter;
-    out property <bool> outliner-visible: root.dock-tab == 2;
+    out property <bool> outliner-visible: root.workspace-dock-visible && root.dock-tab == 2;
     callback outliner-refresh();
     callback outliner-toggle(string);
     callback outliner-pick(string);
@@ -2457,6 +2468,7 @@ export component AppWindow inherits Window {
         { id: "pivot-defaults", title: "Transform pivot defaults…", group: "Edit › Preferences", enabled: true },
         { id: "navigation-defaults", title: "Navigation defaults…", group: "Edit › Preferences", enabled: true },
         { id: "preview-defaults", title: "Preview defaults…", group: "Edit › Preferences", enabled: true },
+        { id: "workspace-defaults", title: "Workspace layout…", group: "View", enabled: true },
         { id: "selection-defaults", title: "Selection defaults…", group: "Edit › Preferences", enabled: true },
         { id: "keyboard-shortcuts", title: "Keyboard shortcuts…", group: "Edit › Preferences", enabled: true },
         { id: "perspective", title: "Perspective view", group: "View › Projection", enabled: true },
@@ -2623,6 +2635,7 @@ export component AppWindow inherits Window {
         else if id == "pivot-defaults" { root.pivot-defaults(); }
         else if id == "navigation-defaults" { root.navigation-defaults(); }
         else if id == "preview-defaults" { root.preview-defaults(); }
+        else if id == "workspace-defaults" { root.workspace-defaults(); }
         else if id == "selection-defaults" { root.selection-defaults(); }
         else if id == "keyboard-shortcuts" { root.keyboard-shortcuts(); }
         else if id == "perspective" { root.projection-changed(0); }
@@ -2759,6 +2772,8 @@ export component AppWindow inherits Window {
         }
         Menu {
             title: "View";
+            MenuItem { title: root.workspace-defaults-error ? "Workspace layout… (needs attention)" : "Workspace layout…"; activated => { root.workspace-defaults(); } }
+            MenuSeparator { }
             Menu {
                 title: "Projection";
                 MenuItem { title: "Perspective"; checked: root.projection-index == 0; activated => { root.projection-changed(0); } }
@@ -3125,11 +3140,11 @@ export component AppWindow inherits Window {
                 }
             }
 
-            HorizontalLayout {
+            workspace-area := HorizontalLayout {
                 vertical-stretch: 1;
 
-                Rectangle {
-                    width: 44px;
+                if root.workspace-tool-rail-visible: Rectangle {
+                    width: Theme.workspace-tool-rail-width;
                     background: Theme.bar;
                     Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
                     VerticalLayout {
@@ -3160,6 +3175,7 @@ export component AppWindow inherits Window {
 
                 viewport := Rectangle {
                     horizontal-stretch: 1;
+                    min-width: 0px;
                     background: Theme.canvas;
 
                     Image {
@@ -3393,7 +3409,10 @@ export component AppWindow inherits Window {
                 }
 
                 Rectangle {
-                    width: 344px;
+                    visible: root.workspace-dock-visible;
+                    width: root.workspace-dock-actual-width;
+                    min-height: 0px;
+                    clip: true;
                     background: Theme.panel;
                     Rectangle { x: 0; width: 1px; background: Theme.border; }
                     VerticalLayout {
@@ -3412,6 +3431,8 @@ export component AppWindow inherits Window {
 
                         if root.dock-tab == 0: ScrollView {
                             vertical-stretch: 1;
+                            min-height: Theme.workspace-inspector-reserve;
+                            preferred-height: Theme.workspace-inspector-reserve;
                             VerticalLayout {
                                 alignment: start;
                                 padding-bottom: Theme.space-lg;
@@ -3783,6 +3804,8 @@ export component AppWindow inherits Window {
 
                         if root.dock-tab == 2: VerticalLayout {
                             vertical-stretch: 1;
+                            min-height: Theme.workspace-inspector-reserve;
+                            preferred-height: Theme.workspace-inspector-reserve;
                             padding-top: Theme.space;
                             spacing: Theme.space-xs;
                             HorizontalLayout {
@@ -3853,6 +3876,8 @@ export component AppWindow inherits Window {
 
                         if root.dock-tab == 1: ScrollView {
                             vertical-stretch: 1;
+                            min-height: Theme.workspace-inspector-reserve;
+                            preferred-height: Theme.workspace-inspector-reserve;
                             VerticalLayout {
                                 alignment: start;
                                 padding: Theme.space-lg;
@@ -3929,8 +3954,13 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        Rectangle {
-                            height: 250px;
+                        agent-feed := Rectangle {
+                            visible: root.workspace-agent-visible;
+                            min-height: 0px;
+                            max-height: root.workspace-agent-visible ? root.workspace-agent-height * 1px : 0px;
+                            preferred-height: root.workspace-agent-visible ? root.workspace-agent-height * 1px : 0px;
+                            vertical-stretch: 0;
+                            clip: true;
                             background: Theme.bar;
                             Rectangle { y: 0; height: 1px; background: Theme.border; }
                             VerticalLayout {

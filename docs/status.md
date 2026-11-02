@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 79.0% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 79.3% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -22,6 +22,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | --- | --- | --- |
 | [MCP](mcp.md) | Live desktop and private headless sessions; shared editing, rendering and builds. Explicit empty edit targets and unknown compile/run argument names reject. | Select a document explicitly when two maps are open. |
 | [Documents](open-documents.md) | Two map windows, silent display, reviewed Quit all including hidden maps, named Close blockers and per-map Save results. | Tabs and workspace restoration. |
+| [Workspace layout](workspace-layout.md) | Save dock, Agent feed and tool-rail visibility and preferred sizes; save 13 [preview defaults](preview-defaults.md), including surface view. Shared live changes and explicit Save/Apply/Reload/Reset. | Preferred sizes fit the window; window placement stays with the operating system. |
 | [VMF and recovery](map-tools.md) | Preserved imported fields, checked Save, recovery snapshots and map checks. | Other-editor round trips; general automatic repairs. |
 | [History](history.md) | Shared Undo/Redo and change summaries. | Persistent history and full property diffs. |
 | [External map comparison](map-comparison.md) | Bounded authored world-brush/whole-entity comparison by stored IDs, categorized pages and complete filtered current selection/framing. | No merge, map-settings comparison, recursive-instance expansion or geometric-equivalence claim. |

@@ -49,3 +49,4 @@ mod transform_pivot;
 mod view;
 
 mod working_region;
+mod workspace_preferences;

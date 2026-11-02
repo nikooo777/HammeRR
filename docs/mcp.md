@@ -55,6 +55,73 @@ Use `--game <gameinfo.txt>` and `--fgd <file.fgd>` for other content.
 The standalone server uses stdio. It does not open a window or HTTP endpoint.
 A render request starts graphics when needed.
 
+## Workspace layout
+
+1. Call `get_workspace_preferences` with `{}` to inspect current/saved/factory
+   layouts, storage readiness/errors, `layout_serial`, `layout_snapshot` and
+   the saved-default action `snapshot`.
+2. Call `set_workspace_layout` with `snapshot` set to `layout_snapshot` and a
+   complete `layout` object:
+
+   | Field | Values | Factory |
+   | --- | --- | --- |
+   | `dock_visible` | Boolean | `true` |
+   | `dock_width` | Integer, 240–640 logical pixels | `344` |
+   | `agent_visible` | Boolean | `true` |
+   | `agent_height` | Integer, 96–480 logical pixels | `250` |
+   | `tool_rail_visible` | Boolean | `true` |
+
+3. To manage saved defaults, pass the report's ordinary `snapshot` to
+   `set_workspace_preferences` with `action`:
+
+   | `action` | Effect |
+   | --- | --- |
+   | `save` | Save the applied current layout for future sessions. |
+   | `apply` | Apply saved defaults to the current session without writing. |
+   | `reload` | Read storage without applying it. |
+   | `reset` | Write factory defaults without applying them. |
+
+All layout fields are required. Sizes are preferences that fit the actual
+window; hiding the dock also hides its Agent feed. Current layout changes
+remain available when saved-default storage is unavailable. They preserve the
+map, selection, Undo and camera, and cancel captured viewport gestures.
+Headless sessions store the same layout state for an attached native UI.
+Ordinary changes never save automatically. Unknown fields, invalid values and
+stale snapshots reject; storage failures stay explicit. Inspect `ready`, errors
+and `write_committed` after saved-default actions. See [Workspace layout](workspace-layout.md).
+
+## Preview defaults
+
+Call `get_preview_defaults` to inspect the current, saved and factory values
+for these 13 settings:
+
+| Setting | Values | Factory |
+| --- | --- | --- |
+| `selection_outlines` | Boolean | `true` |
+| `selection_tint` | Boolean | `true` |
+| `selection_bounds` | Boolean | `false` |
+| `entity_images` | Boolean | `true` |
+| `entity_model_guides` | Boolean | `true` |
+| `authored_models` | Boolean | `true` |
+| `sprite_resources` | Boolean | `true` |
+| `entity_helpers` | Boolean | `true` |
+| `rope_preview` | Boolean | `false` |
+| `sky_preview` | Boolean | `false` |
+| `surface` | `textured`, `flat`, `wireframe`, `lightmap_density`, `smoothing_groups` | `textured` |
+| `tool_textures` | Boolean | `true` |
+| `surface_shading` | Boolean | `false` |
+
+Use `set_view` to change current values. Inspect `get_preview_defaults` again,
+then pass its `snapshot` to `set_preview_defaults` with `action:"save"`, `"apply"`,
+`"reload"` or `"reset"`. Only Save/Reset write; Reload/Reset do not apply values.
+Apply requires finished previews, viewport tools and owned work. Ordinary viewport
+changes and temporary `render_view` overrides never save automatically.
+
+Older files that omit the new `surface`, `tool_textures` or `surface_shading`
+fields use their factory values. Invalid or explicit `null` values reject and
+the file stays preserved. Camera, fog and lighting/sky exposure remain separate.
+See [Preview defaults](preview-defaults.md).
+
 ## Saved colors
 
 1. Call `get_color_palette` with `source:"user"` (the default) or `source:"map"`.
@@ -1104,6 +1171,7 @@ These groups locate the available operations.
 | [Face partitions](partitions.md) | `frame_component_partitions`, `get_saved_component_partitions`, `pick_component_partitions`, `place_component_partition_texture`, `preview_component_partition`, `preview_partition_extrusion`, `raise_component_partition`, `remove_saved_component_partitions`, `resume_component_partitions`, `select_component_partitions`, `store_component_partition`, `update_component_partition_cut`, `update_component_partition_material`, `update_component_partition_texture` |
 | [Surface placement](placement.md) | `apply_repeat_array`, `cancel_repeat_array`, `get_repeat_array`, `preview_repeat_array` |
 | [Preview defaults](preview-defaults.md) | `get_preview_defaults`, `set_preview_defaults` |
+| [Workspace layout](workspace-layout.md) | `get_workspace_preferences`, `set_workspace_layout`, `set_workspace_preferences` |
 | [Recovery](map-tools.md) | `create_recovery_snapshot`, `delete_recovery_snapshot`, `get_recovery`, `reload_recovery_settings`, `restore_recovery_snapshot`, `set_recovery_settings` |
 | [Selection](selection.md) | `begin_paint_selection`, `begin_transform_drag`, `cancel_area_selection`, `cancel_paint_selection`, `cancel_transform_preview`, `cancel_volume_selection`, `commit_area_selection`, `commit_paint_selection`, `commit_transform_preview`, `commit_volume_selection`, `delete_objects`, `duplicate_objects`, `frame_selection`, `frame_volume_selection`, `get_area_selection`, `get_object_selection_mode`, `get_paint_selection`, `get_selection`, `get_selection_defaults`, `get_selection_filters`, `get_selection_profiles`, `get_transform_handles`, `get_volume_selection`, `move_objects`, `preview_snap_to_grid`, `select`, `select_area`, `select_solids`, `select_volume`, `set_area_selection_options`, `set_object_selection_mode`, `set_paint_tool`, `set_selection_defaults`, `set_selection_filters`, `set_selection_profile`, `set_selection_mode`, `set_transform_tool`, `transform_objects`, `update_paint_selection`, `update_transform_drag` |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | `execute_editor_command`, `find_editor_commands`, `get_keyboard_shortcuts`, `set_keyboard_shortcuts` |

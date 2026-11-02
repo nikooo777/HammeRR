@@ -18,6 +18,7 @@ See [Status](status.md) for supported features and limits.
 - [Keyboard shortcuts](keyboard-shortcuts.md)
 - [Navigation defaults](navigation-defaults.md)
 - [Preview defaults](preview-defaults.md)
+- [Workspace layout](workspace-layout.md)
 
 ## Geometry
 

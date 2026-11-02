@@ -129,6 +129,7 @@ pub mod visibility_categories;
 pub mod visibility_profiles;
 pub mod volume;
 pub mod working_region;
+pub mod workspace_preferences;
 pub use clipping::ClipPreview;
 
 pub use management::{ObjectFilter, ObjectReport, PropertyChange, PropertyDraft, PropertyTarget};
@@ -359,6 +360,7 @@ pub struct Session {
     grid_preferences: grid_preferences::State,
     pivot_preferences: pivot_preferences::State,
     preview_preferences: preview_preferences::State,
+    workspace_preferences: workspace_preferences::State,
     navigation_preferences: navigation_preferences::State,
     navigation_current: crate::navigation_preferences::Navigation,
     navigation_local_serial: u64,
@@ -690,6 +692,7 @@ impl Session {
             grid_preferences: grid_preferences::State::default(),
             pivot_preferences: pivot_preferences::State::default(),
             preview_preferences: preview_preferences::State::default(),
+            workspace_preferences: workspace_preferences::State::default(),
             navigation_preferences: navigation_preferences::State::default(),
             navigation_current: Default::default(),
             navigation_local_serial: 0,

@@ -62,6 +62,7 @@ struct Ui {
     seen_scene: render::SceneKey,
     seen_camera: u64,
     seen_view: u64,
+    seen_workspace_layout: u64,
     seen_selection_filters: u64,
     seen_favorites: u64,
     seen_navigation: (u64, u64),
@@ -143,6 +144,7 @@ struct Ui {
     grid_defaults: Option<grid_defaults_ui::Controller>,
     pivot_defaults: Option<pivot_defaults_ui::Controller>,
     preview_defaults: Option<preview_defaults_ui::Controller>,
+    workspace_defaults: Option<workspace_defaults_ui::Controller>,
     selection_defaults: Option<selection_defaults_ui::Controller>,
     navigation_defaults: Option<navigation_defaults_ui::Controller>,
     shortcuts: Option<shortcuts_ui::Controller>,
@@ -192,6 +194,7 @@ impl Ui {
             seen_scene: render::ViewOptions::default().scene_key(0),
             seen_camera: 0,
             seen_view: 0,
+            seen_workspace_layout: u64::MAX,
             seen_selection_filters: u64::MAX,
             seen_favorites: 0,
             seen_navigation: (u64::MAX, u64::MAX),
@@ -273,6 +276,7 @@ impl Ui {
             grid_defaults: None,
             pivot_defaults: None,
             preview_defaults: None,
+            workspace_defaults: None,
             selection_defaults: None,
             navigation_defaults: None,
             shortcuts: None,
@@ -703,6 +707,7 @@ fn create_document_window(
     app.set_stats(ctx.adapter.get_info().name.into());
     {
         let session = lock(document.session());
+        workspace_defaults_ui::adopt_layout(&app, session.workspace_layout());
         let message = match (&open_message, session.game_error()) {
             (Some(result), _) => result.clone().unwrap_or_else(|e| e),
             (None, Some(error)) => error.to_owned(),
@@ -867,6 +872,27 @@ fn create_document_window(
             .show(&lock(&ui.session))
         {
             app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_workspace_defaults, |app| {
+        let app = app.unwrap();
+        let mut ui = ui.borrow_mut();
+        if ui.workspace_defaults.is_none() {
+            match workspace_defaults_ui::Controller::new_with_access(&app, &ui.document_access()) {
+                Ok(controller) => ui.workspace_defaults = Some(controller),
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        if let Err(error) = ui
+            .workspace_defaults
+            .as_ref()
+            .unwrap()
+            .show(&app, &lock(&ui.session))
+        {
+            app.set_message(error.to_string().into());
         }
     });
     root_callback!(app, ui, on_selection_defaults, |app| {
@@ -2946,9 +2972,15 @@ fn create_document_window(
                 let fly_speed = lock(&ui.session).fly_speed();
                 ui.viewport.update(dt, fly_speed);
                 let mut panel_dirty = false;
+                let mut workspace_layout = None;
                 {
                     let mut session = lock(&ui.session);
                     session.poll_game();
+                    let layout_serial = session.workspace_layout_serial();
+                    if layout_serial != ui.seen_workspace_layout {
+                        ui.seen_workspace_layout = layout_serial;
+                        workspace_layout = Some(session.workspace_layout());
+                    }
                     let navigation_serial = session.navigation_preferences_serial();
                     if navigation_serial != ui.seen_navigation {
                         ui.seen_navigation = navigation_serial;
@@ -3409,6 +3441,10 @@ fn create_document_window(
                     }
                 }
 
+                if let Some(layout) = workspace_layout {
+                    workspace_defaults_ui::adopt_layout(&app, layout);
+                }
+
                 if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
                     ui.last_log_refresh = now;
                     if let Some(controller) = &ui.atlas
@@ -3422,6 +3458,13 @@ fn create_document_window(
                     app.set_preview_defaults_error(
                         lock(&ui.session).preview_preferences_error().is_some(),
                     );
+                    {
+                        let session = lock(&ui.session);
+                        let state = session.workspace_preferences_state();
+                        app.set_workspace_defaults_error(
+                            !state["error"].is_null() || !state["storage_error"].is_null(),
+                        );
+                    }
                     app.set_selection_defaults_error(
                         lock(&ui.session).selection_preferences_error().is_some(),
                     );
@@ -3536,6 +3579,11 @@ fn create_document_window(
                         && controller.window.window().is_visible()
                     {
                         controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.workspace_defaults
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&app, &lock(&ui.session));
                     }
                     if let Some(controller) = &ui.selection_defaults
                         && controller.window.window().is_visible()

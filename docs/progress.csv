@@ -101,7 +101,7 @@ C13,Build recipes and quality settings,70
 C14,Build progress and cancellation,100
 W01,"Autosave, backup and recovery",100
 W02,Multiple open documents,55
-W03,Persistent preferences,70
+W03,Persistent preferences,100
 W04,Configurable shortcuts (++),55
 W05,Game/content profiles,20
 W06,Recent files and project context,55

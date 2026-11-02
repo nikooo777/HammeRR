@@ -22,10 +22,25 @@ fn enabled(value: &Value) -> slint::SharedString {
     }
 }
 
+fn surface(value: &Value) -> slint::SharedString {
+    match value.as_str() {
+        Some("textured") => "Textured",
+        Some("flat") => "Flat shading",
+        Some("wireframe") => "Wireframe",
+        Some("lightmap_density") => "Lightmap density",
+        Some("smoothing_groups") => "Smoothing groups",
+        _ => "Unavailable",
+    }
+    .into()
+}
+
 fn refresh(window: &PreviewDefaultsWindow, session: &Session, snapshot: &RefCell<String>) {
     let state = session.preview_preferences_state();
     *snapshot.borrow_mut() = state["snapshot"].as_str().unwrap().into();
     let rows: Vec<_> = [
+        ("surface", "Surface view"),
+        ("tool_textures", "Tool textures"),
+        ("surface_shading", "Directional surface shading"),
         ("selection_outlines", "Selection outlines"),
         ("selection_tint", "Selection tint"),
         ("entity_images", "Entity images"),
@@ -40,8 +55,16 @@ fn refresh(window: &PreviewDefaultsWindow, session: &Session, snapshot: &RefCell
     .into_iter()
     .map(|(key, label)| PreviewDefaultRow {
         label: label.into(),
-        current: enabled(&state["current"][key]),
-        defaults: enabled(&state["defaults"][key]),
+        current: if key == "surface" {
+            surface(&state["current"][key])
+        } else {
+            enabled(&state["current"][key])
+        },
+        defaults: if key == "surface" {
+            surface(&state["defaults"][key])
+        } else {
+            enabled(&state["defaults"][key])
+        },
     })
     .collect();
     window.set_rows(Rc::new(VecModel::from(rows)).into());

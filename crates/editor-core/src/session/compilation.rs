@@ -699,6 +699,18 @@ pub struct BuildSettingsUpdate<'a> {
 }
 
 impl Session {
+    pub(super) fn adopt_profile_build_settings(&mut self, options: compiler::Options) {
+        if let Some(job) = &mut self.compilation.job {
+            job.guarded = true;
+        }
+        if options.brush_texture_shadows != self.compilation.options.brush_texture_shadows {
+            self.cubemap_bindings.texture_shadows_changed();
+        }
+        self.compilation.options = options;
+        self.compilation.recipes.set_active(None);
+        self.compilation.recipes.changed_local();
+    }
+
     pub(super) fn instance_dependency_issue(
         &self,
         dependencies: Option<&compiler::instances::DependencyGuard>,

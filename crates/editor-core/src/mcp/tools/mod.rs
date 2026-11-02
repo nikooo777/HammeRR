@@ -9,6 +9,7 @@ mod color_palette;
 mod compiled_details;
 mod compiled_face_framing;
 mod components;
+mod content_profiles;
 mod context;
 mod cubemap_bindings;
 mod entities;

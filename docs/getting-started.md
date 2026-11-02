@@ -84,6 +84,8 @@ Engine physics, native reflection capture and headless stdio MCP are unavailable
 
 Add custom content through the search paths in `gameinfo.txt`.
 The reader supports directories and VPK archives.
+Use **File → Content profiles…** to save and switch content, FGD, build and game paths
+for each document. See [Content profiles](content-profiles.md).
 VPK directory budgets are 64 MiB per encoded tree, 1,000,000 declarations,
 1,024 bytes per logical path and 128 MiB of decoded metadata per index.
 Mounted indexes share a 256 MiB metadata budget. Repeated declarations count

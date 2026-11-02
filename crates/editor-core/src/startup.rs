@@ -92,6 +92,7 @@ pub struct Application {
     pub build_recipes: build_recipes::Authority,
     pub recovery_settings: recovery::Authority,
     pub prefabs: prefabs::Authority,
+    pub content_profiles: crate::content_profiles::Authority,
     _services: Arc<Services>,
     workspace: Workspace,
     shutdown: Option<Result<(), String>>,
@@ -103,16 +104,51 @@ impl Application {
     pub fn open(args: &Args) -> Result<Self, String> {
         let compile_queue = crate::runtime::CompileQueue::process()?;
         let directory = recovery::default_directory();
-        let content = crate::session::SessionContent::new(mount_game(args.gameinfo.clone()));
+        let mounted_game = mount_game(args.gameinfo.clone());
+        let gameinfo = args.gameinfo.clone().or_else(|| {
+            mounted_game
+                .as_ref()
+                .ok()
+                .map(|game| game.game_dir.join("gameinfo.txt"))
+        });
+        let content = crate::session::SessionContent::new(mounted_game);
         let fgd = args
             .fgd
             .clone()
             .or_else(|| steam::find_css_fgd(&content.game));
-        let definitions = fgd.map_or_else(
+        let definitions = fgd.clone().map_or_else(
             || Err("CS:S SDK FGD not found; use --fgd or Load FGD".into()),
             |path| Catalog::load(&path),
         );
-        Self::assemble(args, compile_queue, directory, content, definitions)
+        let content_profile_config = gameinfo
+            .map(|gameinfo| {
+                let mut config = crate::content_profiles::Config {
+                    gameinfo,
+                    fgd,
+                    engine_root: args.engine_root.clone(),
+                    steam_root: args.steam_root.clone(),
+                    build: crate::build_settings::BuildSettings::from_options(
+                        compiler::Options::default(),
+                    ),
+                };
+                for path in std::iter::once(&mut config.gameinfo)
+                    .chain(config.fgd.iter_mut())
+                    .chain(config.engine_root.iter_mut())
+                    .chain(config.steam_root.iter_mut())
+                {
+                    *path = std::path::absolute(&*path).map_err(|error| error.to_string())?;
+                }
+                Ok::<_, String>(config)
+            })
+            .transpose()?;
+        Self::assemble(
+            args,
+            compile_queue,
+            directory,
+            content,
+            definitions,
+            content_profile_config,
+        )
     }
 
     fn assemble(
@@ -121,6 +157,7 @@ impl Application {
         directory: Result<PathBuf, String>,
         content: crate::session::SessionContent,
         definitions: Result<Catalog, String>,
+        content_profile_config: Option<crate::content_profiles::Config>,
     ) -> Result<Self, String> {
         let directory = directory.and_then(recovery::admit_directory);
         let saved_defaults = crate::saved_defaults::SavedDefaults::configured(directory.clone());
@@ -133,6 +170,7 @@ impl Application {
         let build_recipes = build_recipes::Authority::configured(directory.clone());
         let recovery_settings = recovery::Authority::configured(directory.clone());
         let prefabs = prefabs::Authority::configured(directory.clone());
+        let content_profiles = crate::content_profiles::Authority::configured(directory.clone());
         let services = Arc::new(Services {
             content,
             definitions,
@@ -150,6 +188,8 @@ impl Application {
             build_recipes: build_recipes.clone(),
             recovery_settings: recovery_settings.clone(),
             prefabs: prefabs.clone(),
+            content_profiles: content_profiles.clone(),
+            content_profile_config,
         });
         let workspace = Workspace::new(&services);
         let mut prepared = workspace.prepare_new(Actor::User)?;
@@ -175,6 +215,7 @@ impl Application {
             build_recipes,
             recovery_settings,
             prefabs,
+            content_profiles,
             _services: services,
             workspace,
             shutdown: None,

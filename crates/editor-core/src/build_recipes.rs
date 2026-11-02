@@ -42,62 +42,10 @@ impl Recipe {
     }
 
     pub(crate) fn json(&self, builtin: bool) -> Value {
-        let options = self
+        let description = self
             .settings
-            .options()
+            .description()
             .expect("recipe settings are validated");
-        let description = format!(
-            "{} · {} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
-            options.lighting.label(),
-            options.physics.label(),
-            options.postprocess_order.label(),
-            options.visibility.label(),
-            options.sky_quality.label(),
-            compiler::bounce_label(options.bounces),
-            options.smoothing_angle,
-            options.lighting_work_limit,
-            if options.refine_ambient_probes {
-                "on"
-            } else {
-                "off"
-            },
-            if options.brush_texture_shadows {
-                "on"
-            } else {
-                "off"
-            },
-            if options.colored_texture_shadows {
-                "on"
-            } else {
-                "off"
-            },
-            if options.bake_static_prop_vertices {
-                "on"
-            } else {
-                "off"
-            },
-            if options.reflect_static_props {
-                "on"
-            } else {
-                "off"
-            },
-            if options.generate_reflections {
-                "on"
-            } else {
-                "off"
-            },
-            if options.pack_sky_assets { "on" } else { "off" },
-            if options.pack_water_assets {
-                "on"
-            } else {
-                "off"
-            },
-            if options.pack_static_prop_assets {
-                "on"
-            } else {
-                "off"
-            }
-        );
         json!({"id":self.id,"name":self.name,"builtin":builtin,"settings":self.settings.report(),"description":description})
     }
 }

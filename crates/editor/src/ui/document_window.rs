@@ -253,6 +253,7 @@ impl Ui {
             grid_defaults,
             pivot_defaults,
             preview_defaults,
+            content_profiles,
             workspace_defaults,
             selection_defaults,
             navigation_defaults,

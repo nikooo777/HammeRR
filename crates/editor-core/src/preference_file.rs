@@ -372,6 +372,24 @@ impl<N: AsRef<OsStr>> CoordinatedFile<'_, N> {
         Ok(current)
     }
 
+    pub fn observe_following_from(
+        &self,
+        expected: &ObservedSource,
+    ) -> Result<ObservedSource, String> {
+        let verify = || {
+            self.verify_expected(expected)
+                .map_err(|error| error.message)?;
+            if let Some(destination) = &expected.following {
+                destination.verify().map_err(|error| error.to_string())?;
+            }
+            Ok::<(), String>(())
+        };
+        verify()?;
+        let current = self.observe_following()?;
+        verify()?;
+        Ok(current)
+    }
+
     pub fn publish(
         &self,
         data: &[u8],

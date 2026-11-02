@@ -14,6 +14,20 @@ pub(super) struct State {
 }
 
 impl State {
+    pub(super) fn engine_root(&self) -> Option<&Path> {
+        self.engine_root.as_deref()
+    }
+
+    pub(super) fn steam_root(&self) -> Option<&Path> {
+        self.steam_root.as_deref()
+    }
+
+    pub(super) fn adopt(&mut self, engine_root: Option<PathBuf>, steam_root: Option<PathBuf>) {
+        self.engine_root = engine_root;
+        self.steam_root = steam_root;
+        self.invalidate();
+    }
+
     pub(super) fn invalidate(&self) {
         *self.cache.borrow_mut() = None;
     }

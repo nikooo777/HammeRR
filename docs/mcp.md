@@ -533,6 +533,23 @@ after client disconnection. `complete:false` and `isError:true` report retained
 cleanup failures. Service shutdown follows the local response-output check;
 this does not prove that the remote client read the response.
 
+### Content profiles
+
+`get_content_profiles` reports the shared saved list, current configuration,
+active profile, storage errors, worker status, `revision` and document `intent`.
+Use `save_content_profile` with `name` and `revision`; omit `config` to capture
+the current settings. An explicit `config` contains `gameinfo`, optional `fgd`,
+`engine_root` and `steam_root`, and `build`. Set `replace_id` to update an entry.
+
+`apply_content_profile` needs `id`, `revision` and `intent` from the same document.
+It validates mounts, definitions and runtime paths before adopting them together.
+Changed sources, stale guards and active work reject. Map data and history stay
+intact. Old compiled output and content previews retire.
+
+`remove_content_profile` needs `id` and `revision`; applied content stays active.
+`reload_content_profiles` needs `revision` and explicitly rereads storage.
+See [Content profiles](content-profiles.md) for path requirements and limits.
+
 ### History navigation
 
 Use `get_history` and `navigate_history` with the same `document_id`. History

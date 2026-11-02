@@ -749,6 +749,7 @@ impl EditorServer {
             + Self::color_palette_tools()
             + Self::components_tools()
             + Self::context_tools()
+            + Self::content_profiles_tools()
             + Self::cubemap_bindings_tools()
             + Self::entities_tools()
             + Self::entity_gallery_tools()

@@ -20,6 +20,33 @@ pub struct Report {
 }
 
 impl Session {
+    pub(super) fn reset_mounted_content_assets(&mut self) {
+        self.advance_content_epoch();
+        self.models.get_mut().clear();
+        self.materials = render::MaterialLibrary::default();
+        self.material_index = None;
+        self.material_shaders = super::material_catalog::ShaderIndex::default();
+        self.material_reload = None;
+        self.material_search.report = None;
+        self.material_recent.clear();
+        self.model_browser.catalog = None;
+        self.surface_sample = None;
+        self.reload_sound_assets();
+        self.reload_particle_assets();
+        self.reset_instance_contents();
+        self.reset_compiled_details();
+        self.reset_baked_surfaces();
+        self.reset_sky3d_preview();
+        self.native_capture.invalidate();
+        self.compiled = None;
+        self.compiled_visibility = super::compiled_visibility::State::default();
+        self.compiled_prop_leaf_bounds = super::baked_prop_vertices::leaf_bounds::State::default();
+        self.compilation.retained_pointfile = None;
+        self.leak = None;
+        self.scene_serial += 1;
+        self.view_serial += 1;
+    }
+
     pub fn material_reload_report(&self) -> Option<&Report> {
         self.material_reload.as_ref()
     }

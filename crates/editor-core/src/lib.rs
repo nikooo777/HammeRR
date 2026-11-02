@@ -5,6 +5,7 @@ pub mod build_recipes;
 pub mod build_settings;
 pub mod color;
 pub mod color_palette;
+pub mod content_profiles;
 pub mod game;
 pub mod grid_preferences;
 pub mod identity;

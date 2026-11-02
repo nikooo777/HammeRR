@@ -13,6 +13,7 @@ export { GridDefaultsWindow } from "grid-defaults.slint";
 export { PivotDefaultsWindow } from "pivot-defaults.slint";
 export { NavigationDefaultsWindow } from "navigation-defaults.slint";
 export { PreviewDefaultsWindow, PreviewDefaultRow } from "preview-defaults.slint";
+export { ContentProfilesWindow, ContentProfileRow } from "content-profiles.slint";
 export { WorkspaceDefaultsWindow, WorkspaceDefaultRow } from "workspace-defaults.slint";
 export { SelectionDefaultsWindow, SelectionDefaultRow, SelectionProfileRow } from "selection-defaults.slint";
 export { ShortcutsWindow, ShortcutRow, ShortcutStroke, ShortcutBinding } from "shortcuts.slint";
@@ -2315,6 +2316,7 @@ export component AppWindow inherits Window {
     callback open-map();
     callback import-brush-batch();
     callback recent-maps();
+    callback content-profiles();
     callback save-map();
     callback save-map-as();
     callback compile-map();
@@ -2492,6 +2494,7 @@ export component AppWindow inherits Window {
         { id: "new-map", title: "New map", group: "File", enabled: true },
         { id: "open-map", title: "Open…", group: "File", enabled: true },
         { id: "recent-maps", title: "Recent maps…", group: "File", enabled: true },
+        { id: "content-profiles", title: "Content profiles…", group: "File", enabled: true },
         { id: "open-documents", title: "Open documents…", group: "File", enabled: true },
         { id: "save-map", title: "Save", group: "File", enabled: true },
         { id: "save-map-as", title: "Save as…", group: "File", enabled: true },
@@ -2660,6 +2663,7 @@ export component AppWindow inherits Window {
         if id == "new-map" { root.new-map(); }
         else if id == "open-map" { root.open-map(); }
         else if id == "recent-maps" { root.recent-maps(); }
+        else if id == "content-profiles" { root.content-profiles(); }
         else if id == "open-documents" { root.open-documents(); }
         else if id == "save-map" { root.save-map(); }
         else if id == "save-map-as" { root.save-map-as(); }
@@ -2782,6 +2786,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "New map"; activated => { root.new-map(); } }
             MenuItem { title: "Open…"; activated => { root.open-map(); } }
             MenuItem { title: "Recent maps…"; activated => { root.recent-maps(); } }
+            MenuItem { title: "Content profiles…"; activated => { root.content-profiles(); } }
             MenuItem { title: "Open documents…"; activated => { root.open-documents(); } }
             MenuSeparator { }
             MenuItem { title: "Save"; activated => { root.save-map(); } }

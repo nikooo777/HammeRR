@@ -106,6 +106,8 @@ pub(super) struct Services {
     pub build_recipes: build_recipes::Authority,
     pub recovery_settings: recovery::Authority,
     pub prefabs: prefabs::Authority,
+    pub content_profiles: crate::content_profiles::Authority,
+    pub content_profile_config: Option<crate::content_profiles::Config>,
 }
 
 impl Services {
@@ -132,6 +134,8 @@ impl Services {
             Ok(catalog) => session.set_definitions(Actor::User, catalog.clone()),
             Err(error) => session.report_definitions_error(error.clone()),
         }
+        session.initialize_content_profile_config(self.content_profile_config.clone());
+        session.use_application_content_profiles(self.content_profiles.clone());
         DocumentHandle::start_with_services(
             Arc::new(Mutex::new(session)),
             self.queue.clone(),

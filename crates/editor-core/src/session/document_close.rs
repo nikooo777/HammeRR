@@ -203,6 +203,7 @@ impl Session {
                 "extraction": self.instance_extraction.close_work(),
                 "collapse": self.geometry.instance_collapse.close_work(),
                 "definitions": self.definitions_load.close_work(),
+                "content_profiles": self.content_profile_close_work(),
                 "recovery": self.recovery.close_work(),
                 "native_cleanup_error": self.native_cleanup_error,
                 "native": self.native_activity.as_ref().map(|client| client.close_work()),

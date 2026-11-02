@@ -1,0 +1,190 @@
+import { Button, LineEdit, ScrollView } from "widgets.slint";
+import { Theme, Icon, FieldRow, Badge, MutedText } from "kit.slint";
+
+export struct ContentProfileRow {
+    id: string,
+    name: string,
+    game: string,
+    current: bool,
+}
+
+export component ContentProfilesWindow inherits Window {
+    background: Theme.panel;
+    title: "Content profiles - HammeRR";
+    default-font-size: Theme.font;
+    preferred-width: 900px;
+    preferred-height: 760px;
+    min-width: 760px;
+    min-height: 650px;
+    in property <[ContentProfileRow]> rows;
+    in property <int> max-profiles;
+    in property <string> selected-id;
+    in property <string> current;
+    in property <string> current-path;
+    in property <string> selection;
+    in property <string> build-summary;
+    in property <string> storage;
+    in property <string> status;
+    in property <string> message;
+    in property <bool> message-error;
+    in property <bool> ready;
+    in property <bool> can-save;
+    in property <bool> can-apply;
+    in property <bool> busy;
+    in-out property <string> profile-name;
+    in-out property <string> gameinfo;
+    in-out property <string> fgd;
+    in-out property <string> engine-root;
+    in-out property <string> steam-root;
+    callback choose(string);
+    callback draft-changed();
+    callback use-current();
+    callback capture-build();
+    callback build-settings();
+    callback save-new();
+    callback replace();
+    callback apply();
+    callback remove();
+    callback reload();
+    callback close-dialog();
+    callback worker-finished();
+    forward-focus: keys;
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            HorizontalLayout {
+                spacing: Theme.space;
+                Image {
+                    width: 20px;
+                    height: 20px;
+                    source: Icon.layers;
+                    colorize: Theme.text-muted;
+                }
+                Text {
+                    text: "Content profiles";
+                    color: Theme.text;
+                    font-size: Theme.font-display;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+            }
+            Rectangle {
+                background: Theme.base;
+                border-color: Theme.border;
+                border-width: 1px;
+                border-radius: Theme.radius;
+                VerticalLayout {
+                    padding: Theme.space-lg;
+                    spacing: Theme.space-xs;
+                    Text { text: root.current; color: Theme.text; font-weight: 600; wrap: word-wrap; }
+                    MutedText { text: root.current-path; }
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-xl;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    width: 220px;
+                    spacing: Theme.space;
+                    Text { text: "Saved profiles · \{root.rows.length}/\{root.max-profiles}"; color: Theme.text-muted; font-weight: 600; }
+                    ScrollView {
+                        content-width: self.width;
+                        horizontal-scrollbar-policy: always-off;
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            spacing: Theme.space-xs;
+                            for row in root.rows: Rectangle {
+                                min-height: 66px;
+                                background: row.id == root.selected-id ? Theme.active : touch.has-hover ? Theme.hover : Theme.base;
+                                border-radius: Theme.radius-sm;
+                                accessible-role: button;
+                                accessible-label: row.name;
+                                accessible-enabled: !root.busy;
+                                accessible-checked: row.id == root.selected-id;
+                                accessible-action-default => { if !root.busy { root.choose(row.id); } }
+                                VerticalLayout {
+                                    padding: Theme.space;
+                                    spacing: Theme.space-xs;
+                                    HorizontalLayout {
+                                        spacing: Theme.space-xs;
+                                        Text { text: row.name; color: Theme.text; font-weight: 600; overflow: elide; horizontal-stretch: 1; }
+                                        if row.current: Badge { text: "In use"; text-color: Theme.success; fill: Theme.success-soft; }
+                                    }
+                                    Text { text: row.game; color: Theme.text-faint; font-size: Theme.font-small; overflow: elide; }
+                                }
+                                touch := TouchArea {
+                                    enabled: !root.busy;
+                                    clicked => { root.choose(row.id); }
+                                }
+                            }
+                            if root.rows.length == 0: MutedText { text: "No saved profiles."; }
+                        }
+                    }
+                    Button { text: "Use current content"; enabled: !root.busy; clicked => { root.use-current(); } }
+                    Button { text: "Reload"; enabled: !root.busy; clicked => { root.reload(); } }
+                }
+                ScrollView {
+                    content-width: self.width;
+                    horizontal-scrollbar-policy: always-off;
+                    horizontal-stretch: 1;
+                    VerticalLayout {
+                        padding-right: Theme.space;
+                        spacing: Theme.space-lg;
+                        Text { text: root.selection; color: Theme.text; font-weight: 600; wrap: word-wrap; }
+                        FieldRow {
+                            label: "Profile name"; label-width: 112px; inset: false;
+                            LineEdit { text <=> root.profile-name; enabled: !root.busy; horizontal-stretch: 1; edited => { root.draft-changed(); } }
+                        }
+                        FieldRow {
+                            label: "gameinfo.txt"; label-width: 112px; inset: false;
+                            LineEdit { text <=> root.gameinfo; enabled: !root.busy; horizontal-stretch: 1; edited => { root.draft-changed(); } }
+                        }
+                        FieldRow {
+                            label: "FGD (optional)"; label-width: 112px; inset: false;
+                            LineEdit { text <=> root.fgd; enabled: !root.busy; horizontal-stretch: 1; edited => { root.draft-changed(); } }
+                        }
+                        FieldRow {
+                            label: "CS:S root"; label-width: 112px; inset: false;
+                            LineEdit { text <=> root.engine-root; enabled: !root.busy; horizontal-stretch: 1; edited => { root.draft-changed(); } }
+                        }
+                        FieldRow {
+                            label: "Steam root"; label-width: 112px; inset: false;
+                            LineEdit { text <=> root.steam-root; enabled: !root.busy; horizontal-stretch: 1; edited => { root.draft-changed(); } }
+                        }
+                        MutedText { text: "CS:S root is the optional installation root for Play and native capture. Leave optional paths empty to use discovery."; }
+                        Text { text: "Captured Build settings"; color: Theme.text-muted; font-weight: 600; }
+                        MutedText { text: root.build-summary; }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Use current Build settings"; enabled: !root.busy; clicked => { root.capture-build(); } }
+                            Button { text: "Build settings…"; enabled: !root.busy; clicked => { root.build-settings(); } }
+                        }
+                        MutedText { text: "Edit shared Build settings, then capture them here. Save new and Replace selected save these fields; Apply uses the selected saved profile."; }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Save new"; enabled: root.can-save; clicked => { root.save-new(); } }
+                            Button { text: "Replace selected"; enabled: root.can-save && root.selected-id != ""; clicked => { root.replace(); } }
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                    }
+                }
+            }
+            MutedText { text: root.storage; font-size: Theme.font-small; }
+            Text { text: root.status; color: Theme.warning; wrap: word-wrap; }
+            Text { text: root.message; color: root.message-error ? Theme.danger : Theme.text; wrap: word-wrap; min-height: 34px; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Remove"; enabled: root.ready && root.selected-id != ""; clicked => { root.remove(); } }
+                Button { text: "Apply"; primary: true; enabled: root.can-apply && root.selected-id != ""; clicked => { root.apply(); } }
+            }
+        }
+    }
+}

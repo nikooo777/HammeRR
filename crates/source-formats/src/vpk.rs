@@ -363,7 +363,7 @@ impl Vpk {
         Ok(Some(data))
     }
 
-    pub(crate) fn verify_index(&self) -> io::Result<()> {
+    pub fn verify_index(&self) -> io::Result<()> {
         self.verify_index_metadata(&fs::metadata(&self.dir_path)?)
     }
 

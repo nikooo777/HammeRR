@@ -26,14 +26,26 @@ pub struct Install {
 
 impl Install {
     pub fn from_game(fs: &GameFs) -> Result<Self, String> {
+        Self::from_game_with_root(fs, None)
+    }
+
+    pub(crate) fn from_game_with_root(
+        fs: &GameFs,
+        engine_root: Option<&Path>,
+    ) -> Result<Self, String> {
         #[cfg(not(windows))]
         let game = fs.game_dir.canonicalize().map_err(|e| e.to_string())?;
         #[cfg(windows)]
         let game = dunce::canonicalize(&fs.game_dir).map_err(|e| e.to_string())?;
-        let root = game
+        let default_root = game
             .parent()
             .ok_or("game directory has no parent")?
             .to_owned();
+        let root = engine_root.unwrap_or(&default_root);
+        #[cfg(not(windows))]
+        let root = root.canonicalize().map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        let root = dunce::canonicalize(root).map_err(|error| error.to_string())?;
         #[cfg(not(windows))]
         let executable = root.join("cstrike_linux64");
         #[cfg(windows)]

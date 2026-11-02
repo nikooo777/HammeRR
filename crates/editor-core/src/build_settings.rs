@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BuildSettings {
     pub lighting: String,
@@ -112,6 +112,62 @@ impl BuildSettings {
         settings["reflect_static_props"] = self.reflect_static_props.into();
         settings["refine_ambient_probes"] = self.refine_ambient_probes.into();
         settings
+    }
+
+    pub fn description(&self) -> Result<String, String> {
+        let options = self.options()?;
+        Ok(format!(
+            "{} · {} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
+            options.lighting.label(),
+            options.physics.label(),
+            options.postprocess_order.label(),
+            options.visibility.label(),
+            options.sky_quality.label(),
+            compiler::bounce_label(options.bounces),
+            options.smoothing_angle,
+            options.lighting_work_limit,
+            if options.refine_ambient_probes {
+                "on"
+            } else {
+                "off"
+            },
+            if options.brush_texture_shadows {
+                "on"
+            } else {
+                "off"
+            },
+            if options.colored_texture_shadows {
+                "on"
+            } else {
+                "off"
+            },
+            if options.bake_static_prop_vertices {
+                "on"
+            } else {
+                "off"
+            },
+            if options.reflect_static_props {
+                "on"
+            } else {
+                "off"
+            },
+            if options.generate_reflections {
+                "on"
+            } else {
+                "off"
+            },
+            if options.pack_sky_assets { "on" } else { "off" },
+            if options.pack_water_assets {
+                "on"
+            } else {
+                "off"
+            },
+            if options.pack_static_prop_assets {
+                "on"
+            } else {
+                "off"
+            }
+        ))
     }
 
     pub fn validate(&self) -> Result<(), String> {

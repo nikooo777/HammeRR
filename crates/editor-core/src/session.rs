@@ -54,6 +54,7 @@ pub mod compile_region;
 pub mod component_drag;
 pub mod component_picking;
 pub mod components;
+pub mod content_profiles;
 pub mod context;
 pub mod cubemap_bindings;
 pub mod definitions;
@@ -281,6 +282,7 @@ pub enum SelectMode {
 }
 
 pub struct Session {
+    content_profiles: content_profiles::State,
     reference_images: reference_images::State,
     color_correction: color_correction::State,
     file_claims: crate::path_claims::Binding,
@@ -611,6 +613,7 @@ impl Session {
 
     pub(crate) fn with_shared_content(content: SessionContent) -> Self {
         Self {
+            content_profiles: content_profiles::State::default(),
             color_correction: color_correction::State::default(),
             reference_images: reference_images::State::default(),
             file_claims: crate::path_claims::Binding::default(),
@@ -1186,6 +1189,9 @@ impl Session {
 
     pub fn set_definitions(&mut self, actor: Actor, catalog: Catalog) {
         let count = catalog.classes().count();
+        if let Some(config) = &mut self.content_profiles.current {
+            config.fgd = catalog.sources.last().cloned();
+        }
         self.clear_paint_stroke();
         self.definitions = catalog;
         self.definitions_error = None;
@@ -2328,7 +2334,7 @@ impl Session {
 
     pub fn launch_readiness(&self) -> Result<&Path, String> {
         let path = self.compiled_launch_readiness()?;
-        game::Install::from_game(&self.game)?;
+        self.freeze_play_install()?;
         Ok(path)
     }
 
@@ -2414,7 +2420,7 @@ impl Session {
     }
 
     pub(crate) fn freeze_play_install(&self) -> Result<game::Install, String> {
-        game::Install::from_game(&self.game)
+        game::Install::from_game_with_root(&self.game, self.native_capture.engine_root())
     }
 
     pub(crate) fn begin_launch_frozen(
@@ -2606,6 +2612,7 @@ impl Session {
             origin.cancel();
         }
         self.shutdown_definitions_load();
+        self.shutdown_content_profile();
         self.reset_instance_contents();
         self.reset_compiled_details();
         self.reset_baked_surfaces();
@@ -2631,6 +2638,10 @@ impl Session {
     }
 
     pub(crate) fn instance_workers_busy(&self) -> bool {
+        self.content_profile_worker_busy() || self.content_workers_busy()
+    }
+
+    fn content_workers_busy(&self) -> bool {
         self.baked_surfaces.worker.busy()
             || self.compiled_details.worker.busy()
             || self.instance_contents.worker.busy()

@@ -96,14 +96,14 @@ The pivot stays at its world position. It does not follow the surface.
 
 1. Expand **Transform** and choose **Rotate**, **Scale**, **Mirror** or **Shear**.
 2. Select one point entity, or enter its `entity:<id>` in **Pivot entity**.
-3. Click **Attach origin** to follow its origin.
-4. To follow an offset point instead, first set a **Custom** world point, then
-   click **Attach local point**. The current point becomes an offset in the
-   entity's orientation frame.
+3. For a local offset, click **Detach pivot** if attached. Choose
+   **Pivot → Custom** and enter the world point.
+4. Click **Attach origin** for the origin, or **Attach local point** for the offset.
 5. Inspect **Attached pivot** and its resolved coordinates before transforming.
 
-Moving the anchor moves the pivot. Rotating the anchor also rotates a local
-offset. The attachment remains active when you select other objects to transform.
+A local point is stored in the entity’s orientation frame. Moving the anchor
+moves the pivot. Rotating the anchor also rotates the local offset. The
+attachment remains active when you select other objects to transform.
 **Detach pivot** keeps the resolved point fixed in world space.
 
 An unavailable anchor reports its error and blocks operations that need it.

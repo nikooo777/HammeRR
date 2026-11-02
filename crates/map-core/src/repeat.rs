@@ -90,8 +90,18 @@ pub fn validate_sources(
     count: u32,
     catalog: &Catalog,
 ) -> std::result::Result<(), EditError> {
-    if ids.is_empty() || ids.len() > MAX_SOURCES {
-        return Err(invalid("Choose 1–16 source objects"));
+    validate_sources_with_limit(document, ids, count, catalog, MAX_SOURCES)
+}
+
+fn validate_sources_with_limit(
+    document: &Document,
+    ids: &[ObjectId],
+    count: u32,
+    catalog: &Catalog,
+    max_sources: usize,
+) -> std::result::Result<(), EditError> {
+    if ids.is_empty() || ids.len() > max_sources {
+        return Err(invalid(format!("Choose 1–{max_sources} source objects")));
     }
     if count == 0 || count > MAX_COPIES || ids.len() * count as usize > MAX_OBJECTS {
         return Err(invalid(
@@ -365,11 +375,40 @@ pub fn create_plan(
     plan: &Plan,
     catalog: &Catalog,
 ) -> std::result::Result<Result, EditError> {
+    create_plan_with_limit(tx, ids, plan, catalog, MAX_SOURCES)
+}
+
+pub(crate) fn create_linked_path(
+    tx: &mut Transaction,
+    ids: &[ObjectId],
+    placement: Placement,
+    policies: Policies,
+    catalog: &Catalog,
+) -> std::result::Result<Result, EditError> {
+    create_plan_with_limit(
+        tx,
+        ids,
+        &Plan {
+            placements: vec![placement],
+            policies,
+        },
+        catalog,
+        crate::linked_path::MAX_POINTS + 2,
+    )
+}
+
+fn create_plan_with_limit(
+    tx: &mut Transaction,
+    ids: &[ObjectId],
+    plan: &Plan,
+    catalog: &Catalog,
+    max_sources: usize,
+) -> std::result::Result<Result, EditError> {
     if plan.placements.is_empty() || plan.placements.len() > MAX_COPIES as usize {
         return Err(invalid("Use 1–64 additional placements"));
     }
     let count = plan.placements.len() as u32;
-    validate_sources(tx.document(), ids, count, catalog)?;
+    validate_sources_with_limit(tx.document(), ids, count, catalog, max_sources)?;
     let model_scales = validate_placements(tx.document(), ids, plan, catalog)?;
     let names = source_names(tx.document(), ids)?;
     let scan = references::scan(tx.document(), catalog);

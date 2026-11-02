@@ -59,7 +59,7 @@ pub struct Policies {
 }
 
 impl Policies {
-    pub(super) fn core(&self) -> map_core::repeat::Policies {
+    pub(crate) fn core(&self) -> map_core::repeat::Policies {
         use map_core::repeat as core;
         core::Policies {
             naming: core::Naming {

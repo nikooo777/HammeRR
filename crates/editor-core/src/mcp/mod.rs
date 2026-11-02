@@ -761,6 +761,7 @@ impl EditorServer {
             + Self::external_comparison_tools()
             + Self::instance_collapse_tools()
             + Self::linked_path_tools()
+            + Self::linked_path_observation_tools()
             + Self::materials_tools()
             + Self::measurement_tools()
             + Self::overlay_tools()

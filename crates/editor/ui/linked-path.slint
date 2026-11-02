@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { Icon, IconButton } from "kit.slint";
 import {Button, CheckBox, ComboBox, LineEdit, ScrollView} from "widgets.slint";
 
 export struct LinkedPathPoint { label: string, x: string, y: string, z: string, link: string, id: string, name: string }
@@ -6,10 +7,10 @@ export struct LinkedPathPoint { label: string, x: string, y: string, z: string, 
 export component LinkedPathWindow inherits Window {
     background: Theme.panel;
     title: root.existing ? "Edit linked path - HammeRR" : "Create linked path - HammeRR";
-    preferred-width: 840px;
-    preferred-height: 700px;
-    min-width: 760px;
-    min-height: 600px;
+    preferred-width: 980px;
+    preferred-height: root.existing && root.operation-index != 0 ? 520px : 820px;
+    min-width: 900px;
+    min-height: root.existing && root.operation-index != 0 ? 420px : 760px;
     in-out property <int> class-index;
     in-out property <string> prefix: "path";
     in-out property <bool> closed;
@@ -22,6 +23,21 @@ export component LinkedPathWindow inherits Window {
     in property <bool> can-review;
     in property <bool> ready;
     in property <bool> picking;
+    in property <bool> handling;
+    in-out property <int> operation-index;
+    in-out property <string> train-id;
+    in property <string> train-summary;
+    in-out property <string> train-speed: "100";
+    in-out property <bool> train-start-on;
+    in-out property <bool> duplicate-train;
+    in-out property <string> duplicate-suffix: "_copy";
+    in-out property <string> offset-x: "128";
+    in-out property <string> offset-y: "0";
+    in-out property <string> offset-z: "0";
+    in-out property <int> external-index;
+    in property <bool> native-motion-ready;
+    in property <bool> native-motion-busy;
+    in property <string> native-motion-status: "Load an applied path and choose a train to observe native movement.";
     in property <string> preview-status;
     in property <string> message;
     callback edited();
@@ -32,6 +48,11 @@ export component LinkedPathWindow inherits Window {
     callback move-point(int, int);
     callback pick-position(int);
     callback cancel-pick();
+    callback move-handles(int);
+    callback finish-handles();
+    callback use-selected-train();
+    callback observe-native-motion(bool);
+    callback cancel-native-motion();
     callback preview();
     callback review();
     callback apply();
@@ -43,20 +64,32 @@ export component LinkedPathWindow inherits Window {
             padding: Theme.space-xl;
             spacing: 12px;
             Text { text: root.existing ? "Edit linked path" : "Create linked path"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: root.existing ? "Add, remove, reorder or reposition nodes. Retained names, IDs and properties stay with each node." : "Place ordered point entities and link each target to the next name."; color: Theme.text-muted; wrap: word-wrap; }
+            Text { text: root.existing ? "Edit nodes, convert the chain, attach a train or duplicate with checked references." : "Place ordered point entities and link each target to the next name."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Load selected path"; enabled: root.can-load; clicked => { root.load-selected(); } }
                 if root.existing: Button { text: "New path"; enabled: root.can-preview; clicked => { root.new-path(); } }
                 Rectangle { horizontal-stretch: 1; }
             }
-            HorizontalLayout {
+            if root.existing: HorizontalLayout {
+                spacing: Theme.space;
+                Text { text: "Operation"; vertical-alignment: center; }
+                ComboBox {
+                    enabled: root.editable;
+                    model: ["Edit path", "Set up train", "Duplicate path"];
+                    current-index <=> root.operation-index;
+                    accessible-label: "Operation";
+                    selected => { root.edited(); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            if root.operation-index == 0: HorizontalLayout {
                 spacing: 14px;
                 VerticalLayout {
                     spacing: 5px;
                     Text { text: "Class"; font-weight: 600; }
                     ComboBox {
-                        enabled: root.editable && !root.existing;
+                        enabled: root.editable && root.operation-index == 0;
                         model: ["path_corner", "path_track"];
                         current-index <=> root.class-index;
                         accessible-label: "Class";
@@ -68,7 +101,7 @@ export component LinkedPathWindow inherits Window {
                     spacing: 5px;
                     Text { text: root.existing ? "New node prefix" : "Name prefix"; font-weight: 600; }
                     LineEdit {
-                        enabled: root.editable;
+                        enabled: root.editable && root.operation-index == 0;
                         placeholder-text: "Name prefix";
                         text <=> root.prefix;
                         accessible-label: root.existing ? "New node prefix" : "Name prefix";
@@ -76,13 +109,44 @@ export component LinkedPathWindow inherits Window {
                     }
                 }
                 CheckBox {
-                    enabled: root.editable && !root.existing;
+                    enabled: root.editable && root.operation-index == 0;
                     text: "Closed loop";
                     checked <=> root.closed;
                     toggled => { root.edited(); }
                 }
             }
-            Rectangle {
+            if root.existing: HorizontalLayout {
+                spacing: Theme.space;
+                Text { text: "Train entity ID"; vertical-alignment: center; }
+                LineEdit { enabled: root.editable; text <=> root.train-id; placeholder-text: "entity:123"; accessible-label: "Train entity ID"; edited => { if root.operation-index != 0 { root.edited(); } } }
+                Button { text: "Use selected train"; enabled: root.editable; clicked => { root.use-selected-train(); } }
+                if root.operation-index == 1: Text { text: "Speed"; vertical-alignment: center; }
+                if root.operation-index == 1: LineEdit { enabled: root.editable; text <=> root.train-speed; input-type: decimal; accessible-label: "Train speed"; edited => { root.edited(); } }
+                if root.operation-index == 1: CheckBox { enabled: root.editable; text: "Start moving"; checked <=> root.train-start-on; toggled => { root.edited(); } }
+                if root.operation-index == 2: CheckBox { enabled: root.editable; text: "Include train"; checked <=> root.duplicate-train; toggled => { root.edited(); } }
+            }
+            if root.existing && root.train-summary != "": Text { text: root.train-summary; color: Theme.text-muted; wrap: word-wrap; }
+            if root.existing && root.operation-index == 2: VerticalLayout {
+                spacing: Theme.space-sm;
+                HorizontalLayout {
+                    spacing: Theme.space;
+                    Text { text: "Name suffix"; vertical-alignment: center; }
+                    LineEdit { enabled: root.editable; text <=> root.duplicate-suffix; accessible-label: "Name suffix"; edited => { root.edited(); } }
+                    ComboBox { enabled: root.editable; model: ["Reject external references", "Keep external references"]; current-index <=> root.external-index; accessible-label: "External references"; selected => { root.edited(); } }
+                }
+                HorizontalLayout {
+                    spacing: Theme.space;
+                    Text { text: "Offset X / Y / Z"; vertical-alignment: center; }
+                    LineEdit { enabled: root.editable; text <=> root.offset-x; input-type: decimal; accessible-label: "Duplicate offset X"; edited => { root.edited(); } }
+                    LineEdit { enabled: root.editable; text <=> root.offset-y; input-type: decimal; accessible-label: "Duplicate offset Y"; edited => { root.edited(); } }
+                    LineEdit { enabled: root.editable; text <=> root.offset-z; input-type: decimal; accessible-label: "Duplicate offset Z"; edited => { root.edited(); } }
+                }
+            }
+            if root.operation-index != 0: Text {
+                text: "Path: " + (root.class-index == 0 ? "path_corner" : "path_track") + " · " + root.points.length + " nodes · " + (root.closed ? "closed loop" : "open path");
+                color: Theme.text-muted;
+            }
+            if root.operation-index == 0: Rectangle {
                 background: Theme.hover;
                 border-radius: 6px;
                 VerticalLayout {
@@ -99,7 +163,7 @@ export component LinkedPathWindow inherits Window {
                         Text { horizontal-stretch: 1; text: "X"; color: Theme.axis-x; }
                         Text { horizontal-stretch: 1; text: "Y"; color: Theme.axis-y; }
                         Text { horizontal-stretch: 1; text: "Z"; color: Theme.axis-z; }
-                        Rectangle { width: 360px; }
+                        Rectangle { width: 400px; }
                     }
                     ScrollView {
                         vertical-stretch: 1;
@@ -112,30 +176,31 @@ export component LinkedPathWindow inherits Window {
                                     spacing: 6px;
                                     Text { text: point.label; width: 28px; vertical-alignment: center; }
                                     LineEdit {
-                                        enabled: root.editable;
+                                        enabled: root.editable && root.operation-index == 0;
                                         horizontal-stretch: 1; min-width: 70px;
                                         text <=> point.x; input-type: decimal;
                                         accessible-label: "Point " + point.label + " X";
                                         edited => { root.edited(); }
                                     }
                                     LineEdit {
-                                        enabled: root.editable;
+                                        enabled: root.editable && root.operation-index == 0;
                                         horizontal-stretch: 1; min-width: 70px;
                                         text <=> point.y; input-type: decimal;
                                         accessible-label: "Point " + point.label + " Y";
                                         edited => { root.edited(); }
                                     }
                                     LineEdit {
-                                        enabled: root.editable;
+                                        enabled: root.editable && root.operation-index == 0;
                                         horizontal-stretch: 1; min-width: 70px;
                                         text <=> point.z; input-type: decimal;
                                         accessible-label: "Point " + point.label + " Z";
                                         edited => { root.edited(); }
                                     }
-                                    Button { text: "↑"; accessible-label: "Move up"; width: 36px; enabled: root.editable && index > 0; clicked => { root.move-point(index, -1); } }
-                                    Button { text: "↓"; accessible-label: "Move down"; width: 36px; enabled: root.editable && index + 1 < root.points.length; clicked => { root.move-point(index, 1); } }
-                                    Button { text: "Remove"; width: 130px; enabled: root.editable && root.points.length > 2; clicked => { root.remove-point(index); } }
-                                    Button { text: "Pick position…"; width: 140px; enabled: root.ready; clicked => { root.pick-position(index); } }
+                                    IconButton { icon: Icon.chevron-up; tooltip: "Move up"; enabled: root.editable && root.operation-index == 0 && index > 0; clicked => { root.move-point(index, -1); } }
+                                    IconButton { icon: Icon.chevron-down; tooltip: "Move down"; enabled: root.editable && root.operation-index == 0 && index + 1 < root.points.length; clicked => { root.move-point(index, 1); } }
+                                    IconButton { icon: Icon.trash; tooltip: "Remove point"; enabled: root.editable && root.operation-index == 0 && root.points.length > 2; clicked => { root.remove-point(index); } }
+                                    Button { text: "Pick position…"; width: 140px; enabled: root.ready && root.operation-index == 0; clicked => { root.pick-position(index); } }
+                                    Button { text: "Move handles…"; width: 140px; enabled: root.ready && root.operation-index == 0; clicked => { root.move-handles(index); } }
                                 }
                                 if root.existing: Text { text: point.id == "" ? (point.name == "" ? "New node · assigned at Preview" : point.name + " · new node") : point.name + " · " + point.id; color: Theme.text; font-size: Theme.font; wrap: word-wrap; }
                                 if point.link != "": Text { text: point.link; color: Theme.text-muted; font-size: Theme.font; wrap: word-wrap; }
@@ -145,7 +210,7 @@ export component LinkedPathWindow inherits Window {
                         }
                     }
                     HorizontalLayout {
-                        Button { text: "Add point"; enabled: root.editable && root.points.length < 64; clicked => { root.add-point(); } }
+                        Button { text: "Add point"; enabled: root.editable && root.operation-index == 0 && root.points.length < 64; clicked => { root.add-point(); } }
                         Rectangle { horizontal-stretch: 1; }
                         Text { text: "2–64 points · ±65536 per axis"; color: Theme.text-muted; vertical-alignment: center; }
                     }
@@ -154,6 +219,15 @@ export component LinkedPathWindow inherits Window {
             Text { text: root.preview-status; wrap: word-wrap; min-height: 36px; }
             Text { text: root.message; color: Theme.text-muted; wrap: word-wrap; min-height: 36px; }
             if root.picking: Button { text: "Cancel position pick"; clicked => { root.cancel-pick(); } }
+            if root.handling: Button { text: "Finish moving"; clicked => { root.finish-handles(); } }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Observe movement"; enabled: root.native-motion-ready && !root.native-motion-busy; clicked => { root.observe-native-motion(false); } }
+                Button { text: "Observe stopped train"; enabled: root.native-motion-ready && !root.native-motion-busy; clicked => { root.observe-native-motion(true); } }
+                if root.native-motion-busy: Button { text: "Cancel observation"; clicked => { root.cancel-native-motion(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            if root.native-motion-status != "": Text { text: root.native-motion-status; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

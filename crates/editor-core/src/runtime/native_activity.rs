@@ -194,6 +194,7 @@ impl Target {
 #[derive(Clone, Copy)]
 pub(crate) enum Phase {
     Capture,
+    Movement,
     PlayStartup,
     Play,
 }
@@ -202,6 +203,7 @@ impl Phase {
     fn name(self) -> &'static str {
         match self {
             Self::Capture => "capture",
+            Self::Movement => "movement",
             Self::PlayStartup => "play_startup",
             Self::Play => "play",
         }
@@ -220,6 +222,7 @@ impl Record {
     fn message(&self) -> String {
         let state = match self.phase {
             "capture" => "Native activity busy: reflection capture",
+            "movement" => "Native activity busy: movement observation",
             "play_startup" => "Native activity busy: game startup",
             "play" => "Native activity busy: managed game running",
             _ => "Native activity unavailable: cleanup failed",

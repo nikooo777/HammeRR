@@ -16,7 +16,7 @@ impl Session {
             .linked_path
             .preview
             .as_ref()
-            .is_some_and(|preview| preview.picking.is_some())
+            .is_some_and(|preview| preview.picking.is_some() || preview.handles.is_some())
     }
 
     pub fn linked_path_pick_stamp(&self) -> String {
@@ -64,6 +64,9 @@ impl Session {
         let preview = self.checked_linked_path(token)?;
         if preview.owner != actor {
             return Err("Review the other actor's linked path before picking a position".into());
+        }
+        if preview.handles.is_some() {
+            return Err("Finish or cancel path handles before surface picking".into());
         }
         if row >= preview.request.points.len() {
             return Err("Choose an existing zero-based path row".into());
@@ -119,16 +122,7 @@ impl Session {
             .chain(preview.removed.iter().map(|&id| ObjectId::Entity(id)))
             .collect::<Vec<_>>();
         let surface = self.placement_surface(&excluded, ray, true)?;
-        let preview = self.checked_linked_path(token)?;
-        let mut request = preview.request.clone();
-        request.points[row] = surface.hit.point;
-        let (request, plan) = if let Some(mut existing) = preview.existing.clone() {
-            existing.nodes[row].origin = surface.hit.point;
-            self.linked_path_change_plan(&existing)?
-        } else {
-            let plan = self.linked_path_plan(&request)?;
-            (request, plan)
-        };
+        let (request, plan) = self.linked_path_point_plan(token, row, surface.hit.point)?;
         self.install_linked_path(actor, request, plan)?;
         self.geometry
             .linked_path

@@ -8,13 +8,13 @@ use source_formats::fgd::ClassKind;
 
 use super::{Actor, SelectMode, Session};
 
-pub const MIN_POINTS: usize = 2;
-pub const MAX_POINTS: usize = 64;
-pub const MAX_PREFIX_BYTES: usize = 96;
+pub use map_core::linked_path::{MAX_POINTS, MAX_PREFIX_BYTES, MIN_POINTS};
 const MAX_NAME_ATTEMPTS: usize = 4096;
-const MAX_REFERENCE_WORK: usize = 4_000_000;
+const MAX_REFERENCE_WORK: usize = map_core::linked_path::MAX_REFERENCE_WORK;
 
 mod existing;
+mod handles;
+mod operations;
 mod picking;
 
 type NodeProperties = Vec<(String, String)>;
@@ -70,9 +70,13 @@ pub(super) struct Preview {
     definitions: u64,
     picking: Option<picking::Picking>,
     last_pick: Option<(usize, map_core::query::SurfaceHit)>,
+    core: Option<operations::Draft>,
+    outcome: Option<map_core::linked_path::Outcome>,
+    handles: Option<handles::Handles>,
 }
 
 struct Plan {
+    core: Option<operations::Draft>,
     classname: String,
     points: Vec<DVec3>,
     properties: Vec<NodeProperties>,
@@ -141,27 +145,14 @@ fn apply_nodes(tx: &mut Transaction<'_>, plan: &Plan) -> Result<Vec<ObjectId>, E
 }
 
 fn validate_points(points: &[DVec3]) -> Result<(), String> {
-    if !(MIN_POINTS..=MAX_POINTS).contains(&points.len()) {
-        return Err(format!("Use {MIN_POINTS}–{MAX_POINTS} ordered path points"));
-    }
-    for (index, point) in points.iter().enumerate() {
-        if !point.is_finite() || point.abs().max_element() > crate::spatial::MAX_EXTENT {
-            return Err("Path points must use finite coordinates within ±65536".into());
-        }
-        if points[..index].contains(point) {
-            return Err(
-                "Path points must be distinct; use Closed loop to link the last point to the first"
-                    .into(),
-            );
-        }
-    }
-    Ok(())
+    map_core::linked_path::validate_points(points).map_err(|error| error.to_string())
 }
 
 impl Session {
     pub fn linked_path_stamp(&self) -> String {
         format!(
-            "{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}",
+            self.buffer_review_scope,
             self.document_generation,
             self.document.revision(),
             self.definitions_serial,
@@ -176,7 +167,7 @@ impl Session {
                 let entity = preview.document.entity(entity)?;
                 Some(json!({
                     "id":object_name(id),"origin":entity.origin().map(|origin|origin.to_array()),
-                    "source_id":preview.existing.as_ref().and_then(|request|request.nodes[index].id).map(|id|object_name(ObjectId::Entity(id))),
+                    "source_id":preview.existing.as_ref().and_then(|request|request.nodes[index].id).map(|id|object_name(ObjectId::Entity(id))).or_else(||preview.outcome.as_ref().and_then(|outcome|outcome.mapping.iter().find(|(_,copy)|*copy==id).map(|(source,_)|object_name(*source)))).or_else(||preview.core.as_ref().filter(|draft|!matches!(draft.request,map_core::linked_path::Request::Duplicate{..})).map(|_|object_name(id))),
                     "targetname":entity.properties.get("targetname"),
                     "target":entity.properties.get("target"),
                 }))
@@ -184,8 +175,18 @@ impl Session {
             json!({
                 "token":preview.token,"owner":preview.owner.label(),
                 "valid":self.checked_linked_path(preview.token).is_ok(),
-                "existing":preview.existing.is_some(),
-                "seed":preview.existing.as_ref().map(|request|object_name(ObjectId::Entity(request.seed))),
+                "existing":preview.existing.is_some() || preview.core.as_ref().is_some_and(|draft|!matches!(draft.request,map_core::linked_path::Request::Duplicate{..})),
+                "operation":preview.core.as_ref().map_or(if preview.existing.is_some(){"edit"}else{"create"},operations::Draft::label),
+                "operation_request":preview.core.as_ref().map(operations::Draft::report),
+                "seed":preview.existing.as_ref().map(|request|request.seed).or_else(||preview.core.as_ref().map(operations::Draft::seed)).map(|seed|object_name(ObjectId::Entity(seed))),
+                "train":preview.outcome.as_ref().and_then(|outcome|outcome.train).map(|id|self.linked_path_train_report(&preview.document,id)),
+                "helpers":preview.outcome.as_ref().map(|outcome|outcome.helpers.iter().map(|&id|json!({"id":object_name(ObjectId::Entity(id)),"classname":preview.document.entity(id).and_then(|entity|entity.classname()),"targetname":preview.document.entity(id).and_then(|entity|entity.properties.get("targetname")),"connections":preview.document.entity(id).and_then(|entity|entity.connections.as_ref()).map(|connections|connections.iter().map(|connection|json!({"output":connection.output,"value":connection.value})).collect::<Vec<_>>())})).collect::<Vec<_>>()),
+                "removed_helpers":preview.outcome.as_ref().map(|outcome|outcome.removed_helpers.iter().map(|&id|json!({"id":object_name(ObjectId::Entity(id)),"classname":self.document.entity(id).and_then(|entity|entity.classname()),"targetname":self.document.entity(id).and_then(|entity|entity.properties.get("targetname"))})).collect::<Vec<_>>()),
+                "names":preview.outcome.as_ref().map(|outcome|outcome.names.iter().map(|name|json!({"source":object_name(ObjectId::Entity(name.source)),"copy":object_name(ObjectId::Entity(name.copy)),"before":name.before,"after":name.after})).collect::<Vec<_>>()),
+                "remapped_references":preview.outcome.as_ref().map(|outcome|outcome.remapped_references),
+                "unselected_incoming":preview.outcome.as_ref().map(|outcome|outcome.unselected_incoming.iter().map(|&id|object_name(ObjectId::Entity(id))).collect::<Vec<_>>()),
+                "mapping":preview.outcome.as_ref().map(|outcome|outcome.mapping.iter().map(|(source,copy)|json!({"source":object_name(*source),"copy":object_name(*copy)})).collect::<Vec<_>>()),
+                "handles":self.linked_path_handles_report(),
                 "removed":preview.removed.iter().map(|&id|json!({"id":object_name(ObjectId::Entity(id)),"targetname":self.document.entity(id).and_then(|entity|entity.properties.get("targetname"))})).collect::<Vec<_>>(),
                 "classname":preview.request.classname,"prefix":preview.request.prefix,
                 "points":preview.request.points.iter().map(|point|point.to_array()).collect::<Vec<_>>(),
@@ -223,6 +224,7 @@ impl Session {
             properties.push(values);
         }
         Ok(Plan {
+            core: None,
             classname,
             points: request.points.clone(),
             properties,
@@ -303,13 +305,29 @@ impl Session {
 
     pub fn inspect_existing_linked_path(&self, seed: u32) -> Result<Value, String> {
         let graph = self.existing_linked_path(seed)?;
+        let trains = map_core::linked_path::associated_trains(&self.document, &graph)
+            .map_err(|error| error.to_string())?;
+        let helper_work = self
+            .document
+            .vmf()
+            .entities
+            .iter()
+            .fold(0usize, |work, entity| {
+                work.saturating_add(1)
+                    .saturating_add(entity.properties.0.len())
+                    .saturating_add(entity.connections.as_ref().map_or(0, Vec::len))
+            });
+        if helper_work.saturating_mul(trains.len()) > MAX_REFERENCE_WORK {
+            return Err("Linked path train-helper reporting exceeds four million checks".into());
+        }
+
         let nodes = graph.nodes.iter().map(|&id| {
             let entity = self.document.entity(id).unwrap();
             json!({"id":object_name(ObjectId::Entity(id)),"source_id":object_name(ObjectId::Entity(id)),"origin":entity.origin().unwrap().to_array(),
                 "targetname":entity.properties.get("targetname"),"target":entity.properties.get("target")})
         }).collect::<Vec<_>>();
         Ok(
-            json!({"snapshot":self.linked_path_stamp(),"existing":true,"classname":graph.classname,
+            json!({"snapshot":self.linked_path_stamp(),"existing":true,"operation":"edit","trains":trains.into_iter().map(|id|self.linked_path_train_report(&self.document,id)).collect::<Vec<_>>(),"classname":graph.classname,
             "prefix":"path","seed":object_name(ObjectId::Entity(seed)),"removed":[],"closed":graph.closed,"points":nodes.iter().map(|node|node["origin"].clone()).collect::<Vec<_>>(),"nodes":nodes}),
         )
     }
@@ -431,8 +449,10 @@ impl Session {
         plan: Plan,
     ) -> Result<Value, String> {
         let mut document = self.document.preview_snapshot();
-        let objects = document
-            .edit("preview linked path", |tx| apply_nodes(tx, &plan))
+        let (objects, outcome) = document
+            .edit("preview linked path", |tx| {
+                operations::apply(tx, &plan, &self.definitions)
+            })
             .map_err(|error| error.to_string())?;
         self.clear_geometry_previews_except(&[]);
         self.cancel_block_preview();
@@ -455,6 +475,9 @@ impl Session {
             definitions: self.definitions_serial,
             picking: None,
             last_pick: None,
+            core: plan.core,
+            outcome,
+            handles: None,
         });
         self.scene_serial += 1;
         self.view_serial += 1;
@@ -468,40 +491,46 @@ impl Session {
         preview.token = self.geometry.linked_path.serial;
         preview.owner = actor;
         preview.picking = None;
+        preview.handles = None;
         self.view_serial += 1;
         Ok(self.linked_path())
     }
 
     pub fn apply_linked_path(&mut self, actor: Actor, token: u64) -> Result<Value, String> {
         let preview = self.checked_linked_path(token)?;
-        if preview.picking.is_some() {
-            return Err("Finish or cancel position picking before applying the path".into());
+        if preview.picking.is_some() || preview.handles.is_some() {
+            return Err("Finish or cancel viewport positioning before applying the path".into());
         }
         if preview.owner != actor {
             return Err(
                 "Another actor owns this linked path; Review preview before applying it".into(),
             );
         }
-        let plan = if let Some(request) = &preview.existing {
+        let plan = if let Some(draft) = &preview.core {
+            self.linked_path_operation_plan(draft.clone())?.1
+        } else if let Some(request) = &preview.existing {
             self.linked_path_change_plan(request)?.1
         } else {
             self.linked_path_plan(&preview.request)?
         };
         let expected = preview.document.vmf().clone();
         let expected_objects = preview.objects.clone();
-        let label = if preview.existing.is_some() {
+        let label = if let Some(draft) = &preview.core {
+            draft.history_label()
+        } else if preview.existing.is_some() {
             "edit linked path"
         } else {
             "create linked path"
         };
+        let definitions = self.definitions.clone();
         let objects = self.edit(actor, label, |tx| {
-            let objects = apply_nodes(tx, &plan)?;
+            let (objects, outcome) = operations::apply(tx, &plan, &definitions)?;
             if objects != expected_objects || tx.document().vmf() != &expected {
                 return Err(EditError::Invalid(
                     "Linked path differs from its preview; preview it again".into(),
                 ));
             }
-            Ok(objects)
+            Ok(outcome.map_or(objects, |outcome| outcome.objects))
         })?;
         self.clear_linked_path_preview();
         self.select(&objects, SelectMode::Replace)?;
@@ -535,7 +564,8 @@ impl State {
                 self.serial,
                 preview.token,
                 preview.owner.label(),
-                preview.picking.is_some()
+                preview.picking.is_some(),
+                preview.handles.as_ref().map(|handles| handles.dragging())
             ])
         })
     }

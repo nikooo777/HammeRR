@@ -77,6 +77,7 @@ pub mod instance_reference;
 pub mod layers;
 mod lighting_preview;
 pub mod linked_path;
+pub mod linked_path_observation;
 mod management;
 pub mod material_assets;
 mod material_catalog;
@@ -391,6 +392,7 @@ pub struct Session {
     compiling: bool,
     compilation: compilation::State,
     native_capture: native_capture::State,
+    linked_path_observation: linked_path_observation::State,
     native_activity: Option<crate::runtime::native_activity::Client>,
     native_cleanup_error: Option<String>,
     content_epoch: u64,
@@ -727,6 +729,7 @@ impl Session {
             compiling: false,
             compilation: compilation::State::default(),
             native_capture: native_capture::State::default(),
+            linked_path_observation: linked_path_observation::State::default(),
             native_activity: None,
             native_cleanup_error: None,
             content_epoch: 0,
@@ -2010,7 +2013,8 @@ impl Session {
                     bounds: preview.bounds.map(|point| point.as_vec3()),
                 }),
             transform_handles: self
-                .terrain_move_guide()
+                .linked_path_guide()
+                .or_else(|| self.terrain_move_guide())
                 .or_else(|| self.clip_guide())
                 .or_else(|| self.component_guide())
                 .or_else(|| self.transform_guide()),
@@ -2704,7 +2708,8 @@ impl Session {
     }
 
     fn content_workers_busy(&self) -> bool {
-        self.baked_surfaces.worker.busy()
+        self.linked_path_observation.worker.busy()
+            || self.baked_surfaces.worker.busy()
             || self.compiled_details.worker.busy()
             || self.instance_contents.worker.busy()
             || self.instance_extraction.worker.busy()
@@ -3018,6 +3023,7 @@ impl Session {
         self.append_presentation_guides(&mut mesh, view);
         self.append_context_guides(&mut mesh);
         self.append_measurement_guides(&mut mesh);
+        self.append_linked_path_guides(&mut mesh);
         self.append_model_attachment_guide(&mut mesh);
         self.append_surface_placement_guide(&mut mesh);
         self.append_magnetic_snapping_guide(&mut mesh);

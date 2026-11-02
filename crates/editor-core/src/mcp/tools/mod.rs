@@ -28,6 +28,7 @@ mod instance_contents;
 mod instance_extraction;
 mod instance_reference;
 mod linked_path;
+mod linked_path_observation;
 mod materials;
 mod measurements;
 mod navigation_preferences;

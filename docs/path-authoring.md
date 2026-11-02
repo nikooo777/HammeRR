@@ -2,35 +2,68 @@
 
 # Linked paths
 
-Create or edit ordered `path_corner` and `path_track` chains.
+Create linked nodes, configure a brush train and inspect its native motion.
 
-## Create a path
+## Create or edit a path
 
-1. Open **Create linked path…**.
-2. Choose **Class** and **Name prefix**.
-3. Enter **Points** with X, Y and Z coordinates.
-4. Use **Add point**, **Remove**, **Move up** and **Move down** to set the order.
-5. Enable **Closed loop** if required.
-6. Click **Preview**.
-7. Inspect names, positions and links, then click **Apply** or **Cancel**.
+1. Open **Brush → Linked paths…**.
+2. Choose **Class** and **Name prefix**. To edit a path, select a node and click **Load selected path**.
+3. Enter point coordinates. Use **Add point**, **Remove**, **Move up** and **Move down** to set the order.
+4. Set **Closed loop**. Do not repeat the first point.
+5. Click **Preview**. Cyan arrows show the link direction. Inspect the nodes, then click **Apply** or **Cancel**.
 
-Do not repeat the first point to close a loop.
+To convert an existing path, change **Class** or **Closed loop** under **Edit path**.
+Class conversion requires neutral node behavior and no attached train.
 
-## Edit a path
+## Move a node
 
-1. Select one existing node.
-2. Open **Create linked path… → Load selected path**.
-3. Edit positions or reorder rows.
-4. Use **New node prefix** for inserted nodes.
-5. Preview, review removals, then apply.
+1. Preview the path.
+2. Click **Move handles…** beside a point.
+3. Drag an axis or plane in the viewport. Grid snapping applies.
+4. Click **Finish moving**, then **Apply**. Press Escape during a drag to restore that point.
 
-Use **Pick position…** to place a row on a visible surface.
-Escape or **Cancel position pick** leaves the preceding position unchanged.
+Use **Pick position…** to place a point on a visible surface. **Cancel position pick** keeps its preceding position.
+
+![Move handles on a linked train path](images/linked-path-handles.png)
+
+## Configure a train
+
+1. Create the train brushes. Use **Tie to entity…** to make a `func_train` for `path_corner`, or a `func_tracktrain` for `path_track`.
+2. Give the train a unique name.
+3. Select a path node. Open **Linked paths… → Load selected path**.
+4. Choose **Set up train** under **Operation**.
+5. Enter **Train entity ID**, or select the train and click **Use selected train**.
+6. Set **Speed** and **Start moving**.
+7. Click **Preview**, inspect the train and any startup helper, then **Apply**.
+
+A named `func_train` uses an explicit `logic_auto` helper for automatic startup. The preview lists helper creation and removal. Each Apply is one Undo step.
+
+## Duplicate a path
+
+1. Load the path. Choose **Duplicate path** under **Operation**.
+2. Set **Offset X / Y / Z** and **Name suffix**.
+3. Enable **Include train** if required and choose its **Train entity ID**.
+4. Choose **Reject external references** or **Keep external references**.
+5. Click **Preview**, inspect new names and links, then **Apply** or **Cancel**.
+
+Internal links point to the copies. External incoming controls keep their original targets and appear in the preview report.
+
+## Observe native movement
+
+1. Apply edits, save the map and compile it successfully. Keep Steam running.
+2. Load the path and choose its **Train entity ID**.
+3. Click **Observe stopped train** or **Observe movement**.
+4. Read the result. Use **Cancel observation** to stop the operation.
+
+The observer runs a private map copy. It waits 500 ms for startup before the first control. It records native game time and absolute train origins. Movement observation sends Stop, Start, Stop and Start; tracktrains receive StartForward. The source map, camera and Undo history stay unchanged. MCP exposes the full samples and receipt.
 
 ## Limits
 
-- 2–64 distinct points within ±65536.
-- Prefixes use 1–96 ASCII letters, digits, underscores or dashes, starting with a letter or underscore.
-- Existing names and node identities remain unless explicitly removed.
-- Ambiguous chains, unsafe references and incompatible source changes reject.
-- Authoring a chain does not attach a train or validate runtime movement.
+- 2–64 distinct, visible, unparented nodes within ±65536; one simple chain or loop.
+- No branches, alternate paths, ambiguous names or dynamic link scripts.
+- Class conversion rejects behavior that the new class cannot preserve.
+- Train setup requires visible, unparented, zero-angle convex brush entities. Speed: greater than zero, up to 4096.
+- Duplication supports one complete path, one associated train and its managed startup helper.
+- Native observation requires Linux, a supported CS:S build and a current saved BSP. Authored scripts and console-command entities are unavailable in the private observer.
+- Observed train names use up to 128 ASCII letters, digits, underscores, periods or dashes.
+- Native origins can differ from path points by the train's brush-center offset. Samples do not claim exact node arrivals.

@@ -42,3 +42,21 @@ pub fn capture_with_cleanup(
 pub fn worker_entry(_arguments: Vec<OsString>) -> io::Result<()> {
     Err(unsupported())
 }
+
+pub fn observe_movement_with_cleanup(
+    _request: crate::MovementRequest,
+    observer: &mut dyn CaptureObserver,
+) -> Result<crate::MovementReceipt, CaptureFailure> {
+    let result = observer.checkpoint();
+    let error = match result {
+        Err(error) => error,
+        Ok(()) => io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Native movement observation requires the verified Linux64 CS:S client and private Cage/Bubblewrap runtime",
+        ),
+    };
+    Err(CaptureFailure {
+        error,
+        cleanup: CleanupDisposition::Confirmed,
+    })
+}

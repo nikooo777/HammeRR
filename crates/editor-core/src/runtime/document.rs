@@ -570,6 +570,19 @@ pub struct DocumentContinuation {
 }
 
 impl DocumentAccess {
+    pub fn start_linked_path_observation(
+        &self,
+        actor: Actor,
+        options: crate::session::linked_path_observation::Options,
+    ) -> Result<Value, String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Native movement observation"))
+            .transpose()?;
+        super::linked_path_observation::start(&self.session, actor, options, operation)
+    }
+
     pub fn finish_reviewed_close(&self) -> Result<(), String> {
         let document = self
             .document

@@ -761,12 +761,11 @@ impl Session {
                 (xy, end, [115, 165, 245, 230]),
                 (start, end, [255, 210, 100, 255]),
             ] {
-                append_line(mesh, a, b, color);
+                mesh.add_guide_line(a, b, color);
             }
             for point in [start, end] {
                 for axis in [DVec3::X, DVec3::Y, DVec3::Z] {
-                    append_line(
-                        mesh,
+                    mesh.add_guide_line(
                         point - axis * 3.0,
                         point + axis * 3.0,
                         [255, 230, 170, 255],
@@ -774,15 +773,6 @@ impl Session {
                 }
             }
         }
-    }
-}
-
-fn append_line(mesh: &mut render::SceneMesh, start: DVec3, end: DVec3, color: [u8; 4]) {
-    for point in [start, end] {
-        mesh.lines.push(render::scene::LineVertex {
-            position: point.as_vec3().to_array(),
-            color,
-        });
     }
 }
 

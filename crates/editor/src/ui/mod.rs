@@ -2296,12 +2296,32 @@ fn create_document_window(
                 }
                 return;
             }
+            let path_handling = !lock(&ui.session).linked_path()["preview"]["handles"].is_null();
+            if button == 0 && path_handling {
+                let Some(controller) = &ui.linked_path else {
+                    app.set_message("Open Linked paths… and Review preview before moving nodes.".into());
+                    return;
+                };
+                let pointer = Pointer {
+                    position: DVec2::new(f64::from(x), f64::from(y)),
+                    size: (viewport_size.0.round().max(1.0) as u32, viewport_size.1.round().max(1.0) as u32),
+                };
+                let mut session = lock(&ui.session);
+                let result = if session.camera() != ui.viewport.camera {
+                    Err("Viewport camera changed; choose Move handles again".into())
+                } else {
+                    controller.handle_pointer(&mut session, pointer, down)
+                };
+                if let Err(error) = result { app.set_message(error.into()); }
+                refresh_interaction(&app, &session);
+                return;
+            }
             let path_picking = !lock(&ui.session).linked_path()["preview"]["picking"].is_null();
             if button == 0 && path_picking {
                 if down {
                     ui.pick_release = true;
                     let Some(controller) = ui.linked_path.as_ref() else {
-                        app.set_message("Open Create linked path… and Review preview before picking.".into());
+                        app.set_message("Open Linked paths… and Review preview before picking.".into());
                         return;
                     };
                     let mut session = lock(&ui.session);
@@ -2845,6 +2865,29 @@ fn create_document_window(
                     }
                     return;
                 }
+                if !lock(&ui.session).linked_path()["preview"]["handles"].is_null() {
+                    if let Some(controller) = &ui.linked_path {
+                        let mut session = lock(&ui.session);
+                        let result = if session.camera() != ui.viewport.camera {
+                            Err("Viewport camera changed; choose Move handles again".into())
+                        } else {
+                            controller.move_handle(
+                                &mut session,
+                                Pointer {
+                                    position: DVec2::new(f64::from(x), f64::from(y)),
+                                    size: (
+                                        size.0.round().max(1.0) as u32,
+                                        size.1.round().max(1.0) as u32,
+                                    ),
+                                },
+                            )
+                        };
+                        if let Err(error) = result {
+                            app.set_message(error.into());
+                        }
+                    }
+                    return;
+                }
                 if let Some(controller) = &ui.terrain
                     && controller.is_handling()
                 {
@@ -3003,6 +3046,12 @@ fn create_document_window(
                         if cancel_overlay && let Some(controller) = &ui.overlay {
                             let _ = controller.discard_handles(&mut lock(&ui.session));
                             app.set_overlay_handling(false);
+                        }
+                        let cancel_path = lock(&ui.session).linked_path()["preview"]["handles"]["dragging"] == true;
+                        if cancel_path && let Some(controller) = &ui.linked_path {
+                            let result = controller.discard_handles(&mut lock(&ui.session));
+                            if let Err(error) = result { app.set_message(error.into()); }
+                            app.set_linked_path_handling(false);
                         }
                         if let Some(controller) = &ui.terrain
                             && controller.is_stroking()
@@ -3760,6 +3809,9 @@ fn create_document_window(
                     ));
                 }
                 let path_picking = !lock(&ui.session).linked_path()["preview"]["picking"].is_null();
+                let path_handling =
+                    !lock(&ui.session).linked_path()["preview"]["handles"].is_null();
+                app.set_linked_path_handling(path_handling);
                 if let Some(controller) = &ui.measurements {
                     controller.set_viewport((
                         app.get_viewport_width().round().max(1.0) as u32,

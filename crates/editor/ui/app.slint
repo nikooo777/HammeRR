@@ -2454,6 +2454,7 @@ export component AppWindow inherits Window {
     in property <bool> terrain-center-picking;
     in property <bool> surface-picking;
     in property <bool> overlay-handling;
+    in property <bool> linked-path-handling;
     in property <string> overlay-handle-notice;
     in property <bool> can-cancel-overlay-handles;
     callback cancel-overlay-handles();
@@ -2640,7 +2641,7 @@ export component AppWindow inherits Window {
         { id: "block", title: root.projection-index == 0 ? "Add brush" : "Draw brush", group: "Brush", enabled: true },
         { id: "brush-shapes", title: "Brush shapes…", group: "Brush", enabled: true },
         { id: "draw-polygon", title: "Draw polygon…", group: "Brush", enabled: true },
-        { id: "linked-path", title: "Create linked path…", group: "Brush", enabled: true },
+        { id: "linked-path", title: "Linked paths…", group: "Brush", enabled: true },
         { id: "clip", title: "Clip selected brushes", group: "Brush", enabled: root.can-clip && !root.clipping },
         { id: "hollow", title: "Hollow brushes…", group: "Brush", enabled: root.can-clip },
         { id: "carve", title: "Carve brushes…", group: "Brush", enabled: root.can-clip },
@@ -2979,7 +2980,7 @@ export component AppWindow inherits Window {
             MenuItem { title: root.projection-index == 0 ? "Add brush" : "Draw brush"; activated => { root.create-block(); } }
             MenuItem { title: "Brush shapes…"; activated => { root.brush-shapes(); } }
             MenuItem { title: "Draw polygon…"; activated => { root.draw-polygon(); } }
-            MenuItem { title: "Create linked path…"; activated => { root.create-linked-path(); } }
+            MenuItem { title: "Linked paths…"; activated => { root.create-linked-path(); } }
             MenuSeparator { }
             MenuItem { title: "Clip selected brushes"; enabled: root.can-clip && !root.clipping; activated => { root.start-clip(); } }
             MenuItem { title: "Hollow brushes…"; enabled: root.can-clip; activated => { root.hollow-brushes(); } }
@@ -3313,7 +3314,7 @@ export component AppWindow inherits Window {
                         IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.entity; tooltip: "Place entity"; clicked => { root.place-entity(); } }
                         IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.overlay; tooltip: "Overlay"; clicked => { root.create-overlay(); } }
                         IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.measure; tooltip: "Measurements"; clicked => { root.measurements(); } }
-                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.path; tooltip: "Create linked path"; clicked => { root.create-linked-path(); } }
+                        IconButton { width: 32px; height: 32px; icon-size: 17px; icon: Icon.path; tooltip: "Linked paths"; clicked => { root.create-linked-path(); } }
                     }
                 }
 
@@ -3443,7 +3444,7 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        if (root.viewport-capture-pane < 0 || root.viewport-capture-pane == root.active-pane-index) && (root.overlay-handle-notice != "" || root.pivot-pick-notice != ""): Rectangle {
+                        if (root.viewport-capture-pane < 0 || root.viewport-capture-pane == root.active-pane-index) && (root.overlay-handle-notice != "" || root.pivot-pick-notice != "" || root.linked-path-handling): Rectangle {
                             x: Theme.space;
                             y: Theme.viewport-header-height * 2 + Theme.space-lg * 2;
                             width: min(notice-row.preferred-width, max(0px, parent.width - Theme.space-xl));
@@ -3456,7 +3457,8 @@ export component AppWindow inherits Window {
                                 padding: 6px;
                                 padding-left: Theme.space-lg;
                                 spacing: Theme.space;
-                                Text { text: root.overlay-handle-notice != "" ? root.overlay-handle-notice : root.pivot-pick-notice; color: Theme.info; vertical-alignment: center; overflow: elide; }
+                                Text { text: root.linked-path-handling ? "Move path node · drag a handle · Apply remains required" : root.overlay-handle-notice != "" ? root.overlay-handle-notice : root.pivot-pick-notice; color: Theme.info; vertical-alignment: center; overflow: elide; }
+                                if root.linked-path-handling: Button { text: "Return to preview"; clicked => { root.cancel-surface-pick(); } }
                                 if root.can-cancel-overlay-handles: Button { text: "Cancel handles"; clicked => { root.cancel-overlay-handles(); } }
                                 if root.overlay-handle-notice == "" && root.can-cancel-pivot-pick: Button { text: "Cancel pivot pick"; clicked => { root.cancel-transform-pivot-pick(); } }
                             }

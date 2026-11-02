@@ -495,6 +495,18 @@ pub(super) fn cancel_surface_pick(app: &AppWindow, ui: &SharedUi) -> bool {
     }
     let mut session = lock(&shared);
     let path = session.linked_path();
+    if !path["preview"]["handles"].is_null() {
+        let result = if let Some(controller) = &ui.borrow().linked_path {
+            controller.cancel_handles(&mut session)
+        } else {
+            Err("Open Linked paths… and Review preview before cancelling node handles".into())
+        };
+        match result {
+            Ok(()) => app.set_linked_path_handling(false),
+            Err(error) => app.set_message(error.into()),
+        }
+        return true;
+    }
     if !path["preview"]["picking"].is_null() {
         if path["preview"]["owner"] != Actor::User.label() {
             app.set_message(

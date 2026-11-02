@@ -60,6 +60,15 @@ fn reference_kind(kind: &str) -> bool {
     matches!(kind, "target_destination" | "target_name_or_class")
 }
 
+fn linked_path_target(classname: Option<&str>, key: &str) -> bool {
+    key.eq_ignore_ascii_case("target")
+        && classname.is_some_and(|classname| {
+            ["path_corner", "path_track", "func_train", "func_tracktrain"]
+                .iter()
+                .any(|known| classname.eq_ignore_ascii_case(known))
+        })
+}
+
 #[derive(Clone, Copy)]
 enum BorrowedLocation<'a> {
     Property {
@@ -188,8 +197,8 @@ fn scan_visit<'a>(
     };
     for entity in &document.vmf().entities {
         work.properties(entity, "classname")?;
-        let class = entity
-            .classname()
+        let classname = entity.classname();
+        let class = classname
             .map(|name| lookup(name, work))
             .transpose()?
             .flatten();
@@ -204,9 +213,10 @@ fn scan_visit<'a>(
                 work.charge(1)?;
             }
             let property = class.and_then(|class| class.property(key));
+            let linked_path = linked_path_target(classname, key);
             if key.eq_ignore_ascii_case("targetname")
                 || key.eq_ignore_ascii_case("classname")
-                || property.is_some_and(|property| property.kind == "target_source")
+                || !linked_path && property.is_some_and(|property| property.kind == "target_source")
                 || value.is_empty()
             {
                 continue;
@@ -220,14 +230,27 @@ fn scan_visit<'a>(
             } else {
                 value
             };
-            let declared =
-                parent || property.is_some_and(|property| reference_kind(&property.kind));
+            let declared = parent
+                || linked_path
+                || property.is_some_and(|property| reference_kind(&property.kind));
             let mut certain = declared;
-            let mut reason = if certain {
+            let mut reason = if linked_path {
+                "Built-in linked path target"
+            } else if certain {
                 property.map_or("Parent reference", |property| property.label.as_str())
             } else {
                 "Text match; this property is not declared as an entity reference"
             };
+            if linked_path {
+                work.properties(entity, "classname")?;
+                work.properties(entity, "target")?;
+                if entity.properties.get_all("classname").count() != 1
+                    || entity.properties.get_all("target").count() != 1
+                {
+                    certain = false;
+                    reason = "Duplicate linked path classname or target; review manually";
+                }
+            }
             if property.is_some_and(|property| property.read_only) {
                 certain = false;
                 reason = "Read-only FGD property; review manually";

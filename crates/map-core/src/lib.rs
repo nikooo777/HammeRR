@@ -19,6 +19,7 @@ pub mod groups;
 pub mod hollow;
 pub mod layers;
 pub mod light;
+pub mod linked_path;
 pub mod measurements;
 pub mod merge;
 mod metadata;

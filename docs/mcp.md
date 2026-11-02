@@ -957,6 +957,44 @@ surface-preparation work bounds. There is no overlap avoidance,
 physics settling or live attachment to the targets. Stale or invalid requests
 preserve the previous draft. Unknown fields and policy values refuse.
 
+## Linked paths and trains
+
+`get_linked_path` returns the current snapshot and owned preview.
+Use `set_linked_path` with these actions:
+
+| Action | Required input |
+| --- | --- |
+| `inspect` | One node `id`; returns the whole chain and associated trains. |
+| `topology` | `seed`, `classname`, `closed`, `snapshot`; optional ordered `points`. |
+| `train` | `seed`, `train`, `speed`, `start_on`, `snapshot`. |
+| `duplicate` | `seed`, optional associated `train`, `offset`, `policies`, `snapshot`. |
+| `begin_handles` | Preview `token`, zero-based `row`, `width`, `height`, `snapshot=pick_snapshot`; optional camera. |
+| `begin_drag` | Current `token`, `handle`: `x`, `y`, `z`, `xy`, `xz`, `yz` or `view`; optional pointer. |
+| `update_drag` | Current `token` and exactly one pointer or total `amount:[u,v]`. |
+| `finish_drag`, `cancel_drag`, `cancel_handles` | Current `token`. |
+| `apply`, `cancel` | Current owned preview `token`. |
+
+Changes return a new token. Apply is blocked during viewport positioning.
+Duplication uses the [array policies](#repeated-placement); internal references must use `remap`.
+Class conversion rejects incompatible behavior. Train setup reports explicit startup helpers.
+
+`get_linked_path_observation` returns its snapshot, running token, errors and last receipt.
+Set `include_samples:true` to include the complete sample stream.
+`start_linked_path_observation` requires `train` and that snapshot.
+Optional `stationary:true` sends Stop only; otherwise the observer sends Stop/Start/Stop/Start.
+Tracktrains use StartForward. Defaults are 200 ms and eight samples per phase.
+Use 100–1000 ms, 3–64 samples per phase and at most 60 seconds of requested sampling.
+
+The observer waits 500 ms for map startup before its first control; receipts record `startup_settle_ms`.
+Later authored inputs can still invalidate a stopped phase.
+Start returns an accepted job, not a completed result. Poll the status; check `last.status`,
+`last.current`, native activity and cleanup. Receipts contain source/BSP hashes,
+actual absolute origins, game times, control inputs and artifact paths.
+Cancel with `cancel_linked_path_observation` and the exact token.
+Linux CS:S, Steam and a current saved build are required. The private observer
+uses `-insecure` and `sv_lan 1` and preserves the document.
+See [Linked paths](path-authoring.md) for supported paths and trains.
+
 ## Rope bounds
 
 Set `rope_preview:true` with `set_view` to include admitted spans in source-helper bounds.
@@ -1584,7 +1622,7 @@ These groups locate the available operations.
 | [Instance extraction](instance-extraction.md) | `get_instance_extraction`, `set_instance_extraction` |
 | [Instance authoring](instance-authoring.md) | `get_instance_reference`, `set_instance_reference` |
 | [Collapse references](instances.md#collapse-references-into-editable-geometry) | `get_instance_collapse`, `set_instance_collapse` |
-| [Linked paths](path-authoring.md) | `get_linked_path`, `set_linked_path` |
+| [Linked paths](path-authoring.md) | `get_linked_path`, `set_linked_path`, `get_linked_path_observation`, `start_linked_path_observation`, `cancel_linked_path_observation` |
 | [Materials and face textures](textures.md) | `apply_surface_placement`, `begin_surface_placement_pick`, `begin_texture_stroke`, `browse_materials`, `cancel_face_preview`, `cancel_surface_placement`, `cancel_texture_stroke`, `commit_face_preview`, `commit_texture_stroke`, `edit_faces`, `find_material_faces`, `get_face_selection`, `get_material_search`, `get_material_source`, `get_surface_placement`, `get_surface_placement_sources`, `get_surface_sample`, `get_texture_stroke`, `paint_face_texture`, `pick_surface_placement`, `preview_material`, `preview_surface_placement`, `project_face_group`, `propagate_face_texture`, `reload_material_assets`, `reload_material_favorites`, `replace_materials`, `sample_face_texture`, `search_materials`, `select_faces`, `select_material_faces`, `set_material`, `set_material_favorite`, `update_texture_stroke`, `vary_face_uv` |
 | [Spatial guides](measurements.md) | `get_measurements`, `set_measurement`, `get_workplane`, `set_workplane`, `intersect_workplane` |
 | [Navigation defaults](navigation-defaults.md) | `get_navigation_settings`, `set_navigation_defaults`, `set_navigation_settings` |

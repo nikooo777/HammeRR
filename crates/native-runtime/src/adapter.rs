@@ -10,7 +10,7 @@ use crate::util::invalid;
 
 const CONTROLLER: &str = "\n{\n\"classname\" \"logic_script\"\n\"targetname\" \"__hammerr_capture_controller\"\n\"vscripts\" \"hammerr_capture.nut\"\n\"thinkfunction\" \"HammeRRCaptureThink\"\n}\n";
 
-fn dangerous_class(class: &str) -> bool {
+pub(crate) fn dangerous_class(class: &str) -> bool {
     matches!(
         class.to_ascii_lowercase().as_str(),
         "logic_script"
@@ -87,18 +87,7 @@ pub fn capture_staging_bsp_for_channel(
     if entities.len() > 4 * 1024 * 1024 {
         return Err(invalid("Capture entity text exceeds 4 MiB"));
     }
-    let executable = Regex::new(r#"(?i)"classname"\s*"(?:logic_script|point_servercommand|point_clientcommand|point_broadcastclientcommand)"|\b(?:runscript\w*|consolecommand|callscriptfunction|setthinkfunction)\b|[,\x1b]command[,\x1b]|__hammerr_capture_"#).map_err(io::Error::other)?;
-    let script_fields =
-        Regex::new(r#"(?i)"(?:vscripts|thinkfunction)"\s*"([^"]*)""#).map_err(io::Error::other)?;
-    if executable.is_match(entities)
-        || script_fields
-            .captures_iter(entities)
-            .any(|capture| !capture[1].trim().is_empty())
-    {
-        return Err(invalid(
-            "Compiled entities contain unsupported authored scripts or console commands; inspect the source entity diagnostics",
-        ));
-    }
+    validate_private_entities(entities)?;
     if channel == crate::CaptureChannel::Hdr
         && [
             bsp::lump::LIGHTING_HDR,
@@ -127,4 +116,20 @@ pub fn capture_staging_bsp_for_channel(
         return Err(invalid("Staged capture BSP exceeds 128 MiB"));
     }
     Ok(result)
+}
+
+pub(crate) fn validate_private_entities(entities: &str) -> io::Result<()> {
+    let executable = Regex::new(r#"(?i)"classname"\s*"(?:logic_script|point_servercommand|point_clientcommand|point_broadcastclientcommand)"|\b(?:runscript\w*|consolecommand|callscriptfunction|setthinkfunction)\b|[,\x1b]command[,\x1b]|__hammerr_(?:capture|movement)_"#).map_err(io::Error::other)?;
+    let script_fields =
+        Regex::new(r#"(?i)"(?:vscripts|thinkfunction)"\s*"([^"]*)""#).map_err(io::Error::other)?;
+    if executable.is_match(entities)
+        || script_fields
+            .captures_iter(entities)
+            .any(|capture| !capture[1].trim().is_empty())
+    {
+        return Err(invalid(
+            "Compiled entities contain unsupported authored scripts or console commands; inspect the source entity diagnostics",
+        ));
+    }
+    Ok(())
 }

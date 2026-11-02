@@ -38,6 +38,7 @@ pub(crate) struct WorkerRequest {
 )]
 pub(crate) enum WorkerProfile {
     Reflection(ReflectionProfile),
+    Movement(crate::movement::MovementProfile),
     PplUv857(crate::PplUv857Case),
     PplMidrange909(crate::PplMidrange909Case),
     PplSpatial919(crate::PplSpatial919Case),
@@ -56,6 +57,7 @@ impl WorkerRequest {
     pub fn map_name(&self) -> &str {
         match &self.profile {
             WorkerProfile::Reflection(profile) => &profile.map_name,
+            WorkerProfile::Movement(profile) => &profile.map_name,
             WorkerProfile::PplUv857(_)
             | WorkerProfile::PplMidrange909(_)
             | WorkerProfile::PplSpatial919(_)
@@ -644,6 +646,10 @@ fn validate_capture_socket_path(directory: &Path) -> io::Result<()> {
 }
 
 fn capture_directory_in(parent: &Path) -> io::Result<tempfile::TempDir> {
+    private_directory_in(parent, "hammerr_capture")
+}
+
+fn private_directory_in(parent: &Path, operation: &str) -> io::Result<tempfile::TempDir> {
     let parent = parent.canonicalize()?;
     if parent
         .as_os_str()
@@ -656,7 +662,7 @@ fn capture_directory_in(parent: &Path) -> io::Result<tempfile::TempDir> {
         ));
     }
     let nonce = getrandom::u64().map_err(io::Error::other)?;
-    let prefix = format!("hammerr_capture_{nonce:016x}");
+    let prefix = format!("{operation}_{nonce:016x}");
     validate_capture_socket_path(&parent.join(&prefix))?;
     tempfile::Builder::new()
         .prefix(&prefix)
@@ -871,6 +877,82 @@ fn run_owned(
         ));
     }
     Ok(result)
+}
+
+pub fn observe_movement_with_cleanup(
+    request: crate::MovementRequest,
+    observer: &mut dyn CaptureObserver,
+) -> Result<crate::MovementReceipt, crate::CaptureFailure> {
+    let mut cleanup = crate::CleanupDisposition::Confirmed;
+    observe_movement_inner(request, observer, &mut cleanup)
+        .map_err(|error| crate::CaptureFailure { error, cleanup })
+}
+
+fn observe_movement_inner(
+    mut request: crate::MovementRequest,
+    observer: &mut dyn CaptureObserver,
+    cleanup: &mut crate::CleanupDisposition,
+) -> io::Result<crate::MovementReceipt> {
+    observer.checkpoint()?;
+    let staged = crate::movement::stage(&request.bsp, &request.train)?;
+    let profile = crate::movement::MovementProfile {
+        map_name: request.map_name,
+        source_sha256: request.source_sha256,
+        bsp_sha256: util::hash(&request.bsp),
+        staged_bsp_sha256: util::hash(&staged),
+        train: request.train,
+        mode: request.mode,
+        sample_interval_ms: request.sample_interval_ms,
+        samples_per_phase: request.samples_per_phase,
+        startup_settle_ms: crate::MOVEMENT_STARTUP_SETTLE_MS,
+    };
+    profile.validate()?;
+    drop(request.bsp);
+    request.environment = guard::resolve_environment(&request.environment)?;
+    guard::validate_environment(&request.environment)?;
+    crate::movement::verify_server(&request.environment.engine_root)?;
+    let parent = request.artifacts_parent.canonicalize()?;
+    if parent.starts_with("/tmp") || parent.starts_with("/dev/shm") {
+        return Err(invalid(
+            "Native movement requires retained artifacts on disk",
+        ));
+    }
+    let temporary = private_directory_in(&parent, "hm")?;
+    let lease = lease()?;
+    let directory = temporary.keep().canonicalize()?;
+    util::atomic_write(&directory.join("staged.bsp"), &staged)?;
+    let worker = WorkerRequest {
+        version: WORKER_VERSION,
+        nonce: directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| invalid("Invalid movement directory"))?
+            .to_owned(),
+        supervisor: std::process::id(),
+        supervisor_start: start_time(std::process::id())?,
+        environment: request.environment,
+        profile: WorkerProfile::Movement(profile),
+    };
+    let result = run_owned(&directory, &worker, &lease, observer, cleanup)?;
+    observer.checkpoint()?;
+    let WorkerProfile::Movement(profile) = worker.profile else {
+        return Err(invalid("Missing movement worker profile"));
+    };
+    if util::hash_file(&directory.join("staged.bsp"), util::MAX_BSP)? != profile.staged_bsp_sha256 {
+        return Err(invalid("Native movement changed its staged BSP baseline"));
+    }
+    let console = directory.join("cstrike/hammerr-movement.log");
+    let observation =
+        crate::movement::parse(&util::diagnostic_text(&console, util::MAX_LOG)?, &profile)?;
+    let receipt = crate::movement::receipt(
+        profile,
+        observation,
+        directory.clone(),
+        result.elapsed_ms,
+        *cleanup,
+    );
+    util::json_write(&directory.join("movement-receipt.json"), &receipt)?;
+    Ok(receipt)
 }
 
 pub fn diagnose_ppl_uv857_with_cleanup(

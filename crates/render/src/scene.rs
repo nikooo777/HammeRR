@@ -1785,6 +1785,13 @@ impl SceneMesh {
         ranges
     }
 
+    pub fn add_guide_line(&mut self, start: DVec3, end: DVec3, color: [u8; 4]) {
+        self.lines.extend([start, end].map(|point| LineVertex {
+            position: point.as_vec3().to_array(),
+            color,
+        }));
+    }
+
     pub fn add_bounds_lines(&mut self, mins: DVec3, maxs: DVec3, color: [u8; 4]) {
         let corners: [DVec3; 8] = std::array::from_fn(|bits| {
             DVec3::new(
@@ -1797,12 +1804,7 @@ impl SceneMesh {
             for bit in [1, 2, 4] {
                 let other = index ^ bit;
                 if index < other {
-                    for point in [corners[index], corners[other]] {
-                        self.lines.push(LineVertex {
-                            position: point.as_vec3().to_array(),
-                            color,
-                        });
-                    }
+                    self.add_guide_line(corners[index], corners[other], color);
                 }
             }
         }

@@ -71,7 +71,8 @@ pub struct CaptureReceipt {
     pub preservation_passed: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CleanupDisposition {
     Confirmed,
     Unconfirmed,
@@ -108,6 +109,9 @@ mod guard;
 #[cfg(target_os = "linux")]
 mod isolation;
 #[cfg(target_os = "linux")]
+mod movement;
+mod movement_types;
+#[cfg(target_os = "linux")]
 mod process;
 #[cfg(not(target_os = "linux"))]
 mod unsupported;
@@ -128,6 +132,12 @@ pub use diagnostic::{PplSpatial919Case, PplSpatial919Receipt, PplSpatial919Reque
 pub use diagnostic::{PplUv857Case, PplUv857Receipt, PplUv857Request};
 #[cfg(target_os = "linux")]
 pub use guard::{resolve_environment, validate_environment};
+pub use movement_types::{
+    MOVEMENT_STARTUP_SETTLE_MS, MovementControlReceipt, MovementMode, MovementPhase,
+    MovementReceipt, MovementRequest, MovementSample, MovementTrainIdentity,
+};
+#[cfg(target_os = "linux")]
+pub use process::observe_movement_with_cleanup;
 #[cfg(target_os = "linux")]
 pub use process::{capture, capture_with_cleanup};
 #[cfg(target_os = "linux")]
@@ -137,7 +147,8 @@ pub use process::{
 };
 #[cfg(not(target_os = "linux"))]
 pub use unsupported::{
-    capture, capture_with_cleanup, resolve_environment, validate_environment, worker_entry,
+    capture, capture_with_cleanup, observe_movement_with_cleanup, resolve_environment,
+    validate_environment, worker_entry,
 };
 
 #[cfg(target_os = "linux")]

@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 83.3% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 83.7% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -41,6 +41,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [Color correction](color-correction.md) | One explicit Source RGB8 `.raw` LUT, shared enable/weight controls and complete viewport display-color preview. | Native HDR, tone mapping, entities/volumes and multiple-LUT composition. |
 | [Terrain](terrain.md) | Creation, exact XYZ/Z vertex batches, height CSV import, sculpting, blending, masks, handles, resizing, sewing and full/half-edge subdivision. | Holes, triangle removal and general fractional joins. |
 | [Entities](entities.md) | Typed properties, exact/substring class selection, user/map color palettes, FGD helpers, extended catalogs with sourced automatic visibility groups and optional material-directory exclusions, connections, bounded I/O graph queries/connected selection/framing, batch edits and safe rename. | General graph canvas layouts and runtime simulation. |
+| [Linked paths](path-authoring.md) | Ordered corner/track chains, class and loop conversion, move handles, brush-train setup, reference-safe assembly duplication and native Stop/Start observations. | Simple unparented paths; zero-angle brush trains. Native observation requires Linux CS:S and Steam. |
 | [Reference images](reference-images.md) | Editor-only PNG planes with pose, opacity, flips, per-projection display, guarded reload and Undo. | Static PNG; external source files. |
 | [Helper display](selection-presentation.md) | Independent authored-model, sprite, FGD-resource and helper controls; complete mixed-selection counts and bounds. | Static resources and existing helper support. |
 | [Magnetic movement](placement.md#magnetic-translation) | Pointer Move capture to visible brush, terrain and model vertices; individual child-brush support. | Explicit flat-brush source corner; bounded world-unit radius and first-visible target. |

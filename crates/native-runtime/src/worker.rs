@@ -103,7 +103,7 @@ pub(crate) fn game_directory(directory: &Path, request: &WorkerRequest) -> io::R
             Some(crate::diagnostic::DiagnosticCase::Spatial919(*case))
         }
         WorkerProfile::PplMips931(case) => Some(crate::diagnostic::DiagnosticCase::Mips931(*case)),
-        WorkerProfile::Reflection(_) => None,
+        WorkerProfile::Reflection(_) | WorkerProfile::Movement(_) => None,
     };
     if let Some(case) = diagnostic_case {
         crate::diagnostic::configure_game(directory, &game, case)?;
@@ -111,6 +111,10 @@ pub(crate) fn game_directory(directory: &Path, request: &WorkerRequest) -> io::R
             directory.join("staged.bsp"),
             game.join("maps/hammerr_runtime.bsp"),
         )?;
+        return Ok(game);
+    }
+    if let WorkerProfile::Movement(profile) = &request.profile {
+        crate::movement::configure_game(directory, &game, profile)?;
         return Ok(game);
     }
     let WorkerProfile::Reflection(profile) = &request.profile else {
@@ -586,6 +590,9 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
                 request,
                 crate::diagnostic::DiagnosticCase::Mips931(*case),
             );
+        }
+        WorkerProfile::Movement(profile) => {
+            return crate::movement::execute(directory, request, profile);
         }
         WorkerProfile::Reflection(_) => {}
     }

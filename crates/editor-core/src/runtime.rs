@@ -16,6 +16,7 @@ pub use document::{
     DocumentAccess, DocumentCloseReview, DocumentContinuation, DocumentHandle, DocumentId,
     DocumentLifecycle, DocumentOperation,
 };
+mod linked_path_observation;
 mod recovery;
 #[cfg(feature = "mcp")]
 pub(crate) use recovery::RecoverySubmission;

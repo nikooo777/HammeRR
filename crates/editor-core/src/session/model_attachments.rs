@@ -149,11 +149,11 @@ impl Session {
         }
         let point = self.model_attachment(entity, attachment)?;
         let origin = position(&point);
-        self.set_camera(self.camera.frame_bounds(
+        self.try_set_camera(self.camera.frame_bounds(
             (origin - DVec3::splat(18.0)).as_vec3(),
             (origin + DVec3::splat(18.0)).as_vec3(),
             aspect,
-        ));
+        ))?;
         self.log(
             actor,
             format!(

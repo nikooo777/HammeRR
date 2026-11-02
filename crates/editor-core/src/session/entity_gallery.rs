@@ -432,7 +432,7 @@ impl Session {
             aspect,
             "Gallery",
         )?;
-        self.set_camera(camera);
+        self.try_set_camera(camera)?;
         Ok(())
     }
 

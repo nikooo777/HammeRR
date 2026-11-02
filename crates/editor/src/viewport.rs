@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use editor_core::session::view_layout::{MAX_CANVAS_PIXELS, MAX_PANES};
 use editor_core::shortcuts::Command;
 use glam::Vec3;
 use render::{
@@ -24,25 +25,109 @@ pub struct Click {
     pub control: bool,
 }
 
+pub struct PaneRender {
+    pub index: usize,
+    pub camera: Camera,
+    pub size: (u32, u32),
+}
+
+pub struct PaneFrame {
+    pub index: usize,
+    pub image: slint::Image,
+    pub error: Option<String>,
+}
+
+struct PaneState {
+    targets: [Option<RenderTarget>; 2],
+    next_target: usize,
+    pixel_ratio: f32,
+    camera: Option<Camera>,
+    options: Option<ViewOptions>,
+    size: Option<(u32, u32)>,
+    visible: bool,
+    dirty: bool,
+    error: Option<String>,
+    baked_surfaces_error: Option<String>,
+    color_correction_error: Option<String>,
+    sky3d_error: Option<String>,
+}
+
+impl Default for PaneState {
+    fn default() -> Self {
+        Self {
+            targets: [None, None],
+            next_target: 0,
+            pixel_ratio: 1.0,
+            camera: None,
+            options: None,
+            size: None,
+            visible: false,
+            dirty: true,
+            error: None,
+            baked_surfaces_error: None,
+            color_correction_error: None,
+            sky3d_error: None,
+        }
+    }
+}
+
+impl PaneState {
+    fn needs_render(&self, request: &PaneRender, options: ViewOptions, pixel_ratio: f32) -> bool {
+        self.dirty
+            || self.targets[0].is_none()
+            || self.camera != Some(request.camera)
+            || self.options != Some(options)
+            || self.size != Some(request.size)
+            || self.pixel_ratio != pixel_ratio
+    }
+
+    fn observed(&mut self, request: &PaneRender, options: ViewOptions, pixel_ratio: f32) {
+        self.camera = Some(request.camera);
+        self.options = Some(options);
+        self.size = Some(request.size);
+        self.pixel_ratio = pixel_ratio;
+        self.dirty = false;
+    }
+
+    fn message(&self) -> Option<String> {
+        if let Some(error) = &self.error {
+            return Some(error.clone());
+        }
+        let errors = [
+            self.baked_surfaces_error.as_deref(),
+            self.color_correction_error.as_deref(),
+            self.sky3d_error.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        (!errors.is_empty()).then(|| errors.join("\n"))
+    }
+}
+
+fn pane_options(mut options: ViewOptions, active: bool, pixel_ratio: f32) -> ViewOptions {
+    options.handle_pixel_ratio = pixel_ratio;
+    if !active {
+        options.transform_handles = None;
+        options.area_preview = None;
+        options.paint_preview = None;
+    }
+    options
+}
+
 pub struct Viewport {
     renderer: Renderer,
     scene: Option<GpuScene>,
     pub camera: Camera,
     pub options: ViewOptions,
-    /// Alternated each frame: handing Slint a different texture than last
-    /// time is what makes it repaint.
-    targets: [Option<RenderTarget>; 2],
-    next_target: usize,
-    pixel_ratio: f32,
+    panes: [PaneState; MAX_PANES],
+    active_pane: usize,
     held: HashMap<String, Command>,
     pub shortcut_input: crate::shortcut_input::State,
     looking: bool,
     last_mouse: Option<(f32, f32)>,
     left_press: Option<(f32, f32)>,
-    dirty: bool,
     scene_error: Option<String>,
-    baked_surfaces_error: Option<String>,
-    color_correction_error: Option<String>,
 }
 
 impl Viewport {
@@ -52,18 +137,14 @@ impl Viewport {
             scene: None,
             camera,
             options: ViewOptions::default(),
-            targets: [None, None],
-            next_target: 0,
-            pixel_ratio: 1.0,
+            panes: std::array::from_fn(|_| PaneState::default()),
+            active_pane: 0,
             held: HashMap::new(),
             shortcut_input: Default::default(),
             looking: false,
             last_mouse: None,
             left_press: None,
-            dirty: true,
             scene_error: None,
-            baked_surfaces_error: None,
-            color_correction_error: None,
         }
     }
 
@@ -73,7 +154,9 @@ impl Viewport {
         mesh: &SceneMesh,
         library: &MaterialLibrary,
     ) -> Result<(), String> {
-        self.baked_surfaces_error = None;
+        for pane in &mut self.panes {
+            pane.baked_surfaces_error = None;
+        }
         let uploaded = if mesh.baked_faces.is_some() {
             self.renderer.upload(ctx, mesh, library)
         } else {
@@ -84,29 +167,46 @@ impl Viewport {
             Ok(scene) => scene,
             Err(error) => {
                 self.scene_error = Some(error.clone());
+                self.redraw();
                 return Err(error);
             }
         };
         self.scene = Some(scene);
         self.scene_error = None;
-        self.dirty = true;
+        self.redraw();
         Ok(())
     }
 
     pub fn redraw(&mut self) {
-        self.dirty = true;
+        for pane in &mut self.panes {
+            pane.dirty = true;
+        }
+    }
+
+    fn redraw_active(&mut self) {
+        self.panes[self.active_pane].dirty = true;
+    }
+
+    pub fn set_active_pane(&mut self, index: usize) -> Result<(), String> {
+        if index >= MAX_PANES {
+            return Err("Viewport pane index is out of range".into());
+        }
+        if index != self.active_pane {
+            self.release_all();
+            self.active_pane = index;
+            self.redraw();
+        }
+        Ok(())
     }
 
     pub fn sky3d_error(&self) -> Option<&str> {
-        self.renderer.last_sky3d_error()
+        self.panes[self.active_pane].sky3d_error.as_deref()
     }
 
     pub fn color_correction_error(&self) -> Option<&str> {
-        self.color_correction_error.as_deref()
-    }
-
-    pub fn baked_surfaces_error(&self) -> Option<&str> {
-        self.baked_surfaces_error.as_deref()
+        self.panes[self.active_pane]
+            .color_correction_error
+            .as_deref()
     }
 
     pub fn looking(&self) -> bool {
@@ -189,7 +289,7 @@ impl Viewport {
             let units = self.camera.ortho_height / height.max(1.0);
             self.camera.position += (-self.camera.right() * dx + self.camera.up() * dy) * units;
         }
-        self.dirty = true;
+        self.redraw_active();
     }
 
     /// Wheel dollies the perspective camera or zooms a planar view.
@@ -204,7 +304,7 @@ impl Viewport {
             self.camera
                 .fly(Vec3::new(delta * DOLLY_UNITS_PER_PIXEL, 0.0, 0.0));
         }
-        self.dirty = true;
+        self.redraw_active();
     }
 
     /// Clears held keys, e.g. when the viewport loses focus, so the camera
@@ -239,74 +339,280 @@ impl Viewport {
             return Ok(false);
         }
         self.camera = camera;
-        self.dirty = true;
+        self.redraw_active();
         Ok(true)
     }
 
-    /// Renders a new frame if anything changed, at `size` physical pixels.
-    pub fn render(
+    fn unavailable(&mut self, index: usize, error: String, baked: bool) -> PaneFrame {
+        let pane = &mut self.panes[index];
+        pane.targets = [None, None];
+        pane.error = Some(error.clone());
+        pane.baked_surfaces_error = baked.then(|| error.clone());
+        pane.dirty = false;
+        PaneFrame {
+            index,
+            image: slint::Image::default(),
+            error: Some(error),
+        }
+    }
+
+    fn check_panes(
+        &self,
+        panes: &[PaneRender],
+        active: usize,
+        pixel_ratio: f32,
+        canvas: (u32, u32),
+        session: &editor_core::session::Session,
+    ) -> Result<(), String> {
+        if !pixel_ratio.is_finite() || pixel_ratio <= 0.0 {
+            return Err("Viewport pixel ratio must be finite and positive".into());
+        }
+        if active != session.active_view_pane() {
+            return Err("Active viewport changed before rendering".into());
+        }
+        let rectangles = session.view_layout().rectangles(canvas)?;
+        if panes.len() != rectangles.len() || panes.len() > MAX_PANES {
+            return Err("Visible viewport layout changed before rendering".into());
+        }
+        let mut seen = [false; MAX_PANES];
+        let mut pixels = 0u64;
+        for pane in panes {
+            if pane.index >= MAX_PANES || seen[pane.index] {
+                return Err("Viewport pane indices must be distinct and in range".into());
+            }
+            seen[pane.index] = true;
+            let rectangle = rectangles
+                .iter()
+                .find(|rect| rect.index == pane.index)
+                .ok_or("Viewport pane is not visible in the current layout")?;
+            if pane.size != (rectangle.width, rectangle.height) {
+                return Err("Viewport pane dimensions changed before rendering".into());
+            }
+            let area = u64::from(pane.size.0)
+                .checked_mul(u64::from(pane.size.1))
+                .ok_or("Viewport pane pixel count overflowed")?;
+            pixels = pixels
+                .checked_add(area)
+                .ok_or("Viewport pixel count overflowed")?;
+        }
+        let canvas_pixels = u64::from(canvas.0)
+            .checked_mul(u64::from(canvas.1))
+            .ok_or("Viewport canvas pixel count overflowed")?;
+        if pixels > MAX_CANVAS_PIXELS || pixels > canvas_pixels {
+            return Err(format!(
+                "Visible viewports exceed the {MAX_CANVAS_PIXELS}-pixel render budget"
+            ));
+        }
+        if !seen.get(active).copied().unwrap_or(false) {
+            return Err("Active viewport must be visible".into());
+        }
+        Ok(())
+    }
+
+    fn draw_pane(
         &mut self,
         ctx: &GpuContext,
-        size: (u32, u32),
+        request: &PaneRender,
+        options: ViewOptions,
+        correction_error: Option<&str>,
+    ) -> Result<(), String> {
+        let pane = &mut self.panes[request.index];
+        pane.observed(request, options, options.handle_pixel_ratio);
+        pane.error = None;
+        pane.baked_surfaces_error = None;
+        pane.color_correction_error = None;
+        pane.sky3d_error = None;
+        let maximum = ctx.device.limits().max_texture_dimension_2d;
+        if request.size.0 == 0
+            || request.size.1 == 0
+            || request.size.0 > maximum
+            || request.size.1 > maximum
+        {
+            return Err(format!(
+                "Viewport target requires 1 to {maximum} pixels per axis"
+            ));
+        }
+        request
+            .camera
+            .validate(request.size.0 as f32 / request.size.1 as f32)?;
+        let scene = self.scene.as_ref().ok_or("Viewport scene is unavailable")?;
+        if pane.targets[0].is_none() {
+            pane.targets = [
+                Some(RenderTarget::new(ctx, request.size.0, request.size.1)),
+                Some(RenderTarget::new(ctx, request.size.0, request.size.1)),
+            ];
+        }
+        let target = pane.targets[pane.next_target]
+            .as_ref()
+            .ok_or("Viewport target is unavailable")?;
+        self.renderer.render(
+            ctx,
+            scene,
+            &request.camera,
+            &options,
+            &target.view,
+            request.size,
+        );
+        pane.sky3d_error = self.renderer.last_sky3d_error().map(str::to_owned);
+        let renderer_error = self.renderer.last_color_correction_error();
+        pane.color_correction_error = match (correction_error, renderer_error) {
+            (Some(source), Some(render)) if source != render => Some(format!("{source}\n{render}")),
+            (Some(error), _) | (_, Some(error)) => Some(error.into()),
+            (None, None) => None,
+        };
+        Ok(())
+    }
+
+    fn draw_panes(
+        &mut self,
+        ctx: &GpuContext,
+        panes: &[PaneRender],
+        drawing: &[bool; MAX_PANES],
         pixel_ratio: f32,
+        correction_error: Option<&str>,
+    ) {
+        for request in panes.iter().filter(|request| drawing[request.index]) {
+            let options =
+                pane_options(self.options, request.index == self.active_pane, pixel_ratio);
+            if let Err(error) = self.draw_pane(ctx, request, options, correction_error) {
+                self.panes[request.index].error = Some(error);
+            }
+        }
+    }
+
+    pub fn render_panes(
+        &mut self,
+        ctx: &GpuContext,
+        panes: &[PaneRender],
+        active: usize,
+        pixel_ratio: f32,
+        canvas: (u32, u32),
         session: &mut editor_core::session::Session,
-    ) -> Option<slint::Image> {
-        if self.scene_error.is_some() {
-            return None;
+    ) -> Vec<PaneFrame> {
+        let visible = session.visible_view_panes();
+        let mut frames = Vec::new();
+        for index in 0..MAX_PANES {
+            let pane = &mut self.panes[index];
+            if !visible.iter().any(|visible| visible.index == index) && pane.visible {
+                *pane = PaneState::default();
+                frames.push(PaneFrame {
+                    index,
+                    image: slint::Image::default(),
+                    error: None,
+                });
+            }
         }
-        let size = (size.0.max(1), size.1.max(1));
-        let resized = self.targets[0].as_ref().is_none_or(|t| t.size() != size);
-        if !self.dirty && !resized && self.pixel_ratio == pixel_ratio {
-            return None;
+        let checked = self
+            .set_active_pane(active)
+            .and_then(|()| self.check_panes(panes, active, pixel_ratio, canvas, session));
+        if let Err(error) = checked {
+            frames.extend(
+                visible
+                    .iter()
+                    .map(|pane| self.unavailable(pane.index, error.clone(), false)),
+            );
+            return frames;
         }
-        let scene = self.scene.as_ref()?;
-        self.baked_surfaces_error = None;
+        for request in panes {
+            let state = &mut self.panes[request.index];
+            state.visible = true;
+            if state.targets[0]
+                .as_ref()
+                .is_some_and(|target| target.size() != request.size)
+            {
+                state.targets = [None, None];
+            }
+        }
+        if let Some(error) = self.scene_error.clone().or_else(|| {
+            self.scene
+                .is_none()
+                .then(|| "Viewport scene is unavailable".into())
+        }) {
+            frames.extend(
+                panes
+                    .iter()
+                    .map(|pane| self.unavailable(pane.index, error.clone(), false)),
+            );
+            return frames;
+        }
+        let mut drawing = [false; MAX_PANES];
+        for request in panes {
+            let options = pane_options(self.options, request.index == active, pixel_ratio);
+            drawing[request.index] =
+                self.panes[request.index].needs_render(request, options, pixel_ratio);
+        }
+        if !drawing.iter().any(|drawing| *drawing) {
+            return frames;
+        }
         let guard = match session.baked_surfaces_render_guard(self.options) {
             Ok(guard) => guard,
             Err(error) => {
-                self.baked_surfaces_error = Some(error);
-                return None;
+                frames.extend(
+                    panes
+                        .iter()
+                        .map(|pane| self.unavailable(pane.index, error.clone(), true)),
+                );
+                return frames;
             }
         };
-        self.color_correction_error = None;
-        let preview = match session.color_correction_for_render() {
-            Ok(preview) => preview,
+        let (preview, correction_error) = match session.color_correction_for_render() {
+            Ok(preview) => (preview, None),
             Err(error) => {
-                self.color_correction_error = Some(error);
-                None
+                for request in panes {
+                    drawing[request.index] = true;
+                }
+                (None, Some(error))
             }
         };
         self.renderer.set_color_correction(preview.clone());
-        if resized {
-            self.targets = [
-                Some(RenderTarget::new(ctx, size.0, size.1)),
-                Some(RenderTarget::new(ctx, size.0, size.1)),
-            ];
-        }
-        let target = self.targets[self.next_target].as_ref()?;
-        let options = ViewOptions {
-            handle_pixel_ratio: pixel_ratio,
-            ..self.options
-        };
-        self.renderer
-            .render(ctx, scene, &self.camera, &options, &target.view, size);
-        if let Some(error) = self.renderer.last_color_correction_error() {
-            self.color_correction_error = Some(error.to_owned());
-        }
+        self.draw_panes(
+            ctx,
+            panes,
+            &drawing,
+            pixel_ratio,
+            correction_error.as_deref(),
+        );
         if let Err(error) = session.verify_color_correction_render(preview.as_ref()) {
             self.renderer.set_color_correction(None);
-            self.renderer
-                .render(ctx, scene, &self.camera, &options, &target.view, size);
-            self.color_correction_error = Some(error);
+            for request in panes {
+                drawing[request.index] = true;
+            }
+            self.draw_panes(ctx, panes, &drawing, pixel_ratio, Some(&error));
         }
         if let Err(error) = session.verify_baked_surfaces_render(guard.as_ref(), self.options) {
-            self.baked_surfaces_error = Some(error);
-            return None;
+            frames.extend(
+                panes
+                    .iter()
+                    .map(|pane| self.unavailable(pane.index, error.clone(), true)),
+            );
+            return frames;
         }
-        self.next_target ^= 1;
-        self.pixel_ratio = pixel_ratio;
-        self.dirty = false;
-        slint::Image::try_from(target.texture.clone()).ok()
+        for request in panes.iter().filter(|request| drawing[request.index]) {
+            let pane = &mut self.panes[request.index];
+            let image = if let Some(error) = &pane.error {
+                Err(error.clone())
+            } else {
+                pane.targets[pane.next_target]
+                    .as_ref()
+                    .ok_or_else(|| "Viewport target was retired before display".to_string())
+                    .and_then(|target| {
+                        slint::Image::try_from(target.texture.clone())
+                            .map_err(|error| format!("Could not display viewport texture: {error}"))
+                    })
+            };
+            match image {
+                Ok(image) => {
+                    pane.next_target ^= 1;
+                    frames.push(PaneFrame {
+                        index: request.index,
+                        image,
+                        error: pane.message(),
+                    });
+                }
+                Err(error) => frames.push(self.unavailable(request.index, error, false)),
+            }
+        }
+        frames
     }
 }
 

@@ -47,7 +47,13 @@ impl RetirementView<'_> {
         if let Some(ui) = &self.ui {
             match ui.try_borrow_mut() {
                 Ok(mut ui) => {
-                    ui.viewport.release_all();
+                    if let Some(app) = self.app {
+                        release_pane_input(app, &mut ui);
+                        clear_view_frames(app, &mut ui, "");
+                    } else {
+                        ui.viewport.release_all();
+                        ui.pane_capture = None;
+                    }
                     ui.brush_drag = None;
                     ui.clip_drag = None;
                     ui.interaction = interaction::Interaction::default();
@@ -74,6 +80,7 @@ impl RetirementView<'_> {
         }
         if let Some(app) = &self.app {
             app.set_flying(false);
+            app.set_viewport_capture_pane(-1);
             app.set_frame(slint::Image::default());
         }
         errors

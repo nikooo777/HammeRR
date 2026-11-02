@@ -1,5 +1,6 @@
 //! wgpu device setup, pipelines, and drawing.
 
+use std::collections::VecDeque;
 use std::mem::size_of;
 
 use source_formats::vtf::{ImageFormat, Vtf};
@@ -17,6 +18,8 @@ mod miniature;
 /// The view format the pipelines render into; see [`RenderTarget`].
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+const MAX_SCRATCH_TARGETS: usize = 4;
+const MAX_DEPTH_BYTES: u64 = crate::color_correction::MAX_TARGET_BYTES;
 /// Linear-space clear color; a dark slate like most modern editors.
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.012,
@@ -492,7 +495,7 @@ pub struct Renderer {
     material_generation: Option<u64>,
     white: wgpu::Texture,
     missing: wgpu::Texture,
-    depth: Option<(wgpu::TextureView, (u32, u32))>,
+    depth: VecDeque<(wgpu::TextureView, (u32, u32))>,
     overlay: wgpu::Buffer,
 }
 
@@ -953,7 +956,7 @@ impl Renderer {
             material_generation: None,
             white: solid_texture(ctx, [255, 255, 255, 255]),
             missing: checkerboard_texture(ctx),
-            depth: None,
+            depth: VecDeque::new(),
             overlay: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("spatial overlays"),
                 size: 65_536,
@@ -1450,10 +1453,28 @@ impl Renderer {
     }
 
     fn depth_view(&mut self, ctx: &GpuContext, size: (u32, u32)) -> wgpu::TextureView {
-        if let Some((view, current)) = &self.depth
-            && *current == size
+        if let Some(index) = self.depth.iter().position(|(_, current)| *current == size) {
+            let entry = self.depth.remove(index).unwrap();
+            let view = entry.0.clone();
+            self.depth.push_back(entry);
+            return view;
+        }
+        let bytes = |size: (u32, u32)| {
+            u64::from(size.0)
+                .checked_mul(u64::from(size.1))
+                .and_then(|pixels| pixels.checked_mul(4))
+        };
+        let requested = bytes(size);
+        while !self.depth.is_empty()
+            && (self.depth.len() >= MAX_SCRATCH_TARGETS
+                || self
+                    .depth
+                    .iter()
+                    .try_fold(0_u64, |total, (_, size)| total.checked_add(bytes(*size)?))
+                    .and_then(|total| total.checked_add(requested?))
+                    .is_none_or(|total| total > MAX_DEPTH_BYTES))
         {
-            return view.clone();
+            self.depth.pop_front();
         }
         let texture = ctx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("depth"),
@@ -1470,7 +1491,7 @@ impl Renderer {
             view_formats: &[],
         });
         let view = texture.create_view(&Default::default());
-        self.depth = Some((view.clone(), size));
+        self.depth.push_back((view.clone(), size));
         view
     }
 

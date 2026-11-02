@@ -1532,10 +1532,11 @@ impl Session {
                 }),
         )
         .ok_or("Instance contents have no visible geometry to frame")?;
-        self.set_camera(
-            self.camera
-                .frame_bounds(bounds.0.as_vec3(), bounds.1.as_vec3(), aspect),
-        );
+        self.try_set_camera(self.camera.frame_bounds(
+            bounds.0.as_vec3(),
+            bounds.1.as_vec3(),
+            aspect,
+        ))?;
         self.log(actor, "framed instance contents");
         self.inspect_instance_contents(0, MAX_ROWS)
     }

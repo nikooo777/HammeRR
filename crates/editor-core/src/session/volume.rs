@@ -157,10 +157,11 @@ impl Session {
             return Err("Viewport aspect must be positive and finite".into());
         }
         let spec = self.checked_volume(token)?.spec;
-        self.set_camera(
-            self.camera
-                .frame_bounds(spec.mins.as_vec3(), spec.maxs.as_vec3(), aspect),
-        );
+        self.try_set_camera(self.camera.frame_bounds(
+            spec.mins.as_vec3(),
+            spec.maxs.as_vec3(),
+            aspect,
+        ))?;
         Ok(())
     }
 

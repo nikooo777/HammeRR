@@ -58,6 +58,25 @@ Highlighted rows contain the current selection. Large groups show their first 50
 These keys are factory bindings. See [Keyboard shortcuts](keyboard-shortcuts.md).
 Set **Fly speed** under **Overlays → Camera**, or scroll while flying.
 
+## Coordinated views
+
+1. Open **View → View layout**.
+2. Choose **Single**, **Two columns**, **Two rows** or **Four views**.
+3. Set each pane's projection in its header.
+4. Click a pane to make it **Active**. Edit, pick or navigate there.
+5. Choose **View → Frame all views** to frame the selection in each visible pane. With no selection, frame the map.
+
+![Four views share the same selected columns](images/coordinated-views.png)
+
+All panes share map edits, selection, Undo, shading and display switches. Each pane keeps its own camera.
+Enable **View → View layout → Link orthographic pan and zoom** to move and zoom orthographic cameras together. Perspective cameras stay independent.
+
+Finish or cancel a captured drag or pick before changing panes or layouts.
+If a pane has not refreshed, wait before picking.
+
+Layouts are session-local. New/Open keeps the layout and reseeds cameras; the active pane uses the loaded map camera.
+Up to four panes share one scene. The visible canvas is limited to 16,777,216 physical pixels.
+
 ## Apply a preview
 
 1. Select the objects.

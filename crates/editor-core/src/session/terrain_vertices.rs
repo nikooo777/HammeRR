@@ -342,7 +342,7 @@ impl Session {
             }
         }
         let (lo, hi) = bounds.ok_or("No visible terrain vertices to frame")?;
-        self.set_camera(self.camera.frame_bounds(lo.as_vec3(), hi.as_vec3(), aspect));
+        self.try_set_camera(self.camera.frame_bounds(lo.as_vec3(), hi.as_vec3(), aspect))?;
         self.log(actor, "framed terrain vertices");
         Ok(())
     }

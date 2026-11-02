@@ -592,6 +592,10 @@ impl Session {
                 .map(|region| (region.mins, region.maxs)),
         }
         .ok_or("No bounds are available for this context scope")?;
+        let camera = self
+            .camera
+            .frame_bounds(bounds.0.as_vec3(), bounds.1.as_vec3(), aspect);
+        self.view_camera_candidates(camera)?;
         if let Scope::Object(id) = scope {
             let owner = match id {
                 ObjectId::Solid(id) => self.document.owner_of_solid(id).unwrap(),
@@ -606,10 +610,7 @@ impl Session {
             self.context.serial += 1;
             self.scene_serial += 1;
         }
-        self.set_camera(
-            self.camera
-                .frame_bounds(bounds.0.as_vec3(), bounds.1.as_vec3(), aspect),
-        );
+        self.try_set_camera(camera)?;
         self.log(actor, format!("focused context {scope}"));
         Ok(())
     }

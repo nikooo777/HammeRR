@@ -388,16 +388,7 @@ fn hit_json(doc: &Document, hit: &Hit) -> Value {
 }
 
 fn camera_json(camera: &Camera) -> Value {
-    json!({
-        "position": point(camera.position.as_dvec3()),
-        "yaw": camera.yaw_degrees,
-        "pitch": camera.pitch_degrees,
-        "fov": camera.fov_y_degrees,
-        "forward": point(camera.forward().as_dvec3()),
-        "projection": camera.projection.name(),
-        "ortho_height": camera.ortho_height,
-        "center": (camera.projection != Projection::Perspective).then(|| point((camera.position + camera.forward() * Camera::ORTHO_DISTANCE).as_dvec3())),
-    })
+    crate::session::view_layout::camera_report(camera)
 }
 
 fn game_log_json(log: &game::Log) -> Value {
@@ -786,6 +777,7 @@ impl EditorServer {
             + Self::compiled_face_framing_tools()
             + Self::entity_graph_tools()
             + Self::view_tools()
+            + Self::view_layout_tools()
             + Self::prop_leaf_bounds_tools()
             + Self::working_region_tools()
             + Self::workplane_tools()

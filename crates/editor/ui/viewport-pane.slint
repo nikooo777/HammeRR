@@ -1,0 +1,123 @@
+import { Theme, Badge } from "kit.slint";
+import { ComboBox } from "widgets.slint";
+
+export struct ViewportPane {
+    id: int,
+    frame: image,
+    projection: int,
+    error: string,
+}
+
+export struct ViewportPaneSize {
+    id: int,
+    width: length,
+    height: length,
+    pixel-width: int,
+    pixel-height: int,
+}
+
+export component ViewportPaneView inherits Rectangle {
+    in property <int> pane-id;
+    in property <image> frame;
+    in property <int> projection;
+    in property <bool> active;
+    in property <string> error;
+    in property <bool> navigating;
+    in property <bool> crosshair;
+    in property <int> capture-pane: -1;
+    in property <float> scale-factor: 1;
+    out property <length> content-width: touch.width;
+    out property <length> content-height: touch.height;
+    out property <int> pixel-width: round(touch.width / 1px * root.scale-factor);
+    out property <int> pixel-height: round(touch.height / 1px * root.scale-factor);
+    callback request-focus();
+    callback mouse-button(button: int, down: bool, x: length, y: length, control: bool, alt: bool);
+    callback mouse-moved(x: length, y: length);
+    callback wheel(delta: length, x: length, y: length);
+    callback projection-changed(int);
+    changed projection => { projection-picker.current-index = root.projection; }
+    background: Theme.canvas;
+    clip: true;
+
+    Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.frame;
+        image-fit: fill;
+    }
+    touch := TouchArea {
+        width: parent.width;
+        height: parent.height;
+        mouse-cursor: root.active && root.navigating ? MouseCursor.move : root.crosshair && (root.capture-pane < 0 ? root.active : root.capture-pane == root.pane-id) ? MouseCursor.crosshair : MouseCursor.default;
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down || event.kind == PointerEventKind.up {
+                root.mouse-button(
+                    event.button == PointerEventButton.left ? 0 : event.button == PointerEventButton.right ? 1 : 2,
+                    event.kind == PointerEventKind.down,
+                    self.mouse-x,
+                    self.mouse-y,
+                    event.modifiers.control,
+                    event.modifiers.alt);
+            }
+            if event.kind == PointerEventKind.down && root.active {
+                root.request-focus();
+            }
+        }
+        moved => { root.mouse-moved(self.mouse-x, self.mouse-y); }
+        scroll-event(event) => {
+            root.wheel(event.delta-y, self.mouse-x, self.mouse-y);
+            if root.active { root.request-focus(); }
+            accept
+        }
+    }
+    if root.error != "": Rectangle {
+        x: Theme.space;
+        y: (parent.height - self.height) / 2;
+        width: max(0px, parent.width - Theme.space-xl);
+        height: error-text.preferred-height + Theme.space-xl;
+        background: Theme.overlay;
+        border-radius: Theme.radius;
+        error-text := Text {
+            x: Theme.space;
+            y: Theme.space;
+            width: max(0px, parent.width - Theme.space-xl);
+            text: root.error;
+            color: Theme.warning;
+            wrap: word-wrap;
+            horizontal-alignment: center;
+        }
+    }
+    Rectangle {
+        x: Theme.space;
+        y: Theme.space;
+        width: min(header.preferred-width, max(0px, parent.width - Theme.space-xl));
+        height: Theme.viewport-header-height;
+        background: Theme.overlay;
+        border-color: root.active ? Theme.accent : Theme.border-strong;
+        border-width: 1px;
+        border-radius: Theme.radius;
+        header := HorizontalLayout {
+            padding: Theme.space-xs;
+            spacing: Theme.space-sm;
+            Text { text: "\{root.pane-id + 1}"; color: root.active ? Theme.accent : Theme.text-faint; vertical-alignment: center; }
+            projection-picker := ComboBox {
+                width: Theme.viewport-projection-width;
+                model: ["Perspective", "Top · XY", "Front · XZ", "Side · YZ"];
+                current-index: root.projection;
+                accessible-label: "Projection for view \{root.pane-id + 1}";
+                selected => {
+                    root.projection-changed(self.current-index);
+                    self.current-index = root.projection;
+                }
+            }
+            if root.active: Badge { text: "Active"; text-color: Theme.accent; fill: Theme.accent-soft; }
+        }
+    }
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: transparent;
+        border-width: root.active ? Theme.viewport-active-border-width : 1px;
+        border-color: root.active ? Theme.accent : Theme.border-strong;
+    }
+}

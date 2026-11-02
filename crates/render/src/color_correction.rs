@@ -7,7 +7,7 @@ pub const RGBA_BYTES: usize = 131_072;
 pub const UPLOAD_BYTES: usize = 262_144;
 pub const MAX_TARGET_DIMENSION: u32 = 4096;
 pub const MAX_TARGET_BYTES: u64 = 64 * 1024 * 1024;
-pub const POLICY: &str = "One explicit Source .raw LUT: exactly 98304 packed RGB8 bytes, 32 cubed entries, red index fastest, then green, then blue. Trilinear lookup and weight 0..1 apply to the complete editor viewport's sRGB-encoded display bytes, including background, helpers and selection. No entity/volume evaluation, multiple-LUT composition, native HDR/tone-map parity or map/compiler mutation. One additional RGBA8 target, at most 4096 pixels per axis and 64 MiB; one 128 KiB GPU LUT and a conservative 256 KiB row-padded transient LUT upload, excluding driver overhead. Source failure invalidates the LUT until an explicit successful load. GPU or target failure is explicit; the desktop shows an ungraded frame and render_view fails.";
+pub const POLICY: &str = "One explicit Source .raw LUT: exactly 98304 packed RGB8 bytes, 32 cubed entries, red index fastest, then green, then blue. Trilinear lookup and weight 0..1 apply to the complete editor viewport's sRGB-encoded display bytes, including background, helpers and selection. No entity/volume evaluation, multiple-LUT composition, native HDR/tone-map parity or map/compiler mutation. Up to four cached RGBA8 targets, at most 4096 pixels per axis and 64 MiB combined; one shared 128 KiB GPU LUT and a conservative 256 KiB row-padded transient LUT upload, excluding driver overhead. Source failure invalidates the LUT until an explicit successful load. GPU or target failure is explicit; the desktop shows an ungraded frame and render_view fails.";
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug)]

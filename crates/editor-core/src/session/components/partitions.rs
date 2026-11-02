@@ -525,10 +525,11 @@ impl Session {
             }
         }
         let (mins, maxs) = bounds.ok_or("Select a partition loop to frame")?;
-        self.set_camera(
-            self.camera
-                .frame_bounds(mins.as_vec3(), maxs.as_vec3(), aspect.max(0.01)),
-        );
+        self.try_set_camera(self.camera.frame_bounds(
+            mins.as_vec3(),
+            maxs.as_vec3(),
+            aspect.max(0.01),
+        ))?;
         self.log(actor, "framed face partitions");
         Ok(())
     }

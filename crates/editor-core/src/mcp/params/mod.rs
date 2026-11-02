@@ -38,6 +38,8 @@ mod terrain;
 pub(super) use terrain::*;
 mod view;
 pub(super) use view::*;
+mod view_layout;
+pub(super) use view_layout::*;
 
 mod working_region;
 pub(super) use working_region::*;

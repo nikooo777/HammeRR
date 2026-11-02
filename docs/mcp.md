@@ -1430,6 +1430,32 @@ finite `origin` and `vrad_brush_cast_shadows:"1"` through `set_entity_properties
 then use the same World emission file. Supported child poses are assembled once.
 Moving, parented or unrequested model sources reject.
 
+## Coordinated views
+
+`get_view_layout` reports all four pane cameras, visibility, the active pane,
+linking, blockers and a scoped snapshot. Optional `width` and `height` return
+exact pixel rectangles, including odd-sized splits.
+
+Use `set_view_layout` with one action:
+
+- `update`: set `layout` to `single`, `two_columns`, `two_rows` or `quad`, and/or set `linked_orthographic`.
+- `activate`: choose a visible zero-based `pane`.
+- `camera`: set a pane's `camera`, with optional `aspect`.
+- `projection`: set `pane` and `projection`.
+- `frame`: frame all visible panes; supply four `aspects` for their image sizes.
+
+Pass `snapshot` to reject changed layout/cameras. Invalid requests preserve state.
+Captured picks/drags block pane/layout replacement; independent owned previews remain.
+Existing camera operations address the active pane. Linked orthographic pan/zoom
+keeps perspective cameras independent. Field of view retains its finite 10–150°
+clamp; orthographic height must be 1–131072 units.
+
+`render_view` and `pick_at_pixel` accept an optional zero-based `pane`. They use
+that pane's camera without activating it. Match pane, image size and any camera
+override when picking. Working-region filtering stays common and follows the
+active camera. New/Open keeps the layout, active index and linking, reseeds
+cameras and retires old snapshots.
+
 ## Prefab library
 
 Use `get_prefabs` to inspect entries and obtain a mutation snapshot. `query` searches
@@ -1517,7 +1543,7 @@ These groups locate the available operations.
 | [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `preview_terrain_vertex_set`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_attachment`, `transform_pivot_pick`, `transform_pivot_grid` |
-| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `get_view`, `inspect_baked_lightmaps`, `inspect_baked_surfaces`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_baked_surfaces`, `set_camera`, `set_fog_preview`, `set_view` |
+| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_view_layout`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `get_view`, `inspect_baked_lightmaps`, `inspect_baked_surfaces`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_baked_surfaces`, `set_camera`, `set_view_layout`, `set_fog_preview`, `set_view` |
 | [Working region](working-region.md) | `exclude_visibility_filter`, `get_editor_visibility`, `get_visibility_categories`, `get_visibility_profiles`, `get_working_region`, `remove_visibility_exclusion`, `set_editor_visibility`, `set_visibility_category`, `set_visibility_profile`, `set_working_region` |
 | [Prop leaf bounds](baked-prop-vertices.md) | `get_compiled_prop_leaf_bounds`, `set_compiled_prop_leaf_bounds` |
 | [Compiled visibility](visibility.md) | `frame_compiled_visibility`, `inspect_compiled_visibility`, `set_compiled_visibility_overlay` |

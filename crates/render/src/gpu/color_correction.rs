@@ -1,38 +1,53 @@
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use wgpu::util::DeviceExt;
 
-use super::{COLOR_FORMAT, GpuContext, RenderTarget};
+use super::{COLOR_FORMAT, GpuContext, MAX_SCRATCH_TARGETS, RenderTarget};
 use crate::color_correction::{self, EDGE, Preview};
 
 #[derive(Default)]
 pub(super) struct State {
-    resources: Option<Resources>,
+    shared: Option<Shared>,
+    resources: VecDeque<Resources>,
     failed: Option<((u64, u32, u32), String)>,
     needs_drain: bool,
 }
 
 struct Resources {
-    identity: (u64, u32, u32),
     target: RenderTarget,
-    pipeline: wgpu::RenderPipeline,
+    bytes: u64,
     binding: wgpu::BindGroup,
+}
+
+struct Shared {
+    identity: u64,
+    layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::RenderPipeline,
+    lut: wgpu::TextureView,
+    sampler: wgpu::Sampler,
     settings: wgpu::Buffer,
     weight: f32,
 }
 
 impl State {
+    fn drain(&mut self, ctx: &GpuContext) -> Result<(), String> {
+        let submission = ctx.queue.submit([]);
+        ctx.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission),
+                timeout: Some(Duration::from_secs(1)),
+            })
+            .map_err(|error| format!("Color-correction GPU retirement failed: {error}"))?;
+        self.needs_drain = false;
+        Ok(())
+    }
+
     fn retire(&mut self, ctx: &GpuContext) -> Result<(), String> {
-        if self.resources.is_some() || self.needs_drain {
-            let submission = ctx.queue.submit([]);
-            ctx.device
-                .poll(wgpu::PollType::Wait {
-                    submission_index: Some(submission),
-                    timeout: Some(Duration::from_secs(1)),
-                })
-                .map_err(|error| format!("Color-correction GPU retirement failed: {error}"))?;
-            self.resources = None;
-            self.needs_drain = false;
+        if self.shared.is_some() || !self.resources.is_empty() || self.needs_drain {
+            self.drain(ctx)?;
+            self.resources.clear();
+            self.shared = None;
         }
         Ok(())
     }
@@ -49,7 +64,7 @@ impl State {
         size: (u32, u32),
     ) -> Result<(), String> {
         preview.validate()?;
-        color_correction::target_bytes(size)?;
+        let bytes = color_correction::target_bytes(size)?;
         let identity = (preview.lut.identity(), size.0, size.1);
         if let Some((failed, error)) = &self.failed
             && *failed == identity
@@ -57,41 +72,116 @@ impl State {
             return Err(error.clone());
         }
         if self
-            .resources
+            .shared
             .as_ref()
-            .is_none_or(|state| state.identity != identity)
+            .is_some_and(|shared| shared.identity != preview.lut.identity())
         {
             self.retire(ctx)?;
-            self.needs_drain = true;
-            match Resources::new(ctx, preview, size) {
-                Ok(resources) => {
-                    self.resources = Some(resources);
-                    self.failed = None;
-                    self.needs_drain = false;
-                }
-                Err(error) => {
-                    self.failed = Some((identity, error.clone()));
-                    return Err(error);
-                }
+            self.failed = None;
+        }
+        if self.needs_drain {
+            self.drain(ctx)?;
+        }
+        if let Some(index) = self
+            .resources
+            .iter()
+            .position(|resources| resources.target.size() == size)
+        {
+            let resources = self.resources.remove(index).unwrap();
+            self.resources.push_back(resources);
+            self.shared.as_mut().unwrap().weight = preview.weight;
+            return Ok(());
+        }
+        let limits = ctx.device.limits();
+        if limits.max_texture_dimension_3d < EDGE
+            || size.0 > limits.max_texture_dimension_2d
+            || size.1 > limits.max_texture_dimension_2d
+        {
+            return Err("Color-correction textures exceed GPU dimension limits".into());
+        }
+        let rgba = self
+            .shared
+            .is_none()
+            .then(|| preview.lut.rgba())
+            .transpose()?;
+        let mut retained = self
+            .resources
+            .iter()
+            .map(|resources| resources.bytes)
+            .sum::<u64>();
+        if self.resources.len() >= MAX_SCRATCH_TARGETS
+            || retained
+                .checked_add(bytes)
+                .is_none_or(|total| total > color_correction::MAX_TARGET_BYTES)
+        {
+            self.drain(ctx)?;
+            while self.resources.len() >= MAX_SCRATCH_TARGETS
+                || retained
+                    .checked_add(bytes)
+                    .is_none_or(|total| total > color_correction::MAX_TARGET_BYTES)
+            {
+                let Some(resources) = self.resources.pop_front() else {
+                    return Err("Color-correction target exceeds the scratch cache budget".into());
+                };
+                retained -= resources.bytes;
             }
         }
-        self.resources.as_mut().unwrap().weight = preview.weight;
+        self.needs_drain = true;
+        let allocation = ctx.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let internal = ctx.device.push_error_scope(wgpu::ErrorFilter::Internal);
+        let validation = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let shared = rgba.as_ref().map(|rgba| Shared::create(ctx, preview, rgba));
+        let resources = Resources::create(
+            ctx,
+            self.shared.as_ref().or(shared.as_ref()).unwrap(),
+            size,
+            bytes,
+        );
+        let submission = ctx.queue.submit([]);
+        let completion = ctx.device.poll(wgpu::PollType::Wait {
+            submission_index: Some(submission),
+            timeout: Some(Duration::from_secs(1)),
+        });
+        let validation = pollster::block_on(validation.pop());
+        let internal = pollster::block_on(internal.pop());
+        let allocation = pollster::block_on(allocation.pop());
+        let error = validation
+            .or(internal)
+            .or(allocation)
+            .map(|error| format!("Color-correction GPU preparation failed: {error}"))
+            .or_else(|| {
+                completion
+                    .err()
+                    .map(|error| format!("Color-correction GPU upload failed: {error}"))
+            });
+        if let Some(error) = error {
+            self.failed = Some((identity, error.clone()));
+            return Err(error);
+        }
+        if let Some(shared) = shared {
+            self.shared = Some(shared);
+        }
+        self.shared.as_mut().unwrap().weight = preview.weight;
+        self.resources.push_back(resources);
+        self.failed = None;
+        self.needs_drain = false;
         Ok(())
     }
 
     pub(super) fn target(&self) -> &wgpu::TextureView {
-        &self.resources.as_ref().unwrap().target.view
+        &self.resources.back().unwrap().target.view
     }
 
     pub(super) fn draw(&self, ctx: &GpuContext, target: &wgpu::TextureView) -> Result<(), String> {
-        let resources = self.resources.as_ref().unwrap();
+        let resources = self.resources.back().unwrap();
+        let shared = self.shared.as_ref().unwrap();
         let allocation = ctx.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let internal = ctx.device.push_error_scope(wgpu::ErrorFilter::Internal);
         let validation = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
         ctx.queue.write_buffer(
-            &resources.settings,
+            &shared.settings,
             0,
-            bytemuck::cast_slice(&[resources.weight, 0.0, 0.0, 0.0]),
+            bytemuck::cast_slice(&[shared.weight, 0.0, 0.0, 0.0]),
         );
         let mut encoder = ctx.device.create_command_encoder(&Default::default());
         {
@@ -108,7 +198,7 @@ impl State {
                 })],
                 ..Default::default()
             });
-            pass.set_pipeline(&resources.pipeline);
+            pass.set_pipeline(&shared.pipeline);
             pass.set_bind_group(0, &resources.binding, &[]);
             pass.draw(0..3, 0..1);
         }
@@ -123,36 +213,8 @@ impl State {
     }
 }
 
-impl Resources {
-    fn new(ctx: &GpuContext, preview: &Preview, size: (u32, u32)) -> Result<Self, String> {
-        let limits = ctx.device.limits();
-        if limits.max_texture_dimension_3d < EDGE
-            || size.0 > limits.max_texture_dimension_2d
-            || size.1 > limits.max_texture_dimension_2d
-        {
-            return Err("Color-correction textures exceed GPU dimension limits".into());
-        }
-        let rgba = preview.lut.rgba()?;
-        let allocation = ctx.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
-        let internal = ctx.device.push_error_scope(wgpu::ErrorFilter::Internal);
-        let validation = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let resources = Self::create(ctx, preview, size, &rgba);
-        let submission = ctx.queue.submit([]);
-        let completion = ctx.device.poll(wgpu::PollType::Wait {
-            submission_index: Some(submission),
-            timeout: Some(Duration::from_secs(1)),
-        });
-        let validation = pollster::block_on(validation.pop());
-        let internal = pollster::block_on(internal.pop());
-        let allocation = pollster::block_on(allocation.pop());
-        if let Some(error) = validation.or(internal).or(allocation) {
-            return Err(format!("Color-correction GPU preparation failed: {error}"));
-        }
-        completion.map_err(|error| format!("Color-correction LUT upload failed: {error}"))?;
-        Ok(resources)
-    }
-
-    fn create(ctx: &GpuContext, preview: &Preview, size: (u32, u32), rgba: &[u8]) -> Self {
+impl Shared {
+    fn create(ctx: &GpuContext, preview: &Preview, rgba: &[u8]) -> Self {
         let device = &ctx.device;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("color correction"),
@@ -253,19 +315,33 @@ impl Resources {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let target = RenderTarget::new(ctx, size.0, size.1);
-        let display = target.texture.create_view(&wgpu::TextureViewDescriptor {
-            format: Some(wgpu::TextureFormat::Rgba8Unorm),
-            ..Default::default()
-        });
         let settings = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("color-correction weight"),
             contents: bytemuck::cast_slice(&[preview.weight, 0.0, 0.0, 0.0]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let binding = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        Self {
+            identity: preview.lut.identity(),
+            layout,
+            pipeline,
+            lut: lut.create_view(&Default::default()),
+            sampler,
+            settings,
+            weight: preview.weight,
+        }
+    }
+}
+
+impl Resources {
+    fn create(ctx: &GpuContext, shared: &Shared, size: (u32, u32), bytes: u64) -> Self {
+        let target = RenderTarget::new(ctx, size.0, size.1);
+        let display = target.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(wgpu::TextureFormat::Rgba8Unorm),
+            ..Default::default()
+        });
+        let binding = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("color correction"),
-            layout: &layout,
+            layout: &shared.layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -273,27 +349,22 @@ impl Resources {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(
-                        &lut.create_view(&Default::default()),
-                    ),
+                    resource: wgpu::BindingResource::TextureView(&shared.lut),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
+                    resource: wgpu::BindingResource::Sampler(&shared.sampler),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: settings.as_entire_binding(),
+                    resource: shared.settings.as_entire_binding(),
                 },
             ],
         });
         Self {
-            identity: (preview.lut.identity(), size.0, size.1),
             target,
-            pipeline,
+            bytes,
             binding,
-            settings,
-            weight: preview.weight,
         }
     }
 }

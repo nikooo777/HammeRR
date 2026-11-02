@@ -631,7 +631,7 @@ impl Session {
             aspect,
             "Compiled visibility",
         )?;
-        self.set_camera(camera);
+        self.try_set_camera(camera)?;
         self.log(actor, "Frame compiled visibility bounds");
         Ok(report)
     }

@@ -150,10 +150,11 @@ impl Session {
             return Err("View aspect must be finite and positive".into());
         }
         let bounds = self.checked_primitive(token)?.bounds;
-        self.set_camera(
-            self.camera
-                .frame_bounds(bounds[0].as_vec3(), bounds[1].as_vec3(), aspect),
-        );
+        self.try_set_camera(self.camera.frame_bounds(
+            bounds[0].as_vec3(),
+            bounds[1].as_vec3(),
+            aspect,
+        ))?;
         Ok(())
     }
 

@@ -1,4 +1,6 @@
 import { Theme } from "theme.slint";
+import { ViewportPaneView, ViewportPane, ViewportPaneSize } from "viewport-pane.slint";
+export { ViewportPane, ViewportPaneSize }
 import { IconButton, Separator, SectionHeader, FieldRow, Badge, MutedText, OverlaySwitch, OverlayNote, OverlayLink, DockTab, ToolTile, Icon } from "kit.slint";
 export { ExternalComparisonWindow, ComparisonRow } from "external-comparison.slint";
 export { EntityGalleryWindow, EntityGalleryClassRow, EntityGalleryPreviewRow } from "entity-gallery.slint";
@@ -2141,6 +2143,22 @@ export component AppWindow inherits Window {
     forward-focus: focus;
 
     in property <image> frame;
+    in property <[ViewportPane]> viewport-panes;
+    in property <int> view-layout-index;
+    in property <int> active-pane-index;
+    in property <bool> linked-orthographic;
+    in property <int> viewport-capture-pane: -1;
+    in property <float> viewport-scale-factor: 1;
+    property <int> viewport-focused-pane-index;
+    property <float> pane-scale: max(0.01, root.viewport-scale-factor);
+    property <int> split-pixel-width: floor(root.viewport-canvas-pixel-width / 2.0);
+    property <int> split-pixel-height: floor(root.viewport-canvas-pixel-height / 2.0);
+    property <length> left-pane-width: root.split-pixel-width / root.pane-scale * 1px;
+    property <length> right-pane-width: (root.viewport-canvas-pixel-width - root.split-pixel-width) / root.pane-scale * 1px;
+    property <length> top-pane-height: root.split-pixel-height / root.pane-scale * 1px;
+    property <length> bottom-pane-height: (root.viewport-canvas-pixel-height - root.split-pixel-height) / root.pane-scale * 1px;
+    property <length> active-pane-x: root.active-pane-index == 1 ? pane1.x : root.active-pane-index == 2 ? pane2.x : root.active-pane-index == 3 ? pane3.x : pane0.x;
+    property <length> active-pane-y: root.active-pane-index == 1 ? pane1.y : root.active-pane-index == 2 ? pane2.y : root.active-pane-index == 3 ? pane3.y : pane0.y;
     in property <string> map-title: "untitled.vmf";
     in property <string> message;
     in property <string> stats;
@@ -2345,8 +2363,18 @@ export component AppWindow inherits Window {
     in property <bool> can-apply-material;
     in property <[Activity]> activity;
 
-    out property <length> viewport-width: viewport.width;
-    out property <length> viewport-height: viewport.height;
+    out property <length> viewport-width: root.active-pane-index == 1 ? pane1.content-width : root.active-pane-index == 2 ? pane2.content-width : root.active-pane-index == 3 ? pane3.content-width : pane0.content-width;
+    out property <length> viewport-height: root.active-pane-index == 1 ? pane1.content-height : root.active-pane-index == 2 ? pane2.content-height : root.active-pane-index == 3 ? pane3.content-height : pane0.content-height;
+    out property <length> viewport-canvas-width: viewport.width;
+    out property <length> viewport-canvas-height: viewport.height;
+    out property <int> viewport-canvas-pixel-width: round(viewport.width / 1px * root.pane-scale);
+    out property <int> viewport-canvas-pixel-height: round(viewport.height / 1px * root.pane-scale);
+    out property <[ViewportPaneSize]> viewport-pane-sizes: [
+        { id: 0, width: pane0.content-width, height: pane0.content-height, pixel-width: pane0.pixel-width, pixel-height: pane0.pixel-height },
+        { id: 1, width: pane1.content-width, height: pane1.content-height, pixel-width: pane1.pixel-width, pixel-height: pane1.pixel-height },
+        { id: 2, width: pane2.content-width, height: pane2.content-height, pixel-width: pane2.pixel-width, pixel-height: pane2.pixel-height },
+        { id: 3, width: pane3.content-width, height: pane3.content-height, pixel-width: pane3.pixel-width, pixel-height: pane3.pixel-height },
+    ];
 
     callback new-map();
     callback open-map();
@@ -2364,6 +2392,10 @@ export component AppWindow inherits Window {
     callback history();
     callback create-block();
     callback projection-changed(int);
+    callback view-layout-changed(int);
+    callback pane-projection-changed(int, int);
+    callback view-link-changed(bool);
+    callback frame-all-views();
     callback spatial-changed();
     callback frame-selection();
     callback saved-views();
@@ -2504,6 +2536,10 @@ export component AppWindow inherits Window {
     callback mouse-moved(x: length, y: length);
     callback wheel(delta: length, x: length, y: length);
     callback viewport-focus-lost();
+    callback pane-mouse-button(pane: int, button: int, down: bool, x: length, y: length, control: bool, alt: bool);
+    callback pane-mouse-moved(pane: int, x: length, y: length);
+    callback pane-wheel(pane: int, delta: length, x: length, y: length);
+    callback pane-focus-lost(int);
     callback retire-document();
     callback open-documents();
 
@@ -2551,6 +2587,11 @@ export component AppWindow inherits Window {
         { id: "workspace-defaults", title: "Workspace layout…", group: "View", enabled: true },
         { id: "selection-defaults", title: "Selection defaults…", group: "Edit › Preferences", enabled: true },
         { id: "keyboard-shortcuts", title: "Keyboard shortcuts…", group: "Edit › Preferences", enabled: true },
+        { id: "view-layout-single", title: "Single view", group: "View › View layout", enabled: true },
+        { id: "view-layout-columns", title: "Two columns", group: "View › View layout", enabled: true },
+        { id: "view-layout-rows", title: "Two rows", group: "View › View layout", enabled: true },
+        { id: "view-layout-four", title: "Four views", group: "View › View layout", enabled: true },
+        { id: "link-orthographic", title: root.linked-orthographic ? "Unlink orthographic pan and zoom" : "Link orthographic pan and zoom", group: "View › View layout", enabled: true },
         { id: "perspective", title: "Perspective view", group: "View › Projection", enabled: true },
         { id: "top", title: "Top view · XY", group: "View › Projection", enabled: true },
         { id: "front", title: "Front view · XZ", group: "View › Projection", enabled: true },
@@ -2561,6 +2602,7 @@ export component AppWindow inherits Window {
         { id: "lightmap-density", title: "Lightmap density", group: "View › Shading", enabled: true },
         { id: "smoothing-groups", title: "Smoothing groups", group: "View › Shading", enabled: true },
         { id: "frame-selection", title: "Frame selection", group: "View", enabled: true },
+        { id: "frame-all-views", title: "Frame all views", group: "View", enabled: true },
         { id: "saved-views", title: "Saved views…", group: "View", enabled: true },
         { id: "measurements", title: "Measurements…", group: "View", enabled: true },
         { id: "overlays", title: "Overlays", group: "View", enabled: true },
@@ -2720,6 +2762,11 @@ export component AppWindow inherits Window {
         else if id == "workspace-defaults" { root.workspace-defaults(); }
         else if id == "selection-defaults" { root.selection-defaults(); }
         else if id == "keyboard-shortcuts" { root.keyboard-shortcuts(); }
+        else if id == "view-layout-single" { root.view-layout-changed(0); }
+        else if id == "view-layout-columns" { root.view-layout-changed(1); }
+        else if id == "view-layout-rows" { root.view-layout-changed(2); }
+        else if id == "view-layout-four" { root.view-layout-changed(3); }
+        else if id == "link-orthographic" { root.view-link-changed(!root.linked-orthographic); }
         else if id == "perspective" { root.projection-changed(0); }
         else if id == "top" { root.projection-changed(1); }
         else if id == "front" { root.projection-changed(2); }
@@ -2730,6 +2777,7 @@ export component AppWindow inherits Window {
         else if id == "lightmap-density" { root.choose-surface-view(3); }
         else if id == "smoothing-groups" { root.choose-surface-view(4); }
         else if id == "frame-selection" { root.frame-selection(); }
+        else if id == "frame-all-views" { root.frame-all-views(); }
         else if id == "saved-views" { root.saved-views(); }
         else if id == "measurements" { root.measurements(); }
         else if id == "overlays" { root.overlays-open = true; }
@@ -2858,6 +2906,15 @@ export component AppWindow inherits Window {
             MenuItem { title: root.workspace-defaults-error ? "Workspace layout… (needs attention)" : "Workspace layout…"; activated => { root.workspace-defaults(); } }
             MenuSeparator { }
             Menu {
+                title: "View layout";
+                MenuItem { title: "Single"; checked: root.view-layout-index == 0; activated => { root.view-layout-changed(0); } }
+                MenuItem { title: "Two columns"; checked: root.view-layout-index == 1; activated => { root.view-layout-changed(1); } }
+                MenuItem { title: "Two rows"; checked: root.view-layout-index == 2; activated => { root.view-layout-changed(2); } }
+                MenuItem { title: "Four views"; checked: root.view-layout-index == 3; activated => { root.view-layout-changed(3); } }
+                MenuSeparator { }
+                MenuItem { title: "Link orthographic pan and zoom"; checked: root.linked-orthographic; activated => { root.view-link-changed(!root.linked-orthographic); } }
+            }
+            Menu {
                 title: "Projection";
                 MenuItem { title: "Perspective"; checked: root.projection-index == 0; activated => { root.projection-changed(0); } }
                 MenuItem { title: "Top · XY"; checked: root.projection-index == 1; activated => { root.projection-changed(1); } }
@@ -2873,6 +2930,7 @@ export component AppWindow inherits Window {
                 MenuItem { title: "Smoothing groups"; checked: root.surface-view == 4; activated => { root.choose-surface-view(4); } }
             }
             MenuItem { title: "Frame selection"; activated => { root.frame-selection(); } }
+            MenuItem { title: "Frame all views"; activated => { root.frame-all-views(); } }
             MenuItem { title: "Saved views…"; activated => { root.saved-views(); } }
             MenuItem { title: "Measurements…"; activated => { root.measurements(); } }
             MenuSeparator { }
@@ -3259,231 +3317,284 @@ export component AppWindow inherits Window {
                     horizontal-stretch: 1;
                     min-width: 0px;
                     background: Theme.canvas;
-
-                    Image {
+                    clip: true;
+                    focus := FocusScope {
                         width: parent.width;
                         height: parent.height;
-                        source: root.frame;
-                        image-fit: fill;
-                    }
-
-                    focus := FocusScope {
-                        focus-lost => {
-                            root.viewport-focus-lost();
+                        focus-lost => { root.pane-focus-lost(root.viewport-focused-pane-index); }
+                        pane0 := ViewportPaneView {
+                            pane-id: 0;
+                            x: 0px;
+                            y: 0px;
+                            width: root.view-layout-index == 1 || root.view-layout-index == 3 ? root.left-pane-width : viewport.width;
+                            height: root.view-layout-index == 2 || root.view-layout-index == 3 ? root.top-pane-height : viewport.height;
+                            visible: true;
+                            active: root.active-pane-index == 0;
+                            frame: self.active ? root.frame : root.viewport-panes[0].frame;
+                            projection: self.active ? root.projection-index : root.viewport-panes[0].projection;
+                            error: root.viewport-panes[0].error;
+                            scale-factor: root.pane-scale;
+                            navigating: root.flying;
+                            capture-pane: root.viewport-capture-pane;
+                            crosshair: root.surface-picking || root.overlay-handling || root.pivot-picking || ((root.drawing-block || root.clipping) && self.projection != 0);
+                            request-focus => { root.viewport-focused-pane-index = 0; focus.focus(); }
+                            mouse-button(button, down, x, y, control, alt) => { root.pane-mouse-button(0, button, down, x, y, control, alt); }
+                            mouse-moved(x, y) => { root.pane-mouse-moved(0, x, y); }
+                            wheel(delta, x, y) => { root.pane-wheel(0, delta, x, y); }
+                            projection-changed(index) => { root.pane-projection-changed(0, index); }
                         }
-
-                        touch := TouchArea {
-                            changed has-hover => {
-                                if self.has-hover && !focus.has-focus && !TextInputInterface.text-input-focused {
-                                    focus.focus();
-                                }
-                            }
-                            mouse-cursor: root.flying ? MouseCursor.move : (root.surface-picking || root.overlay-handling || root.pivot-picking || ((root.drawing-block || root.clipping) && root.projection-index != 0)) ? MouseCursor.crosshair : MouseCursor.default;
-                            pointer-event(event) => {
-                                if (event.kind == PointerEventKind.down) {
-                                    focus.focus();
-                                }
-                                if (event.kind == PointerEventKind.down || event.kind == PointerEventKind.up) {
-                                    root.mouse-button(
-                                        event.button == PointerEventButton.left ? 0 : event.button == PointerEventButton.right ? 1 : 2,
-                                        event.kind == PointerEventKind.down,
-                                        self.mouse-x,
-                                        self.mouse-y,
-                                        event.modifiers.control,
-                                        event.modifiers.alt);
-                                }
-                            }
-                            moved => {
-                                root.mouse-moved(self.mouse-x, self.mouse-y);
-                            }
-                            scroll-event(event) => {
-                                root.wheel(event.delta-y, self.mouse-x, self.mouse-y);
-                                accept
-                            }
+                        pane1 := ViewportPaneView {
+                            pane-id: 1;
+                            x: root.view-layout-index == 2 ? 0px : root.left-pane-width;
+                            y: root.view-layout-index == 2 ? root.top-pane-height : 0px;
+                            width: root.view-layout-index == 0 ? 0px : root.view-layout-index == 2 ? viewport.width : root.right-pane-width;
+                            height: root.view-layout-index == 0 ? 0px : root.view-layout-index == 1 ? viewport.height : root.view-layout-index == 2 ? root.bottom-pane-height : root.top-pane-height;
+                            visible: root.view-layout-index != 0;
+                            active: root.active-pane-index == 1;
+                            frame: self.active ? root.frame : root.viewport-panes[1].frame;
+                            projection: self.active ? root.projection-index : root.viewport-panes[1].projection;
+                            error: root.viewport-panes[1].error;
+                            scale-factor: root.pane-scale;
+                            navigating: root.flying;
+                            capture-pane: root.viewport-capture-pane;
+                            crosshair: root.surface-picking || root.overlay-handling || root.pivot-picking || ((root.drawing-block || root.clipping) && self.projection != 0);
+                            request-focus => { root.viewport-focused-pane-index = 1; focus.focus(); }
+                            mouse-button(button, down, x, y, control, alt) => { root.pane-mouse-button(1, button, down, x, y, control, alt); }
+                            mouse-moved(x, y) => { root.pane-mouse-moved(1, x, y); }
+                            wheel(delta, x, y) => { root.pane-wheel(1, delta, x, y); }
+                            projection-changed(index) => { root.pane-projection-changed(1, index); }
                         }
-                    }
-
-                    Rectangle {
-                        x: 10px;
-                        y: 10px;
-                        width: view-row.preferred-width;
-                        height: 34px;
-                        background: Theme.overlay;
-                        border-color: Theme.border-strong;
-                        border-width: 1px;
-                        border-radius: Theme.radius + 1px;
-                        view-row := HorizontalLayout {
-                            padding: 3px;
-                            spacing: 2px;
-                            ComboBox {
-                                width: 132px;
-                                model: ["Perspective", "Top · XY", "Front · XZ", "Side · YZ"];
-                                current-index: root.projection-index;
-                                selected => { root.projection-changed(self.current-index); }
-                            }
-                            ComboBox {
-                                width: 148px;
-                                model: ["Textured", "Flat shading", "Wireframe", "Lightmap density", "Smoothing groups"];
-                                current-index <=> root.surface-view;
-                                selected => { root.surface-view-changed(); }
-                            }
-                            Button { text: "Overlays"; icon: Icon.layers; colorize-icon: true; checkable: true; checked <=> root.overlays-open; }
-                            Rectangle { width: 4px; }
-                            IconButton { icon: Icon.frame; tooltip: root.frame-shortcut == "" ? "Frame selection" : "Frame selection · " + root.frame-shortcut; clicked => { root.frame-selection(); } }
-                            IconButton { icon: Icon.bookmark; tooltip: "Saved views"; clicked => { root.saved-views(); } }
+                        pane2 := ViewportPaneView {
+                            pane-id: 2;
+                            x: 0px;
+                            y: root.top-pane-height;
+                            width: root.view-layout-index == 3 ? root.left-pane-width : 0px;
+                            height: root.view-layout-index == 3 ? root.bottom-pane-height : 0px;
+                            visible: root.view-layout-index == 3;
+                            active: root.active-pane-index == 2;
+                            frame: self.active ? root.frame : root.viewport-panes[2].frame;
+                            projection: self.active ? root.projection-index : root.viewport-panes[2].projection;
+                            error: root.viewport-panes[2].error;
+                            scale-factor: root.pane-scale;
+                            navigating: root.flying;
+                            capture-pane: root.viewport-capture-pane;
+                            crosshair: root.surface-picking || root.overlay-handling || root.pivot-picking || ((root.drawing-block || root.clipping) && self.projection != 0);
+                            request-focus => { root.viewport-focused-pane-index = 2; focus.focus(); }
+                            mouse-button(button, down, x, y, control, alt) => { root.pane-mouse-button(2, button, down, x, y, control, alt); }
+                            mouse-moved(x, y) => { root.pane-mouse-moved(2, x, y); }
+                            wheel(delta, x, y) => { root.pane-wheel(2, delta, x, y); }
+                            projection-changed(index) => { root.pane-projection-changed(2, index); }
                         }
-                    }
-
-                    if root.overlay-handle-notice != "" || root.pivot-pick-notice != "": Rectangle {
-                        x: 10px;
-                        y: 52px;
-                        width: min(notice-row.preferred-width, parent.width - 20px);
-                        height: 40px;
-                        background: Theme.overlay;
-                        border-color: Theme.border-strong;
-                        border-width: 1px;
-                        border-radius: Theme.radius + 1px;
-                        notice-row := HorizontalLayout {
-                            padding: 6px;
-                            padding-left: Theme.space-lg;
-                            spacing: Theme.space;
-                            Text { text: root.overlay-handle-notice != "" ? root.overlay-handle-notice : root.pivot-pick-notice; color: Theme.info; vertical-alignment: center; overflow: elide; }
-                            if root.can-cancel-overlay-handles: Button { text: "Cancel handles"; clicked => { root.cancel-overlay-handles(); } }
-                            if root.overlay-handle-notice == "" && root.can-cancel-pivot-pick: Button { text: "Cancel pivot pick"; clicked => { root.cancel-transform-pivot-pick(); } }
+                        pane3 := ViewportPaneView {
+                            pane-id: 3;
+                            x: root.left-pane-width;
+                            y: root.top-pane-height;
+                            width: root.view-layout-index == 3 ? root.right-pane-width : 0px;
+                            height: root.view-layout-index == 3 ? root.bottom-pane-height : 0px;
+                            visible: root.view-layout-index == 3;
+                            active: root.active-pane-index == 3;
+                            frame: self.active ? root.frame : root.viewport-panes[3].frame;
+                            projection: self.active ? root.projection-index : root.viewport-panes[3].projection;
+                            error: root.viewport-panes[3].error;
+                            scale-factor: root.pane-scale;
+                            navigating: root.flying;
+                            capture-pane: root.viewport-capture-pane;
+                            crosshair: root.surface-picking || root.overlay-handling || root.pivot-picking || ((root.drawing-block || root.clipping) && self.projection != 0);
+                            request-focus => { root.viewport-focused-pane-index = 3; focus.focus(); }
+                            mouse-button(button, down, x, y, control, alt) => { root.pane-mouse-button(3, button, down, x, y, control, alt); }
+                            mouse-moved(x, y) => { root.pane-mouse-moved(3, x, y); }
+                            wheel(delta, x, y) => { root.pane-wheel(3, delta, x, y); }
+                            projection-changed(index) => { root.pane-projection-changed(3, index); }
                         }
                     }
-
-                    if root.has-transform-preview || root.has-area-preview || root.has-paint-preview: Rectangle {
-                        x: (parent.width - self.width) / 2;
-                        y: parent.height - self.height - 44px;
-                        width: min(pending-row.preferred-width + 8px, parent.width - 20px);
-                        height: 44px;
-                        background: root.agent-preview ? Theme.agent-soft : Theme.panel;
-                        border-color: root.agent-preview ? Theme.agent-border : Theme.accent;
-                        border-width: 1px;
-                        border-radius: Theme.radius-lg;
-                        drop-shadow-blur: 18px;
-                        drop-shadow-color: #00000080;
-                        pending-row := HorizontalLayout {
-                            padding: 8px;
-                            padding-left: Theme.space-lg;
-                            spacing: Theme.space;
-                            if root.agent-preview: Image { y: (parent.height - self.height) / 2; width: 15px; height: 15px; source: Icon.agent; colorize: Theme.agent; }
-                            if root.agent-preview: Text { text: "Agent preview"; color: Theme.agent-text; font-weight: 600; vertical-alignment: center; }
-                            Text { text: root.interaction-summary; color: Theme.text; vertical-alignment: center; overflow: elide; }
-                            Button { text: "Cancel"; clicked => { root.cancel-interaction(); } }
-                            Button { primary: true; text: root.has-transform-preview ? "Apply transform" : root.has-texture-stroke ? "Apply textures" : "Apply selection"; clicked => { if root.has-transform-preview { root.apply-transform-preview(); } else { root.apply-area-selection(); } } }
-                        }
-                    }
-
-                    Rectangle {
-                        x: 10px;
-                        y: parent.height - self.height - 10px;
-                        width: hint.preferred-width + 16px;
-                        height: hint.preferred-height + 8px;
-                        border-radius: Theme.radius-sm;
-                        background: Theme.overlay;
-                        hint := Text {
-                            text: root.clipping ? "Drag a plane handle · release keeps the preview · Apply cut changes the map · Esc cancels" : root.handles-mode-index == 5 ? "Drag to paint the sampled texture · release applies · Esc cancels" : root.handles-mode-index == 4 ? "Drag to paint visible hits · release selects · Ctrl toggles · Esc cancels" : root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates" + (root.frame-shortcut == "" ? "" : " · " + root.frame-shortcut + " frames") + " · Esc cancels";
-                            color: Theme.text-muted;
-                            font-size: Theme.font-small;
-                        }
-                    }
-
-                    if root.overlays-open: TouchArea {
-                        clicked => { root.overlays-open = false; }
-                    }
-                    if root.overlays-open: Rectangle {
-                        x: 10px;
-                        y: 50px;
-                        width: 320px;
-                        height: min(overlay-content.preferred-height + 2px, viewport.height - 60px);
-                        TouchArea { }
+                    active-overlays := Rectangle {
+                        x: root.active-pane-x;
+                        y: root.active-pane-y;
+                        width: root.viewport-width;
+                        height: root.viewport-height;
+                        background: transparent;
+                        clip: true;
                         Rectangle {
-                            background: Theme.panel;
+                            x: Theme.space;
+                            y: Theme.viewport-header-height + Theme.space-xl;
+                            width: min(view-row.preferred-width, max(0px, parent.width - Theme.space-xl));
+                            height: Theme.viewport-header-height;
+                            background: Theme.overlay;
                             border-color: Theme.border-strong;
                             border-width: 1px;
+                            border-radius: Theme.radius + 1px;
+                            view-row := HorizontalLayout {
+                                padding: 3px;
+                                spacing: 2px;
+                                if root.viewport-width >= Theme.viewport-controls-breakpoint: ComboBox {
+                                    width: 148px;
+                                    model: ["Textured", "Flat shading", "Wireframe", "Lightmap density", "Smoothing groups"];
+                                    current-index <=> root.surface-view;
+                                    selected => { root.surface-view-changed(); }
+                                }
+                                Button { text: "Overlays"; icon: Icon.layers; colorize-icon: true; checkable: true; checked <=> root.overlays-open; }
+                                Rectangle { width: 4px; }
+                                IconButton { icon: Icon.frame; tooltip: root.frame-shortcut == "" ? "Frame selection" : "Frame selection · " + root.frame-shortcut; clicked => { root.frame-selection(); } }
+                                if root.viewport-width >= Theme.viewport-bookmark-breakpoint: IconButton { icon: Icon.bookmark; tooltip: "Saved views"; clicked => { root.saved-views(); } }
+                            }
+                        }
+
+                        if (root.viewport-capture-pane < 0 || root.viewport-capture-pane == root.active-pane-index) && (root.overlay-handle-notice != "" || root.pivot-pick-notice != ""): Rectangle {
+                            x: Theme.space;
+                            y: Theme.viewport-header-height * 2 + Theme.space-lg * 2;
+                            width: min(notice-row.preferred-width, max(0px, parent.width - Theme.space-xl));
+                            height: 40px;
+                            background: Theme.overlay;
+                            border-color: Theme.border-strong;
+                            border-width: 1px;
+                            border-radius: Theme.radius + 1px;
+                            notice-row := HorizontalLayout {
+                                padding: 6px;
+                                padding-left: Theme.space-lg;
+                                spacing: Theme.space;
+                                Text { text: root.overlay-handle-notice != "" ? root.overlay-handle-notice : root.pivot-pick-notice; color: Theme.info; vertical-alignment: center; overflow: elide; }
+                                if root.can-cancel-overlay-handles: Button { text: "Cancel handles"; clicked => { root.cancel-overlay-handles(); } }
+                                if root.overlay-handle-notice == "" && root.can-cancel-pivot-pick: Button { text: "Cancel pivot pick"; clicked => { root.cancel-transform-pivot-pick(); } }
+                            }
+                        }
+
+                        if (root.viewport-capture-pane < 0 || root.viewport-capture-pane == root.active-pane-index) && (root.has-transform-preview || root.has-area-preview || root.has-paint-preview): Rectangle {
+                            x: (parent.width - self.width) / 2;
+                            y: parent.height - self.height - 44px;
+                            width: min(pending-row.preferred-width + Theme.space, max(0px, parent.width - Theme.space-xl));
+                            height: 44px;
+                            background: root.agent-preview ? Theme.agent-soft : Theme.panel;
+                            border-color: root.agent-preview ? Theme.agent-border : Theme.accent;
+                            border-width: 1px;
                             border-radius: Theme.radius-lg;
-                            drop-shadow-blur: 24px;
-                            drop-shadow-color: #00000090;
-                            clip: true;
-                            ScrollView {
-                                overlay-content := VerticalLayout {
-                                    padding-top: Theme.space-xs;
-                                    padding-bottom: Theme.space;
-                                    spacing: 2px;
-                                    SectionHeader { text: "CAMERA"; collapsible: false; }
-                                    FieldRow {
-                                        label: "Fly speed";
-                                        LineEdit { text <=> root.fly-speed; input-type: decimal; accessible-label: "Fly speed"; accepted => { root.fly-speed-changed(); } }
-                                        Text { text: "units/s"; color: Theme.text-faint; vertical-alignment: center; }
+                            drop-shadow-blur: 18px;
+                            drop-shadow-color: #00000080;
+                            pending-row := HorizontalLayout {
+                                padding: 8px;
+                                padding-left: Theme.space-lg;
+                                spacing: Theme.space;
+                                if root.agent-preview: Image { y: (parent.height - self.height) / 2; width: 15px; height: 15px; source: Icon.agent; colorize: Theme.agent; }
+                                if root.agent-preview: Text { text: "Agent preview"; color: Theme.agent-text; font-weight: 600; vertical-alignment: center; }
+                                Text { text: root.interaction-summary; color: Theme.text; vertical-alignment: center; overflow: elide; }
+                                Button { text: "Cancel"; clicked => { root.cancel-interaction(); } }
+                                Button { primary: true; text: root.has-transform-preview ? "Apply transform" : root.has-texture-stroke ? "Apply textures" : "Apply selection"; clicked => { if root.has-transform-preview { root.apply-transform-preview(); } else { root.apply-area-selection(); } } }
+                            }
+                        }
+
+                        Rectangle {
+                            visible: root.viewport-capture-pane < 0 || root.viewport-capture-pane == root.active-pane-index;
+                            x: Theme.space;
+                            y: parent.height - self.height - Theme.space;
+                            width: max(0px, parent.width - Theme.space-xl);
+                            height: hint.preferred-height + Theme.space;
+                            border-radius: Theme.radius-sm;
+                            background: Theme.overlay;
+                            hint := Text {
+                                x: Theme.space;
+                                y: Theme.space-xs;
+                                width: max(0px, parent.width - Theme.space-xl);
+                                text: root.clipping ? "Drag a plane handle · release keeps the preview · Apply cut changes the map · Esc cancels" : root.handles-mode-index == 5 ? "Drag to paint the sampled texture · release applies · Esc cancels" : root.handles-mode-index == 4 ? "Drag to paint visible hits · release selects · Ctrl toggles · Esc cancels" : root.handles-mode-index != 0 && !root.face-mode ? "Drag a handle · release applies · Esc cancels · drag elsewhere to select an area" : root.face-mode ? "Click or drag to select faces · Ctrl toggles · areas include faces through geometry" : "Click or drag to select · Ctrl toggles · right mouse navigates" + (root.frame-shortcut == "" ? "" : " · " + root.frame-shortcut + " frames") + " · Esc cancels";
+                                color: Theme.text-muted;
+                                font-size: Theme.font-small;
+                                overflow: elide;
+                            }
+                        }
+
+                        if root.overlays-open: TouchArea {
+                            clicked => { root.overlays-open = false; }
+                        }
+                        if root.overlays-open: Rectangle {
+                            x: Theme.space;
+                            y: Theme.viewport-header-height * 2 + Theme.space-lg * 2;
+                            width: min(320px, max(0px, parent.width - Theme.space-xl));
+                            height: min(overlay-content.preferred-height + 2px, max(0px, parent.height - self.y - Theme.space));
+                            TouchArea { }
+                            Rectangle {
+                                background: Theme.panel;
+                                border-color: Theme.border-strong;
+                                border-width: 1px;
+                                border-radius: Theme.radius-lg;
+                                drop-shadow-blur: 24px;
+                                drop-shadow-color: #00000090;
+                                clip: true;
+                                ScrollView {
+                                    overlay-content := VerticalLayout {
+                                        padding-top: Theme.space-xs;
+                                        padding-bottom: Theme.space;
+                                        spacing: 2px;
+                                        SectionHeader { text: "CAMERA"; collapsible: false; }
+                                        FieldRow {
+                                            label: "Fly speed";
+                                            LineEdit { text <=> root.fly-speed; input-type: decimal; accessible-label: "Fly speed"; accepted => { root.fly-speed-changed(); } }
+                                            Text { text: "units/s"; color: Theme.text-faint; vertical-alignment: center; }
+                                        }
+                                        SectionHeader { text: "DISPLAY"; collapsible: false; }
+                                        OverlaySwitch { text: "Tool textures"; checked <=> root.show-tools; toggled => { root.options-changed(); } }
+                                        OverlaySwitch { text: "Leak path"; checked <=> root.show-leak; toggled => { root.options-changed(); } }
+                                        OverlaySwitch { text: "Show grid"; checked <=> root.grid-visible; toggled => { root.spatial-changed(); } }
+                                        OverlaySwitch { text: "Selection tint"; checked <=> root.selection-tint; toggled => { root.options-changed(); } }
+                                        OverlaySwitch { text: "Selection outlines"; checked <=> root.selection-outlines; toggled => { root.options-changed(); } }
+                                        OverlaySwitch { text: "Selection bounds"; checked <=> root.selection-bounds; toggled => { root.options-changed(); } }
+                                        SectionHeader { text: "ENTITIES"; collapsible: false; }
+                                        OverlaySwitch { text: "Authored models"; checked <=> root.authored-models; toggled => { root.options-changed(); } }
+                                        OverlaySwitch { text: "Sprite resources"; checked <=> root.sprite-resources; toggled => { root.options-changed(); } }
+                                        OverlaySwitch { text: "Entity helpers"; checked <=> root.entity-helpers; toggled => { root.options-changed(); } }
+                                        OverlaySwitch { text: "Entity images"; checked <=> root.entity-images; toggled => { root.options-changed(); } }
+                                        OverlaySwitch { text: "Additive sprite guides"; enabled: root.sprite-resources; checked <=> root.additive-sprite-guides; toggled => { root.options-changed(); } }
+                                        OverlaySwitch { text: "Entity model guides"; checked <=> root.entity-model-guides; toggled => { root.options-changed(); } }
+                                        OverlayNote { text: "Static editor resources · hidden guides keep picking and bounds"; }
+                                        if root.helper-presentation-status != "": OverlayNote { text: root.helper-presentation-status; text-color: Theme.warning; }
+                                        SectionHeader { text: "SURFACES"; collapsible: false; }
+                                        OverlaySwitch { text: "Normal map preview"; checked <=> root.normal-maps; toggled => { root.options-changed(); } }
+                                        if root.normal-maps: OverlayNote { text: root.normal-map-status + (root.lighting-preview ? " · unshadowed authored lights" : " · fixed editor light"); }
+                                        OverlaySwitch { text: "Directional surface shading"; checked <=> root.surface-shading; toggled => { root.options-changed(); } }
+                                        if root.surface-shading: OverlayNote { text: root.surface-view == 0 ? "Stronger fixed editor light · authored lighting takes precedence" : "Directional surface shading requires Textured view"; }
+                                        if root.surface-view == 4: FieldRow {
+                                            label: "Highlight group";
+                                            SpinBox { minimum: 1; maximum: 32; value <=> root.smoothing-view-group; edited => { root.surface-view-changed(); } }
+                                        }
+                                        if root.surface-view >= 3: OverlayNote { text: "Authored settings · baked lighting is pending"; }
+                                        SectionHeader { text: "LIGHTING"; collapsible: false; }
+                                        OverlaySwitch { text: "Unshadowed authored lighting"; checked <=> root.lighting-preview; toggled => { root.options-changed(); } }
+                                        FieldRow {
+                                            label: "Channel";
+                                            ComboBox { model: ["LDR", "HDR"]; current-index <=> root.lighting-channel; selected => { root.options-changed(); } }
+                                        }
+                                        if root.lighting-preview: OverlaySwitch { text: "Include sky ambient"; checked <=> root.lighting-sky-ambient; toggled => { root.options-changed(); } }
+                                        if root.lighting-preview: FieldRow {
+                                            label: "Quality";
+                                            ComboBox { model: ["Fast · vertex", "Detail · per-fragment"]; current-index <=> root.lighting-quality; selected => { root.options-changed(); } }
+                                        }
+                                        if root.lighting-preview: FieldRow {
+                                            label: "Exposure EV";
+                                            LineEdit { text <=> root.lighting-exposure-ev; input-type: decimal; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
+                                        }
+                                        if root.lighting-preview: OverlayNote { text: root.lighting-status + " · no shadows or bounce"; }
+                                        if root.lighting-error != "": OverlayNote { text: root.lighting-error; text-color: Theme.warning; }
+                                        SectionHeader { text: "ENVIRONMENT"; collapsible: false; }
+                                        OverlaySwitch { text: "2D sky preview"; checked <=> root.sky-preview; toggled => { root.options-changed(); } }
+                                        if root.sky-preview: FieldRow {
+                                            label: "Sky channel";
+                                            ComboBox { model: ["LDR", "HDR · editor preview"]; current-index <=> root.sky-channel; selected => { root.options-changed(); } }
+                                        }
+                                        if root.sky-preview && root.sky-channel == 1: FieldRow {
+                                            label: "Sky EV";
+                                            LineEdit { text <=> root.sky-exposure-ev; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
+                                        }
+                                        if root.sky-preview: OverlayNote { text: root.sky-preview-status + " · Perspective, Textured"; }
+                                        if root.sky-preview-error != "": OverlayNote { text: root.sky-preview-error; text-color: Theme.warning; }
+                                        OverlaySwitch { text: "Rope preview"; checked <=> root.rope-preview; toggled => { root.options-changed(); } }
+                                        if root.rope-preview: OverlayNote { text: root.rope-preview-status + " · static curves"; }
+                                        OverlaySwitch { text: "Instance contents"; checked <=> root.instance-contents; toggled => { root.options-changed(); } }
+                                        if root.instance-contents: OverlayNote { text: root.instance-contents-status; }
+                                        OverlayLink { text: "3D sky"; status: root.sky3d-preview-status; clicked => { root.overlays-open = false; root.sky3d-preview(); } }
+                                        if root.sky3d-render-error != "": OverlayNote { text: root.sky3d-render-error; text-color: Theme.warning; }
+                                        OverlayLink { text: "Fog"; status: root.fog-preview-status; clicked => { root.overlays-open = false; root.fog-preview(); } }
+                                        OverlayLink { text: "Color correction"; status: root.color-correction-status; clicked => { root.overlays-open = false; root.color-correction-preview(); } }
+                                        OverlayLink { text: "Reference images"; status: root.reference-images-status; clicked => { root.overlays-open = false; root.reference-images(); } }
+                                        if root.color-correction-error != "": OverlayNote { text: root.color-correction-error; text-color: Theme.warning; }
+                                        OverlayLink { text: "Instance contents"; status: "Inspect…"; clicked => { root.overlays-open = false; root.inspect-instance-contents(); } }
                                     }
-                                    SectionHeader { text: "DISPLAY"; collapsible: false; }
-                                    OverlaySwitch { text: "Tool textures"; checked <=> root.show-tools; toggled => { root.options-changed(); } }
-                                    OverlaySwitch { text: "Leak path"; checked <=> root.show-leak; toggled => { root.options-changed(); } }
-                                    OverlaySwitch { text: "Show grid"; checked <=> root.grid-visible; toggled => { root.spatial-changed(); } }
-                                    OverlaySwitch { text: "Selection tint"; checked <=> root.selection-tint; toggled => { root.options-changed(); } }
-                                    OverlaySwitch { text: "Selection outlines"; checked <=> root.selection-outlines; toggled => { root.options-changed(); } }
-                                    OverlaySwitch { text: "Selection bounds"; checked <=> root.selection-bounds; toggled => { root.options-changed(); } }
-                                    SectionHeader { text: "ENTITIES"; collapsible: false; }
-                                    OverlaySwitch { text: "Authored models"; checked <=> root.authored-models; toggled => { root.options-changed(); } }
-                                    OverlaySwitch { text: "Sprite resources"; checked <=> root.sprite-resources; toggled => { root.options-changed(); } }
-                                    OverlaySwitch { text: "Entity helpers"; checked <=> root.entity-helpers; toggled => { root.options-changed(); } }
-                                    OverlaySwitch { text: "Entity images"; checked <=> root.entity-images; toggled => { root.options-changed(); } }
-                                    OverlaySwitch { text: "Additive sprite guides"; enabled: root.sprite-resources; checked <=> root.additive-sprite-guides; toggled => { root.options-changed(); } }
-                                    OverlaySwitch { text: "Entity model guides"; checked <=> root.entity-model-guides; toggled => { root.options-changed(); } }
-                                    OverlayNote { text: "Static editor resources · hidden guides keep picking and bounds"; }
-                                    if root.helper-presentation-status != "": OverlayNote { text: root.helper-presentation-status; text-color: Theme.warning; }
-                                    SectionHeader { text: "SURFACES"; collapsible: false; }
-                                    OverlaySwitch { text: "Normal map preview"; checked <=> root.normal-maps; toggled => { root.options-changed(); } }
-                                    if root.normal-maps: OverlayNote { text: root.normal-map-status + (root.lighting-preview ? " · unshadowed authored lights" : " · fixed editor light"); }
-                                    OverlaySwitch { text: "Directional surface shading"; checked <=> root.surface-shading; toggled => { root.options-changed(); } }
-                                    if root.surface-shading: OverlayNote { text: root.surface-view == 0 ? "Stronger fixed editor light · authored lighting takes precedence" : "Directional surface shading requires Textured view"; }
-                                    if root.surface-view == 4: FieldRow {
-                                        label: "Highlight group";
-                                        SpinBox { minimum: 1; maximum: 32; value <=> root.smoothing-view-group; edited => { root.surface-view-changed(); } }
-                                    }
-                                    if root.surface-view >= 3: OverlayNote { text: "Authored settings · baked lighting is pending"; }
-                                    SectionHeader { text: "LIGHTING"; collapsible: false; }
-                                    OverlaySwitch { text: "Unshadowed authored lighting"; checked <=> root.lighting-preview; toggled => { root.options-changed(); } }
-                                    FieldRow {
-                                        label: "Channel";
-                                        ComboBox { model: ["LDR", "HDR"]; current-index <=> root.lighting-channel; selected => { root.options-changed(); } }
-                                    }
-                                    if root.lighting-preview: OverlaySwitch { text: "Include sky ambient"; checked <=> root.lighting-sky-ambient; toggled => { root.options-changed(); } }
-                                    if root.lighting-preview: FieldRow {
-                                        label: "Quality";
-                                        ComboBox { model: ["Fast · vertex", "Detail · per-fragment"]; current-index <=> root.lighting-quality; selected => { root.options-changed(); } }
-                                    }
-                                    if root.lighting-preview: FieldRow {
-                                        label: "Exposure EV";
-                                        LineEdit { text <=> root.lighting-exposure-ev; input-type: decimal; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
-                                    }
-                                    if root.lighting-preview: OverlayNote { text: root.lighting-status + " · no shadows or bounce"; }
-                                    if root.lighting-error != "": OverlayNote { text: root.lighting-error; text-color: Theme.warning; }
-                                    SectionHeader { text: "ENVIRONMENT"; collapsible: false; }
-                                    OverlaySwitch { text: "2D sky preview"; checked <=> root.sky-preview; toggled => { root.options-changed(); } }
-                                    if root.sky-preview: FieldRow {
-                                        label: "Sky channel";
-                                        ComboBox { model: ["LDR", "HDR · editor preview"]; current-index <=> root.sky-channel; selected => { root.options-changed(); } }
-                                    }
-                                    if root.sky-preview && root.sky-channel == 1: FieldRow {
-                                        label: "Sky EV";
-                                        LineEdit { text <=> root.sky-exposure-ev; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
-                                    }
-                                    if root.sky-preview: OverlayNote { text: root.sky-preview-status + " · Perspective, Textured"; }
-                                    if root.sky-preview-error != "": OverlayNote { text: root.sky-preview-error; text-color: Theme.warning; }
-                                    OverlaySwitch { text: "Rope preview"; checked <=> root.rope-preview; toggled => { root.options-changed(); } }
-                                    if root.rope-preview: OverlayNote { text: root.rope-preview-status + " · static curves"; }
-                                    OverlaySwitch { text: "Instance contents"; checked <=> root.instance-contents; toggled => { root.options-changed(); } }
-                                    if root.instance-contents: OverlayNote { text: root.instance-contents-status; }
-                                    OverlayLink { text: "3D sky"; status: root.sky3d-preview-status; clicked => { root.overlays-open = false; root.sky3d-preview(); } }
-                                    if root.sky3d-render-error != "": OverlayNote { text: root.sky3d-render-error; text-color: Theme.warning; }
-                                    OverlayLink { text: "Fog"; status: root.fog-preview-status; clicked => { root.overlays-open = false; root.fog-preview(); } }
-                                    OverlayLink { text: "Color correction"; status: root.color-correction-status; clicked => { root.overlays-open = false; root.color-correction-preview(); } }
-                                    OverlayLink { text: "Reference images"; status: root.reference-images-status; clicked => { root.overlays-open = false; root.reference-images(); } }
-                                    if root.color-correction-error != "": OverlayNote { text: root.color-correction-error; text-color: Theme.warning; }
-                                    OverlayLink { text: "Instance contents"; status: "Inspect…"; clicked => { root.overlays-open = false; root.inspect-instance-contents(); } }
                                 }
                             }
                         }

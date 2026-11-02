@@ -53,7 +53,7 @@ impl Session {
         {
             return Err(error);
         }
-        self.set_camera(camera);
+        self.try_set_camera(camera)?;
         self.log(
             actor,
             format!("framed compiled {} face {face}", channel.name()),

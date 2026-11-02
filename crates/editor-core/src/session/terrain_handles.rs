@@ -75,6 +75,13 @@ impl Session {
         self.terrain_handles.active.is_some()
     }
 
+    pub(super) fn terrain_move_dragging(&self) -> bool {
+        self.terrain_handles
+            .active
+            .as_ref()
+            .is_some_and(|active| active.drag.is_some())
+    }
+
     pub(super) fn working_region_cancel_terrain_drag(&mut self) {
         if let Some(active) = &mut self.terrain_handles.active {
             active.drag = None;

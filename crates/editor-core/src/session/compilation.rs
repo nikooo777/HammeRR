@@ -1810,7 +1810,7 @@ impl Session {
         let (mins, maxs) = (center - half, center + half);
         let camera =
             self.inspection_frame_camera(mins, maxs, aspect, "Recorded build diagnostic")?;
-        self.set_camera(camera);
+        self.try_set_camera(camera)?;
         self.log(
             actor,
             format!("framed recorded build diagnostic {index} from job {job_token}"),

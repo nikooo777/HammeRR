@@ -48,6 +48,7 @@ mod sky3d_preview;
 mod terrain;
 mod transform_pivot;
 mod view;
+mod view_layout;
 
 mod working_region;
 mod workplane;

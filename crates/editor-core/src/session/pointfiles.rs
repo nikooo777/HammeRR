@@ -208,8 +208,8 @@ impl Session {
         } else {
             camera = Camera::planar(camera.projection, position.as_vec3(), camera.ortho_height);
         }
+        self.try_set_camera(camera)?;
         self.pointfile.index = index;
-        self.set_camera(camera);
         Ok(())
     }
 
@@ -230,10 +230,10 @@ impl Session {
                 return Err("Path exceeds the planar zoom limit. Use perspective framing or navigate individual points.".into());
             }
         }
-        self.set_camera(
+        self.try_set_camera(
             self.camera
                 .frame_bounds(min.as_vec3(), max.as_vec3(), aspect),
-        );
+        )?;
         Ok(())
     }
 }

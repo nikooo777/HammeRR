@@ -495,7 +495,7 @@ impl EditorServer {
             let mut session = self.session();
             session.preflight_instance_contents();
             let camera = spec.resolve(&session, 1.0)?;
-            session.set_camera(camera);
+            session.try_set_camera(camera)?;
             session.log(Actor::Agent, "moved the camera");
             Ok(camera_json(&camera))
         })
@@ -513,16 +513,24 @@ impl EditorServer {
         let (camera, mut view) = {
             let mut session = self.session();
             session.preflight_instance_contents();
-            let camera = match args
-                .camera
-                .as_ref()
-                .unwrap_or(&CameraSpec::default())
-                .resolve_with_instance_contents(
+            let default_camera = CameraSpec::default();
+            let camera_spec = args.camera.as_ref().unwrap_or(&default_camera);
+            let camera_result = match args.pane {
+                Some(pane) => camera_spec.resolve_for_pane(
+                    &session,
+                    pane,
+                    size.0 as f32 / size.1 as f32,
+                    args.instance_contents,
+                    args.rope_preview,
+                ),
+                None => camera_spec.resolve_with_instance_contents(
                     &session,
                     size.0 as f32 / size.1 as f32,
                     args.instance_contents,
                     args.rope_preview,
-                ) {
+                ),
+            };
+            let camera = match camera_result {
                 Ok(camera) => camera,
                 Err(error) => return fail(error),
             };
@@ -554,7 +562,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Identify the object and face at a pixel of an image rendered by render_view with the same camera and size.",
+        description = "Identify the object and face at a pixel of an image rendered by render_view with the same camera and size. Optional pane selects the configured pane camera without activating or publishing it.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn pick_at_pixel(
@@ -565,15 +573,22 @@ impl EditorServer {
             let mut session = self.session();
             session.preflight_instance_contents();
             let (w, h) = render_size(args.width, args.height);
-            let camera = args
-                .camera
-                .unwrap_or_default()
-                .resolve_with_instance_contents(
+            let camera_spec = args.camera.unwrap_or_default();
+            let camera = match args.pane {
+                Some(pane) => camera_spec.resolve_for_pane(
+                    &session,
+                    pane,
+                    w as f32 / h as f32,
+                    args.instance_contents,
+                    args.rope_preview,
+                )?,
+                None => camera_spec.resolve_with_instance_contents(
                     &session,
                     w as f32 / h as f32,
                     args.instance_contents,
                     args.rope_preview,
-                )?;
+                )?,
+            };
             let ndc_x = 2.0 * (args.x + 0.5) / w as f32 - 1.0;
             let ndc_y = 1.0 - 2.0 * (args.y + 0.5) / h as f32;
             let (origin, direction) = camera.ray(ndc_x, ndc_y, w as f32 / h as f32);

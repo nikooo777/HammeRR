@@ -163,7 +163,7 @@ impl Session {
         )?;
         let changed = camera != before;
         if changed {
-            self.set_camera(camera);
+            self.try_set_camera(camera)?;
             self.log(actor, "Moved camera");
         }
         Ok(json!({
@@ -289,10 +289,10 @@ impl Session {
                 result["editor_visibility"] =
                     self.set_editor_visibility(actor, action, &self.working_region_stamp())?;
             }
-            Command::Perspective => self.set_projection(actor, Projection::Perspective),
-            Command::Top => self.set_projection(actor, Projection::Top),
-            Command::Front => self.set_projection(actor, Projection::Front),
-            Command::Side => self.set_projection(actor, Projection::Side),
+            Command::Perspective => self.try_set_projection(actor, Projection::Perspective)?,
+            Command::Top => self.try_set_projection(actor, Projection::Top)?,
+            Command::Front => self.try_set_projection(actor, Projection::Front)?,
+            Command::Side => self.try_set_projection(actor, Projection::Side)?,
             Command::Objects | Command::Faces => {
                 let enabled = command == Command::Faces;
                 result["mode_changed"] = json!(self.face_mode() != enabled);

@@ -89,7 +89,7 @@ impl Session {
             let camera = self.camera;
             self.set_clip_tool(actor, true)?;
             if camera != self.camera {
-                self.set_camera(camera);
+                self.try_set_camera(camera)?;
             }
             self.cancel_clip_preview();
         }

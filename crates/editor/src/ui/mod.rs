@@ -60,6 +60,12 @@ struct Ui {
     session: SharedSession,
     document_access: runtime::DocumentAccess,
     viewport: Viewport,
+    view_panes: Rc<VecModel<ViewportPane>>,
+    view_layout: session::view_layout::Layout,
+    active_view_pane: usize,
+    seen_view_layout: u64,
+    pane_capture: Option<PaneCapture>,
+    pane_images: [Option<PaneImage>; session::view_layout::MAX_PANES],
     seen_scene: render::SceneKey,
     seen_camera: u64,
     seen_view: u64,
@@ -191,6 +197,19 @@ impl Ui {
         let camera = lock(&session).camera();
         Self {
             viewport: Viewport::new(&ctx, camera),
+            view_panes: Rc::new(VecModel::from(
+                (0..session::view_layout::MAX_PANES)
+                    .map(|index| ViewportPane {
+                        id: index as i32,
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>(),
+            )),
+            view_layout: session::view_layout::Layout::Single,
+            active_view_pane: 0,
+            seen_view_layout: u64::MAX,
+            pane_capture: None,
+            pane_images: [None; session::view_layout::MAX_PANES],
             ctx,
             session,
             document_access,
@@ -722,6 +741,7 @@ fn create_document_window(
     }
 
     let ui = Rc::new(RefCell::new(Ui::for_document(document, ctx)));
+    bind_view_panes(&app, &ui);
 
     root_callback!(app, ui, on_open_map, |app| open_dialog(&app.unwrap(), &ui));
     root_callback!(app, ui, on_import_brush_batch, |app| {
@@ -1086,14 +1106,15 @@ fn create_document_window(
         &app.unwrap(),
         &ui
     ));
-    root_callback!(app, ui, on_projection_changed, |_app; index| {
-        let projection = [
-            Projection::Perspective,
-            Projection::Top,
-            Projection::Front,
-            Projection::Side,
-        ][index.clamp(0, 3) as usize];
-        lock(&session_of(&ui)).set_projection(Actor::User, projection);
+    root_callback!(app, ui, on_projection_changed, |app; index| {
+        change_view_panes(&app.unwrap(), &ui, |session| {
+            session.set_view_pane_projection(
+                Actor::User,
+                session.active_view_pane(),
+                pane_projection(index)?,
+                None,
+            )
+        });
     });
     root_callback!(app, ui, on_spatial_changed, |app| spatial_changed(
         &app.unwrap(),
@@ -2278,7 +2299,7 @@ fn create_document_window(
                 return;
             }
             let measurement_picking =
-                !lock(&ui.session).measurement_state()["draft"]["picking"].is_null();
+                lock(&ui.session).measurement_picking();
             if button == 0 && measurement_picking {
                 if down {
                     ui.pick_release = true;
@@ -2947,6 +2968,7 @@ fn create_document_window(
     });
     app.on_viewport_focus_lost({
         let scope = admission::Callback::new(&app, &ui, &file_access(&ui));
+        let weak_app = app.as_weak();
         move || {
             scope.focus_lost(
                 |app, ui| {
@@ -2988,10 +3010,12 @@ fn create_document_window(
                 },
                 |ui| {
                     let mut ui = ui.borrow_mut();
-                    ui.viewport.release_all();
-                    ui.brush_drag = None;
-                    ui.clip_drag = None;
-                    ui.object_cycle.cancel();
+                    if let Some(app) = weak_app.upgrade() {
+                        release_pane_input(&app, &mut ui);
+                    } else {
+                        ui.viewport.release_all();
+                        ui.pane_capture = None;
+                    }
                 },
             )
         }
@@ -3006,6 +3030,7 @@ fn create_document_window(
                 let now = Instant::now();
                 let dt = (now - last_tick).as_secs_f32().min(0.1);
                 last_tick = now;
+                app.set_viewport_scale_factor(app.window().scale_factor());
 
                 let ui = &mut *ui.borrow_mut();
                 let fast = synchronize_shortcut_input(&app, &mut ui.viewport).unwrap_or(false);
@@ -3025,7 +3050,8 @@ fn create_document_window(
                 let mut panel_dirty = false;
                 let mut workspace_layout = None;
                 {
-                    let mut session = lock(&ui.session);
+                    let shared = ui.session.clone();
+                    let mut session = lock(&shared);
                     session.poll_game();
                     let layout_serial = session.workspace_layout_serial();
                     if layout_serial != ui.seen_workspace_layout {
@@ -3116,14 +3142,18 @@ fn create_document_window(
                         panel_dirty = true;
                     }
                     if session.camera_serial() != ui.seen_camera {
+                        release_pane_input(&app, ui);
                         ui.seen_camera = session.camera_serial();
                         ui.viewport.camera = session.camera();
-                        ui.viewport.release_all();
-                        ui.brush_drag = None;
                         ui.viewport.redraw();
                         refresh_spatial(&app, &session);
                     } else {
                         session.publish_camera(ui.viewport.camera);
+                    }
+                    if session.view_layout_serial() != ui.seen_view_layout
+                        && let Err(error) = sync_view_panes(&app, ui, &session)
+                    {
+                        app.set_message(error.into());
                     }
                     let previous_scene = ui.seen_scene;
                     if let Some(scene_key) = prepare_scene_refresh(
@@ -3174,7 +3204,7 @@ fn create_document_window(
                         }
                         let uploaded = ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
                         if let Err(error) = uploaded {
-                            app.set_frame(slint::Image::default());
+                            clear_view_frames(&app, ui, &format!("Viewport unavailable: {error}"));
                             if !preview_error.is_empty() {
                                 preview_error.push('\n');
                             }
@@ -3694,8 +3724,7 @@ fn create_document_window(
 
                 let entity_picking =
                     lock(&ui.session).get_entity_placement()["draft"]["picking"] == true;
-                let measurement_picking =
-                    !lock(&ui.session).measurement_state()["draft"]["picking"].is_null();
+                let measurement_picking = lock(&ui.session).measurement_picking();
                 if let Some(controller) = &ui.overlay {
                     controller.set_viewport((
                         app.get_viewport_width().round().max(1.0) as u32,
@@ -3749,20 +3778,59 @@ fn create_document_window(
                         .is_some_and(|controller| controller.is_handling()),
                 );
                 let scale = app.window().scale_factor();
-                let size = (
-                    (app.get_viewport_width() * scale).round() as u32,
-                    (app.get_viewport_height() * scale).round() as u32,
+                let canvas = (
+                    app.get_viewport_canvas_pixel_width().max(0) as u32,
+                    app.get_viewport_canvas_pixel_height().max(0) as u32,
                 );
-                if let Some(frame) =
-                    ui.viewport
-                        .render(&ui.ctx, size, scale, &mut lock(&ui.session))
-                {
-                    app.set_frame(frame);
+                let sizes = app.get_viewport_pane_sizes();
+                let shared = ui.session.clone();
+                let mut session = lock(&shared);
+                let requests = session
+                    .visible_view_panes()
+                    .into_iter()
+                    .map(|pane| {
+                        let size = sizes
+                            .iter()
+                            .find(|size| usize::try_from(size.id).ok() == Some(pane.index));
+                        viewport::PaneRender {
+                            index: pane.index,
+                            camera: pane.camera,
+                            size: size.map_or((0, 0), |size| {
+                                (
+                                    size.pixel_width.max(0) as u32,
+                                    size.pixel_height.max(0) as u32,
+                                )
+                            }),
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let frames = ui.viewport.render_panes(
+                    &ui.ctx,
+                    &requests,
+                    ui.active_view_pane,
+                    scale,
+                    canvas,
+                    &mut session,
+                );
+                for frame in frames {
+                    ui.pane_images[frame.index] = requests
+                        .iter()
+                        .find(|request| request.index == frame.index)
+                        .filter(|_| frame.image.size().width > 0)
+                        .map(|request| PaneImage {
+                            camera: request.camera,
+                            scene: ui.seen_scene,
+                            size: request.size,
+                        });
+                    let mut row = ui.view_panes.row_data(frame.index).unwrap_or_default();
+                    if frame.index == ui.active_view_pane {
+                        app.set_frame(frame.image.clone());
+                    }
+                    row.frame = frame.image;
+                    row.error = frame.error.unwrap_or_default().into();
+                    ui.view_panes.set_row_data(frame.index, row);
                 }
-                if let Some(error) = ui.viewport.baked_surfaces_error() {
-                    app.set_frame(slint::Image::default());
-                    app.set_preview_error(format!("Viewport unavailable: {error}").into());
-                }
+                drop(session);
                 app.set_sky3d_render_error(ui.viewport.sky3d_error().unwrap_or_default().into());
                 app.set_color_correction_error(
                     ui.viewport

@@ -316,7 +316,7 @@ impl Session {
         let mins = origin - Vec3::splat(FRAME_HALF_EXTENT);
         let maxs = origin + Vec3::splat(FRAME_HALF_EXTENT);
         let camera = self.inspection_frame_camera(mins, maxs, aspect, "Compiled light")?;
-        self.set_camera(camera);
+        self.try_set_camera(camera)?;
         self.log(
             actor,
             format!("framed compiled {} light record {ordinal}", channel.name()),

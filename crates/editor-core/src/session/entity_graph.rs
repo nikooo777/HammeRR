@@ -745,7 +745,7 @@ impl Session {
         if !camera.position.is_finite() || !camera.view_projection(aspect).is_finite() {
             return Err("Graph nodes have no finite framing camera".into());
         }
-        self.set_camera(camera);
+        self.try_set_camera(camera)?;
         self.log(actor, "framed connected entity graph");
         Ok(Frame {
             snapshot: snapshot.into(),

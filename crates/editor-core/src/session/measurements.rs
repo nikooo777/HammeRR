@@ -137,7 +137,7 @@ fn measurement_json(measurement: &Measurement, resolver: &mut measurements::Reso
 }
 
 impl Session {
-    pub(super) fn measurement_picking(&self) -> bool {
+    pub fn measurement_picking(&self) -> bool {
         self.measurements
             .draft
             .as_ref()
@@ -727,7 +727,7 @@ impl Session {
                 return Err("Measurement exceeds this camera's framing range; use Perspective or a wider viewport".into());
             }
         }
-        self.set_camera(camera);
+        self.try_set_camera(camera)?;
         Ok(())
     }
 

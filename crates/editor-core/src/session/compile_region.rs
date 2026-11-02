@@ -198,11 +198,11 @@ impl Session {
             .displayed_compile_region()
             .ok_or("No compile-region bounds to frame")?
             .bounds;
-        self.set_camera(self.camera.frame_bounds(
+        self.try_set_camera(self.camera.frame_bounds(
             bounds.mins.as_vec3(),
             bounds.maxs.as_vec3(),
             aspect,
-        ));
+        ))?;
         self.log(actor, "Frame compile region");
         Ok(())
     }

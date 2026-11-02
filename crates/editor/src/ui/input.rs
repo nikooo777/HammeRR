@@ -1,5 +1,404 @@
 use super::*;
 
+#[derive(Clone, Copy)]
+pub(super) struct PaneCapture {
+    pane: usize,
+    buttons: u8,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct PaneImage {
+    pub camera: render::Camera,
+    pub scene: render::SceneKey,
+    pub size: (u32, u32),
+}
+
+pub(super) fn release_pane_input(app: &AppWindow, ui: &mut Ui) {
+    ui.viewport.release_all();
+    ui.pane_capture = None;
+    ui.brush_drag = None;
+    ui.clip_drag = None;
+    ui.object_cycle.cancel();
+    ui.interaction = interaction::Interaction::default();
+    ui.pick_release = false;
+    app.set_viewport_capture_pane(-1);
+    app.set_flying(false);
+    pointer_lock::sync(app, false);
+    pointer_lock::reset_keyboard(app);
+}
+
+pub(super) fn sync_view_panes(
+    app: &AppWindow,
+    ui: &mut Ui,
+    session: &Session,
+) -> Result<(), String> {
+    let layout = session.view_layout();
+    let active = session.active_view_pane();
+    let resized = layout != ui.view_layout;
+    let changed = layout != ui.view_layout || active != ui.active_view_pane;
+    let camera_changed = changed || session.camera_serial() != ui.seen_camera;
+    if camera_changed {
+        release_pane_input(app, ui);
+        ui.viewport.set_active_pane(active)?;
+        ui.viewport.camera = session.camera();
+        ui.seen_camera = session.camera_serial();
+    }
+    if changed {
+        ui.viewport.redraw();
+    }
+    if resized {
+        clear_view_frames(app, ui, "");
+    }
+    ui.view_layout = layout;
+    ui.active_view_pane = active;
+    ui.seen_view_layout = session.view_layout_serial();
+    app.set_view_layout_index(match layout {
+        session::view_layout::Layout::Single => 0,
+        session::view_layout::Layout::TwoColumns => 1,
+        session::view_layout::Layout::TwoRows => 2,
+        session::view_layout::Layout::Quad => 3,
+    });
+    app.set_active_pane_index(active as i32);
+    app.set_linked_orthographic(session.linked_orthographic_views());
+    for index in 0..session::view_layout::MAX_PANES {
+        let mut row = ui.view_panes.row_data(index).unwrap_or_default();
+        let projection = session.view_pane_camera(index)?.projection.index() as i32;
+        if changed && index >= layout.pane_count() {
+            row.frame = slint::Image::default();
+            row.error = SharedString::default();
+            row.projection = projection;
+            ui.view_panes.set_row_data(index, row);
+        } else if row.projection != projection {
+            row.projection = projection;
+            ui.view_panes.set_row_data(index, row);
+        }
+    }
+    if changed {
+        let frame = ui.view_panes.row_data(active).unwrap_or_default().frame;
+        app.set_frame(frame);
+    }
+    if camera_changed {
+        refresh_spatial(app, session);
+    }
+    Ok(())
+}
+
+fn activate_view_pane(app: &AppWindow, ui: &SharedUi, pane: i32) -> Result<usize, String> {
+    let pane = usize::try_from(pane).map_err(|_| "Unknown viewport pane")?;
+    let mut ui = ui.borrow_mut();
+    let shared = ui.session.clone();
+    let mut session = lock(&shared);
+    sync_view_panes(app, &mut ui, &session)?;
+    if pane != session.active_view_pane() {
+        if ui.pane_capture.is_some() {
+            return Err("Finish the captured viewport gesture before changing panes".into());
+        }
+        session.publish_camera(ui.viewport.camera);
+        session.activate_view_pane(Actor::User, pane, None)?;
+        sync_view_panes(app, &mut ui, &session)?;
+    }
+    session.publish_camera(ui.viewport.camera);
+    if session.camera_serial() != ui.seen_camera {
+        sync_view_panes(app, &mut ui, &session)?;
+    }
+    Ok(pane)
+}
+
+fn pane_button_down(app: &AppWindow, ui: &SharedUi, pane: i32, button: i32) -> bool {
+    let result = activate_view_pane(app, ui, pane);
+    let pane = match result {
+        Ok(pane) => pane,
+        Err(error) => {
+            app.set_message(error.into());
+            return false;
+        }
+    };
+    if button == 0 && !pane_image_current(app, ui, pane) {
+        app.set_message("Wait for this view to refresh before picking".into());
+        return false;
+    }
+    let Some(bit) = u32::try_from(button)
+        .ok()
+        .filter(|button| *button < u8::BITS)
+        .and_then(|button| 1_u8.checked_shl(button))
+    else {
+        return false;
+    };
+    let mut ui = ui.borrow_mut();
+    let capture = ui
+        .pane_capture
+        .get_or_insert(PaneCapture { pane, buttons: 0 });
+    if capture.pane != pane {
+        return false;
+    }
+    capture.buttons |= bit;
+    app.set_viewport_capture_pane(pane as i32);
+    true
+}
+
+fn pane_image_current(app: &AppWindow, ui: &SharedUi, pane: usize) -> bool {
+    let ui = ui.borrow();
+    let Some(image) = ui.pane_images[pane] else {
+        return false;
+    };
+    let session = lock(&ui.session);
+    let scene = session.render_scene_key(session.view());
+    app.get_viewport_pane_sizes().iter().any(|size| {
+        usize::try_from(size.id).ok() == Some(pane)
+            && image.camera == ui.viewport.camera
+            && image.scene == scene
+            && image.size
+                == (
+                    size.pixel_width.max(0) as u32,
+                    size.pixel_height.max(0) as u32,
+                )
+    })
+}
+
+fn pane_pointer_current(app: &AppWindow, ui: &SharedUi, pane: i32) -> bool {
+    let Ok(pane) = usize::try_from(pane) else {
+        return false;
+    };
+    let mut ui = ui.borrow_mut();
+    let shared = ui.session.clone();
+    let session = lock(&shared);
+    if let Err(error) = sync_view_panes(app, &mut ui, &session) {
+        app.set_message(error.into());
+        return false;
+    }
+    pane == ui.active_view_pane && ui.pane_capture.is_none_or(|capture| capture.pane == pane)
+}
+
+fn pane_button_up(app: &AppWindow, ui: &SharedUi, pane: i32, button: i32) -> bool {
+    if !pane_pointer_current(app, ui, pane) {
+        return false;
+    }
+    let Some(bit) = u32::try_from(button)
+        .ok()
+        .filter(|button| *button < u8::BITS)
+        .and_then(|button| 1_u8.checked_shl(button))
+    else {
+        return false;
+    };
+    let mut ui = ui.borrow_mut();
+    let Some(capture) = &mut ui.pane_capture else {
+        return false;
+    };
+    if capture.buttons & bit == 0 {
+        return false;
+    }
+    capture.buttons &= !bit;
+    if capture.buttons == 0 {
+        ui.pane_capture = None;
+        app.set_viewport_capture_pane(-1);
+    }
+    true
+}
+
+fn pane_wheel(app: &AppWindow, ui: &SharedUi, pane: i32) -> bool {
+    match activate_view_pane(app, ui, pane) {
+        Ok(_) => true,
+        Err(error) => {
+            app.set_message(error.into());
+            false
+        }
+    }
+}
+
+pub(super) fn clear_view_frames(app: &AppWindow, ui: &mut Ui, error: &str) {
+    ui.pane_images.fill(None);
+    for index in 0..session::view_layout::MAX_PANES {
+        let mut row = ui.view_panes.row_data(index).unwrap_or_default();
+        row.frame = slint::Image::default();
+        row.error = error.into();
+        ui.view_panes.set_row_data(index, row);
+    }
+    app.set_frame(slint::Image::default());
+}
+
+fn pane_aspects(app: &AppWindow, visible: usize) -> Result<[f32; 4], String> {
+    let mut aspects = [1.0; session::view_layout::MAX_PANES];
+    for size in app.get_viewport_pane_sizes().iter() {
+        let index = usize::try_from(size.id).map_err(|_| "Unknown viewport pane")?;
+        if index >= aspects.len() {
+            return Err("Unknown viewport pane".into());
+        }
+        if index < visible {
+            if size.pixel_width <= 0 || size.pixel_height <= 0 {
+                return Err("Visible viewport has no size".into());
+            }
+            aspects[index] = size.pixel_width as f32 / size.pixel_height as f32;
+        }
+    }
+    Ok(aspects)
+}
+
+pub(super) fn pane_projection(index: i32) -> Result<Projection, String> {
+    match index {
+        0 => Ok(Projection::Perspective),
+        1 => Ok(Projection::Top),
+        2 => Ok(Projection::Front),
+        3 => Ok(Projection::Side),
+        _ => Err("Unknown viewport projection".into()),
+    }
+}
+
+pub(super) fn change_view_panes(
+    app: &AppWindow,
+    ui: &SharedUi,
+    change: impl FnOnce(&mut Session) -> Result<serde_json::Value, String>,
+) {
+    let result = (|| {
+        let mut ui = ui.borrow_mut();
+        let shared = ui.session.clone();
+        let mut session = lock(&shared);
+        sync_view_panes(app, &mut ui, &session)?;
+        if ui.pane_capture.is_some() {
+            return Err("Finish the captured viewport gesture before changing views".into());
+        }
+        session.publish_camera(ui.viewport.camera);
+        change(&mut session)?;
+        sync_view_panes(app, &mut ui, &session)?;
+        Ok::<(), String>(())
+    })();
+    if let Err(error) = result {
+        app.set_message(error.into());
+    }
+}
+
+pub(super) fn bind_view_panes(app: &AppWindow, ui: &SharedUi) {
+    app.set_viewport_panes(ui.borrow().view_panes.clone().into());
+    app.set_viewport_scale_factor(app.window().scale_factor());
+    {
+        let mut ui = ui.borrow_mut();
+        let shared = ui.session.clone();
+        if let Err(error) = sync_view_panes(app, &mut ui, &lock(&shared)) {
+            app.set_message(error.into());
+        }
+    }
+    app.on_view_layout_changed({
+        let scope = admission::Callback::new(app, ui, &file_access(ui));
+        move |index| {
+            scope.input((), |app, ui| {
+                change_view_panes(&app, &ui, |session| {
+                    let layout = match index {
+                        0 => session::view_layout::Layout::Single,
+                        1 => session::view_layout::Layout::TwoColumns,
+                        2 => session::view_layout::Layout::TwoRows,
+                        3 => session::view_layout::Layout::Quad,
+                        _ => return Err("Unknown viewport layout".into()),
+                    };
+                    session.update_view_layout(Actor::User, Some(layout), None, None)
+                });
+            });
+        }
+    });
+    app.on_view_link_changed({
+        let scope = admission::Callback::new(app, ui, &file_access(ui));
+        move |linked| {
+            scope.input((), |app, ui| {
+                change_view_panes(&app, &ui, |session| {
+                    session.update_view_layout(Actor::User, None, Some(linked), None)
+                });
+            });
+        }
+    });
+    app.on_frame_all_views({
+        let scope = admission::Callback::new(app, ui, &file_access(ui));
+        move || {
+            scope.input((), |app, ui| {
+                change_view_panes(&app, &ui, |session| {
+                    session.frame_all_views(
+                        Actor::User,
+                        pane_aspects(&app, session.view_layout().pane_count())?,
+                        None,
+                    )
+                });
+            });
+        }
+    });
+    app.on_pane_projection_changed({
+        let scope = admission::Callback::new(app, ui, &file_access(ui));
+        move |pane, projection| {
+            scope.input((), |app, ui| {
+                if !pane_wheel(&app, &ui, pane) {
+                    return;
+                }
+                change_view_panes(&app, &ui, |session| {
+                    let pane = usize::try_from(pane).map_err(|_| "Unknown viewport pane")?;
+                    session.set_view_pane_projection(
+                        Actor::User,
+                        pane,
+                        pane_projection(projection)?,
+                        None,
+                    )
+                });
+            });
+        }
+    });
+    app.on_pane_mouse_button({
+        let scope = admission::Callback::new(app, ui, &file_access(ui));
+        move |pane, button, down, x, y, control, alt| {
+            scope.input((), |app, ui| {
+                let accepted = if down {
+                    pane_button_down(&app, &ui, pane, button)
+                } else {
+                    pane_button_up(&app, &ui, pane, button)
+                };
+                if accepted {
+                    app.invoke_mouse_button(button, down, x, y, control, alt);
+                } else if !down {
+                    let misplaced = ui
+                        .borrow()
+                        .pane_capture
+                        .is_some_and(|capture| usize::try_from(pane).ok() != Some(capture.pane));
+                    if misplaced {
+                        app.invoke_viewport_focus_lost();
+                    }
+                }
+            });
+        }
+    });
+    app.on_pane_mouse_moved({
+        let scope = admission::Callback::new(app, ui, &file_access(ui));
+        move |pane, x, y| {
+            scope.input((), |app, ui| {
+                if pane_pointer_current(&app, &ui, pane) {
+                    app.invoke_mouse_moved(x, y);
+                }
+            });
+        }
+    });
+    app.on_pane_wheel({
+        let scope = admission::Callback::new(app, ui, &file_access(ui));
+        move |pane, delta, x, y| {
+            scope.input((), |app, ui| {
+                if pane_wheel(&app, &ui, pane) {
+                    app.invoke_wheel(delta, x, y);
+                }
+            });
+        }
+    });
+    app.on_pane_focus_lost({
+        let weak_app = app.as_weak();
+        let weak_ui = Rc::downgrade(ui);
+        move |pane| {
+            let (Some(app), Some(ui)) = (weak_app.upgrade(), weak_ui.upgrade()) else {
+                return;
+            };
+            if !pane_pointer_current(&app, &ui, pane) {
+                return;
+            }
+            let captured = ui.borrow().pane_capture.is_some();
+            if captured {
+                app.invoke_viewport_focus_lost();
+            } else {
+                release_pane_input(&app, &mut ui.borrow_mut());
+            }
+        }
+    });
+}
+
 /// Edits the selection as the user and shows any error in the status bar.
 pub(super) fn edit_selection(
     app: &AppWindow,
@@ -245,13 +644,20 @@ pub(super) fn route_shortcut_key(
     key: shortcut_input::ViewportKey<'_>,
 ) -> bool {
     let native = pointer_lock::keyboard_event(app, key.down);
+    let shared = session_of(ui);
+    {
+        let session = lock(&shared);
+        if let Err(error) = sync_view_panes(app, &mut ui.borrow_mut(), &session) {
+            app.set_message(error.into());
+            return true;
+        }
+    }
     if synchronize_shortcut_input(app, &mut ui.borrow_mut().viewport).is_none() {
         return false;
     }
     if !key.down {
         return false;
     }
-    let shared = session_of(ui);
     let mut session = lock(&shared);
     let routed = {
         let mut ui = ui.borrow_mut();

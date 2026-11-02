@@ -127,6 +127,7 @@ pub mod terrain_triangles;
 pub mod terrain_vertices;
 pub mod transform_pivot;
 mod uv_variation;
+pub mod view_layout;
 pub mod visibility_categories;
 pub mod visibility_profiles;
 pub mod volume;
@@ -359,6 +360,7 @@ pub struct Session {
     map_palette_scope: String,
     material_recent: VecDeque<String>,
     camera: Camera,
+    view_layout: view_layout::State,
     view: ViewOptions,
     fog_preview: fog::Selection,
     sky3d_preview: sky3d_preview::State,
@@ -615,7 +617,11 @@ impl Session {
     }
 
     pub(crate) fn with_shared_content(content: SessionContent) -> Self {
-        Self {
+        let camera = Camera::looking_at(
+            DVec3::new(-512.0, -512.0, 384.0).as_vec3(),
+            glam::Vec3::ZERO,
+        );
+        let mut session = Self {
             content_profiles: content_profiles::State::default(),
             color_correction: color_correction::State::default(),
             reference_images: reference_images::State::default(),
@@ -691,10 +697,8 @@ impl Session {
             color_palette: color_palette::Binding::default(),
             map_palette_scope: crate::recovery::unique_id(),
             material_recent: VecDeque::new(),
-            camera: Camera::looking_at(
-                DVec3::new(-512.0, -512.0, 384.0).as_vec3(),
-                glam::Vec3::ZERO,
-            ),
+            camera,
+            view_layout: view_layout::State::new(camera),
             view: ViewOptions::default(),
             fog_preview: fog::Selection::default(),
             sky3d_preview: sky3d_preview::State::default(),
@@ -741,7 +745,9 @@ impl Session {
             definitions_error: None,
             definitions_serial: 0,
             definitions_load: definitions::LoadState::default(),
-        }
+        };
+        session.reseed_view_layout_cameras();
+        session
     }
 
     pub fn game(&self) -> &GameFs {
@@ -1653,6 +1659,7 @@ impl Session {
         self.face_selection.clear();
         self.camera_serial += 1;
         self.changed();
+        self.reseed_view_layout_cameras();
     }
 
     pub fn open(
@@ -1930,23 +1937,47 @@ impl Session {
 
     /// Moves the viewport camera from outside the viewport.
     pub fn set_camera(&mut self, camera: Camera) {
+        if let Err(error) = self.try_set_camera(camera) {
+            self.reject_view_camera(error);
+        }
+    }
+
+    pub fn try_set_camera(&mut self, camera: Camera) -> Result<(), String> {
+        let cameras = self.view_camera_candidates(camera)?;
         let previous = self.camera;
         self.saved_cameras[self.camera.projection.index()] = Some(self.camera);
         self.camera = camera;
+        self.view_layout.cameras = cameras;
+        self.view_layout.serial += 1;
+        self.view_layout.error = None;
         self.cancel_block_preview();
         self.clip_epoch += 1;
         self.interaction_camera_changed();
         self.camera_serial += 1;
         self.working_region_camera_changed(previous);
+        Ok(())
     }
 
     /// Records the viewport's own camera movement.
     pub fn publish_camera(&mut self, camera: Camera) {
+        if self.camera == camera {
+            return;
+        }
+        let cameras = match self.view_camera_candidates(camera) {
+            Ok(cameras) => cameras,
+            Err(error) => {
+                self.reject_view_camera(error);
+                return;
+            }
+        };
         let previous = self.camera;
         if self.camera != camera {
             self.interaction_camera_changed();
         }
         self.camera = camera;
+        self.view_layout.cameras = cameras;
+        self.view_layout.serial += 1;
+        self.view_layout.error = None;
         self.working_region_camera_changed(previous);
     }
 
@@ -2064,24 +2095,36 @@ impl Session {
     }
 
     pub fn camera_for_projection(&self, projection: Projection) -> Camera {
+        self.camera_for_projection_with_selection(projection, true)
+    }
+
+    fn camera_for_projection_with_selection(
+        &self,
+        projection: Projection,
+        selection: bool,
+    ) -> Camera {
         if projection == self.camera.projection {
             return self.camera;
         }
         if let Some(camera) = self.saved_cameras[projection.index()] {
             return camera;
         }
-        let bounds = if self.face_mode {
-            self.selection_bounds()
-        } else {
-            self.framing_bounds_in(&self.document, &self.selected_ids(), None)
-        }
-        .or_else(|| {
-            self.framing_bounds_in(
-                &self.document,
-                &self.document.objects().collect::<Vec<_>>(),
-                None,
-            )
-        });
+        let bounds = selection
+            .then(|| {
+                if self.face_mode {
+                    self.selection_bounds()
+                } else {
+                    self.framing_bounds_in(&self.document, &self.selected_ids(), None)
+                }
+            })
+            .flatten()
+            .or_else(|| {
+                self.framing_bounds_in(
+                    &self.document,
+                    &self.document.objects().collect::<Vec<_>>(),
+                    None,
+                )
+            });
         let (mins, maxs) = bounds.unwrap_or((DVec3::splat(-384.0), DVec3::splat(384.0)));
         if projection == Projection::Perspective {
             Camera::overview(mins.as_vec3(), maxs.as_vec3())
@@ -2095,8 +2138,19 @@ impl Session {
     }
 
     pub fn set_projection(&mut self, actor: Actor, projection: Projection) {
-        self.set_camera(self.camera_for_projection(projection));
+        if let Err(error) = self.try_set_projection(actor, projection) {
+            self.reject_view_camera(error);
+        }
+    }
+
+    pub fn try_set_projection(
+        &mut self,
+        actor: Actor,
+        projection: Projection,
+    ) -> Result<(), String> {
+        self.try_set_camera(self.camera_for_projection(projection))?;
         self.log(actor, format!("{} view", projection.name()));
+        Ok(())
     }
 
     pub fn frame_selection(&mut self, actor: Actor, aspect: f32) -> Result<(), String> {
@@ -2104,20 +2158,13 @@ impl Session {
         if !aspect.is_finite() || aspect <= 0.0 {
             return Err("Viewport aspect must be positive and finite".into());
         }
-        let bounds = if self.selection.is_empty() && self.face_selection.is_empty() {
-            let document = self.render_document();
-            self.framing_bounds_in(document, &document.objects().collect::<Vec<_>>(), None)
-        } else if !self.face_mode {
-            self.framing_bounds_in(self.render_document(), &self.selected_ids(), None)
-        } else {
-            self.selection_bounds_in(self.render_document())
-        };
+        let bounds = self.view_framing_bounds();
         let (mins, maxs) = bounds.ok_or("No objects to frame")?;
         let camera = self
             .camera
             .frame_bounds(mins.as_vec3(), maxs.as_vec3(), aspect.max(0.01));
         camera.validate(aspect)?;
-        self.set_camera(camera);
+        self.try_set_camera(camera)?;
         self.log(actor, "framed objects");
         Ok(())
     }
@@ -2145,14 +2192,20 @@ impl Session {
         if settings == self.spatial {
             return Ok(());
         }
+        let camera = (settings.draw_block && self.camera.projection == Projection::Perspective)
+            .then(|| self.camera_for_projection_with_selection(Projection::Top, !self.face_mode));
+        if let Some(camera) = camera {
+            self.view_camera_candidates(camera)?;
+        }
         self.spatial = settings;
         if settings.draw_block {
             self.geometry.paint.enabled = false;
             self.clip_tool = false;
             self.set_face_mode(false);
         }
-        if settings.draw_block && self.camera.projection == Projection::Perspective {
-            self.set_projection(actor, Projection::Top);
+        if let Some(camera) = camera {
+            self.try_set_camera(camera)?;
+            self.log(actor, format!("{} view", Projection::Top.name()));
         }
         self.cancel_block_preview();
         self.clear_geometry_previews_except(&[previews::Kind::Face, previews::Kind::Paint]);

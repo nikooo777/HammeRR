@@ -148,6 +148,7 @@ pub(in crate::mcp) struct PointfileNavigateArgs {
 }
 
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CameraSpec {
     /// "perspective", "top" (XY), "front" (XZ), or "side" (YZ).
     pub projection: Option<String>,
@@ -165,7 +166,7 @@ pub struct CameraSpec {
     pub yaw: Option<f32>,
     /// Degrees above the horizon; negative looks down.
     pub pitch: Option<f32>,
-    /// Vertical field of view in degrees.
+    /// Vertical field of view in degrees; finite values clamp to 10–150.
     pub fov: Option<f32>,
 }
 
@@ -182,6 +183,40 @@ impl CameraSpec {
         instance_contents: Option<bool>,
         rope_preview: Option<bool>,
     ) -> Result<Camera, String> {
+        self.resolve_from_camera(
+            session,
+            session.camera(),
+            aspect,
+            instance_contents,
+            rope_preview,
+        )
+    }
+
+    pub(in crate::mcp) fn resolve_for_pane(
+        &self,
+        session: &Session,
+        pane: usize,
+        aspect: f32,
+        instance_contents: Option<bool>,
+        rope_preview: Option<bool>,
+    ) -> Result<Camera, String> {
+        self.resolve_from_camera(
+            session,
+            session.view_pane_camera(pane)?,
+            aspect,
+            instance_contents,
+            rope_preview,
+        )
+    }
+
+    fn resolve_from_camera(
+        &self,
+        session: &Session,
+        base: Camera,
+        aspect: f32,
+        instance_contents: Option<bool>,
+        rope_preview: Option<bool>,
+    ) -> Result<Camera, String> {
         if [self.fov, self.yaw, self.pitch, self.ortho_height]
             .into_iter()
             .flatten()
@@ -194,12 +229,15 @@ impl CameraSpec {
             return Err("Camera coordinates and angles must be finite".into());
         }
         let mut camera = if let Some(projection) = &self.projection {
-            session.camera_for_projection(
-                Projection::parse(projection)
-                    .ok_or("projection must be perspective, top, front or side")?,
-            )
+            let projection = Projection::parse(projection)
+                .ok_or("projection must be perspective, top, front or side")?;
+            if projection == base.projection {
+                base
+            } else {
+                session.camera_for_projection(projection)
+            }
         } else {
-            session.camera()
+            base
         };
         if let Some(height) = self.ortho_height {
             if !height.is_finite()
@@ -451,7 +489,10 @@ pub struct SetViewArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RenderArgs {
+    /// Optional configured pane index 0–3; uses that camera without activating the pane.
+    pub pane: Option<usize>,
     pub instance_contents: Option<bool>,
     /// Unshadowed authored constant point/spot/direct sun preview; defaults off. One visible sun; optional sky ambient, no bounce/shadows/sky visibility.
     pub lighting_preview: Option<bool>,
@@ -516,7 +557,10 @@ pub struct RenderArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PickArgs {
+    /// Match render_view.pane; does not activate the pane or publish its camera.
+    pub pane: Option<usize>,
     pub instance_contents: Option<bool>,
     /// Pixel column and row in an image rendered with the same camera and size.
     pub x: f32,

@@ -909,7 +909,7 @@ impl Session {
         let camera = self.inspection_frame_camera(mins, maxs, aspect, "Baked surface")?;
         ready.build.verify(&control, MAX_METADATA_BYTES)?;
         ready.verify_assets(&control)?;
-        self.set_camera(camera);
+        self.try_set_camera(camera)?;
         self.log(actor, format!("Frame baked surface {kind:?} {ordinal}"));
         let mut report = json!({"token":token.to_string(),"record_kind":kind,"channel":self.baked_surfaces.options.channel,"bounds":bounds,"camera":{"position":camera.position.to_array(),"yaw_degrees":camera.yaw_degrees,"pitch_degrees":camera.pitch_degrees}});
         report[if kind == RecordKind::Faces {

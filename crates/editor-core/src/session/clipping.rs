@@ -42,6 +42,11 @@ impl Session {
         if self.clip_tool == enabled {
             return Ok(());
         }
+        let camera = (enabled && self.camera.projection == Projection::Perspective)
+            .then(|| self.camera_for_projection(Projection::Top));
+        if let Some(camera) = camera {
+            self.view_camera_candidates(camera)?;
+        }
         self.clear_geometry_previews_except(&[previews::Kind::Face, previews::Kind::Paint]);
 
         self.clear_volume_selection();
@@ -53,8 +58,9 @@ impl Session {
             self.spatial.draw_block = false;
             self.cancel_block_preview();
             self.cancel_face_preview();
-            if self.camera.projection == Projection::Perspective {
-                self.set_projection(actor, Projection::Top);
+            if let Some(camera) = camera {
+                self.try_set_camera(camera)?;
+                self.log(actor, format!("{} view", Projection::Top.name()));
             }
         }
         self.view_serial += 1;

@@ -649,7 +649,7 @@ impl Session {
             return Err("Comparison objects have no finite framing camera".into());
         }
         control.checkpoint()?;
-        self.set_camera(camera);
+        self.try_set_camera(camera)?;
         self.log(actor, "framed current comparison matches");
         Ok(())
     }

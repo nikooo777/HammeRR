@@ -453,7 +453,7 @@ impl Session {
             .unwrap()
             .as_vec3();
         let camera = self.inspection_frame_camera(mins, maxs, aspect, "Reference image")?;
-        self.set_camera(camera);
+        self.try_set_camera(camera)?;
         self.log(actor, "framed reference image");
         Ok(())
     }

@@ -201,7 +201,7 @@ impl Session {
         let mut camera =
             render::Camera::looking_at(center, center + glam::Vec3::new(1.0, 1.0, -0.2));
         camera.fov_y_degrees = self.camera.fov_y_degrees;
-        self.set_camera(camera);
+        self.try_set_camera(camera)?;
         Ok(())
     }
 

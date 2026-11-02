@@ -130,7 +130,7 @@ impl Session {
             .iter()
             .find(|view| view.id == id)
             .ok_or("Saved view no longer exists")?;
-        self.set_camera(camera(view));
+        self.try_set_camera(camera(view))?;
         self.log(actor, format!("restored view {}", view.name));
         Ok(())
     }

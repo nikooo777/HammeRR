@@ -48,8 +48,8 @@ reload or reset.
 | Transform | Select tool, Move handles, Rotate handles, Scale handles |
 | Authoring | Draw brush, Clip mode |
 
-File and clipboard factory bindings are **Ctrl+N**, **Ctrl+O**, **Ctrl+S**,
-**Ctrl+Shift+S**, **Ctrl+C**, **Ctrl+X** and **Ctrl+V**, respectively. They run
+File and clipboard factory bindings are <kbd>Ctrl</kbd>+<kbd>N</kbd>, <kbd>Ctrl</kbd>+<kbd>O</kbd>, <kbd>Ctrl</kbd>+<kbd>S</kbd>,
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>, <kbd>Ctrl</kbd>+<kbd>C</kbd>, <kbd>Ctrl</kbd>+<kbd>X</kbd> and <kbd>Ctrl</kbd>+<kbd>V</kbd>, respectively. They run
 the same editor controls, including existing dialogs and review steps.
 
 Camera factory bindings are **W**, **S**, **A**, **D**, **E** and **Q**,
@@ -64,8 +64,8 @@ modifiers have changed.
   run after the focused control rejects the key. Buttons may consume Space or
   Enter; an unbound Tab moves focus. Pointing at the viewport gives it keyboard
   focus unless text is being edited. The desktop must deliver the combination.
-- **Escape** stays reserved. Exact **Ctrl+K** opens command search; modified
-  alternatives such as **Ctrl+Shift+K** can be assigned.
+- **Escape** stays reserved. Exact <kbd>Ctrl</kbd>+<kbd>K</kbd> opens command search; modified
+  alternatives such as <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd> can be assigned.
 - Arrow keys and **PageUp**/**PageDown**, with no modifier or only **Shift**,
   keep fixed nudging behavior. Include **Ctrl**, **Alt** or **Meta** to bind them.
 - A single stroke cannot also be a sequence prefix. Conflicting logical and
@@ -82,3 +82,9 @@ modifiers have changed.
   and unsaved form values.
 - Saving bindings does not edit the map. Executing a command has the same effect
   as its editor control.
+
+<!-- page-nav -->
+
+---
+
+[← Compare external maps](map-comparison.md) · [Manual](README.md) · [Navigation defaults →](navigation-defaults.md)

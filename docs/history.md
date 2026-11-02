@@ -23,3 +23,9 @@ The target is the state immediately after that transaction.
 - Changed source state requires a new selection.
 - Navigation does not move the camera or save the file.
 - A new edit replaces the available Redo branch.
+
+<!-- page-nav -->
+
+---
+
+[← Content profiles](content-profiles.md) · [Manual](README.md) · [Compare external maps →](map-comparison.md)

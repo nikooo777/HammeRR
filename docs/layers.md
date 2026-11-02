@@ -27,6 +27,9 @@ Cancel discards pending changes.
 
 **Delete layer…** removes the layer after review. It keeps the member objects.
 Layer visibility is saved in the map.
+
+> [!WARNING]
+> Hidden members are left out of compiled builds. Show them before you compile.
 [Temporary editor visibility](selection.md#temporary-editor-visibility) is separate.
 
 ## Automatic categories and saved rules
@@ -60,3 +63,9 @@ inheritance or wildcard patterns.
 - Colors identify layer records; they do not recolor geometry.
 - Layers contain whole objects, not individual faces or components.
 - Imported unsupported layer/group links block authoring and remain preserved.
+
+<!-- page-nav -->
+
+---
+
+[← Groups](groups.md) · [Manual](README.md) · [Clipboard →](clipboard.md)

@@ -4,6 +4,8 @@
 
 Create, edit and compile Counter-Strike: Source maps on Linux or Windows.
 
+![Textured brush courtyard and model props](images/showcase-editor.png)
+
 ## Requirements
 
 - Counter-Strike: Source installed through Steam.
@@ -44,7 +46,7 @@ Each release includes a complete `CHANGELOG.md`. The release page shows up to 40
    Omit the filename to start an empty map.
 
 3. Click **Save as…** to choose a `.vmf` destination.
-4. Use **Save** or **Ctrl+S** for later changes.
+4. Use **Save** or <kbd>Ctrl</kbd>+<kbd>S</kbd> for later changes.
 
 The editor finds the Steam game installation and SDK entity definitions automatically.
 On Linux, keep `hammerr-physics` and `hammerr-native-runtime` beside the other programs.
@@ -68,11 +70,10 @@ Steam is located through the current user's registry setting and standard instal
 
 Editing, VMF saves, preferences, recovery, prefabs, instance extraction, rendered previews and BSP compilation are available. State uses `%LOCALAPPDATA%\hammerr\recovery` unless overridden. Sound previews need FFmpeg/ffplay on `PATH`.
 
-Engine physics, native reflection capture and headless stdio MCP are unavailable on Windows. **Show silently** requires Hyprland; Windows document display requires an explicit focused-show request.
+> [!NOTE]
+> Engine physics, native reflection capture and headless stdio MCP are unavailable on Windows. **Show silently** requires Hyprland; Windows document display requires an explicit focused-show request.
 
-![Textured brush courtyard and model props](images/showcase-editor.png)
-
-## Other content
+## Command-line options
 
 | Option | Use |
 | --- | --- |
@@ -82,17 +83,16 @@ Engine physics, native reflection capture and headless stdio MCP are unavailable
 | `--no-mcp` | Disable the desktop MCP server. |
 | `--headless` | Use stdio MCP without a window on Linux. |
 
+## Custom content
+
 Add custom content through the search paths in `gameinfo.txt`.
 The reader supports directories and VPK archives.
 Use **File → Content profiles…** to save and switch content, FGD, build and game paths
 for each document. See [Content profiles](content-profiles.md).
-VPK directory budgets are 64 MiB per encoded tree, 1,000,000 declarations,
-1,024 bytes per logical path and 128 MiB of decoded metadata per index.
-Mounted indexes share a 256 MiB metadata budget. Repeated declarations count
-toward these budgets. Excessive metadata causes an explicit load error.
 
 ## Limits
 
+- VPK directories allow 64 MiB per encoded tree, 1,000,000 declarations, 1,024 bytes per logical path and 128 MiB of decoded metadata per index. Mounted indexes share a 256 MiB budget, and repeated declarations count toward it. Excess metadata causes an explicit load error.
 - Native reflection capture and engine physics require Linux; see the Windows notes above for platform limits.
 - Invalid imports leave the current map open. Nesting is limited to 256 blocks.
 - An active saved camera needs finite, representable coordinates and a distinct look target. Invalid selected camera data refuses Open.
@@ -102,3 +102,9 @@ toward these budgets. Excessive metadata causes an explicit load error.
 - Other-editor round trips are unverified.
 
 Next: [Editor basics](basics.md), [AI agents](mcp.md) or [Compile and play](compile-and-play.md).
+
+<!-- page-nav -->
+
+---
+
+[Manual](README.md) · [Editor basics and saved views →](basics.md)

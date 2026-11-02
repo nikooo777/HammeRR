@@ -65,3 +65,9 @@ Use **Move plane** or **Rotate plane** to adjust the cut with handles.
 - Carving away every child brush of an entity rejects.
 - Terrain cannot be hollowed or carved. A clip through terrain rejects.
 - Invalid, collapsed or excessively thin results reject before the map changes.
+
+<!-- page-nav -->
+
+---
+
+[← Brushes and transforms](brushes.md) · [Manual](README.md) · [Polygon brushes →](polygon-brushes.md)

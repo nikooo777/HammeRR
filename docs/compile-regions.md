@@ -37,3 +37,9 @@ A marker position alone does not establish that the helper is included safely.
 - Drafts, source changes and incompatible bindings require another review.
 - Region builds retain source data outside the box.
 - Missing retained dependencies, unsupported intersections or leaks stop publication.
+
+<!-- page-nav -->
+
+---
+
+[← Build recipes](build-recipes.md) · [Manual](README.md) · [Physics →](physics.md)

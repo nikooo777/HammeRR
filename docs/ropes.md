@@ -39,3 +39,9 @@ Transform pivots, snap anchors, placement and paint keep their ordinary endpoint
 - Parenting, attachment binding, dangling ropes and unsupported interpolators are unavailable.
 - No rope material, wind, collision, stiffness, breakage or runtime animation preview.
 - Bounds-based selection can include empty space inside the curve's axis-aligned box; it does not test exact tube intersection.
+
+<!-- page-nav -->
+
+---
+
+[← Sky previews and assets](sky.md) · [Manual](README.md) · [Models →](models.md)

@@ -1652,3 +1652,9 @@ These groups locate the available operations.
 - Maps, selection and drafts are document-local. Content catalogs and saved preferences can be shared.
 - Stdio requires pipes or redirected regular files, not terminal or device descriptors.
 - Use a trusted local MCP client. The desktop endpoint is bound to loopback.
+
+<!-- page-nav -->
+
+---
+
+[← Visibility clusters](visclusters.md) · [Manual](README.md) · [Status and limits →](status.md)

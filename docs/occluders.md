@@ -22,3 +22,9 @@ Supported unnamed child occluders can compile through [referenced assemblies](in
 - Supported islands, contacts and overlaps retain exterior polygons and gaps.
 - Child runtime parenting and named control are unsupported.
 - Child helper counts do not imply parent viewport geometry or picking.
+
+<!-- page-nav -->
+
+---
+
+[← Final compiled details](compiled-details.md) · [Manual](README.md) · [Visibility clusters →](visclusters.md)

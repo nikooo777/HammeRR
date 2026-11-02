@@ -34,3 +34,9 @@ See [Saved defaults](basics.md#saved-defaults) for storage errors.
 - Ordinary layout changes do not save automatically. Saved-default errors do not block **Apply layout**.
 - Layout changes preserve the map, selection, Undo history and camera. They cancel captured viewport gestures.
 - Window placement, monitor choice and desktop workspaces remain under the operating system's control.
+
+<!-- page-nav -->
+
+---
+
+[← Preview defaults](preview-defaults.md) · [Manual](README.md) · [Brushes and transforms →](brushes.md)

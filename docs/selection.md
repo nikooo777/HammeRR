@@ -8,17 +8,17 @@ Choose objects, faces or bounded groups of visible geometry.
 
 1. Choose **Objects** or **Faces** in the toolbar.
 2. Click the target.
-3. Use Ctrl+click to toggle membership.
+3. Use <kbd>Ctrl</kbd>+click to toggle membership.
 
 Use **Select → Pick world brushes**, **Pick brush entities** and **Pick point entities and models** to choose which types clicks can select.
-Alt+click cycles overlapping object hits. **Bypass groups** selects individual members.
+<kbd>Alt</kbd>+click cycles overlapping object hits. **Bypass groups** selects individual members.
 
 ## Choose the object selection unit
 
 1. Choose **Objects** in the toolbar.
 2. Open **Select → Object selection**.
 3. Choose **Groups**, **Objects** or **Solids**.
-4. Click, Alt+click, drag an area, select a volume or paint to select those units.
+4. Click, <kbd>Alt</kbd>+click, drag an area, select a volume or paint to select those units.
 
 **Groups** selects the outermost native group, including nested groups and visible
 members. **Objects** ignores groups and selects a complete world brush or entity.
@@ -126,3 +126,9 @@ Assign either action under [Keyboard shortcuts…](keyboard-shortcuts.md). Both 
 - Terrain selection follows the displaced sheet, not its former parent volume.
 - Overlap cycling retains up to 64 ordered hits.
 - Asset reload or source changes can end active selection gestures; start a fresh review.
+
+<!-- page-nav -->
+
+---
+
+[← Editor basics and saved views](basics.md) · [Manual](README.md) · [Helpers and selection presentation →](selection-presentation.md)

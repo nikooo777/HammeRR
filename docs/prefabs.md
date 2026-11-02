@@ -14,7 +14,7 @@ Save and reuse brush/entity assemblies as VMF files.
 
 ## Browse previews
 
-1. Enter a search in **Find a prefab**.
+1. Type in **Search names, categories and tags**.
 2. Choose **Flat** or **Textured**.
 3. Click **Render page**.
 4. Select a card.
@@ -62,7 +62,9 @@ If the source file changes, refresh the library and review it again before editi
 
 Cancel discards only the pending placement.
 Use **Rename…** or **Delete prefab…** to manage the library.
-Review the selected name before confirming deletion.
+
+> [!WARNING]
+> **Delete prefab…** removes the VMF from the library and is not part of map Undo. Review the selected name before confirming. Placed copies stay in the map.
 
 ![The same brush and model assembly at three scales](images/prefab-assemblies.png)
 
@@ -76,3 +78,9 @@ Review the selected name before confirming deletion.
 - Unsupported references follow the [clipboard rules](clipboard.md#references).
 - Thumbnails show supported editor geometry, not compiled game lighting.
 - A changed file requires a new preview before Apply.
+
+<!-- page-nav -->
+
+---
+
+[← Clipboard](clipboard.md) · [Manual](README.md) · [Map checks, notes and recovery →](map-tools.md)

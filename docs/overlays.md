@@ -92,3 +92,9 @@ Rebind can replace complete eligible flat, terrain or mixed target sets.
 - Moving geometry does not automatically refit or rebind an overlay.
 - Compile regions must retain the complete projection and every required target.
 - Unsupported, missing or ambiguous bindings fail explicitly.
+
+<!-- page-nav -->
+
+---
+
+[← Linked paths](path-authoring.md) · [Manual](README.md) · [Groups →](groups.md)

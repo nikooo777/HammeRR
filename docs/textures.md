@@ -6,8 +6,8 @@ Apply materials and control their placement on brush faces.
 
 ## Apply a material
 
-1. Choose **Selection → Faces · materials & textures**.
-2. Select faces. Use Ctrl+click to toggle a face.
+1. Click **Faces** in the toolbar.
+2. Select faces. Use <kbd>Ctrl</kbd>+click to toggle a face.
 3. Click **Browse materials…**.
 4. Search, or choose a folder or category.
 5. Select a thumbnail, then click **Use material**.
@@ -169,3 +169,9 @@ Editor-only `%tooltexture` images can use only their stored levels.
 - The viewport does not simulate every shader effect. See [normal maps](normal-maps.md) and [material source](material-source.md).
 - Reload ends affected paint, area and volume selection gestures. Start a new gesture afterward.
 - Favorites are limited to 512 entries. Recent materials last for the current session.
+
+<!-- page-nav -->
+
+---
+
+[← Terrain](terrain.md) · [Manual](README.md) · [Atlas-region texturing →](atlas-texturing.md)

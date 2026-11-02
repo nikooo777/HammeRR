@@ -270,3 +270,9 @@ limits also apply.
 - VRAD numeric brightness parity is unavailable.
 
 See [MCP emission](mcp.md#material-emission) for the shared property workflow.
+
+<!-- page-nav -->
+
+---
+
+[← Compile and play](compile-and-play.md) · [Manual](README.md) · [Build recipes →](build-recipes.md)

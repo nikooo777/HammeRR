@@ -4,7 +4,7 @@
 
 Use the viewport to inspect the map. Use the Inspector to change the selection.
 
-![The HammeRR editor window with a light selected](images/editor-window.png)
+![The HammeRR editor window with detail brushes selected](images/editor-window.png)
 
 ## The window
 
@@ -24,12 +24,12 @@ Commands that open a dialog end with "…". Hover a toolbar or rail icon to see 
 
 ## Search commands
 
-1. Press **Ctrl+K** in the viewport, or click **Search commands** in the toolbar.
+1. Press <kbd>Ctrl</kbd>+<kbd>K</kbd> in the viewport, or click **Search commands** in the toolbar.
 2. Type part of a command, menu name, object ID, class, name or material.
-3. Use the arrow keys to choose a result, then press Enter.
+3. Use the arrow keys to choose a result, then press <kbd>Enter</kbd>.
 
 Commands run exactly like their menu items and show their current keyboard shortcut. Unavailable commands appear dimmed.
-Objects select and frame the chosen object. Escape or a click outside closes the search.
+Objects select and frame the chosen object. <kbd>Esc</kbd> or a click outside closes the search.
 
 ## Browse objects
 
@@ -44,16 +44,16 @@ Highlighted rows contain the current selection. Large groups show their first 50
 
 | Action | Control |
 | --- | --- |
-| Fly | Hold the right mouse button to look. Factory movement keys are WASD and Q/E; change them in [Keyboard shortcuts](keyboard-shortcuts.md). The cursor locks and hides until you release the button. |
-| Fly faster | Hold Shift while flying. |
+| Fly | Hold the right mouse button to look. Move with <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd>, and <kbd>Q</kbd> / <kbd>E</kbd> for down and up; change them in [Keyboard shortcuts](keyboard-shortcuts.md). The cursor locks and hides until you release the button. |
+| Fly faster | Hold <kbd>Shift</kbd> while flying. |
 | Planar pan / zoom | Right-drag / mouse wheel. |
 | Change projection | Use the projection menu in the viewport header: **Perspective**, **Top · XY**, **Front · XZ**, **Side · YZ**. |
-| Frame the selection | **F**, or **Frame selection** in the viewport header. With no selection, frame the map. |
-| Select / toggle | Click / Ctrl+click. |
+| Frame the selection | <kbd>F</kbd>, or **Frame selection** in the viewport header. With no selection, frame the map. |
+| Select / toggle | Click / <kbd>Ctrl</kbd>+click. |
 | Select an area | Drag on empty space; release to select. |
-| Duplicate / delete | Ctrl+D / Del. |
-| Undo / redo | Ctrl+Z / Ctrl+Y. |
-| Cancel an active tool | Escape. |
+| Duplicate / delete | <kbd>Ctrl</kbd>+<kbd>D</kbd> / <kbd>Del</kbd>. |
+| Undo / redo | <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd>. |
+| Cancel an active tool | <kbd>Esc</kbd>. |
 
 These keys are factory bindings. See [Keyboard shortcuts](keyboard-shortcuts.md).
 Set **Fly speed** under **Overlays → Camera**, or scroll while flying.
@@ -63,10 +63,10 @@ Set **Fly speed** under **Overlays → Camera**, or scroll while flying.
 1. Open **View → View layout**.
 2. Choose **Single**, **Two columns**, **Two rows** or **Four views**.
 3. Set each pane's projection in its header.
-4. Click a pane to make it **Active**. Edit, pick or navigate there.
+4. Click a pane to make it active. An orange outline marks it, and its header adds shading, **Overlays**, framing and saved views. Edit, pick or navigate there.
 5. Choose **View → Frame all views** to frame the selection in each visible pane. With no selection, frame the map.
 
-![Four views share the same selected columns](images/coordinated-views.png)
+![Four views share the selected bridges](images/coordinated-views.png)
 
 All panes share map edits, selection, Undo, shading and display switches. Each pane keeps its own camera.
 Enable **View → View layout → Link orthographic pan and zoom** to move and zoom orthographic cameras together. Perspective cameras stay independent.
@@ -180,3 +180,9 @@ See [Open documents](open-documents.md) for multiple maps.
 - Lightmap density shows authored spacing, not compiled samples.
 - Ordinary camera movement and view settings belong to the session. Saved views belong to the map.
 - Preference files are limited to 4 KiB. Symlinked or nonregular preference files reject.
+
+<!-- page-nav -->
+
+---
+
+[← Getting started](getting-started.md) · [Manual](README.md) · [Selection →](selection.md)

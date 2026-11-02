@@ -4,6 +4,9 @@
 
 Build collision bodies with the installed CS:S physics library.
 
+> [!NOTE]
+> Engine physics requires Linux. On Windows, keep **Physics bodies** set to **No physics bodies**.
+
 1. Assign materials to world geometry or brush-entity faces.
 2. Open **Build settings…**.
 3. Choose **Physics bodies → CS:S engine physics**.
@@ -44,3 +47,9 @@ Eligible water generates fluid behavior. See [water](water.md) for current, pres
 - Surface definitions follow mounted manifest order and checked native property limits.
 - Preview model bounds do not establish native collision shapes.
 - Custom density controls and broader moving-body behavior remain unfinished.
+
+<!-- page-nav -->
+
+---
+
+[← Compile regions](compile-regions.md) · [Manual](README.md) · [Water and slime →](water.md)

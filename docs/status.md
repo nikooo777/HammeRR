@@ -83,3 +83,9 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 
 Unsupported input and exceeded resource budgets fail explicitly.
 A failed build preserves the previous published output.
+
+<!-- page-nav -->
+
+---
+
+[← MCP setup and tool index](mcp.md) · [Manual](README.md)

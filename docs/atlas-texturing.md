@@ -4,7 +4,7 @@
 
 Fit flat faces independently or together, or automatically pack separate face UV islands into a rectangular part of an existing material image.
 
-1. Select faces under **Selection → Faces · materials & textures**.
+1. Click **Faces** in the toolbar and select faces.
 2. Open **Edit face textures…**, then **Fit atlas region…**.
 3. Enter **Material**, then click **Inspect material**.
 4. Drag between two edges on the inspected image, or enter **X**, **Y**, **Width** and **Height** in source image pixels.
@@ -90,3 +90,9 @@ After **Reload material assets**, unchanged images can reuse their regions. Chan
 - Together fitting requires a reference from the target selection and same-facing coplanar faces. It does not unfold across corners.
 - Packing uses one unrotated rectangular allocation per face, including unused polygon corners; it does not preserve continuity across islands. Allocation search is bounded to 1024 free rectangles and fails explicitly if that budget is exceeded.
 - Up to 256 faces. Padding changes the fit, not the image. Choose suitable image gutters and padding for the material's filtering and mipmaps.
+
+<!-- page-nav -->
+
+---
+
+[← Materials and textures](textures.md) · [Manual](README.md) · [Material source →](material-source.md)

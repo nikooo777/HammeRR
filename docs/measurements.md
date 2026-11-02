@@ -59,3 +59,9 @@ The grid draws over geometry. Snapping uses the plane axes. **Half extent** sets
 - Reference planes guide ruler picks. They do not change brush drawing or object transforms.
 - Up to 128 measurements; names are limited to 80 characters.
 - **Cancel** discards only the owned preview. Applied edits remain undoable.
+
+<!-- page-nav -->
+
+---
+
+[← Working region](working-region.md) · [Manual](README.md) · [Open documents →](open-documents.md)

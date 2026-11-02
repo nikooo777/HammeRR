@@ -24,3 +24,9 @@ the window; it does not undo a completed load or applied settings.
 - Correction applies to display colors across the complete viewport, including the background, grid and selection. Native HDR, tone mapping, LUT entities, volumes, transitions and multiple LUTs are unavailable.
 - Missing or changed input invalidates the LUT. Load it again. A failed load clears earlier data.
 - Corrected views are limited to 4096 pixels per axis and 64 MiB of additional target storage. A GPU or size error shows an ungraded desktop frame with an error; `render_view` fails.
+
+<!-- page-nav -->
+
+---
+
+[← Fog preview](fog.md) · [Manual](README.md) · [Reference images →](reference-images.md)

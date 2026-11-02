@@ -25,3 +25,9 @@ Use **Reload sounds** after changing files or scripts, then reopen the browser.
 - Ambiguous scripts reject. Malformed scripts show warnings; catalog read failures show an unavailable state.
 - A `wave` value must be text. A `rndwave` value must be a block of wave entries.
 - Playback observation errors show a failed state with the error. **Stop** remains available.
+
+<!-- page-nav -->
+
+---
+
+[← Particle effects](particles.md) · [Manual](README.md) · [Entities and logic →](entities.md)

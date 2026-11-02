@@ -13,7 +13,7 @@ Reshape a brush through its corners, edges or faces.
 5. Click **Pick in viewport**.
 6. Click components to select them.
 
-Ctrl+click toggles a component. Empty space clears the selection.
+<kbd>Ctrl</kbd>+click toggles a component. Empty space clears the selection.
 Use **Add to scope** or **Remove from scope** for a custom brush set.
 **Stop viewport picking** returns to object picking.
 
@@ -84,3 +84,9 @@ Use [Flat partitions](partitions.md) to divide a face before choosing a result.
 - Split and ridge heights are 0.125–4096 units.
 - Terrain uses its own [editing tools](terrain.md).
 - Twisted, collapsed, concave or unrepresentable texture results reject before Apply.
+
+<!-- page-nav -->
+
+---
+
+[← Polygon brushes](polygon-brushes.md) · [Manual](README.md) · [Flat partitions →](partitions.md)

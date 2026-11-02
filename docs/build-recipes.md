@@ -48,3 +48,9 @@ Use **Rename recipe** or **Delete recipe** to manage it.
   settings and postprocess plan captured when that job started.
 - External commands and arbitrary compiler-stage ordering are unavailable.
 - Stale or unreadable storage rejects writes until reloaded or repaired.
+
+<!-- page-nav -->
+
+---
+
+[← Material emission](material-emission.md) · [Manual](README.md) · [Compile regions →](compile-regions.md)

@@ -67,3 +67,9 @@ The observer runs a private map copy. It waits 500 ms for startup before the fir
 - Native observation requires Linux, a supported CS:S build and a current saved BSP. Authored scripts and console-command entities are unavailable in the private observer.
 - Observed train names use up to 128 ASCII letters, digits, underscores, periods or dashes.
 - Native origins can differ from path points by the train's brush-center offset. Samples do not claim exact node arrivals.
+
+<!-- page-nav -->
+
+---
+
+[← Point-entity gallery](entity-gallery.md) · [Manual](README.md) · [Overlays →](overlays.md)

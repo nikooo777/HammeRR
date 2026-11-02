@@ -20,3 +20,9 @@ Use **Reload particles** after changing assets. Reopen the browser afterward.
 - Map-specific manifests, unlisted files, include/base directives and external references are unsupported.
 - Missing, corrupt or over-budget active data fails explicitly. Ambiguous system names cannot be chosen.
 - Limits: 128 manifest files, 16 MiB per PCF, 64 MiB total and 16,384 systems.
+
+<!-- page-nav -->
+
+---
+
+[← Sprite guides](sprite-guides.md) · [Manual](README.md) · [Sounds →](sounds.md)

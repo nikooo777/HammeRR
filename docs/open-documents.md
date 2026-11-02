@@ -50,3 +50,9 @@ Failed cleanup retains that map's claims and reports the error.
 - MCP callers must pass the opaque `document_id` when two maps are open.
 
 See [MCP documents](mcp.md#documents) for routing and Close tokens.
+
+<!-- page-nav -->
+
+---
+
+[← Measurements](measurements.md) · [Manual](README.md) · [Recent maps →](recent-maps.md)

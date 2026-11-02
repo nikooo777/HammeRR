@@ -24,3 +24,9 @@ See [Saved defaults](basics.md#saved-defaults) for storage errors.
 - Cameras, fog, sky exposure and mode-specific diagnostic settings are separate.
 - Ordinary viewport changes do not change saved defaults.
 - Applying defaults requires finished previews and owned work.
+
+<!-- page-nav -->
+
+---
+
+[← Navigation defaults](navigation-defaults.md) · [Manual](README.md) · [Workspace layout →](workspace-layout.md)

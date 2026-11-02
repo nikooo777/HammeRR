@@ -22,3 +22,9 @@ Join adjacent or overlapping brushes into one convex solid.
 - Terrain is unsupported.
 - Outer faces retain their source settings. Coincident planes use the lowest brush ID, then face ID.
 - The lowest source brush ID survives. Internal faces disappear.
+
+<!-- page-nav -->
+
+---
+
+[← Flat partitions](partitions.md) · [Manual](README.md) · [Surface placement →](placement.md)

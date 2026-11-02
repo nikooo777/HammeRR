@@ -17,7 +17,7 @@ Transfer a detached set of objects within or between maps.
 11. Inspect the result.
 12. Click **Apply paste**.
 
-Viewport shortcuts are Ctrl+C, Ctrl+X and Ctrl+V.
+Viewport shortcuts are <kbd>Ctrl</kbd>+<kbd>C</kbd>, <kbd>Ctrl</kbd>+<kbd>X</kbd> and <kbd>Ctrl</kbd>+<kbd>V</kbd>.
 Text fields retain their normal text shortcuts.
 Cancel discards the paste preview; a completed Cut remains a separate Undo step.
 
@@ -35,3 +35,9 @@ An intervening edit, Undo or definition reload invalidates that receipt.
 - Ambiguous, scripted and unsupported numeric references reject.
 - Saved face partitions are outside clipboard transfer.
 - A source edit does not change an already copied payload.
+
+<!-- page-nav -->
+
+---
+
+[← Layers](layers.md) · [Manual](README.md) · [Prefab library →](prefabs.md)

@@ -43,3 +43,9 @@ Use **Reload models** after model files change. Use **Reload material assets** a
 - Final brush-model pivots, posed brush geometry and local bounds are checked at compile time.
 - Source edits or changed dependencies require another refresh.
 - Missing or unsupported child content reports an error; stale data is not presented as current.
+
+<!-- page-nav -->
+
+---
+
+[← Extract an assembly](instance-extraction.md) · [Manual](README.md) · [Compiled assemblies →](instances.md)

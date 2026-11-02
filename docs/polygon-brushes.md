@@ -27,3 +27,9 @@ Use **Undo corner**, **Clear outline** or the coordinate list to correct the out
 - Crossing edges, touching nonadjacent edges and collinear corners reject.
 - Concave outlines become separate convex brushes.
 - Holes, curves and oblique drawing planes are unavailable.
+
+<!-- page-nav -->
+
+---
+
+[← Hollow, carve and clip](brush-tools.md) · [Manual](README.md) · [Vertices, edges and faces →](components.md)

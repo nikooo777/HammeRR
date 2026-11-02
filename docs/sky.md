@@ -20,7 +20,7 @@ Use a `light_environment` for [sun and sky lighting](compile-and-play.md#lightin
 
 1. Select **Sky channel → HDR · editor preview**.
 2. Check that all six HDR faces are ready.
-3. Adjust **HDR sky exposure (EV)**.
+3. Adjust **Sky EV**.
 
 This exposure affects the editor sky only, not game tone mapping or baked lighting.
 
@@ -70,3 +70,9 @@ The game must enable full HDR to display its HDR channel.
 - Miniature scale is an integer from 1 to 128. Camera angles do not rotate the miniature preview.
 - The miniature uses unlit textures. It does not preview fog, authored lighting, models, terrain or water.
 - Native capture and packing can impose stricter limits than viewport display.
+
+<!-- page-nav -->
+
+---
+
+[← Reference images](reference-images.md) · [Manual](README.md) · [Rope preview →](ropes.md)

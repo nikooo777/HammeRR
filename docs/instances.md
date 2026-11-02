@@ -273,3 +273,9 @@ A failed expansion preserves the previous published BSP.
 - General runtime entities, arbitrary parenting, dynamic scripts and unsupported initial poses remain unavailable.
 - Child overlay and cubemap bindings cannot cross occurrence scopes or target unsupported owners.
 - Inspect the current diagnostic for exact class and material restrictions; admission differs by compiler consumer.
+
+<!-- page-nav -->
+
+---
+
+[← Instance contents](instance-contents.md) · [Manual](README.md) · [Compile and play →](compile-and-play.md)

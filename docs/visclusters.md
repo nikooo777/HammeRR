@@ -20,3 +20,9 @@ Supported child volumes also compile through referenced assemblies.
 - Unsupported wet, solid, partial or ambiguous memberships report diagnostics.
 - Compile regions must retain the required volume and source geometry.
 - This is an optimization control, not a repair for leaks or invalid portals.
+
+<!-- page-nav -->
+
+---
+
+[← Occluders](occluders.md) · [Manual](README.md) · [MCP setup and tool index →](mcp.md)

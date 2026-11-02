@@ -8,7 +8,7 @@ Create horizontal world-liquid volumes with native depth, inward surfaces and op
 
 1. Draw the water volume inside a sealed room. Keep it as a world brush.
 2. In object mode, apply `tools/toolsnodraw` to the brush.
-3. Choose **Selection → Faces · materials & textures**.
+3. Click **Faces** in the toolbar.
 4. Apply a water material to the horizontal top face.
 5. Open **Build settings…**.
 6. Choose **Physics bodies → CS:S engine physics** for floating physics objects.
@@ -28,7 +28,7 @@ A missing declaration reports a one-sided surface. An unreadable named material 
 
 1. Draw the volume inside a sealed room. Keep it as a world brush.
 2. Apply `tools/toolsnodraw` to the brush.
-3. Choose **Selection → Faces · materials & textures**.
+3. Click **Faces** in the toolbar.
 4. Apply a supported opaque slime material to the horizontal top face.
 5. Choose **Physics bodies → CS:S engine physics** in **Build settings…** for floating physics objects.
 6. Compile and inspect **Build details… → Diagnostics**.
@@ -124,3 +124,9 @@ Movement, parenting, rendered surfaces and authored world current/damping are un
 - The editor shows the water material's editor image, not native reflection or refraction.
 - Invalid controls, missing required assets and exceeded geometry budgets fail without replacing the previous BSP.
 - Sampled textures must meet the [native texture limits](textures.md#native-texture-files).
+
+<!-- page-nav -->
+
+---
+
+[← Physics](physics.md) · [Manual](README.md) · [Static props →](static-props.md)

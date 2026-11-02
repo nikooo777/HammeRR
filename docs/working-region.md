@@ -114,3 +114,9 @@ A saved class filter removes the surrounding world and prop models.
   [Compile region…](compile-regions.md) for builds.
 - Each map keeps its own profiles. Instance children do not merge their
   saved profiles into the parent map.
+
+<!-- page-nav -->
+
+---
+
+[← Helpers and selection presentation](selection-presentation.md) · [Manual](README.md) · [Measurements →](measurements.md)

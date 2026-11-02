@@ -46,3 +46,9 @@ Changes to current content, definitions, game paths and build settings update th
 - A map can save successfully even when updating its recent-list entry fails.
 
 MCP: `get_recent_maps`, `open_recent_map`, `relocate_recent_map` and `cancel_recent_map`.
+
+<!-- page-nav -->
+
+---
+
+[← Open documents](open-documents.md) · [Manual](README.md) · [Content profiles →](content-profiles.md)

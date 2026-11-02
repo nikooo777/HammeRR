@@ -26,3 +26,9 @@ See [Saved defaults](basics.md#saved-defaults) for storage errors.
 
 Only flight speed is stored. Camera position, orientation, zoom and saved views are separate.
 Ordinary speed changes remain temporary.
+
+<!-- page-nav -->
+
+---
+
+[← Keyboard shortcuts](keyboard-shortcuts.md) · [Manual](README.md) · [Preview defaults →](preview-defaults.md)

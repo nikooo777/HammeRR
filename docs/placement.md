@@ -77,3 +77,9 @@ ordinary surface placement retain their own controls.
 - Missing or unsupported meshes provide no vertex target.
 - Geometry must remain finite and within ±65536 units.
 - Changed sources or reloaded models require a new preview.
+
+<!-- page-nav -->
+
+---
+
+[← Merge brushes](merge.md) · [Manual](README.md) · [Repeated placement →](repeated-placement.md)

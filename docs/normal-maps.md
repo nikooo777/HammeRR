@@ -14,7 +14,7 @@ Show small surface detail without adding geometry.
 | --- | --- |
 | ![Brick with ordinary shading](images/normal-maps-off.png) | ![The same brick with normal-map detail](images/normal-maps-on.png) |
 
-For authored lights, select **Detail · per-fragment lighting**. Fast lighting cannot use normal maps.
+For authored lights, set **Overlays → Lighting → Quality** to **Detail · per-fragment**. Fast lighting cannot use normal maps.
 Use **Reload material assets** after changing material files.
 
 ## Limits
@@ -24,3 +24,9 @@ Use **Reload material assets** after changing material files.
 - Base transforms must be identity. Bump transforms support positive scale and translation, with zero rotation.
 - No specular, reflections, animation or game brightness match.
 - Unsupported faces keep their base image and report why the effect is unavailable.
+
+<!-- page-nav -->
+
+---
+
+[← Material source](material-source.md) · [Manual](README.md) · [Authored lighting preview →](lighting-preview.md)

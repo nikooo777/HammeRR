@@ -36,3 +36,9 @@ remain limited to the ordinary sampled path.
 - **Disable Shadows** excludes the prop from this shadow path.
 - Shadow support does not imply vertex-lighting or asset-packing support.
 - This page describes compiled shadows. The editor's authored-lighting preview is unshadowed.
+
+<!-- page-nav -->
+
+---
+
+[← Static props](static-props.md) · [Manual](README.md) · [Brush texture shadows →](brush-texture-shadows.md)

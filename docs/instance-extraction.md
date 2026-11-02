@@ -33,3 +33,9 @@ reviewed pivot or destination. Cleanup errors remain visible.
 - Terrain, runtime entities, existing references and unsupported metadata or inbound face bindings reject.
 - Source, selection or path changes stale the preparation.
 - Undo restores parent objects but does not delete the published child file.
+
+<!-- page-nav -->
+
+---
+
+[← Instance references](instance-authoring.md) · [Manual](README.md) · [Instance contents →](instance-contents.md)

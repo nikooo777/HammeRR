@@ -38,3 +38,9 @@ Cached first/second images retain the texture paths and material declaration ide
 - Missing, malformed or over-budget source shows an error; partial text is marked as truncated.
 - Inspection does not rewrite materials or reload a running game's assets.
 - Restart the editor after replacing a mounted VPK index; display reload does not remount archives.
+
+<!-- page-nav -->
+
+---
+
+[← Atlas-region texturing](atlas-texturing.md) · [Manual](README.md) · [Normal-map preview →](normal-maps.md)

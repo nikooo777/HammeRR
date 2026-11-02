@@ -38,3 +38,9 @@ See [lightmap boundary sampling](compile-and-play.md#lightmap-boundary-sampling)
 - **Frame face** refuses invalid geometry and active viewport gestures. Finish or cancel the gesture, then try again.
 - Multiple source contributors do not prevent framing a valid compiled face.
 - Inspection keeps the camera unchanged. Framing keeps source, selection, drafts and history unchanged.
+
+<!-- page-nav -->
+
+---
+
+[← HDR exposure](hdr-exposure.md) · [Manual](README.md) · [Baked surfaces →](baked-surfaces.md)

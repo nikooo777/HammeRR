@@ -53,3 +53,9 @@ Use **Reload settings** after another editor changes recovery storage settings.
 - A recovered copy does not silently overwrite the original map.
 - Saved visibility, temporary editor hiding and working regions are separate controls.
 - Source changes can stale checks or repairs; review again before applying them.
+
+<!-- page-nav -->
+
+---
+
+[← Prefab library](prefabs.md) · [Manual](README.md) · [Instance references →](instance-authoring.md)

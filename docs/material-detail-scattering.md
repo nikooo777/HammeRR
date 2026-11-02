@@ -66,3 +66,9 @@ changed consumed assets stop publication.
 - Native detail lighting uses a quantized gamma lookup, and sprites use 8-bit vertex colours. Separate HDR storage does not imply floating-point rendering precision or editor/game colour parity.
 - Reflection generation always checks **Detail material file**, defaulting to `detail/detailsprites`, even in model-only scenes or when no details are emitted. Its supported static atlas material needs one square 2D texture no larger than 4096 pixels per side, with [native mip requirements](textures.md#native-texture-files). Procedural, render-target and animated inputs reject.
 - Decoration has no collision and does not replace structural geometry.
+
+<!-- page-nav -->
+
+---
+
+[← Detail sprites](detail-sprites.md) · [Manual](README.md) · [Final compiled details →](compiled-details.md)

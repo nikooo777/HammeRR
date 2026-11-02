@@ -6,7 +6,7 @@ Create, sculpt and paint displacement surfaces. Compile them with lighting and c
 
 ## Create terrain
 
-1. Select world quad faces under **Selection → Faces · materials & textures**.
+1. Click **Faces** in the toolbar and select world quad faces.
 2. Choose **Terrain grid**: 5 × 5, 9 × 9 or 17 × 17.
 3. Choose **Start corner** to set grid orientation.
 4. Click **Create terrain**.
@@ -168,7 +168,7 @@ Consumed detail helpers contribute world terrain. Runtime brush-model terrain re
 ## Preview authored lighting
 
 Choose **Textured** and enable **Unshadowed authored lighting**.
-**Detail · per-fragment lighting** shows local pools more accurately than Fast vertex lighting.
+**Detail · per-fragment** quality shows local pools more accurately than **Fast · vertex**.
 Only supported opaque, single-base terrain receives this preview; blends and bump/detail materials are excluded.
 See [lighting preview](lighting-preview.md).
 
@@ -188,3 +188,9 @@ Removing the last terrain face restores its parent's solid brush volume.
 - Masks are session-local and become stale after incompatible topology or source changes.
 - Holes, triangle removal and general fractional border joins remain unavailable.
 - Invalid terrain shows a diagnostic and an outline instead of substituted shaded geometry.
+
+<!-- page-nav -->
+
+---
+
+[← Repeated placement](repeated-placement.md) · [Manual](README.md) · [Materials and textures →](textures.md)

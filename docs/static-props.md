@@ -142,3 +142,9 @@ Inspect **Instance contents…** before building. Child source files must remain
 - Cutout vertex lighting is experimental.
 - Missing or unsupported required data fails rather than substituting another asset.
 - Sampled textures must meet the [native texture limits](textures.md#native-texture-files).
+
+<!-- page-nav -->
+
+---
+
+[← Water and slime](water.md) · [Manual](README.md) · [Static-prop shadows →](prop-shadows.md)

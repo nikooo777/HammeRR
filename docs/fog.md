@@ -45,3 +45,9 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
 - Radial fog, secondary colors, far-Z clipping, volumes, transitions and nondefault HDR/zoom scales are unsupported.
 - Sky, helpers, selection outlines and the grid do not receive fog.
 - This is an editor approximation, not a game brightness match.
+
+<!-- page-nav -->
+
+---
+
+[← Authored lighting preview](lighting-preview.md) · [Manual](README.md) · [Color correction →](color-correction.md)

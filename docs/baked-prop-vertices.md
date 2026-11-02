@@ -62,3 +62,9 @@ Camera, selection, map, history and ordinary drafts stay unchanged.
 - Missing channels remain unavailable; they do not substitute another channel.
 - Intact stale output is marked historical. Missing, replaced or corrupt build output is unavailable.
 - Inspection does not alter the map or build settings.
+
+<!-- page-nav -->
+
+---
+
+[← Baked surfaces](baked-surfaces.md) · [Manual](README.md) · [Compiled lights →](compiled-lights.md)

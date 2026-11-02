@@ -67,3 +67,9 @@ prepare again. Other objects still cast shadows on the prop.
 - Resource and GPU adapter limits can refuse preparation or display. For prepared static props, **Show** checks the combined CPU working budget before enabling the layer. If compiled mesh generation fails, the layer is disabled and its diagnostic is retained. Authored geometry stays available. An upload failure does not publish a successful frame.
 
 Use `inspect_baked_surfaces` and `set_baked_surfaces` through MCP.
+
+<!-- page-nav -->
+
+---
+
+[← Baked lightmaps](baked-lightmaps.md) · [Manual](README.md) · [Baked prop vertices →](baked-prop-vertices.md)

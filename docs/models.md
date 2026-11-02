@@ -52,8 +52,8 @@ X is red, Y is green and Z is blue. Positions follow the displayed reference pos
 ## Preview authored lighting
 
 1. Choose **Textured** and enable **Unshadowed authored lighting**.
-2. Choose **Detail · per-fragment lighting** or **Fast · vertex lighting**.
-3. Adjust **Lighting exposure (EV)**.
+2. Under **Overlays → Lighting**, set **Quality** to **Detail · per-fragment** or **Fast · vertex**.
+3. Adjust **Exposure EV**.
 4. Check which models receive preview lighting.
 
 Supported opaque, single-base `VertexLitGeneric` meshes receive light.
@@ -78,3 +78,9 @@ that those files are still current.
 - Authored lighting excludes bump, blend, reflection, Phong, proxy and other unsupported model materials.
 - Static-prop output has separate [compiler limits](static-props.md).
 - Editor budgets: 64 MiB per companion file, 128 cached models, one million scene vertices and six million indices.
+
+<!-- page-nav -->
+
+---
+
+[← Rope preview](ropes.md) · [Manual](README.md) · [Sprite guides →](sprite-guides.md)

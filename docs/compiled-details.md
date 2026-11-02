@@ -59,3 +59,9 @@ one shared base retain that base for both channels.
 - The layer accepts at most 16,384 records, 64 model assets and 128 materials. Exceeded asset or geometry budgets fail explicitly.
 
 Use `inspect_compiled_details` and `set_compiled_details` through MCP.
+
+<!-- page-nav -->
+
+---
+
+[← Material detail scattering](material-detail-scattering.md) · [Manual](README.md) · [Occluders →](occluders.md)

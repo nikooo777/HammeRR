@@ -225,7 +225,7 @@ Point entities and terrain cannot be mirrored with this operation.
 
 ### Shear
 
-Choose different **Shift coordinate** and **By coordinate** axes.
+Choose different **Shift** and **by** axes.
 Set **Factor** to the required proportional shift.
 For example, X by Y at 0.5 shifts X by half the Y distance from the pivot.
 Use **Keep textures attached while shearing** when required.
@@ -240,3 +240,9 @@ Click **Shear selection** to apply.
 - Invalid geometry rejects before Apply. Reloading model bounds invalidates pending snap previews.
 - A malformed entity origin stops the whole move or copy operation.
 - Invalid imported brushes stay in the map. Preview errors identify omitted geometry.
+
+<!-- page-nav -->
+
+---
+
+[← Workspace layout](workspace-layout.md) · [Manual](README.md) · [Hollow, carve and clip →](brush-tools.md)

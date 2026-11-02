@@ -37,3 +37,9 @@ Atlas textures must meet the [native texture limits](textures.md#native-texture-
 - No collision or ordinary runtime entity remains after compilation.
 - The editor helper does not display the final native card or sway.
 - Unsupported atlas declarations, geometry or combinations fail explicitly.
+
+<!-- page-nav -->
+
+---
+
+[← Model detail props](model-detail-props.md) · [Manual](README.md) · [Material detail scattering →](material-detail-scattering.md)

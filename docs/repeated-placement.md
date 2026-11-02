@@ -114,3 +114,9 @@ them attached to their target surfaces. One Undo removes the whole placement.
 - Rotation or scaling rejects unsupported opaque or spatial metadata.
 - Changed maps, definitions or captured sources require a fresh preview. Failed requests preserve the previous preview.
 - Apply before saving or compiling. Those operations use committed geometry.
+
+<!-- page-nav -->
+
+---
+
+[← Surface placement](placement.md) · [Manual](README.md) · [Terrain →](terrain.md)

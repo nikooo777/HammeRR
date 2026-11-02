@@ -29,3 +29,9 @@ For an additive guide:
 - No animation, glow visibility, fog, runtime I/O or game pixel match.
 - Textures are limited to 512 pixels per axis. Scale must be positive and finite.
 - Selection and framing use the entity box. Images are not placement or snap targets.
+
+<!-- page-nav -->
+
+---
+
+[← Models](models.md) · [Manual](README.md) · [Particle effects →](particles.md)

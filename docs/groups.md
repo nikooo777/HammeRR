@@ -39,3 +39,9 @@ The member geometry remains in the map.
 - Editing entity-owned child-brush memberships is unavailable.
 - Group bypass is session-local. It does not affect individual face selection.
 - Explicit transform/placement IDs keep their exact scope; select the complete group first when required.
+
+<!-- page-nav -->
+
+---
+
+[← Overlays](overlays.md) · [Manual](README.md) · [Layers →](layers.md)

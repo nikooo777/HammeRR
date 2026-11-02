@@ -30,3 +30,9 @@ Use larger equal values to brighten the image; for example, `1.625`.
 - This procedure covers one controller and positive equal bounds.
 - Forced tone-map scale or disabled dynamic tone mapping can override it.
 - LDR playback does not demonstrate HDR behavior.
+
+<!-- page-nav -->
+
+---
+
+[← Cubemap faces](cubemap-faces.md) · [Manual](README.md) · [Baked lightmaps →](baked-lightmaps.md)

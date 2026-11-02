@@ -55,3 +55,9 @@ Use [Recent maps](recent-maps.md) to reopen a map with its captured context.
 
 MCP: `get_content_profiles`, `save_content_profile`, `apply_content_profile`,
 `remove_content_profile` and `reload_content_profiles`.
+
+<!-- page-nav -->
+
+---
+
+[← Recent maps](recent-maps.md) · [Manual](README.md) · [History →](history.md)

@@ -44,3 +44,9 @@ Objects match by kind and stored ID. Both maps stay intact.
 - Pages have at most 64 rows. Search is limited to 512 bytes and displayed labels
   to 512 characters. Search covers those labels and IDs. Selection and framing
   preserve authored data and Undo history.
+
+<!-- page-nav -->
+
+---
+
+[← History](history.md) · [Manual](README.md) · [Keyboard shortcuts →](keyboard-shortcuts.md)

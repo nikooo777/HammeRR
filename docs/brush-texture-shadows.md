@@ -133,3 +133,9 @@ for exact geometry and resource limits.
 - Unsupported materials, transforms or required assets stop the build.
 
 See [static-prop mesh shadows](prop-shadows.md) for model casters.
+
+<!-- page-nav -->
+
+---
+
+[← Static-prop shadows](prop-shadows.md) · [Manual](README.md) · [Generated reflections →](reflections.md)

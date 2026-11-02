@@ -29,3 +29,9 @@ The target must resolve uniquely; missing or ambiguous references fail explicitl
 - Tint attenuates baked lighting; it does not add a new material effect.
 - LDR+HDR stores independent static colors in each channel’s style-0 table. Legacy shared-base records remain supported.
 - Unsupported assets, transforms or lighting controls stop the build.
+
+<!-- page-nav -->
+
+---
+
+[← Visibility inspection](visibility.md) · [Manual](README.md) · [Detail sprites →](detail-sprites.md)

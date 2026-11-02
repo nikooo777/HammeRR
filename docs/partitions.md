@@ -15,7 +15,7 @@ Divide a brush face before raising, extruding or texturing its pieces.
 
 The dividing line appears without changing the brush.
 Use **Highlight pieces** or click pieces in the viewport to choose them.
-Ctrl+click toggles a highlight.
+<kbd>Ctrl</kbd>+click toggles a highlight.
 
 ## Move the dividing line
 
@@ -68,3 +68,9 @@ Raising or extruding applies the stored top settings.
 - A map can store divisions on 64 faces, within 64 KiB.
 - Terrain, full-source removal, collapsed geometry and out-of-bounds results reject.
 - Free-form dividing lines and per-piece texture axes are unavailable.
+
+<!-- page-nav -->
+
+---
+
+[← Vertices, edges and faces](components.md) · [Manual](README.md) · [Merge brushes →](merge.md)

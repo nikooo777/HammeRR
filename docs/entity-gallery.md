@@ -9,7 +9,7 @@ models, FGD helper geometry, icons and property defaults as ordinary placement.
 ## Preview and place examples
 
 1. Open **Entity → Point-entity gallery…**, or search for
-   **Point-entity gallery…** in **Ctrl+K**.
+   **Point-entity gallery…** in <kbd>Ctrl</kbd>+<kbd>K</kbd>.
 2. Search by class name or description, then choose **Search**. **Previous**
    and **Next** browse every matching class in pages of 32. Classes that need
    surface-specific authoring or an instance source show why they are unavailable.
@@ -82,3 +82,9 @@ scene. `apply_entity_gallery` and `cancel_entity_gallery` require its owned toke
   gallery origin or show the relevant region before previewing.
 - Tokens belong to their document and actor. Changed, closed, foreign or
   replaced previews cannot be applied. A failed replay rolls back the whole batch.
+
+<!-- page-nav -->
+
+---
+
+[← Entities and logic](entities.md) · [Manual](README.md) · [Linked paths →](path-authoring.md)

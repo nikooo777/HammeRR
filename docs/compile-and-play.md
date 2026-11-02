@@ -375,3 +375,9 @@ cargo run -j8 -p compiler --bin hammerr-compile -- \
 ```
 
 Use `--help` for available settings. CLI, editor and MCP builds use the same compiler.
+
+<!-- page-nav -->
+
+---
+
+[← Compiled assemblies](instances.md) · [Manual](README.md) · [Material emission →](material-emission.md)

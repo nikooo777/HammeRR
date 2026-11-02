@@ -141,3 +141,9 @@ Only the immediately containing reference supplies the value; use [explicit forw
 - Source changes stale the form. **Cancel** discards only the owned form.
 
 See [compiled assemblies](instances.md) for supported content and name fixups.
+
+<!-- page-nav -->
+
+---
+
+[← Map checks, notes and recovery](map-tools.md) · [Manual](README.md) · [Extract an assembly →](instance-extraction.md)

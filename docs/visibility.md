@@ -75,3 +75,9 @@ output remains readable; bounds guides require current output.
 - Pages contain at most 64 rows. Retention caps at 64 MiB, 65,536 leaves,
   262,144 portals, 1,048,576 points and 4,096 points per portal. Exceeded metadata
   limits make inspection unavailable; ordinary compilation can still succeed.
+
+<!-- page-nav -->
+
+---
+
+[← Compiled lights](compiled-lights.md) · [Manual](README.md) · [Model detail props →](model-detail-props.md)

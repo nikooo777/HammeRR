@@ -27,3 +27,9 @@ Removing a root binding may select a child sample.
 - Changes to referenced sources or material sources invalidate the draft. With visible instances, this also covers the saved parent. Refreshing an identical assignment does not make an old draft valid; preview it again.
 - Unsupported or unavailable instance content rejects inspection and drafts without changing the map.
 - Inspection uses the current **Brush texture shadows** build setting, including admitted child brush models with **Shadows** set to **Yes** and supported binary cutout materials. Changing this setting invalidates cached reports and drafts, including when it is changed back; refresh and preview again. This does not bake shadows or capture reflections.
+
+<!-- page-nav -->
+
+---
+
+[← Generated reflections](reflections.md) · [Manual](README.md) · [HDR exposure →](hdr-exposure.md)

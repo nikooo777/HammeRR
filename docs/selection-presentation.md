@@ -48,3 +48,9 @@ Set `sprite_resources` explicitly when changing `entity_images` independently.
 - Models and sprites retain existing pose, material and static-resource limits; runtime effects are not simulated.
 - Bounds are axis-aligned, not collision hulls. Unknown identities or incomplete bounds are explicitly unavailable; no partial box is shown.
 - Ordinary switches do not edit source, Undo history or saved defaults.
+
+<!-- page-nav -->
+
+---
+
+[← Selection](selection.md) · [Manual](README.md) · [Working region →](working-region.md)

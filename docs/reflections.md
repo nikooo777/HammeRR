@@ -3,7 +3,9 @@
 # Generated reflections
 
 Capture scene cubemaps and pack them into the published BSP.
-Native capture requires Linux; it is unavailable on Windows.
+
+> [!NOTE]
+> Native capture requires Linux; it is unavailable on Windows.
 
 ## Generate reflections
 
@@ -62,3 +64,9 @@ Supported samples and ordinary world/detail bindings can also come from [referen
 - **Cancel build** waits for owned capture cleanup.
 - Generation captures one reflection bounce, not repeated recursive reflection builds.
 - Root-face binding inspection and drafts include assembled sample choices. Edit child faces and helpers in their source map.
+
+<!-- page-nav -->
+
+---
+
+[← Brush texture shadows](brush-texture-shadows.md) · [Manual](README.md) · [Cubemap faces →](cubemap-faces.md)

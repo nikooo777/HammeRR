@@ -179,3 +179,9 @@ Click **Apply properties** to keep the draft, or **Cancel** to discard it.
 - Guides cover checked static properties, not parenting, animation, simulation or runtime I/O.
 - Reload material assets for changed icons; reload models for changed model geometry; reload FGD for changed definitions.
 - Changed source or replaced drafts require a fresh review before applying edits.
+
+<!-- page-nav -->
+
+---
+
+[← Sounds](sounds.md) · [Manual](README.md) · [Point-entity gallery →](entity-gallery.md)

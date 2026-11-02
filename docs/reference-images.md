@@ -13,7 +13,7 @@ Place external PNG images as editor-only tracing planes.
 5. Click **Apply settings**, then save the map. **Undo** and **Redo** restore metadata.
 6. Use **Frame image** to inspect the saved pose.
 
-![Two editor-only PNG planes with different pose, opacity and flips](images/reference-images.png)
+![A blueprint reference plane standing behind the compound](images/reference-images.png)
 
 New images start on XY at world origin, with their original aspect, a 256-unit
 longest edge and opacity 0.5. Rotation uses XYZ Euler degrees; image right is +X
@@ -39,3 +39,9 @@ unfinished form changes. Applied actions remain undoable.
 - Images never enter game geometry or automatic asset packing. Only root-document references are displayed.
 - Sources are checked once per second. MCP rendering refuses unavailable images requested in its projection.
 - Finish other drafts before editing references. Invalid metadata stays preserved and unavailable.
+
+<!-- page-nav -->
+
+---
+
+[← Color correction](color-correction.md) · [Manual](README.md) · [Sky previews and assets →](sky.md)

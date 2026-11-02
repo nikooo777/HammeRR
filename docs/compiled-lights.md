@@ -59,3 +59,9 @@ falloff, ray occlusion or exact finite-area visibility.
 - Intact stale output is historical. Missing, replaced or unverifiable output clears the displayed data.
 - Inspection preserves the map, selection, camera and pending drafts.
 - **Frame light** changes the camera only. It preserves source selection and adds no light marker or baked lighting preview.
+
+<!-- page-nav -->
+
+---
+
+[← Baked prop vertices](baked-prop-vertices.md) · [Manual](README.md) · [Visibility inspection →](visibility.md)

@@ -1762,6 +1762,26 @@ fn build(
     output.stats.detail_props = detail_stats.props;
     output.stats.detail_prop_models = detail_stats.models;
     output.stats.detail_prop_sprites = detail_stats.sprites;
+    let sky_plan = if options.pack_sky_assets {
+        control.advance(Stage::SkyAssets)?;
+        let archive = bsp
+            .pak_data_controlled(bsp::PakLimits::default(), &mut || {
+                control.checkpoint().map_err(io::Error::other)
+            })
+            .map_err(|error| error.to_string())?;
+        Some(
+            sky_assets::collect_sky_asset_plan(
+                vmf,
+                fs,
+                &archive,
+                bsp::PakLimits::default(),
+                control,
+            )
+            .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
     for step in output.stats.postprocess.plan.steps {
         if !step.enabled {
             continue;
@@ -1955,20 +1975,9 @@ fn build(
             .map_err(|error| error.to_string())?;
         output.cubemap_assets = Some(manifest);
     }
-    if options.pack_sky_assets {
-        let archive = bsp
-            .pak_data_controlled(bsp::PakLimits::default(), &mut || {
-                control.checkpoint().map_err(io::Error::other)
-            })
+    if let Some(plan) = sky_plan {
+        plan.verify_sources(fs, control)
             .map_err(|error| error.to_string())?;
-        let plan = sky_assets::collect_sky_asset_plan(
-            vmf,
-            fs,
-            &archive,
-            bsp::PakLimits::default(),
-            control,
-        )
-        .map_err(|error| error.to_string())?;
         plan.attach(&mut bsp, control)
             .map_err(|error| error.to_string())?;
         output.stats.sky_assets = Some(PackedSkyStats {

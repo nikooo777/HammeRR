@@ -94,6 +94,10 @@ Geometry and visibility stay first. Packing, reflection capture and publication
 keep their fixed order afterward. A failed stage stops the build and preserves
 the previous published BSP. **Build details…** retains the job's captured plan.
 
+With **Pack sky assets**, **Checking sky assets** validates dependencies before
+lighting or physics; final packing and publication still follow those stages,
+and an error preserves the previous BSP.
+
 ## World geometry and visibility
 
 Structural brushes divide space and seal the map. `func_detail` contributes surfaces without structural splits.

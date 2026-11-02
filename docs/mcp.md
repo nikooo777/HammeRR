@@ -900,6 +900,10 @@ The plan includes `requested_order`, enabled-only `effective_stages`, two
 ordered `steps` (`stage`, `enabled`, `skip_reason`), `fixed_before`, `fixed_after`
 and a shared human-readable `summary`.
 
+With `pack_sky_assets:true`, `sky_assets` / **Checking sky assets** validates
+the requested sky before either postprocess pass. Final packing still checks
+the completed archive; a failure does not publish output.
+
 Recipes and per-map settings retain the applied order. Older saved settings
 without the field use lighting before physics. Active jobs block settings and
 recipe edits and retain their captured order and plan in `get_compile_status`.

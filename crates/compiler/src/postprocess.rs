@@ -59,7 +59,7 @@ impl PostprocessOrder {
                 skip_reason,
             }
         });
-        let fixed_before = "Geometry, VIS, static props and details";
+        let fixed_before = "Geometry, VIS, static props, details and requested asset preflight";
         let fixed_after = "Asset packing and reflections when requested; guarded output writing";
         let labels = steps.map(|step| match step.skip_reason {
             Some(reason) => format!("{} skipped ({reason})", step.stage.label()),

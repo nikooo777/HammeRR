@@ -77,6 +77,7 @@ This action does not select or resolve an authored object.
 | **Indirect light** | Direct only, or one to four diffuse bounces. |
 | **Brush smoothing angle** | Smooth ungrouped brush corners from 0° to 90°. |
 | **Sampling quality** | Fast (32 directions), Balanced (128 directions), or Detailed (512 directions). |
+| **Postprocess order** | Run lighting before physics, or physics before lighting. |
 | **Brush texture shadows** | Use supported cutout or translucent brush and terrain textures for light blocking. |
 | **Colored texture shadows** | Tint baked light through admitted fractional textures; requires **Brush texture shadows** and lit mode. Default off. |
 | **Bake static-prop vertex lighting** | Write supported per-vertex prop lighting. |
@@ -86,6 +87,12 @@ This action does not select or resolve an authored object.
 **Lighting work limit (millions)** bounds lighting work. Click **Apply work limit** after editing it.
 Exceeding the allowance fails explicitly. Increase it only when the intended map and settings justify more work.
 Use [build recipes](build-recipes.md) to retain settings.
+
+**Postprocess order** applies immediately to the next build. Read the effective
+plan beneath it for stages skipped by the current lighting and physics settings.
+Geometry and visibility stay first. Packing, reflection capture and publication
+keep their fixed order afterward. A failed stage stops the build and preserves
+the previous published BSP. **Build details…** retains the job's captured plan.
 
 ## World geometry and visibility
 

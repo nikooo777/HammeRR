@@ -24,6 +24,7 @@ mod pak_limits;
 pub mod physics;
 pub mod planes;
 pub mod portals;
+mod postprocess;
 pub mod prop_lighting_assets;
 mod publication;
 pub mod sky_assets;
@@ -84,6 +85,10 @@ pub use physics::damping::{
     validate_water_damping,
 };
 pub use portals::Leak;
+pub use postprocess::{
+    PostprocessExecution, PostprocessOrder, PostprocessPlan, PostprocessReport, PostprocessStage,
+    PostprocessStatus, PostprocessStep,
+};
 pub use publication::{FileIdentity, FileStamp, OutputLease};
 pub use sky_assets::{SkyAssetManifest, SkyAssetPlan, read_packed_sky, verify_packed_sky};
 pub use water_analog::{WATER_ANALOG_CLASSNAME, WATER_ANALOG_DEFAULTS};
@@ -184,6 +189,7 @@ impl SkyQuality {
 pub struct Options {
     pub lighting: LightingMode,
     pub physics: PhysicsMode,
+    pub postprocess_order: PostprocessOrder,
     pub sky_quality: SkyQuality,
     pub lighting_work_limit: u64,
     pub visibility: VisibilityMode,
@@ -226,6 +232,7 @@ impl Default for Options {
         Self {
             lighting: LightingMode::default(),
             physics: PhysicsMode::default(),
+            postprocess_order: PostprocessOrder::default(),
             sky_quality: SkyQuality::default(),
             lighting_work_limit: DEFAULT_LIGHTING_WORK_LIMIT,
             visibility: VisibilityMode::default(),
@@ -528,6 +535,7 @@ pub struct HdrLightingStats {
 
 #[derive(Debug, Default, serde::Serialize)]
 pub struct Stats {
+    pub postprocess: PostprocessReport,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub material_emission: Option<MaterialEmissionStats>,
     pub brush_shadow_models: usize,
@@ -1166,7 +1174,7 @@ fn build(
                 }
             }),
     );
-    let emission_input = lighting::emission::preflight(
+    let mut emission_input = lighting::emission::preflight(
         prepared_instances,
         &caster_requests,
         fs,
@@ -1754,110 +1762,121 @@ fn build(
     output.stats.detail_props = detail_stats.props;
     output.stats.detail_prop_models = detail_stats.models;
     output.stats.detail_prop_sprites = detail_stats.sprites;
-    if options.lighting.performs_lighting() {
-        control.advance(Stage::Lighting)?;
-        let mut prop_material_sources = map.materials.take_prop_lighting_sources();
-        if let Some(reads) = &mut prop_material_sources
-            && let Some(sources) = &prop_stats.source_owner
-        {
-            reads.share_sources(sources.clone());
+    for step in output.stats.postprocess.plan.steps {
+        if !step.enabled {
+            continue;
         }
-        let result = lighting::bake(
-            &map,
-            &models[0].tree,
-            &visibility,
-            &mut bsp,
-            &mut output.report,
-            lighting::Settings {
-                control,
-                emission: emission_input,
-                instances: prepared_instances,
-                fs,
-                vmf,
-                options,
-                smoothing_sources: &emission.smoothing_sources,
-                face_sources: &emission.face_sources,
-                model_entities: &emission.model_entities,
-                world_leaf_nodes: &emission.world_leaf_nodes,
-                detail_model_centers: &detail_stats.model_centers,
-                detail_lighting_origins: &detail_stats.lighting_origins,
-                detail_lighting_tints: &detail_stats.lighting_tints,
-                prop_sources: &prop_stats.sources,
-                prop_material_sources,
-                prop_asset_sources: prop_stats.source_owner.as_ref(),
-                brush_material_sources: material_sources
-                    .as_ref()
-                    .filter(|_| options.brush_texture_shadows || emission_file.is_some()),
-            },
-            &mut output.stats.lighting_progress,
-        );
-        if let Some(progress) = &output.stats.lighting_progress {
-            output.stats.lighting_work = (progress.preparation_work + progress.ldr_work) as usize;
-            output.stats.lighting_total_work = progress.work as usize;
-            output.stats.lightmap_samples = progress.ldr_lightmap_samples_completed as usize;
-            if options.lighting == LightingMode::DirectLdrHdr {
-                output.stats.hdr = Some(HdrLightingStats {
-                    lighting_work: progress.hdr_work as usize,
-                    lightmap_samples: progress.hdr_lightmap_samples_completed as usize,
-                    ..Default::default()
-                });
-            }
-        }
-        let stats = result?;
-        if output.report.has_errors() {
-            return Ok(());
-        }
-        if let Some(emission) = &stats.material_emission {
-            let message = if emission.source_faces == 0 {
-                "Material emission: no rendered source faces; no emission was baked".into()
-            } else {
-                format!(
-                    "Material emission: {} source faces, {:.3} square units, {} LDR and {} HDR shadow rays",
-                    emission.source_faces,
-                    emission.source_area,
-                    emission.channel_rays[0],
-                    emission.channel_rays[1],
-                )
-            };
-            output
-                .report
-                .diagnostics
-                .push(Diagnostic::info(message, None, None));
-        }
-        output.world_light_origins = Some(std::sync::Arc::new(stats.world_light_origins));
-        output.stats.material_emission = stats.material_emission;
-        output.stats.world_lights = stats.lights;
-        output.stats.light_styles = stats.light_styles;
-        output.stats.styled_faces = stats.styled_faces;
-        output.stats.light_style_maps = stats.light_style_maps;
-        output.stats.lighting_faces = stats.faces;
-        output.stats.lit_brush_models = stats.models;
-        output.stats.brush_shadow_models = stats.brush_shadow_models;
-        output.stats.model_lighting_faces = stats.model_faces;
-        output.stats.lightmap_samples = stats.samples;
-        output.stats.lighting_bytes = stats.bytes;
-        output.stats.lighting_work = stats.work;
-        output.stats.lighting_total_work = stats.total_work;
-        output.prop_lighting_assets = stats.prop_lighting_assets;
-        output.stats.prop_vertex_lighting = stats.prop_vertex_lighting;
-        output.stats.hdr = stats.hdr;
-        if let Some(hdr) = output
-            .stats
-            .hdr
-            .as_ref()
-            .filter(|hdr| !hdr.map_data_present)
-        {
-            let mut missing = Vec::new();
-            if hdr.lighting_bytes == 0 {
-                missing.push("HDR light samples (lump 53)");
-            }
-            if hdr.world_lights == 0 {
-                missing.push("HDR world lights (lump 54)");
-            }
-            if hdr.ambient_samples == 0 {
-                missing.push("HDR model ambient samples (lump 55)");
-            }
-            output.report.diagnostics.push(Diagnostic::warning(
+        control.advance(step.stage.progress())?;
+        output.stats.postprocess.begin(step.stage);
+        let result: Result<(), String> = (|| {
+            match step.stage {
+                PostprocessStage::Lighting => {
+                    let mut prop_material_sources = map.materials.take_prop_lighting_sources();
+                    if let Some(reads) = &mut prop_material_sources
+                        && let Some(sources) = &prop_stats.source_owner
+                    {
+                        reads.share_sources(sources.clone());
+                    }
+                    let result = lighting::bake(
+                        &map,
+                        &models[0].tree,
+                        &visibility,
+                        &mut bsp,
+                        &mut output.report,
+                        lighting::Settings {
+                            control,
+                            emission: emission_input.take(),
+                            instances: prepared_instances,
+                            fs,
+                            vmf,
+                            options,
+                            smoothing_sources: &emission.smoothing_sources,
+                            face_sources: &emission.face_sources,
+                            model_entities: &emission.model_entities,
+                            world_leaf_nodes: &emission.world_leaf_nodes,
+                            detail_model_centers: &detail_stats.model_centers,
+                            detail_lighting_origins: &detail_stats.lighting_origins,
+                            detail_lighting_tints: &detail_stats.lighting_tints,
+                            prop_sources: &prop_stats.sources,
+                            prop_material_sources,
+                            prop_asset_sources: prop_stats.source_owner.as_ref(),
+                            brush_material_sources: material_sources.as_ref().filter(|_| {
+                                options.brush_texture_shadows || emission_file.is_some()
+                            }),
+                        },
+                        &mut output.stats.lighting_progress,
+                    );
+                    if let Some(progress) = &output.stats.lighting_progress {
+                        output.stats.lighting_work =
+                            (progress.preparation_work + progress.ldr_work) as usize;
+                        output.stats.lighting_total_work = progress.work as usize;
+                        output.stats.lightmap_samples =
+                            progress.ldr_lightmap_samples_completed as usize;
+                        if options.lighting == LightingMode::DirectLdrHdr {
+                            output.stats.hdr = Some(HdrLightingStats {
+                                lighting_work: progress.hdr_work as usize,
+                                lightmap_samples: progress.hdr_lightmap_samples_completed as usize,
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    let stats = result?;
+                    if output.report.has_errors() {
+                        return Ok(());
+                    }
+                    if let Some(emission) = &stats.material_emission {
+                        let message = if emission.source_faces == 0 {
+                            "Material emission: no rendered source faces; no emission was baked"
+                                .into()
+                        } else {
+                            format!(
+                                "Material emission: {} source faces, {:.3} square units, {} LDR and {} HDR shadow rays",
+                                emission.source_faces,
+                                emission.source_area,
+                                emission.channel_rays[0],
+                                emission.channel_rays[1],
+                            )
+                        };
+                        output
+                            .report
+                            .diagnostics
+                            .push(Diagnostic::info(message, None, None));
+                    }
+                    output.world_light_origins =
+                        Some(std::sync::Arc::new(stats.world_light_origins));
+                    output.stats.material_emission = stats.material_emission;
+                    output.stats.world_lights = stats.lights;
+                    output.stats.light_styles = stats.light_styles;
+                    output.stats.styled_faces = stats.styled_faces;
+                    output.stats.light_style_maps = stats.light_style_maps;
+                    output.stats.lighting_faces = stats.faces;
+                    output.stats.lit_brush_models = stats.models;
+                    output.stats.brush_shadow_models = stats.brush_shadow_models;
+                    output.stats.model_lighting_faces = stats.model_faces;
+                    output.stats.lightmap_samples = stats.samples;
+                    output.stats.lighting_bytes = stats.bytes;
+                    output.stats.lighting_work = stats.work;
+                    output.stats.lighting_total_work = stats.total_work;
+                    output.prop_lighting_assets = stats.prop_lighting_assets;
+                    output.stats.prop_vertex_lighting = stats.prop_vertex_lighting;
+                    output.stats.hdr = stats.hdr;
+                    if let Some(hdr) = output
+                        .stats
+                        .hdr
+                        .as_ref()
+                        .filter(|hdr| !hdr.map_data_present)
+                    {
+                        let mut missing = Vec::new();
+                        if hdr.lighting_bytes == 0 {
+                            missing.push("HDR light samples (lump 53)");
+                        }
+                        if hdr.world_lights == 0 {
+                            missing.push("HDR world lights (lump 54)");
+                        }
+                        if hdr.ambient_samples == 0 {
+                            missing.push("HDR model ambient samples (lump 55)");
+                        }
+                        output.report.diagnostics.push(Diagnostic::warning(
                 format!(
                     "HDR unavailable: incomplete map data; missing {}. These arrays must all be nonempty to activate native HDR",
                     missing.join(", ")
@@ -1865,59 +1884,70 @@ fn build(
                 None,
                 None,
             ));
+                    }
+                    output.stats.prop_shadow_props = stats.prop_shadows.props;
+                    output.stats.prop_shadow_models = stats.prop_shadows.models;
+                    output.stats.prop_shadow_triangles = stats.prop_shadows.triangles;
+                    output.stats.prop_shadow_disabled = stats.prop_shadows.disabled;
+                    output.stats.prop_shadow_work = stats.prop_shadows.work;
+                    output.stats.prop_shadow_alpha_triangles = stats.prop_shadows.alpha_triangles;
+                    output.stats.prop_shadow_alpha_materials = stats.prop_shadows.alpha_materials;
+                    output.stats.prop_shadow_alpha_textures = stats.prop_shadows.alpha_textures;
+                    output.stats.prop_shadow_alpha_bytes = stats.prop_shadows.alpha_bytes;
+                    output.stats.light_evaluations = stats.culling.evaluated;
+                    output.stats.light_pvs_skipped = stats.culling.pvs_skipped;
+                    output.stats.light_range_skipped = stats.culling.range_skipped;
+                    output.stats.light_culling_work = stats.culling.work;
+                    output.stats.ambient_samples = stats.ambient_samples;
+                    output.stats.ambient_bytes = stats.ambient_bytes;
+                    output.stats.bounces = stats.bounces;
+                    output.stats.bounce_rays = stats.bounce_rays;
+                    output.stats.bounce_samples = stats.bounce_samples;
+                    output.stats.bounce_work = stats.bounce_work;
+                    output.stats.model_bounce_faces = stats.model_bounce_faces;
+                    output.stats.model_bounce_samples = stats.model_bounce_samples;
+                    output.stats.bump_faces = stats.bump_faces;
+                    output.stats.bump_lightmaps = stats.bump_lightmaps;
+                    output.stats.smoothed_faces = stats.smoothed_faces;
+                    output.stats.smoothed_corners = stats.smoothed_corners;
+                    output.stats.normal_work = stats.normal_work;
+                    output.stats.smoothing_angle = options.smoothing_angle;
+                }
+                PostprocessStage::Physics => {
+                    let stats = physics::bake(
+                        &map,
+                        &models,
+                        &water,
+                        physics::Settings {
+                            vmf,
+                            fs,
+                            sources: material_sources
+                                .as_ref()
+                                .ok_or("Engine physics source owner is missing")?,
+                        },
+                        &mut bsp,
+                        &mut output.report,
+                        control,
+                    )?;
+                    output.stats.physics_models = stats.models;
+                    output.stats.physics_solids = stats.solids;
+                    output.stats.physics_convexes = stats.convexes;
+                    output.stats.physics_bytes = stats.bytes;
+                    output.stats.physics_fluids = stats.fluids;
+                    output.stats.physics_mesh_triangles = stats.mesh_triangles;
+                    output.stats.physics_surface_properties = stats.surface_properties;
+                }
+            }
+            Ok(())
+        })();
+        output.stats.postprocess.finish(
+            control.cancelled(),
+            result.is_err() || output.report.has_errors(),
+        );
+        result?;
+        if output.report.has_errors() {
+            return Ok(());
         }
-        output.stats.prop_shadow_props = stats.prop_shadows.props;
-        output.stats.prop_shadow_models = stats.prop_shadows.models;
-        output.stats.prop_shadow_triangles = stats.prop_shadows.triangles;
-        output.stats.prop_shadow_disabled = stats.prop_shadows.disabled;
-        output.stats.prop_shadow_work = stats.prop_shadows.work;
-        output.stats.prop_shadow_alpha_triangles = stats.prop_shadows.alpha_triangles;
-        output.stats.prop_shadow_alpha_materials = stats.prop_shadows.alpha_materials;
-        output.stats.prop_shadow_alpha_textures = stats.prop_shadows.alpha_textures;
-        output.stats.prop_shadow_alpha_bytes = stats.prop_shadows.alpha_bytes;
-        output.stats.light_evaluations = stats.culling.evaluated;
-        output.stats.light_pvs_skipped = stats.culling.pvs_skipped;
-        output.stats.light_range_skipped = stats.culling.range_skipped;
-        output.stats.light_culling_work = stats.culling.work;
-        output.stats.ambient_samples = stats.ambient_samples;
-        output.stats.ambient_bytes = stats.ambient_bytes;
-        output.stats.bounces = stats.bounces;
-        output.stats.bounce_rays = stats.bounce_rays;
-        output.stats.bounce_samples = stats.bounce_samples;
-        output.stats.bounce_work = stats.bounce_work;
-        output.stats.model_bounce_faces = stats.model_bounce_faces;
-        output.stats.model_bounce_samples = stats.model_bounce_samples;
-        output.stats.bump_faces = stats.bump_faces;
-        output.stats.bump_lightmaps = stats.bump_lightmaps;
-        output.stats.smoothed_faces = stats.smoothed_faces;
-        output.stats.smoothed_corners = stats.smoothed_corners;
-        output.stats.normal_work = stats.normal_work;
-        output.stats.smoothing_angle = options.smoothing_angle;
-    }
-    if options.physics == PhysicsMode::Engine {
-        control.advance(Stage::Physics)?;
-        let stats = physics::bake(
-            &map,
-            &models,
-            &water,
-            physics::Settings {
-                vmf,
-                fs,
-                sources: material_sources
-                    .as_ref()
-                    .ok_or("Engine physics source owner is missing")?,
-            },
-            &mut bsp,
-            &mut output.report,
-            control,
-        )?;
-        output.stats.physics_models = stats.models;
-        output.stats.physics_solids = stats.solids;
-        output.stats.physics_convexes = stats.convexes;
-        output.stats.physics_bytes = stats.bytes;
-        output.stats.physics_fluids = stats.fluids;
-        output.stats.physics_mesh_triangles = stats.mesh_triangles;
-        output.stats.physics_surface_properties = stats.surface_properties;
     }
     control.checkpoint()?;
     if let Some((mut manifest, entries)) = reflection_plan {
@@ -2067,6 +2097,7 @@ pub fn compile_with_source_controlled(
     };
     output.stats.lighting_mode = options.lighting;
     output.stats.physics_mode = options.physics;
+    output.stats.postprocess = PostprocessReport::new(options);
     output.stats.visibility_mode = options.visibility;
     let prepared = if let Err(message) = options
         .validate()

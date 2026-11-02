@@ -714,6 +714,9 @@ pub struct CompileSettingsArgs {
     pub lighting: Option<String>,
     /// none (default) or engine; engine uses the verified installed CS:S Linux64 library in an isolated worker.
     pub physics: Option<String>,
+    /// lighting_then_physics (factory default) or physics_then_lighting. Changes actual pass order after fixed geometry/VIS assembly and before packing, reflection capture and publication. Disabled passes stay disabled. Omitted/null retains the current order; unknown values reject atomically.
+    #[schemars(extend("enum" = ["lighting_then_physics", "physics_then_lighting", null]))]
+    pub postprocess_order: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

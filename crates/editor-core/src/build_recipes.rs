@@ -47,9 +47,10 @@ impl Recipe {
             .options()
             .expect("recipe settings are validated");
         let description = format!(
-            "{} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
+            "{} · {} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
             options.lighting.label(),
             options.physics.label(),
+            options.postprocess_order.label(),
             options.visibility.label(),
             options.sky_quality.label(),
             compiler::bounce_label(options.bounces),
@@ -154,6 +155,7 @@ pub(crate) fn builtins() -> [Recipe; 2] {
             settings: compiler::Options {
                 lighting: compiler::LightingMode::DirectLdr,
                 physics: compiler::PhysicsMode::Engine,
+                postprocess_order: compiler::PostprocessOrder::LightingThenPhysics,
                 sky_quality: compiler::SkyQuality::Detailed,
                 visibility: compiler::VisibilityMode::Detailed,
                 bounces: compiler::MAX_LIGHT_BOUNCES,

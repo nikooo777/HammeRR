@@ -33,6 +33,10 @@ export component CompileWindow inherits Window {
     callback cancel-recipe-edit();
     callback reload-recipes();
     in property <bool> recipes-reload-enabled;
+    in property <[string]> postprocess-orders;
+    in-out property <string> selected-postprocess-order <=> postprocess-selector.current-value;
+    in property <string> postprocess-plan;
+    callback change-postprocess-order(int);
     in property <int> lighting-choice;
     in property <bool> lighting-enabled;
     in property <string> lighting-description;
@@ -167,6 +171,18 @@ export component CompileWindow inherits Window {
                     Rectangle { horizontal-stretch: 1; }
                 }
                 Text { text: "Recipes change the settings below. Apply recipe does not start a build. Active builds freeze settings and recipe edits."; wrap: word-wrap; color: Theme.text-muted; }
+                HorizontalLayout {
+                    spacing: Theme.space-lg;
+                    Text { text: "Postprocess order"; vertical-alignment: center; }
+                    postprocess-selector := ComboBox {
+                        model: root.postprocess-orders;
+                        enabled: root.lighting-enabled;
+                        accessible-label: "Postprocess order";
+                        selected => { root.change-postprocess-order(self.current-index); }
+                    }
+                }
+                Text { text: "Geometry and visibility run first. Packing, reflection capture and publication keep their fixed order."; wrap: word-wrap; color: Theme.text-muted; }
+                Text { text: root.postprocess-plan; wrap: word-wrap; color: Theme.text-muted; }
                 HorizontalLayout {
                     spacing: 12px;
                     Text { text: "Build lighting"; vertical-alignment: center; }

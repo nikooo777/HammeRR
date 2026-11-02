@@ -681,6 +681,7 @@ fn result_json(result: &CompileResult) -> Value {
 pub struct BuildSettingsUpdate<'a> {
     pub lighting: Option<&'a str>,
     pub physics: Option<&'a str>,
+    pub postprocess_order: Option<&'a str>,
     pub sky_quality: Option<&'a str>,
     pub visibility: Option<&'a str>,
     pub bounces: Option<u8>,
@@ -746,6 +747,8 @@ impl Session {
             .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
         let physics_choices = [compiler::PhysicsMode::None, compiler::PhysicsMode::Engine]
             .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
+        let postprocess_order_choices = compiler::PostprocessOrder::ALL
+            .map(|order| json!({"name":order.name(),"label":order.label()}));
         let sky_choices = [compiler::SkyQuality::Fast, compiler::SkyQuality::Balanced, compiler::SkyQuality::Detailed].map(|quality| json!({"name":quality.name(), "label":quality.label(), "directions":quality.directions()}));
         let visibility_choices = [compiler::VisibilityMode::Fast, compiler::VisibilityMode::Detailed].map(|mode| json!({"name":mode.name(), "label":mode.label(), "description":mode.description()}));
         let bounce_choices = compiler::BOUNCE_LABELS
@@ -763,6 +766,9 @@ impl Session {
             None
         };
         settings["lighting_work_limit"] = self.compilation.options.lighting_work_limit.into();
+        settings["postprocess_order"] = self.compilation.options.postprocess_order.name().into();
+        settings["postprocess_order_choices"] = json!(postprocess_order_choices);
+        settings["postprocess_plan"] = json!(self.compilation.options.postprocess_plan());
         settings["light_value_bindings"] = instance_reference::light_value_binding_scope();
         settings["material_emission_description"] = "World settings → Emission file (_hammerr_emission_file) selects an optional mounted relative declaration file. File contents and source assets validate at compile time. Records are [ldr:|hdr:] material R G B brightness; add texture: before the material to multiply radiance by nearest mip0 base-texture RGB with the 2.2 conversion and stored UV clamp/repeat. One mode per material; unsupported or changed textures reject. Sources are drawn opaque world/detail faces or eligible stationary func_brush models with Shadows Yes, using their compiled initial pose. Moving, unrequested and MDL emitting models are unavailable. By default, finite-area sources use sampled baked lighting and dynamic receivers use indexed ambient only. Exact emission visibility (_hammerr_emission_exact_visibility) is a separate default-off World 0/1 policy requiring a nonblank Emission file. It requests bounded exact rational finite-source shadow subtraction for uniquely owned world/detail or eligible stationary Shadows Yes func_brush emitting faces at root or assembled-child scope. Exact sources use a certified ordinary native outward triangle fan with a simple convex projection, without primitive overrides or displacement. Planar and nonplanar faces are admitted only within that fan certificate. Each nondegenerate original native triangle uses its actual plane for facing, support, clipping and the finite-area kernel; all source coordinates are retained. Nonzero-residual planar texture partitions keep their exact original-face coverage proof. Nonplanar textures require exact subcoverage of each original native fan triangle before RGB groups merge. The native fan must cover the actual surface once. Each subcoverage must cover its original native triangle once, with exact target-plane support, positive outward area, target containment, pairwise disjoint interiors and exact total projected area across all RGB groups, including black, with no floating coverage allowance. Existing planar, sampled and native point approximation paths are unchanged. Colour selection retains nearest mip0 RGB and binary64 UV semantics; the coverage proof does not certify real-arithmetic UV boundaries or native filtering parity. The retained plane keeps original custody and native direct-emission semantics; every applicable owning hull still blocks light to other receivers, including real source self-occlusion. The whole emitting BSP face is excluded from its own emission; fan triangles do not exchange that face's light, and receiver grids stay unchanged, including retained-plane sampling for brush receivers. It uses all applicable original opaque or supported binary-cutout brush hulls certified closed, bounded and convex from their final planes, including oblique planes, plus actual two-sided opaque or supported binary-cutout native terrain and static-prop mesh triangles. Cutouts use the retained static alpha sampler, transform, nearest mip0 classification and clamp/repeat. Brush masks require Brush texture shadows; prop masks require the original MDL CAST_TEXTURE_SHADOWS flag. No prerequisite is enabled automatically. Exact hull events use strict segment endpoints and maximum coverage at exactly coincident boundary faces; sampled near-tie tolerance bands remain separate. Fragment conversion must certify binary64 kernel vertices exactly on each actual source triangle plane and all converted coverage inside the exact visible region. Terrain and prop emitting sources, moving, parented or unrequested brush-model emitting sources, and fractional/colored transmission or unqualified prop shadow providers remain unsupported. Unsupported providers, uncertain source support, unqualified fragment conversion/conditioning and exhausted bounds reject without sampled fallback or BSP publication. Native direct emission (_hammerr_emission_native_direct) is a default-off World 0/1 policy requiring a nonblank Emission file. It adds native selected/folded runtime direct point approximations at constant-RGB integration-triangle centroids and removes only intrinsic direct emission from indexed ambient; baked maps, VHV, detail direct and reflected ambient remain, with emission visibility selected independently. Native light slots and angular/folding behavior do not reproduce finite-area response. The inherited full-VHV native path can add static-cache lighting when dynamic lights affect the prop. Native direct emission implies no shader glow or exact finite-source runtime response. Turn off both emission policies before clearing Emission file, or change them in one draft. Default-off paired emission keeps the existing authored HDR WorldLight requirement. Fullbright validates without baking or native emission records.".into();
         let native_emission =
@@ -1112,6 +1118,7 @@ impl Session {
         let BuildSettingsUpdate {
             lighting,
             physics,
+            postprocess_order,
             sky_quality,
             visibility,
             bounces,
@@ -1166,6 +1173,10 @@ impl Session {
                 .map(compiler::PhysicsMode::parse)
                 .transpose()?
                 .unwrap_or(self.compilation.options.physics),
+            postprocess_order: postprocess_order
+                .map(compiler::PostprocessOrder::parse)
+                .transpose()?
+                .unwrap_or(self.compilation.options.postprocess_order),
         }
         .validate()?;
         if self.closing {
@@ -1189,9 +1200,10 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
+                    "Build settings: {} · {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
                     options.lighting.label(),
                     options.physics.label(),
+                    options.postprocess_order.label(),
                     options.visibility.label(),
                     options.bounces,
                     options.smoothing_angle,
@@ -1814,6 +1826,8 @@ impl Session {
                 "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"bake_static_prop_vertices":job.options.bake_static_prop_vertices,"pack_sky_assets":job.options.pack_sky_assets,"pack_water_assets":job.options.pack_water_assets,"pack_static_prop_assets":job.options.pack_static_prop_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.guarded && job.content_epoch != self.content_epoch) || dependency_issue.is_some() || static_prop_source_issue.is_some() || material_source_issue.is_some(),"static_prop_source_issue":static_prop_source_issue,"material_source_issue":material_source_issue,"result":job.result()});
             status["settings"]["lighting_work_limit"] = job.options.lighting_work_limit.into();
+            status["settings"]["postprocess_order"] = job.options.postprocess_order.name().into();
+            status["postprocess_plan"] = json!(job.options.postprocess_plan());
             status["settings"]["brush_texture_shadows"] = job.options.brush_texture_shadows.into();
             status["settings"]["colored_texture_shadows"] = job.options.colored_texture_shadows.into();
             status["settings"]["reflect_static_props"] = job.options.reflect_static_props.into();

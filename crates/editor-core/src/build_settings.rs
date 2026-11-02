@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct BuildSettings {
     pub lighting: String,
     pub physics: String,
+    #[serde(default = "default_postprocess_order")]
+    pub postprocess_order: String,
     pub sky_quality: String,
     pub visibility: String,
     pub bounces: u8,
@@ -34,6 +36,12 @@ pub struct BuildSettings {
     pub refine_ambient_probes: bool,
 }
 
+fn default_postprocess_order() -> String {
+    compiler::PostprocessOrder::LightingThenPhysics
+        .name()
+        .into()
+}
+
 fn default_lighting_work_limit() -> u64 {
     compiler::DEFAULT_LIGHTING_WORK_LIMIT
 }
@@ -53,6 +61,7 @@ impl BuildSettings {
         Self {
             lighting: options.lighting.name().into(),
             physics: options.physics.name().into(),
+            postprocess_order: options.postprocess_order.name().into(),
             sky_quality: options.sky_quality.name().into(),
             visibility: options.visibility.name().into(),
             bounces: options.bounces,
@@ -74,6 +83,7 @@ impl BuildSettings {
         compiler::Options {
             lighting: compiler::LightingMode::parse(&self.lighting)?,
             physics: compiler::PhysicsMode::parse(&self.physics)?,
+            postprocess_order: compiler::PostprocessOrder::parse(&self.postprocess_order)?,
             sky_quality: compiler::SkyQuality::parse(&self.sky_quality)?,
             visibility: compiler::VisibilityMode::parse(&self.visibility)?,
             bounces: self.bounces,
@@ -112,6 +122,7 @@ impl BuildSettings {
         crate::session::compilation::BuildSettingsUpdate {
             lighting: Some(&self.lighting),
             physics: Some(&self.physics),
+            postprocess_order: Some(&self.postprocess_order),
             sky_quality: Some(&self.sky_quality),
             visibility: Some(&self.visibility),
             bounces: Some(self.bounces),

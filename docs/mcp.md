@@ -798,6 +798,28 @@ See [Color correction](color-correction.md) for target and resource limits.
 4. Poll `get_compile_status`.
 5. Inspect diagnostics before calling `launch_game`.
 
+Set `postprocess_order:"lighting_then_physics"` (the default) or
+`"physics_then_lighting"` through `set_compile_settings` to choose the actual
+lighting/physics execution order. Omitting the field or passing `null` keeps
+the applied order; unknown values reject the update atomically.
+`get_compile_settings` reports `postprocess_order`, shared
+`postprocess_order_choices` and the effective `postprocess_plan`, including
+skipped-stage reasons. Geometry and visibility remain first; packing,
+reflection capture and publication keep their fixed order afterward.
+The plan includes `requested_order`, enabled-only `effective_stages`, two
+ordered `steps` (`stage`, `enabled`, `skip_reason`), `fixed_before`, `fixed_after`
+and a shared human-readable `summary`.
+
+Recipes and per-map settings retain the applied order. Older saved settings
+without the field use lighting before physics. Active jobs block settings and
+recipe edits and retain their captured order and plan in `get_compile_status`.
+Read `job.settings.postprocess_order` and `job.postprocess_plan` for that job;
+current settings do not replace its captured values.
+Finished results include `stats.postprocess.plan` and entered
+`stats.postprocess.stages` with each pass’s completed, failed or cancelled status.
+Skipped passes stay in the plan with reasons and do not appear as executed.
+External commands and arbitrary compiler-stage ordering are unavailable.
+
 `compile_map` waits for the build. `run_map` builds and launches through the same job system.
 All three accept `path` for the BSP destination and optional `expected_generation`;
 use `document_id` to select a map. Unknown argument names are errors. Omitting

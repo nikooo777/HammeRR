@@ -3,7 +3,8 @@ use std::process::ExitCode;
 
 use compiler::{
     CompileContext, Control, FileIdentity, Level, LightingMode, Options, OutputLease, PhysicsMode,
-    WriteReservation, compile_with_source_controlled, finalize_reflections, instances,
+    PostprocessOrder, WriteReservation, compile_with_source_controlled, finalize_reflections,
+    instances,
 };
 use source_formats::file_publication::{BoundDestination, Policy};
 use source_formats::gamefs::GameFs;
@@ -11,7 +12,7 @@ use source_formats::vmf::Vmf;
 
 const MAX_PRINTED_LIGHTING_CONTRIBUTORS: usize = 8;
 
-const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--sky-quality fast|balanced|detailed] [--lighting-work-limit <units>] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--pack-water-assets] [--pack-static-prop-assets] [--bake-static-prop-vertices] [--reflect-static-props] [--brush-texture-shadows] [--colored-texture-shadows] [--refine-ambient-probes] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
+const USAGE: &str = "usage: hammerr-compile <map.vmf> --game <gameinfo.txt> [-o <map.bsp>] [--lighting fullbright|direct_ldr|direct_ldr_hdr] [--physics none|engine] [--postprocess-order lighting_then_physics|physics_then_lighting] [--sky-quality fast|balanced|detailed] [--lighting-work-limit <units>] [--visibility fast|detailed] [--bounces 0..4] [--smoothing-angle 0..90] [--pack-sky-assets] [--pack-water-assets] [--pack-static-prop-assets] [--bake-static-prop-vertices] [--reflect-static-props] [--brush-texture-shadows] [--colored-texture-shadows] [--refine-ambient-probes] [--generate-reflections] [--reflection-engine-root <directory>] [--reflection-steam-root <directory>]";
 
 fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
@@ -57,6 +58,10 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
                 let name = args.next().ok_or(USAGE)?;
                 options.physics = PhysicsMode::parse(name.to_str().ok_or(USAGE)?)?;
             }
+            Some("--postprocess-order") => {
+                let name = args.next().ok_or(USAGE)?;
+                options.postprocess_order = PostprocessOrder::parse(name.to_str().ok_or(USAGE)?)?;
+            }
             Some("--smoothing-angle") => {
                 let value = args.next().ok_or(USAGE)?;
                 options.smoothing_angle = value.to_str().ok_or(USAGE)?.parse::<u8>()?;
@@ -82,6 +87,13 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
                     compiler::DEFAULT_LIGHTING_WORK_LIMIT,
                     compiler::MIN_LIGHTING_WORK_LIMIT,
                     compiler::MAX_LIGHTING_WORK_LIMIT
+                );
+                let plan = Options::default().postprocess_plan();
+                println!(
+                    "\n--postprocess-order controls only the supported lighting/physics sequence; default {}. Disabled phases are skipped, and either phase's failure stops the remaining sequence. {} run before both; {} follows both. No external commands or other stage rearrangement are supported.",
+                    PostprocessOrder::default().name(),
+                    plan.fixed_before,
+                    plan.fixed_after
                 );
                 return Ok(());
             }
@@ -200,6 +212,17 @@ fn run(control: &Control) -> Result<(), Box<dyn std::error::Error>> {
     }
     if let Some(progress) = &output.stats.lighting_progress {
         print_lighting_progress(progress);
+    }
+    println!(
+        "Postprocess plan: {}",
+        output.stats.postprocess.plan.summary
+    );
+    for execution in &output.stats.postprocess.stages {
+        println!(
+            "Postprocess {}: {}",
+            execution.stage.label(),
+            execution.status.name()
+        );
     }
     let published = if let Some(lease) = &lease {
         if let Some(identity) = &source_identity {

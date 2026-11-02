@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 80.1% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 80.4% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -54,6 +54,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 
 | Area | Works | Not yet / limits |
 | --- | --- | --- |
+| [Build recipes](build-recipes.md) | Saved settings, lighting-first or physics-first postprocessing, explicit skipped passes and captured job plans. | Geometry/VIS preparation and final packing, reflection capture and publication retain their dependency order. External commands and arbitrary stage ordering are unavailable. |
 | [World and visibility](compile-and-play.md) | Structural/detail geometry, removal of whole internal caps by exact matching or axial rectangle containment between supported opaque detail brushes, GRATE materials, Fast and Detailed visibility, hints, portals, located split failures and visibility work/input counts. | Each cap needs one original brush side. No general detail-brush union or partial-cap splitting. General unsupported portal/model combinations. |
 | [Build diagnostics](compile-and-play.md#frame-a-build-diagnostic) | Structured messages, a copyable full report and recorded world-position framing through UI/MCP. | Latest finished job, first 100 rows and certified world positions only. Invalid, absent and unclassified coordinates remain unavailable; recorded positions do not resolve current authored objects. |
 | [Visibility inspection](visibility.md) | Owned world-leaf/cluster joins, original portal rings, native PVS/PAS pages, stored source clusters for native point/spot/surface lights, world-position/Perspective-camera lookup, framing, selected guides and complete bounded PVS/PAS destination bounds. | Potential visibility does not show native light winners, falloff, ray occlusion or exact finite-area visibility. Declared f32 classification has no engine boundary bit-parity claim; destination guides cap at 512 leaves and native bounds are not exact cells; no compiled-cell picking or PRT import; freshness guards consumed compiler inputs, not a complete runtime material closure. |

@@ -189,6 +189,23 @@ fn visibility_details(stats: &serde_json::Value) -> String {
 
 fn refresh_current_settings(window: &CompileWindow, session: &Session) {
     let settings = session.compile_settings();
+    let postprocess_choice = settings["postprocess_order_choices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|choice| choice["name"] == settings["postprocess_order"]);
+    window.set_selected_postprocess_order(
+        postprocess_choice
+            .and_then(|choice| choice["label"].as_str())
+            .unwrap_or_default()
+            .into(),
+    );
+    window.set_postprocess_plan(
+        settings["postprocess_plan"]["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .into(),
+    );
     sky_packing::refresh(window, session);
     water_packing::refresh(window, session);
     static_prop_packing::refresh(window, session);
@@ -581,6 +598,13 @@ impl Controller {
             }
         });
         let settings = lock(shared).compile_settings();
+        let postprocess_labels = settings["postprocess_order_choices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
+            .collect::<Vec<_>>();
+        window.set_postprocess_orders(Rc::new(slint::VecModel::from(postprocess_labels)).into());
         let labels = settings["choices"]
             .as_array()
             .into_iter()
@@ -616,6 +640,34 @@ impl Controller {
             .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
             .collect::<Vec<_>>();
         window.set_bounce_modes(Rc::new(slint::VecModel::from(bounce_labels)).into());
+        window.on_change_postprocess_order({
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
+            move |choice| {
+                admitted(&window, &target, |window, shared| {
+                    let mut session = lock(shared);
+                    let settings = session.compile_settings();
+                    let result = usize::try_from(choice)
+                        .ok()
+                        .and_then(|index| settings["postprocess_order_choices"].get(index))
+                        .and_then(|choice| choice["name"].as_str())
+                        .ok_or_else(|| "Choose a supported postprocess order".to_string())
+                        .and_then(|order| {
+                            session.update_build_settings(
+                                Actor::User,
+                                crate::session::compilation::BuildSettingsUpdate {
+                                    postprocess_order: Some(order),
+                                    ..Default::default()
+                                },
+                            )
+                        });
+                    refresh_recipes(&window, &session, &recipes);
+                    window.set_message(match result {
+                        Ok(_) => "Postprocess order updated for the next build.".into(),
+                        Err(error) => error.into(),
+                    });
+                });
+            }
+        });
         window.on_change_smoothing_angle({
             let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
             move |angle| {
@@ -1382,9 +1434,13 @@ impl Controller {
         } else {
             "full map".to_owned()
         };
+        let postprocess_plan = job["postprocess_plan"]["summary"]
+            .as_str()
+            .map(|summary| format!("\nPostprocess plan at build start: {summary}"))
+            .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{material_emission}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{brush_global_shadows}{styles}{hdr}{lighting_progress}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}{postprocess_plan}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{material_emission}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{brush_global_shadows}{styles}{hdr}{lighting_progress}{smoothing}{physics}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),

@@ -4,7 +4,6 @@ use map_core::measurements::{self, Measurement, Measurements};
 use map_core::query::{Ray, SurfaceHit};
 use render::Camera;
 use serde_json::{Value, json};
-use source_formats::vmf::Vmf;
 
 use super::{Actor, Pointer, Session};
 
@@ -22,6 +21,16 @@ impl From<Endpoint> for measurements::Endpoint {
             Endpoint::End => Self::End,
         }
     }
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PickMode {
+    #[default]
+    Surface,
+    Plane,
 }
 
 const MAX_PICK_VIEWPORT_SIZE: u32 = super::viewport_pick::MAX_DIMENSION;
@@ -74,32 +83,54 @@ struct Draft {
 
 struct Picking {
     endpoint: Endpoint,
+    mode: PickMode,
     pub(super) context: super::viewport_pick::Context,
 }
 
-fn measurement_json(measurement: &Measurement, vmf: &Vmf) -> Value {
-    let start = measurement.resolve_endpoint(vmf, measurements::Endpoint::Start);
-    let end = measurement.resolve_endpoint(vmf, measurements::Endpoint::End);
-    let resolved = measurement.resolved(vmf);
-    let attachment = |endpoint| {
+fn measurement_json(measurement: &Measurement, resolver: &mut measurements::Resolver<'_>) -> Value {
+    let start = resolver.endpoint(measurement, measurements::Endpoint::Start);
+    let end = resolver.endpoint(measurement, measurements::Endpoint::End);
+    let resolved = resolver.measurement(measurement);
+    let attachment = |endpoint, point: &Result<DVec3, String>| {
+        if let Ok(Some(reference)) = measurement.surface_reference(endpoint) {
+            let mut report = match &reference.target {
+                measurements::SurfaceTarget::Brush { vertex_sides } => {
+                    json!({"kind":"brush_surface","vertex_sides":vertex_sides,"weights":reference.weights})
+                }
+                measurements::SurfaceTarget::Terrain {
+                    triangle,
+                    grid_size,
+                    indices,
+                    cage_corners,
+                } => {
+                    json!({"kind":"terrain_surface","triangle":triangle,"grid_size":grid_size,"indices":indices,"cage_corners":cage_corners,"weights":reference.weights})
+                }
+            };
+            report["object"] = json!(crate::identity::id_string(reference.owner));
+            report["solid"] = json!(reference.face.solid);
+            report["side"] = json!(reference.face.side);
+            report["available"] = json!(point.is_ok());
+            report["error"] = json!(point.as_ref().err());
+            return Some(report);
+        }
         measurement
             .origin_reference(endpoint)
             .ok()
             .flatten()
             .map(|id| {
-                let point = measurement.resolve_endpoint(vmf, endpoint);
                 match measurement.local_offset(endpoint).ok().flatten() {
                     Some(offset) => json!({"kind":"entity_local","object":format!("entity:{id}"),
-                        "local_offset":offset.to_array(),"available":point.is_ok(),"error":point.err()}),
+                        "local_offset":offset.to_array(),"available":point.is_ok(),"error":point.as_ref().err()}),
                     None => json!({"kind":"entity_origin","object":format!("entity:{id}"),
-                        "available":point.is_ok(),"error":point.err()}),
+                        "available":point.is_ok(),"error":point.as_ref().err()}),
                 }
             })
     };
+    let attachments = json!({"start":attachment(measurements::Endpoint::Start, &start),"end":attachment(measurements::Endpoint::End, &end)});
     json!({"id":measurement.id,"name":measurement.name,
         "start":start.ok().map(|point|point.to_array()),"end":end.ok().map(|point|point.to_array()),
         "stored_start":measurement.start.to_array(),"stored_end":measurement.end.to_array(),
-        "attachments":{"start":attachment(measurements::Endpoint::Start),"end":attachment(measurements::Endpoint::End)},
+        "attachments":attachments,
         "available":resolved.is_ok(),"error":resolved.as_ref().err(),
         "distance":resolved.as_ref().ok().map(Measurement::distance),
         "components":resolved.as_ref().ok().map(|measurement|measurement.components().to_array())})
@@ -187,12 +218,13 @@ impl Session {
     }
 
     pub fn measurement_state(&self) -> Value {
+        let mut resolver = measurements::Resolver::new(self.document.vmf());
         let (entries, metadata_error) = match self.measurements() {
             Ok(metadata) => (
                 metadata
                     .measurements
                     .iter()
-                    .map(|measurement| measurement_json(measurement, self.document.vmf()))
+                    .map(|measurement| measurement_json(measurement, &mut resolver))
                     .collect::<Vec<_>>(),
                 None,
             ),
@@ -200,14 +232,14 @@ impl Session {
         };
         let draft = self.measurements.draft.as_ref().map(|draft| {
             let picking = draft.picking.as_ref().map(|picking| json!({
-                "endpoint":picking.endpoint,"width":picking.context.size.0,"height":picking.context.size.1,
+                "endpoint":picking.endpoint,"mode":picking.mode,"width":picking.context.size.0,"height":picking.context.size.1,
                 "valid":self.checked_measurement_pick(draft.owner,draft.token).is_ok(),
                 "error":self.checked_measurement_pick(draft.owner,draft.token).err()}));
             let last_pick = draft.last_pick.map(|(endpoint, surface)| json!({"endpoint":endpoint,
                 "target":crate::identity::id_string(surface.hit.object),"solid":surface.hit.solid,
                 "side":surface.hit.side,"point":surface.hit.point.to_array(),"normal":surface.normal.to_array()}));
             json!({"token":draft.token,"owner":draft.owner.label(),"replace":draft.replace,
-                "measurement":measurement_json(&draft.measurement, self.document.vmf()),
+                "measurement":measurement_json(&draft.measurement, &mut resolver),
                 "picking":picking,"last_pick":last_pick,
                 "valid":self.checked_measurement(draft.token).is_ok(),
                 "error":self.checked_measurement(draft.token).err()})
@@ -219,8 +251,8 @@ impl Session {
             "edit_error":self.measurement_context().err(),
             "limits":{"measurements":measurements::MAX_MEASUREMENTS,"name_characters":measurements::MAX_NAME_CHARS,
                 "coordinate_extent":measurements::MAX_COORDINATE,"pick_viewport_dimension":MAX_PICK_VIEWPORT_SIZE},
-            "attachments":"Attach an endpoint to a point entity's authored origin, or capture its current world point in the entity's rigid local frame with attach_local. Local points follow authored Source orientation and translation with unit axes; model scale, parenting and mesh vertices are not evaluated. Absent angles mean zero; invalid or ambiguous authored orientation makes local attachments unavailable. References retain stable IDs through duplicate/delete/Undo. Missing, ambiguous, brush or invalid-origin targets remain unavailable with stored world provenance and no fallback. Reports use committed coordinates; viewport/render_view guides follow the render document during transform previews. Detach freezes only a resolvable point. Explicit world_endpoint replaces either attachment, including an unavailable one. Brush/surface attachments are unsupported.",
-            "picking":"Preview a ruler, then arm unattached start/end picking. Rays and viewport pixels use the first visible brush, terrain triangle or supported model mesh; misses preserve endpoints. No grid/plane fallback or snapping. Surface picks stay world points. Guides never enter picking."})
+            "attachments":"Attach origin/local follows point-entity translation or rigid orientation; model scale, parenting and animated mesh anchors are unsupported. Attach surface preserves the last picked authored brush/terrain point using stable face-vertex identities and triangle weights. Brush geometry must retain the selected ordinary face and its three incident-side vertex keys; terrain must retain its prepared triangle, grid size and ordered quad-cage identities. Compatible moves/transforms/sculpting resolve current geometry; removed, ambiguous, saved-hidden or incompatible targets are unavailable without stored-world fallback. Rulers persist through VMF save/reopen and Undo. Detach freezes only a resolvable point. Explicit world_endpoint replaces any attachment, including an unavailable one. Reports use committed coordinates; guides follow the render document during geometry previews.",
+            "picking":"Surface mode picks the first visible brush, terrain triangle or supported model mesh at its actual point. Surface picks stay world points until explicit Attach surface; model hits cannot become durable surface anchors. Plane mode explicitly intersects the configured workplane and uses its snapping setting; parallel/backward rays fail without fallback. Misses and stale picks preserve endpoints. Guides never enter picking."})
     }
 
     fn measurement_plan(
@@ -249,13 +281,13 @@ impl Session {
         };
         if let Some(existing) = existing {
             for endpoint in [measurements::Endpoint::Start, measurements::Endpoint::End] {
-                if existing.origin_reference(endpoint)?.is_some() {
+                if existing.attached(endpoint)? {
                     let point = existing
                         .resolve_endpoint(self.document.vmf(), endpoint)
                         .unwrap_or_else(|_| existing.stored_endpoint(endpoint));
                     if measurement.stored_endpoint(endpoint) != point {
                         return Err(format!(
-                            "The {} endpoint is attached to an entity; Detach or explicitly replace it with a world endpoint before editing coordinates",
+                            "The {} endpoint is attached; Detach or explicitly replace it with a world endpoint before editing coordinates",
                             endpoint.label()
                         ));
                     }
@@ -320,6 +352,26 @@ impl Session {
         size: (u32, u32),
         snapshot: &str,
     ) -> Result<Value, String> {
+        self.begin_measurement_pick_mode(
+            actor,
+            token,
+            endpoint,
+            PickMode::Surface,
+            (camera, size),
+            snapshot,
+        )
+    }
+
+    pub fn begin_measurement_pick_mode(
+        &mut self,
+        actor: Actor,
+        token: u64,
+        endpoint: Endpoint,
+        mode: PickMode,
+        view: (Camera, (u32, u32)),
+        snapshot: &str,
+    ) -> Result<Value, String> {
+        let (camera, size) = view;
         if snapshot != self.measurement_pick_stamp() {
             return Err("Measurement picking context changed; inspect Measurements again".into());
         }
@@ -327,12 +379,11 @@ impl Session {
         if draft.owner != actor {
             return Err("Review the other actor's measurement before picking an endpoint".into());
         }
-        if draft
-            .measurement
-            .origin_reference(endpoint.into())?
-            .is_some()
-        {
-            return Err("Detach the entity-origin endpoint or explicitly use a world endpoint before surface picking".into());
+        if draft.measurement.attached(endpoint.into())? {
+            return Err(
+                "Detach the attached endpoint or explicitly use a world endpoint before picking"
+                    .into(),
+            );
         }
         let context = super::viewport_pick::Context::capture(self, camera, size, "Measurement")?;
         if self.viewport_pick_conflict() {
@@ -340,7 +391,11 @@ impl Session {
                 "Finish the active viewport tool before picking a measurement endpoint".into(),
             );
         }
-        let picking = Picking { endpoint, context };
+        let picking = Picking {
+            endpoint,
+            mode,
+            context,
+        };
         self.measurements.serial += 1;
         let draft = self.measurements.draft.as_mut().unwrap();
         draft.token = self.measurements.serial;
@@ -376,13 +431,23 @@ impl Session {
         token: u64,
         ray: Ray,
     ) -> Result<Value, String> {
-        let endpoint = self.checked_measurement_pick(actor, token)?.endpoint;
-        let surface = self.placement_surface(&[], ray, true)?;
+        let picking = self.checked_measurement_pick(actor, token)?;
+        let endpoint = picking.endpoint;
+        let (point, surface) = match picking.mode {
+            PickMode::Surface => {
+                let surface = self.placement_surface(&[], ray, true)?;
+                (surface.hit.point, Some(surface))
+            }
+            PickMode::Plane => (
+                DVec3::from_array(self.workplane_intersection(ray, None)?.point),
+                None,
+            ),
+        };
         let draft = self.measurements.draft.as_ref().unwrap();
         let mut measurement = draft.measurement.clone();
         match endpoint {
-            Endpoint::Start => measurement.start = surface.hit.point,
-            Endpoint::End => measurement.end = surface.hit.point,
+            Endpoint::Start => measurement.start = point,
+            Endpoint::End => measurement.end = point,
         }
         measurement.validate_available_endpoints(self.document.vmf())?;
         self.measurements.serial += 1;
@@ -390,7 +455,7 @@ impl Session {
         draft.token = self.measurements.serial;
         draft.measurement = measurement;
         draft.picking = None;
-        draft.last_pick = Some((endpoint, surface));
+        draft.last_pick = surface.map(|surface| (endpoint, surface));
         self.scene_serial += 1;
         Ok(self.measurement_state())
     }
@@ -456,6 +521,34 @@ impl Session {
         self.replace_measurement_endpoint(measurement)
     }
 
+    pub fn attach_measurement_surface(
+        &mut self,
+        actor: Actor,
+        token: u64,
+        endpoint: Endpoint,
+    ) -> Result<Value, String> {
+        let mut measurement = self.editable_measurement(actor, token)?;
+        let (picked_endpoint, surface) = self
+            .measurements
+            .draft
+            .as_ref()
+            .unwrap()
+            .last_pick
+            .ok_or("Pick a brush or terrain surface point before attaching it")?;
+        if !matches!(
+            (picked_endpoint, endpoint),
+            (Endpoint::Start, Endpoint::Start) | (Endpoint::End, Endpoint::End)
+        ) {
+            return Err(
+                "Pick this endpoint on a brush or terrain surface before attaching it".into(),
+            );
+        }
+        let reference = measurements::SurfaceReference::capture(&self.document, surface)?;
+        measurement.set_surface_reference(endpoint.into(), reference)?;
+        measurement.set_stored_endpoint(endpoint.into(), surface.hit.point);
+        self.replace_measurement_endpoint(measurement)
+    }
+
     pub fn attach_measurement_local(
         &mut self,
         actor: Actor,
@@ -482,7 +575,7 @@ impl Session {
         endpoint: Endpoint,
     ) -> Result<Value, String> {
         let mut measurement = self.editable_measurement(actor, token)?;
-        if measurement.origin_reference(endpoint.into())?.is_none() {
+        if !measurement.attached(endpoint.into())? {
             return Err("This measurement endpoint is already a world point".into());
         }
         let point = measurement.resolve_endpoint(self.document.vmf(), endpoint.into())?;
@@ -653,8 +746,9 @@ impl Session {
                 .retain(|measurement| measurement.id != draft.measurement.id);
             metadata.measurements.push(draft.measurement.clone());
         }
+        let mut resolver = measurements::Resolver::new(self.render_document().vmf());
         for measurement in &metadata.measurements {
-            let Ok(measurement) = measurement.resolved(self.render_document().vmf()) else {
+            let Ok(measurement) = resolver.measurement(measurement) else {
                 continue;
             };
             let start = measurement.start;

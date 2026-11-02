@@ -181,40 +181,7 @@ fn cage_corners(
     face: FaceId,
     mesh: &map_core::DisplacementMesh,
 ) -> Result<[Vec<u32>; 4], String> {
-    let topology = subobject::topology(solid).map_err(|error| error.to_string())?;
-    let boundary = topology
-        .faces
-        .iter()
-        .find(|candidate| candidate.side == face.side)
-        .filter(|face| face.vertices.len() == 4)
-        .ok_or("Terrain vertex requires an unambiguous quad cage")?;
-    let n = mesh.size;
-    if ![5, 9, 17].contains(&n) || mesh.base_positions.len() != n * n {
-        return Err("Terrain vertex grid is invalid".into());
-    }
-    let mut result = Vec::with_capacity(4);
-    for index in [0, (n - 1) * n, n * n - 1, n - 1] {
-        let point = mesh.base_positions[index];
-        let mut matches = boundary
-            .vertices
-            .iter()
-            .map(|&index| &topology.vertices[index])
-            .filter(|vertex| {
-                vertex
-                    .position
-                    .abs_diff_eq(point, map_core::plane::ON_EPSILON)
-            });
-        let corner = matches
-            .next()
-            .ok_or("Terrain grid corner has no cage identity")?;
-        if matches.next().is_some() {
-            return Err("Terrain grid corner has an ambiguous cage identity".into());
-        }
-        result.push(corner.sides.clone());
-    }
-    result
-        .try_into()
-        .map_err(|_| "Terrain grid corner identities are unavailable".into())
+    subobject::terrain_cage_corners(solid, face, mesh).map_err(|error| error.to_string())
 }
 
 impl Session {

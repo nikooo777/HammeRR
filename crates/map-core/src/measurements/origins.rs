@@ -36,8 +36,15 @@ impl Endpoint {
     }
 }
 
+pub(super) fn known_reference_key(key: &str) -> bool {
+    [Endpoint::Start, Endpoint::End]
+        .into_iter()
+        .any(|endpoint| key == endpoint.key() || key == endpoint.local_key())
+}
+
 pub(crate) fn reserved_origin_ids(vmf: &Vmf) -> HashSet<u32> {
-    vmf.extra
+    let mut ids: HashSet<u32> = vmf
+        .extra
         .iter()
         .filter(|node| node.key == KEY)
         .filter_map(Node::children)
@@ -49,7 +56,9 @@ pub(crate) fn reserved_origin_ids(vmf: &Vmf) -> HashSet<u32> {
         .filter_map(Node::as_str)
         .filter_map(|value| value.parse::<u32>().ok())
         .filter(|id| *id != 0)
-        .collect()
+        .collect();
+    ids.extend(super::surfaces::reserved_object_ids(vmf));
+    ids
 }
 
 pub fn entity_origin(vmf: &Vmf, object: ObjectId) -> Result<DVec3, String> {
@@ -202,6 +211,7 @@ impl Measurement {
     }
 
     pub fn set_origin_reference(&mut self, endpoint: Endpoint, entity: Option<u32>) {
+        self.clear_surface_reference(endpoint);
         self.extra.retain(|node| node.key != endpoint.local_key());
         if let Some(id) = entity {
             let reference = Node::string(endpoint.key(), id.to_string());
@@ -234,6 +244,14 @@ impl Measurement {
     }
 
     pub fn resolve_endpoint(&self, vmf: &Vmf, endpoint: Endpoint) -> Result<DVec3, String> {
+        super::Resolver::new(vmf).endpoint(self, endpoint)
+    }
+
+    pub(super) fn resolve_entity_endpoint(
+        &self,
+        vmf: &Vmf,
+        endpoint: Endpoint,
+    ) -> Result<DVec3, String> {
         if let Some(offset) = self.local_offset(endpoint)? {
             let id = self.origin_reference(endpoint)?.unwrap();
             let (origin, basis) = entity_local_pose(vmf, ObjectId::Entity(id))?;
@@ -248,13 +266,7 @@ impl Measurement {
     }
 
     pub fn resolved(&self, vmf: &Vmf) -> Result<Self, String> {
-        let mut result = self.clone();
-        result.start = self.resolve_endpoint(vmf, Endpoint::Start)?;
-        result.end = self.resolve_endpoint(vmf, Endpoint::End)?;
-        if result.start == result.end {
-            return Err("Measurement endpoints must be distinct; attached points coincide".into());
-        }
-        Ok(result)
+        super::Resolver::new(vmf).measurement(self)
     }
 
     pub fn validate_available_endpoints(&self, vmf: &Vmf) -> Result<(), String> {

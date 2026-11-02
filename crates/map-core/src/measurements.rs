@@ -11,6 +11,9 @@ use crate::{EditError, Transaction};
 mod origins;
 pub(crate) use origins::reserved_origin_ids;
 pub use origins::{Endpoint, entity_local_pose, entity_origin};
+mod surfaces;
+pub(crate) use surfaces::reserved_side_ids;
+pub use surfaces::{Resolver, SurfaceReference, SurfaceTarget};
 
 pub const KEY: &str = "hammerr_measurements";
 pub const MAX_MEASUREMENTS: usize = 128;
@@ -46,9 +49,23 @@ impl Measurement {
         }
         let start_origin = self.origin_reference(Endpoint::Start)?;
         let end_origin = self.origin_reference(Endpoint::End)?;
+        let start_surface = self.surface_reference(Endpoint::Start)?;
+        let end_surface = self.surface_reference(Endpoint::End)?;
+        if (start_origin.is_some() && start_surface.is_some())
+            || (end_origin.is_some() && end_surface.is_some())
+        {
+            return Err(
+                "Measurement endpoints cannot combine entity and surface attachments".into(),
+            );
+        }
         self.local_offset(Endpoint::Start)?;
         self.local_offset(Endpoint::End)?;
-        if self.start == self.end && start_origin.is_none() && end_origin.is_none() {
+        if self.start == self.end
+            && start_origin.is_none()
+            && end_origin.is_none()
+            && start_surface.is_none()
+            && end_surface.is_none()
+        {
             return Err("Measurement endpoints must be distinct".into());
         }
         if self
@@ -146,7 +163,7 @@ impl Measurements {
             .children()
             .ok_or("Measurements must be a metadata block")?;
         let version = field(nodes, "version")?;
-        if !matches!(version, "1" | "2") {
+        if !matches!(version, "1" | "2" | "3") {
             return Err("Unsupported measurement metadata version; metadata is preserved".into());
         }
         let mut result = Self::default();
@@ -195,6 +212,12 @@ impl Measurements {
                     .into(),
             );
         }
+        if version != "3" && result.has_surface_attachments() {
+            return Err(
+                "Surface measurement attachments require metadata version 3; metadata is preserved"
+                    .into(),
+            );
+        }
         Ok(result)
     }
 
@@ -203,6 +226,20 @@ impl Measurements {
             [Endpoint::Start, Endpoint::End]
                 .into_iter()
                 .any(|endpoint| measurement.local_offset(endpoint).ok().flatten().is_some())
+        })
+    }
+
+    fn has_surface_attachments(&self) -> bool {
+        self.measurements.iter().any(|measurement| {
+            [Endpoint::Start, Endpoint::End]
+                .into_iter()
+                .any(|endpoint| {
+                    measurement
+                        .surface_reference(endpoint)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                })
         })
     }
 
@@ -245,10 +282,33 @@ impl Measurements {
             .ok_or_else(|| "Measurement IDs exhausted".into())
     }
 
+    pub fn validate_retained_references(
+        &self,
+        removed_objects: &BTreeSet<u32>,
+        removed_sides: &BTreeSet<u32>,
+    ) -> Result<(), String> {
+        self.validate()?;
+        if !self.extra.is_empty() {
+            return Err(
+                "Unknown measurement metadata cannot be proven independent of removed IDs".into(),
+            );
+        }
+        for measurement in &self.measurements {
+            measurement.validate_retained_references(removed_objects, removed_sides)?;
+        }
+        Ok(())
+    }
+
     pub fn write(self, tx: &mut Transaction) -> Result<(), EditError> {
         let previous = Self::parse(tx.vmf()).map_err(EditError::Invalid)?;
         self.validate().map_err(EditError::Invalid)?;
-        let needs_local_version = self.has_local_attachments();
+        let required_version = if self.has_surface_attachments() {
+            "3"
+        } else if self.has_local_attachments() {
+            "2"
+        } else {
+            "1"
+        };
         let node = if self.measurements.is_empty() && self.extra.is_empty() {
             None
         } else {
@@ -259,8 +319,8 @@ impl Measurements {
             let mut nodes = Vec::new();
             for node in original_fields {
                 if node.key == "version" {
-                    nodes.push(if needs_local_version && node.as_str() == Some("1") {
-                        Node::string("version", "2")
+                    nodes.push(if node.as_str().unwrap() < required_version {
+                        Node::string("version", required_version)
                     } else {
                         node.clone()
                     });
@@ -283,10 +343,7 @@ impl Measurements {
                 }
             }
             if original.is_none() {
-                nodes.push(Node::string(
-                    "version",
-                    if needs_local_version { "2" } else { "1" },
-                ));
+                nodes.push(Node::string("version", required_version));
             }
             nodes.extend(pending.iter().map(Measurement::to_node));
             nodes.extend(pending_extra);

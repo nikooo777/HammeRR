@@ -131,6 +131,7 @@ pub mod visibility_categories;
 pub mod visibility_profiles;
 pub mod volume;
 pub mod working_region;
+pub mod workplane;
 pub mod workspace_preferences;
 pub use clipping::ClipPreview;
 
@@ -362,6 +363,7 @@ pub struct Session {
     fog_preview: fog::Selection,
     sky3d_preview: sky3d_preview::State,
     spatial: spatial::Settings,
+    workplane: workplane::State,
     grid_preferences: grid_preferences::State,
     pivot_preferences: pivot_preferences::State,
     preview_preferences: preview_preferences::State,
@@ -697,6 +699,7 @@ impl Session {
             fog_preview: fog::Selection::default(),
             sky3d_preview: sky3d_preview::State::default(),
             spatial: spatial::Settings::default(),
+            workplane: workplane::State::default(),
             grid_preferences: grid_preferences::State::default(),
             pivot_preferences: pivot_preferences::State::default(),
             preview_preferences: preview_preferences::State::default(),
@@ -1622,6 +1625,7 @@ impl Session {
         self.material_search.report = None;
         self.context.draft = None;
         self.measurements.reset_document();
+        self.workplane.reset_document();
         self.context.focused = None;
         self.context.serial += 1;
         self.property_draft = None;
@@ -1960,6 +1964,7 @@ impl Session {
             grid_size: self.spatial.grid_size as f32,
             grid_visible: self.spatial.grid_visible,
             grid_elevation: self.spatial.elevation as f32,
+            workplane: self.workplane.guide(),
             block_preview: self
                 .block_preview
                 .map(|(mins, maxs)| [mins.as_vec3(), maxs.as_vec3()]),

@@ -788,6 +788,7 @@ impl EditorServer {
             + Self::view_tools()
             + Self::prop_leaf_bounds_tools()
             + Self::working_region_tools()
+            + Self::workplane_tools()
             + Self::visibility_rules_tools()
     }
 }

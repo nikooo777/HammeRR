@@ -15,6 +15,50 @@ fn line(vertices: &mut Vec<LineVertex>, a: Vec3, b: Vec3, color: [u8; 4]) {
     }));
 }
 
+fn workplane_lines(vertices: &mut Vec<LineVertex>, grid: map_core::workplane::Grid) {
+    let frame = grid.frame();
+    let extent = grid.half_extent();
+    let spacing = grid.display_spacing();
+    let ticks = (extent / spacing).floor() as i32;
+    for axis in 0..2 {
+        for tick in -ticks..=ticks {
+            let mut start = glam::DVec2::splat(-extent);
+            start[axis] = f64::from(tick) * spacing;
+            let mut end = start;
+            end[1 - axis] = extent;
+            let color = if tick == 0 {
+                [[65, 185, 210, 255], [220, 175, 75, 255]][axis]
+            } else if tick % 8 == 0 {
+                [60, 105, 125, 255]
+            } else {
+                [36, 65, 80, 255]
+            };
+            if let (Ok(start), Ok(end)) = (frame.point_at(start), frame.point_at(end)) {
+                line(vertices, start.as_vec3(), end.as_vec3(), color);
+            }
+        }
+    }
+    let corners = [
+        glam::DVec2::new(-extent, -extent),
+        glam::DVec2::new(extent, -extent),
+        glam::DVec2::new(extent, extent),
+        glam::DVec2::new(-extent, extent),
+    ];
+    for index in 0..corners.len() {
+        if let (Ok(start), Ok(end)) = (
+            frame.point_at(corners[index]),
+            frame.point_at(corners[(index + 1) % corners.len()]),
+        ) {
+            line(
+                vertices,
+                start.as_vec3(),
+                end.as_vec3(),
+                [85, 140, 160, 255],
+            );
+        }
+    }
+}
+
 pub(crate) fn overlay_lines(
     camera: &Camera,
     size: (u32, u32),
@@ -63,6 +107,9 @@ pub(crate) fn overlay_lines(
         }
     }
     let grid_count = vertices.len();
+    if let Some(workplane) = options.workplane {
+        workplane_lines(&mut vertices, workplane);
+    }
     if let Some([mins, maxs]) = options.block_preview {
         for axis in 0..3 {
             let a = (axis + 1) % 3;

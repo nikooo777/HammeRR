@@ -1,6 +1,10 @@
 use super::*;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MeasurementsInspectArgs {}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(extend("type" = "object"))]
 pub enum MeasurementArgs {
@@ -14,6 +18,8 @@ pub enum MeasurementArgs {
     BeginPick {
         token: u64,
         endpoint: crate::session::measurements::Endpoint,
+        /// surface (default) or plane; plane explicitly uses the reference plane.
+        mode: Option<crate::session::measurements::PickMode>,
         width: u32,
         height: u32,
         camera: Option<CameraSpec>,
@@ -43,6 +49,14 @@ pub enum MeasurementArgs {
         token: u64,
         endpoint: crate::session::measurements::Endpoint,
         object: String,
+    },
+    AttachSurface {
+        token: u64,
+        endpoint: crate::session::measurements::Endpoint,
+    },
+    Detach {
+        token: u64,
+        endpoint: crate::session::measurements::Endpoint,
     },
     DetachOrigin {
         token: u64,

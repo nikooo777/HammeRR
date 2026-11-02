@@ -45,3 +45,5 @@ mod visibility_rules;
 pub(super) use visibility_rules::*;
 mod workspace_preferences;
 pub(super) use workspace_preferences::*;
+mod workplane;
+pub(super) use workplane::*;

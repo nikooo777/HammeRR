@@ -10,7 +10,8 @@ use slint::{ComponentHandle, VecModel};
 
 use crate::runtime::{DocumentAccess, DocumentContinuation};
 
-use crate::session::measurements::{Endpoint, Request};
+use crate::session::measurements::{Endpoint, PickMode, Request};
+use crate::session::workplane::Update as PlaneUpdate;
 use crate::session::{Actor, Pointer, Session};
 use crate::{MeasurementRow, MeasurementsWindow};
 
@@ -25,10 +26,17 @@ struct Form {
     dirty: bool,
 }
 
+#[derive(Default)]
+struct PlaneForm {
+    snapshot: String,
+    dirty: bool,
+}
+
 pub struct Controller {
     pub window: MeasurementsWindow,
     form: Rc<RefCell<Form>>,
     viewport: Rc<Cell<(u32, u32)>>,
+    plane: Rc<RefCell<PlaneForm>>,
 }
 
 fn coordinate(value: &str) -> Result<f64, String> {
@@ -145,7 +153,11 @@ fn refresh(window: &MeasurementsWindow, session: &Session, form: &RefCell<Form>)
         let attached = attachment.is_some_and(|data| !data.is_null());
         let status = attachment.filter(|data|!data.is_null()).map(|data| {
             let object = data["object"].as_str().unwrap_or("entity");
-            let target = if data["kind"] == "entity_local" {
+            let target = if data["kind"] == "brush_surface" {
+                format!("surface point on solid:{} / side:{}", data["solid"], data["side"])
+            } else if data["kind"] == "terrain_surface" {
+                format!("terrain surface point on solid:{} / side:{} · triangle {} · grid {}", data["solid"], data["side"], data["triangle"], data["grid_size"])
+            } else if data["kind"] == "entity_local" {
                 match serde_json::from_value::<[f64; 3]>(data["local_offset"].clone()) {
                     Ok(offset) => {
                         let [x, y, z] = offset.map(|value| {
@@ -163,7 +175,7 @@ fn refresh(window: &MeasurementsWindow, session: &Session, form: &RefCell<Form>)
                 Some(error) => format!("{name}: {object} {target} unavailable — {error}. Stored coordinates shown; Use {name} world explicitly replaces this reference."),
                 None => format!("{name}: follows {object} {target}. Detach freezes its current world point."),
             }
-        }).unwrap_or_else(||format!("{name}: exact world point. Enter an entity ID or leave blank to use the selected point entity."));
+        }).unwrap_or_else(||format!("{name}: fixed world point. Entity attachments use an ID or the selected point entity; surface attachments use the endpoint's last surface pick."));
         match endpoint {
             Endpoint::Start => {
                 window.set_start_attached(attached);
@@ -175,35 +187,35 @@ fn refresh(window: &MeasurementsWindow, session: &Session, form: &RefCell<Form>)
             }
         }
     }
-    let entries = session
-        .measurements()
-        .map(|metadata| {
-            metadata
-                .measurements
-                .into_iter()
-                .map(|measurement| {
-                    let detail = match measurement.resolved(session.document().vmf()) {
-                        Ok(resolved) => {
-                            let delta = resolved.components();
-                            format!(
-                                "{:.3} units · ΔX {:+.3} · ΔY {:+.3} · ΔZ {:+.3}",
-                                resolved.distance(),
-                                delta.x,
-                                delta.y,
-                                delta.z
-                            )
-                        }
-                        Err(error) => format!("Unavailable: {error}"),
-                    };
-                    MeasurementRow {
-                        id: measurement.id.to_string().into(),
-                        name: measurement.name.clone().into(),
-                        detail: detail.into(),
+    let entries = state["measurements"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|measurement| {
+            let detail = if let Some(error) = measurement["error"].as_str() {
+                format!("Unavailable: {error}")
+            } else {
+                match (
+                    measurement["distance"].as_f64(),
+                    serde_json::from_value::<[f64; 3]>(measurement["components"].clone()),
+                ) {
+                    (Some(distance), Ok([x, y, z])) => {
+                        format!("{distance:.3} units · ΔX {x:+.3} · ΔY {y:+.3} · ΔZ {z:+.3}")
                     }
-                })
-                .collect::<Vec<_>>()
+                    _ => "Unavailable: measurement coordinates could not be resolved".into(),
+                }
+            };
+            MeasurementRow {
+                id: measurement["id"]
+                    .as_u64()
+                    .unwrap_or_default()
+                    .to_string()
+                    .into(),
+                name: measurement["name"].as_str().unwrap_or_default().into(),
+                detail: detail.into(),
+            }
         })
-        .unwrap_or_default();
+        .collect::<Vec<_>>();
     window.set_measurements(Rc::new(VecModel::from(entries)).into());
     let status = if let Some(error) = state["metadata_error"].as_str() {
         format!(
@@ -224,14 +236,25 @@ fn refresh(window: &MeasurementsWindow, session: &Session, form: &RefCell<Form>)
         )
     } else if let Some(error) = draft["measurement"]["error"].as_str() {
         format!(
-            "Ruler unavailable: {error}. Attach a valid origin or explicitly use a world endpoint before Apply."
+            "Ruler unavailable: {error}. Attach a valid point or explicitly use a world endpoint before Apply."
         )
     } else if form.dirty {
         "Endpoints or name changed. Preview again before Apply.".into()
     } else if picking {
-        draft["picking"]["error"].as_str().map(str::to_string).unwrap_or_else(||format!(
-            "Pick the {} endpoint on a visible surface. Escape cancels picking and keeps the endpoints.",
-            draft["picking"]["endpoint"].as_str().unwrap_or("selected")))
+        draft["picking"]["error"]
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                format!(
+                    "Pick the {} endpoint {}. Escape cancels picking and keeps the endpoints.",
+                    draft["picking"]["endpoint"].as_str().unwrap_or("selected"),
+                    if draft["picking"]["mode"] == "plane" {
+                        "on the enabled reference plane"
+                    } else {
+                        "on a visible surface"
+                    }
+                )
+            })
     } else {
         "Preview is current. Apply stores the measurement in one Undo step.".into()
     };
@@ -296,18 +319,16 @@ fn adopt(
         extra: Vec::new(),
     };
     load(window, &measurement);
-    window.set_start_origin_object(
-        data["attachments"]["start"]["object"]
-            .as_str()
-            .unwrap_or("")
-            .into(),
-    );
-    window.set_end_origin_object(
-        data["attachments"]["end"]["object"]
-            .as_str()
-            .unwrap_or("")
-            .into(),
-    );
+    let origin_object = |endpoint: &str| {
+        let attachment = &data["attachments"][endpoint];
+        if attachment["kind"] == "entity_origin" || attachment["kind"] == "entity_local" {
+            attachment["object"].as_str().unwrap_or("")
+        } else {
+            ""
+        }
+    };
+    window.set_start_origin_object(origin_object("start").into());
+    window.set_end_origin_object(origin_object("end").into());
     let mut form = form.borrow_mut();
     form.selected = (draft["replace"] == true).then_some(measurement.id);
     form.owned_token = draft["token"].as_u64();
@@ -326,6 +347,7 @@ fn cancel_owned(session: &mut Session, form: &RefCell<Form>) {
 enum OriginAction {
     Attach,
     AttachLocal,
+    AttachSurface,
     Detach,
     World,
 }
@@ -367,6 +389,9 @@ fn change_origin(
                 _ => session.attach_measurement_local(Actor::User, token, endpoint, object),
             }
         }
+        OriginAction::AttachSurface => {
+            session.attach_measurement_surface(Actor::User, token, endpoint)
+        }
         OriginAction::Detach => session.detach_measurement_origin(Actor::User, token, endpoint),
         OriginAction::World => {
             let request = request(window, form.selected)?;
@@ -397,16 +422,188 @@ fn with_session<R>(
     }
 }
 
+fn load_plane(
+    window: &MeasurementsWindow,
+    form: &RefCell<PlaneForm>,
+    state: &Value,
+) -> Result<(), String> {
+    let vector = |key: &str| {
+        serde_json::from_value::<[f64; 3]>(state[key].clone())
+            .map_err(|_| format!("Reference plane {key} is unavailable"))
+    };
+    let [ox, oy, oz] = vector("origin")?.map(|value| value.to_string());
+    let [nx, ny, nz] = vector("normal")?.map(|value| value.to_string());
+    let [tx, ty, tz] = vector("tangent")?.map(|value| value.to_string());
+    let snapshot = state["snapshot"]
+        .as_str()
+        .ok_or("Reference plane snapshot is unavailable")?;
+    let grid = state["grid_size"]
+        .as_f64()
+        .ok_or("Reference plane grid spacing is unavailable")?;
+    let extent = state["half_extent"]
+        .as_f64()
+        .ok_or("Reference plane extent is unavailable")?;
+    window.set_plane_origin_x(ox.into());
+    window.set_plane_origin_y(oy.into());
+    window.set_plane_origin_z(oz.into());
+    window.set_plane_normal_x(nx.into());
+    window.set_plane_normal_y(ny.into());
+    window.set_plane_normal_z(nz.into());
+    window.set_plane_tangent_x(tx.into());
+    window.set_plane_tangent_y(ty.into());
+    window.set_plane_tangent_z(tz.into());
+    window.set_plane_grid(grid.to_string().into());
+    window.set_plane_extent(extent.to_string().into());
+    window.set_plane_enabled(state["enabled"] == true);
+    window.set_plane_show(state["show"] == true);
+    window.set_plane_snap(state["snap"] == true);
+    let mut form = form.borrow_mut();
+    form.snapshot = snapshot.into();
+    form.dirty = false;
+    Ok(())
+}
+
+fn refresh_plane(window: &MeasurementsWindow, session: &Session, form: &RefCell<PlaneForm>) {
+    let state = session.workplane_state();
+    let form = form.borrow();
+    let stale = state["snapshot"].as_str() != Some(form.snapshot.as_str());
+    window.set_plane_stale(stale);
+    window.set_plane_can_pick(
+        !stale && !form.dirty && state["enabled"] == true && state["ready"] == true,
+    );
+    window.set_plane_status(format!(
+        "Current plane: {} · {} · {}\nOrigin {} · normal {}\nGrid {} units · displayed spacing {} units{}",
+        if state["enabled"] == true {"Enabled"} else {"Disabled"},
+        if state["shown"] == true {"Grid shown"} else {"Grid hidden"},
+        if state["snap"] == true {"Plane snapping on"} else {"Plane snapping off"},
+        state["origin"], state["normal"], state["grid_size"], state["display_spacing"],
+        if form.dirty {"\nChanged fields need Apply plane."} else {""},
+    ).into());
+}
+
+fn plane_update(window: &MeasurementsWindow) -> Result<PlaneUpdate, String> {
+    Ok(PlaneUpdate {
+        origin: Some([
+            coordinate(&window.get_plane_origin_x())?,
+            coordinate(&window.get_plane_origin_y())?,
+            coordinate(&window.get_plane_origin_z())?,
+        ]),
+        normal: Some([
+            coordinate(&window.get_plane_normal_x())?,
+            coordinate(&window.get_plane_normal_y())?,
+            coordinate(&window.get_plane_normal_z())?,
+        ]),
+        tangent: Some([
+            coordinate(&window.get_plane_tangent_x())?,
+            coordinate(&window.get_plane_tangent_y())?,
+            coordinate(&window.get_plane_tangent_z())?,
+        ]),
+        enabled: Some(window.get_plane_enabled()),
+        show: Some(window.get_plane_show()),
+        snap: Some(window.get_plane_snap()),
+        grid_size: Some(coordinate(&window.get_plane_grid())?),
+        half_extent: Some(coordinate(&window.get_plane_extent())?),
+    })
+}
+
+#[derive(Clone, Copy)]
+enum PlaneAction {
+    Apply,
+    Reset,
+    Reload,
+}
+
+fn bind_plane(
+    window: &MeasurementsWindow,
+    access: &DocumentContinuation,
+) -> Rc<RefCell<PlaneForm>> {
+    let form = Rc::new(RefCell::new(PlaneForm::default()));
+    let callback = |action| {
+        let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
+        move || {
+            with_session(&window, &access, |window, session| {
+                let snapshot = form.borrow().snapshot.clone();
+                let result = match action {
+                    PlaneAction::Apply => plane_update(window).and_then(|update| {
+                        session.set_workplane(Actor::User, update, Some(&snapshot))
+                    }),
+                    PlaneAction::Reset => session.reset_workplane(Actor::User, Some(&snapshot)),
+                    PlaneAction::Reload => Ok(session.workplane_state()),
+                };
+                match result.and_then(|state| load_plane(window, &form, &state)) {
+                    Ok(()) => window.set_plane_message(
+                        match action {
+                            PlaneAction::Apply => {
+                                "Reference plane applied. Plane picks use these guide settings."
+                            }
+                            PlaneAction::Reset => "Reference plane reset and disabled.",
+                            PlaneAction::Reload => {
+                                "Current reference plane loaded. Unapplied fields discarded."
+                            }
+                        }
+                        .into(),
+                    ),
+                    Err(error) => window.set_plane_message(error.into()),
+                }
+                refresh_plane(window, session, &form);
+            });
+        }
+    };
+    window.on_plane_apply(callback(PlaneAction::Apply));
+    window.on_plane_reset(callback(PlaneAction::Reset));
+    window.on_plane_reload(callback(PlaneAction::Reload));
+    window.on_plane_edited({
+        let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
+        move || {
+            with_session(&window, &access, |window, session| {
+                form.borrow_mut().dirty = true;
+                refresh_plane(window, session, &form);
+            });
+        }
+    });
+    window.on_plane_preset({
+        let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
+        move |preset| {
+            with_session(&window, &access, |window, session| {
+                let (normal, tangent) = match preset {
+                    0 => (DVec3::Z, DVec3::X),
+                    1 => (-DVec3::Y, DVec3::X),
+                    2 => (DVec3::X, DVec3::Y),
+                    _ => {
+                        window.set_plane_message("Choose XY, XZ or YZ orientation.".into());
+                        return;
+                    }
+                };
+                window.set_plane_normal_x(normal.x.to_string().into());
+                window.set_plane_normal_y(normal.y.to_string().into());
+                window.set_plane_normal_z(normal.z.to_string().into());
+                window.set_plane_tangent_x(tangent.x.to_string().into());
+                window.set_plane_tangent_y(tangent.y.to_string().into());
+                window.set_plane_tangent_z(tangent.z.to_string().into());
+                window.set_plane_enabled(true);
+                form.borrow_mut().dirty = true;
+                window.set_plane_message(
+                    "Orientation prepared at the entered origin. Apply plane to use it.".into(),
+                );
+                refresh_plane(window, session, &form);
+            });
+        }
+    });
+    form
+}
+
 impl Controller {
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let access = access.downgrade();
         let window = MeasurementsWindow::new()?;
+        let plane = bind_plane(&window, &access);
         let form = Rc::new(RefCell::new(Form::default()));
         let viewport = Rc::new(Cell::new((1024, 576)));
         for endpoint in [Endpoint::Start, Endpoint::End] {
             for action in [
                 OriginAction::Attach,
                 OriginAction::AttachLocal,
+                OriginAction::AttachSurface,
                 OriginAction::Detach,
                 OriginAction::World,
             ] {
@@ -443,6 +640,12 @@ impl Controller {
                     (Endpoint::End, OriginAction::AttachLocal) => {
                         window.on_attach_end_local(callback)
                     }
+                    (Endpoint::Start, OriginAction::AttachSurface) => {
+                        window.on_attach_start_surface(callback)
+                    }
+                    (Endpoint::End, OriginAction::AttachSurface) => {
+                        window.on_attach_end_surface(callback)
+                    }
                     (Endpoint::Start, OriginAction::Detach) => {
                         window.on_detach_start_origin(callback)
                     }
@@ -453,49 +656,55 @@ impl Controller {
             }
         }
         for endpoint in [Endpoint::Start, Endpoint::End] {
-            let (pick_window, access, form, viewport) = (
-                window.as_weak(),
-                access.clone(),
-                form.clone(),
-                viewport.clone(),
-            );
-            let pick = move || {
-                with_session(&pick_window, &access, |window, session| {
-                    let camera = session.camera();
-                    let snapshot = session.measurement_pick_stamp();
-                    let result = {
-                        let form = form.borrow();
-                        if form.dirty {
-                            Err("Preview the changed endpoints or name before picking".to_string())
-                        } else {
-                            form.owned_token
-                                .ok_or_else(|| {
-                                    "Preview or Review the measurement before picking".to_string()
-                                })
-                                .and_then(|token| {
-                                    session.begin_measurement_pick(
-                                        Actor::User,
-                                        token,
-                                        endpoint,
-                                        camera,
-                                        viewport.get(),
-                                        &snapshot,
-                                    )
-                                })
+            for mode in [PickMode::Surface, PickMode::Plane] {
+                let (pick_window, access, form, viewport) = (
+                    window.as_weak(),
+                    access.clone(),
+                    form.clone(),
+                    viewport.clone(),
+                );
+                let pick = move || {
+                    with_session(&pick_window, &access, |window, session| {
+                        let camera = session.camera();
+                        let snapshot = session.measurement_pick_stamp();
+                        let result = {
+                            let form = form.borrow();
+                            if form.dirty {
+                                Err("Preview the changed endpoints or name before picking"
+                                    .to_string())
+                            } else {
+                                form.owned_token
+                                    .ok_or_else(|| {
+                                        "Preview or Review the measurement before picking"
+                                            .to_string()
+                                    })
+                                    .and_then(|token| {
+                                        session.begin_measurement_pick_mode(
+                                            Actor::User,
+                                            token,
+                                            endpoint,
+                                            mode,
+                                            (camera, viewport.get()),
+                                            &snapshot,
+                                        )
+                                    })
+                            }
+                        };
+                        match result.and_then(|state| adopt(window, session, &form, &state)) {
+                            Ok(()) => {
+                                let _ = window.hide();
+                            }
+                            Err(error) => window.set_message(error.into()),
                         }
-                    };
-                    match result.and_then(|state| adopt(window, session, &form, &state)) {
-                        Ok(()) => {
-                            let _ = window.hide();
-                        }
-                        Err(error) => window.set_message(error.into()),
-                    }
-                    refresh(window, session, &form);
-                });
-            };
-            match endpoint {
-                Endpoint::Start => window.on_pick_start(pick),
-                Endpoint::End => window.on_pick_end(pick),
+                        refresh(window, session, &form);
+                    });
+                };
+                match (endpoint, mode) {
+                    (Endpoint::Start, PickMode::Surface) => window.on_pick_start(pick),
+                    (Endpoint::End, PickMode::Surface) => window.on_pick_end(pick),
+                    (Endpoint::Start, PickMode::Plane) => window.on_pick_start_plane(pick),
+                    (Endpoint::End, PickMode::Plane) => window.on_pick_end_plane(pick),
+                }
             }
         }
         window.on_cancel_pick({
@@ -731,8 +940,14 @@ impl Controller {
             }
         });
         window.on_cancel({
-            let (window, access, form) = (window.as_weak(), access.clone(), form.clone());
+            let (window, access, form, plane) = (
+                window.as_weak(),
+                access.clone(),
+                form.clone(),
+                plane.clone(),
+            );
             move || {
+                *plane.borrow_mut() = PlaneForm::default();
                 with_session(&window, &access, |_window, session| {
                     cancel_owned(session, &form);
                 });
@@ -754,6 +969,7 @@ impl Controller {
             window,
             form,
             viewport,
+            plane,
         })
     }
 
@@ -781,7 +997,10 @@ impl Controller {
             },
         )?;
         adopt(&self.window, session, &self.form, &state)?;
-        self.window.set_message("Surface endpoint picked. Check the exact coordinates, then pick the other endpoint or Apply.".into());
+        self.window.set_message(
+            "Endpoint picked. Check the exact coordinates, then pick the other endpoint or Apply."
+                .into(),
+        );
         self.refresh(session);
         let _ = self.window.show();
         Ok(())
@@ -804,9 +1023,16 @@ impl Controller {
 
     pub fn refresh(&self, session: &Session) {
         refresh(&self.window, session, &self.form);
+        refresh_plane(&self.window, session, &self.plane);
     }
 
     pub fn show(&self, session: &Session) -> Result<(), slint::PlatformError> {
+        if self.plane.borrow().snapshot.is_empty() {
+            self.window.set_plane_message("".into());
+            if let Err(error) = load_plane(&self.window, &self.plane, &session.workplane_state()) {
+                self.window.set_plane_message(error.into());
+            }
+        }
         if !self.window.window().is_visible()
             && (self.form.borrow().owned_token.is_none()
                 || self.form.borrow().owned_token

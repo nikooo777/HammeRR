@@ -1430,6 +1430,22 @@ finite `origin` and `vrad_brush_cast_shadows:"1"` through `set_entity_properties
 then use the same World emission file. Supported child poses are assembled once.
 Moving, parented or unrequested model sources reject.
 
+## Spatial guides
+
+Use `get_measurements` for ruler state, attachment availability and fresh snapshots.
+With `set_measurement`, preview a ruler, `begin_pick` in `surface` mode, then
+`pick_ray` or `pick_pixel`. Use `attach_surface` for the picked endpoint before
+`apply`. Brush and terrain references persist in the VMF. Incompatible targets
+report unavailable; `detach` requires a resolvable point, while `world_endpoint`
+explicitly replaces any attachment.
+
+Use `get_workplane` and `set_workplane` to configure a session-local reference
+plane. Set numeric axes with `update`, capture a fixed pose with `from_face` or
+`from_ray`, or use `reset`. Pass the returned `snapshot` to reject stale settings.
+`intersect_workplane` returns a checked forward intersection and optional snapping
+in plane coordinates. Ruler `begin_pick` with `mode: "plane"` uses this same policy.
+The plane clears on New/Open and does not edit the map, history or camera.
+
 ## Tool reference
 
 The server publishes the complete parameter schema for every tool.
@@ -1464,7 +1480,7 @@ These groups locate the available operations.
 | [Collapse references](instances.md#collapse-references-into-editable-geometry) | `get_instance_collapse`, `set_instance_collapse` |
 | [Linked paths](path-authoring.md) | `get_linked_path`, `set_linked_path` |
 | [Materials and face textures](textures.md) | `apply_surface_placement`, `begin_surface_placement_pick`, `begin_texture_stroke`, `browse_materials`, `cancel_face_preview`, `cancel_surface_placement`, `cancel_texture_stroke`, `commit_face_preview`, `commit_texture_stroke`, `edit_faces`, `find_material_faces`, `get_face_selection`, `get_material_search`, `get_material_source`, `get_surface_placement`, `get_surface_placement_sources`, `get_surface_sample`, `get_texture_stroke`, `paint_face_texture`, `pick_surface_placement`, `preview_material`, `preview_surface_placement`, `project_face_group`, `propagate_face_texture`, `reload_material_assets`, `reload_material_favorites`, `replace_materials`, `sample_face_texture`, `search_materials`, `select_faces`, `select_material_faces`, `set_material`, `set_material_favorite`, `update_texture_stroke`, `vary_face_uv` |
-| [Measurements](measurements.md) | `get_measurements`, `set_measurement` |
+| [Spatial guides](measurements.md) | `get_measurements`, `set_measurement`, `get_workplane`, `set_workplane`, `intersect_workplane` |
 | [Navigation defaults](navigation-defaults.md) | `get_navigation_settings`, `set_navigation_defaults`, `set_navigation_settings` |
 | [Overlays](overlays.md) | `apply_overlay`, `browse_overlay_targets`, `cancel_overlay`, `get_overlay_state`, `overlay_corner_handles`, `preview_overlay`, `preview_overlay_corners`, `preview_overlay_rebind`, `preview_overlay_refit`, `review_overlay` |
 | [Particles](particles.md) | `apply_particle_choice`, `begin_particle_choice`, `browse_particles`, `cancel_particle_choice`, `choose_particle`, `get_particle_choice`, `inspect_particle`, `reload_particle_assets` |

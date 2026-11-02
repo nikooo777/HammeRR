@@ -365,6 +365,7 @@ impl Document {
             touched: Vec::new(),
             start_positions: None,
             reserved_measurement_ids: None,
+            reserved_measurement_side_ids: None,
             world: None,
             extra: None,
             cordon: None,
@@ -519,6 +520,7 @@ pub struct Transaction<'a> {
     touched: Vec<(ObjectId, State)>,
     start_positions: Option<std::collections::HashMap<ObjectId, usize>>,
     reserved_measurement_ids: Option<HashSet<u32>>,
+    reserved_measurement_side_ids: Option<HashSet<u32>>,
     world: Option<Properties>,
     extra: Option<Vec<Node>>,
     cordon: Option<Option<Node>>,
@@ -597,10 +599,23 @@ impl Transaction<'_> {
     }
 
     pub fn new_side_id(&mut self) -> Result<u32, EditError> {
-        let id = u32::try_from(self.doc.next_side_id)
-            .map_err(|_| EditError::Invalid("Map face IDs are exhausted".into()))?;
-        self.doc.next_side_id += 1;
-        Ok(id)
+        if self.reserved_measurement_side_ids.is_none() {
+            self.reserved_measurement_side_ids =
+                Some(crate::measurements::reserved_side_ids(self.vmf()));
+        }
+        loop {
+            let id = u32::try_from(self.doc.next_side_id)
+                .map_err(|_| EditError::Invalid("Map face IDs are exhausted".into()))?;
+            self.doc.next_side_id += 1;
+            if !self
+                .reserved_measurement_side_ids
+                .as_ref()
+                .unwrap()
+                .contains(&id)
+            {
+                return Ok(id);
+            }
+        }
     }
 
     fn capture_object_order(&mut self) {
@@ -739,6 +754,7 @@ impl Transaction<'_> {
     pub(crate) fn set_editor_metadata(&mut self, key: &str, node: Option<Node>) {
         if key == crate::measurements::KEY {
             self.reserved_measurement_ids = None;
+            self.reserved_measurement_side_ids = None;
         }
         self.extra.get_or_insert_with(|| self.doc.vmf.extra.clone());
         let existing = self.doc.vmf.extra.iter().position(|node| node.key == key);

@@ -50,4 +50,5 @@ mod transform_pivot;
 mod view;
 
 mod working_region;
+mod workplane;
 mod workspace_preferences;

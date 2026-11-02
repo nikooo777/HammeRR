@@ -2,8 +2,7 @@ use glam::{DVec2, DVec3};
 use render::Projection;
 use serde::{Deserialize, Serialize};
 
-pub const MIN_GRID: f64 = 0.125;
-pub const MAX_GRID: f64 = 4096.0;
+pub use map_core::workplane::{MAX_GRID, MIN_GRID};
 pub const MAX_EXTENT: f64 = 65_536.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
@@ -53,11 +52,7 @@ impl Settings {
             depth: update.depth.unwrap_or(self.depth),
             draw_block: update.draw_block.unwrap_or(self.draw_block),
         };
-        if !next.grid_size.is_finite() || !(MIN_GRID..=MAX_GRID).contains(&next.grid_size) {
-            return Err(format!(
-                "Grid spacing must be between {MIN_GRID} and {MAX_GRID} units"
-            ));
-        }
+        map_core::workplane::validate_grid_spacing(next.grid_size)?;
         if !next.elevation.is_finite() || next.elevation.abs() > MAX_EXTENT {
             return Err(format!(
                 "Elevation must be finite and within ±{MAX_EXTENT} units"

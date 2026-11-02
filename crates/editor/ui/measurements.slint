@@ -1,15 +1,29 @@
-import { Theme } from "theme.slint";
+import { Theme, SectionHeader, MutedText } from "kit.slint";
 import { Button, CheckBox, LineEdit, ScrollView } from "widgets.slint";
 
 export struct MeasurementRow { id: string, name: string, detail: string }
 
+component GuideVectorRow inherits HorizontalLayout {
+    in property <string> label;
+    in-out property <string> value-x;
+    in-out property <string> value-y;
+    in-out property <string> value-z;
+    callback edited();
+    spacing: Theme.space;
+    Text { text: root.label; width: Theme.guide-field-label-width; color: Theme.text-muted; vertical-alignment: center; }
+    LineEdit { text <=> root.value-x; accessible-label: root.label + " X"; edited => { root.edited(); } }
+    LineEdit { text <=> root.value-y; accessible-label: root.label + " Y"; edited => { root.edited(); } }
+    LineEdit { text <=> root.value-z; accessible-label: root.label + " Z"; edited => { root.edited(); } }
+}
+
 export component MeasurementsWindow inherits Window {
     background: Theme.panel;
     title: "Measurements - HammeRR";
-    preferred-width: 860px;
-    preferred-height: 940px;
-    min-width: 760px;
-    min-height: 880px;
+    preferred-width: Theme.measurements-dialog-width;
+    preferred-height: Theme.measurements-dialog-height;
+    min-width: Theme.measurements-dialog-min-width;
+    min-height: Theme.measurements-dialog-min-height;
+    default-font-size: Theme.font;
     in property <[MeasurementRow]> measurements;
     in property <string> selected-id;
     in-out property <string> measurement-name;
@@ -38,6 +52,24 @@ export component MeasurementsWindow inherits Window {
     in property <string> preview-status;
     in property <string> result;
     in property <string> message;
+    in-out property <string> plane-origin-x: "0";
+    in-out property <string> plane-origin-y: "0";
+    in-out property <string> plane-origin-z: "0";
+    in-out property <string> plane-normal-x: "0";
+    in-out property <string> plane-normal-y: "0";
+    in-out property <string> plane-normal-z: "1";
+    in-out property <string> plane-tangent-x: "1";
+    in-out property <string> plane-tangent-y: "0";
+    in-out property <string> plane-tangent-z: "0";
+    in-out property <string> plane-grid: "16";
+    in-out property <string> plane-extent: "512";
+    in-out property <bool> plane-enabled;
+    in-out property <bool> plane-show: true;
+    in-out property <bool> plane-snap: true;
+    in property <bool> plane-can-pick;
+    in property <bool> plane-stale;
+    in property <string> plane-status;
+    in property <string> plane-message;
     callback choose(string);
     callback new-measurement();
     callback edited();
@@ -57,6 +89,15 @@ export component MeasurementsWindow inherits Window {
     callback detach-end-origin();
     callback world-start();
     callback world-end();
+    callback attach-start-surface();
+    callback attach-end-surface();
+    callback pick-start-plane();
+    callback pick-end-plane();
+    callback plane-edited();
+    callback plane-preset(int);
+    callback plane-apply();
+    callback plane-reset();
+    callback plane-reload();
     callback view-changed();
     callback cancel();
     forward-focus: dialog-focus;
@@ -69,102 +110,170 @@ export component MeasurementsWindow inherits Window {
         }
         VerticalLayout {
             padding: Theme.space-xl;
-            spacing: 12px;
+            spacing: Theme.space-lg;
             HorizontalLayout {
                 Text { text: "Measurements"; font-size: Theme.font-display; font-weight: 600; }
                 Rectangle { horizontal-stretch: 1; }
                 CheckBox { text: "Show guides"; checked <=> root.show-guides; toggled => { root.view-changed(); } }
             }
-            Text { text: "Persistent rulers · world points, entity origins or rigid entity-local points · X red, Y green, Z blue"; color: Theme.text-muted; wrap: word-wrap; }
-            Rectangle {
-                background: Theme.hover;
-                border-radius: 6px;
+            ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                vertical-stretch: 1;
                 VerticalLayout {
-                    padding: 10px;
-                    spacing: 8px;
-                    ScrollView {
-                        vertical-stretch: 1;
-                        min-height: 135px;
-                        VerticalLayout {
-                            spacing: 6px;
-                            alignment: start;
-                            for measurement in root.measurements: Button {
-                                text: measurement.name + "\n" + measurement.detail;
-                                primary: root.selected-id == measurement.id;
-                                min-height: 54px;
-                                max-height: 54px;
-                                vertical-stretch: 0;
-                                clicked => { root.choose(measurement.id); }
+                    padding-right: Theme.space;
+                    spacing: Theme.space-lg;
+                    rulers := SectionHeader { text: "RULERS"; }
+                    if rulers.expanded: VerticalLayout {
+                        spacing: Theme.space;
+                        Text { text: "Persistent rulers · fixed world points or attached entity, brush and terrain points · X red, Y green, Z blue"; color: Theme.text-muted; wrap: word-wrap; }
+                        Rectangle {
+                            background: Theme.hover;
+                            border-radius: Theme.radius;
+                            height: 220px;
+                            VerticalLayout {
+                                padding: Theme.space;
+                                spacing: Theme.space;
+                                ScrollView {
+                                    vertical-stretch: 1;
+                                    min-height: 135px;
+                                    VerticalLayout {
+                                        spacing: Theme.space-sm;
+                                        alignment: start;
+                                        for measurement in root.measurements: Button {
+                                            text: measurement.name + "\n" + measurement.detail;
+                                            primary: root.selected-id == measurement.id;
+                                            min-height: 54px;
+                                            max-height: 54px;
+                                            vertical-stretch: 0;
+                                            clicked => { root.choose(measurement.id); }
+                                        }
+                                        if root.measurements.length == 0: Text { text: "No saved measurements. Enter two endpoints, then Preview."; color: Theme.text-muted; wrap: word-wrap; }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    Button { text: "New measurement"; enabled: root.editable; clicked => { root.new-measurement(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Button { text: "Frame"; enabled: root.can-frame; clicked => { root.frame(); } }
+                                    Button { text: "Delete"; enabled: root.can-delete; clicked => { root.delete-measurement(); } }
+                                }
                             }
-                            if root.measurements.length == 0: Text { text: "No saved measurements. Enter two endpoints, then Preview."; color: Theme.text-muted; wrap: word-wrap; }
                         }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Text { text: "Name"; width: 50px; vertical-alignment: center; }
+                            LineEdit { enabled: root.editable; text <=> root.measurement-name; accessible-label: "Measurement name"; edited => { root.edited(); } }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Rectangle { width: 50px; }
+                            Text { horizontal-stretch: 1; text: "X"; color: Theme.axis-x; }
+                            Text { horizontal-stretch: 1; text: "Y"; color: Theme.axis-y; }
+                            Text { horizontal-stretch: 1; text: "Z"; color: Theme.axis-z; }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Text { text: "Start"; width: 50px; vertical-alignment: center; }
+                            LineEdit { enabled: root.editable && !root.start-attached; text <=> root.start-x; accessible-label: "Start X"; edited => { root.edited(); } }
+                            LineEdit { enabled: root.editable && !root.start-attached; text <=> root.start-y; accessible-label: "Start Y"; edited => { root.edited(); } }
+                            LineEdit { enabled: root.editable && !root.start-attached; text <=> root.start-z; accessible-label: "Start Z"; edited => { root.edited(); } }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Text { text: "End"; width: 50px; vertical-alignment: center; }
+                            LineEdit { enabled: root.editable && !root.end-attached; text <=> root.end-x; accessible-label: "End X"; edited => { root.edited(); } }
+                            LineEdit { enabled: root.editable && !root.end-attached; text <=> root.end-y; accessible-label: "End Y"; edited => { root.edited(); } }
+                            LineEdit { enabled: root.editable && !root.end-attached; text <=> root.end-z; accessible-label: "End Z"; edited => { root.edited(); } }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            LineEdit { text <=> root.start-origin-object; placeholder-text: "entity:<id> or selection"; accessible-label: "Start origin object"; enabled: root.can-attach; }
+                            Button { text: "Attach start origin"; enabled: root.can-attach; clicked => { root.attach-start-origin(); } }
+                            Button { text: "Attach start local"; enabled: root.can-attach; clicked => { root.attach-start-local(); } }
+                            Button { text: "Detach start"; enabled: root.can-attach && root.start-attached; clicked => { root.detach-start-origin(); } }
+                            Button { text: "Use start world"; enabled: root.can-attach && root.start-attached; clicked => { root.world-start(); } }
+                        }
+                        Text { text: root.start-origin-status; color: Theme.text-muted; wrap: word-wrap; }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            LineEdit { text <=> root.end-origin-object; placeholder-text: "entity:<id> or selection"; accessible-label: "End origin object"; enabled: root.can-attach; }
+                            Button { text: "Attach end origin"; enabled: root.can-attach; clicked => { root.attach-end-origin(); } }
+                            Button { text: "Attach end local"; enabled: root.can-attach; clicked => { root.attach-end-local(); } }
+                            Button { text: "Detach end"; enabled: root.can-attach && root.end-attached; clicked => { root.detach-end-origin(); } }
+                            Button { text: "Use end world"; enabled: root.can-attach && root.end-attached; clicked => { root.world-end(); } }
+                        }
+                        Text { text: root.end-origin-status; color: Theme.text-muted; wrap: word-wrap; }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Attach start surface"; enabled: root.can-attach; clicked => { root.attach-start-surface(); } }
+                            Button { text: "Attach end surface"; enabled: root.can-attach; clicked => { root.attach-end-surface(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                        MutedText { text: "Pick a brush or terrain surface, then attach that point. Fixed world points do not follow geometry."; }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Pick start"; enabled: root.can-pick && !root.start-attached; clicked => { root.pick-start(); } }
+                            Button { text: "Pick end"; enabled: root.can-pick && !root.end-attached; clicked => { root.pick-end(); } }
+                            if root.picking: Button { text: "Cancel picking"; clicked => { root.cancel-pick(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            Text { text: "Visible surfaces · fixed world points · no snapping"; color: Theme.text-muted; wrap: word-wrap; }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Pick start on plane"; enabled: root.can-pick && root.plane-can-pick && !root.start-attached; clicked => { root.pick-start-plane(); } }
+                            Button { text: "Pick end on plane"; enabled: root.can-pick && root.plane-can-pick && !root.end-attached; clicked => { root.pick-end-plane(); } }
+                            MutedText { text: "Enable and apply the reference plane first."; }
+                        }
+                        Text { text: root.result; font-size: Theme.font-heading; font-weight: 600; min-height: 45px; wrap: word-wrap; }
+                        Text { text: root.preview-status; min-height: 40px; wrap: word-wrap; }
+                        Text { text: "128 rulers · 80 characters per name · ±65536 per coordinate · Ruler guides are not surface-pick targets."; color: Theme.text-muted; font-size: Theme.font; wrap: word-wrap; }
                     }
-                    HorizontalLayout {
-                        Button { text: "New measurement"; enabled: root.editable; clicked => { root.new-measurement(); } }
-                        Rectangle { horizontal-stretch: 1; }
-                        Button { text: "Frame"; enabled: root.can-frame; clicked => { root.frame(); } }
-                        Button { text: "Delete"; enabled: root.can-delete; clicked => { root.delete-measurement(); } }
+                    plane := SectionHeader { text: "REFERENCE PLANE"; expanded: false; }
+                    if plane.expanded: VerticalLayout {
+                        spacing: Theme.space;
+                        MutedText { text: "Temporary 3D guide and plane-pick grid. Apply plane leaves map geometry and Undo history unchanged."; }
+                        Text { text: root.plane-status; color: Theme.text-muted; wrap: word-wrap; }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            CheckBox { text: "Enable plane"; checked <=> root.plane-enabled; toggled => { root.plane-edited(); } }
+                            CheckBox { text: "Show plane grid"; checked <=> root.plane-show; toggled => { root.plane-edited(); } }
+                            CheckBox { text: "Snap plane picks"; checked <=> root.plane-snap; toggled => { root.plane-edited(); } }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Text { text: "Orientation"; width: Theme.guide-field-label-width; color: Theme.text-muted; vertical-alignment: center; }
+                            Button { text: "XY"; clicked => { root.plane-preset(0); } }
+                            Button { text: "XZ"; clicked => { root.plane-preset(1); } }
+                            Button { text: "YZ"; clicked => { root.plane-preset(2); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                        GuideVectorRow { label: "Origin"; value-x <=> root.plane-origin-x; value-y <=> root.plane-origin-y; value-z <=> root.plane-origin-z; edited => { root.plane-edited(); } }
+                        GuideVectorRow { label: "Normal"; value-x <=> root.plane-normal-x; value-y <=> root.plane-normal-y; value-z <=> root.plane-normal-z; edited => { root.plane-edited(); } }
+                        GuideVectorRow { label: "Grid X axis"; value-x <=> root.plane-tangent-x; value-y <=> root.plane-tangent-y; value-z <=> root.plane-tangent-z; edited => { root.plane-edited(); } }
+                        MutedText { text: "Normal points out of the plane. Grid X axis sets its orientation and must be perpendicular to the normal."; }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Text { text: "Grid spacing"; width: Theme.guide-field-label-width; color: Theme.text-muted; vertical-alignment: center; }
+                            LineEdit { text <=> root.plane-grid; accessible-label: "Plane grid spacing"; edited => { root.plane-edited(); } }
+                            Text { text: "Half extent"; color: Theme.text-muted; vertical-alignment: center; }
+                            LineEdit { text <=> root.plane-extent; accessible-label: "Plane half extent"; edited => { root.plane-edited(); } }
+                        }
+                        if root.plane-stale: Text { text: "Reference plane changed. Reload plane before applying these fields."; color: Theme.warning; wrap: word-wrap; }
+                        Text { text: root.plane-message; color: Theme.text-muted; wrap: word-wrap; }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Reload plane"; clicked => { root.plane-reload(); } }
+                            Button { text: "Reset plane"; enabled: !root.plane-stale; clicked => { root.plane-reset(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            Button { text: "Apply plane"; primary: true; enabled: !root.plane-stale; clicked => { root.plane-apply(); } }
+                        }
+                        MutedText { text: "Half extent limits the displayed grid; plane picks use the whole plane and create fixed world endpoints. Surface picks use visible geometry. Closing discards unapplied plane fields."; }
                     }
                 }
             }
-            HorizontalLayout {
-                spacing: 10px;
-                Text { text: "Name"; width: 50px; vertical-alignment: center; }
-                LineEdit { enabled: root.editable; text <=> root.measurement-name; accessible-label: "Measurement name"; edited => { root.edited(); } }
-            }
-            HorizontalLayout {
-                spacing: 10px;
-                Rectangle { width: 50px; }
-                Text { horizontal-stretch: 1; text: "X"; color: Theme.axis-x; }
-                Text { horizontal-stretch: 1; text: "Y"; color: Theme.axis-y; }
-                Text { horizontal-stretch: 1; text: "Z"; color: Theme.axis-z; }
-            }
-            HorizontalLayout {
-                spacing: 10px;
-                Text { text: "Start"; width: 50px; vertical-alignment: center; }
-                LineEdit { enabled: root.editable && !root.start-attached; text <=> root.start-x; accessible-label: "Start X"; edited => { root.edited(); } }
-                LineEdit { enabled: root.editable && !root.start-attached; text <=> root.start-y; accessible-label: "Start Y"; edited => { root.edited(); } }
-                LineEdit { enabled: root.editable && !root.start-attached; text <=> root.start-z; accessible-label: "Start Z"; edited => { root.edited(); } }
-            }
-            HorizontalLayout {
-                spacing: 10px;
-                Text { text: "End"; width: 50px; vertical-alignment: center; }
-                LineEdit { enabled: root.editable && !root.end-attached; text <=> root.end-x; accessible-label: "End X"; edited => { root.edited(); } }
-                LineEdit { enabled: root.editable && !root.end-attached; text <=> root.end-y; accessible-label: "End Y"; edited => { root.edited(); } }
-                LineEdit { enabled: root.editable && !root.end-attached; text <=> root.end-z; accessible-label: "End Z"; edited => { root.edited(); } }
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                LineEdit { text <=> root.start-origin-object; placeholder-text: "entity:<id> or selection"; accessible-label: "Start origin object"; enabled: root.can-attach; }
-                Button { text: "Attach start origin"; enabled: root.can-attach; clicked => { root.attach-start-origin(); } }
-                Button { text: "Attach start local"; enabled: root.can-attach; clicked => { root.attach-start-local(); } }
-                Button { text: "Detach start"; enabled: root.can-attach && root.start-attached; clicked => { root.detach-start-origin(); } }
-                Button { text: "Use start world"; enabled: root.can-attach && root.start-attached; clicked => { root.world-start(); } }
-            }
-            Text { text: root.start-origin-status; color: Theme.text-muted; wrap: word-wrap; }
-            HorizontalLayout {
-                spacing: 8px;
-                LineEdit { text <=> root.end-origin-object; placeholder-text: "entity:<id> or selection"; accessible-label: "End origin object"; enabled: root.can-attach; }
-                Button { text: "Attach end origin"; enabled: root.can-attach; clicked => { root.attach-end-origin(); } }
-                Button { text: "Attach end local"; enabled: root.can-attach; clicked => { root.attach-end-local(); } }
-                Button { text: "Detach end"; enabled: root.can-attach && root.end-attached; clicked => { root.detach-end-origin(); } }
-                Button { text: "Use end world"; enabled: root.can-attach && root.end-attached; clicked => { root.world-end(); } }
-            }
-            Text { text: root.end-origin-status; color: Theme.text-muted; wrap: word-wrap; }
-            HorizontalLayout {
-                spacing: 10px;
-                Button { text: "Pick start"; enabled: root.can-pick && !root.start-attached; clicked => { root.pick-start(); } }
-                Button { text: "Pick end"; enabled: root.can-pick && !root.end-attached; clicked => { root.pick-end(); } }
-                if root.picking: Button { text: "Cancel picking"; clicked => { root.cancel-pick(); } }
-                Rectangle { horizontal-stretch: 1; }
-                Text { text: "Preview first · visible surfaces · no snapping"; color: Theme.text-muted; wrap: word-wrap; }
-            }
-            Text { text: root.result; font-size: Theme.font-heading; font-weight: 600; min-height: 45px; wrap: word-wrap; }
-            Text { text: root.preview-status; min-height: 40px; wrap: word-wrap; }
             Text { text: root.message; color: Theme.text-muted; min-height: 36px; wrap: word-wrap; }
-            Text { text: "128 rulers · 80 characters per name · ±65536 per coordinate · Guides cannot be picked and ignore object visibility."; color: Theme.text-muted; font-size: Theme.font; wrap: word-wrap; }
             HorizontalLayout {
-                spacing: 10px;
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
                 if root.can-review: Button { text: "Review preview"; clicked => { root.review(); } }

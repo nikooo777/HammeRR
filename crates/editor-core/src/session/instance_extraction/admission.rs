@@ -175,17 +175,8 @@ pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result
             .entries
             .values()
             .any(|intent| !intent.extra.is_empty())
-        || !measurements.extra.is_empty()
-        || measurements.measurements.iter().any(|measurement| {
-            measurement.extra.iter().any(|node| {
-                !matches!(
-                    node.key.as_str(),
-                    "start_entity_origin" | "end_entity_origin"
-                )
-            })
-        })
     {
-        return Err("Unknown context, measurement or partition extension metadata cannot be proven independent of the selection".into());
+        return Err("Unknown context or partition extension metadata cannot be proven independent of the selection".into());
     }
     for node in &vmf.extra {
         if ![
@@ -319,16 +310,7 @@ pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result
             );
         }
     }
-    for measurement in &measurements.measurements {
-        for endpoint in [measurements::Endpoint::Start, measurements::Endpoint::End] {
-            if measurement
-                .origin_reference(endpoint)?
-                .is_some_and(|id| removed.contains(&id))
-            {
-                return Err("A measurement origin binding refers to selected IDs".into());
-            }
-        }
-    }
+    measurements.validate_retained_references(&removed, &side_ids)?;
     if partitions
         .entries
         .keys()

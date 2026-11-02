@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 81.8% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 82.1% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -106,10 +106,10 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | ![A compiled reflecting pool](docs/images/water-native.png) | ![A rope between masonry posts](docs/images/rope-span.png) |
 | Build water and opaque slime pools with captured reflections and fluid physics. | Preview and frame linked spans with authored slack and width. |
 
-| [Fog](docs/fog.md) | [Measurement guides](docs/measurements.md) |
+| [Fog](docs/fog.md) | [Spatial guides](docs/measurements.md) |
 | --- | --- |
-| ![Distance fog in the courtyard](docs/images/fog-on.png) | ![A height guide at a doorway](docs/images/doorway-measurement.png) |
-| Inspect an authored static fog controller. | Save rulers and attach endpoints to entity frames. |
+| ![Distance fog in the courtyard](docs/images/fog-on.png) | ![An oblique reference plane and attached ruler](docs/images/spatial-guides.png) |
+| Inspect an authored static fog controller. | Attach rulers to surfaces and snap picks to 3D reference planes. |
 
 | [Color correction](docs/color-correction.md) | [Visibility profiles](docs/working-region.md#saved-rule-profiles) |
 | --- | --- |

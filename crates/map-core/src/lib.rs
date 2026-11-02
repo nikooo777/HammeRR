@@ -43,6 +43,7 @@ pub mod texture_deform;
 pub mod transfer;
 pub mod transform;
 pub mod visibility_profiles;
+pub mod workplane;
 
 pub use brush::{BrushError, BrushGeometry, Face, texel_uv};
 pub use displacement::{DisplacementError, DisplacementMesh};

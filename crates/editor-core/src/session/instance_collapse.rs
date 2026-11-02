@@ -628,33 +628,13 @@ impl Session {
             return Err("Instance helpers with attached notes cannot be collapsed".into());
         }
         let measurements = map_core::measurements::Measurements::parse(self.document.vmf())?;
-        if !measurements.extra.is_empty()
-            || measurements.measurements.iter().any(|measurement| {
-                measurement.extra.iter().any(|node| {
-                    !matches!(
-                        node.key.as_str(),
-                        "start_entity_origin" | "end_entity_origin"
-                    )
-                })
+        let removed_ids = removed
+            .iter()
+            .map(|object| match object {
+                ObjectId::Solid(id) | ObjectId::Entity(id) => *id,
             })
-        {
-            return Err(
-                "Custom measurement metadata cannot be remapped during instance collapse".into(),
-            );
-        }
-        for measurement in &measurements.measurements {
-            for endpoint in [
-                map_core::measurements::Endpoint::Start,
-                map_core::measurements::Endpoint::End,
-            ] {
-                if measurement
-                    .origin_reference(endpoint)?
-                    .is_some_and(|id| removed.contains(&ObjectId::Entity(id)))
-                {
-                    return Err("A measurement is attached to an instance helper; detach it before collapse".into());
-                }
-            }
-        }
+            .collect();
+        measurements.validate_retained_references(&removed_ids, &BTreeSet::new())?;
         let source = SourceLocation::capture(
             self.path
                 .as_deref()

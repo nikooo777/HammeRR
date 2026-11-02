@@ -1192,8 +1192,7 @@ impl Session {
     }
 
     pub fn report_definitions_error(&mut self, error: String) {
-        self.log(Actor::User, format!("entity definitions: {error}"));
-        self.definitions_error = Some(error);
+        self.record_definitions_error(Actor::User, error);
     }
 
     pub fn placement_origin(&self) -> DVec3 {

@@ -341,9 +341,10 @@ fn spawn_fgd_load(
                 app_for_worker.upgrade_in_event_loop(move |app| app.set_message(message.into()));
         });
     if let Err(error) = spawned {
-        lock(shared).fail_definitions_load(token);
+        let message = format!("Could not start FGD load worker: {error}");
+        lock(shared).fail_definitions_load(Actor::User, token, message.clone());
         if let Some(app) = app.upgrade() {
-            app.set_message(error.to_string().into());
+            app.set_message(message.into());
         }
     }
 }

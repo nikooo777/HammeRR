@@ -96,6 +96,11 @@ impl<'a> Budget<'a> {
         )
     }
 
+    pub(super) fn metadata(&mut self, text: &str) -> Result<(), String> {
+        self.member()?;
+        self.text(text)
+    }
+
     pub(super) fn property(&mut self, property: &Property) -> Result<(), String> {
         self.member()?;
         for text in [

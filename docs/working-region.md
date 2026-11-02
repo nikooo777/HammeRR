@@ -22,6 +22,9 @@ any exclusion stay hidden. Filters keep complete objects.
    **Exact class** to match the complete class name. To add a bounds
    intersection rule, check **Limit object filter to bounds** and set its
    **Minimum** and **Maximum**.
+   For a class set, enter one full classname per line in
+   **Classes (any exact)**. Any listed complete class name may match, ignoring
+   ASCII letter case; **Class** and all other filters must also match.
 6. Click **Apply** to update box, distance and inclusion together. Existing
    exclusions stay active. Scroll the panel to reach additional criteria.
    **Cancel** closes it without applying field changes; it does not undo
@@ -32,10 +35,13 @@ any exclusion stay hidden. Filters keep complete objects.
 ## Categories and exclusions
 
 1. Choose **Categories and exclusions** at the top of **Working region…**.
-2. Find a type or entity class in **Find categories by type or class…**.
+2. Find a type, entity class or FGD group in
+   **Find categories by type, class or FGD group…**.
    Use **Previous** and **Next** to see more categories.
 3. Click **Exclude category** to exclude its whole objects immediately.
-   Categories update from the map's object types and exact entity classes.
+   Categories update from the map's object types, exact entity classes and
+   loaded FGD groups. **FGD · Parent / Name** rows show class counts, matching
+   owners and declaration sources. A whole group uses one exclusion.
 4. Click **Remove category exclusion** to remove that category's rule.
    Other overlapping rules and hidden state can still exclude its objects.
 5. To exclude a custom query, choose **Box and filters**, check
@@ -48,6 +54,12 @@ any exclusion stay hidden. Filters keep complete objects.
 Category actions preserve other inclusion and exclusion rules. **Apply** is
 not required for category or exclusion buttons. **Clear working region**
 removes every active rule, box and distance limit.
+
+FGD groups match literal full classnames; inheritance and wildcard expansion
+do not apply. Groups with no matching map objects remain available. Empty or
+unavailable declarations show a reason and disable their category button;
+**Remove exclusion** still removes an existing rule. Large class sets use a
+count summary, including in saved profile details.
 
 ## Saved rule profiles
 
@@ -90,6 +102,14 @@ A saved class filter removes the surrounding world and prop models.
 - There can be 32 active exclusions and 64 saved profiles. Profile names
   allow up to 64 characters and 256 UTF-8 bytes; total profile metadata is
   limited to 256 KiB.
+- A class set allows up to 256 unique names of 256 UTF-8 bytes each. Empty,
+  control-containing or duplicate case-insensitive names reject. Spaces around
+  each line are ignored; whitespace-only or newline-only input reports an error.
+  Commas and quotes stay part of a name. Names containing `*` or `?` are literal,
+  not patterns.
+- Applied and saved class sets capture their names. Reloading FGD group
+  membership does not rewrite those existing rules; remove an old exclusion
+  and exclude the updated category when needed.
 - Applied filters are temporary and do not affect compilation. Use
   [Compile region…](compile-regions.md) for builds.
 - Each map keeps its own profiles. Instance children do not merge their

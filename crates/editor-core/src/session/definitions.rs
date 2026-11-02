@@ -13,6 +13,8 @@ use std::sync::{
 pub(super) struct LoadState {
     worker: Slot,
     serial: u64,
+    status_serial: u64,
+    catalog_serial: u64,
     identity: Option<Arc<()>>,
     cancelled: Option<Arc<AtomicBool>>,
 }
@@ -69,16 +71,76 @@ pub struct MapSizeReport {
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct MetadataSourceReport {
+    pub source: Option<String>,
+    pub line: usize,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct MaterialExclusionReport {
+    pub prefix: String,
+    pub source: Option<String>,
+    pub line: usize,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct AutoVisGroupReport {
+    pub parent: String,
+    pub name: String,
+    pub classes: Vec<String>,
+    pub sources: Vec<MetadataSourceReport>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct VersionReport {
+    pub value: i32,
+    pub source: Option<String>,
+    pub line: usize,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub struct DefinitionsReport {
+    pub available: bool,
+    pub serial: u64,
+    pub status_serial: u64,
     pub classes: usize,
     pub sources: Vec<String>,
     pub error: Option<String>,
     pub map_size: Option<MapSizeReport>,
+    pub material_exclusions: Vec<MaterialExclusionReport>,
+    pub auto_visgroups: Vec<AutoVisGroupReport>,
+    pub versions: Vec<VersionReport>,
+    pub hammerplusplus_resource_version_reference: i32,
+    pub version_policy: &'static str,
 }
 
 impl DefinitionsReport {
     pub fn status(&self) -> String {
-        let mut status = format!("Loaded FGD catalog: {} classes", self.classes);
+        let mut status = if self.available {
+            format!("Loaded FGD catalog: {} classes", self.classes)
+        } else {
+            format!("FGD catalog unavailable: {} retained classes", self.classes)
+        };
+        status += &format!(
+            " · {} material exclusions · {} automatic visibility groups",
+            self.material_exclusions.len(),
+            self.auto_visgroups.len()
+        );
+        if !self.versions.is_empty() {
+            let mismatches = self
+                .versions
+                .iter()
+                .filter(|version| version.diagnostic.is_some())
+                .count();
+            status += &format!(
+                " · {} FGD resource version declarations",
+                self.versions.len()
+            );
+            if mismatches != 0 {
+                status += &format!(" ({mismatches} differ from Hammer++ resource version 9)");
+            }
+        }
         match &self.map_size {
             Some(size) => {
                 status += &format!(
@@ -101,6 +163,17 @@ impl DefinitionsReport {
 }
 
 impl Session {
+    pub fn definitions_status_serial(&self) -> u64 {
+        self.definitions_load.status_serial
+    }
+
+    pub(super) fn record_definitions_error(&mut self, actor: Actor, error: String) {
+        self.log(actor, format!("entity definitions: {error}"));
+        self.definitions_error = Some(error);
+        self.definitions_load.status_serial += 1;
+        self.view_serial += 1;
+    }
+
     pub fn begin_definitions_load(&mut self, path: &Path) -> Result<Request, String> {
         if self.closing {
             return Err("The editor is closing".into());
@@ -111,6 +184,7 @@ impl Session {
             .begin()
             .ok_or("An FGD load is already in progress")?;
         self.definitions_load.serial += 1;
+        self.definitions_load.catalog_serial = self.definitions_serial;
         let identity = Arc::new(());
         let cancelled = Arc::new(AtomicBool::new(false));
         self.definitions_load.identity = Some(identity.clone());
@@ -143,15 +217,24 @@ impl Session {
         }
         self.definitions_load.identity = None;
         self.definitions_load.cancelled = None;
-        let catalog = completed.result?;
+        let catalog = match completed.result {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                self.record_definitions_error(actor, error.clone());
+                return Err(error);
+            }
+        };
         self.set_definitions(actor, catalog);
         Ok(self.entity_definitions_report())
     }
 
-    pub fn fail_definitions_load(&mut self, token: u64) {
-        if token == self.definitions_load.serial {
+    pub fn fail_definitions_load(&mut self, actor: Actor, token: u64, error: String) {
+        if token == self.definitions_load.serial && self.definitions_load.identity.is_some() {
             self.definitions_load.identity = None;
             self.definitions_load.cancelled = None;
+            if !self.closing && self.definitions_load.catalog_serial == self.definitions_serial {
+                self.record_definitions_error(actor, error);
+            }
         }
     }
 
@@ -167,6 +250,9 @@ impl Session {
 
     pub fn entity_definitions_report(&self) -> DefinitionsReport {
         DefinitionsReport {
+            available: self.definitions_serial > 0 && self.definitions_error.is_none(),
+            serial: self.definitions_serial,
+            status_serial: self.definitions_status_serial(),
             classes: self.definitions.classes().count(),
             sources: self
                 .definitions
@@ -185,6 +271,57 @@ impl Session {
                     source: size.source.as_ref().map(|path| path.display().to_string()),
                     line: size.line,
                 }),
+            material_exclusions: self
+                .definitions
+                .material_exclusions
+                .iter()
+                .map(|exclusion| MaterialExclusionReport {
+                    prefix: exclusion.prefix.clone(),
+                    source: exclusion
+                        .source
+                        .as_ref()
+                        .map(|path| path.display().to_string()),
+                    line: exclusion.line,
+                })
+                .collect(),
+            auto_visgroups: self
+                .definitions
+                .auto_visgroups
+                .iter()
+                .map(|group| AutoVisGroupReport {
+                    parent: group.parent.clone(),
+                    name: group.name.clone(),
+                    classes: group.classes.clone(),
+                    sources: group
+                        .sources
+                        .iter()
+                        .map(|source| MetadataSourceReport {
+                            source: source
+                                .source
+                                .as_ref()
+                                .map(|path| path.display().to_string()),
+                            line: source.line,
+                        })
+                        .collect(),
+                })
+                .collect(),
+            versions: self
+                .definitions
+                .versions
+                .iter()
+                .map(|version| VersionReport {
+                    value: version.value,
+                    source: version
+                        .source
+                        .as_ref()
+                        .map(|path| path.display().to_string()),
+                    line: version.line,
+                    diagnostic: version.diagnostic().map(str::to_owned),
+                })
+                .collect(),
+            hammerplusplus_resource_version_reference:
+                source_formats::fgd::HAMMERPLUSPLUS_FGD_VERSION,
+            version_policy: "Version declarations describe vendor FGD resource freshness; they do not select a grammar, require an additional FGD, or certify full vendor compatibility. An absent declaration is valid.",
         }
     }
 }

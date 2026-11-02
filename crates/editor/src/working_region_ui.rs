@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, path::Path, rc::Rc};
 
 use glam::DVec3;
 use serde_json::Value;
@@ -8,6 +8,7 @@ use source_formats::vmf::format_number;
 use crate::{
     AppWindow, VisibilityCategoryRow, VisibilityExclusionRow, VisibilityProfileRow,
     WorkingRegionWindow,
+    management_ui::parse_class_names,
     runtime::{DocumentAccess, DocumentContinuation},
     session::{
         Actor, ObjectFilter, Session,
@@ -24,6 +25,7 @@ const FILTER_KINDS: [Option<&str>; 5] = [
     Some("brush_entity"),
 ];
 const CATEGORY_PAGE_SIZE: usize = 50;
+const CLASS_SUMMARY_NAMES: usize = 3;
 
 #[derive(Default)]
 struct RulesState {
@@ -83,6 +85,19 @@ fn load_filter(window: &WorkingRegionWindow, filter: &Value) {
     window.set_filter_enabled(filter.is_object());
     window.set_query(text("query"));
     window.set_classname(text("classname"));
+    window.set_classnames(
+        filter["classnames"]
+            .as_array()
+            .map(|classes| {
+                classes
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default()
+            .into(),
+    );
     window.set_exact_class(filter["exact_class"] == true);
     window.set_targetname(text("targetname"));
     window.set_material(text("material"));
@@ -179,6 +194,7 @@ fn filter(window: &WorkingRegionWindow) -> Result<Option<ObjectFilter>, String> 
     Ok(Some(ObjectFilter {
         query: optional_text(window.get_query()),
         classname: optional_text(window.get_classname()),
+        classnames: parse_class_names(window.get_classnames().as_str())?,
         exact_class: window.get_exact_class(),
         targetname: optional_text(window.get_targetname()),
         material: optional_text(window.get_material()),
@@ -320,6 +336,13 @@ fn filter_summary(filter: &ObjectFilter) -> String {
             }
         ));
     }
+    if let Some(classes) = &filter.classnames {
+        parts.push(if classes.len() > CLASS_SUMMARY_NAMES {
+            format!("Any of {} exact classes", classes.len())
+        } else {
+            format!("Any exact class: {}", classes.join(", "))
+        });
+    }
     if let Some(name) = &filter.targetname {
         parts.push(format!("Entity name contains “{name}”"));
     }
@@ -372,6 +395,40 @@ fn profile_detail(profile: &Profile) -> String {
     lines.join("\n")
 }
 
+fn category_detail(category: &Value) -> Result<String, String> {
+    let total = category["total"]
+        .as_u64()
+        .ok_or("Missing category object count")?;
+    let mut detail = format!("{total} whole owners");
+    let membership = &category["membership"];
+    if membership.is_object() {
+        let classes = membership["class_count"]
+            .as_u64()
+            .ok_or("Missing FGD group class count")?;
+        let present = membership["matching_classes"]
+            .as_u64()
+            .ok_or("Missing FGD group matching-class count")?;
+        detail.push_str(&format!(" · {classes} exact classes · {present} present"));
+        if let Some(sources) = membership["sources"].as_array()
+            && let Some(source) = sources.first()
+        {
+            let path = source["source"].as_str().unwrap_or("Inline FGD");
+            let name = Path::new(path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(path);
+            detail.push_str(&format!("\n{name}:{}", source["line"]));
+            if sources.len() > 1 {
+                detail.push_str(&format!(" · {} declarations", sources.len()));
+            }
+        }
+    }
+    if let Some(reason) = category["unavailable_reason"].as_str() {
+        detail.push_str(&format!("\nUnavailable: {reason}"));
+    }
+    Ok(detail)
+}
+
 fn refresh_categories(
     window: &WorkingRegionWindow,
     session: &Session,
@@ -380,6 +437,7 @@ fn refresh_categories(
     window.set_categories_ready(false);
     window.set_categories(slint::ModelRc::default());
     window.set_category_summary("".into());
+    window.set_fgd_category_status("".into());
     window.set_category_previous(false);
     window.set_category_next(false);
     let offset = rules.borrow().category_offset;
@@ -406,22 +464,35 @@ fn refresh_categories(
                     .as_str()
                     .ok_or("Missing category label")?
                     .into(),
-                detail: format!(
-                    "{} whole owners",
-                    category["total"]
-                        .as_u64()
-                        .ok_or("Missing category object count")?
-                )
-                .into(),
+                detail: category_detail(category)?.into(),
                 excluded: category["excluded"]
                     .as_bool()
                     .ok_or("Missing category exclusion state")?,
+                available: category["available"]
+                    .as_bool()
+                    .ok_or("Missing category availability")?,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
     let returned = rows.len();
     let next = report["next_offset"].as_u64().map(|value| value as usize);
     window.set_categories(Rc::new(slint::VecModel::from(rows)).into());
+    window.set_fgd_category_status(
+        if report["fgd"]["available"] == true {
+            format!(
+                "FGD groups: {} · Exact class sets from loaded definitions",
+                report["fgd"]["groups"]
+            )
+        } else {
+            format!(
+                "FGD groups unavailable · {}",
+                report["fgd"]["unavailable_reason"]
+                    .as_str()
+                    .unwrap_or("No loaded FGD catalog")
+            )
+        }
+        .into(),
+    );
     window.set_category_summary(if total == 0 {
         "No matching categories".into()
     } else if returned == 0 {
@@ -935,7 +1006,8 @@ impl Controller {
             return;
         }
         let mut messages = Vec::new();
-        if *self.snapshot.borrow() != session.working_region_stamp() {
+        let region_changed = *self.snapshot.borrow() != session.working_region_stamp();
+        if region_changed {
             match refresh(&self.window, session, &self.snapshot, &self.rules, true) {
                 Ok(()) => messages
                     .push("Map, selection or view changed. Current filters reloaded.".into()),
@@ -944,8 +1016,16 @@ impl Controller {
         }
         let rules_changed =
             self.rules.borrow().observed_snapshot != session.visibility_rules_snapshot();
-        if rules_changed && let Err(error) = refresh_reports(&self.window, session, &self.rules) {
-            messages.push(error);
+        if rules_changed {
+            let result = if region_changed {
+                Ok(())
+            } else {
+                refresh(&self.window, session, &self.snapshot, &self.rules, false)
+            }
+            .and_then(|()| refresh_reports(&self.window, session, &self.rules));
+            if let Err(error) = result {
+                messages.push(error);
+            }
         }
         if !messages.is_empty() {
             self.window.set_message(messages.join("\n").into());

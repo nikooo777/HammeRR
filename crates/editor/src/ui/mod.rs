@@ -163,6 +163,7 @@ struct Ui {
     primitive_material_target: Option<(Option<u64>, u64)>,
     carve_material_target: Option<String>,
     seen_definitions: u64,
+    seen_definitions_status: u64,
     seen_materials: u64,
 }
 
@@ -295,6 +296,7 @@ impl Ui {
             primitive_material_target: None,
             carve_material_target: None,
             seen_definitions: 0,
+            seen_definitions_status: 0,
             seen_materials: 0,
         }
     }
@@ -3067,10 +3069,25 @@ fn create_document_window(
                             controller.refresh_material(&session);
                         }
                     }
-                    if session.definitions_serial() != ui.seen_definitions {
+                    if session.definitions_serial() != ui.seen_definitions
+                        || session.definitions_status_serial() != ui.seen_definitions_status
+                    {
                         ui.seen_definitions = session.definitions_serial();
+                        ui.seen_definitions_status = session.definitions_status_serial();
                         if let Some(window) = &ui.entity_window {
                             refresh_entity_window(window, &session);
+                        }
+                        if let Some(window) = &ui.material_window
+                            && window.window().is_visible()
+                        {
+                            refresh_material_catalog(window, &mut session);
+                            refresh_material_window(window, &mut session);
+                        }
+                        if let Some(pickers) = &ui.property_pickers
+                            && pickers.material.window().is_visible()
+                        {
+                            refresh_material_catalog(&pickers.material, &mut session);
+                            refresh_material_window(&pickers.material, &mut session);
                         }
                         panel_dirty = true;
                     }

@@ -483,7 +483,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Read the loaded FGD catalog status, source files and effective @mapsize declaration with authored values, sorted bounds and file/line provenance. FGD map size is informational and does not set editor or compiler coordinate limits.",
+        description = "Read FGD availability, catalog serial, class count, source files, directory material exclusions, automatic visibility groups with literal class members, and @version resource freshness diagnostics with file/line provenance. @version does not select grammar or certify full vendor compatibility; absence is valid. Material exclusions compare case-insensitive relative-directory prefixes without wildcard or component-boundary matching; root material filenames are unaffected. Auto-vis members match complete entity classnames case-insensitively, without wildcard or inheritance expansion. Effective @mapsize includes authored values and sorted bounds; it is informational and does not set editor or compiler coordinate limits.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_entity_definitions(&self) -> ToolResult {
@@ -491,7 +491,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Load an FGD and its includes, resolving inherited entity definitions. Updates the GUI and MCP class catalog together; existing map data is preserved. Returns catalog status and informational @mapsize metadata."
+        description = "Load an FGD and its includes, resolving inherited definitions and ordered @ExtendClass merges, including extension bases. Updates the shared class catalog, optional material exclusion rules and automatic visibility categories together; existing map data is preserved. Returns source provenance, resource version diagnostics and informational @mapsize metadata. Unknown catalog directives, missing extension bases and exhausted metadata bounds reject; failed loads preserve the previous catalog. @version is vendor resource freshness metadata, not a grammar switch or a requirement to load a vendor FGD."
     )]
     pub(in crate::mcp) async fn load_entity_definitions(
         &self,
@@ -514,8 +514,10 @@ impl EditorServer {
             Ok(Ok(value)) => ok(value),
             Ok(Err(error)) => fail(error),
             Err(error) => {
-                self.session().fail_definitions_load(token);
-                fail(error.to_string())
+                let message = format!("FGD load worker failed: {error}");
+                self.session()
+                    .fail_definitions_load(Actor::Agent, token, message.clone());
+                fail(message)
             }
         }
     }

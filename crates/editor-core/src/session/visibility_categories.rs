@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -18,9 +18,13 @@ pub const MAX_CLASSES: usize = 4096;
 struct Category {
     id: String,
     label: String,
-    filter: ObjectFilter,
+    filter: Option<ObjectFilter>,
     total: usize,
     excluded: bool,
+    source: &'static str,
+    available: bool,
+    unavailable_reason: Option<String>,
+    membership: Option<Value>,
 }
 
 impl Category {
@@ -35,9 +39,13 @@ impl Category {
         Self {
             id,
             label,
-            filter,
+            filter: Some(filter),
             total,
             excluded,
+            source: "authored",
+            available: true,
+            unavailable_reason: None,
+            membership: None,
         }
     }
 }
@@ -45,11 +53,13 @@ impl Category {
 impl Session {
     pub fn visibility_rules_snapshot(&self) -> String {
         format!(
-            "visibility-rules:{}:{}:{}:{}",
+            "visibility-rules:{}:{}:{}:{}:{}:{}",
             self.buffer_review_scope,
             self.document_generation,
             self.document.revision(),
-            self.working_region.query_serial
+            self.working_region.query_serial,
+            self.definitions_serial(),
+            self.definitions_status_serial()
         )
     }
 
@@ -78,7 +88,8 @@ impl Session {
             }
         }
         let exclusions = &self.working_region.options.exclusions;
-        let mut categories = Vec::with_capacity(classes.len() + 3);
+        let mut categories =
+            Vec::with_capacity(classes.len() + 3 + self.definitions().auto_visgroups.len());
         for (kind, label, total) in [
             ("solid", "World solids", vmf.world.solids.len()),
             ("point_entity", "Point entities", points),
@@ -98,7 +109,7 @@ impl Session {
                 exclusions,
             ));
         }
-        for (classname, total) in classes {
+        for (classname, &total) in &classes {
             let label = if classname.is_empty() {
                 "Entities without classname".into()
             } else {
@@ -108,7 +119,7 @@ impl Session {
                 format!("class:{classname}"),
                 label,
                 ObjectFilter {
-                    classname: Some(classname),
+                    classname: Some(classname.clone()),
                     exact_class: true,
                     kind: Some("entity".into()),
                     ..ObjectFilter::default()
@@ -116,6 +127,56 @@ impl Session {
                 total,
                 exclusions,
             ));
+        }
+        for group in &self.definitions().auto_visgroups {
+            let classnames = group
+                .classes
+                .iter()
+                .map(|name| name.to_ascii_lowercase())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            let total = classnames
+                .iter()
+                .map(|name| classes.get(name).copied().unwrap_or_default())
+                .sum();
+            let matching_classes = classnames
+                .iter()
+                .filter(|name| classes.contains_key(*name))
+                .count();
+            let filter = ObjectFilter {
+                classnames: Some(classnames.clone()),
+                kind: Some("entity".into()),
+                ..ObjectFilter::default()
+            };
+            let invalid = filter.validate().err();
+            let unavailable_reason = if self.definitions_error().is_some() {
+                Some("Entity definitions could not load; reload definitions before changing this FGD category".into())
+            } else if self.definitions_serial() == 0 {
+                Some("Load entity definitions before changing this FGD category".into())
+            } else {
+                invalid.clone()
+            };
+            let parent = group.parent.to_ascii_lowercase();
+            let name = group.name.to_ascii_lowercase();
+            categories.push(Category {
+                id: format!("fgd:{}:{parent}:{name}", parent.len()),
+                label: format!("FGD · {} / {}", group.parent, group.name),
+                excluded: invalid.is_none() && exclusions.contains(&filter),
+                filter: invalid.is_none().then_some(filter),
+                total,
+                source: "fgd",
+                available: unavailable_reason.is_none(),
+                unavailable_reason,
+                membership: Some(json!({
+                    "parent":group.parent,"name":group.name,"class_count":classnames.len(),
+                    "matching_classes":matching_classes,
+                    "sources":group.sources.iter().map(|source|json!({
+                        "source":source.source.as_ref().map(|path|path.display().to_string()),
+                        "line":source.line
+                    })).collect::<Vec<_>>()
+                })),
+            });
         }
         Ok(categories)
     }
@@ -154,15 +215,23 @@ impl Session {
             "next_offset":(offset.saturating_add(limit)<categories.len()).then_some(offset.saturating_add(limit)),
             "categories":categories.into_iter().skip(offset).take(limit).collect::<Vec<_>>(),
             "exclusion_count":self.working_region.options.exclusions.len(),
-            "limits":{"page":MAX_PAGE,"query_bytes":MAX_QUERY_BYTES,"classname_bytes":MAX_CLASS_BYTES,"classes":MAX_CLASSES,"exclusions":MAX_EXCLUSIONS},
-            "policy":"Categories count committed authored root objects, including saved-hidden objects, by root kind and exact case-insensitive entity classname. Child brushes and expanded instance contents are not separate categories. The excluded flag means this exact category exclusion is present; other inclusion, exclusion, spatial and saved/editor visibility rules may still hide overlapping objects. Category changes preserve source, history and builds."
+            "fgd":{"available":self.definitions_serial()>0 && self.definitions_error().is_none(),
+                "definitions_serial":self.definitions_serial(),"definitions_status_serial":self.definitions_status_serial(),
+                "groups":self.definitions().auto_visgroups.len(),
+                "unavailable_reason":self.definitions_error().map(str::to_owned).or_else(||(self.definitions_serial()==0).then(||"Load entity definitions to use FGD categories".into()))},
+            "limits":{"page":MAX_PAGE,"query_bytes":MAX_QUERY_BYTES,"classname_bytes":MAX_CLASS_BYTES,"classes":MAX_CLASSES,"exclusions":MAX_EXCLUSIONS,
+                "class_set_members":source_formats::fgd::MAX_AUTO_VIS_CLASSES},
+            "policy":"Categories count committed authored root objects, including saved-hidden objects, by root kind, exact entity classname and FGD AutoVisGroup literal membership. FGD groups use one canonical exact-class-set exclusion each, including groups with no current matches. Class sets have no wildcard or inheritance expansion. Child brushes and expanded instance contents are not separate categories. The excluded flag means this exact category exclusion is present; other inclusion, exclusion, spatial and saved/editor visibility rules may still hide overlapping objects. Saved rules retain literal membership across FGD changes. Category changes preserve source, history and builds."
         }))
     }
 
     pub(super) fn check_visibility_rules_snapshot(&self, snapshot: &str) -> Result<(), String> {
         self.ensure_not_closing()?;
         if snapshot != self.visibility_rules_snapshot() {
-            return Err("Visibility rules or map changed; inspect visibility again".into());
+            return Err(
+                "Visibility rules, map or entity definitions changed; inspect visibility again"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -193,15 +262,21 @@ impl Session {
             .into_iter()
             .find(|category| category.id == id)
             .ok_or("Choose an existing automatic visibility category")?;
+        if !category.available {
+            return Err(category
+                .unavailable_reason
+                .unwrap_or_else(|| "This visibility category is unavailable".into()));
+        }
+        let filter = category
+            .filter
+            .ok_or("This visibility category has no usable literal class members")?;
         let mut options = self.working_region.options.clone();
         if excluded {
-            if !options.exclusions.contains(&category.filter) {
-                options.exclusions.push(category.filter);
+            if !options.exclusions.contains(&filter) {
+                options.exclusions.push(filter);
             }
         } else {
-            options
-                .exclusions
-                .retain(|filter| filter != &category.filter);
+            options.exclusions.retain(|entry| entry != &filter);
         }
         self.configure_visibility_rules(actor, options)
     }

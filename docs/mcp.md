@@ -247,6 +247,28 @@ the selection. Resolve those IDs through `get_objects` for owners and bounds.
 Each issue includes `brush`, optional `face`, and `message`.
 At most 64 details are returned; `preview_issues_omitted` counts the rest.
 
+## Entity-definition metadata
+
+Call `get_entity_definitions` after `load_entity_definitions` to inspect
+`available`, `serial`, `status_serial`, source files and load errors, alongside the loaded classes
+and effective `map_size`. Catalog metadata includes:
+
+| Field | Contents |
+| --- | --- |
+| `material_exclusions` | Literal directory `prefix`, `source` and `line` for each declaration. |
+| `auto_visgroups` | `parent`, `name`, literal `classes` and declaration `sources` (`source`, `line`). |
+| `versions` | Declared `value`, `source`, `line` and nullable freshness `diagnostic`. |
+| `hammerplusplus_resource_version_reference` | Verified resource version `9`. |
+| `version_policy` | The stated interpretation of version metadata. |
+
+Missing `@version` remains valid, including for ordinary CS:S definitions.
+Declared values are compared with resource version 9 for freshness; they do not
+select a parser grammar or establish vendor/game compatibility. Unknown catalog
+directives fail explicitly with source diagnostics. Reload the root FGD to
+refresh included files. Metadata is bounded to 1,024 material prefixes, 256
+groups, 256 classes and source declarations per group, and 256 version
+declarations; names/prefixes allow at most 256 UTF-8 bytes.
+
 ## Point-entity gallery
 
 Use `browse_entity_gallery` to page through all loaded FGD point classes, including
@@ -360,7 +382,15 @@ case-insensitive substring `query`, `classname`, `targetname` and `material`;
 `exact_class:true` makes classname matching exact; `kind` accepts `solid`,
 `entity`, `point_entity` or `brush_entity`; `hidden` matches authored hidden
 state; `within:[[min_x,min_y,min_z],[max_x,max_y,max_z]]` tests bounds
-intersection. Every specified rule must match. Unknown display bounds stay
+intersection. `classnames:["light","light_spot"]` adds an exact,
+ASCII-case-insensitive OR set of literal complete entity classnames. It combines
+with singular `classname` and every other constraint using AND, and never
+matches world solids. `null`/omission disables this optional set; an empty array
+rejects. Sets admit up to 256 names of 256 UTF-8 bytes each and reject empty,
+whitespace-padded, control-containing or duplicate case-insensitive names.
+`*` and `?` remain literal characters; inheritance and wildcard expansion do not
+apply. The same field works in object reports, `find_objects`, exclusions and
+saved visibility profiles. Unknown display bounds stay
 visible to box/distance filters and report `unresolved_bounds`; `within` requires
 known bounds. Exclusions report `outside_working_region`, `outside_draw_distance`,
 `object_filter` or `excluded_rule`. Saved Hide, editor-hidden exclusions and tool-texture
@@ -377,12 +407,25 @@ available when every object is excluded. See [Working region](working-region.md)
 Call `get_visibility_categories` with optional `query` (default empty,
 ASCII-case-insensitive substring of ID/label, at most 256 bytes), `offset`
 (default 0) and `limit` (default 50, range 1–200). Category rows contain `id`,
-`label`, `filter`, `total` and `excluded`. Stable IDs are `kind:solid`,
+`label`, `filter`, `total`, `excluded`, `source`, `available`,
+`unavailable_reason` and optional `membership`. Stable authored IDs are `kind:solid`,
 `kind:point_entity`, `kind:brush_entity` and `class:<ASCII-lowercase-class>`.
-Class filters use `kind:"entity"` and `exact_class:true`. Empty categories are
-omitted; at most 4,096 classes of 256 bytes each are admitted. Automatic
+Class filters use `kind:"entity"` and `exact_class:true`. Empty authored categories
+are omitted; at most 4,096 classes of 256 bytes each are admitted. Automatic
 categories classify whole root owners using the shared object-report rules.
 They are editor-only; native layers and saved Hide/Show affect compilation.
+
+FGD rows use `source:"fgd"`, an opaque returned ID and labels such as
+`FGD · Parent / Name`. Their `membership` reports `parent`, `name`, `class_count`,
+the numeric count `matching_classes`, and declaration `sources`. Each valid
+group produces one `classnames` filter and therefore one exclusion, even for
+large sets. Groups with no current map matches remain listed. Empty or invalid
+groups report `available:false`, a reason and `filter:null`; inspect them without
+attempting to toggle them. The top-level `fgd` object reports availability,
+`definitions_serial`, `definitions_status_serial`, group count and an unavailable
+reason. Source changes and definition reload/failure epochs invalidate category
+snapshots. Applied/saved class sets keep
+their captured members until explicitly changed.
 
 Use that report's `snapshot` with these calls:
 
@@ -523,6 +566,24 @@ material pages contain 1–200.
 `inspect_model.sources` records the three model-file origins at cache load.
 Material preview pixels have no physical-source provenance; catalog provenance
 describes the current VMT lookup separately.
+
+Material calls accept `exclude_fgd_materials:true` to apply loaded
+`@MaterialExclusion` directory prefixes; the default is `false`. It composes
+with name, generated-map, source, shader and category filters. Matching uses an
+ASCII-case-insensitive literal prefix of the relative material directory,
+without wildcard or component-boundary expansion: `debug` also matches
+`debugger/...`, but a root-level `debug.vmt` has no matching directory.
+The directory candidate has no trailing slash: prefix `debug/` matches
+`debug/sub/foo` but does not match direct child `debug/foo`.
+
+`fgd_material_exclusions` reports `requested`, `applied`, `ready`, `prefix_count`,
+`excluded_candidates`, `definitions_serial`, `definitions_tool`, `policy` and
+`candidate_scope`. Prefix counts describe loaded rules even when the option is
+off. Excluded-candidate counts cover matches after name/generated/source filters,
+before shader/category filtering and paging. A requested filter with no valid
+FGD catalog fails before asset reads. Set the flag to `false` to override it;
+use `get_entity_definitions` for complete rule provenance and load diagnostics.
+Neither filtering nor browsing edits source, history, camera or compilation.
 
 ### Material matching and image layers
 

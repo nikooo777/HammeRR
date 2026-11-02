@@ -1,8 +1,8 @@
 import { Theme } from "theme.slint";
-import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView, TextEdit } from "widgets.slint";
 import { FieldRow } from "kit.slint";
 
-export struct VisibilityCategoryRow { id: string, label: string, detail: string, excluded: bool }
+export struct VisibilityCategoryRow { id: string, label: string, detail: string, excluded: bool, available: bool }
 export struct VisibilityExclusionRow { index: int, summary: string }
 export struct VisibilityProfileRow { name: string, detail: string }
 
@@ -61,6 +61,7 @@ export component WorkingRegionWindow inherits Window {
     in-out property <string> query;
     in-out property <int> kind;
     in-out property <string> classname;
+    in-out property <string> classnames;
     in-out property <bool> exact-class;
     in-out property <string> targetname;
     in-out property <string> material;
@@ -80,6 +81,7 @@ export component WorkingRegionWindow inherits Window {
     in property <[VisibilityCategoryRow]> categories;
     in property <string> category-summary;
     in property <string> category-message;
+    in property <string> fgd-category-status;
     in property <bool> categories-ready;
     in property <bool> category-previous;
     in property <bool> category-next;
@@ -164,6 +166,18 @@ export component WorkingRegionWindow inherits Window {
                         CheckBox { enabled: root.filter-enabled; text: "Exact class"; checked <=> root.exact-class; }
                     }
                     FieldRow {
+                        label: "Classes (any exact)"; label-width: Theme.visibility-class-set-label-width; inset: false;
+                        TextEdit {
+                            enabled: root.filter-enabled;
+                            height: Theme.visibility-class-set-height;
+                            text <=> root.classnames;
+                            wrap: word-wrap;
+                            placeholder-text: "Optional · one full classname per line";
+                            accessible-label: "Classes (any exact)";
+                        }
+                    }
+                    Text { text: "Enter one full classname per line. Any listed exact class may match, ignoring letter case. Class and other filters still apply. Leave empty for no class-set rule."; wrap: word-wrap; color: Theme.text-muted; }
+                    FieldRow {
                         label: "Entity name"; inset: false;
                         LineEdit { enabled: root.filter-enabled; text <=> root.targetname; placeholder-text: "Targetname contains…"; accessible-label: "Object filter entity name"; }
                     }
@@ -191,8 +205,10 @@ export component WorkingRegionWindow inherits Window {
                     padding-right: Theme.space-xl;
                     spacing: Theme.space-lg;
                     Text { text: "Automatic categories"; color: Theme.text; font-weight: 600; }
-                    Text { text: "Categories follow the map's object types and exact entity classes. Counts include saved-hidden owners. Category buttons apply immediately."; wrap: word-wrap; color: Theme.text-muted; }
-                    LineEdit { text <=> root.category-query; placeholder-text: "Find categories by type or class…"; accessible-label: "Find visibility categories"; edited => { root.category-query-changed(); } }
+                    Text { text: "Categories follow authored object types, exact classes and loaded FGD groups. Counts include saved-hidden owners. Category buttons apply immediately."; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: root.fgd-category-status; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: "FGD groups match literal full classnames, ignoring case. Each group uses one exclusion; inheritance and wildcard expansion do not apply."; wrap: word-wrap; color: Theme.text-muted; }
+                    LineEdit { text <=> root.category-query; placeholder-text: "Find categories by type, class or FGD group…"; accessible-label: "Find visibility categories"; edited => { root.category-query-changed(); } }
                     Text { text: root.category-message; wrap: word-wrap; color: Theme.warning; }
                     Text { text: root.category-summary; wrap: word-wrap; color: Theme.text-muted; }
                     for category in root.categories: VerticalLayout {
@@ -200,7 +216,7 @@ export component WorkingRegionWindow inherits Window {
                         HorizontalLayout {
                             spacing: Theme.space;
                             Text { text: category.label; color: Theme.text; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; }
-                            Button { text: category.excluded ? "Remove category exclusion" : "Exclude category"; enabled: root.categories-ready; clicked => { root.category-exclusion(category.id, !category.excluded); } }
+                            Button { text: category.excluded ? "Remove category exclusion" : "Exclude category"; enabled: root.categories-ready && category.available; clicked => { root.category-exclusion(category.id, !category.excluded); } }
                         }
                         Text { text: category.detail; wrap: word-wrap; color: Theme.text-faint; }
                     }

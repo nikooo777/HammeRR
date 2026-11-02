@@ -429,7 +429,11 @@ export component EntityWindow inherits Window {
                 }
                 Button { text: "Load FGD…"; clicked => { root.load-fgd(); } }
             }
-            Text { text: root.catalog-status; wrap: word-wrap; }
+            ScrollView {
+                height: Theme.catalog-metadata-status-height;
+                content-width: self.visible-width;
+                Text { text: root.catalog-status; wrap: word-wrap; color: Theme.text-muted; accessible-label: "Loaded FGD catalog"; }
+            }
             HorizontalLayout {
                 spacing: 12px;
                 vertical-stretch: 1;
@@ -734,6 +738,9 @@ export component MaterialWindow inherits Window {
     in property <[string]> source-ids;
     in-out property <int> source-index;
     in-out property <bool> exclude-generated-map-materials;
+    in-out property <bool> exclude-fgd-materials;
+    in-out property <string> fgd-definitions-state;
+    in property <string> fgd-exclusion-status;
     in property <[MaterialTileRow]> rows;
     in property <int> total;
     in property <string> catalog-label;
@@ -787,6 +794,8 @@ export component MaterialWindow inherits Window {
                 ComboBox { horizontal-stretch: 1; model: root.source-labels; current-index <=> root.source-index; selected => { root.offset = 0; root.search(); } }
                 CheckBox { text: "Exclude maps/ materials"; checked <=> root.exclude-generated-map-materials; toggled => { root.offset = 0; root.search(); } }
             }
+            CheckBox { text: "Hide FGD-excluded directories"; checked <=> root.exclude-fgd-materials; toggled => { root.offset = 0; root.search(); } }
+            Text { text: root.fgd-exclusion-status; wrap: word-wrap; color: Theme.text-muted; }
             if root.shader-scan-status != "": ScrollView {
                 height: 64px;
                 content-width: self.visible-width;
@@ -1915,6 +1924,7 @@ export component ReportWindow inherits Window {
     preferred-width: 960px; preferred-height: 760px;
     in-out property <string> query;
     in-out property <string> classname;
+    in-out property <string> classnames;
     in-out property <bool> exact-class;
     in-out property <string> targetname;
     in-out property <string> material;
@@ -1956,6 +1966,18 @@ export component ReportWindow inherits Window {
                 LineEdit { text <=> root.targetname; placeholder-text: "Entity name"; edited => { root.page = 0; root.search(); } }
                 LineEdit { text <=> root.material; placeholder-text: "Material"; edited => { root.page = 0; root.search(); } }
             }
+            FieldRow {
+                label: "Classes (any exact)"; label-width: Theme.visibility-class-set-label-width; inset: false;
+                TextEdit {
+                    height: Theme.visibility-class-set-height;
+                    text <=> root.classnames;
+                    wrap: word-wrap;
+                    placeholder-text: "Optional · one full classname per line";
+                    accessible-label: "Classes (any exact)";
+                    edited => { root.page = 0; root.search(); }
+                }
+            }
+            Text { text: "Enter one full classname per line. Any listed exact class may match, ignoring letter case. Entity class and other filters still apply. Clear Classes (any exact) to remove the set."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;
                 ComboBox { model: ["All types", "World brushes", "All entities", "Point entities", "Brush entities"]; current-index <=> root.kind; selected => { root.page = 0; root.search(); } }

@@ -721,7 +721,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Browse the shared material catalog, bounded to 200 entries per page and 256 game mounts. match_mode is substring (default), literal prefix or regex over material names, case-insensitive by default. Regex uses the regex crate syntax, at most 256 pattern bytes, depth 32 and 1 MiB compiler/DFA budgets; invalid/unsupported patterns reject. Optional shader is an exact case-insensitive resolved shader name, including Patch resolution. Each shader query classifies at most 128 materials and reads at most 16 MiB; repeat the same query while shader_scan.complete is false. Counts/pages include confirmed matches so far; shader_scan.matches_complete is true only after the complete scan without unresolved materials. Failures include total counts and the first 16 material/error rows, never silent nonmatches. Classified entries report shader, declaration identity and its captured VMT origin. Shader declarations remain cached until Reload material assets; current source metadata is separate and observed mount changes invalidate classifications. Sources select current winning VMT directory/VPK origins, never shadowed copies or assumed stock content. Optionally exclude all maps/... paths, including authored ones. Groups include all, used, recent, favorites, folder:<path> and category:<label>. UI: Browse materials → Name match / Shader. No map/history/selection/camera/draft changes.",
+        description = "Browse the shared material catalog, bounded to 200 entries per page and 256 game mounts. match_mode is substring (default), literal prefix or regex over material names, case-insensitive by default. Regex uses the regex crate syntax, at most 256 pattern bytes, depth 32 and 1 MiB compiler/DFA budgets; invalid/unsupported patterns reject. Optional shader is an exact case-insensitive resolved shader name, including Patch resolution. Each shader query classifies at most 128 materials and reads at most 16 MiB; repeat the same query while shader_scan.complete is false. Counts/pages include confirmed matches so far; shader_scan.matches_complete is true only after the complete scan without unresolved materials. Failures include total counts and the first 16 material/error rows, never silent nonmatches. Classified entries report shader, declaration identity and its captured VMT origin. Shader declarations remain cached until Reload material assets; current source metadata is separate and observed mount changes invalidate classifications. Sources select current winning VMT directory/VPK origins, never shadowed copies or assumed stock content. Optionally exclude all maps/... paths, including authored ones. exclude_fgd_materials defaults false; true applies loaded FGD author exclusions as literal ASCII-case-insensitive relative directory prefixes (debug also matches debugger/...; a root debug.vmt does not match). No wildcards or compiler-availability inference. Missing/failed definitions reject; valid empty rules succeed. fgd_material_exclusions reports requested/applied/ready, rule and excluded-candidate counts, scope and definitions_serial; get_entity_definitions reports rule provenance. Groups include all, used, recent, favorites, folder:<path> and category:<label>. UI: Browse materials → Name match / Shader. No map/history/selection/camera/draft changes.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn browse_materials(
@@ -737,6 +737,7 @@ impl EditorServer {
                 &crate::materials::CatalogFilter {
                     source: args.source,
                     exclude_generated_map_materials: args.exclude_generated_map_materials,
+                    exclude_fgd_materials: args.exclude_fgd_materials,
                     match_mode: args.match_mode,
                     shader: args.shader,
                 },
@@ -812,7 +813,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Search the same catalog as Browse materials. match_mode selects substring (default), literal prefix or bounded regex; shader optionally selects an exact resolved shader name, including Patch materials. Returns compatible material names plus provenance/classification entries, sources and shader_scan. Repeat while shader_scan.complete is false: each operation classifies at most 128 candidates / 16 MiB. Before completion counts/pages describe confirmed matches only; failed classifications stay explicit and make matches_complete false. Queries cap at 256 bytes; regex depth and compiler/DFA memory are bounded. Winning-source and maps-path filters compose with both matchers. Cached shader declarations refresh with Reload material assets; current VMT provenance does not describe cached display pixels. No map/history/selection/camera/draft changes.",
+        description = "Search the same catalog as Browse materials. match_mode selects substring (default), literal prefix or bounded regex; shader optionally selects an exact resolved shader name, including Patch materials. Returns compatible material names plus provenance/classification entries, sources and shader_scan. Repeat while shader_scan.complete is false: each operation classifies at most 128 candidates / 16 MiB. Before completion counts/pages describe confirmed matches only; failed classifications stay explicit and make matches_complete false. Queries cap at 256 bytes; regex depth and compiler/DFA memory are bounded. Winning-source and maps-path filters compose with both matchers. exclude_fgd_materials defaults false and optionally applies loaded FGD author exclusions using literal ASCII-case-insensitive relative directory prefixes (debug also matches debugger/...; a root debug.vmt does not match), without wildcards or compiler-availability inference. Missing/failed definitions reject; valid empty rules succeed. fgd_material_exclusions reports policy, readiness, applied rule/candidate counts and definitions_serial; get_entity_definitions reports rule provenance. Cached shader declarations refresh with Reload material assets; current VMT provenance does not describe cached display pixels. No map/history/selection/camera/draft changes.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn search_materials(
@@ -828,6 +829,7 @@ impl EditorServer {
                 &crate::materials::CatalogFilter {
                     source: args.source,
                     exclude_generated_map_materials: args.exclude_generated_map_materials,
+                    exclude_fgd_materials: args.exclude_fgd_materials,
                     match_mode: args.match_mode,
                     shader: args.shader,
                 },
@@ -841,6 +843,7 @@ impl EditorServer {
                 json!({ "materials": names, "entries":catalog.entries, "sources":catalog.sources,
                 "total":catalog.total,"offset":catalog.offset,"filter":catalog.filter,
                 "shader_scan":catalog.shader_scan,
+                "fgd_material_exclusions":catalog.fgd_material_exclusions,
                 "provenance_scope":catalog.provenance_scope }),
             )
         })

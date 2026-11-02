@@ -29,7 +29,8 @@ carry physical-source provenance; use **Reload material assets** after changes.
 1. Open **Browse materials…** and enter the material-name query.
 2. Choose **Name match → Substring**, **Prefix** or **Regex**. Prefix starts at the beginning of the material path. Regex supports expressions such as `^nature/blend.*(grass|dirt)`.
 3. Optionally enter an exact **Shader**, such as `WorldVertexTransition` or `Water`. Leave it blank for all shaders.
-4. Combine these choices with **Winning VMT source**, **Exclude maps/ materials**, folders, categories, used materials or favorites.
+4. Combine these choices with **Winning VMT source**, **Exclude maps/ materials**,
+   **Hide FGD-excluded directories**, folders, categories, used materials or favorites.
 5. Read **Shader scan** while the browser classifies declarations in bounded batches. The scan continues while the browser is visible; counts and pages show confirmed matches so far.
 6. Check unavailable-material errors before relying on the complete results. Repair sources and choose **Reload material assets** to retry them.
 
@@ -44,6 +45,29 @@ See [material source](material-source.md#inspect-image-layers-and-alpha) to insp
 | Default display image | Actual second blend image |
 | --- | --- |
 | ![Native blend material display image](images/blend-layer-1.png) | ![Declared basetexture2 image](images/blend-layer-2.png) |
+
+## Use FGD directory rules
+
+1. Load an FGD through **Entity… → Load FGD…**.
+2. Open **Browse materials…**.
+3. Check **Hide FGD-excluded directories** to apply the loaded
+   `@MaterialExclusion` rules. The option starts off.
+4. Read the rule-prefix and excluded-candidate counts beside the controls.
+5. Turn the option off to include those directories again. Other name, source,
+   shader, category and generated-map filters remain active.
+
+Rules use a case-insensitive literal prefix of the relative material directory.
+For example, `debug` also matches `debugger/...`; it does not hide a root-level
+`debug.vmt` by filename alone. There is no wildcard or directory-boundary
+expansion. A trailing slash stays literal: `debug/` hides `debug/sub/foo` but
+leaves the direct child `debug/foo` available because its directory is `debug`.
+Counts cover candidates after name, generated-map and source filters,
+before shader/category filtering and paging.
+
+Loading or failing to load definitions refreshes an open browser. If the option
+requires an unavailable FGD catalog, the browser clears its rows and reports the
+error. Turn it off to override the FGD filter. Browsing changes no materials,
+map source, saved visibility, Undo history or compilation.
 
 ## Edit face textures
 

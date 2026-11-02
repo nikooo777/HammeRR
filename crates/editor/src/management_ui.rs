@@ -560,6 +560,24 @@ fn bind_material(
     Ok(window)
 }
 
+pub(crate) fn parse_class_names(value: &str) -> Result<Option<Vec<String>>, String> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let names = value
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        return Err(
+            "Classes (any exact) needs one full classname per line, or clear the field".into(),
+        );
+    }
+    Ok(Some(names))
+}
+
 fn filter(window: &ReportWindow) -> Result<ObjectFilter, String> {
     let within = if window.get_limit_bounds() {
         let fields = [
@@ -591,6 +609,7 @@ fn filter(window: &ReportWindow) -> Result<ObjectFilter, String> {
     Ok(ObjectFilter {
         query: text(window.get_query()),
         classname: text(window.get_classname()),
+        classnames: parse_class_names(window.get_classnames().as_str())?,
         exact_class: window.get_exact_class(),
         targetname: text(window.get_targetname()),
         material: text(window.get_material()),

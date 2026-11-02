@@ -3,7 +3,7 @@ use super::super::*;
 #[tool_router(router = visibility_rules_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect automatic editor-only visibility categories and the current visibility-rules snapshot. Optional query defaults empty and matches id/label by ASCII-case-insensitive substring (at most 256 bytes); offset defaults 0; limit defaults 50 (1–200). Rows report id, label, filter, total and excluded; empty categories are omitted. Stable category IDs are kind:solid, kind:point_entity, kind:brush_entity and class:<ASCII-lowercase-class>. Class filters combine kind=entity with exact_class=true. At most 4096 classes, each at most 256 bytes. Categories classify whole root owners with shared object-report rules. Their exclusions affect rendering and spatial picking independently of saved native layers/Hide/Show, which affect compilation. Use the returned snapshot for category/exclusion changes.",
+        description = "Inspect automatic editor-only visibility categories and the current visibility-rules snapshot. Optional query defaults empty and matches id/label by ASCII-case-insensitive substring (at most 256 bytes); offset defaults 0; limit defaults 50 (1–200). Rows report id, label, filter, total, excluded, source, available, unavailable_reason and optional membership with parent/name, class_count, numeric matching_classes and declaration sources. Counts include saved-hidden authored root owners. Empty authored categories are omitted; FGD AutoVisGroup rows remain present with zero matches. FGD groups use one entity-only exact class-set exclusion, up to 256 literal classnames; no wildcard or inheritance expansion. The excluded flag means the exact canonical rule is present, even when overlapping rules also hide objects. Failed/unloaded definitions make FGD rows unavailable; authored categories remain usable. Treat FGD IDs as opaque stable IDs. At most 4096 authored classes, each at most 256 bytes. Exclusions affect rendering and spatial picking independently of native layers/Hide/Show compilation state. Use the returned snapshot for changes; map, query-rule or definitions changes invalidate it.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_visibility_categories(
@@ -17,7 +17,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Change one automatic editor-only category with its exact id and the latest get_visibility_categories snapshot. excluded=true adds that category's canonical exclusion; excluded=false removes only that exact rule. Preserves inclusion, overlapping exclusions and box/distance/follow-camera settings, so removing the category rule may leave objects excluded by another rule. No source, selection, Undo or compile-scope change. Unknown categories and stale/invalid requests reject without changes."
+        description = "Change one available automatic editor-only category with its exact id and the latest get_visibility_categories snapshot. excluded=true adds that category's canonical exclusion; excluded=false removes only that exact rule. An FGD group consumes one exclusion and captures its current literal class membership. Preserves inclusion, overlapping exclusions and box/distance/follow-camera settings, so removing the category rule may leave objects excluded by another rule. No source, selection, Undo or compile-scope change. Unknown/unavailable categories, reloaded definitions and other stale/invalid requests reject without changes."
     )]
     pub(in crate::mcp) fn set_visibility_category(
         &self,
@@ -34,7 +34,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Exclude an object-report filter using the latest get_visibility_categories snapshot. Accepts filter fields query, classname, exact_class, targetname, material, kind, hidden and within with the shared get_object_report semantics. Adds the exact exclusion once and clears the active inclusion filter; preserves other exclusions and box/distance/follow-camera settings. At most 32 exclusion rules; a whole root owner is hidden when any exclusion matches. Editor-only: source, selection, Undo and compilation remain unchanged. Invalid/stale requests reject atomically."
+        description = "Exclude an object-report filter using the latest get_visibility_categories snapshot. Accepts query, classname, classnames, exact_class, targetname, material, kind, hidden and within with shared ObjectFilter semantics. classnames is an optional OR set of 1–256 distinct literal entity classnames, each 1–256 UTF-8 bytes without control characters or surrounding whitespace; matching is complete ASCII-case-insensitive equality, with no wildcard/inheritance expansion, and combines with all other fields using AND. World solids never match classnames. Adds the exact exclusion once and clears active inclusion; preserves other exclusions and box/distance/follow-camera settings. At most 32 exclusion rules; a whole root owner is hidden when any exclusion matches. Editor-only: source, selection, Undo and compilation remain unchanged. Invalid/stale requests reject atomically."
     )]
     pub(in crate::mcp) fn exclude_visibility_filter(
         &self,
@@ -60,7 +60,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect map-local named visibility profiles, their snapshot, entries {name,rules} and limits. Each strict rules object stores an optional inclusion filter and up to 32 exclusion filters with shared ObjectFilter semantics. At most 64 profiles; names at most 64 characters/256 UTF-8 bytes with Unicode-lowercase uniqueness and lookup; aggregate encoded metadata at most 256 KiB. Malformed or unsupported metadata stays preserved and reports unavailable. Profiles are separate from native layer/Hide/Show compilation state.",
+        description = "Inspect map-local named visibility profiles, their snapshot, entries {name,rules} and limits. Each strict rules object stores an optional inclusion filter and up to 32 exclusion filters with shared ObjectFilter semantics. Exact class sets, including saved FGD categories, retain literal membership across definition changes; applying a profile does not reinterpret group names. At most 64 profiles; names at most 64 characters/256 UTF-8 bytes with Unicode-lowercase uniqueness and lookup; aggregate encoded metadata at most 256 KiB. Malformed or unsupported metadata stays preserved and reports unavailable. Profiles are separate from native layer/Hide/Show compilation state.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_visibility_profiles(

@@ -2,8 +2,14 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod loading;
+mod metadata;
 
 use loading::{Budget, MAX_FIELD_BYTES, MAX_FILE_BYTES, helper_bytes};
+pub use metadata::{
+    AutoVisGroup, HAMMERPLUSPLUS_FGD_VERSION, MAX_AUTO_VIS_CLASSES, MAX_AUTO_VIS_GROUPS,
+    MAX_AUTO_VIS_SOURCES, MAX_MATERIAL_EXCLUSIONS, MAX_METADATA_NAME_BYTES,
+    MAX_VERSION_DECLARATIONS, MaterialExclusion, MetadataSource, VersionDeclaration,
+};
 
 const MAX_DEPTH: usize = 128;
 
@@ -163,6 +169,9 @@ pub struct Catalog {
     classes: BTreeMap<String, Class>,
     pub sources: Vec<PathBuf>,
     pub map_size: Option<MapSize>,
+    pub material_exclusions: Vec<MaterialExclusion>,
+    pub auto_visgroups: Vec<AutoVisGroup>,
+    pub versions: Vec<VersionDeclaration>,
 }
 
 impl Catalog {
@@ -176,7 +185,7 @@ impl Catalog {
                 Declaration::Include(_) => {
                     return Err("use Catalog::load to resolve FGD includes".into());
                 }
-                declaration => raw.insert(declaration, None),
+                declaration => raw.insert(declaration, None, &mut budget)?,
             }
         }
         Self::resolve(raw, Vec::new(), &mut budget)
@@ -202,14 +211,25 @@ impl Catalog {
         sources: Vec<PathBuf>,
         budget: &mut Budget<'_>,
     ) -> Result<Self, String> {
+        let extensions = prepare_extensions(&raw, budget)?;
         let mut classes = BTreeMap::new();
         for name in raw.classes.keys() {
-            resolve(name, &raw, &mut classes, &mut Vec::new(), budget)?;
+            resolve(
+                name,
+                &raw,
+                &extensions,
+                &mut classes,
+                &mut Vec::new(),
+                budget,
+            )?;
         }
         Ok(Self {
             classes,
             sources,
             map_size: raw.map_size,
+            material_exclusions: raw.metadata.material_exclusions,
+            auto_visgroups: raw.metadata.auto_visgroups,
+            versions: raw.metadata.versions,
         })
     }
 
@@ -223,26 +243,51 @@ impl Catalog {
         self.classes()
             .find(|class| class.name.eq_ignore_ascii_case(name))
     }
+
+    /// Accepts a canonical material name relative to materials/, including its filename.
+    pub fn material_excluded(&self, name: &str) -> bool {
+        metadata::material_excluded(&self.material_exclusions, name)
+    }
+}
+
+struct Extension {
+    class: Class,
+    bases: Vec<Class>,
 }
 
 #[derive(Default)]
 struct RawCatalog {
     classes: BTreeMap<String, Class>,
-    extensions: BTreeMap<String, Vec<Class>>,
+    extensions: Vec<Extension>,
     map_size: Option<MapSize>,
+    metadata: metadata::Metadata,
 }
 
 impl RawCatalog {
-    fn insert(&mut self, declaration: Declaration, source: Option<&Path>) {
+    fn insert(
+        &mut self,
+        declaration: Declaration,
+        source: Option<&Path>,
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
         match declaration {
             Declaration::Class(class) => {
                 self.classes.insert(class.name.clone(), class);
             }
             Declaration::Extend(class) => {
-                self.extensions
-                    .entry(class.name.clone())
-                    .or_default()
-                    .push(class);
+                let mut bases = Vec::new();
+                let mut resolved = BTreeMap::new();
+                for name in &class.bases {
+                    bases.push(resolve(
+                        name,
+                        self,
+                        &BTreeMap::new(),
+                        &mut resolved,
+                        &mut Vec::new(),
+                        budget,
+                    )?);
+                }
+                self.extensions.push(Extension { class, bases });
             }
             Declaration::MapSize(mut size) => {
                 if size.authored[0] != size.authored[1] {
@@ -250,8 +295,18 @@ impl RawCatalog {
                     self.map_size = Some(size);
                 }
             }
+            Declaration::MaterialExclusion(exclusion) => {
+                self.metadata.exclusion(exclusion, source, budget)?;
+            }
+            Declaration::AutoVisGroup(group) => {
+                self.metadata.group(group, source, budget)?;
+            }
+            Declaration::Version(version) => {
+                self.metadata.version(version, source, budget)?;
+            }
             Declaration::Include(_) => unreachable!(),
         }
+        Ok(())
     }
 }
 
@@ -295,7 +350,9 @@ fn load(
                 active,
                 budget,
             )?,
-            declaration => raw.insert(declaration, Some(&path)),
+            declaration => raw
+                .insert(declaration, Some(&path), budget)
+                .map_err(|error| format!("{}: {error}", path.display()))?,
         }
     }
     active.pop();
@@ -306,6 +363,7 @@ fn load(
 fn resolve(
     name: &str,
     raw: &RawCatalog,
+    extensions: &BTreeMap<String, Vec<Class>>,
     resolved: &mut BTreeMap<String, Class>,
     active: &mut Vec<String>,
     budget: &mut Budget<'_>,
@@ -332,11 +390,11 @@ fn resolve(
     class.helpers.clear();
     active.push(name.into());
     for base in &own.bases {
-        let parent = resolve(base, raw, resolved, active, budget)?;
+        let parent = resolve(base, raw, extensions, resolved, active, budget)?;
         merge(&mut class, &parent, true, budget)?;
     }
     merge(&mut class, own, true, budget)?;
-    if let Some(extensions) = raw.extensions.get(name) {
+    if let Some(extensions) = extensions.get(name) {
         for extension in extensions {
             merge(&mut class, extension, false, budget)?;
         }
@@ -345,6 +403,65 @@ fn resolve(
     budget.copy_class(&class)?;
     resolved.insert(name.into(), class.clone());
     Ok(class)
+}
+
+fn prepare_extensions(
+    raw: &RawCatalog,
+    budget: &mut Budget<'_>,
+) -> Result<BTreeMap<String, Vec<Class>>, String> {
+    let mut patches: BTreeMap<String, Vec<Class>> = BTreeMap::new();
+    for extension in &raw.extensions {
+        budget.poll()?;
+        if !raw.classes.contains_key(&extension.class.name) {
+            continue;
+        }
+        let mut inherited = extension.class.clone();
+        budget.copy_class(&inherited)?;
+        inherited.properties.clear();
+        inherited.inputs.clear();
+        inherited.outputs.clear();
+        inherited.helpers.clear();
+        let mut resolved = BTreeMap::new();
+        for captured in &extension.bases {
+            // Native extension bases retain property slots until application, while I/O is copied at declaration.
+            let current = resolve(
+                &captured.name,
+                raw,
+                &patches,
+                &mut resolved,
+                &mut Vec::new(),
+                budget,
+            )?;
+            let mut parent = captured.clone();
+            budget.copy_class(&parent)?;
+            parent.helpers.clear();
+            for property in &mut parent.properties {
+                let mut replacement = None;
+                for candidate in &current.properties {
+                    budget.work(property.name.len() + candidate.name.len() + 1)?;
+                    if property.name.eq_ignore_ascii_case(&candidate.name) {
+                        replacement = Some(candidate);
+                        break;
+                    }
+                }
+                let candidate = replacement.ok_or_else(|| {
+                    format!(
+                        "FGD extension base {} no longer contains captured property {}; replacing captured base members is unsupported",
+                        captured.name, property.name
+                    )
+                })?;
+                budget.property(candidate)?;
+                *property = candidate.clone();
+            }
+            merge(&mut inherited, &parent, true, budget)?;
+        }
+        merge(&mut inherited, &extension.class, true, budget)?;
+        patches
+            .entry(extension.class.name.clone())
+            .or_default()
+            .push(inherited);
+    }
+    Ok(patches)
 }
 
 fn merge(
@@ -450,6 +567,9 @@ enum Declaration {
     Class(Class),
     Extend(Class),
     MapSize(MapSize),
+    MaterialExclusion(MaterialExclusion),
+    AutoVisGroup(AutoVisGroup),
+    Version(VersionDeclaration),
 }
 
 struct Token {
@@ -672,10 +792,53 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                 }
                 "@extendclass" => {
                     let class = self.class(ClassKind::Base)?;
-                    if !class.bases.is_empty() {
-                        return Err(self.error("base(...) on @ExtendClass is not supported"));
-                    }
                     declarations.push(Declaration::Extend(class));
+                }
+                "@materialexclusion" => {
+                    self.expect("[")?;
+                    while !self.take("]") {
+                        let line = self.line(self.index);
+                        let prefix = self.metadata_name()?;
+                        declarations.push(Declaration::MaterialExclusion(MaterialExclusion {
+                            prefix,
+                            source: None,
+                            line,
+                        }));
+                    }
+                }
+                "@autovisgroup" => {
+                    self.expect("=")?;
+                    let parent = self.metadata_name()?;
+                    self.expect("[")?;
+                    while !self.take("]") {
+                        let line = self.line(self.index);
+                        let name = self.metadata_name()?;
+                        self.expect("[")?;
+                        let mut classes = Vec::new();
+                        while !self.take("]") {
+                            let class = self.metadata_name()?;
+                            metadata::append_class(&mut classes, class, self.budget)?;
+                        }
+                        self.budget.metadata(&parent)?;
+                        declarations.push(Declaration::AutoVisGroup(AutoVisGroup {
+                            parent: parent.clone(),
+                            name,
+                            classes,
+                            sources: vec![MetadataSource { source: None, line }],
+                        }));
+                    }
+                }
+                "@version" => {
+                    let line = self.line(self.index - 1);
+                    self.expect("(")?;
+                    let value = self.integer("@version")?;
+                    self.expect(")")?;
+                    self.budget.metadata("")?;
+                    declarations.push(Declaration::Version(VersionDeclaration {
+                        value,
+                        source: None,
+                        line,
+                    }));
                 }
                 "@baseclass" | "@pointclass" | "@solidclass" | "@npcclass" | "@filterclass"
                 | "@keyframeclass" | "@moveclass" => {
@@ -687,26 +850,10 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
                     declarations.push(Declaration::Class(self.class(kind)?));
                 }
                 _ if directive.starts_with('@') => {
-                    let mut depth = 0_i32;
-                    while self.index < self.tokens.len() {
-                        self.budget.poll()?;
-                        let token = &self.tokens[self.index];
-                        if !token.quoted {
-                            if depth == 0 && token.text.starts_with('@') {
-                                break;
-                            }
-                            if matches!(token.text.as_str(), "(" | "[") {
-                                depth += 1;
-                            }
-                            if matches!(token.text.as_str(), ")" | "]") {
-                                depth -= 1;
-                            }
-                        }
-                        self.index += 1;
-                    }
-                    if depth != 0 {
-                        return Err(self.error("unbalanced FGD directive"));
-                    }
+                    return Err(format!(
+                        "line {}: unsupported FGD directive {directive}",
+                        self.line(self.index - 1)
+                    ));
                 }
                 _ => return Err(self.error("expected an FGD directive")),
             }
@@ -715,20 +862,39 @@ impl<'a, 'b, 'c> Parser<'a, 'b, 'c> {
     }
 
     fn map_coordinate(&mut self) -> Result<i32, String> {
+        self.integer("@mapsize")
+    }
+
+    fn integer(&mut self, directive: &str) -> Result<i32, String> {
         let token = self
             .tokens
             .get(self.index)
-            .ok_or_else(|| self.error("expected a signed 32-bit @mapsize integer"))?;
+            .ok_or_else(|| self.error(&format!("expected a signed 32-bit {directive} integer")))?;
         let digits = token.text.strip_prefix('-').unwrap_or(&token.text);
         if token.quoted || digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-            return Err(self.error("expected a signed 32-bit @mapsize integer"));
+            return Err(self.error(&format!("expected a signed 32-bit {directive} integer")));
         }
         let coordinate = token
             .text
             .parse()
-            .map_err(|_| self.error("@mapsize integer exceeds signed 32-bit range"))?;
+            .map_err(|_| self.error(&format!("{directive} integer exceeds signed 32-bit range")))?;
         self.index += 1;
         Ok(coordinate)
+    }
+
+    fn metadata_name(&mut self) -> Result<String, String> {
+        let text = self.text()?;
+        if text.is_empty()
+            || text.trim() != text
+            || text.chars().any(char::is_control)
+            || text.len() > MAX_METADATA_NAME_BYTES
+        {
+            return Err(self.error(&format!(
+                "FGD metadata names require 1..={MAX_METADATA_NAME_BYTES} bytes without control characters or surrounding whitespace"
+            )));
+        }
+        self.budget.metadata(&text)?;
+        Ok(text)
     }
 
     fn class(&mut self, kind: ClassKind) -> Result<Class, String> {

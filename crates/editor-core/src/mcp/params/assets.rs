@@ -24,6 +24,7 @@ pub struct ReplaceMaterialsArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BrowseMaterialsArgs {
     pub query: Option<String>,
     pub group: Option<String>,
@@ -35,6 +36,9 @@ pub struct BrowseMaterialsArgs {
     /// Exclude every maps/... material, including generated patches and cubemap variants. This path filter also excludes authored materials under maps/.
     #[serde(default)]
     pub exclude_generated_map_materials: bool,
+    /// Apply loaded FGD material-directory exclusions (default false). Literal case-insensitive relative directory prefixes; unavailable definitions reject.
+    #[serde(default)]
+    pub exclude_fgd_materials: bool,
     /// Case-insensitive substring (default), literal prefix, or regex over the material name. Regex is bounded to 256 pattern bytes, depth 32 and 1 MiB compiler/DFA budgets.
     #[serde(default)]
     pub match_mode: crate::materials::NameMatch,
@@ -193,6 +197,7 @@ pub struct RenderModelArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SearchMaterialsArgs {
     /// Case-insensitive substring, e.g. 'brick', 'cs_italy', 'tools/'.
     pub query: String,
@@ -206,6 +211,9 @@ pub struct SearchMaterialsArgs {
     /// Exclude every maps/... material, including generated patches and cubemap variants. Also excludes authored materials under maps/.
     #[serde(default)]
     pub exclude_generated_map_materials: bool,
+    /// Apply loaded FGD material-directory exclusions (default false). Literal case-insensitive relative directory prefixes; unavailable definitions reject.
+    #[serde(default)]
+    pub exclude_fgd_materials: bool,
     /// Case-insensitive substring (default), prefix, or bounded regex matching on material names.
     #[serde(default)]
     pub match_mode: crate::materials::NameMatch,

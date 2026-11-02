@@ -76,11 +76,31 @@ Missing or ambiguous targets report errors rather than invented endpoints.
 1. Create a root FGD that includes the game FGD and extensions.
 2. Open **Entity… → Load FGD…**.
 3. Choose the root FGD.
-4. Search for the updated class.
+4. Read **Loaded FGD catalog** for material-exclusion, automatic-group and
+   version declaration counts and freshness warnings. Scroll to read the
+   complete status.
+5. Search for the updated class.
 
 Reload the root after changing definitions.
+`@ExtendClass base(...)` uses the base members present at its declaration.
+Earlier extensions can update those property values; later-added members and
+base helper lists are not inherited. Direct extension helpers apply to the
+target. Missing bases and replaced captured members report errors.
 Invalid numeric flag values stop FGD loading.
 **Loaded FGD catalog** reports the effective **FGD map size**; that metadata does not override compiler bounds.
+FGDs without `@version`, including ordinary CS:S definitions, remain valid.
+Declared versions are compared with the verified Hammer++ resource version 9
+for freshness diagnostics. They do not select a different grammar or certify
+compatibility with another game or editor.
+Use MCP `get_entity_definitions` to inspect individual declarations, diagnostics
+and source locations.
+
+Loaded `@AutoVisGroup` entries appear in
+[Working region → Categories and exclusions](working-region.md#categories-and-exclusions).
+Loaded `@MaterialExclusion` directory rules are optional in the
+[material browser](textures.md#use-fgd-directory-rules). Neither changes saved
+map visibility or compilation. Unknown catalog directives report load errors
+instead of being silently skipped.
 
 ## Brush entities
 
@@ -123,6 +143,11 @@ Saved **Hide** entities and expanded instance contents are excluded; temporary e
 2. Enter a class in **Entity class contains…**, for example `light`.
 3. Enable **Exact class** to exclude classes such as `light_environment`.
 4. Inspect the rows, then use **Select all matches**.
+
+For multiple exact classes, enter one full name per line in **Classes (any exact)**,
+for example `light` and `light_spot` on separate lines. Any listed name can match;
+**Entity class contains…** and other filters still apply. Clear the field to
+remove the set. Class sets do not expand inheritance or wildcard patterns.
 
 Class matching ignores letter case. With **Exact class** off, it matches part
 of the class name.

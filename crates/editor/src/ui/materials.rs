@@ -39,7 +39,9 @@ fn refresh_material_window_with_favorites(
     session: &mut Session,
     favorites: &material_favorites::Snapshot,
 ) {
-    if window.get_favorites_revision() != favorites.serial.to_string() {
+    if window.get_favorites_revision() != favorites.serial.to_string()
+        || window.get_fgd_definitions_state() != definitions_state(session)
+    {
         refresh_material_catalog_with_favorites(window, session, favorites);
     } else {
         refresh_favorites_status(window, favorites);
@@ -975,12 +977,21 @@ pub(crate) fn refresh_material_catalog(window: &MaterialWindow, session: &mut Se
     refresh_material_catalog_with_favorites(window, session, &favorites);
 }
 
+fn definitions_state(session: &Session) -> String {
+    format!(
+        "{}:{}",
+        session.definitions_serial(),
+        session.definitions_status_serial()
+    )
+}
+
 fn refresh_material_catalog_with_favorites(
     window: &MaterialWindow,
     session: &mut Session,
     favorites: &material_favorites::Snapshot,
 ) {
     window.set_favorites_revision(favorites.serial.to_string().into());
+    window.set_fgd_definitions_state(definitions_state(session).into());
     refresh_favorites_status(window, favorites);
     let source = window
         .get_source_ids()
@@ -990,6 +1001,7 @@ fn refresh_material_catalog_with_favorites(
     let filter = editor_core::materials::CatalogFilter {
         source: Some(source.clone()),
         exclude_generated_map_materials: window.get_exclude_generated_map_materials(),
+        exclude_fgd_materials: window.get_exclude_fgd_materials(),
         match_mode: match window.get_match_mode() {
             0 => editor_core::materials::NameMatch::Substring,
             1 => editor_core::materials::NameMatch::Prefix,
@@ -1034,9 +1046,22 @@ fn refresh_material_catalog_with_favorites(
             window.set_available(false);
             window.set_preview(slint::Image::default());
             window.set_detail(error.into());
+            window.set_fgd_exclusion_status(if window.get_exclude_fgd_materials() {
+                "FGD directory filter requested · Catalog unavailable. Turn off Hide FGD-excluded directories to override this filter."
+            } else {
+                "FGD directory filter off · Catalog unavailable."
+            }.into());
             return;
         }
     };
+    let exclusions = &catalog.fgd_material_exclusions;
+    window.set_fgd_exclusion_status(if exclusions.applied {
+        format!("FGD directory rules enabled · {} prefixes · {} matching candidates hidden. Turn off this option to include them.", exclusions.prefix_count, exclusions.excluded_candidates)
+    } else if exclusions.ready {
+        format!("FGD directory rules off · {} prefixes available", exclusions.prefix_count)
+    } else {
+        "FGD directory rules off · No valid FGD catalog available".into()
+    }.into());
     window.set_shader_scan_pending(catalog.shader_scan.required && !catalog.shader_scan.complete);
     let scan = &catalog.shader_scan;
     let status = if scan.required {

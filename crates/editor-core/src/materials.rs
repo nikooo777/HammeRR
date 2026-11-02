@@ -66,8 +66,38 @@ impl NameMatcher {
 pub struct CatalogFilter {
     pub source: Option<String>,
     pub exclude_generated_map_materials: bool,
+    pub exclude_fgd_materials: bool,
     pub match_mode: NameMatch,
     pub shader: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FgdMaterialExclusions {
+    pub requested: bool,
+    pub applied: bool,
+    pub ready: bool,
+    pub prefix_count: usize,
+    pub excluded_candidates: usize,
+    pub definitions_serial: u64,
+    pub definitions_tool: &'static str,
+    pub candidate_scope: &'static str,
+    pub policy: &'static str,
+}
+
+impl Default for FgdMaterialExclusions {
+    fn default() -> Self {
+        Self {
+            requested: false,
+            applied: false,
+            ready: false,
+            prefix_count: 0,
+            excluded_candidates: 0,
+            definitions_serial: 0,
+            definitions_tool: "get_entity_definitions",
+            candidate_scope: "after_name_generated_and_source_filters_before_shader_group_and_page",
+            policy: "ascii_case_insensitive_literal_relative_directory_prefix",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -191,6 +221,7 @@ pub struct Catalog {
     pub favorites: crate::material_favorites::Status,
     pub sources: Vec<Source>,
     pub filter: CatalogFilter,
+    pub fgd_material_exclusions: FgdMaterialExclusions,
     pub provenance_scope: &'static str,
     pub shader_scan: ShaderScan,
 }
@@ -364,6 +395,7 @@ pub fn browse(
         favorites: crate::material_favorites::Status::session(favorites.len()),
         sources: Vec::new(),
         filter: CatalogFilter::default(),
+        fgd_material_exclusions: FgdMaterialExclusions::default(),
         provenance_scope: "current_winning_vmt; display previews have independent cached identities",
         shader_scan: ShaderScan::default(),
     })

@@ -47,6 +47,25 @@ impl Session {
                 "Use a query up to {MAX_QUERY_BYTES} bytes, a group up to {MAX_GROUP_BYTES} bytes and a page of 1 to {MAX_MATERIAL_PAGE} materials"
             ));
         }
+        let ready = self.definitions_serial > 0 && self.definitions_error.is_none();
+        if filter.exclude_fgd_materials && !ready {
+            return Err(match &self.definitions_error {
+                Some(error) => format!(
+                    "Cannot exclude FGD material directories: entity definitions are unavailable: {error}"
+                ),
+                None => {
+                    "Cannot exclude FGD material directories: load entity definitions first".into()
+                }
+            });
+        }
+        let mut fgd_material_exclusions = FgdMaterialExclusions {
+            requested: filter.exclude_fgd_materials,
+            applied: filter.exclude_fgd_materials && ready,
+            ready,
+            prefix_count: self.definitions.material_exclusions.len(),
+            definitions_serial: self.definitions_serial,
+            ..FgdMaterialExclusions::default()
+        };
         let sources = catalog_sources(&self.game)?;
         validate_source_filter(filter.source.as_deref(), &sources)?;
         let matcher = NameMatcher::new(query, filter.match_mode)?;
@@ -113,6 +132,10 @@ impl Session {
                     continue;
                 }
             }
+            if filter.exclude_fgd_materials && self.definitions.material_excluded(&name) {
+                fgd_material_exclusions.excluded_candidates += 1;
+                continue;
+            }
             selected.insert(name);
         }
         let scan = if let Some(shader) = &shader {
@@ -177,6 +200,7 @@ impl Session {
         }
         catalog.sources = sources;
         catalog.filter = filter.clone();
+        catalog.fgd_material_exclusions = fgd_material_exclusions;
         catalog.shader_scan = scan;
         catalog.favorites = favorites.status.clone();
         Ok(catalog)

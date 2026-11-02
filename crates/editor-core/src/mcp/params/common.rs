@@ -51,6 +51,7 @@ pub struct SaveMapArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FindArgs {
     /// Free text across IDs, class, name and materials.
     pub query: Option<String>,
@@ -58,6 +59,8 @@ pub struct FindArgs {
     pub hidden: Option<bool>,
     /// Case-insensitive substring of the entity classname (e.g. 'info_player', 'func_').
     pub classname: Option<String>,
+    #[schemars(length(min = 1, max = source_formats::fgd::MAX_AUTO_VIS_CLASSES))]
+    pub classnames: Option<Vec<String>>,
     #[serde(default)]
     pub exact_class: bool,
     /// Case-insensitive substring of targetname.

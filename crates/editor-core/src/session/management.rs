@@ -13,6 +13,8 @@ use crate::inspector;
 pub struct ObjectFilter {
     pub query: Option<String>,
     pub classname: Option<String>,
+    #[schemars(length(min = 1, max = source_formats::fgd::MAX_AUTO_VIS_CLASSES))]
+    pub classnames: Option<Vec<String>>,
     #[serde(default)]
     pub exact_class: bool,
     pub targetname: Option<String>,
@@ -49,6 +51,33 @@ impl ObjectFilter {
                 return Err("Bounds need finite, ordered minimum and maximum coordinates".into());
             }
         }
+        if let Some(classnames) = &self.classnames {
+            if classnames.is_empty() || classnames.len() > source_formats::fgd::MAX_AUTO_VIS_CLASSES
+            {
+                return Err(format!(
+                    "Classes (any exact) requires 1–{} distinct classnames",
+                    source_formats::fgd::MAX_AUTO_VIS_CLASSES
+                ));
+            }
+            let mut names = BTreeSet::new();
+            for name in classnames {
+                if name.is_empty()
+                    || name.trim() != name
+                    || name.len() > source_formats::fgd::MAX_METADATA_NAME_BYTES
+                    || name.chars().any(char::is_control)
+                {
+                    return Err(format!(
+                        "Exact classnames require 1–{} UTF-8 bytes without control characters or surrounding whitespace",
+                        source_formats::fgd::MAX_METADATA_NAME_BYTES
+                    ));
+                }
+                if !names.insert(name.to_ascii_lowercase()) {
+                    return Err(
+                        "Classes (any exact) contains duplicate case-insensitive classnames".into(),
+                    );
+                }
+            }
+        }
         Ok(())
     }
 
@@ -61,6 +90,12 @@ impl ObjectFilter {
             contains(&report.classname, &self.classname)
         };
         class_matches
+            && self.classnames.as_ref().is_none_or(|classnames| {
+                matches!(report.object, ObjectId::Entity(_))
+                    && classnames
+                        .iter()
+                        .any(|name| report.classname.eq_ignore_ascii_case(name))
+            })
             && contains(&report.targetname, &self.targetname)
             && self.hidden.is_none_or(|wanted| wanted == report.hidden)
             && self.kind.as_deref().is_none_or(|wanted| {

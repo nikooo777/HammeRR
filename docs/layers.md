@@ -31,8 +31,9 @@ Layer visibility is saved in the map.
 
 ## Automatic categories and saved rules
 
-Use [Working region](working-region.md) for automatic object-type and exact
-entity-class categories, custom exclusions, and map-local rule profiles.
+Use [Working region](working-region.md) for automatic object-type, exact
+entity-class and loaded FGD group categories, custom exclusions, and map-local
+rule profiles.
 
 1. Open **View → Working region…**.
 2. Choose **Categories and exclusions**, find a category, then click
@@ -45,6 +46,13 @@ Categories follow authored map content; they do not change named-layer
 membership. Saved profiles store rules, not copies of member objects.
 Profile metadata is saved in the map; applying it does not change compilation
 or saved hidden state.
+
+FGD categories show **FGD · Parent / Name**, their exact-class count, current
+whole-owner count and declaration source. One group adds one exclusion, even
+when it contains many classes. Empty or unavailable declarations have disabled
+category buttons; **Remove exclusion** remains available for existing rules.
+FGD groups do not create or edit named layers, and they do not expand class
+inheritance or wildcard patterns.
 
 ## Limits
 

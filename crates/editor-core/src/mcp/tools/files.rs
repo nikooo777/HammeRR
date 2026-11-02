@@ -276,7 +276,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Find objects by classname, targetname, material, kind and/or a bounding box. Class names match case-insensitive substrings unless exact_class=true. Returns summaries with ids and bounds.",
+        description = "Find objects by classname, targetname, material, kind and/or a bounding box through the shared object filter. classname matches a case-insensitive substring unless exact_class=true. Optional classnames is a bounded nonempty list of exact literal entity classnames, matched as OR and combined with all other fields as AND; it never matches world solids or expands inheritance/wildcards. Invalid or unknown filter arguments reject. Returns summaries with ids and bounds.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn find_objects(
@@ -289,6 +289,7 @@ impl EditorServer {
                 query: args.query,
                 hidden: args.hidden,
                 classname: args.classname,
+                classnames: args.classnames,
                 exact_class: args.exact_class,
                 targetname: args.targetname,
                 material: args.material,

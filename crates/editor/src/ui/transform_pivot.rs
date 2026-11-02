@@ -26,26 +26,32 @@ pub(super) fn refresh_pivot_pick_controls(
         if picking.owner != Actor::User.label() {
             format!("Pivot pick belongs to {}. Viewport selection remains available.", picking.owner)
         } else if interactive {
-            "Click a visible brush, terrain sheet or model surface. Escape or Cancel pivot pick keeps the current pivot.".into()
+            if picking.attach_vertex {
+                "Click a visible brush face, terrain triangle or supported model mesh. The nearest actual corner or vertex of that first hit becomes the attachment. Escape or Cancel pivot pick keeps the current pivot.".into()
+            } else {
+                "Click a visible brush, terrain sheet or model surface. Escape or Cancel pivot pick keeps the current pivot.".into()
+            }
         } else {
             format!("{}. Cancel pivot pick to start again.", picking.error.unwrap_or_else(|| "Viewport camera or dimensions changed".into()))
         }
     }).unwrap_or_default();
     app.set_pivot_pick_notice(notice.into());
-    app.set_pivot_pick_source(if state.last_pick_matches_pivot {
-        state
-            .last_pick
-            .map(|surface| {
-                format!(
-                    "Picked {} · X {} · Y {} · Z {} · fixed world point",
-                    surface.target, surface.point[0], surface.point[1], surface.point[2]
-                )
-            })
-            .unwrap_or_default()
-            .into()
-    } else {
-        "".into()
-    });
+    app.set_pivot_pick_source(
+        if !app.get_pivot_attached() && state.last_pick_matches_pivot {
+            state
+                .last_pick
+                .map(|surface| {
+                    format!(
+                        "Picked {} · X {} · Y {} · Z {} · fixed world point",
+                        surface.target, surface.point[0], surface.point[1], surface.point[2]
+                    )
+                })
+                .unwrap_or_default()
+                .into()
+        } else {
+            "".into()
+        },
+    );
 }
 
 fn refresh_pivot_attachment_controls(app: &AppWindow, session: &Session) {
@@ -56,16 +62,12 @@ fn refresh_pivot_attachment_controls(app: &AppWindow, session: &Session) {
     }
     app.set_can_attach_pivot(state.attach_error.is_none());
     app.set_can_detach_pivot(attached && state.detach_error.is_none());
-    let mut summary = if let Some(attachment) = state.attachment {
-        format!(
-            "{} · {}",
-            attachment.object,
-            if attachment.kind == "local" {
-                "Rigid local point"
-            } else {
-                "Authored origin"
-            }
-        )
+    let vertex = state
+        .attachment
+        .as_ref()
+        .is_some_and(|attachment| attachment.kind == "vertex");
+    let mut summary = if let Some(attachment) = &state.attachment {
+        crate::pivot_defaults_ui::attachment_summary(attachment)
     } else {
         "Attach origin uses the entity's origin. Attach local point keeps the current world point."
             .into()
@@ -79,6 +81,9 @@ fn refresh_pivot_attachment_controls(app: &AppWindow, session: &Session) {
         }
         if let Some(error) = state.error {
             summary.push_str(&format!("\nUnavailable: {error}"));
+            if vertex {
+                summary.push_str("\nUse Attach vertex… to choose the source again, or Use world point to replace it.");
+            }
         }
     }
     if let Some(error) = state.attach_error {
@@ -231,6 +236,25 @@ pub(super) fn bind_pivot_pick_controls_with_access(
             })
         }
     });
+    app.on_attach_pivot_vertex({
+        let callback = admission::SessionCallback::new(app, access);
+        move || {
+            callback.input(|app, session| {
+                let camera = session.camera();
+                let snapshot = session.transform_pivot_pick_stamp();
+                let result = session.begin_transform_pivot_vertex_pick(
+                    Actor::User,
+                    camera,
+                    viewport_size(&app),
+                    &snapshot,
+                );
+                if let Err(error) = result {
+                    app.set_message(error.into());
+                }
+                refresh_pivot_pick_controls(&app, session, session.camera());
+            })
+        }
+    });
     app.on_cancel_transform_pivot_pick({
         let callback = admission::SessionCallback::new(app, access);
         move || {
@@ -267,7 +291,14 @@ pub(super) fn pick_pivot_pixel(
     match session.pick_transform_pivot_pixel(Actor::User, token, pointer) {
         Ok(_) => {
             refresh_interaction(app, session);
-            app.set_message("Picked custom transform pivot. The map is unchanged.".into());
+            app.set_message(
+                if session.transform_pivot_attached() {
+                    "Transform pivot attached to the picked vertex. The map is unchanged."
+                } else {
+                    "Picked custom transform pivot. The map is unchanged."
+                }
+                .into(),
+            );
         }
         Err(error) => app.set_message(error.into()),
     }

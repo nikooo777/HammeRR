@@ -2196,6 +2196,7 @@ export component AppWindow inherits Window {
     in property <string> pivot-pick-notice;
     in property <string> pivot-pick-source;
     callback pick-transform-pivot();
+    callback attach-pivot-vertex();
     callback snap-transform-pivot-to-grid();
     callback cancel-transform-pivot-pick();
     callback attach-pivot-origin();
@@ -3608,12 +3609,16 @@ export component AppWindow inherits Window {
                                                 current-index <=> root.transform-pivot-mode;
                                                 selected => { root.transform-pivot-changed(); }
                                             }
-                                            if root.pivot-attached: Text { text: "Attached entity"; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; }
+                                            if root.pivot-attached: Text { text: "Attached pivot"; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; }
                                         }
                                         if root.transform-pivot-mode == 0: Text { text: root.selection-pivot; color: Theme.text-faint; font-size: Theme.font-small; }
                                         HorizontalLayout {
                                             spacing: Theme.space-sm;
                                             Button { text: "Pick pivot…"; enabled: root.can-pick-pivot; clicked => { root.pick-transform-pivot(); } }
+                                            Button { text: "Attach vertex…"; enabled: root.can-pick-pivot; clicked => { root.attach-pivot-vertex(); } }
+                                        }
+                                        HorizontalLayout {
+                                            spacing: Theme.space-sm;
                                             Button { text: "Snap pivot to grid"; enabled: root.can-snap-pivot; clicked => { root.snap-transform-pivot-to-grid(); } }
                                         }
                                         if root.pivot-grid-error != "": MutedText { text: root.pivot-grid-error; font-size: Theme.font-small; }
@@ -3633,7 +3638,7 @@ export component AppWindow inherits Window {
                                             Button { text: "Attach local point"; enabled: root.can-attach-pivot; clicked => { root.attach-pivot-local(); } }
                                         }
                                         MutedText { text: root.pivot-attachment-summary; font-size: Theme.font-small; }
-                                        MutedText { text: "Local points follow authored origin and rotation. Model scale, parenting and surfaces are not attached."; font-size: Theme.font-small; }
+                                        MutedText { text: "Point-entity local points follow authored origin and rotation, without model scale or parenting. Attach vertex… follows a picked brush, terrain or model vertex."; font-size: Theme.font-small; }
                                         if root.pivot-attached: VerticalLayout {
                                             spacing: Theme.space-sm;
                                             Button { text: "Detach pivot"; enabled: root.can-detach-pivot; clicked => { root.detach-transform-pivot(); } }

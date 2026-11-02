@@ -100,7 +100,7 @@ The pivot stays at its world position. It does not follow the surface.
 4. To follow an offset point instead, first set a **Custom** world point, then
    click **Attach local point**. The current point becomes an offset in the
    entity's orientation frame.
-5. Inspect **Attached entity** and its resolved coordinates before transforming.
+5. Inspect **Attached pivot** and its resolved coordinates before transforming.
 
 Moving the anchor moves the pivot. Rotating the anchor also rotates a local
 offset. The attachment remains active when you select other objects to transform.
@@ -109,13 +109,46 @@ offset. The attachment remains active when you select other objects to transform
 An unavailable anchor reports its error and blocks operations that need it.
 Enter explicit coordinates under **World point replacement**, then click
 **Use world point** to recover without resolving the old anchor. There is no
-fallback to a cached point or selection center. Brush, surface and
-general-purpose anchors are unavailable.
+fallback to a cached point or selection center.
 Resolved points and local offsets must be finite.
 Local offsets use authored origin/orientation, without model scale, parenting
 or FGD orientation adjustments. Undo can restore a deleted anchor. **New** or
 **Open** clears the attachment, retaining a resolved point as a fixed world
 point or returning to Selection center when the anchor is unavailable.
+
+### Attach the pivot to a vertex
+
+1. Expand **Transform** and choose **Rotate**, **Scale**, **Mirror** or **Shear**.
+2. Click **Attach vertex…**.
+3. Click a visible brush face, terrain triangle or supported model mesh.
+4. Inspect **Attached pivot**, its source and resolved coordinates.
+5. Select the objects to transform, then rotate, scale, mirror or shear.
+
+![Rotation handles follow a barrel mesh vertex used as an array pivot](images/attached-pivot.png)
+
+The first visible hit determines the target: a brush uses its nearest face
+corner; terrain and models use the nearest vertex of the hit triangle.
+Selected objects remain valid targets. Picking uses editor query visibility,
+not rendered-pixel occlusion.
+**Cancel pivot pick** or Escape preserves the current pivot. **Detach pivot**
+fixes the resolved point in world space; **World point replacement** and
+**Use world point** recover an unavailable binding.
+
+- Brush corners follow geometry while their side/corner topology remains valid.
+- Terrain vertices use prepared displacement positions, including shared
+  neighbor/LOD adjustments. Grid size and the captured base identity must stay
+  valid.
+- Model vertices follow the current pose and scale. Body/mesh identity and the
+  captured editor-cache identity of the original MDL/VVD/VTX bytes must match.
+  **Reload models** invalidates these bindings even when the bytes are identical;
+  the resolver does not reread disk assets each frame. Content-context changes
+  also require a new binding.
+- Saved **Hide** makes a vertex owner unavailable. Editor display filters affect
+  picking but do not invalidate an existing binding.
+
+Unavailable topology, grids, model bodies or assets report errors without a
+cached-point fallback. Startup defaults cannot store bindings. **New** or
+**Open** clears them using the same rule as point-entity attachments.
 
 ### Snap the pivot to the grid
 
@@ -172,7 +205,7 @@ Both modes use the current grid even when automatic **Snap** is off.
 Apply creates one Undo step; an already aligned selection adds none.
 
 Each object requires whole visible roots with valid geometry inside ±65536 units.
-Invalid requests retain the previous preview. Model and point-entity anchors use
+Invalid requests retain the previous preview. Models and point entities align
 their existing model or helper bounds. Reloading model assets cancels a snap preview.
 For exact corner matching, use [Surface placement](placement.md#snap-a-real-corner).
 

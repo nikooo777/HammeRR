@@ -748,12 +748,47 @@ Call `set_selection_profile` with the latest snapshot and `operation:{action:"sa
 Use a profile ID for `replace`, `apply`, `rename` or `delete`; `rename` also needs `name`.
 Only `apply` changes current rules. Profile edits leave startup defaults unchanged; default Save/Reset retain profiles. Version 1/2 files remain readable with Groups mode; explicit saves publish version 3 through the same authority and conflict guards.
 
+## Pick or attach a transform pivot
+
+Call `transform_pivot_pick` with `action:"inspect"`, then `action:"begin"` with
+its `snapshot`, `width`, `height` and optional `camera`. The boolean
+`attach_vertex` defaults to `false`; `null` rejects. `false` sets a fixed world
+surface point through **Pick pivot…**. `true` arms **Attach vertex…** using the
+same owned token and subsequent `ray`, `pixel` or `cancel` actions.
+
+`ray` supplies `ray_origin` and `ray_direction`; `pixel` supplies continuous
+`x`, `y` and the captured viewport dimensions. Vertex mode chooses the nearest
+corner of the first hit brush face polygon, or the nearest vertex of the first
+hit terrain/model triangle, with selected objects allowed.
+It uses editor query visibility, not rendered-pixel occlusion. Pending picks
+report `kind:"world_point"` or `"attach_vertex"` and `attach_vertex`. Failed or
+stale picks preserve the existing binding and pending ownership; cancel leaves
+the pivot unchanged.
+
+Vertex completion returns `attachment` with its shared typed `source`. The
+source families are `brush_corner`, `terrain_vertex` and `model_vertex`:
+
+- Brush sources retain owner, solid and side/corner topology identity.
+- Terrain sources retain face, vertex index, grid size and ordered base
+  identity. Positions use prepared terrain, including shared neighbor/LOD
+  adjustments.
+- Model sources retain model path, body/mesh vertex identity, cached original
+  MDL/VVD/VTX SHA256 and reload generation. Current pose and scale still apply.
+  There is no per-frame disk reread; **Reload models** invalidates the binding
+  even when the bytes are identical.
+
+Changed topology, grids, bodies or unavailable assets produce explicit errors.
+Saved-hidden vertex owners are unavailable; editor display filters affect
+picking without invalidating existing bindings. No cached-point fallback or
+arbitrary barycentric surface attachment is provided.
+
 ## Attached transform pivots
 
 Call `transform_pivot_attachment` with `action:"inspect"` to read the current
 attachment, resolved world point or resolution error, and action snapshot.
-Attachment modes include `attached_origin` and `attached_local`; point-entity
-identity is bound to its document generation.
+Attachment modes include `attached_origin`, `attached_local` and
+`attached_vertex`; identity is bound to its document generation. Vertex bindings
+report `attachment.kind:"vertex"` and their shared typed `attachment.source`.
 
 | Action | Fields | Result |
 | --- | --- | --- |
@@ -766,12 +801,11 @@ An omitted object requires exactly one selected valid point entity. Local
 offsets follow later entity translation and orientation. Unknown or incompatible
 action fields reject. An unavailable anchor never falls back to a cached point
 or selection center; supply an explicit `world_point` to recover. These actions
-change no geometry, history, camera or saved defaults. General brush/surface
-anchors remain unavailable.
-Local frames use authored origin/orientation, without model scale, parenting or
-FGD orientation adjustments. Undo can restore a deleted anchor; New/Open clear
-the attachment, retaining its resolved world point or using selection-center
-mode if it was unavailable.
+change no geometry, history, camera or saved defaults.
+Point-entity local frames use authored origin/orientation, without model scale,
+parenting or FGD orientation adjustments. Undo can restore a deleted anchor.
+New/Open clear the attachment, retaining its resolved world point or using
+selection-center mode if it was unavailable.
 
 `transform_objects` accepts `pivot_source:"selection_center"`,
 `"current_transform_pivot"` or `"custom_world_point"`. Current-transform-pivot

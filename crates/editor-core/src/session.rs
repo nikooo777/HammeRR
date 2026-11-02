@@ -118,6 +118,7 @@ pub mod sky3d_preview;
 mod sky_preview;
 pub mod sounds;
 pub mod statistics;
+pub mod surface_vertex;
 mod surfaces;
 pub mod terrain_handles;
 pub mod terrain_strokes;
@@ -330,6 +331,7 @@ pub struct Session {
     clip_drag: Option<clip_drag::Drag>,
     transform_tool: TransformTool,
     transform_pivot: transform_pivot::State,
+    surface_vertices: surface_vertex::State,
     transform_drag: Option<TransformDrag>,
     area_preview: Option<AreaPreview>,
     pointfile: pointfiles::State,
@@ -659,6 +661,7 @@ impl Session {
             clip_drag: None,
             transform_tool: TransformTool::default(),
             transform_pivot: transform_pivot::State::default(),
+            surface_vertices: surface_vertex::State::default(),
             transform_drag: None,
             area_preview: None,
             pointfile: pointfiles::State::default(),

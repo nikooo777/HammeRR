@@ -210,7 +210,7 @@ impl Session {
         let candidate = self.placement_surface_candidate(ids, ray, true)?;
         let mut final_transform = transform;
         let (reason, target, identity, distance) = if let Some(picked) = candidate {
-            let (target, position) = self.placement_corner_target(picked)?;
+            let (target, position) = self.capture_surface_vertex(picked)?;
             let distance = position.distance(proposed);
             if distance <= radius {
                 final_transform.translation =

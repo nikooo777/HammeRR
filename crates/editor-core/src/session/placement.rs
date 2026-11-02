@@ -11,12 +11,16 @@ use map_core::{
 use serde_json::{Value, json};
 use source_formats::vmf::Solid;
 
-use super::{Actor, Session};
+use super::{
+    Actor, Session,
+    surface_vertex::{
+        CORNER_SNAP_ROUNDOFF_ULPS, ModelPick, PickedSurface, Reference, precise_corner,
+    },
+};
 
 pub mod magnetic;
 
 const MAX_POINTS: usize = 1_000_000;
-const CORNER_SNAP_ROUNDOFF_ULPS: f64 = 4.0;
 pub const MAX_SOURCE_BRUSHES: usize = super::components::MAX_SOURCE_PAGE_SIZE;
 pub const MAX_SOURCE_CORNERS: usize = 4096;
 
@@ -99,59 +103,8 @@ pub(super) struct Plan {
 
 struct CornerSnap {
     source: DVec3,
-    target: CornerTarget,
+    target: Reference,
     position: DVec3,
-}
-
-enum CornerTarget {
-    Brush(Component),
-    Terrain(query::TerrainVertex),
-    Model(ModelCornerTarget),
-}
-
-struct ModelCornerTarget {
-    entity: ObjectId,
-    path: String,
-    checksum: i32,
-    body: u32,
-    skin: usize,
-    scale: f32,
-    origin: DVec3,
-    rotation: DQuat,
-    part: usize,
-    triangle: usize,
-    vertex: u32,
-    position: DVec3,
-}
-
-struct PickedSurface {
-    surface: SurfaceHit,
-    model: Option<ModelCornerTarget>,
-}
-
-impl CornerTarget {
-    fn report(&self) -> Value {
-        match self {
-            Self::Brush(component) => {
-                let mut report = super::components::component_json(component);
-                report["kind"] = json!("brush_corner");
-                report
-            }
-            Self::Terrain(vertex) => json!({
-                "kind":"terrain_vertex", "solid":vertex.face.solid, "side":vertex.face.side,
-                "triangle":vertex.triangle, "index":vertex.index, "grid_size":vertex.grid_size,
-                "row":vertex.index / vertex.grid_size, "column":vertex.index % vertex.grid_size,
-                "provenance":"prepared_surface"
-            }),
-            Self::Model(target) => json!({
-                "kind":"model_vertex", "entity":object_id(target.entity), "model":target.path,
-                "checksum":target.checksum, "body":target.body, "skin":target.skin,
-                "scale":target.scale, "origin":target.origin.to_array(), "rotation":target.rotation.to_array(),
-                "part":target.part, "triangle":target.triangle, "vertex":target.vertex,
-                "provenance":"cached_decoded_model_mesh"
-            }),
-        }
-    }
 }
 
 pub(super) struct SupportPoint {
@@ -171,52 +124,6 @@ fn object_id(id: ObjectId) -> String {
         ObjectId::Solid(id) => format!("solid:{id}"),
         ObjectId::Entity(id) => format!("entity:{id}"),
     }
-}
-
-fn precise_corner(solid: &Solid, component: &Component, approximate: DVec3) -> Option<DVec3> {
-    let mut sides = component.sides.clone();
-    sides.sort_unstable();
-    let planes = sides
-        .iter()
-        .map(|id| {
-            let side = solid.sides.iter().find(|side| side.id == *id)?;
-            Some((map_core::Plane::from_points(side.plane.0)?, side.plane.0[1]))
-        })
-        .collect::<Option<Vec<_>>>()?;
-    let reference = approximate;
-    let mut best = None;
-    let mut largest = 0.0;
-    for (a, first) in planes.iter().enumerate() {
-        for (b, second) in planes.iter().enumerate().skip(a + 1) {
-            for (c, third) in planes.iter().enumerate().skip(b + 1) {
-                let [na, nb, nc] = [first.0.normal, second.0.normal, third.0.normal];
-                let determinant = na.dot(nb.cross(nc));
-                if !determinant.is_finite() || determinant.abs() <= largest {
-                    continue;
-                }
-                largest = determinant.abs();
-                best = Some([a, b, c]);
-            }
-        }
-    }
-    let indices = best?;
-    let [na, nb, nc] = indices.map(|index| planes[index].0.normal);
-    let determinant = na.dot(nb.cross(nc));
-    let distances = indices.map(|index| planes[index].0.normal.dot(planes[index].1 - reference));
-    let point = reference
-        + (distances[0] * nb.cross(nc) + distances[1] * nc.cross(na) + distances[2] * na.cross(nb))
-            / determinant;
-    if !point.is_finite() || !point.abs_diff_eq(approximate, map_core::plane::ON_EPSILON) {
-        return None;
-    }
-    for (plane, origin) in planes {
-        let scale = (plane.normal.abs() * (point.abs() + origin.abs())).element_sum();
-        let error = CORNER_SNAP_ROUNDOFF_ULPS * f64::EPSILON * scale;
-        if plane.normal.dot(point - origin).abs() > error {
-            return None;
-        }
-    }
-    Some(point)
 }
 
 fn corner_translation(source: DVec3, position: DVec3, grid: f64) -> DVec3 {
@@ -691,6 +598,11 @@ impl Session {
             .map(|picked| picked.surface)
     }
 
+    pub fn pick_surface_vertex(&mut self, ray: Ray) -> Result<(Reference, DVec3), String> {
+        let picked = self.picked_placement_surface(&[], ray, true)?;
+        self.capture_surface_vertex(picked)
+    }
+
     fn picked_placement_surface(
         &mut self,
         ids: &[ObjectId],
@@ -762,20 +674,12 @@ impl Session {
                         let hit = instance.pick_mesh_surface(&ray)?;
                         Some(PickedSurface {
                             surface: hit.surface,
-                            model: Some(ModelCornerTarget {
-                                entity: instance.id,
-                                path: instance.asset.path.clone(),
-                                checksum: instance.asset.model.header.checksum,
-                                body: instance.body,
-                                skin: instance.skin,
-                                scale: instance.scale,
-                                origin: instance.origin,
-                                rotation: instance.rotation,
-                                part: hit.part,
-                                triangle: hit.triangle,
-                                vertex: hit.vertex,
-                                position: hit.position,
-                            }),
+                            model: Some(ModelPick::new(
+                                instance,
+                                hit,
+                                self.models.borrow().reload_generation(),
+                                self.content_epoch,
+                            )),
                         })
                     }),
             )
@@ -788,43 +692,6 @@ impl Session {
             return Err("The first visible brush hit has ambiguous or invalid geometry".into());
         }
         Ok(candidate)
-    }
-
-    fn placement_corner_target(
-        &self,
-        picked: PickedSurface,
-    ) -> Result<(CornerTarget, DVec3), String> {
-        let PickedSurface { surface, model } = picked;
-        let (target, position) = if let Some(target) = model {
-            if self
-                .document
-                .vmf()
-                .entities
-                .iter()
-                .filter(|entity| ObjectId::Entity(entity.id) == target.entity)
-                .count()
-                != 1
-            {
-                return Err("The first visible model has an ambiguous entity identity".into());
-            }
-            let position = target.position;
-            (CornerTarget::Model(target), position)
-        } else if let Some(vertex) = surface.terrain_vertex {
-            (CornerTarget::Terrain(vertex), vertex.position)
-        } else {
-            let (target, approximate) = query::face_corner(&self.document, &surface.hit).ok_or(
-                "The first visible hit must have unambiguous brush, terrain or model mesh geometry",
-            )?;
-            let (_, solid) = subobject::solid(&self.document, target.solid)
-                .map_err(|error| error.to_string())?;
-            let position = precise_corner(solid, &target, approximate)
-                .ok_or("Target corner planes have no finite intersection")?;
-            (CornerTarget::Brush(target), position)
-        };
-        if !position.is_finite() || position.abs().max_element() > crate::spatial::MAX_EXTENT {
-            return Err("Target vertex must be finite and within ±65536 units".into());
-        }
-        Ok((target, position))
     }
 
     fn plan_placement(
@@ -848,7 +715,7 @@ impl Session {
             let ray = ray.ok_or("Supply a ray or pick a target corner in the viewport")?;
             let picked = self.picked_placement_surface(ids, ray, true)?;
             let surface = picked.surface;
-            let (target, position) = self.placement_corner_target(picked)?;
+            let (target, position) = self.capture_surface_vertex(picked)?;
             let delta = corner_translation(source, position, self.spatial.grid_size);
             self.object_translation_bounds(ids, delta)?;
             return Ok(Plan {

@@ -13,7 +13,7 @@ G01,Interactive brush creation,100
 G02,Additional brush primitives,100
 G03,Full numeric transforms,80
 G04,Transform handles (++),100
-G05,Transform pivots (++),85
+G05,Transform pivots (++),100
 G06,"Vertex, edge and face geometry editing",80
 G07,Plane clipping,80
 G08,Hollowing and carving,80

@@ -23,10 +23,14 @@ A scale factor of 1 keeps size; 1.1 gives 10% growth per copy.
 Every copy starts from the originals. Scale applies before rotation and movement.
 One Undo removes the entire array. Cancel discards only the preview.
 
-**Current transform pivot** uses the pivot configured in the Inspector, including
-an attached point-entity anchor. An unavailable anchor reports an error; it does
-not switch to the selection center. Each preview captures one world point and
+**Current transform pivot** uses the [pivot configured in the Inspector](brushes.md#attach-the-pivot-to-a-vertex), including
+point-entity, brush-corner, terrain-vertex and supported model-vertex attachments.
+An unavailable anchor reports an error; it does not switch to the selection
+center. Each preview captures one world point and
 one source frame for all copies.
+Vertex attachments retain their source topology/grid or cached model identity
+requirements. Reusing array settings resolves the current binding again;
+model reloads or unavailable sources report an error before a new preview.
 
 ## Reuse the last applied array
 

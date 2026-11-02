@@ -50,11 +50,10 @@ impl Session {
     fn pivot_preferences_stamp_for(&self, saved: &Snapshot<Pivot>) -> String {
         if self.transform_pivot_attached() {
             format!(
-                "{}:{}:{}:{}",
+                "{}:{}:{}",
                 saved.serial,
                 self.pivot_preferences.local_serial,
-                self.document_generation,
-                self.document.revision()
+                self.surface_vertex_context_stamp()
             )
         } else {
             format!("{}:{}", saved.serial, self.pivot_preferences.local_serial)
@@ -108,10 +107,10 @@ impl Session {
         state.as_object_mut().unwrap().extend(json!({
             "limits": {"file_bytes": crate::pivot_preferences::MAX_FILE_BYTES, "finite_coordinates": true},
             "apply_error": self.pivot_defaults_apply_admission().err(),
-            "save_error": if self.transform_pivot_attached() { Some("Detach the transform pivot before saving startup defaults; attached entity IDs are not startup defaults".to_owned()) } else { current.as_ref().err().cloned() },
+            "save_error": if self.transform_pivot_attached() { Some("Detach the transform pivot before saving startup defaults; attachment references are not startup defaults".to_owned()) } else { current.as_ref().err().cloned() },
             "current_error": current.err(),
             "attachment": self.transform_pivot_attachment_state(),
-            "persistence": "Only Save current as defaults and Reset saved defaults write preferences. Saved pivot defaults apply once when a document Session starts. Apply replaces any attachment and changes only this document's pivot, preserving other transform settings. Save rejects attached pivots; detach explicitly first. New/Open retain ordinary current pivots and clear point-entity bindings. Pick provenance, attachment identity, selection, camera and map history are never saved as defaults."
+            "persistence": "Only Save current as defaults and Reset saved defaults write preferences. Saved pivot defaults apply once when a document Session starts. Apply replaces any attachment and changes only this document's pivot, preserving other transform settings. Save rejects attached pivots; detach explicitly first. New/Open retain ordinary current pivots and clear all attachment bindings. Pick provenance, attachment identity, selection, camera and map history are never saved as defaults."
         }).as_object().unwrap().clone());
         state
     }
@@ -150,7 +149,7 @@ impl Session {
                     Pivot::default()
                 } else {
                     if self.transform_pivot_attached() {
-                        return Err("Detach the transform pivot before saving startup defaults; attached entity IDs are not startup defaults".into());
+                        return Err("Detach the transform pivot before saving startup defaults; attachment references are not startup defaults".into());
                     }
                     Pivot::from_point(self.transform_pivot_value()?)
                 };

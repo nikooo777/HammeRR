@@ -6,7 +6,7 @@ use map_core::{
 use render::Camera;
 use serde::{Deserialize, Serialize};
 
-use super::{Actor, Pointer, Session, TransformTool, viewport_pick::Context};
+use super::{Actor, Pointer, Session, TransformTool, surface_vertex, viewport_pick::Context};
 
 pub const MAX_VIEWPORT_DIMENSION: u32 = super::viewport_pick::MAX_DIMENSION;
 
@@ -44,10 +44,18 @@ impl PivotSource {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
+enum AttachmentSource {
+    Entity {
+        entity: u32,
+        local_offset: Option<DVec3>,
+    },
+    Vertex(surface_vertex::Reference),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct Attachment {
-    entity: u32,
-    local_offset: Option<DVec3>,
+    source: AttachmentSource,
     generation: u64,
 }
 
@@ -57,6 +65,7 @@ pub struct AttachmentInfo {
     pub kind: &'static str,
     pub local_offset: Option<[f64; 3]>,
     pub generation: u64,
+    pub source: Option<surface_vertex::Reference>,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -89,6 +98,14 @@ struct Picking {
     tool: TransformTool,
     context: Context,
     previous_pivot: Option<DVec3>,
+    kind: PickKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PickKind {
+    WorldPoint,
+    AttachVertex,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -111,6 +128,8 @@ pub struct PickReport {
     pub previous_pivot: Option<[f64; 3]>,
     pub valid: bool,
     pub error: Option<String>,
+    pub kind: PickKind,
+    pub attach_vertex: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -118,6 +137,7 @@ pub struct Report {
     pub snapshot: String,
     pub current_pivot: Option<[f64; 3]>,
     pub current_error: Option<String>,
+    pub attachment: Option<AttachmentInfo>,
     pub picking: Option<PickReport>,
     pub last_pick: Option<Surface>,
     pub last_pick_matches_pivot: bool,
@@ -138,7 +158,7 @@ pub struct GridReport {
 
 impl Session {
     pub fn transform_pivot_value(&self) -> Result<Option<DVec3>, String> {
-        let Some(attachment) = self.transform_pivot.attachment else {
+        let Some(attachment) = &self.transform_pivot.attachment else {
             if let Some(point) = self.transform_tool.pivot {
                 crate::pivot_preferences::validate_point(point)?;
             }
@@ -147,14 +167,22 @@ impl Session {
         if attachment.generation != self.document_generation {
             return Err("Attached transform pivot belongs to a different map".into());
         }
-        let object = ObjectId::Entity(attachment.entity);
-        let point = match attachment.local_offset {
-            Some(offset) => {
-                let (origin, basis) =
-                    map_core::measurements::entity_local_pose(self.document.vmf(), object)?;
-                origin + basis * offset
+        let point = match &attachment.source {
+            AttachmentSource::Entity {
+                entity,
+                local_offset,
+            } => {
+                let object = ObjectId::Entity(*entity);
+                match local_offset {
+                    Some(offset) => {
+                        let (origin, basis) =
+                            map_core::measurements::entity_local_pose(self.document.vmf(), object)?;
+                        origin + basis * *offset
+                    }
+                    None => map_core::measurements::entity_origin(self.document.vmf(), object)?,
+                }
             }
-            None => map_core::measurements::entity_origin(self.document.vmf(), object)?,
+            AttachmentSource::Vertex(reference) => self.resolve_surface_vertex(reference)?,
         };
         crate::pivot_preferences::validate_point(point)?;
         Ok(Some(point))
@@ -222,12 +250,9 @@ impl Session {
 
     pub fn transform_pivot_attachment_stamp(&self) -> String {
         format!(
-            "pivot-attachment:{}:{}:{}:{}:{}:{}:{}:{:?}",
+            "pivot-attachment:{}:{}:{}:{}:{:?}",
             self.buffer_review_scope,
-            self.document_generation,
-            self.document.revision(),
-            self.definitions_serial,
-            self.content_epoch,
+            self.surface_vertex_context_stamp(),
             self.pivot_preferences.local_serial,
             self.transform_pivot.serial,
             (self.face_mode, self.selected_ids())
@@ -237,25 +262,19 @@ impl Session {
     pub fn transform_pivot_attachment_state(&self) -> AttachmentReport {
         let point = self.resolved_transform_pivot(&self.selected_ids());
         let admission = self.pivot_attachment_admission().err();
-        let attachment = self
+        let attachment = self.transform_pivot_attachment_info();
+        let mode = match self
             .transform_pivot
             .attachment
-            .map(|attachment| AttachmentInfo {
-                object: crate::identity::id_string(ObjectId::Entity(attachment.entity)),
-                kind: if attachment.local_offset.is_some() {
-                    "local"
-                } else {
-                    "origin"
-                },
-                local_offset: attachment.local_offset.map(|offset| offset.to_array()),
-                generation: attachment.generation,
-            });
-        let mode = match self.transform_pivot.attachment {
-            Some(Attachment {
+            .as_ref()
+            .map(|attachment| &attachment.source)
+        {
+            Some(AttachmentSource::Entity {
                 local_offset: Some(_),
                 ..
             }) => "attached_local",
-            Some(_) => "attached_origin",
+            Some(AttachmentSource::Entity { .. }) => "attached_origin",
+            Some(AttachmentSource::Vertex(_)) => "attached_vertex",
             None => match self.transform_tool.pivot {
                 None => "selection_center",
                 Some(point) if point == DVec3::ZERO => "world_origin",
@@ -276,8 +295,37 @@ impl Session {
             mode,
             error: point.err(),
             attach_error: admission,
-            policy: "Session-local authored point-entity origin or rigid origin/orientation attachment. Local offsets ignore model scale, parenting, FGD orientation adjustments and model meshes. Missing or invalid targets are unavailable without a world-point fallback; Undo restores resolution when the target returns. Detach captures the resolved world point; explicit world replacement repairs unavailable attachments. Previews and drags capture the committed resolved point once. New/Open clear the binding. Attached pivots cannot be saved as startup defaults; detach explicitly first. No source, history or camera edits.",
+            policy: "Session-local point-entity origin/rigid-local or stable brush, terrain and supported model vertex attachment. Point-local offsets ignore model scale, parenting, FGD orientation adjustments and model meshes; vertex references use the shared source-family identity checks. Vertex picking snaps explicitly to one actual vertex of the first visible surface, not an arbitrary surface point. Missing or invalid targets are unavailable without a world-point fallback; Undo restores resolution when valid identity returns. Detach captures the resolved world point; explicit world replacement repairs unavailable attachments. Previews and drags capture the committed resolved point once. New/Open clear all bindings. Attached pivots cannot be saved as startup defaults; detach explicitly first. No source, history or camera edits.",
         }
+    }
+
+    fn transform_pivot_attachment_info(&self) -> Option<AttachmentInfo> {
+        let attachment = self.transform_pivot.attachment.as_ref()?;
+        let (object, kind, local_offset, source) = match &attachment.source {
+            AttachmentSource::Entity {
+                entity,
+                local_offset,
+            } => (
+                ObjectId::Entity(*entity),
+                if local_offset.is_some() {
+                    "local"
+                } else {
+                    "origin"
+                },
+                local_offset.map(|offset| offset.to_array()),
+                None,
+            ),
+            AttachmentSource::Vertex(reference) => {
+                (reference.object(), "vertex", None, Some(reference.clone()))
+            }
+        };
+        Some(AttachmentInfo {
+            object: crate::identity::id_string(object),
+            kind,
+            local_offset,
+            generation: attachment.generation,
+            source,
+        })
     }
 
     fn check_pivot_attachment_action(&self, snapshot: &str) -> Result<(), String> {
@@ -320,23 +368,14 @@ impl Session {
         let ObjectId::Entity(entity) = object else {
             return Err("Pivot attachment requires an authored point entity".into());
         };
-        self.set_transform_tool_with_pivot(
+        self.install_transform_pivot_attachment(
             actor,
-            TransformTool {
-                pivot: Some(point),
-                ..self.transform_tool
+            point,
+            AttachmentSource::Entity {
+                entity,
+                local_offset,
             },
-            true,
         )?;
-        self.transform_pivot.attachment = Some(Attachment {
-            entity,
-            local_offset,
-            generation: self.document_generation,
-        });
-        self.transform_pivot.last_pick = None;
-        self.transform_pivot.serial += 1;
-        self.pivot_preferences.local_serial += 1;
-        self.view_serial += 1;
         self.log(
             actor,
             if local {
@@ -346,6 +385,31 @@ impl Session {
             },
         );
         Ok(self.transform_pivot_attachment_state())
+    }
+
+    fn install_transform_pivot_attachment(
+        &mut self,
+        actor: Actor,
+        point: DVec3,
+        source: AttachmentSource,
+    ) -> Result<(), String> {
+        self.set_transform_tool_with_pivot(
+            actor,
+            TransformTool {
+                pivot: Some(point),
+                ..self.transform_tool
+            },
+            true,
+        )?;
+        self.transform_pivot.attachment = Some(Attachment {
+            source,
+            generation: self.document_generation,
+        });
+        self.transform_pivot.last_pick = None;
+        self.transform_pivot.serial += 1;
+        self.pivot_preferences.local_serial += 1;
+        self.view_serial += 1;
+        Ok(())
     }
 
     pub fn attach_transform_pivot_origin(
@@ -564,11 +628,9 @@ impl Session {
 
     pub fn transform_pivot_pick_stamp(&self) -> String {
         format!(
-            "{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}:{:?}",
+            "{}:{}:{}:{}:{}:{:?}:{:?}:{:?}",
             self.transform_pivot.serial,
-            self.document_generation,
-            self.document.revision(),
-            self.definitions_serial(),
+            self.surface_vertex_context_stamp(),
             self.scene_serial,
             self.view_serial,
             self.camera_serial,
@@ -592,6 +654,7 @@ impl Session {
     }
 
     pub fn transform_pivot_pick_state(&self) -> Report {
+        let begin_error = self.transform_pivot_pick_admission().err();
         let point = self.transform_pivot_value();
         Report {
             snapshot: self.transform_pivot_pick_stamp(),
@@ -602,6 +665,7 @@ impl Session {
                 .flatten()
                 .map(|point| point.to_array()),
             current_error: point.as_ref().err().cloned(),
+            attachment: self.transform_pivot_attachment_info(),
             picking: self.transform_pivot.picking.as_ref().map(|picking| {
                 let checked = self.checked_transform_pivot_pick(picking.owner, picking.token);
                 PickReport {
@@ -612,6 +676,8 @@ impl Session {
                     previous_pivot: picking.previous_pivot.map(|point| point.to_array()),
                     valid: checked.is_ok(),
                     error: checked.err(),
+                    kind: picking.kind,
+                    attach_vertex: picking.kind == PickKind::AttachVertex,
                 }
             }),
             last_pick: self.transform_pivot.last_pick.clone(),
@@ -632,8 +698,8 @@ impl Session {
                         && surface.revision == self.document.revision()
                 },
             ),
-            begin_error: self.transform_pivot_pick_admission().err(),
-            policy: "Pick the first visible exact brush, terrain sheet or supported model surface, including selected objects. No grid snapping, workplane fallback or surface attachment. A hit replaces any point-entity attachment with a fixed world pivot and ends picking; misses preserve the old pivot and armed pick. Cancel changes no pivot. Foreign or stale picks never capture desktop input. No map, history, selection, camera, framing or persistence changes.",
+            begin_error,
+            policy: "Pick the first visible exact brush, terrain sheet or supported model surface, including selected objects. World-point mode captures a fixed point; attach-vertex mode explicitly snaps to an actual vertex and retains its shared stable source reference. Neither mode uses grid snapping or a workplane fallback. A successful hit replaces any attachment and ends picking; misses or invalid source identities preserve the old pivot and armed pick. Cancel changes no pivot. Foreign or stale picks never capture desktop input. No map, history, selection, camera, framing or persistence changes.",
         }
     }
 
@@ -643,6 +709,39 @@ impl Session {
         camera: Camera,
         size: (u32, u32),
         snapshot: &str,
+    ) -> Result<Report, String> {
+        self.begin_transform_pivot_pick_with_kind(
+            actor,
+            camera,
+            size,
+            snapshot,
+            PickKind::WorldPoint,
+        )
+    }
+
+    pub fn begin_transform_pivot_vertex_pick(
+        &mut self,
+        actor: Actor,
+        camera: Camera,
+        size: (u32, u32),
+        snapshot: &str,
+    ) -> Result<Report, String> {
+        self.begin_transform_pivot_pick_with_kind(
+            actor,
+            camera,
+            size,
+            snapshot,
+            PickKind::AttachVertex,
+        )
+    }
+
+    fn begin_transform_pivot_pick_with_kind(
+        &mut self,
+        actor: Actor,
+        camera: Camera,
+        size: (u32, u32),
+        snapshot: &str,
+        kind: PickKind,
     ) -> Result<Report, String> {
         if snapshot != self.transform_pivot_pick_stamp() {
             return Err("Transform pivot context changed; inspect pivot picking again".into());
@@ -661,8 +760,15 @@ impl Session {
             tool: self.transform_tool,
             context,
             previous_pivot,
+            kind,
         });
-        self.log(actor, "started transform pivot picking");
+        self.log(
+            actor,
+            match kind {
+                PickKind::WorldPoint => "started transform pivot picking",
+                PickKind::AttachVertex => "started transform pivot vertex attachment picking",
+            },
+        );
         Ok(self.transform_pivot_pick_state())
     }
 
@@ -672,28 +778,41 @@ impl Session {
         token: u64,
         ray: Ray,
     ) -> Result<Report, String> {
-        self.checked_transform_pivot_pick(actor, token)?;
-        let SurfaceHit { hit, normal, .. } = self.placement_surface(&[], ray, true)?;
-        self.set_transform_tool_with_pivot(
-            actor,
-            TransformTool {
-                pivot: Some(hit.point),
-                ..self.transform_tool
-            },
-            true,
-        )?;
+        let kind = self.checked_transform_pivot_pick(actor, token)?.kind;
+        match kind {
+            PickKind::WorldPoint => {
+                let SurfaceHit { hit, normal, .. } = self.placement_surface(&[], ray, true)?;
+                self.set_transform_tool_with_pivot(
+                    actor,
+                    TransformTool {
+                        pivot: Some(hit.point),
+                        ..self.transform_tool
+                    },
+                    true,
+                )?;
+                self.transform_pivot.last_pick = Some(Surface {
+                    target: crate::identity::id_string(hit.object),
+                    solid: hit.solid,
+                    side: hit.side,
+                    point: hit.point.to_array(),
+                    normal: normal.to_array(),
+                    generation: self.document_generation,
+                    revision: self.document.revision(),
+                });
+                self.log(actor, "picked custom transform pivot");
+            }
+            PickKind::AttachVertex => {
+                let (reference, point) = self.pick_surface_vertex(ray)?;
+                self.install_transform_pivot_attachment(
+                    actor,
+                    point,
+                    AttachmentSource::Vertex(reference),
+                )?;
+                self.log(actor, "attached transform pivot to picked surface vertex");
+            }
+        }
         self.transform_pivot.picking = None;
         self.transform_pivot.serial += 1;
-        self.transform_pivot.last_pick = Some(Surface {
-            target: crate::identity::id_string(hit.object),
-            solid: hit.solid,
-            side: hit.side,
-            point: hit.point.to_array(),
-            normal: normal.to_array(),
-            generation: self.document_generation,
-            revision: self.document.revision(),
-        });
-        self.log(actor, "picked custom transform pivot");
         Ok(self.transform_pivot_pick_state())
     }
 

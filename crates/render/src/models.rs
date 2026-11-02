@@ -87,6 +87,10 @@ impl Asset {
         Ok(MaterialBindings(materials))
     }
 
+    pub fn source_identity(&self) -> Option<[u8; 32]> {
+        self.source_identity
+    }
+
     pub fn memory_bytes(&self) -> usize {
         self.memory_bytes_with(self.material_bytes.load(Ordering::Relaxed))
     }
@@ -128,6 +132,8 @@ struct Entry {
 pub struct Library {
     entries: BTreeMap<String, Entry>,
     serial: u64,
+    generation: u64,
+    reload_generation: u64,
     bytes: usize,
 }
 
@@ -225,6 +231,14 @@ pub struct MaterialReloadReport {
 }
 
 impl Library {
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub fn reload_generation(&self) -> u64 {
+        self.reload_generation
+    }
+
     pub fn get_verified(
         &mut self,
         fs: &GameFs,
@@ -248,6 +262,7 @@ impl Library {
                     return Err("A cached model with older bytes is still in use; Reload models and compile again before preparing details".into());
                 }
                 self.bytes -= self.entries.remove(&path).unwrap().bytes;
+                self.generation += 1;
             }
         }
         let asset = self.get(fs, &path)?;
@@ -329,8 +344,10 @@ impl Library {
                 );
             };
             self.bytes -= self.entries.remove(&candidate).unwrap().bytes;
+            self.generation += 1;
         }
         self.bytes += bytes;
+        self.generation += 1;
         self.entries.insert(
             path,
             Entry {
@@ -385,6 +402,8 @@ impl Library {
     }
 
     pub fn clear(&mut self) {
+        self.generation += 1;
+        self.reload_generation += 1;
         self.entries.clear();
         self.bytes = 0;
     }

@@ -10,6 +10,9 @@ pub enum TransformPivotPickArgs {
         width: u32,
         height: u32,
         camera: Option<CameraSpec>,
+        /// Attach to an actual vertex of the first visible hit instead of setting a fixed surface point. Default false.
+        #[serde(default)]
+        attach_vertex: bool,
     },
     Ray {
         token: u64,
@@ -60,7 +63,7 @@ pub enum TransformPivotAttachmentArgs {
 #[tool_router(router = transform_pivot_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect or change the shared transform pivot's point-entity attachment. inspect returns attachment, resolved world point or explicit error, and snapshot. attach_origin and attach_local require the latest snapshot and optional canonical object ID; omitted object requires exactly one selected valid point entity. Origin follows that entity's origin; local captures the current resolved world pivot in that entity's Source orientation frame and follows its later origin/orientation. detach requires snapshot and fixes the current resolved point in world space. Missing or invalid anchors reject resolution and dependent transforms without a selection-center or cached-point fallback. world_point requires explicit finite point coordinates and replaces the attachment through shared transform controls, including recovery when it cannot resolve. Actions use the same Session operations as Attach origin, Attach local point, Detach pivot and Use world point. Strict action fields reject incompatible arguments. No geometry, Undo, camera or saved-default writes; broader surface, brush and general anchors remain unavailable."
+        description = "Inspect or detach the shared transform pivot's attachment, replace it with an explicit world point, or bind a point-entity origin/local point. inspect returns attachment with its shared typed source for vertex bindings, resolved world point or explicit error, and snapshot. attach_origin and attach_local require the latest snapshot and optional canonical object ID; omitted object requires exactly one selected valid point entity. Origin follows that entity's origin; local captures the current resolved world pivot in that entity's Source orientation frame and follows its later origin/orientation. detach requires snapshot and fixes the current resolved point in world space. Missing or invalid anchors reject resolution and dependent transforms without a selection-center or cached-point fallback. world_point requires explicit finite point coordinates and replaces the attachment through shared transform controls, including recovery when it cannot resolve. Actions use the same Session operations as Attach origin, Attach local point, Detach pivot and Use world point. Strict action fields reject incompatible arguments. Vertex bindings are acquired through transform_pivot_pick begin with attach_vertex=true; detach and world_point handle every binding kind. No geometry, Undo, camera or saved-default writes."
     )]
     pub(in crate::mcp) fn transform_pivot_attachment(
         &self,
@@ -99,7 +102,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Snap the current effective shared transform pivot to the current grid, using the same Session operation as Snap pivot to grid in the UI. action=inspect returns snapshot, resolved before point, candidate after point, grid, changed=false and error without mutation. action=snap requires that latest snapshot and returns before/after/grid/changed plus the next snapshot. Selection-center mode requires a nonempty object selection with valid bounds for every object; world-origin and custom pivots can snap without a selection. Each world coordinate rounds to the nearest grid multiple, with half steps away from zero, even when Snap is off. Both points must be finite and within ±65536 units. Success fixes the pivot at the snapped world point, detaches any entity anchor, preserves other transform settings and clears old surface-pick provenance even for an aligned point. changed reports a coordinate, selection-center-mode or attachment change. Active tools, picks, previews, gestures, paint/component editing, builds, launches and closing reject without retiring their work. Context changes reject stale snapshots. No map, Undo history, selection, camera, grid or saved-startup-default writes. Numeric UI transforms and handles use the result; use pivot_source=current_transform_pivot with transform_objects to resolve the current tool pivot explicitly."
+        description = "Snap the current effective shared transform pivot to the current grid, using the same Session operation as Snap pivot to grid in the UI. action=inspect returns snapshot, resolved before point, candidate after point, grid, changed=false and error without mutation. action=snap requires that latest snapshot and returns before/after/grid/changed plus the next snapshot. Selection-center mode requires a nonempty object selection with valid bounds for every object; world-origin and custom pivots can snap without a selection. Each world coordinate rounds to the nearest grid multiple, with half steps away from zero, even when Snap is off. Both points must be finite and within ±65536 units. Success fixes the pivot at the snapped world point, detaches any attachment, preserves other transform settings and clears old surface-pick provenance even for an aligned point. changed reports a coordinate, selection-center-mode or attachment change. Active tools, picks, previews, gestures, paint/component editing, builds, launches and closing reject without retiring their work. Context changes reject stale snapshots. No map, Undo history, selection, camera, grid or saved-startup-default writes. Numeric UI transforms and handles use the result; use pivot_source=current_transform_pivot with transform_objects to resolve the current tool pivot explicitly."
     )]
     pub(in crate::mcp) fn transform_pivot_grid(
         &self,
@@ -118,7 +121,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Pick the shared custom transform pivot from an exact visible brush, terrain sheet or supported model surface, using the same operations as Pick pivot… in the UI. inspect returns snapshot, current_pivot, owned pending token/context validity and last_pick target/solid/side/point/normal provenance. begin requires latest snapshot, a nonempty object selection, width/height1–8192 and optional temporary camera matching render_view; rejects active previews/viewport tools/builds. ray requires the owned token and finite ray_origin/ray_direction; pixel requires the token and continuous x/y pixel positions with captured width/height (no implicit half-pixel offset). The first valid hit replaces any attachment with a fixed world pivot, records provenance and ends picking. Selected objects remain valid targets. Misses/invalid/stale/foreign requests preserve the existing pivot and armed pick. cancel disarms an owned matching token even after stale context changes; it never overwrites later settings. Generation/revision/definitions/selection/tool/view/camera/viewport guards reject stale input. Desktop input is captured only for a fresh user-owned context. The surface pick remains a fixed world point; use transform_pivot_attachment to attach it to a point entity. No snapping, workplane fallback, persistence or map/history/selection/camera/framing changes. Numeric UI transforms and shared handles use the resulting custom pivot. Use pivot_source=current_transform_pivot with transform_objects; omitted source/pivot retains its selection-center behavior. UI: Pivot → Pick pivot… → click a surface; Cancel pivot pick or Escape cancels an interactive pick."
+        description = "Pick a fixed world transform pivot or attach it to a brush corner, prepared terrain vertex or supported model-mesh vertex from the first visible editor-query surface hit through one owned protocol. inspect returns snapshot, current_pivot/current_error, attachment with shared typed source, owned pending kind/attach_vertex/context validity, and last fixed surface-pick provenance. begin requires latest snapshot, nonempty object selection, width/height1–8192 and optional temporary camera matching render_view. attach_vertex is a boolean defaulting false (null rejects): false preserves Pick pivot fixed-world behavior; true uses Attach vertex. ray/pixel use the same owned token; pixel uses captured dimensions and continuous coordinates without a half-pixel offset. Vertex mode chooses the nearest corner of the hit brush face polygon, or the nearest vertex of the hit terrain/model triangle; it does not select a barycentric point or arbitrary screen-near vertex. Selected objects remain valid targets. Brush bindings require stable side/corner topology; terrain uses prepared displacement positions including shared neighbor/LOD adjustments and requires stable grid/base identity. Model bindings follow current pose/scale but retain body/mesh identity, cached original MDL/VVD/VTX identity and model-reload generation; Reload models invalidates them even with identical bytes. Saved-hidden vertex owners are unavailable. Editor query visibility controls picking, not later resolution, and is not rendered-pixel occlusion. Misses and invalid/stale/foreign requests preserve the binding and armed pick; valid completion replaces the prior pivot and ends picking. cancel preserves the pivot and accepts its owned token after context changes. Unavailable bindings expose errors without cached/world/selection fallback. No map/history/camera/default writes. Use transform_pivot_attachment for inspection, detach or explicit world-point recovery; transform_objects pivot_source=current_transform_pivot consumes the result. UI: Pivot → Pick pivot… or Attach vertex…; Cancel pivot pick or Escape cancels."
     )]
     pub(in crate::mcp) fn transform_pivot_pick(
         &self,
@@ -133,6 +136,7 @@ impl EditorServer {
                     width,
                     height,
                     camera,
+                    attach_vertex,
                 } => {
                     let maximum = crate::session::transform_pivot::MAX_VIEWPORT_DIMENSION;
                     if width == 0 || height == 0 || width > maximum || height > maximum {
@@ -143,12 +147,21 @@ impl EditorServer {
                     let camera = camera
                         .unwrap_or_default()
                         .resolve(&session, width as f32 / height as f32)?;
-                    session.begin_transform_pivot_pick(
-                        Actor::Agent,
-                        camera,
-                        (width, height),
-                        &snapshot,
-                    )?
+                    if attach_vertex {
+                        session.begin_transform_pivot_vertex_pick(
+                            Actor::Agent,
+                            camera,
+                            (width, height),
+                            &snapshot,
+                        )?
+                    } else {
+                        session.begin_transform_pivot_pick(
+                            Actor::Agent,
+                            camera,
+                            (width, height),
+                            &snapshot,
+                        )?
+                    }
                 }
                 TransformPivotPickArgs::Ray {
                     token,

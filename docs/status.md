@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 80.5% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 80.6% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -47,7 +47,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [Particles](particles.md) | Active manifest metadata and effect assignment. | Particle rendering and animation. |
 | [Sounds](sounds.md) | File/script browsing, short audition and assignment, with malformed-script warnings and playback errors. | Game mixing, soundscapes and sentence synthesis. |
 | [Organization](layers.md) | Groups, native layers, automatic kind/class categories, current exclusions, map-local saved query profiles, clipboard, prefabs, notes and saved views. | Prefab assets stay external. |
-| [Transform pivots](brushes.md#attach-the-pivot-to-a-point-entity) | Fixed, picked and grid-snapped pivots; live authored point-entity origin/local-frame attachments; explicit array pivot sources and reuse of last-applied array settings. | General brush/terrain/model-surface attachments, parenting and animated bones. Attached pivots stay session-local. |
+| [Transform pivots](brushes.md#attach-the-pivot-to-a-vertex) | Fixed, picked and grid-snapped pivots; live point-origin/local-frame and brush, terrain or model vertex anchors; explicit array pivot sources and reusable applied settings. | Session-local bindings; topology, grid, model-body or asset-context changes can require rebinding. Arbitrary surface-point interpolation, parenting and animated/deformed mesh anchors are unavailable. |
 | [Measurements](measurements.md) | Saved rulers, surface picks and origin/local entity attachments. | Surface attachments, parenting and animated bones. |
 | [Instances](instance-authoring.md) | Saved references, checked brush/terrain and static-prop mesh previews, nested light bindings, static child fog, saved child atlas regions and bounded extraction with chosen local pivots. | In-place child editing, child illumination and general replacement parameters. |
 

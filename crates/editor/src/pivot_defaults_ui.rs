@@ -6,7 +6,7 @@ use slint::ComponentHandle;
 use crate::{
     AppWindow, PivotDefaultsWindow,
     runtime::DocumentAccess,
-    session::{Actor, Session},
+    session::{Actor, Session, transform_pivot::AttachmentInfo},
 };
 
 pub fn refresh_status(app: &AppWindow, session: &Session) {
@@ -27,32 +27,77 @@ fn pivot(value: &Value) -> String {
     }
 }
 
+pub(crate) fn attachment_summary(attachment: &AttachmentInfo) -> String {
+    match attachment.kind {
+        "origin" => format!("{} · Authored origin", attachment.object),
+        "local" => format!("{} · Rigid local point", attachment.object),
+        "vertex" => {
+            let Some(reference) = &attachment.source else {
+                return format!("{} · Vertex source unavailable", attachment.object);
+            };
+            let source = reference.report();
+            match source["kind"].as_str() {
+                Some("brush_corner") => {
+                    let sides = source["sides"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .map(Value::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(
+                        "{} · Brush corner · brush {} · faces {sides}",
+                        attachment.object, source["solid"]
+                    )
+                }
+                Some("terrain_vertex") => format!(
+                    "{} · Terrain vertex · brush {} · face {} · row {}, column {}",
+                    attachment.object,
+                    source["solid"],
+                    source["side"],
+                    source["row"],
+                    source["column"]
+                ),
+                Some("model_vertex") => format!(
+                    "{} · Model vertex · part {} · triangle {} · vertex {}\n{} · body {} · skin {}",
+                    attachment.object,
+                    source["part"],
+                    source["triangle"],
+                    source["vertex"],
+                    source["model"]
+                        .as_str()
+                        .unwrap_or("Model source unavailable"),
+                    source["body"],
+                    source["skin"]
+                ),
+                _ => format!("{} · Vertex source unavailable", attachment.object),
+            }
+        }
+        _ => format!("{} · Unavailable attachment", attachment.object),
+    }
+}
+
 fn refresh(window: &PivotDefaultsWindow, session: &Session, snapshot: &RefCell<String>) {
     let state = session.pivot_preferences_state();
     *snapshot.borrow_mut() = state["snapshot"].as_str().unwrap().into();
-    let attachment = &state["attachment"];
-    window.set_current(if attachment["attachment"].is_object() {
-        let binding = &attachment["attachment"];
-        let mut current = format!(
-            "Current document: {} · {}",
-            binding["object"].as_str().unwrap_or("Attached entity"),
-            if binding["kind"] == "local" {
-                "Rigid local point"
-            } else {
-                "Authored origin"
-            },
-        );
-        if !attachment["effective_pivot"].is_null() {
+    let attachment = session.transform_pivot_attachment_state();
+    window.set_current(if let Some(binding) = &attachment.attachment {
+        let mut current = format!("Current document: {}", attachment_summary(binding));
+        if let Some(point) = attachment.effective_pivot {
             current.push_str(&format!(
-                "\nResolved world point: {}",
-                attachment["effective_pivot"]
+                "\nResolved · X {:.3} · Y {:.3} · Z {:.3}",
+                point[0], point[1], point[2]
             ));
         }
         if let Some(error) = state["current_error"]
             .as_str()
-            .or(attachment["error"].as_str())
+            .or(attachment.error.as_deref())
         {
             current.push_str(&format!("\nUnavailable: {error}"));
+            if binding.kind == "vertex" {
+                current
+                    .push_str("\nUse Attach vertex… in the Inspector to choose the source again.");
+            }
         }
         current.into()
     } else {

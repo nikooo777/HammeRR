@@ -2110,23 +2110,36 @@ fn create_document_window(
     let instance_contents = instance_contents::bind_with_access(&app, &file_access(&ui));
     let instance_reference = instance_reference::bind_with_access(&app, &file_access(&ui));
     let instance_extraction = instance_extraction::bind_with_access(&app, &file_access(&ui));
+    app.on_shortcut_input_reset({
+        let ui = Rc::downgrade(&ui);
+        let app = app.as_weak();
+        move || {
+            if let Some(app) = app.upgrade() {
+                pointer_lock::reset_keyboard(&app);
+            }
+            if let Some(ui) = ui.upgrade()
+                && let Ok(mut ui) = ui.try_borrow_mut()
+            {
+                ui.viewport.clear_keyboard();
+            }
+        }
+    });
     app.on_key({
         let scope = admission::Callback::new(&app, &ui, &file_access(&ui));
-        move |text, down, control, shift, alt, meta| {
+        move |text, down, repeat, control, shift, alt, meta| {
             scope.input(true, |app, ui| {
-                shortcuts_ui::route_viewport_key(
+                route_shortcut_key(
                     &app,
-                    &session_of(&ui),
-                    shortcuts_ui::ViewportKey {
+                    &ui,
+                    shortcut_input::ViewportKey {
                         text: &text,
                         down,
+                        repeat,
                         control,
                         shift,
                         alt,
                         meta,
                     },
-                    |text, control, shift| command_key(&app, &ui, text, control, shift),
-                    |text, down| ui.borrow_mut().viewport.key(text, down),
                 )
             })
         }
@@ -2136,6 +2149,10 @@ fn create_document_window(
         move |button, down, x, y, control, alt| scope.input((), |app, ui| {
             let viewport_size = (app.get_viewport_width(), app.get_viewport_height());
             let mut ui = ui.borrow_mut();
+            let _ = synchronize_shortcut_input(&app, &mut ui.viewport);
+            if down {
+                ui.viewport.shortcut_input.reset();
+            }
             if button == 0 && !down && ui.object_cycle.active() {
                 let shared = ui.session.clone();
                 let camera = ui.viewport.camera;
@@ -2965,12 +2982,20 @@ fn create_document_window(
                 last_tick = now;
 
                 let ui = &mut *ui.borrow_mut();
+                let fast = synchronize_shortcut_input(&app, &mut ui.viewport).unwrap_or(false);
                 pointer_lock::sync(&app, ui.viewport.looking());
                 if let Some((dx, dy)) = pointer_lock::take_delta(&app) {
                     ui.viewport.look_by(dx, dy, app.get_viewport_height());
                 }
-                let fly_speed = lock(&ui.session).fly_speed();
-                ui.viewport.update(dt, fly_speed);
+                let fly_speed = {
+                    let session = lock(&ui.session);
+                    ui.viewport.sync_shortcuts(session.shortcuts_stamp());
+                    session.fly_speed()
+                };
+                if let Err(error) = ui.viewport.update(dt, fly_speed, fast) {
+                    ui.viewport.clear_keyboard();
+                    app.set_message(error.into());
+                }
                 let mut panel_dirty = false;
                 let mut workspace_layout = None;
                 {

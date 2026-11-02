@@ -1,20 +1,33 @@
-use std::{collections::BTreeSet, path::PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
 mod authority;
+mod binding;
+mod matcher;
 pub use authority::{Authority, Snapshot};
+pub use binding::{
+    Binding, Chord, KeyInput, LOGICAL_KEYS, MAX_KEY_BYTES, MAX_SEQUENCE_STROKES, PHYSICAL_KEYS,
+    Resolution, SEQUENCE_TIMEOUT_MS, canonical_key, canonical_physical_key,
+};
 
 use crate::preference_file::{CoordinatedFile, ObservedSource, Publication, SaveError, Source};
 
 pub const FILE_NAME: &str = "shortcuts.json";
-pub const MAX_FILE_BYTES: u64 = 16 * 1024;
+pub const MAX_FILE_BYTES: u64 = 64 * 1024;
 pub const MAX_QUERY_BYTES: usize = 128;
 const FORMAT_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Command {
+    NewMap,
+    OpenMap,
+    SaveMap,
+    SaveMapAs,
+    Copy,
+    Cut,
+    Paste,
     Undo,
     Redo,
     FrameSelection,
@@ -38,10 +51,23 @@ pub enum Command {
     ClipMode,
     HideSelectionInEditor,
     ShowAllEditorHidden,
+    CameraForward,
+    CameraBackward,
+    CameraLeft,
+    CameraRight,
+    CameraUp,
+    CameraDown,
 }
 
 impl Command {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 36] = [
+        Self::NewMap,
+        Self::OpenMap,
+        Self::SaveMap,
+        Self::SaveMapAs,
+        Self::Copy,
+        Self::Cut,
+        Self::Paste,
         Self::Undo,
         Self::Redo,
         Self::FrameSelection,
@@ -65,10 +91,23 @@ impl Command {
         Self::ClipMode,
         Self::HideSelectionInEditor,
         Self::ShowAllEditorHidden,
+        Self::CameraForward,
+        Self::CameraBackward,
+        Self::CameraLeft,
+        Self::CameraRight,
+        Self::CameraUp,
+        Self::CameraDown,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::NewMap => "New map",
+            Self::OpenMap => "Open map",
+            Self::SaveMap => "Save map",
+            Self::SaveMapAs => "Save map as",
+            Self::Copy => "Copy objects",
+            Self::Cut => "Cut objects",
+            Self::Paste => "Paste objects",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
             Self::FrameSelection => "Frame selection",
@@ -92,62 +131,42 @@ impl Command {
             Self::ClipMode => "Clip mode",
             Self::HideSelectionInEditor => "Hide selected in editor",
             Self::ShowAllEditorHidden => "Show all editor-hidden",
+            Self::CameraForward => "Camera forward",
+            Self::CameraBackward => "Camera backward",
+            Self::CameraLeft => "Camera left",
+            Self::CameraRight => "Camera right",
+            Self::CameraUp => "Camera up",
+            Self::CameraDown => "Camera down",
         }
     }
-}
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Chord {
-    pub key: String,
-    pub control: bool,
-    pub shift: bool,
-}
-
-pub fn canonical_key(value: &str) -> Option<String> {
-    if value.len() == 1 && value.as_bytes()[0].is_ascii_alphabetic() {
-        return Some(value.to_ascii_uppercase());
-    }
-    if value.eq_ignore_ascii_case("delete") {
-        return Some("Delete".into());
-    }
-    if value.eq_ignore_ascii_case("backspace") {
-        return Some("Backspace".into());
-    }
-    let number = value
-        .strip_prefix('F')
-        .or_else(|| value.strip_prefix('f'))?
-        .parse::<u8>()
-        .ok()?;
-    (1..=12).contains(&number).then(|| format!("F{number}"))
-}
-
-impl Chord {
-    pub fn label(&self) -> String {
-        format!(
-            "{}{}{}",
-            if self.control { "Ctrl+" } else { "" },
-            if self.shift { "Shift+" } else { "" },
-            self.key
+    pub fn is_camera(self) -> bool {
+        matches!(
+            self,
+            Self::CameraForward
+                | Self::CameraBackward
+                | Self::CameraLeft
+                | Self::CameraRight
+                | Self::CameraUp
+                | Self::CameraDown
         )
     }
 
-    fn validated(mut self) -> Result<Self, String> {
-        self.key = canonical_key(&self.key).ok_or("Choose A–Z, F1–F12, Delete or Backspace")?;
-        if (!self.control && matches!(self.key.as_str(), "W" | "A" | "S" | "D" | "Q" | "E"))
-            || (self.control
-                && matches!(self.key.as_str(), "N" | "O" | "S" | "C" | "X" | "V" | "K"))
-        {
-            return Err(format!(
-                "{} is reserved for camera, file, clipboard or search controls",
-                self.label()
-            ));
-        }
-        Ok(self)
+    pub fn is_frontend(self) -> bool {
+        matches!(
+            self,
+            Self::NewMap
+                | Self::OpenMap
+                | Self::SaveMap
+                | Self::SaveMapAs
+                | Self::Copy
+                | Self::Cut
+                | Self::Paste
+        )
     }
 }
 
-pub type Slots = [Option<Chord>; 2];
+pub type Slots = [Option<Binding>; 2];
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CommandRow {
@@ -170,6 +189,20 @@ pub struct CommandSearch {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Bindings {
+    #[serde(default = "new_map_default")]
+    pub new_map: Slots,
+    #[serde(default = "open_map_default")]
+    pub open_map: Slots,
+    #[serde(default = "save_map_default")]
+    pub save_map: Slots,
+    #[serde(default = "save_map_as_default")]
+    pub save_map_as: Slots,
+    #[serde(default = "copy_default")]
+    pub copy: Slots,
+    #[serde(default = "cut_default")]
+    pub cut: Slots,
+    #[serde(default = "paste_default")]
+    pub paste: Slots,
     pub undo: Slots,
     pub redo: Slots,
     pub frame_selection: Slots,
@@ -211,19 +244,93 @@ pub struct Bindings {
     pub hide_selection_in_editor: Slots,
     #[serde(default)]
     pub show_all_editor_hidden: Slots,
+    #[serde(default = "camera_forward_default")]
+    pub camera_forward: Slots,
+    #[serde(default = "camera_backward_default")]
+    pub camera_backward: Slots,
+    #[serde(default = "camera_left_default")]
+    pub camera_left: Slots,
+    #[serde(default = "camera_right_default")]
+    pub camera_right: Slots,
+    #[serde(default = "camera_up_default")]
+    pub camera_up: Slots,
+    #[serde(default = "camera_down_default")]
+    pub camera_down: Slots,
 }
 
-fn chord(key: &str, control: bool, shift: bool) -> Option<Chord> {
-    Some(Chord {
+fn chord(key: &str, control: bool, shift: bool) -> Option<Binding> {
+    Some(Binding::Single(Chord {
         key: key.into(),
         control,
         shift,
-    })
+        alt: false,
+        meta: false,
+        physical: false,
+    }))
+}
+
+fn new_map_default() -> Slots {
+    [chord("N", true, false), None]
+}
+
+fn open_map_default() -> Slots {
+    [chord("O", true, false), None]
+}
+
+fn save_map_default() -> Slots {
+    [chord("S", true, false), None]
+}
+
+fn save_map_as_default() -> Slots {
+    [chord("S", true, true), None]
+}
+
+fn copy_default() -> Slots {
+    [chord("C", true, false), None]
+}
+
+fn cut_default() -> Slots {
+    [chord("X", true, false), None]
+}
+
+fn paste_default() -> Slots {
+    [chord("V", true, false), None]
+}
+
+fn camera_forward_default() -> Slots {
+    [chord("W", false, false), None]
+}
+
+fn camera_backward_default() -> Slots {
+    [chord("S", false, false), None]
+}
+
+fn camera_left_default() -> Slots {
+    [chord("A", false, false), None]
+}
+
+fn camera_right_default() -> Slots {
+    [chord("D", false, false), None]
+}
+
+fn camera_up_default() -> Slots {
+    [chord("E", false, false), None]
+}
+
+fn camera_down_default() -> Slots {
+    [chord("Q", false, false), None]
 }
 
 impl Default for Bindings {
     fn default() -> Self {
         Self {
+            new_map: new_map_default(),
+            open_map: open_map_default(),
+            save_map: save_map_default(),
+            save_map_as: save_map_as_default(),
+            copy: copy_default(),
+            cut: cut_default(),
+            paste: paste_default(),
             undo: [chord("Z", true, false), None],
             redo: [chord("Z", true, true), chord("Y", true, false)],
             frame_selection: [chord("F", false, false), None],
@@ -250,6 +357,12 @@ impl Default for Bindings {
             clip_mode: [None, None],
             hide_selection_in_editor: [None, None],
             show_all_editor_hidden: [None, None],
+            camera_forward: camera_forward_default(),
+            camera_backward: camera_backward_default(),
+            camera_left: camera_left_default(),
+            camera_right: camera_right_default(),
+            camera_up: camera_up_default(),
+            camera_down: camera_down_default(),
         }
     }
 }
@@ -275,22 +388,10 @@ impl Bindings {
                 "Command search is limited to {MAX_QUERY_BYTES} UTF-8 bytes"
             ));
         }
-        let mut bindings = Self::default();
+        let mut bindings = self.clone();
         for command in Command::ALL {
-            for (slot, source) in bindings
-                .slots_mut(command)
-                .iter_mut()
-                .zip(self.slots(command))
-            {
-                *slot = match source {
-                    Some(chord) => Some(Chord {
-                        key: canonical_key(&chord.key)
-                            .ok_or("Command search requires supported logical binding keys")?,
-                        control: chord.control,
-                        shift: chord.shift,
-                    }),
-                    None => None,
-                };
+            for binding in bindings.slots_mut(command).iter_mut().flatten() {
+                binding.canonicalize_for_search()?;
             }
         }
         let query = query.to_lowercase();
@@ -316,6 +417,13 @@ impl Bindings {
 
     pub fn slots(&self, command: Command) -> &Slots {
         match command {
+            Command::NewMap => &self.new_map,
+            Command::OpenMap => &self.open_map,
+            Command::SaveMap => &self.save_map,
+            Command::SaveMapAs => &self.save_map_as,
+            Command::Copy => &self.copy,
+            Command::Cut => &self.cut,
+            Command::Paste => &self.paste,
             Command::Undo => &self.undo,
             Command::Redo => &self.redo,
             Command::FrameSelection => &self.frame_selection,
@@ -339,11 +447,24 @@ impl Bindings {
             Command::ClipMode => &self.clip_mode,
             Command::HideSelectionInEditor => &self.hide_selection_in_editor,
             Command::ShowAllEditorHidden => &self.show_all_editor_hidden,
+            Command::CameraForward => &self.camera_forward,
+            Command::CameraBackward => &self.camera_backward,
+            Command::CameraLeft => &self.camera_left,
+            Command::CameraRight => &self.camera_right,
+            Command::CameraUp => &self.camera_up,
+            Command::CameraDown => &self.camera_down,
         }
     }
 
     pub fn slots_mut(&mut self, command: Command) -> &mut Slots {
         match command {
+            Command::NewMap => &mut self.new_map,
+            Command::OpenMap => &mut self.open_map,
+            Command::SaveMap => &mut self.save_map,
+            Command::SaveMapAs => &mut self.save_map_as,
+            Command::Copy => &mut self.copy,
+            Command::Cut => &mut self.cut,
+            Command::Paste => &mut self.paste,
             Command::Undo => &mut self.undo,
             Command::Redo => &mut self.redo,
             Command::FrameSelection => &mut self.frame_selection,
@@ -367,32 +488,13 @@ impl Bindings {
             Command::ClipMode => &mut self.clip_mode,
             Command::HideSelectionInEditor => &mut self.hide_selection_in_editor,
             Command::ShowAllEditorHidden => &mut self.show_all_editor_hidden,
+            Command::CameraForward => &mut self.camera_forward,
+            Command::CameraBackward => &mut self.camera_backward,
+            Command::CameraLeft => &mut self.camera_left,
+            Command::CameraRight => &mut self.camera_right,
+            Command::CameraUp => &mut self.camera_up,
+            Command::CameraDown => &mut self.camera_down,
         }
-    }
-
-    pub fn validated(mut self) -> Result<Self, String> {
-        let mut seen = BTreeSet::new();
-        for command in Command::ALL {
-            for slot in self.slots_mut(command) {
-                if let Some(chord) = slot.take() {
-                    let chord = chord.validated()?;
-                    if !seen.insert((chord.key.clone(), chord.control, chord.shift)) {
-                        return Err(format!("{} is assigned more than once", chord.label()));
-                    }
-                    *slot = Some(chord);
-                }
-            }
-        }
-        Ok(self)
-    }
-
-    pub fn resolve(&self, chord: &Chord) -> Option<Command> {
-        Command::ALL.into_iter().find(|command| {
-            self.slots(*command)
-                .iter()
-                .flatten()
-                .any(|binding| binding == chord)
-        })
     }
 
     pub fn label(&self, command: Command) -> String {
@@ -400,7 +502,7 @@ impl Bindings {
             .slots(command)
             .iter()
             .flatten()
-            .map(Chord::label)
+            .map(Binding::label)
             .collect::<Vec<_>>();
         if labels.is_empty() {
             "Unbound".into()

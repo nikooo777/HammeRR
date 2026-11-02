@@ -1,25 +1,118 @@
 import { Theme } from "theme.slint";
-import {Button, CheckBox, ComboBox, LineEdit, ListView} from "widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView } from "widgets.slint";
+import { FieldRow } from "kit.slint";
 
 export struct ShortcutRow { command: string, label: string, current: string, factory: string }
+export struct ShortcutStroke { key: string, physical: bool, control: bool, shift: bool, alt: bool, meta: bool }
+export struct ShortcutBinding { count: int, first: ShortcutStroke, second: ShortcutStroke }
+
+component StrokeEditor inherits VerticalLayout {
+    in property <string> label;
+    in property <[string]> logical-keys;
+    in property <[string]> physical-keys;
+    in property <bool> camera;
+    in-out property <ShortcutStroke> stroke;
+    callback edited();
+    spacing: Theme.space;
+    Text { text: root.label; color: Theme.text-muted; font-size: Theme.font-small; }
+    HorizontalLayout {
+        spacing: Theme.space;
+        FieldRow {
+            label: "Key type"; label-width: Theme.shortcuts-field-label-width; inset: false;
+            ComboBox {
+                model: ["Logical key", "Physical key"];
+                current-index: root.stroke.physical ? 1 : 0;
+                accessible-label: root.label + " key type";
+                selected => {
+                    if root.stroke.physical != (self.current-index == 1) {
+                        root.stroke.key = "";
+                        root.stroke.physical = self.current-index == 1;
+                        root.edited();
+                    }
+                }
+            }
+        }
+        FieldRow {
+            label: "Key"; label-width: Theme.shortcuts-key-label-width; inset: false;
+            ComboBox {
+                model: root.stroke.physical ? root.physical-keys : root.logical-keys;
+                current-value: root.stroke.key == "" ? "Choose key" : root.stroke.key;
+                accessible-label: root.label + " key";
+                selected => { root.stroke.key = self.current-index == 0 ? "" : self.current-value; root.edited(); }
+            }
+        }
+    }
+    HorizontalLayout {
+        spacing: Theme.space-lg;
+        CheckBox { text: "Ctrl"; checked <=> root.stroke.control; toggled => { root.edited(); } }
+        CheckBox { text: "Shift"; enabled: !root.camera; checked <=> root.stroke.shift; toggled => { root.edited(); } }
+        CheckBox { text: "Alt"; checked <=> root.stroke.alt; toggled => { root.edited(); } }
+        CheckBox { text: "Meta"; checked <=> root.stroke.meta; toggled => { root.edited(); } }
+        Rectangle { horizontal-stretch: 1; }
+    }
+}
+
+component BindingEditor inherits Rectangle {
+    in property <string> label;
+    in property <[string]> logical-keys;
+    in property <[string]> physical-keys;
+    in property <bool> camera;
+    in-out property <ShortcutBinding> binding;
+    callback edited();
+    background: Theme.base;
+    border-radius: Theme.radius;
+    height: binding-layout.preferred-height;
+    binding-layout := VerticalLayout {
+        padding: Theme.space-lg;
+        spacing: Theme.space-lg;
+        HorizontalLayout {
+            spacing: Theme.space;
+            Text { text: root.label; color: Theme.text; font-weight: 600; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; }
+            Text { text: "Binding type"; color: Theme.text-muted; vertical-alignment: center; }
+            ComboBox {
+                model: root.camera ? ["Unbound", "Single stroke"] : ["Unbound", "Single stroke", "Two-stroke sequence"];
+                current-index <=> root.binding.count;
+                accessible-label: root.label + " binding type";
+                selected => { root.edited(); }
+            }
+        }
+        if root.binding.count > 0: StrokeEditor {
+            label: root.label + " · First stroke";
+            logical-keys: root.logical-keys;
+            physical-keys: root.physical-keys;
+            camera: root.camera;
+            stroke <=> root.binding.first;
+            edited => { root.edited(); }
+        }
+        if root.binding.count == 2: StrokeEditor {
+            label: root.label + " · Second stroke";
+            logical-keys: root.logical-keys;
+            physical-keys: root.physical-keys;
+            camera: false;
+            stroke <=> root.binding.second;
+            edited => { root.edited(); }
+        }
+    }
+}
 
 export component ShortcutsWindow inherits Window {
     background: Theme.panel;
     title: "Keyboard shortcuts - HammeRR";
-    preferred-width: 820px;
-    preferred-height: 900px;
-    min-width: 760px;
-    min-height: 850px;
+    default-font-size: Theme.font;
+    preferred-width: Theme.shortcuts-dialog-width;
+    preferred-height: Theme.shortcuts-dialog-height;
+    min-width: Theme.shortcuts-dialog-min-width;
+    min-height: Theme.preferences-dialog-min-height;
     in property <[ShortcutRow]> commands;
-    in property <[string]> keys;
+    in property <[string]> logical-keys;
+    in property <[string]> physical-keys;
     in property <string> selected;
     in property <string> selected-label;
-    in-out property <int> primary-key;
-    in-out property <bool> primary-control;
-    in-out property <bool> primary-shift;
-    in-out property <int> alternate-key;
-    in-out property <bool> alternate-control;
-    in-out property <bool> alternate-shift;
+    in property <bool> selected-camera;
+    in property <bool> selected-visible: true;
+    in-out property <ShortcutBinding> primary;
+    in-out property <ShortcutBinding> alternate;
     in property <string> status;
     in property <string> storage;
     in property <string> message;
@@ -40,62 +133,77 @@ export component ShortcutsWindow inherits Window {
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
             padding: Theme.space-xl;
-            spacing: 12px;
-            Text {text:"Keyboard shortcuts";font-size: Theme.font-display;font-weight:600;}
-            Text {text:"These commands run while the viewport has keyboard focus. Text fields keep their normal editing shortcuts. Save shortcuts applies your changes now and at startup.";wrap:word-wrap;color:Theme.text-muted;}
+            spacing: Theme.space-lg;
+            Text { text: "Keyboard shortcuts"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
+            Text { text: "Set up to two bindings per command. Save shortcuts activates the complete form now and at startup. Text fields and focused controls keep native handling."; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
-                spacing: 8px;
+                spacing: Theme.space;
                 LineEdit { text <=> root.search; placeholder-text: "Label, command ID or binding"; accessible-label: "Search commands"; horizontal-stretch: 1; edited => { root.filter-commands(); } }
                 Button { text: "Clear search"; enabled: root.search != ""; clicked => { root.search = ""; root.filter-commands(); } }
-                Text { text: root.result-count; vertical-alignment: center; }
+                Text { text: root.result-count; color: Theme.text-muted; vertical-alignment: center; }
             }
             if root.search-error != "": Text { text: root.search-error; color: Theme.warning; wrap: word-wrap; }
-            HorizontalLayout {
-                Text {text:"Command";width:180px;font-weight:600;}
-                Text {text:"Current form";horizontal-stretch:1;font-weight:600;}
-                Text {text:"Factory bindings";width:240px;font-weight:600;}
-            }
-            commands-list := ListView {
-                height: root.search-error == "" ? 330px : 300px;
-                for row in root.commands: Rectangle {
-                    height: max(34px, row-layout.min-height);
-                    background: root.selected == row.command ? Theme.selection : Theme.hover;
-                    row-layout := HorizontalLayout {
-                        spacing:8px;padding:4px;
-                        Button {text:row.label;width:176px;clicked=>{root.choose(row.command);}}
-                        Text {text:row.current;horizontal-stretch:1;vertical-alignment:center;}
-                        Text {text:row.factory;width:232px;vertical-alignment:center;color:Theme.text-muted;}
+            ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding-right: Theme.space-xl;
+                    spacing: Theme.space-lg;
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Text { text: "Command"; color: Theme.text; width: Theme.shortcuts-command-width; font-weight: 600; }
+                        Text { text: "Current form"; color: Theme.text; horizontal-stretch: 1; font-weight: 600; }
+                        Text { text: "Factory bindings"; color: Theme.text; width: Theme.shortcuts-factory-width; font-weight: 600; }
                     }
+                    ListView {
+                        height: Theme.shortcuts-catalog-height;
+                        for row in root.commands: Rectangle {
+                            height: max(Theme.row-height, row-layout.min-height);
+                            background: root.selected == row.command ? Theme.selection : Theme.hover;
+                            row-layout := HorizontalLayout {
+                                spacing: Theme.space;
+                                padding: Theme.space-xs;
+                                Button { text: row.label; width: Theme.shortcuts-command-width - Theme.space-xs; clicked => { root.choose(row.command); } }
+                                Text { text: row.current; color: Theme.text; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; }
+                                Text { text: row.factory; width: Theme.shortcuts-factory-width - Theme.space-xs; vertical-alignment: center; color: Theme.text-muted; wrap: word-wrap; }
+                            }
+                        }
+                    }
+                    if !root.has-matches: Text { text: "No commands match. Selected bindings and other form edits are retained."; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: root.selected-label; color: Theme.text; font-size: Theme.font-heading; font-weight: 600; }
+                    if !root.selected-visible && root.has-matches: Text { text: "This command is outside the search results. Its bindings remain editable."; wrap: word-wrap; color: Theme.text-muted; }
+                    if root.selected-camera: Text { text: "Camera directions use single strokes. Shift stays off in the binding because holding Shift independently boosts movement speed."; wrap: word-wrap; color: Theme.text-muted; }
+                    BindingEditor {
+                        label: "Primary";
+                        logical-keys: root.logical-keys;
+                        physical-keys: root.physical-keys;
+                        camera: root.selected-camera;
+                        binding <=> root.primary;
+                        edited => { root.edited(); }
+                    }
+                    BindingEditor {
+                        label: "Alternate";
+                        logical-keys: root.logical-keys;
+                        physical-keys: root.physical-keys;
+                        camera: root.selected-camera;
+                        binding <=> root.alternate;
+                        edited => { root.edited(); }
+                    }
+                    Text { text: "Choose Unbound to remove a slot. Logical keys follow the keyboard layout; physical keys use the selected key position. Each stroke has its own exact modifiers."; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: "Sequences use two strokes within one second. Escape cancels; Ctrl+K opens command search. Arrows and PageUp/PageDown require Ctrl, Alt or Meta to override fixed nudging."; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
                 }
             }
-            Text {text:root.has-matches ? root.selected-label : "No commands match; existing edits are retained";font-weight:600;}
+            Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+            Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
-                spacing:12px;
-                Text {text:"Primary";width:86px;vertical-alignment:center;}
-                ComboBox {enabled:root.has-matches;model:root.keys;current-index <=> root.primary-key;accessible-label:"Primary shortcut key";selected=>{root.edited();}}
-                CheckBox {enabled:root.has-matches;text:"Ctrl";checked <=> root.primary-control;toggled=>{root.edited();}}
-                CheckBox {enabled:root.has-matches;text:"Shift";checked <=> root.primary-shift;toggled=>{root.edited();}}
-            }
-            HorizontalLayout {
-                spacing:12px;
-                Text {text:"Alternate";width:86px;vertical-alignment:center;}
-                ComboBox {enabled:root.has-matches;model:root.keys;current-index <=> root.alternate-key;accessible-label:"Alternate shortcut key";selected=>{root.edited();}}
-                CheckBox {enabled:root.has-matches;text:"Ctrl";checked <=> root.alternate-control;toggled=>{root.edited();}}
-                CheckBox {enabled:root.has-matches;text:"Shift";checked <=> root.alternate-shift;toggled=>{root.edited();}}
-            }
-            Text {text:"Choose Unbound to remove a slot. Chords use logical keys with exact Ctrl and Shift; Alt and Meta bindings are unavailable. Duplicate chords must be changed together before Save.";wrap:word-wrap;color:Theme.text-muted;}
-            Text {text:"Reserved: Escape, arrows, PageUp/PageDown, camera W/A/S/D/Q/E with or without Shift, and Ctrl+N/O/S/C/X/V. Camera movement, nudging, file and clipboard controls keep their existing bindings.";wrap:word-wrap;color:Theme.text-muted;}
-            Text {text:root.storage;wrap:word-wrap;color:Theme.text-muted;}
-            Text {text:root.status;wrap:word-wrap;color:Theme.warning;}
-            Rectangle {vertical-stretch:1;}
-            Text {text:root.message;wrap:word-wrap;min-height:36px;}
-            HorizontalLayout {
-                spacing:12px;
-                Button {text:"Reload saved";clicked=>{root.reload();}}
-                Button {text:"Reset saved shortcuts";clicked=>{root.reset();}}
-                Rectangle {horizontal-stretch:1;}
-                Button {text:"Cancel";clicked=>{root.cancel();}}
-                Button {text:"Save shortcuts";enabled:root.can-save;clicked=>{root.save();}}
+                spacing: Theme.space;
+                Button { text: "Reload saved"; clicked => { root.reload(); } }
+                Button { text: "Reset saved shortcuts"; clicked => { root.reset(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Save shortcuts"; enabled: root.can-save; clicked => { root.save(); } }
             }
         }
     }

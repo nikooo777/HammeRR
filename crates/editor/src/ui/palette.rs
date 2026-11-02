@@ -1,4 +1,4 @@
-use editor_core::shortcuts::{Bindings, Chord, Command};
+use editor_core::shortcuts::{Bindings, Command};
 use slint::{Model, ModelRc, VecModel};
 
 use crate::identity::parse_id;
@@ -10,6 +10,13 @@ const OBJECT_ROWS: usize = 8;
 
 fn shortcut_command(id: &str) -> Option<Command> {
     Some(match id {
+        "new-map" => Command::NewMap,
+        "open-map" => Command::OpenMap,
+        "save-map" => Command::SaveMap,
+        "save-map-as" => Command::SaveMapAs,
+        "copy" => Command::Copy,
+        "cut" => Command::Cut,
+        "paste" => Command::Paste,
         "undo" => Command::Undo,
         "redo" => Command::Redo,
         "frame-selection" => Command::FrameSelection,
@@ -37,28 +44,7 @@ fn shortcut_command(id: &str) -> Option<Command> {
 }
 
 fn command_keys(bindings: &Bindings, id: &str) -> String {
-    let fixed = match id {
-        "new-map" => "Ctrl+N",
-        "open-map" => "Ctrl+O",
-        "save-map" => "Ctrl+S",
-        "save-map-as" => "Ctrl+Shift+S",
-        "copy" => "Ctrl+C",
-        "cut" => "Ctrl+X",
-        "paste" => "Ctrl+V",
-        _ => "",
-    };
-    if !fixed.is_empty() {
-        return fixed.to_owned();
-    }
-    shortcut_command(id).map_or_else(String::new, |command| {
-        bindings
-            .slots(command)
-            .iter()
-            .flatten()
-            .map(Chord::label)
-            .collect::<Vec<_>>()
-            .join(" · ")
-    })
+    shortcut_command(id).map_or_else(String::new, |command| bindings.label(command))
 }
 
 fn command_rows(app: &AppWindow, session: &Session, query: &str) -> Vec<PaletteRow> {

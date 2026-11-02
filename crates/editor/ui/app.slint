@@ -15,7 +15,7 @@ export { NavigationDefaultsWindow } from "navigation-defaults.slint";
 export { PreviewDefaultsWindow, PreviewDefaultRow } from "preview-defaults.slint";
 export { WorkspaceDefaultsWindow, WorkspaceDefaultRow } from "workspace-defaults.slint";
 export { SelectionDefaultsWindow, SelectionDefaultRow, SelectionProfileRow } from "selection-defaults.slint";
-export { ShortcutsWindow, ShortcutRow } from "shortcuts.slint";
+export { ShortcutsWindow, ShortcutRow, ShortcutStroke, ShortcutBinding } from "shortcuts.slint";
 export { WorkingRegionWindow, VisibilityCategoryRow, VisibilityExclusionRow, VisibilityProfileRow } from "working-region.slint";
 export { CompileRegionWindow } from "compile-region.slint";
 export { FogWindow } from "fog.slint";
@@ -2419,7 +2419,12 @@ export component AppWindow inherits Window {
     callback tie-entity();
     callback move-to-world();
     // Returns whether the key was handled.
-    callback key(text: string, down: bool, control: bool, shift: bool, alt: bool, meta: bool) -> bool;
+    callback key(text: string, down: bool, repeat: bool, control: bool, shift: bool, alt: bool, meta: bool) -> bool;
+    callback shortcut-input-reset();
+    out property <bool> shortcut-input-blocked: TextInputInterface.text-input-focused || root.palette-open;
+    changed shortcut-input-blocked => {
+        if root.shortcut-input-blocked { root.shortcut-input-reset(); }
+    }
     // button: 0 = left, 1 = right, 2 = middle
     callback mouse-button(button: int, down: bool, x: length, y: length, control: bool, alt: bool);
     callback mouse-moved(x: length, y: length);
@@ -2590,6 +2595,7 @@ export component AppWindow inherits Window {
     }
 
     function open-palette() {
+        root.shortcut-input-reset();
         root.overlays-open = false;
         root.palette-query = "";
         root.palette-index = 0;
@@ -2911,18 +2917,17 @@ export component AppWindow inherits Window {
         height: 100%;
         // Keys that the focused control rejects bubble here, so shortcuts work after toolbar and panel clicks.
         key-pressed(event) => {
-            if (event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta && event.text == "o") {
-                root.open-map();
-                return accept;
-            }
-            if (event.modifiers.control && !event.modifiers.alt && !event.modifiers.meta && event.text == "k") {
+            if root.shortcut-input-blocked { return reject; }
+            if (event.modifiers.control && !event.modifiers.shift && !event.modifiers.alt && !event.modifiers.meta && (event.text == "k" || event.text == "K")) {
+                if event.repeat { return accept; }
+                if root.key(event.text, true, event.repeat, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) { return accept; }
                 root.open-palette();
                 return accept;
             }
-            root.key(event.text, true, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) ? EventResult.accept : EventResult.reject
+            root.key(event.text, true, event.repeat, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) ? EventResult.accept : EventResult.reject
         }
         key-released(event) => {
-            root.key(event.text, false, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) ? EventResult.accept : EventResult.reject
+            root.key(event.text, false, event.repeat, event.modifiers.control, event.modifiers.shift, event.modifiers.alt, event.modifiers.meta) ? EventResult.accept : EventResult.reject
         }
 
         VerticalLayout {
@@ -2936,7 +2941,7 @@ export component AppWindow inherits Window {
                     spacing: 2px;
                     alignment: start;
                     IconButton { y: 6px; icon: Icon.new; tooltip: "New map"; clicked => { root.new-map(); } }
-                    IconButton { y: 6px; icon: Icon.open; tooltip: "Open map · Ctrl+O"; clicked => { root.open-map(); } }
+                    IconButton { y: 6px; icon: Icon.open; tooltip: "Open map"; clicked => { root.open-map(); } }
                     IconButton { y: 6px; icon: Icon.save; tooltip: "Save map"; clicked => { root.save-map(); } }
                     Separator { y: 10px; }
                     IconButton { y: 6px; icon: Icon.undo; tooltip: "Undo"; enabled: root.can-undo; clicked => { root.undo(); } }

@@ -1,13 +1,59 @@
 use super::{Actor, SelectMode, Session};
 use crate::{
     identity::id_string,
-    shortcuts::{Authority, Bindings, Chord, Command, CommandSearch, Snapshot},
+    shortcuts::{Authority, Bindings, Command, CommandSearch, KeyInput, Resolution, Snapshot},
 };
-use glam::DVec3;
+use glam::{DVec3, Vec3};
 use map_core::{ObjectId, edit};
 use render::Projection;
 use serde_json::{Value, json};
 use std::path::PathBuf;
+
+pub const MAX_CAMERA_STEP_SECONDS: f32 = 1.0;
+pub const MAX_CAMERA_DIRECTIONS: usize = 6;
+
+pub fn step_camera_navigation(
+    mut camera: render::Camera,
+    direction: [f32; 3],
+    seconds: f32,
+    fly_speed: f32,
+    fast: bool,
+) -> Result<render::Camera, String> {
+    if !seconds.is_finite() || !(0.0..=MAX_CAMERA_STEP_SECONDS).contains(&seconds) {
+        return Err(format!(
+            "Camera movement duration must be finite and between 0 and {MAX_CAMERA_STEP_SECONDS} seconds"
+        ));
+    }
+    let mut direction = Vec3::from_array(direction);
+    if !direction.is_finite() || direction.abs().max_element() > 1.0 {
+        return Err("Camera movement axes must be finite and between -1 and 1".into());
+    }
+    crate::navigation_preferences::Navigation { fly_speed }.validate()?;
+    if !camera.position.is_finite() {
+        return Err("Camera movement requires a finite current position".into());
+    }
+    if camera.projection != Projection::Perspective {
+        direction.z = 0.0;
+    }
+    if direction == Vec3::ZERO || seconds == 0.0 {
+        return Ok(camera);
+    }
+    let multiplier = if fast {
+        crate::navigation_preferences::FAST_MULTIPLIER
+    } else {
+        1.0
+    };
+    let amount = direction.normalize() * fly_speed * multiplier * seconds;
+    if camera.projection == Projection::Perspective {
+        camera.fly(amount);
+    } else {
+        camera.position += camera.up() * amount.x + camera.right() * amount.y;
+    }
+    if !camera.position.is_finite() {
+        return Err("Camera movement would produce a nonfinite position".into());
+    }
+    Ok(camera)
+}
 
 pub(super) enum Binding {
     Independent(Authority),
@@ -72,23 +118,63 @@ impl Session {
         self.keyboard_shortcuts_snapshot().current
     }
 
-    pub fn resolve_editor_shortcut(
+    pub fn resolve_editor_shortcut_sequence(
         &self,
-        key: &str,
-        control: bool,
-        shift: bool,
-        alt: bool,
-        meta: bool,
-    ) -> Option<Command> {
-        if alt || meta {
-            return None;
+        inputs: &[KeyInput],
+    ) -> Result<Resolution, String> {
+        self.shortcuts.authority().resolve_sequence(inputs)
+    }
+
+    pub fn navigate_camera(
+        &mut self,
+        actor: Actor,
+        commands: &[Command],
+        seconds: f32,
+        fast: bool,
+    ) -> Result<Value, String> {
+        self.ensure_not_closing()?;
+        if commands.is_empty() || commands.len() > MAX_CAMERA_DIRECTIONS {
+            return Err(format!(
+                "Camera movement requires 1–{MAX_CAMERA_DIRECTIONS} distinct direction commands"
+            ));
         }
-        let key = crate::shortcuts::canonical_key(key)?;
-        self.shortcuts.authority().resolve(&Chord {
-            key,
-            control,
-            shift,
-        })
+        let mut direction = Vec3::ZERO;
+        for (index, command) in commands.iter().enumerate() {
+            if commands[..index].contains(command) {
+                return Err("Camera movement direction commands must be distinct".into());
+            }
+            direction += match command {
+                Command::CameraForward => Vec3::X,
+                Command::CameraBackward => Vec3::NEG_X,
+                Command::CameraRight => Vec3::Y,
+                Command::CameraLeft => Vec3::NEG_Y,
+                Command::CameraUp => Vec3::Z,
+                Command::CameraDown => Vec3::NEG_Z,
+                _ => return Err("Camera movement accepts only camera direction commands".into()),
+            };
+        }
+        let before = self.camera();
+        let camera = step_camera_navigation(
+            before,
+            direction.to_array(),
+            seconds,
+            self.fly_speed(),
+            fast,
+        )?;
+        let changed = camera != before;
+        if changed {
+            self.set_camera(camera);
+            self.log(actor, "Moved camera");
+        }
+        Ok(json!({
+            "commands":commands,
+            "seconds":seconds,
+            "fast":fast,
+            "fly_speed":self.fly_speed(),
+            "camera_changed":changed,
+            "projection":camera.projection.name(),
+            "position":camera.position.to_array()
+        }))
     }
 
     pub fn keyboard_shortcuts_state(&self) -> Value {
@@ -169,6 +255,29 @@ impl Session {
         }
         let mut result = json!({"command":command});
         match command {
+            Command::NewMap => {
+                return Err("Use new_map with discard_changes and optional expected_review from get_map_info; the native shortcut opens the shared New workflow".into());
+            }
+            Command::OpenMap => {
+                return Err("Use open_map with an explicit path and replacement inputs; the native shortcut opens the file chooser".into());
+            }
+            Command::SaveMap | Command::SaveMapAs => {
+                return Err("Use save_map with an explicit path for Save as, or omit path to save the retained current source; native shortcuts use the shared Save workflows".into());
+            }
+            Command::Copy | Command::Cut => {
+                return Err("Use copy_objects or cut_objects with get_clipboard.snapshot and an explicit session/system destination; native shortcuts use the shared system clipboard workflow".into());
+            }
+            Command::Paste => {
+                return Err("Use get_clipboard, import_clipboard when needed, then preview_paste and apply_paste; the native shortcut opens the shared Paste workflow".into());
+            }
+            Command::CameraForward
+            | Command::CameraBackward
+            | Command::CameraLeft
+            | Command::CameraRight
+            | Command::CameraUp
+            | Command::CameraDown => {
+                return Err("Use step_camera_navigation with direction commands and an explicit duration; native camera shortcuts run while held".into());
+            }
             Command::Undo => result["label"] = json!(self.undo(actor)),
             Command::Redo => result["label"] = json!(self.redo(actor)),
             Command::HideSelectionInEditor | Command::ShowAllEditorHidden => {

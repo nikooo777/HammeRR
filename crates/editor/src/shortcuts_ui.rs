@@ -1,13 +1,14 @@
 use std::{cell::RefCell, rc::Rc};
 
-use editor_core::shortcuts::{Bindings, Chord, Command, CommandRow, Snapshot};
-use slint::{ComponentHandle, Model, VecModel, platform::Key};
+use editor_core::shortcuts::{
+    Binding, Bindings, Chord, Command, CommandRow, LOGICAL_KEYS, PHYSICAL_KEYS, Snapshot,
+};
+use slint::{ComponentHandle, Model, VecModel};
 
 use crate::{
-    AppWindow, ShortcutRow, ShortcutsWindow,
-    runtime::{DocumentAccess, SharedSession, lock},
+    AppWindow, ShortcutBinding, ShortcutRow, ShortcutStroke, ShortcutsWindow,
+    runtime::DocumentAccess,
     session::{Actor, Session},
-    viewport::key_text,
 };
 
 struct Form {
@@ -16,6 +17,7 @@ struct Form {
     selected: Command,
     snapshot: String,
     dirty: bool,
+    edit_error: Option<String>,
 }
 
 pub struct Controller {
@@ -23,28 +25,33 @@ pub struct Controller {
     form: Rc<RefCell<Form>>,
 }
 
-fn keys() -> Vec<String> {
-    std::iter::once("Unbound".into())
-        .chain(('A'..='Z').map(|key| key.to_string()))
-        .chain((1..=12).map(|key| format!("F{key}")))
-        .chain(["Delete".into(), "Backspace".into()])
-        .collect()
+fn key_model(keys: &[&str]) -> slint::ModelRc<slint::SharedString> {
+    Rc::new(VecModel::from(
+        std::iter::once("Choose key")
+            .chain(keys.iter().copied())
+            .map(Into::into)
+            .collect::<Vec<_>>(),
+    ))
+    .into()
 }
 
-fn load_slot(window: &ShortcutsWindow, slot: Option<&Chord>, alternate: bool) {
-    let key = slot
-        .and_then(|slot| keys().iter().position(|key| key == &slot.key))
-        .unwrap_or(0) as i32;
-    let control = slot.is_some_and(|slot| slot.control);
-    let shift = slot.is_some_and(|slot| slot.shift);
-    if alternate {
-        window.set_alternate_key(key);
-        window.set_alternate_control(control);
-        window.set_alternate_shift(shift);
-    } else {
-        window.set_primary_key(key);
-        window.set_primary_control(control);
-        window.set_primary_shift(shift);
+fn load_stroke(chord: Option<&Chord>) -> ShortcutStroke {
+    chord.map_or_else(ShortcutStroke::default, |chord| ShortcutStroke {
+        key: chord.key.as_str().into(),
+        physical: chord.physical,
+        control: chord.control,
+        shift: chord.shift,
+        alt: chord.alt,
+        meta: chord.meta,
+    })
+}
+
+fn load_slot(binding: Option<&Binding>) -> ShortcutBinding {
+    let strokes = binding.map(Binding::strokes).unwrap_or_default();
+    ShortcutBinding {
+        count: strokes.len() as i32,
+        first: load_stroke(strokes.first()),
+        second: load_stroke(strokes.get(1)),
     }
 }
 
@@ -57,9 +64,10 @@ fn load_selected(window: &ShortcutsWindow, form: &Form) {
             .into(),
     );
     window.set_selected_label(form.selected.label().into());
+    window.set_selected_camera(form.selected.is_camera());
     let slots = form.bindings.slots(form.selected);
-    load_slot(window, slots[0].as_ref(), false);
-    load_slot(window, slots[1].as_ref(), true);
+    window.set_primary(load_slot(slots[0].as_ref()));
+    window.set_alternate(load_slot(slots[1].as_ref()));
 }
 
 fn refresh(window: &ShortcutsWindow, session: &Session, form: &RefCell<Form>) {
@@ -93,6 +101,12 @@ fn refresh_with_snapshot(
     form: &RefCell<Form>,
 ) {
     let mut current = form.borrow_mut();
+    if !current.dirty && current.snapshot != snapshot.stamp() {
+        current.bindings = snapshot.current.clone();
+        current.snapshot = snapshot.stamp();
+        current.edit_error = None;
+        load_selected(window, &current);
+    }
     match session.find_editor_commands(&window.get_search(), Some(&current.bindings)) {
         Ok(result) => {
             window.set_search_error("".into());
@@ -100,15 +114,12 @@ fn refresh_with_snapshot(
                 format!("{} of {} commands", result.matched, result.total).into(),
             );
             window.set_has_matches(!result.commands.is_empty());
-            if !result
-                .commands
-                .iter()
-                .any(|row| row.command == current.selected)
-                && let Some(first) = result.commands.first()
-            {
-                current.selected = first.command;
-            }
-            load_selected(window, &current);
+            window.set_selected_visible(
+                result
+                    .commands
+                    .iter()
+                    .any(|row| row.command == current.selected),
+            );
             let rows = command_rows(result.commands);
             if rows.len() != current.rows.row_count() {
                 current.rows.set_vec(rows);
@@ -125,7 +136,13 @@ fn refresh_with_snapshot(
     let state = snapshot.report();
     let stale = current.snapshot != snapshot.stamp();
     let validation = current.bindings.clone().validated();
-    window.set_can_save(current.dirty && !stale && state["ready"] == true && validation.is_ok());
+    window.set_can_save(
+        current.dirty
+            && !stale
+            && state["ready"] == true
+            && validation.is_ok()
+            && current.edit_error.is_none(),
+    );
     window.set_storage(
         format!(
             "Storage: {}",
@@ -137,6 +154,8 @@ fn refresh_with_snapshot(
         format!("Saved shortcuts unavailable: {error}. Current valid bindings remain active. Reload saved must succeed or explicitly Reset saved shortcuts before Save.")
     } else if stale {
         "Shortcuts changed in another editor. Reload saved discards this form and loads the current saved bindings.".into()
+    } else if let Some(error) = &current.edit_error {
+        error.clone()
     } else if let Err(error) = validation {
         error
     } else if current.dirty {
@@ -152,30 +171,32 @@ fn adopt(window: &ShortcutsWindow, session: &Session, form: &RefCell<Form>) {
     current.bindings = snapshot.current.clone();
     current.snapshot = snapshot.stamp();
     current.dirty = false;
+    current.edit_error = None;
     load_selected(window, &current);
     drop(current);
     refresh_with_snapshot(window, session, &snapshot, form);
 }
 
-fn read_slot(window: &ShortcutsWindow, alternate: bool) -> Option<Chord> {
-    let (index, control, shift) = if alternate {
-        (
-            window.get_alternate_key(),
-            window.get_alternate_control(),
-            window.get_alternate_shift(),
-        )
-    } else {
-        (
-            window.get_primary_key(),
-            window.get_primary_control(),
-            window.get_primary_shift(),
-        )
-    };
-    (index > 0).then(|| Chord {
-        key: keys().get(index as usize).cloned().unwrap_or_default(),
-        control,
-        shift,
-    })
+fn read_stroke(stroke: ShortcutStroke) -> Chord {
+    Chord {
+        key: stroke.key.to_string(),
+        physical: stroke.physical,
+        control: stroke.control,
+        shift: stroke.shift,
+        alt: stroke.alt,
+        meta: stroke.meta,
+    }
+}
+
+fn read_slot(binding: ShortcutBinding) -> Result<Option<Binding>, String> {
+    match binding.count {
+        0 => Ok(None),
+        1 => Ok(Some(Binding::Single(read_stroke(binding.first)))),
+        2 => Ok(Some(Binding::Sequence {
+            sequence: [read_stroke(binding.first), read_stroke(binding.second)],
+        })),
+        _ => Err("Choose Unbound, Single stroke or Two-stroke sequence".into()),
+    }
 }
 
 impl Controller {
@@ -190,16 +211,10 @@ impl Controller {
             selected: Command::Undo,
             snapshot: String::new(),
             dirty: false,
+            edit_error: None,
         }));
-        window.set_keys(
-            Rc::new(VecModel::from(
-                keys()
-                    .into_iter()
-                    .map(Into::into)
-                    .collect::<Vec<slint::SharedString>>(),
-            ))
-            .into(),
-        );
+        window.set_logical_keys(key_model(LOGICAL_KEYS));
+        window.set_physical_keys(key_model(PHYSICAL_KEYS));
         window.on_filter_commands({
             let (window, target, form) = (window.as_weak(), access.downgrade(), form.clone());
             move || {
@@ -225,13 +240,13 @@ impl Controller {
                 };
                 let result = target.upgrade().and_then(|access| {
                     access.with_session(|session| {
-                        if let Ok(command) = serde_json::from_value::<Command>(
-                            serde_json::Value::String(command.to_string()),
-                        ) {
-                            form.borrow_mut().selected = command;
-                            load_selected(&window, &form.borrow());
-                            refresh(&window, session, &form);
-                        }
+                        let command = serde_json::from_value::<Command>(serde_json::Value::String(
+                            command.to_string(),
+                        ))
+                        .map_err(|_| "Choose an available shortcut command")?;
+                        form.borrow_mut().selected = command;
+                        load_selected(&window, &form.borrow());
+                        refresh(&window, session, &form);
                         Ok(())
                     })
                 });
@@ -246,15 +261,20 @@ impl Controller {
                 let Some(window) = window.upgrade() else {
                     return;
                 };
-                if !window.get_has_matches() {
-                    return;
-                }
                 let result = target.upgrade().and_then(|access| {
                     access.with_session(|session| {
                         let mut current = form.borrow_mut();
                         let command = current.selected;
-                        *current.bindings.slots_mut(command) =
-                            [read_slot(&window, false), read_slot(&window, true)];
+                        let bindings = read_slot(window.get_primary()).and_then(|primary| {
+                            read_slot(window.get_alternate()).map(|alternate| [primary, alternate])
+                        });
+                        match bindings {
+                            Ok(bindings) => {
+                                *current.bindings.slots_mut(command) = bindings;
+                                current.edit_error = None;
+                            }
+                            Err(error) => current.edit_error = Some(error),
+                        }
                         current.dirty = true;
                         drop(current);
                         refresh(&window, session, &form);
@@ -307,109 +327,28 @@ impl Controller {
         window.on_cancel({
             let window = window.as_weak();
             move || {
-                let _ = window.unwrap().hide();
+                if let Some(window) = window.upgrade() {
+                    let _ = window.hide();
+                }
             }
         });
         Ok(Self { window, form })
     }
 
     pub fn show(&self, session: &Session) -> Result<(), slint::PlatformError> {
-        self.window.set_message("".into());
-        self.window.set_search("".into());
-        adopt(&self.window, session, &self.form);
+        if self.window.window().is_visible() {
+            refresh(&self.window, session, &self.form);
+        } else {
+            self.window.set_message("".into());
+            self.window.set_search("".into());
+            adopt(&self.window, session, &self.form);
+        }
         self.window.show()
     }
 
     pub fn refresh(&self, session: &Session) {
         refresh(&self.window, session, &self.form);
     }
-}
-
-fn event_key(text: &str) -> Option<String> {
-    if text == key_text(Key::Delete) {
-        return Some("Delete".into());
-    }
-    if text == key_text(Key::Backspace) {
-        return Some("Backspace".into());
-    }
-    let functions = [
-        Key::F1,
-        Key::F2,
-        Key::F3,
-        Key::F4,
-        Key::F5,
-        Key::F6,
-        Key::F7,
-        Key::F8,
-        Key::F9,
-        Key::F10,
-        Key::F11,
-        Key::F12,
-    ];
-    functions
-        .into_iter()
-        .position(|key| text == key_text(key))
-        .map(|index| format!("F{}", index + 1))
-        .or_else(|| editor_core::shortcuts::canonical_key(text))
-}
-
-fn dispatch_key(
-    app: &AppWindow,
-    session: &mut Session,
-    text: &str,
-    control: bool,
-    shift: bool,
-    alt: bool,
-    meta: bool,
-) -> bool {
-    let Some(key) = event_key(text) else {
-        return false;
-    };
-    let Some(command) = session.resolve_editor_shortcut(&key, control, shift, alt, meta) else {
-        return false;
-    };
-    let aspect = app.get_viewport_width() / app.get_viewport_height().max(1.0);
-    if let Err(error) = session.execute_editor_command(Actor::User, command, aspect) {
-        app.set_message(error.into());
-    }
-    true
-}
-
-pub struct ViewportKey<'a> {
-    pub text: &'a str,
-    pub down: bool,
-    pub control: bool,
-    pub shift: bool,
-    pub alt: bool,
-    pub meta: bool,
-}
-
-pub fn route_viewport_key(
-    app: &AppWindow,
-    session: &SharedSession,
-    key: ViewportKey<'_>,
-    fixed_command: impl FnOnce(&str, bool, bool) -> bool,
-    navigation: impl FnOnce(&str, bool) -> bool,
-) -> bool {
-    if !key.down {
-        return navigation(key.text, false);
-    }
-    if key.alt || key.meta {
-        return false;
-    }
-    let configured = dispatch_key(
-        app,
-        &mut lock(session),
-        key.text,
-        key.control,
-        key.shift,
-        key.alt,
-        key.meta,
-    );
-    if configured || fixed_command(key.text, key.control, key.shift) {
-        return true;
-    }
-    !key.control && navigation(key.text, true)
 }
 
 pub fn refresh_hint(app: &AppWindow, session: &Session) {
@@ -422,7 +361,7 @@ pub fn refresh_hint(app: &AppWindow, session: &Session) {
             .iter()
             .flatten()
             .next()
-            .map(Chord::label)
+            .map(Binding::label)
             .unwrap_or_default()
             .into(),
     );

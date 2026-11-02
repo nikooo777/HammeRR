@@ -1,5 +1,5 @@
 use super::super::*;
-use crate::shortcuts::{Bindings, Command};
+use crate::shortcuts::{Bindings, Command, KeyInput, Resolution};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -32,10 +32,28 @@ pub struct FindEditorCommandsArgs {
     bindings: Option<Box<Bindings>>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResolveKeyboardShortcutArgs {
+    #[schemars(length(min = 1, max = 2))]
+    inputs: Vec<KeyInput>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CameraNavigationArgs {
+    #[schemars(length(min = 1, max = 6))]
+    commands: Vec<Command>,
+    #[schemars(range(min = 0.0, max = 1.0))]
+    seconds: f32,
+    #[serde(default)]
+    fast: bool,
+}
+
 #[tool_router(router = shortcut_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Search the same 23-command catalog as Keyboard shortcuts… → Search commands. query is at most 128 UTF-8 bytes; case-insensitive whitespace-separated literal terms must all match a command label, typed ID, current/form binding display or factory binding display. Empty query returns every command in catalog order. Optional complete typed bindings searches an unsaved form without activating it; duplicate/reserved draft chords remain searchable, unsupported key names and unknown fields reject. Returns query, shared preference snapshot, total, matched and command rows. Reads current in-memory settings only; no command execution, storage read/write, map/history/camera or preference changes.",
+        description = "Search the same 36-command catalog as Keyboard shortcuts… → Search commands. query is at most 128 UTF-8 bytes; case-insensitive whitespace-separated literal terms must all match a command label, typed ID, current/form binding display or factory binding display. Empty query returns every command in catalog order. Optional typed bindings searches an unsaved form without activating it; incomplete or invalid draft bindings remain searchable and Save performs validation. Unknown fields reject. Returns query, shared preference snapshot, total, matched and command rows. Reads current in-memory settings only; no execution, storage access, map/history/camera or preference changes.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn find_editor_commands(
@@ -50,7 +68,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect the shared viewport shortcut configuration: undo, redo, frame_selection, delete_selection, duplicate_selection, perspective, top, front, side, objects, faces, show_grid, snap_to_grid, tool_textures, selection_outlines, select_tool, move_tool, rotate_tool, scale_tool, draw_brush, clip_mode, hide_selection_in_editor and show_all_editor_hidden, with exact primary/alternate nullable chord slots, factory defaults, command labels, scope/reserved keys, preference snapshot, storage path and load errors. Projection, selection-mode, viewport-toggle, transform-tool, authoring-mode and editor-visibility commands are unbound by default, including older saved configurations. Text fields retain native editing. Saved shortcuts load at startup; malformed storage stays untouched and current valid bindings remain usable. No map/history/camera mutation.",
+        description = "Inspect all 36 shared keyboard commands with two nullable primary/alternate bindings, factory values, labels, logical/physical key catalogs, reserved controls, sequence timeout, preference snapshot, storage path and load errors. Includes New/Open/Save/Save as, Copy/Cut/Paste, six held camera directions and the existing viewport commands. Bindings accept one chord or a two-stroke sequence, logical or physical keys and exact Ctrl/Shift/Alt/Meta modifiers. Held camera bindings are single-stroke and ignore Shift for the independent speed boost. Text fields retain native editing. Saved shortcuts load at startup; malformed storage stays untouched and current valid bindings remain usable. No map/history/camera mutation.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_keyboard_shortcuts(&self) -> ToolResult {
@@ -58,7 +76,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Configure shortcuts through the same Session operation as Keyboard shortcuts…. Requires current get_keyboard_shortcuts.snapshot. action=save takes bindings keyed by command, each exactly two nullable slots. The original command fields remain required; missing perspective/top/front/side/objects/faces/show_grid/snap_to_grid/tool_textures/selection_outlines/select_tool/move_tool/rotate_tool/scale_tool/draw_brush/clip_mode/hide_selection_in_editor/show_all_editor_hidden slots default to unbound for version1 compatibility. A chord is {key,control,shift}; keys are logical A–Z/F1–F12/Delete/Backspace, case normalized. No Alt/Meta, sequences or arbitrary commands. Duplicate chords and reserved camera/file/clipboard/navigation/tool keys reject without changing bindings or disk. Save persists atomically and activates immediately; reload activates only fully valid storage and preserves current bindings on failure; reset explicitly writes/activates factory defaults, including recovery from malformed storage. Save is blocked after load/source errors until Reload succeeds or explicit Reset. All writes compare the inspected file identity/bytes; stale concurrent changes reject. write_committed reports completed writes even if later verification failed. Save/Reset coordinate participating Linux writers through a nonblocking lock and retain the original directory binding. Changed directories require Reload; programs ignoring the lock remain outside that guarantee. No map/history/source/camera changes."
+        description = "Configure shortcuts through the same Session operation as Keyboard shortcuts…. Requires get_keyboard_shortcuts.snapshot. action=save takes bindings keyed by command, each exactly two nullable slots. A slot is a legacy single chord {key,control,shift,alt,meta,physical} or {sequence:[chord,chord]}; alt/meta/physical default false. physical=false names logical keys; physical=true uses the reported physical-key catalog. Same-family duplicates and single/sequence prefix conflicts reject; mixed logical/physical overlaps are checked for ambiguity during resolution. Camera directions require a single chord with shift=false; event Shift remains the speed boost. Escape, unmodified or Shift-only arrows/PageUp/PageDown, and Ctrl+K without extra modifiers remain reserved. Legacy version1 files missing new file/clipboard/camera command fields receive their former fixed defaults; older optional viewport commands remain unbound. Save persists atomically and activates; reload activates fully valid storage and preserves current bindings on failure; reset explicitly writes/activates factory defaults. Save is blocked after load/source errors until Reload succeeds or explicit Reset. Writes compare inspected file identity/bytes and stale snapshots reject. write_committed reports completed writes even if later verification fails. Participating writers use the existing coordinated publication and original directory binding. No map/history/source/camera changes."
     )]
     pub(in crate::mcp) fn set_keyboard_shortcuts(
         &self,
@@ -84,7 +102,41 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Execute a shared viewport command through the same typed Session dispatcher as configured human shortcuts. command=hide_selection_in_editor/show_all_editor_hidden uses the same set_editor_visibility operation as Hide selected in editor / Show all editor-hidden and returns editor_visibility with its actual hidden_total and snapshot. Hide uses the current root object selection; empty selection rejects and adding exclusions requires committed geometry. Show all clears only temporary editor exclusions and remains available during previews. Repeated commands are idempotent. Saved Hide, selection, map/history, camera, builds and preferences are unchanged; existing visibility gesture retirement applies. aspect is unused. command=draw_brush activates the planar drawing mode through set_spatial_settings and returns draw_block; entering from Perspective selects Top without creating a brush. command=clip_mode activates set_clip_tool and returns clip_tool; entering requires selected brushes or brush entities. Repeated activation preserves the drawing/cut preview and active plane drag. Leave modes through existing human controls or explicit setters. Both return the actual projection and camera_changed boolean, preserve spatial dimensions/grid and normal setter retirement, and write no map/history/preferences; aspect is unused. command=select_tool/move_tool/rotate_tool/scale_tool uses set_transform_tool and the viewport's paint-disable operation, returning tool=select/move/rotate/scale. It preserves axes, pivot, texture policies, angle snap, camera and Objects/Faces mode; actual tool changes retire transform/area/component work and held paint strokes before late release. Repeating unchanged settings preserves pending transform work. aspect is unused. command=show_grid/snap_to_grid toggles the originating Session's spatial setting and returns grid_visible/snap; tool_textures/selection_outlines toggles the live view setting and returns the corresponding boolean. These use the same checkbox operations and draft/drag cleanup, without map/history or saved-default writes; aspect is unused. command=perspective/top/front/side changes only the originating Session's projection through the existing camera controls, preserving its per-projection camera behavior; aspect is unused for these commands. command=objects/faces calls the same selection-mode operation as the viewport and set_selection_mode: a mode change clears object/face selection and obsolete gestures/previews, entering faces also disables clipping/draw-block; component editing clears even when the mode is already active. Returns mode and mode_changed, which reports only the mode transition. No map/history/camera change. undo/redo performs one history step (label=null when unavailable); frame_selection frames selected objects/faces or the map using optional positive finite aspect (default1); delete_selection deletes current selected objects; duplicate_selection copies the current selection by [grid,grid,0] and selects the copies. Object commands reject component-editing scope and empty selection. Existing delete_objects/duplicate_objects retain explicit ID/offset support through the same Session helpers. This does not synthesize keyboard input, change shortcut preferences, access system clipboard or open dialogs."
+        description = "Resolve one or two observed key inputs against the current shared keyboard bindings, using the same resolver as native input. Each input requires at least one supported logical/physical key name and all control/shift/alt/meta booleans; omit an unavailable key family or use null, using names from get_keyboard_shortcuts.logical_keys/physical_keys. Returns status none, prefix or command with the matched typed command. Overlapping logical/physical matches produce an explicit ambiguity error instead of choosing a command. Held camera matches ignore Shift; camera bindings cannot be sequences. This stateless inspection does not hold keys, advance a native sequence timeout, execute commands or change preferences/map/history/camera.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn resolve_keyboard_shortcut(
+        &self,
+        Parameters(args): Parameters<ResolveKeyboardShortcutArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let resolution = self
+                .session()
+                .resolve_editor_shortcut_sequence(&args.inputs)?;
+            let (status, command) = match resolution {
+                Resolution::None => ("none", None),
+                Resolution::Prefix => ("prefix", None),
+                Resolution::Command(command) => ("command", Some(command)),
+            };
+            Ok(json!({"status":status,"command":command}))
+        })
+    }
+
+    #[tool(
+        description = "Move the shared camera with the same normalized movement calculation as held native camera shortcuts. commands contains 1–6 distinct camera_forward/camera_backward/camera_left/camera_right/camera_up/camera_down values; opposing directions cancel. seconds is finite from 0 to 1. fast defaults false and applies the independent Shift speed multiplier to the Session's current fly_speed. Perspective moves forward/right/world-up; planar views move screen-up/right and ignore up/down before normalization. Returns actual position/projection and camera_changed. No map/history/preferences writes. Changed cameras use the normal Session camera operation, including captured-gesture and camera-following visibility invalidation; this does not synthesize keyboard input."
+    )]
+    pub(in crate::mcp) fn step_camera_navigation(
+        &self,
+        Parameters(args): Parameters<CameraNavigationArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .navigate_camera(Actor::Agent, &args.commands, args.seconds, args.fast)
+        })
+    }
+
+    #[tool(
+        description = "Execute a shared Session viewport command through the same operations used by native shortcuts. New/Open/Save/Save as and Copy/Cut/Paste return explicit guidance to new_map/open_map/save_map and the guarded clipboard tools, which accept their required inputs; this generic call never opens a dialog or fabricates a file/clipboard action. Camera direction commands require step_camera_navigation with an explicit duration. undo/redo performs one history step, with label=null when unavailable. frame_selection uses positive finite aspect (default1). delete_selection and duplicate_selection require whole-object scope and a nonempty selection; duplication uses [grid,grid,0] and selects copies. perspective/top/front/side preserve remembered projection cameras. objects/faces use shared selection-mode cleanup. show_grid/snap_to_grid/tool_textures/selection_outlines toggle the current Session setting without saving defaults. select_tool/move_tool/rotate_tool/scale_tool use shared transform and paint-disable operations; unchanged tools preserve pending work. draw_brush and clip_mode activate their existing authoring workflows, selecting Top when required; clip requires selected brushes. hide_selection_in_editor/show_all_editor_hidden use shared temporary visibility and return its report; saved visibility, selection, source, history and builds stay unchanged. Existing gesture retirement and ownership guards apply. This does not synthesize input or change shortcut preferences."
     )]
     pub(in crate::mcp) fn execute_editor_command(
         &self,

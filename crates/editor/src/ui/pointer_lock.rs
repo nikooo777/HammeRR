@@ -1,12 +1,19 @@
-use std::cell::RefCell;
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
+use editor_core::shortcuts::{canonical_key, canonical_physical_key};
 use slint::ComponentHandle;
-use slint::winit_030::winit::event::{DeviceEvent, DeviceId};
+use slint::winit_030::winit::event::{DeviceEvent, DeviceId, ElementState, Ime, WindowEvent};
 use slint::winit_030::winit::event_loop::ActiveEventLoop;
+use slint::winit_030::winit::keyboard::{Key, PhysicalKey};
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+use slint::winit_030::winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 use slint::winit_030::winit::window::{CursorGrabMode, WindowId};
 use slint::winit_030::{CustomApplicationHandler, EventResult, WinitWindowAccessor};
 
-use crate::AppWindow;
+use crate::{AppWindow, shortcut_input::NativeKey};
 
 #[derive(Default)]
 struct State {
@@ -17,12 +24,143 @@ struct State {
 
 thread_local! {
     static STATE: RefCell<State> = RefCell::default();
+    static KEYBOARDS: RefCell<HashMap<WindowId, Keyboard>> = RefCell::default();
 }
 
-/// Collects relative mouse motion, which is the only motion a locked pointer reports.
+#[derive(Default)]
+struct Keyboard {
+    pending: Option<NativeKey>,
+    pressed: HashSet<String>,
+    released: HashSet<String>,
+    focused: bool,
+    shift: bool,
+    composing: bool,
+    reset: bool,
+    cancel_prefix: bool,
+}
+
+impl Keyboard {
+    fn retire_pending(&mut self) {
+        if self
+            .pending
+            .take()
+            .is_some_and(|event| event.down && !event.synthetic && !event.is_modifier())
+        {
+            self.cancel_prefix = true;
+        }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct KeyboardFrame {
+    pub released: HashSet<String>,
+    pub focused: bool,
+    pub shift: bool,
+    pub composing: bool,
+    pub reset: bool,
+    pub cancel_prefix: bool,
+}
+
 pub(super) struct Handler;
 
 impl CustomApplicationHandler for Handler {
+    fn window_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        window: Option<&slint::winit_030::winit::window::Window>,
+        _slint_window: Option<&slint::Window>,
+        event: &WindowEvent,
+    ) -> EventResult {
+        KEYBOARDS.with_borrow_mut(|keyboards| {
+            if matches!(event, WindowEvent::Destroyed) {
+                keyboards.remove(&window_id);
+                return;
+            }
+            let keyboard = keyboards.entry(window_id).or_insert_with(|| Keyboard {
+                focused: window.is_some_and(slint::winit_030::winit::window::Window::has_focus),
+                ..Keyboard::default()
+            });
+            keyboard.retire_pending();
+            match event {
+                WindowEvent::KeyboardInput {
+                    event,
+                    is_synthetic,
+                    ..
+                } => {
+                    let identity = match event.physical_key {
+                        PhysicalKey::Code(code) => Some(format!("{code:?}")),
+                        PhysicalKey::Unidentified(_) => None,
+                    };
+                    let down = event.state == ElementState::Pressed;
+                    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+                    let logical_key = event.key_without_modifiers();
+                    #[cfg(not(any(
+                        target_os = "linux",
+                        target_os = "windows",
+                        target_os = "macos"
+                    )))]
+                    let logical_key = event.logical_key.clone();
+                    let logical = match logical_key {
+                        Key::Character(text) => canonical_key(text.as_str()),
+                        Key::Named(key) => canonical_key(&format!("{key:?}")),
+                        _ => None,
+                    };
+                    let mut repeat = event.repeat;
+                    let dead = matches!(event.logical_key, Key::Dead(_));
+                    if dead {
+                        keyboard.reset = true;
+                    }
+                    if !is_synthetic && let Some(identity) = &identity {
+                        if down {
+                            repeat |= !keyboard.pressed.insert(identity.clone());
+                        } else {
+                            keyboard.pressed.remove(identity);
+                            keyboard.released.insert(identity.clone());
+                        }
+                    }
+                    keyboard.pending = Some(NativeKey {
+                        logical,
+                        physical: identity.as_deref().and_then(canonical_physical_key),
+                        identity,
+                        down,
+                        repeat,
+                        synthetic: *is_synthetic,
+                        dead,
+                    });
+                }
+                WindowEvent::ModifiersChanged(modifiers) => {
+                    keyboard.shift = modifiers.state().shift_key();
+                }
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    ..
+                }
+                | WindowEvent::MouseWheel { .. } => keyboard.cancel_prefix = true,
+                WindowEvent::Focused(focused) => {
+                    keyboard.focused = *focused;
+                    if !*focused {
+                        keyboard.pressed.clear();
+                        keyboard.released.clear();
+                        keyboard.shift = false;
+                        keyboard.composing = false;
+                        keyboard.reset = true;
+                    }
+                }
+                WindowEvent::CloseRequested => {
+                    keyboard.pressed.clear();
+                    keyboard.reset = true;
+                }
+                WindowEvent::Ime(event) => {
+                    keyboard.composing = matches!(event, Ime::Preedit(text, _) if !text.is_empty());
+                    keyboard.reset = true;
+                }
+                _ => {}
+            }
+        });
+        EventResult::Propagate
+    }
+
     fn device_event(
         &mut self,
         _event_loop: &ActiveEventLoop,
@@ -39,6 +177,55 @@ impl CustomApplicationHandler for Handler {
         }
         EventResult::Propagate
     }
+}
+
+pub(super) fn keyboard_event(app: &AppWindow, down: bool) -> Option<NativeKey> {
+    app.window()
+        .with_winit_window(|window| {
+            KEYBOARDS.with_borrow_mut(|keyboards| {
+                keyboards
+                    .get_mut(&window.id())?
+                    .pending
+                    .take()
+                    .filter(|event| event.down == down)
+            })
+        })
+        .flatten()
+}
+
+pub(super) fn keyboard_frame(app: &AppWindow) -> KeyboardFrame {
+    app.window()
+        .with_winit_window(|window| {
+            KEYBOARDS.with_borrow_mut(|keyboards| {
+                let keyboard = keyboards.entry(window.id()).or_insert_with(|| Keyboard {
+                    focused: window.has_focus(),
+                    ..Keyboard::default()
+                });
+                keyboard.retire_pending();
+                KeyboardFrame {
+                    released: std::mem::take(&mut keyboard.released),
+                    focused: keyboard.focused,
+                    shift: keyboard.shift,
+                    composing: keyboard.composing,
+                    reset: std::mem::take(&mut keyboard.reset),
+                    cancel_prefix: std::mem::take(&mut keyboard.cancel_prefix),
+                }
+            })
+        })
+        .unwrap_or_default()
+}
+
+pub(super) fn reset_keyboard(app: &AppWindow) {
+    app.window().with_winit_window(|window| {
+        KEYBOARDS.with_borrow_mut(|keyboards| {
+            if let Some(keyboard) = keyboards.get_mut(&window.id()) {
+                keyboard.pending = None;
+                keyboard.pressed.clear();
+                keyboard.released.clear();
+                keyboard.reset = true;
+            }
+        });
+    });
 }
 
 fn grab(window: &slint::winit_030::winit::window::Window) -> bool {

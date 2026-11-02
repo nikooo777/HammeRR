@@ -26,8 +26,10 @@ impl Snapshot {
         let rows = self.current.command_rows();
         json!({"snapshot":self.stamp(),"current":self.current,"factory_defaults":factory,
             "ready":self.ready,"stored":self.stored,"error":self.error,"path":self.path,"commands":rows,
-            "limits":{"slots_per_command":2,"file_bytes":MAX_FILE_BYTES},
-            "scope":"Viewport focus only. Logical A–Z, F1–F12, Delete and Backspace with exact Ctrl/Shift modifiers; Alt/Meta are unavailable. Escape, arrows/PageUp/PageDown, camera W/A/S/D/Q/E (including Shift) and Ctrl+N/O/S/C/X/V are reserved. Text fields keep native editing shortcuts. Save and Reset persist and activate; failed Reload preserves current bindings. No map or Undo changes."})
+            "logical_keys":LOGICAL_KEYS,"physical_keys":PHYSICAL_KEYS,
+            "limits":{"slots_per_command":2,"file_bytes":MAX_FILE_BYTES,"key_bytes":MAX_KEY_BYTES,
+                "sequence_strokes":MAX_SEQUENCE_STROKES,"sequence_timeout_ms":SEQUENCE_TIMEOUT_MS},
+            "scope":"Editor window outside text fields. Logical or physical keys with exact Ctrl/Shift/Alt/Meta modifiers and one or two strokes. Camera directions require one stroke without stored Shift; event Shift independently boosts movement. Escape, unmodified or Shift-only arrows/PageUp/PageDown and exact Ctrl+K command search are reserved. Two-stroke mismatches and timeout cancel without replay. Mixed logical/physical ambiguity and matching reserved controls reject explicitly. Text fields keep native editing shortcuts; OS-intercepted combinations are unavailable. Save and Reset persist and activate; failed Reload preserves current bindings. No map or Undo changes."})
     }
 }
 
@@ -58,8 +60,8 @@ impl Authority {
         self.lock().serial
     }
 
-    pub(crate) fn resolve(&self, chord: &Chord) -> Option<Command> {
-        self.lock().current.resolve(chord)
+    pub(crate) fn resolve_sequence(&self, inputs: &[KeyInput]) -> Result<Resolution, String> {
+        self.lock().current.resolve_sequence(inputs)
     }
 
     pub(crate) fn change(

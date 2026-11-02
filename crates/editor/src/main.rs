@@ -48,6 +48,7 @@ mod rename_ui;
 mod repeat_ui;
 mod saved_views_ui;
 mod selection_defaults_ui;
+mod shortcut_input;
 mod shortcuts_ui;
 mod sky3d_ui;
 mod sky_assets_ui;

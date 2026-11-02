@@ -122,6 +122,81 @@ fields use their factory values. Invalid or explicit `null` values reject and
 the file stays preserved. Camera, fog and lighting/sky exposure remain separate.
 See [Preview defaults](preview-defaults.md).
 
+## Keyboard shortcuts
+
+Call `get_keyboard_shortcuts` to inspect the 36-command catalog, `current` and
+`factory_defaults` bindings, `logical_keys` and `physical_keys`, storage errors
+and the preference `snapshot`. `find_editor_commands` searches labels, command
+IDs, current/form bindings and factory bindings. Its optional complete `bindings`
+object searches an unsaved form without activating it; saving validates it.
+
+To save, copy the complete reported `current` object, edit its command entries,
+then call `set_keyboard_shortcuts` with `action:"save"`, that object as `bindings`,
+and the inspected `snapshot`. Each command has exactly two slots. A slot is
+`null`, a single chord, or a two-stroke sequence. For example, this entry assigns
+**Ctrl+G**, then **G**, to Show grid:
+
+```json
+{
+  "show_grid": [
+    {
+      "sequence": [
+        {"key":"G","control":true,"shift":false},
+        {"key":"G","control":false,"shift":false}
+      ]
+    },
+    null
+  ]
+}
+```
+
+Each chord requires `key`, `control` and `shift`. Optional `alt`, `meta` and
+`physical` default to `false`, retaining the legacy single-chord format. Set
+`physical:true` and use a reported physical key such as `KeyG` for a key position;
+otherwise use a reported logical key such as `G`. Each stroke has its own exact
+modifiers. Sequences contain exactly two chords. Camera direction bindings allow
+one stroke and require `shift:false`; Shift independently boosts held movement.
+
+Saving rejects invalid names, duplicate or ambiguous bindings, single strokes
+that are also sequence prefixes, and reserved combinations. Escape and exact Ctrl+K stay reserved.
+Arrows/PageUp/PageDown without Ctrl, Alt or Meta remain fixed nudging keys.
+`action:"reload"` activates valid saved bindings; `action:"reset"` explicitly
+writes and activates factory bindings. Failed operations preserve the current
+bindings; inspect `ready`, `error` and `write_committed`. Ordinary configuration
+changes do not write the map or Undo history.
+
+Use `resolve_keyboard_shortcut` to resolve one or two typed key inputs without
+executing them:
+
+```json
+{
+  "inputs": [
+    {"logical":"G","physical":"KeyG","control":true,"shift":false,"alt":false,"meta":false},
+    {"logical":"G","physical":"KeyG","control":false,"shift":false,"alt":false,"meta":false}
+  ]
+}
+```
+
+Each input requires all four modifier booleans and at least one supported
+`logical` or `physical` key name. Missing or invalid names reject. Results report
+`status:"none"`, `"prefix"` or `"command"` and a nullable typed `command`.
+Resolution is stateless: it holds no keys or timeout. Native input uses the same
+resolver with a one-second sequence timeout and focus/modal cancellation.
+Text fields and focused controls keep native handling before configured
+commands. Resolving typed inputs does not inject keyboard events.
+
+For bounded camera motion, call `step_camera_navigation`, for example
+`{"commands":["camera_forward","camera_right"],"seconds":0.1,"fast":false}`.
+Use the six `camera_forward`, `camera_backward`, `camera_left`, `camera_right`,
+`camera_up` and `camera_down` IDs. Duration must be finite and between zero and
+one second. Opposite directions cancel; planar views ignore up/down before
+normalizing motion. The result reports actual position, projection and
+`camera_changed` without map, history or preference edits.
+
+`execute_editor_command` runs shared Session commands. File and clipboard
+commands report the existing tools that need paths, IDs or transfer tokens;
+they do not open native dialogs through MCP. See [Keyboard shortcuts](keyboard-shortcuts.md).
+
 ## Saved colors
 
 1. Call `get_color_palette` with `source:"user"` (the default) or `source:"map"`.
@@ -1174,7 +1249,7 @@ These groups locate the available operations.
 | [Workspace layout](workspace-layout.md) | `get_workspace_preferences`, `set_workspace_layout`, `set_workspace_preferences` |
 | [Recovery](map-tools.md) | `create_recovery_snapshot`, `delete_recovery_snapshot`, `get_recovery`, `reload_recovery_settings`, `restore_recovery_snapshot`, `set_recovery_settings` |
 | [Selection](selection.md) | `begin_paint_selection`, `begin_transform_drag`, `cancel_area_selection`, `cancel_paint_selection`, `cancel_transform_preview`, `cancel_volume_selection`, `commit_area_selection`, `commit_paint_selection`, `commit_transform_preview`, `commit_volume_selection`, `delete_objects`, `duplicate_objects`, `frame_selection`, `frame_volume_selection`, `get_area_selection`, `get_object_selection_mode`, `get_paint_selection`, `get_selection`, `get_selection_defaults`, `get_selection_filters`, `get_selection_profiles`, `get_transform_handles`, `get_volume_selection`, `move_objects`, `preview_snap_to_grid`, `select`, `select_area`, `select_solids`, `select_volume`, `set_area_selection_options`, `set_object_selection_mode`, `set_paint_tool`, `set_selection_defaults`, `set_selection_filters`, `set_selection_profile`, `set_selection_mode`, `set_transform_tool`, `transform_objects`, `update_paint_selection`, `update_transform_drag` |
-| [Keyboard shortcuts](keyboard-shortcuts.md) | `execute_editor_command`, `find_editor_commands`, `get_keyboard_shortcuts`, `set_keyboard_shortcuts` |
+| [Keyboard shortcuts](keyboard-shortcuts.md) | `execute_editor_command`, `find_editor_commands`, `get_keyboard_shortcuts`, `resolve_keyboard_shortcut`, `set_keyboard_shortcuts`, `step_camera_navigation` |
 | [3D sky preview](sky.md) | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `preview_terrain_vertex_set`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |

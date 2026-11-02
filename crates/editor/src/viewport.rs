@@ -1,8 +1,9 @@
 //! The 3D viewport: fly-camera input and rendering into textures that Slint
 //! composites.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
+use editor_core::shortcuts::Command;
 use glam::Vec3;
 use render::{
     Camera, GpuContext, GpuScene, MaterialLibrary, Projection, RenderTarget, Renderer, SceneMesh,
@@ -33,7 +34,8 @@ pub struct Viewport {
     targets: [Option<RenderTarget>; 2],
     next_target: usize,
     pixel_ratio: f32,
-    held: HashSet<String>,
+    held: HashMap<String, Command>,
+    pub shortcut_input: crate::shortcut_input::State,
     looking: bool,
     last_mouse: Option<(f32, f32)>,
     left_press: Option<(f32, f32)>,
@@ -53,7 +55,8 @@ impl Viewport {
             targets: [None, None],
             next_target: 0,
             pixel_ratio: 1.0,
-            held: HashSet::new(),
+            held: HashMap::new(),
+            shortcut_input: Default::default(),
             looking: false,
             last_mouse: None,
             left_press: None,
@@ -110,21 +113,23 @@ impl Viewport {
         self.looking
     }
 
-    /// Returns whether the key is a camera control.
-    pub fn key(&mut self, text: &str, down: bool) -> bool {
-        let key = text.to_lowercase();
-        let handled = matches!(key.as_str(), "w" | "a" | "s" | "d")
-            || (self.camera.projection == Projection::Perspective
-                && matches!(key.as_str(), "q" | "e"))
-            || key == key_text(Key::Shift);
-        if handled {
-            if down {
-                self.held.insert(key);
-            } else {
-                self.held.remove(&key);
-            }
+    pub fn hold_camera(&mut self, identity: String, command: Command) {
+        self.held.insert(identity, command);
+    }
+
+    pub fn release_camera(&mut self, identity: &str) -> bool {
+        self.held.remove(identity).is_some()
+    }
+
+    pub fn clear_keyboard(&mut self) {
+        self.held.clear();
+        self.shortcut_input.reset();
+    }
+
+    pub fn sync_shortcuts(&mut self, stamp: String) {
+        if self.shortcut_input.sync(stamp) {
+            self.held.clear();
         }
-        handled
     }
 
     /// Returns a click when the left button is released close to where it
@@ -205,7 +210,7 @@ impl Viewport {
     /// Clears held keys, e.g. when the viewport loses focus, so the camera
     /// doesn't keep flying.
     pub fn release_all(&mut self) {
-        self.held.clear();
+        self.clear_keyboard();
         self.looking = false;
         self.last_mouse = None;
         self.left_press = None;
@@ -213,28 +218,29 @@ impl Viewport {
 
     /// Advances the camera by `dt` seconds of held movement keys. Returns
     /// whether it moved.
-    pub fn update(&mut self, dt: f32, fly_speed: f32) -> bool {
-        let axis = |pos: &str, neg: &str| {
-            f32::from(u8::from(self.held.contains(pos)))
-                - f32::from(u8::from(self.held.contains(neg)))
+    pub fn update(&mut self, dt: f32, fly_speed: f32, fast: bool) -> Result<bool, String> {
+        let axis = |pos: Command, neg: Command| {
+            f32::from(u8::from(self.held.values().any(|command| *command == pos)))
+                - f32::from(u8::from(self.held.values().any(|command| *command == neg)))
         };
-        let dir = Vec3::new(axis("w", "s"), axis("d", "a"), axis("e", "q"));
-        if dir == Vec3::ZERO {
-            return false;
+        let direction = [
+            axis(Command::CameraForward, Command::CameraBackward),
+            axis(Command::CameraRight, Command::CameraLeft),
+            axis(Command::CameraUp, Command::CameraDown),
+        ];
+        let camera = editor_core::session::shortcuts::step_camera_navigation(
+            self.camera,
+            direction,
+            dt,
+            fly_speed,
+            fast,
+        )?;
+        if camera == self.camera {
+            return Ok(false);
         }
-        let fast = if self.held.contains(&key_text(Key::Shift)) {
-            editor_core::navigation_preferences::FAST_MULTIPLIER
-        } else {
-            1.0
-        };
-        let amount = dir.normalize() * fly_speed * fast * dt;
-        if self.camera.projection == Projection::Perspective {
-            self.camera.fly(amount);
-        } else {
-            self.camera.position += self.camera.up() * amount.x + self.camera.right() * amount.y;
-        }
+        self.camera = camera;
         self.dirty = true;
-        true
+        Ok(true)
     }
 
     /// Renders a new frame if anything changed, at `size` physical pixels.

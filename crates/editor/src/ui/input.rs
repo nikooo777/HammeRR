@@ -202,29 +202,113 @@ pub(super) fn cancel_viewport_face_preview(app: &AppWindow, session: &mut Sessio
     }
 }
 
-/// Keyboard commands; returns whether the key was handled.
-pub(super) fn command_key(
+fn frontend_shortcut(
+    app: &AppWindow,
+    command: editor_core::shortcuts::Command,
+) -> Result<(), String> {
+    use editor_core::shortcuts::Command;
+    match command {
+        Command::NewMap => app.invoke_new_map(),
+        Command::OpenMap => app.invoke_open_map(),
+        Command::SaveMap => app.invoke_save_map(),
+        Command::SaveMapAs => app.invoke_save_map_as(),
+        Command::Copy => app.invoke_copy_objects(),
+        Command::Cut => app.invoke_cut_objects(),
+        Command::Paste => app.invoke_paste_objects(),
+        _ => return Err("This shortcut has no native command adapter".into()),
+    }
+    Ok(())
+}
+
+pub(super) fn synchronize_shortcut_input(app: &AppWindow, viewport: &mut Viewport) -> Option<bool> {
+    let keyboard = pointer_lock::keyboard_frame(app);
+    for identity in keyboard.released {
+        viewport.release_camera(&identity);
+    }
+    viewport.shortcut_input.expire();
+    if keyboard.cancel_prefix {
+        viewport.shortcut_input.reset();
+    }
+    if keyboard.reset {
+        viewport.release_all();
+    }
+    if !keyboard.focused || keyboard.composing || app.get_shortcut_input_blocked() {
+        viewport.release_all();
+        return None;
+    }
+    Some(keyboard.shift)
+}
+
+pub(super) fn route_shortcut_key(
     app: &AppWindow,
     ui: &SharedUi,
-    text: &str,
-    control: bool,
-    shift: bool,
+    key: shortcut_input::ViewportKey<'_>,
 ) -> bool {
-    let key = text.to_lowercase();
-    let object_shortcut = if control {
-        matches!(key.as_str(), "c" | "x" | "v")
-    } else {
-        [
-            Key::UpArrow,
-            Key::DownArrow,
-            Key::LeftArrow,
-            Key::RightArrow,
-            Key::PageUp,
-            Key::PageDown,
-        ]
-        .iter()
-        .any(|value| key == key_text(*value))
+    let native = pointer_lock::keyboard_event(app, key.down);
+    if synchronize_shortcut_input(app, &mut ui.borrow_mut().viewport).is_none() {
+        return false;
+    }
+    if !key.down {
+        return false;
+    }
+    let shared = session_of(ui);
+    let mut session = lock(&shared);
+    let routed = {
+        let mut ui = ui.borrow_mut();
+        ui.viewport.sync_shortcuts(session.shortcuts_stamp());
+        shortcut_input::route_viewport_key(
+            &mut ui.viewport.shortcut_input,
+            &session,
+            &key,
+            native.as_ref(),
+        )
     };
+    match routed {
+        Err(error) => {
+            ui.borrow_mut().viewport.clear_keyboard();
+            app.set_message(error.into());
+            true
+        }
+        Ok(shortcut_input::Routed::Consumed) => true,
+        Ok(shortcut_input::Routed::Camera { command, identity }) => {
+            ui.borrow_mut().viewport.hold_camera(identity, command);
+            true
+        }
+        Ok(shortcut_input::Routed::Command(command)) => {
+            let result = if command.is_frontend() {
+                drop(session);
+                frontend_shortcut(app, command)
+            } else {
+                let aspect = app.get_viewport_width() / app.get_viewport_height().max(1.0);
+                session
+                    .execute_editor_command(Actor::User, command, aspect)
+                    .map(|_| ())
+            };
+            if let Err(error) = result {
+                app.set_message(error.into());
+            }
+            true
+        }
+        Ok(shortcut_input::Routed::Unhandled) => {
+            drop(session);
+            !key.control && !key.alt && !key.meta && command_key(app, ui, key.text, key.shift)
+        }
+    }
+}
+
+/// Keyboard commands; returns whether the key was handled.
+pub(super) fn command_key(app: &AppWindow, ui: &SharedUi, text: &str, shift: bool) -> bool {
+    let key = text.to_lowercase();
+    let object_shortcut = [
+        Key::UpArrow,
+        Key::DownArrow,
+        Key::LeftArrow,
+        Key::RightArrow,
+        Key::PageUp,
+        Key::PageDown,
+    ]
+    .iter()
+    .any(|value| key == key_text(*value));
     let components_active = {
         let shared = session_of(ui);
         let session = lock(&shared);
@@ -232,18 +316,6 @@ pub(super) fn command_key(
     };
     if object_shortcut && components_active {
         app.set_message("Use Reshape brushes or its move handles. Finish component editing before editing whole objects.".into());
-        return true;
-    }
-    if control {
-        match key.as_str() {
-            "s" if shift => save_as(app, ui),
-            "s" => save(app, ui),
-            "c" => app.invoke_copy_objects(),
-            "x" => app.invoke_cut_objects(),
-            "v" => app.invoke_paste_objects(),
-            "n" => new_map(app, ui),
-            _ => return false,
-        }
         return true;
     }
     if key == key_text(Key::Escape) {

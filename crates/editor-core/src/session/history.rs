@@ -121,7 +121,8 @@ fn entry(
 impl Session {
     pub fn history_snapshot(&self) -> String {
         format!(
-            "{}:{}:{}:{}",
+            "history-v1:{}:{}:{}:{}:{}",
+            self.buffer_review_scope,
             self.document_generation,
             self.document.revision(),
             usize::from(self.document.is_dirty()),

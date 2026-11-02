@@ -63,17 +63,21 @@ fn invalid(message: impl Into<String>) -> EditError {
     EditError::Invalid(message.into())
 }
 
-pub(crate) fn validated_geometry(solid: &Solid) -> Result<BrushGeometry, EditError> {
+pub fn validated_geometry(solid: &Solid) -> Result<BrushGeometry, EditError> {
     let geometry = BrushGeometry::from_solid(solid)
         .map_err(|error| invalid(format!("Brush {}: {error}", solid.id)))?;
     if !geometry.mins.is_finite()
         || !geometry.maxs.is_finite()
         || !geometry.mins.cmplt(geometry.maxs).all()
     {
-        return Err(invalid(format!(
-            "Brush {} has invalid bounds after transform",
-            solid.id
-        )));
+        return Err(invalid(format!("Brush {} has invalid bounds", solid.id)));
+    }
+    for face in &geometry.faces {
+        crate::surface::validate_projection(
+            &solid.sides[face.side],
+            face.plane.normal,
+            &face.vertices,
+        )?;
     }
     Ok(geometry)
 }

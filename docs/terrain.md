@@ -76,6 +76,8 @@ For exact movement:
 
 For dragging, click **Move with handles…** in the same operation.
 Review the displacement before applying. **Undo** restores the previous grid.
+Accepted **New** or **Open…** discards the old move handles. Retained inspection
+masks can remain stale; make a new selection before editing another map.
 
 ## Set exact vertex heights
 

@@ -323,6 +323,14 @@ pub(crate) fn update(
     )?;
     side.u_axis = projection.u;
     side.v_axis = projection.v;
+    validate_projection(side, normal, points)
+}
+
+pub(crate) fn validate_projection(
+    side: &Side,
+    normal: DVec3,
+    points: &[DVec3],
+) -> Result<(), EditError> {
     if !side.u_axis.axis.is_finite()
         || !side.v_axis.axis.is_finite()
         || !side.u_axis.offset.is_finite()
@@ -337,25 +345,19 @@ pub(crate) fn update(
             "texture projection must have finite axes and nonzero scales",
         ));
     }
-    let direct = edit.u_axis.is_some() || edit.v_axis.is_some();
     let [u, v] = [side.u_axis, side.v_axis].map(|axis| {
-        if direct {
-            let vector = axis.axis / axis.scale;
-            vector / vector.abs().max_element()
-        } else {
-            axis.axis
-        }
+        let vector = axis.axis / axis.scale;
+        vector / vector.abs().max_element()
     });
     let area = u.cross(v).dot(normal).abs();
-    if !area.is_finite() || area < 1e-8 * u.length() * v.length() || (!direct && area < 1e-12) {
+    if !area.is_finite() || area < 1e-8 * u.length() * v.length() {
         return Err(invalid(
             "texture projection collapses on this face; use face alignment or edge wrapping",
         ));
     }
-    if direct
-        && points
-            .iter()
-            .any(|point| !crate::texel_uv(side, *point).is_finite())
+    if points
+        .iter()
+        .any(|point| !crate::texel_uv(side, *point).is_finite())
     {
         return Err(invalid(
             "texture vectors produce non-finite texel coordinates on this face",

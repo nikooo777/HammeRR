@@ -73,12 +73,16 @@ fn main() {
         Some("overview") => Camera::overview(mesh.mins, mesh.maxs),
         Some(arg) => parse_camera(arg),
         None => Camera::from_vmf(&vmf)
+            .expect("invalid saved camera")
             .map(|c| Camera {
                 fov_y_degrees: 75.0,
                 ..c
             })
             .unwrap_or_else(|| Camera::overview(mesh.mins, mesh.maxs)),
     };
+    camera
+        .validate(WIDTH as f32 / HEIGHT as f32)
+        .expect("invalid camera");
     eprintln!("camera: {camera:?}");
 
     let ctx = GpuContext::new().expect("GPU");

@@ -77,23 +77,78 @@ impl Camera {
         }
     }
 
+    pub fn checked_looking_at(position: Vec3, target: Vec3) -> Result<Self, String> {
+        if !position.is_finite() || !target.is_finite() {
+            return Err("Camera points must fit finite binary32 coordinates".into());
+        }
+        let direction = (target.as_dvec3() - position.as_dvec3())
+            .try_normalize()
+            .ok_or("Camera position and look target must be distinct")?;
+        let mut camera = Self::looking_at(Vec3::ZERO, direction.as_vec3());
+        camera.position = position;
+        camera.validate(1.0)?;
+        Ok(camera)
+    }
+
+    pub fn validate(&self, aspect: f32) -> Result<(), String> {
+        if !self.position.is_finite()
+            || !self.yaw_degrees.is_finite()
+            || !self.pitch_degrees.is_finite()
+            || !self.fov_y_degrees.is_finite()
+            || self.fov_y_degrees <= 0.0
+            || self.fov_y_degrees >= 180.0
+            || !self.ortho_height.is_finite()
+            || !(Self::MIN_ORTHO_HEIGHT..=Self::MAX_ORTHO_HEIGHT).contains(&self.ortho_height)
+            || !aspect.is_finite()
+            || aspect <= 0.0
+        {
+            return Err(
+                "Camera coordinates, angles and projection must be finite and valid".into(),
+            );
+        }
+        if !self.view_projection(aspect).is_finite() {
+            return Err("Camera view cannot be represented at this position and aspect".into());
+        }
+        Ok(())
+    }
+
     /// The active camera Hammer saved in the map, if any.
-    pub fn from_vmf(vmf: &Vmf) -> Option<Self> {
-        let cameras = vmf.cameras.as_ref()?.children()?;
-        let active: usize = cameras
+    pub fn from_vmf(vmf: &Vmf) -> Result<Option<Self>, String> {
+        let Some(cameras) = &vmf.cameras else {
+            return Ok(None);
+        };
+        let cameras = cameras.children().ok_or("Saved cameras must be a block")?;
+        let Some(active) = cameras
             .iter()
-            .find(|n| n.key.eq_ignore_ascii_case("activecamera"))
-            .and_then(|n| n.as_str()?.parse().ok())?;
+            .find(|node| node.key.eq_ignore_ascii_case("activecamera"))
+        else {
+            return Ok(None);
+        };
+        let active = active
+            .as_str()
+            .and_then(|value| value.parse::<i64>().ok())
+            .ok_or("Saved active camera index must be an integer")?;
+        if active == -1 {
+            return Ok(None);
+        }
+        let active = usize::try_from(active).map_err(|_| "Saved active camera index is invalid")?;
         let camera = cameras
             .iter()
-            .filter(|n| n.key.eq_ignore_ascii_case("camera"))
-            .nth(active)?
-            .children()?;
-        let vec = |key: &str| {
-            let v = parse_vec3(camera.iter().find(|n| n.key == key)?.as_str()?)?;
-            Some(v.as_vec3())
+            .filter(|node| node.key.eq_ignore_ascii_case("camera"))
+            .nth(active)
+            .and_then(|node| node.children())
+            .ok_or("Saved active camera is unavailable")?;
+        let point = |key: &str| -> Result<Vec3, String> {
+            camera
+                .iter()
+                .find(|node| node.key == key)
+                .and_then(|node| node.as_str())
+                .and_then(parse_vec3)
+                .filter(|point| point.is_finite() && point.as_vec3().is_finite())
+                .map(|point| point.as_vec3())
+                .ok_or_else(|| format!("Saved camera {key} must fit finite binary32 coordinates"))
         };
-        Some(Self::looking_at(vec("position")?, vec("look")?))
+        Self::checked_looking_at(point("position")?, point("look")?).map(Some)
     }
 
     /// Looks at a bounding box from above one corner, far enough to see it all.
@@ -148,7 +203,7 @@ impl Camera {
     /// plane, 0 at infinity. Keeps precision across Source's large maps.
     pub fn view_projection(&self, aspect: f32) -> Mat4 {
         use glam::camera::rh::{proj::directx, view};
-        let view = view::look_at_mat4(self.position, self.position + self.forward(), self.up());
+        let view = view::look_to_mat4(self.position, self.forward(), self.up());
         if self.projection != Projection::Perspective {
             let half = self.ortho_height * 0.5;
             return directx::orthographic(

@@ -323,18 +323,23 @@ impl Session {
     }
 
     pub fn cancel_terrain_move_handles(&mut self, token: u64) -> Result<(), String> {
-        let active = self
-            .terrain_handles
+        self.terrain_handles
             .active
             .as_ref()
             .filter(|active| active.token == token)
             .ok_or("Terrain handles were closed or replaced")?;
+        self.retire_terrain_move_handles();
+        Ok(())
+    }
+
+    pub(super) fn retire_terrain_move_handles(&mut self) {
+        let Some(active) = self.terrain_handles.active.take() else {
+            return;
+        };
         if active.preview.is_some() && self.face_preview_token() == active.preview {
             self.cancel_face_preview();
         }
-        self.terrain_handles.active = None;
         self.view_serial += 1;
-        Ok(())
     }
 
     pub fn terrain_move_handles_json(&self) -> Value {

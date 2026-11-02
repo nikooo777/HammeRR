@@ -17,6 +17,10 @@ const SIGNATURE: u32 = 0x55aa_1234;
 /// `archive_index` value meaning the data follows the index in the dir file.
 const DIR_ARCHIVE: u16 = 0x7fff;
 const ENTRY_TERMINATOR: u16 = 0xffff;
+pub const MAX_DIRECTORY_TREE_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_DIRECTORY_PATH_BYTES: usize = 1024;
+pub const MAX_DIRECTORY_ENTRIES: usize = 1_000_000;
+pub const MAX_DIRECTORY_BYTES: usize = 128 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 struct Entry {
@@ -35,6 +39,7 @@ pub struct Vpk {
     /// Where `DIR_ARCHIVE` entry offsets start in the dir file.
     dir_data_start: u64,
     entries: HashMap<String, Entry>,
+    directory_bytes: usize,
     index_identity: IndexIdentity,
 }
 
@@ -126,13 +131,20 @@ impl Vpk {
         };
         let tree_len = word(2) as usize;
 
+        if tree_len > MAX_DIRECTORY_TREE_BYTES {
+            return Err(invalid("VPK directory tree exceeds 64 MiB"));
+        }
+
         if header_len + tree_len as u64 > file.metadata()?.len() {
             return Err(invalid("VPK directory tree lies outside the file"));
         }
         file.seek(SeekFrom::Start(header_len))?;
-        let mut tree = vec![0u8; tree_len];
+        let mut tree = Vec::new();
+        tree.try_reserve_exact(tree_len)
+            .map_err(|_| invalid("VPK directory tree allocation failed"))?;
+        tree.resize(tree_len, 0);
         file.read_exact(&mut tree)?;
-        let entries = Self::parse_tree(&tree)?;
+        let (entries, directory_bytes) = Self::parse_tree(&tree)?;
         if index_identity(&file.metadata()?) != identity
             || index_identity(&fs::metadata(&dir_path)?) != identity
         {
@@ -146,6 +158,7 @@ impl Vpk {
             archive_stem,
             dir_data_start: header_len + tree_len as u64,
             entries,
+            directory_bytes,
             index_identity: identity,
         })
     }
@@ -162,23 +175,43 @@ impl Vpk {
         }
     }
 
-    fn parse_tree(tree: &[u8]) -> io::Result<HashMap<String, Entry>> {
+    fn parse_tree(tree: &[u8]) -> io::Result<(HashMap<String, Entry>, usize)> {
         let mut cur = Cursor { remaining: tree };
         let mut entries = HashMap::new();
+        let mut directory_bytes = 0usize;
+        let mut entry_count = 0usize;
         loop {
             let ext = cur.cstr()?;
             if ext.is_empty() {
                 break;
+            }
+            if ext.len() > MAX_DIRECTORY_PATH_BYTES {
+                return Err(invalid("VPK directory path exceeds 1024 bytes"));
             }
             loop {
                 let dir = cur.cstr()?;
                 if dir.is_empty() {
                     break;
                 }
+                if dir.len() > MAX_DIRECTORY_PATH_BYTES {
+                    return Err(invalid("VPK directory path exceeds 1024 bytes"));
+                }
                 loop {
                     let name = cur.cstr()?;
                     if name.is_empty() {
                         break;
+                    }
+                    let path_len = name
+                        .len()
+                        .checked_add(if dir == " " { 0 } else { dir.len() + 1 })
+                        .and_then(|bytes| {
+                            bytes.checked_add(if ext == " " { 0 } else { ext.len() + 1 })
+                        })
+                        .filter(|&bytes| bytes <= MAX_DIRECTORY_PATH_BYTES)
+                        .ok_or_else(|| invalid("VPK directory path exceeds 1024 bytes"))?;
+                    entry_count += 1;
+                    if entry_count > MAX_DIRECTORY_ENTRIES {
+                        return Err(invalid("VPK directory exceeds 1000000 entries"));
                     }
                     let crc = cur.u32()?;
                     let preload_len = cur.u16()? as usize;
@@ -188,9 +221,21 @@ impl Vpk {
                     if cur.u16()? != ENTRY_TERMINATOR {
                         return Err(invalid("corrupt VPK directory entry"));
                     }
-                    let preload = cur.take(preload_len)?.into();
+                    directory_bytes = directory_bytes
+                        .checked_add(path_len)
+                        .and_then(|bytes| bytes.checked_add(preload_len))
+                        .and_then(|bytes| bytes.checked_add(size_of::<(String, Entry)>()))
+                        .filter(|&bytes| bytes <= MAX_DIRECTORY_BYTES)
+                        .ok_or_else(|| invalid("VPK directory metadata exceeds 128 MiB"))?;
+                    let mut preload = Vec::new();
+                    preload
+                        .try_reserve_exact(preload_len)
+                        .map_err(|_| invalid("VPK preload allocation failed"))?;
+                    preload.extend_from_slice(cur.take(preload_len)?);
 
-                    let mut path = String::with_capacity(dir.len() + name.len() + ext.len() + 2);
+                    let mut path = String::new();
+                    path.try_reserve_exact(path_len)
+                        .map_err(|_| invalid("VPK path allocation failed"))?;
                     if dir != " " {
                         path.push_str(dir);
                         path.push('/');
@@ -200,12 +245,18 @@ impl Vpk {
                         path.push('.');
                         path.push_str(ext);
                     }
+                    let path = crate::gamefs::asset_relative(&path)
+                        .map_err(|error| invalid(error.to_string()))?;
+                    if !entries.contains_key(&path) {
+                        entries
+                            .try_reserve(1)
+                            .map_err(|_| invalid("VPK directory entry allocation failed"))?;
+                    }
                     entries.insert(
-                        crate::gamefs::asset_relative(&path)
-                            .map_err(|error| invalid(error.to_string()))?,
+                        path,
                         Entry {
                             crc,
-                            preload,
+                            preload: preload.into_boxed_slice(),
                             archive,
                             offset,
                             length,
@@ -214,7 +265,12 @@ impl Vpk {
                 }
             }
         }
-        Ok(entries)
+        Ok((entries, directory_bytes))
+    }
+
+    /// Directory metadata charge, including repeated entries before replacement.
+    pub fn directory_bytes(&self) -> usize {
+        self.directory_bytes
     }
 
     pub fn path(&self) -> &Path {

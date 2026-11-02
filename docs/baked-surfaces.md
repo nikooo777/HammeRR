@@ -64,6 +64,6 @@ prepare again. Other objects still cast shadows on the prop.
 - Authored hiding, selection, picking and Undo stay separate. Face ordinals identify this preparation and channel.
 - The preview shows initial brush-model poses. Runtime motion, native adaptation, dynamic lights and exact game appearance are not simulated.
 - Static props require generated vertex lighting. Prop inspection is double-sided. Face density and smoothing groups do not apply to props. Prop lightmaps remain unavailable.
-- Resource and GPU adapter limits can refuse preparation or display. An upload failure does not publish a successful frame.
+- Resource and GPU adapter limits can refuse preparation or display. For prepared static props, **Show** checks the combined CPU working budget before enabling the layer. If compiled mesh generation fails, the layer is disabled and its diagnostic is retained. Authored geometry stays available. An upload failure does not publish a successful frame.
 
 Use `inspect_baked_surfaces` and `set_baked_surfaces` through MCP.

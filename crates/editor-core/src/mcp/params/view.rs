@@ -222,7 +222,9 @@ impl CameraSpec {
                     rope_preview,
                 )
                 .ok_or("focus objects have no bounds")?;
-            return Ok(camera.frame_bounds(lo.as_vec3(), hi.as_vec3(), aspect));
+            let camera = camera.frame_bounds(lo.as_vec3(), hi.as_vec3(), aspect);
+            camera.validate(aspect)?;
+            return Ok(camera);
         }
         if let Some(center) = self.center {
             if camera.projection == Projection::Perspective || self.position.is_some() {
@@ -245,11 +247,12 @@ impl CameraSpec {
                     "Planar views have fixed axes; use center, position and ortho_height".into(),
                 );
             }
+            camera.validate(aspect)?;
             return Ok(camera);
         }
         if let Some(target) = self.look_at {
             let fov = camera.fov_y_degrees;
-            camera = Camera::looking_at(camera.position, Vec3::from_array(target));
+            camera = Camera::checked_looking_at(camera.position, Vec3::from_array(target))?;
             camera.fov_y_degrees = fov;
         } else {
             camera.yaw_degrees = self.yaw.unwrap_or(camera.yaw_degrees);
@@ -258,6 +261,7 @@ impl CameraSpec {
                 .unwrap_or(camera.pitch_degrees)
                 .clamp(-89.0, 89.0);
         }
+        camera.validate(aspect)?;
         Ok(camera)
     }
 }

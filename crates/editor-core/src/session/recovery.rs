@@ -710,7 +710,7 @@ impl Session {
             .map_err(|error| format!("Recovery map has invalid IDs: {error}"))?;
         document.context().map_err(|error| error.to_string())?;
         document.mark_unsaved();
-        self.replace_document(document, None);
+        self.replace_document(document, None, None)?;
         self.recovery.title = format!("Recovered {}", entry.title);
         self.recovery.source_path = entry.source_path;
         self.log(

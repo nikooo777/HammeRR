@@ -183,22 +183,7 @@ pub fn projection_valid(side: &Side) -> bool {
     let Some(plane) = Plane::from_points(side.plane.0) else {
         return false;
     };
-    let u = side.u_axis;
-    let v = side.v_axis;
-    if !u.axis.is_finite()
-        || !v.axis.is_finite()
-        || !u.offset.is_finite()
-        || !v.offset.is_finite()
-        || !u.scale.is_finite()
-        || !v.scale.is_finite()
-        || u.scale.abs() < 1e-8
-        || v.scale.abs() < 1e-8
-        || !side.rotation.is_finite()
-    {
-        return false;
-    }
-    let area = u.axis.cross(v.axis).dot(plane.normal).abs();
-    area >= 1e-12 && area >= 1e-8 * u.axis.length() * v.axis.length()
+    crate::surface::validate_projection(side, plane.normal, &side.plane.0).is_ok()
 }
 
 fn check_brush(
@@ -297,7 +282,13 @@ fn check_brush(
                 None,
             );
         }
-        if !projection_valid(side) {
+        let valid_projection = face.map_or_else(
+            || projection_valid(side),
+            |face| {
+                crate::surface::validate_projection(side, face.plane.normal, &face.vertices).is_ok()
+            },
+        );
+        if !valid_projection {
             let fix = (!face_location.ambiguous && Plane::from_points(side.plane.0).is_some())
                 .then_some(Fix::ResetProjection(id));
             report.add(Severity::Error, "invalid_projection", &face_location, "Texture projection has invalid values or collapses on this face. Resetting uses world-aligned axes, 0.25 scale and zero shift/rotation.", fix);

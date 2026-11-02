@@ -156,6 +156,14 @@ impl Ready {
         }
         Ok(())
     }
+
+    fn display_capacity(&self, options: &LightingSettings) -> Result<(), String> {
+        if self.props.is_some() {
+            self.lighting_capacity(options)
+        } else {
+            self.validate_settings(options)
+        }
+    }
 }
 
 pub struct Request {
@@ -818,7 +826,7 @@ impl Session {
                 .ready
                 .as_ref()
                 .ok_or("Prepare baked surfaces first")?;
-            ready.validate_settings(&self.baked_surfaces.options)?;
+            ready.display_capacity(&self.baked_surfaces.options)?;
             if ready.lighting.is_none() {
                 return Err("Choose an available baked surface channel first".into());
             }
@@ -1028,57 +1036,60 @@ impl Session {
         mesh: &mut SceneMesh,
         authored_models: bool,
     ) -> Result<(), String> {
-        let ready = self
-            .baked_surfaces
-            .ready
-            .as_ref()
-            .ok_or("Prepared baked surfaces were retired")?;
-        let lighting = ready
-            .lighting
-            .as_ref()
-            .ok_or("Baked surface lighting is unavailable")?;
-        if ready.props.is_some() {
-            ready.lighting_capacity(&self.baked_surfaces.options)?;
-        }
-        let result = ready
-            .scene
-            .append_prepared_filtered(mesh, &ready.assets.materials, lighting.clone(), |surface| {
-                self.baked_surface_in_region(surface)
-            })
-            .and_then(|()| {
-                if let Some(props) = &ready.props
-                    && authored_models
-                {
-                    let decoded = props
-                        .materials
-                        .iter()
-                        .flatten()
-                        .try_fold(0usize, |bytes, material| {
-                            bytes.checked_add(material.decoded_bytes())
-                        })
-                        .ok_or("Compiled prop material byte size overflow")?;
-                    let metadata = props
-                        .bytes
-                        .checked_sub(decoded)
-                        .ok_or("Compiled prop retained material size is inconsistent")?;
-                    let extra = ready
-                        .scene
-                        .retained_bytes()
-                        .checked_add(ready.assets.bytes)
-                        .and_then(|bytes| bytes.checked_add(lighting.cpu_byte_len().ok()?))
-                        .and_then(|bytes| bytes.checked_add(metadata))
-                        .ok_or("Baked surface retained working size overflow")?;
-                    props.scene.append_prepared_filtered(
-                        mesh,
-                        &props.materials,
-                        &self.baked_surfaces.options,
-                        ready.preparation.draw_lod,
-                        extra,
-                        |prop| self.baked_prop_in_region(prop),
-                    )?;
-                }
-                Ok(())
-            });
+        let result = (|| {
+            let ready = self
+                .baked_surfaces
+                .ready
+                .as_ref()
+                .ok_or("Prepared baked surfaces were retired")?;
+            let lighting = ready
+                .lighting
+                .as_ref()
+                .ok_or("Baked surface lighting is unavailable")?;
+            ready.display_capacity(&self.baked_surfaces.options)?;
+            ready
+                .scene
+                .append_prepared_filtered(
+                    mesh,
+                    &ready.assets.materials,
+                    lighting.clone(),
+                    |surface| self.baked_surface_in_region(surface),
+                )
+                .and_then(|()| {
+                    if let Some(props) = &ready.props
+                        && authored_models
+                    {
+                        let decoded = props
+                            .materials
+                            .iter()
+                            .flatten()
+                            .try_fold(0usize, |bytes, material| {
+                                bytes.checked_add(material.decoded_bytes())
+                            })
+                            .ok_or("Compiled prop material byte size overflow")?;
+                        let metadata = props
+                            .bytes
+                            .checked_sub(decoded)
+                            .ok_or("Compiled prop retained material size is inconsistent")?;
+                        let extra = ready
+                            .scene
+                            .retained_bytes()
+                            .checked_add(ready.assets.bytes)
+                            .and_then(|bytes| bytes.checked_add(lighting.cpu_byte_len().ok()?))
+                            .and_then(|bytes| bytes.checked_add(metadata))
+                            .ok_or("Baked surface retained working size overflow")?;
+                        props.scene.append_prepared_filtered(
+                            mesh,
+                            &props.materials,
+                            &self.baked_surfaces.options,
+                            ready.preparation.draw_lod,
+                            extra,
+                            |prop| self.baked_prop_in_region(prop),
+                        )?;
+                    }
+                    Ok(())
+                })
+        })();
         if let Err(error) = &result {
             self.baked_surfaces.requested = false;
             self.baked_surfaces.displayed = false;

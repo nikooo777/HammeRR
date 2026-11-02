@@ -1567,7 +1567,24 @@ impl Session {
         Ok(())
     }
 
-    fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
+    fn replace_document(
+        &mut self,
+        document: Document,
+        path: Option<PathBuf>,
+        camera: Option<Camera>,
+    ) -> Result<(), String> {
+        let camera = match camera {
+            Some(camera) => camera,
+            None => Camera::from_vmf(document.vmf())?.unwrap_or_else(|| {
+                let bounds =
+                    self.object_bounds_in(&document, &document.objects().collect::<Vec<_>>());
+                bounds.map_or(self.camera, |(lo, hi)| {
+                    Camera::overview(lo.as_vec3(), hi.as_vec3())
+                })
+            }),
+        };
+        camera.validate(1.0)?;
+        self.retire_terrain_move_handles();
         self.reset_transform_pivot_attachment();
         self.reference_images = reference_images::State::default();
         self.clear_external_comparison();
@@ -1590,12 +1607,7 @@ impl Session {
         self.working_region = working_region::State::default();
         self.cancel_connection_edit();
         self.cancel_entity_rename();
-        self.camera = Camera::from_vmf(document.vmf()).unwrap_or_else(|| {
-            let bounds = self.object_bounds_in(&document, &document.objects().collect::<Vec<_>>());
-            bounds.map_or(self.camera, |(lo, hi)| {
-                Camera::overview(lo.as_vec3(), hi.as_vec3())
-            })
-        });
+        self.camera = camera;
         self.document = document;
         self.history_actors.clear();
         self.fog_preview = fog::Selection::default();
@@ -1614,6 +1626,7 @@ impl Session {
         self.face_selection.clear();
         self.camera_serial += 1;
         self.changed();
+        Ok(())
     }
 
     pub fn open(
@@ -1675,7 +1688,7 @@ impl Session {
             document.vmf().entities.len(),
             start.elapsed()
         );
-        self.replace_document(document, Some(path.to_owned()));
+        self.replace_document(document, Some(path.to_owned()), None)?;
         self.update_recovery_path(recovery_path);
         self.file_claims.source = Some(claim);
         self.restore_recent_map_context(path, remember);
@@ -1688,8 +1701,14 @@ impl Session {
 
     pub fn new_map(&mut self, actor: Actor, discard_changes: bool) -> Result<(), String> {
         self.ensure_discardable(discard_changes)?;
-        self.replace_document(Document::empty(), None);
-        self.camera = Camera::looking_at(glam::Vec3::new(-512.0, -512.0, 384.0), glam::Vec3::ZERO);
+        self.replace_document(
+            Document::empty(),
+            None,
+            Some(Camera::looking_at(
+                glam::Vec3::new(-512.0, -512.0, 384.0),
+                glam::Vec3::ZERO,
+            )),
+        )?;
         self.log(actor, "new map");
         Ok(())
     }
@@ -2082,10 +2101,11 @@ impl Session {
             self.selection_bounds_in(self.render_document())
         };
         let (mins, maxs) = bounds.ok_or("No objects to frame")?;
-        self.set_camera(
-            self.camera
-                .frame_bounds(mins.as_vec3(), maxs.as_vec3(), aspect.max(0.01)),
-        );
+        let camera = self
+            .camera
+            .frame_bounds(mins.as_vec3(), maxs.as_vec3(), aspect.max(0.01));
+        camera.validate(aspect)?;
+        self.set_camera(camera);
         self.log(actor, "framed objects");
         Ok(())
     }
@@ -2208,7 +2228,12 @@ impl Session {
         };
         spatial::validate_bounds(mins, maxs)?;
         let id = self.edit(actor, "create block", |tx| {
-            map_core::edit::create_block(tx, mins, maxs, material)
+            let id = map_core::edit::create_block(tx, mins, maxs, material)?;
+            let ObjectId::Solid(solid) = id else {
+                unreachable!()
+            };
+            map_core::transform::validated_geometry(tx.document().solid(solid).unwrap())?;
+            Ok(id)
         })?;
         self.select(&[id], SelectMode::Replace)?;
         Ok(id)
@@ -2770,6 +2795,14 @@ impl Session {
     }
 
     pub fn build_scene_for_view(&mut self, view: ViewOptions) -> SceneMesh {
+        self.build_scene_with_baked_surfaces(view, true)
+    }
+
+    fn build_scene_with_baked_surfaces(
+        &mut self,
+        view: ViewOptions,
+        allow_baked_surfaces: bool,
+    ) -> SceneMesh {
         self.preflight_compiled_visibility();
         self.preflight_compiled_details();
         self.preflight_baked_surfaces();
@@ -2790,7 +2823,7 @@ impl Session {
         );
         let model_guides = self.fgd_model_guides(document, &evaluation, view.entity_model_guides);
         let mut lighting = lighting_preview::prepare(document.vmf(), &evaluation.objects, view);
-        let baked_surfaces = self.baked_surfaces_visible();
+        let baked_surfaces = allow_baked_surfaces && self.baked_surfaces_visible();
         let root_models = (baked_surfaces || !view.authored_models).then(|| {
             let mut models = evaluation.models.instances.clone();
             for instance in &mut models {
@@ -2926,7 +2959,8 @@ impl Session {
                 .append_baked_surfaces(&mut mesh, view.authored_models)
                 .is_err()
         {
-            return self.build_scene_for_view(view);
+            drop(mesh);
+            return self.build_scene_with_baked_surfaces(view, false);
         }
         self.append_compiled_prop_leaf_bounds(&mut mesh);
         self.append_overlay_guide(&mut mesh);

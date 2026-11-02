@@ -84,11 +84,16 @@ Engine physics, native reflection capture and headless stdio MCP are unavailable
 
 Add custom content through the search paths in `gameinfo.txt`.
 The reader supports directories and VPK archives.
+VPK directory budgets are 64 MiB per encoded tree, 1,000,000 declarations,
+1,024 bytes per logical path and 128 MiB of decoded metadata per index.
+Mounted indexes share a 256 MiB metadata budget. Repeated declarations count
+toward these budgets. Excessive metadata causes an explicit load error.
 
 ## Limits
 
 - Native reflection capture and engine physics require Linux; see the Windows notes above for platform limits.
 - Invalid imports leave the current map open. Nesting is limited to 256 blocks.
+- An active saved camera needs finite, representable coordinates and a distinct look target. Invalid selected camera data refuses Open.
 - Save retains imported properties and extra blocks. It uses standard VMF formatting.
 - A changed or conflicting destination blocks Save. Use **Save as…** to review the destination again.
 - Failed saves retain unsaved changes. A reported write-verification error can mean the file was already written.

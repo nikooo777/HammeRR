@@ -243,7 +243,9 @@ For a spatial child-brush query, choose Solids and call `select_volume` with
 `preview:true`; `get_volume_selection` pages the exact brush IDs without changing
 the selection. Resolve those IDs through `get_objects` for owners and bounds.
 
-`render_view.preview_issues` identifies omitted brushes and invalid terrain.
+`render_view.preview_issues` identifies omitted brushes and invalid terrain
+for owners included in the frame. Editor-excluded owners do not consume details;
+whole-map checks still inspect them.
 Each issue includes `brush`, optional `face`, and `message`.
 At most 64 details are returned; `preview_issues_omitted` counts the rest.
 
@@ -531,12 +533,22 @@ after client disconnection. `complete:false` and `isError:true` report retained
 cleanup failures. Service shutdown follows the local response-output check;
 this does not prove that the remote client read the response.
 
+### History navigation
+
+Use `get_history` and `navigate_history` with the same `document_id`. History
+snapshots are opaque and Session-bound; do not construct or share them between
+documents. A foreign snapshot rejects before navigation.
+
 ### Block batches and cut materials
 
 `create_blocks` accepts the [block-batch JSON](brushes.md#import-a-block-batch)
 inline and creates one Undo step. `create_block` also accepts `rotation`,
 `texture_scale` and `lightmap_scale`. Creation results include
 `faces:[{solid,side,normal}]` for direct face edits.
+Every creation must produce valid brush geometry. Creation and spatial edits
+refuse nonfinite derived texture coordinates before committing. Refusal preserves
+source, selection, IDs and Undo history. Authored UV vectors and scales stay
+independent; no replacement projection is invented.
 
 `preview_carve` and `preview_carve_many` accept `cut_material`:
 `{"policy":"cutter"}`, `{"policy":"target"}`, or
@@ -1017,6 +1029,8 @@ selected channel's `face` ordinal; optional `aspect` is finite 0.01–100.
 Set `compiled_static_props:true` and `draw_lod:0` through `7` on Prepare to
 include generated static-prop vertex lighting. Defaults are false and 0.
 An unavailable LOD or required input fails preparation without substitution.
+Show also checks combined display capacity for prepared static props. A compiled-mesh
+failure retires the requested layer and preserves its diagnostic in inspection/frame state.
 Use `record_kind:"static_props"` on inspection and `prop` instead of `face`
 on Frame. Change LOD through a new preparation. Prop ordinals identify this
 preparation; exact stored colours remain in `inspect_baked_prop_vertices`.

@@ -501,6 +501,24 @@ impl GameFs {
             }
         }
         if !deferred.is_empty() {
+            const MAX_MOUNTED_VPK_DIRECTORY_BYTES: usize = 256 * 1024 * 1024;
+            if let Mount::Pak(incoming) = &mount {
+                self.mounts
+                    .iter()
+                    .filter_map(|mounted| match &mounted.mount {
+                        Mount::Pak(pak) => Some(pak.directory_bytes()),
+                        Mount::Directory(_) => None,
+                    })
+                    .try_fold(incoming.directory_bytes(), usize::checked_add)
+                    .filter(|&bytes| bytes <= MAX_MOUNTED_VPK_DIRECTORY_BYTES)
+                    .ok_or_else(|| Error::Io {
+                        path: mount.location().into(),
+                        source: io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Mounted VPK directory metadata exceeds 256 MiB",
+                        ),
+                    })?;
+            }
             self.mounts.push(MountedPath {
                 ids: deferred,
                 mount,

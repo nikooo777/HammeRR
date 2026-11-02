@@ -243,6 +243,7 @@ struct Builder<'a> {
     displacements: HashMap<FaceId, Displacement>,
     terrain_geometry: HashMap<u32, Result<BrushGeometry, String>>,
     unshaded_terrain: HashMap<FaceId, DisplacementMesh>,
+    terrain_issues: HashMap<u32, Vec<TerrainIssue>>,
 }
 
 struct Displacement {
@@ -304,6 +305,11 @@ impl Builder<'_> {
     }
 
     fn add_solid(&mut self, solid: &Solid, selected: bool, terrain_owner_supported: bool) {
+        if let Some(issues) = self.terrain_issues.remove(&solid.id) {
+            for issue in issues {
+                self.issues.push(SceneIssue::Terrain(issue));
+            }
+        }
         self.stats.brushes += 1;
         let geometry = match self.terrain_geometry.remove(&solid.id) {
             Some(geometry) => geometry,
@@ -1520,14 +1526,18 @@ impl SceneMesh {
         let (models, helpers) = entities;
         let (selected, selected_faces) = selection;
         let terrain = terrain::prepare(vmf);
-        let mut issues = SceneIssues::default();
-        for issue in terrain.issues {
-            issues.push(SceneIssue::Terrain(issue));
-        }
+        let terrain_issues = terrain.issues.into_iter().fold(
+            HashMap::<u32, Vec<TerrainIssue>>::new(),
+            |mut issues, issue| {
+                issues.entry(issue.face.solid).or_default().push(issue);
+                issues
+            },
+        );
         let mut builder = Builder {
             authored_surfaces,
             entity_helpers,
-            issues,
+            issues: SceneIssues::default(),
+            terrain_issues,
             tool_textures,
             selection_tint,
             lighting: crate::lighting::Preview {

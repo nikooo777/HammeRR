@@ -17,7 +17,7 @@ The target is the state immediately after that transaction.
 
 ## Limits
 
-- History belongs to the open document. It is not saved in the VMF.
+- History and navigation snapshots belong to one open document. They are not saved in the VMF.
 - Navigation supports 256 transactions per jump.
 - Apply or cancel active drafts before navigating.
 - Changed source state requires a new selection.

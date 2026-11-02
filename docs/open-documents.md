@@ -14,6 +14,8 @@ If Close reports active work, inspect **Active** in the document row. Wait for
 the named request or worker, or cancel it with its normal control.
 Closing the last document exits the editor.
 The ordinary **New** and **Open…** controls replace their current map instead.
+Accepted replacement retires the previous map’s terrain move handles. A refused
+Open preserves the current map, camera and drafts.
 
 ## Save all named maps
 

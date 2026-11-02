@@ -133,6 +133,7 @@ pub struct GridSnapArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TransformArgs {
     /// Object IDs; omitted uses the shared selection. Repeated IDs are applied once.
     pub ids: Option<Vec<String>>,
@@ -146,7 +147,9 @@ pub struct TransformArgs {
     pub reflection: Option<[bool; 3]>,
     /// Shift one coordinate by factor times another coordinate about the pivot, after scale/reflection and before rotation. Brushes and brush entities only. Factor range -64..64.
     pub shear: Option<ShearArgs>,
-    /// World pivot [x,y,z]; omitted uses the combined selection bounds center.
+    /// selection_center, current_transform_pivot or custom_world_point. Omitted with no pivot retains the selection-center default; omitted with pivot means a custom world point.
+    pub pivot_source: Option<crate::session::transform_pivot::PivotSource>,
+    /// World point for custom_world_point; required for that source and incompatible with other explicit sources.
     pub pivot: Option<[f64; 3]>,
     /// Follow translation/rotation about the pivot; default true.
     pub texture_lock: Option<bool>,
@@ -160,6 +163,7 @@ pub struct TransformArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TransformToolArgs {
     /// select, move, rotate or scale; omitted preserves the current tool.
     pub mode: Option<String>,
@@ -287,7 +291,8 @@ pub(in crate::mcp) fn transform_mode_name(mode: Option<render::handles::Mode>) -
 
 pub(in crate::mcp) fn transform_state(session: &Session) -> Value {
     let tool = session.transform_tool();
-    json!({"magnetic_snapping":session.magnetic_snapping(),"settings": {"mode": transform_mode_name(tool.mode), "space": if tool.local {"local"} else {"world"}, "pivot": tool.pivot.map(|pivot| pivot.to_array()), "texture_lock": tool.texture_lock, "texture_scale_lock": tool.texture_scale_lock.unwrap_or(tool.texture_lock), "angle_step": tool.angle_step},
+    let pivot = session.transform_pivot_value();
+    json!({"magnetic_snapping":session.magnetic_snapping(),"pivot_attachment":session.transform_pivot_attachment_state(),"settings": {"mode": transform_mode_name(tool.mode), "space": if tool.local {"local"} else {"world"}, "pivot": pivot.as_ref().ok().and_then(|point| point.map(|point| point.to_array())), "pivot_error":pivot.err(), "texture_lock": tool.texture_lock, "texture_scale_lock": tool.texture_scale_lock.unwrap_or(tool.texture_lock), "angle_step": tool.angle_step},
         "drag": session.transform_drag().map(|drag| json!({"handle": drag.handle.name(), "mode": transform_mode_name(Some(drag.mode)), "amount": drag.amount.to_array(), "pivot": drag.pivot.to_array(), "basis": drag.basis.to_cols_array_2d(), "camera": camera_json(&drag.camera)})),
         "preview": session.transform_preview().map(|preview| { let presentation = preview.presentation(); json!({"grid_snap": preview.grid_snap, "display": {"primary": if presentation.operations.is_empty() { "identity" } else { presentation.primary.name() }, "operations": presentation.operations.iter().map(|operation| operation.name()).collect::<Vec<_>>(), "summary": presentation.summary}, "ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(), "translation": preview.transform.translation.to_array(), "rotation": preview.transform.rotation.to_array(), "scale": preview.transform.scale.to_array(), "reflection": preview.transform.reflection, "shear": preview.transform.shear.map(|shear| json!({"axis": (["x", "y", "z"][shear.axis]), "reference": (["x", "y", "z"][shear.reference]), "factor": shear.factor})), "basis": preview.transform.basis.to_cols_array_2d(), "pivot": preview.transform.pivot.to_array(), "texture_lock": preview.transform.texture_lock, "texture_scale_lock": preview.transform.texture_scale_lock.unwrap_or(preview.transform.texture_lock), "bounds": bounds_json(session.object_bounds_in(&preview.document, &preview.ids)), "objects": preview.ids.iter().filter_map(|id| detail(&preview.document, *id).ok()).collect::<Vec<_>>()} )})})
 }

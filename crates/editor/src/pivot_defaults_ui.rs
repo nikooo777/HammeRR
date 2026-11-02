@@ -30,7 +30,34 @@ fn pivot(value: &Value) -> String {
 fn refresh(window: &PivotDefaultsWindow, session: &Session, snapshot: &RefCell<String>) {
     let state = session.pivot_preferences_state();
     *snapshot.borrow_mut() = state["snapshot"].as_str().unwrap().into();
-    window.set_current(format!("Current document: {}", pivot(&state["current"])).into());
+    let attachment = &state["attachment"];
+    window.set_current(if attachment["attachment"].is_object() {
+        let binding = &attachment["attachment"];
+        let mut current = format!(
+            "Current document: {} · {}",
+            binding["object"].as_str().unwrap_or("Attached entity"),
+            if binding["kind"] == "local" {
+                "Rigid local point"
+            } else {
+                "Authored origin"
+            },
+        );
+        if !attachment["effective_pivot"].is_null() {
+            current.push_str(&format!(
+                "\nResolved world point: {}",
+                attachment["effective_pivot"]
+            ));
+        }
+        if let Some(error) = state["current_error"]
+            .as_str()
+            .or(attachment["error"].as_str())
+        {
+            current.push_str(&format!("\nUnavailable: {error}"));
+        }
+        current.into()
+    } else {
+        format!("Current document: {}", pivot(&state["current"])).into()
+    });
     window.set_defaults(if state["ready"] != true {
         "Saved defaults could not load.".into()
     } else {
@@ -54,6 +81,8 @@ fn refresh(window: &PivotDefaultsWindow, session: &Session, snapshot: &RefCell<S
     );
     window.set_status(state["error"].as_str().or(state["storage_error"].as_str()).unwrap_or("New document windows use these defaults. Apply changes only this document’s pivot.").into());
     window.set_ready(state["ready"] == true);
+    window.set_can_save(state["ready"] == true && state["save_error"].is_null());
+    window.set_save_status(state["save_error"].as_str().unwrap_or("").into());
     window.set_can_apply(state["ready"] == true && state["apply_error"].is_null());
     window.set_apply_status(state["apply_error"].as_str().unwrap_or("").into());
 }

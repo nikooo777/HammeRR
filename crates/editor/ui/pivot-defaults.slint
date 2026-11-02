@@ -14,6 +14,8 @@ export component PivotDefaultsWindow inherits Window {
     in property <string> status;
     in property <string> message;
     in property <bool> ready;
+    in property <bool> can-save;
+    in property <string> save-status;
     in property <bool> can-apply;
     in property <string> apply-status;
     callback save();
@@ -33,7 +35,8 @@ export component PivotDefaultsWindow inherits Window {
             Text { text: root.defaults; wrap: word-wrap; font-size: Theme.font-heading; }
             Text { text: root.storage; wrap: word-wrap; color: Theme.text-muted; }
             Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
-            Text { text: "Save keeps this pivot for new document windows. A custom pivot is a fixed world point and does not follow a surface. New/Open in this window keep the current pivot."; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: "Save keeps a selection-center or fixed world pivot for new document windows. Detach an attached pivot before saving. New/Open retain ordinary pivots and clear entity bindings."; wrap: word-wrap; color: Theme.text-muted; }
+            Text { text: root.save-status; wrap: word-wrap; color: Theme.warning; }
             Text { text: root.apply-status; wrap: word-wrap; color: Theme.warning; }
             Rectangle { vertical-stretch: 1; }
             Text { text: root.message; wrap: word-wrap; min-height: 34px; }
@@ -48,7 +51,7 @@ export component PivotDefaultsWindow inherits Window {
                 Button { text: "Close"; clicked => { root.close-dialog(); } }
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: "Apply saved defaults"; enabled: root.can-apply; clicked => { root.apply(); } }
-                Button { text: "Save current as defaults"; enabled: root.ready; clicked => { root.save(); } }
+                Button { text: "Save current as defaults"; enabled: root.can-save; clicked => { root.save(); } }
             }
         }
     }

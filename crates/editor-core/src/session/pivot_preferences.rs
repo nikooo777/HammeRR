@@ -48,7 +48,17 @@ impl Session {
     }
 
     fn pivot_preferences_stamp_for(&self, saved: &Snapshot<Pivot>) -> String {
-        format!("{}:{}", saved.serial, self.pivot_preferences.local_serial)
+        if self.transform_pivot_attached() {
+            format!(
+                "{}:{}:{}:{}",
+                saved.serial,
+                self.pivot_preferences.local_serial,
+                self.document_generation,
+                self.document.revision()
+            )
+        } else {
+            format!("{}:{}", saved.serial, self.pivot_preferences.local_serial)
+        }
     }
 
     pub fn pivot_preferences_stamp(&self) -> String {
@@ -62,12 +72,13 @@ impl Session {
 
     fn apply_pivot_value(&mut self, actor: Actor, value: Pivot) -> Result<(), String> {
         value.validate()?;
-        self.set_transform_tool(
+        self.set_transform_tool_with_pivot(
             actor,
             TransformTool {
                 pivot: value.point(),
                 ..self.transform_tool
             },
+            true,
         )
     }
 
@@ -86,14 +97,21 @@ impl Session {
 
     pub fn pivot_preferences_state(&self) -> Value {
         let saved = self.pivot_preferences.binding.authority().snapshot();
+        let current = self.transform_pivot_value();
         let mut state = saved.report(
-            Pivot::from_point(self.transform_tool.pivot),
+            Pivot::from_point(current.as_ref().ok().copied().flatten()),
             self.pivot_preferences_stamp_for(&saved),
         );
+        if current.is_err() {
+            state["current"] = Value::Null;
+        }
         state.as_object_mut().unwrap().extend(json!({
             "limits": {"file_bytes": crate::pivot_preferences::MAX_FILE_BYTES, "finite_coordinates": true},
             "apply_error": self.pivot_defaults_apply_admission().err(),
-            "persistence": "Only Save current as defaults and Reset saved defaults write preferences. Saved pivot defaults apply once when a document Session starts. Apply changes only this document's pivot and preserves other transform settings. New/Open retain its current pivot. Picks save only fixed world coordinates when explicitly requested; no surface attachment, selection, pick provenance, camera or map history is stored."
+            "save_error": if self.transform_pivot_attached() { Some("Detach the transform pivot before saving startup defaults; attached entity IDs are not startup defaults".to_owned()) } else { current.as_ref().err().cloned() },
+            "current_error": current.err(),
+            "attachment": self.transform_pivot_attachment_state(),
+            "persistence": "Only Save current as defaults and Reset saved defaults write preferences. Saved pivot defaults apply once when a document Session starts. Apply replaces any attachment and changes only this document's pivot, preserving other transform settings. Save rejects attached pivots; detach explicitly first. New/Open retain ordinary current pivots and clear point-entity bindings. Pick provenance, attachment identity, selection, camera and map history are never saved as defaults."
         }).as_object().unwrap().clone());
         state
     }
@@ -131,7 +149,10 @@ impl Session {
                 let value = if action == "reset" {
                     Pivot::default()
                 } else {
-                    Pivot::from_point(self.transform_tool.pivot)
+                    if self.transform_pivot_attached() {
+                        return Err("Detach the transform pivot before saving startup defaults; attached entity IDs are not startup defaults".into());
+                    }
+                    Pivot::from_point(self.transform_pivot_value()?)
                 };
                 self.pivot_preferences.binding.authority().save(
                     saved.serial,

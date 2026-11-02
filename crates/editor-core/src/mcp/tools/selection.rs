@@ -214,7 +214,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Move, rotate, scale, mirror and shear objects in one atomic undoable edit, or create a shared draft with preview=true. Choose world (default) or local space. Scale about the pivot, rotate X/Y/Z in that frame, then translate in that frame. Defaults to selection and its bounds center. texture_lock follows movement/rotation; texture_scale_lock stretches about the pivot independently. Omitted scale lock inherits texture_lock, retaining the prior complete-lock/world-fixed behavior. Both false preserve original projections exactly. Point entities rotate their Source orientation and move with the group; model size stays unchanged. Positive scale only. reflection chooses axes in that same frame, preserving outward winding and source IDs. Reflection supports world brushes and brush entities within ±65536; point entities and displacement brushes are rejected atomically. shear shifts its axis by factor times its distinct reference coordinate about the pivot in the same frame, after scale/reflection and before rotation. Finite factors -64..64; nonzero shear shares the brush-only scope and bounds. texture_scale_lock also controls reflection/shear attachment. Inspect get_transform_handles for the shared draft; commit_transform_preview or cancel_transform_preview completes it."
+        description = "Move, rotate, scale, mirror and shear objects in one atomic undoable edit, or create a shared draft with preview=true. Choose world (default) or local space. Scale about the pivot, rotate X/Y/Z in that frame, then translate in that frame. IDs default to selection. pivot_source accepts selection_center, current_transform_pivot or custom_world_point through the shared resolver. Omitting source and pivot retains the selection-bounds-center default; a legacy explicit pivot means a custom world point. Explicit custom source requires pivot, while other explicit sources reject coordinates. Current transform pivot uses attached point-entity anchors and rejects unavailable anchors without fallback. texture_lock follows movement/rotation; texture_scale_lock stretches about the pivot independently. Omitted scale lock inherits texture_lock, retaining the prior complete-lock/world-fixed behavior. Both false preserve original projections exactly. Point entities rotate their Source orientation and move with the group; model size stays unchanged. Positive scale only. reflection chooses axes in that same frame, preserving outward winding and source IDs. Reflection supports world brushes and brush entities within ±65536; point entities and displacement brushes are rejected atomically. shear shifts its axis by factor times its distinct reference coordinate about the pivot in the same frame, after scale/reflection and before rotation. Finite factors -64..64; nonzero shear shares the brush-only scope and bounds. texture_scale_lock also controls reflection/shear attachment. Inspect get_transform_handles for the shared draft; commit_transform_preview or cancel_transform_preview completes it."
     )]
     pub(in crate::mcp) fn transform_objects(
         &self,
@@ -244,10 +244,15 @@ impl EditorServer {
                 translation: basis * transform.translation,
                 ..transform
             };
+            let pivot = session.resolve_transform_pivot_request(
+                &ids,
+                args.pivot_source,
+                args.pivot.map(vec3),
+            )?;
             let pivot = if args.preview {
-                session.preview_transform(Actor::Agent, &ids, transform, args.pivot.map(vec3))?
+                session.preview_transform(Actor::Agent, &ids, transform, Some(pivot))?
             } else {
-                session.transform_objects(Actor::Agent, &ids, transform, args.pivot.map(vec3))?
+                session.transform_objects(Actor::Agent, &ids, transform, Some(pivot))?
             };
             let document = if args.preview {
                 session.render_document()
@@ -313,7 +318,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Read or set the shared viewport transform tool: select/move/rotate/scale, world/local axes, selection/world/custom pivot, independent texture movement/rotation and scale-stretch locking, and angle snap. Local axes follow the first selected brush's first face or point-entity orientation. Changing controls cancels pending transform/area interactions."
+        description = "Read or set the shared viewport transform tool: select/move/rotate/scale, world/local axes, selection/world/custom pivot and attached point-entity anchors, independent texture movement/rotation and scale-stretch locking, and angle snap. Local axes follow the first selected brush's first face or point-entity orientation. Changing controls cancels pending transform/area interactions. Unrelated controls preserve an attachment; explicit pivot_mode or pivot replaces it. Coordinates are incompatible with selection/world pivot modes. Use transform_pivot_attachment for inspect/attach/detach/recovery."
     )]
     pub(in crate::mcp) fn set_transform_tool(
         &self,
@@ -322,6 +327,12 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             let mut tool = session.transform_tool();
+            let replace_pivot = args.pivot_mode.is_some() || args.pivot.is_some();
+            if args.pivot.is_some()
+                && matches!(args.pivot_mode.as_deref(), Some("selection" | "world"))
+            {
+                return Err("pivot coordinates require custom pivot_mode".into());
+            }
             if let Some(mode) = args.mode {
                 tool.mode = match mode.as_str() {
                     "select" => None,
@@ -342,12 +353,12 @@ impl EditorServer {
                 tool.pivot = match mode.as_str() {
                     "selection" => None,
                     "world" => Some(DVec3::ZERO),
-                    "custom" => Some(
-                        args.pivot
-                            .map(vec3)
-                            .or(tool.pivot)
+                    "custom" => Some(match args.pivot {
+                        Some(point) => vec3(point),
+                        None => session
+                            .transform_pivot_value()?
                             .ok_or("custom pivot needs coordinates")?,
-                    ),
+                    }),
                     _ => return Err("pivot_mode must be selection, world or custom".into()),
                 };
             } else if let Some(pivot) = args.pivot {
@@ -358,7 +369,7 @@ impl EditorServer {
                 tool.texture_scale_lock = Some(scale_lock);
             }
             tool.angle_step = args.angle_step.unwrap_or(tool.angle_step);
-            session.set_transform_tool(Actor::Agent, tool)?;
+            session.set_transform_tool_with_pivot(Actor::Agent, tool, replace_pivot)?;
             Ok(transform_state(&session))
         })
     }

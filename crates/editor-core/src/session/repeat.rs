@@ -1,8 +1,37 @@
 use crate::identity::id_string;
+use glam::DVec3;
 use map_core::{Document, EditError, ObjectId, repeat};
 use serde_json::{Value, json};
 
+pub use super::transform_pivot::PivotSource;
 use super::{Actor, SelectMode, Session};
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Request {
+    pub count: u32,
+    pub translation: DVec3,
+    pub rotation: DVec3,
+    pub scale: DVec3,
+    pub local: bool,
+    pub texture_lock: bool,
+    pub pivot_source: Option<PivotSource>,
+    pub pivot: Option<DVec3>,
+}
+
+impl Request {
+    fn report(self) -> Value {
+        json!({
+            "count":self.count,
+            "translation":self.translation.to_array(),
+            "rotation":self.rotation.to_array(),
+            "scale":self.scale.to_array(),
+            "space":if self.local {"local"} else {"world"},
+            "texture_lock":self.texture_lock,
+            "pivot_source":self.pivot_source,
+            "pivot":self.pivot.map(|point|point.to_array()),
+        })
+    }
+}
 
 pub struct Preview {
     pub document: Document,
@@ -10,6 +39,7 @@ pub struct Preview {
     token: u64,
     sources: Vec<ObjectId>,
     options: repeat::Options,
+    request: Request,
     local: bool,
     generation: u64,
     revision: u64,
@@ -20,17 +50,19 @@ pub struct Preview {
 pub struct State {
     serial: u64,
     pub preview: Option<Preview>,
+    last_settings: Option<Request>,
 }
 
 impl Session {
     pub fn repeat_stamp(&self) -> String {
         format!(
-            "{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}",
             self.document_generation,
             self.document.revision(),
             self.definitions_serial,
             self.scene_serial,
-            self.geometry.repeat.serial
+            self.geometry.repeat.serial,
+            self.pivot_preferences.local_serial
         )
     }
 
@@ -45,6 +77,8 @@ impl Session {
                 "rotation": preview.options.rotation.to_array(),
                 "scale": preview.options.scale.to_array(),
                 "pivot": preview.options.pivot.to_array(),
+                "pivot_source": preview.request.pivot_source,
+                "request": preview.request.report(),
                 "space": if preview.local { "local" } else { "world" },
                 "basis": preview.options.basis.to_cols_array_2d(),
                 "frame_source": preview.local.then(|| preview.sources.iter().copied().min().map(id_string)).flatten(),
@@ -70,10 +104,12 @@ impl Session {
             "handle": self.repeat_array_handle(),
             "snapshot": self.repeat_stamp(),
             "preview": preview,
+            "last_settings":self.last_repeat_array_settings().map(Request::report),
             "limits": {"sources":repeat::MAX_SOURCES,"copies":repeat::MAX_COPIES,"objects_including_owned_brushes":repeat::MAX_OBJECTS,"sides":repeat::MAX_SIDES,"name_bytes":repeat::MAX_NAME_BYTES},
             "transform_policy":"Copy n uses the original objects, scales each XYZ axis by its per-copy factor raised to n, then rotates by n × XYZ degrees, then translates by n × the move step. Scale and rotation share one fixed world pivot; all steps use the chosen world or captured source-local frame. Source local uses the first source in stable object-ID order (brushes before entities), captured once for every copy. Scale defaults to 1 and nonidentity factors support only brushes and brush entities. Count excludes originals.",
             "reference_policy":"Unique source targetnames become name_copyN, with a collision suffix when needed. Certain exact internal FGD/I/O/parent references follow that copy; external links and procedural references remain unchanged. Shared names, ambiguous internal matches, wildcard captures of new names, overlay face-ID references and node IDs reject. Named source sets with scripts or dynamic I/O also reject.",
             "metadata_policy":"Object and owned-brush context notes copy with their existing authorship/observations and full map budgets. Saved partitions remain attached to originals. Other opaque custom metadata and embedded text stay verbatim; their semantics are not inferred or remapped.",
+            "reuse_policy":"Last settings retain only the most recently applied array's steps, space, texture policy and pivot intent. Preview last array resolves the current selection, current pivot and source-local frame afresh; it does not create geometry until Apply. Custom world points remain literal world coordinates. Failed previews and cancelled arrays do not replace last settings.",
         })
     }
 
@@ -125,16 +161,67 @@ impl Session {
     pub fn preview_repeat_array_in_space(
         &mut self,
         sources: &[ObjectId],
-        mut options: repeat::Options,
+        options: repeat::Options,
         local: bool,
         snapshot: &str,
     ) -> Result<Value, String> {
+        self.preview_repeat_array_request(
+            sources,
+            Request {
+                count: options.count,
+                translation: options.translation,
+                rotation: options.rotation,
+                scale: options.scale,
+                local,
+                texture_lock: options.texture_lock,
+                pivot_source: None,
+                pivot: Some(options.pivot),
+            },
+            snapshot,
+        )
+    }
+
+    pub fn last_repeat_array_settings(&self) -> Option<Request> {
+        self.geometry.repeat.last_settings
+    }
+
+    pub fn preview_last_repeat_array(&mut self, snapshot: &str) -> Result<Value, String> {
+        let request = self
+            .last_repeat_array_settings()
+            .ok_or("Apply a repeat array before reusing its settings")?;
+        let sources = self.selected_ids();
+        self.preview_repeat_array_request(&sources, request, snapshot)
+    }
+
+    pub fn preview_repeat_array_request(
+        &mut self,
+        sources: &[ObjectId],
+        mut request: Request,
+        snapshot: &str,
+    ) -> Result<Value, String> {
         if snapshot != self.repeat_stamp() {
-            return Err("Map, selection or preview changed; inspect the repeat array again".into());
+            return Err(
+                "Map, selection, pivot or preview changed; inspect the repeat array again".into(),
+            );
         }
+        self.ensure_not_closing()?;
         self.require_root_objects(sources)?;
         self.ensure_partitions_resolved()?;
-        options.basis = self.transform_basis(sources, local)?;
+        let pivot =
+            self.resolve_transform_pivot_request(sources, request.pivot_source, request.pivot)?;
+        request.pivot_source = Some(PivotSource::from_request(
+            request.pivot_source,
+            request.pivot,
+        )?);
+        let options = repeat::Options {
+            count: request.count,
+            translation: request.translation,
+            rotation: request.rotation,
+            scale: request.scale,
+            pivot,
+            basis: self.transform_basis(sources, request.local)?,
+            texture_lock: request.texture_lock,
+        };
         let mut document = self.document.preview_snapshot();
         let result = document
             .edit("preview repeat array", |tx| {
@@ -158,7 +245,8 @@ impl Session {
             token: self.geometry.repeat.serial,
             sources: sources.to_vec(),
             options,
-            local,
+            request,
+            local: request.local,
             generation: self.document_generation,
             revision: self.document.revision(),
             definitions: self.definitions_serial,
@@ -173,6 +261,7 @@ impl Session {
         let expected = preview.document.vmf().clone();
         let sources = preview.sources.clone();
         let options = preview.options;
+        let request = preview.request;
         let expected_result = preview.result.clone();
         let definitions = self.definitions.clone();
         let result = self.edit(actor, "repeat array", |tx| {
@@ -184,6 +273,7 @@ impl Session {
             }
             Ok(result)
         })?;
+        self.geometry.repeat.last_settings = Some(request);
         let copies = result.objects();
         self.select(&copies, SelectMode::Replace)?;
         Ok(

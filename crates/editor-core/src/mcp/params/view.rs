@@ -332,7 +332,9 @@ pub struct RepeatArrayArgs {
     pub rotation: Option<[f64; 3]>,
     /// Finite positive XYZ scale factors per copy, default [1,1,1]. Copy n uses factor^n on originals, before rotation/translation in the chosen frame about the fixed world pivot. Nonidentity factors require brushes or brush entities.
     pub scale: Option<[f64; 3]>,
-    /// Fixed world pivot. Defaults to the source selection center.
+    /// selection_center, current_transform_pivot or custom_world_point. Omitted with no pivot uses the selection center; omitted with pivot preserves the legacy custom-world-point request.
+    pub pivot_source: Option<crate::session::repeat::PivotSource>,
+    /// Fixed world point for custom_world_point; required for that source and incompatible with other explicit sources.
     pub pivot: Option<[f64; 3]>,
     /// Keep textures attached to copied geometry. Defaults to true.
     pub texture_lock: Option<bool>,
@@ -344,6 +346,13 @@ pub struct RepeatArrayArgs {
 #[serde(deny_unknown_fields)]
 pub struct RepeatArrayTokenArgs {
     pub token: u64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewLastRepeatArrayArgs {
+    /// Latest get_repeat_array.snapshot. Resolves saved intent against the current selection.
+    pub snapshot: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

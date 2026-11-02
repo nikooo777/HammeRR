@@ -58,12 +58,21 @@ pub(super) fn refresh_interaction(app: &AppWindow, session: &Session) {
     );
     app.set_transform_texture_lock(texture_lock);
     app.set_transform_texture_scale_lock(texture_scale_lock);
-    app.set_transform_pivot_mode(match tool.pivot {
-        None => 0,
-        Some(pivot) if pivot == DVec3::ZERO => 1,
-        Some(_) => 2,
+    let attached = session
+        .transform_pivot_attachment_state()
+        .attachment
+        .is_some();
+    app.set_pivot_attached(attached);
+    app.set_transform_pivot_mode(if attached {
+        3
+    } else {
+        match tool.pivot {
+            None => 0,
+            Some(pivot) if pivot == DVec3::ZERO => 1,
+            Some(_) => 2,
+        }
     });
-    if let Some(pivot) = tool.pivot {
+    if !attached && let Some(pivot) = tool.pivot {
         app.set_pivot_x(pivot.x.to_string().into());
         app.set_pivot_y(pivot.y.to_string().into());
         app.set_pivot_z(pivot.z.to_string().into());
@@ -205,7 +214,10 @@ pub(super) fn refresh_interaction(app: &AppWindow, session: &Session) {
     app.set_interaction_summary(summary.into());
 }
 
-pub(super) fn transform_tool_from_controls(app: &AppWindow) -> Result<TransformTool, String> {
+pub(super) fn transform_tool_from_controls(
+    app: &AppWindow,
+    session: &Session,
+) -> Result<TransformTool, String> {
     let mode = match app.get_handles_mode_index() {
         0 => None,
         1 => Some(render::handles::Mode::Move),
@@ -216,11 +228,13 @@ pub(super) fn transform_tool_from_controls(app: &AppWindow) -> Result<TransformT
     let pivot = match app.get_transform_pivot_mode() {
         0 => None,
         1 => Some(DVec3::ZERO),
-        _ => Some(input_vector([
+        2 => Some(input_vector([
             app.get_pivot_x(),
             app.get_pivot_y(),
             app.get_pivot_z(),
         ])?),
+        3 => session.transform_tool().pivot,
+        _ => return Err("Choose a pivot".into()),
     };
     Ok(TransformTool {
         mode,
@@ -385,7 +399,7 @@ pub(super) fn bind_manipulation_controls_with_access(
         let callback = admission::SessionCallback::new(app, access);
         move || {
             callback.input(|app, session| {
-                let result = transform_tool_from_controls(&app)
+                let result = transform_tool_from_controls(&app, session)
                     .and_then(|tool| session.set_transform_tool(Actor::User, tool))
                     .and_then(|()| {
                         session.set_paint_operation(
@@ -559,22 +573,9 @@ pub(super) fn apply_selection_transform(
         app.get_transform_space_index() == 1,
     )?;
     transform.translation = transform.basis * transform.translation;
-    let pivot = if app.get_transform_mode() == 0 {
-        None
-    } else {
-        match app.get_transform_pivot_mode() {
-            0 => None,
-            1 => Some(DVec3::ZERO),
-            2 => Some(input_vector([
-                app.get_pivot_x(),
-                app.get_pivot_y(),
-                app.get_pivot_z(),
-            ])?),
-            _ => return Err("Choose a pivot".into()),
-        }
-    };
     let ids = session.selected_ids();
-    session.set_transform_tool(Actor::User, transform_tool_from_controls(app)?)?;
+    session.set_transform_tool(Actor::User, transform_tool_from_controls(app, session)?)?;
+    let pivot = Some(session.resolved_transform_pivot(&ids)?);
     session.transform_objects(Actor::User, &ids, transform, pivot)?;
     Ok(())
 }

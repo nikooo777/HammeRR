@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 80.4% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 80.5% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -64,7 +64,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | [Component editing](docs/components.md) | [Repeated placement](docs/repeated-placement.md) |
 | --- | --- |
 | ![A raised roof ridge](docs/images/roof-ridge.png) | ![A circular array of columns](docs/images/radial-array.png) |
-| Reshape corners, edges and faces. | Repeat assemblies with shared transforms and safe references. |
+| Reshape corners, edges and faces. | Reuse arrays with shared pivots and safe references. |
 
 | [Materials](docs/textures.md) | [Normal maps](docs/normal-maps.md) |
 | --- | --- |

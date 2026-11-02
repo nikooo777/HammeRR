@@ -1565,6 +1565,7 @@ impl Session {
     }
 
     fn replace_document(&mut self, document: Document, path: Option<PathBuf>) {
+        self.reset_transform_pivot_attachment();
         self.reference_images = reference_images::State::default();
         self.clear_external_comparison();
         self.reset_instance_contents();
@@ -2214,15 +2215,27 @@ impl Session {
         if ids.is_empty() {
             return Err("Select objects to transform".into());
         }
+        let display = self.display_bounds_in(&self.document);
+        let mut bounds = Vec::with_capacity(ids.len());
         for &id in ids {
             if !self.selection_contains(id) {
                 return Err(format!("{id} does not exist"));
             }
+            let (mins, maxs) = display
+                .get(&id)
+                .copied()
+                .or_else(|| map_core::query::bounds(&self.document, id))
+                .ok_or_else(|| format!("{id} has no valid bounds for a transform pivot"))?;
+            if !mins.is_finite() || !maxs.is_finite() || !mins.cmple(maxs).all() {
+                return Err(format!("{id} has no valid bounds for a transform pivot"));
+            }
+            bounds.push((mins, maxs));
         }
-        let (mins, maxs) = self
-            .object_bounds_in(&self.document, ids)
-            .ok_or("Selected objects have no valid bounds")?;
-        Ok((mins + maxs) * 0.5)
+        let (mins, maxs) =
+            map_core::query::union(bounds).ok_or("Selected objects have no valid bounds")?;
+        let center = (mins + maxs) * 0.5;
+        crate::pivot_preferences::validate_point(center)?;
+        Ok(center)
     }
 
     pub fn transform_objects(

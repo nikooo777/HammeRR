@@ -92,6 +92,31 @@ A failed batch changes no objects.
 The pivot stays at its world position. It does not follow the surface.
 **Cancel pivot pick** or Escape stops an unfinished pick.
 
+### Attach the pivot to a point entity
+
+1. Expand **Transform** and choose **Rotate**, **Scale**, **Mirror** or **Shear**.
+2. Select one point entity, or enter its `entity:<id>` in **Pivot entity**.
+3. Click **Attach origin** to follow its origin.
+4. To follow an offset point instead, first set a **Custom** world point, then
+   click **Attach local point**. The current point becomes an offset in the
+   entity's orientation frame.
+5. Inspect **Attached entity** and its resolved coordinates before transforming.
+
+Moving the anchor moves the pivot. Rotating the anchor also rotates a local
+offset. The attachment remains active when you select other objects to transform.
+**Detach pivot** keeps the resolved point fixed in world space.
+
+An unavailable anchor reports its error and blocks operations that need it.
+Enter explicit coordinates under **World point replacement**, then click
+**Use world point** to recover without resolving the old anchor. There is no
+fallback to a cached point or selection center. Brush, surface and
+general-purpose anchors are unavailable.
+Resolved points and local offsets must be finite.
+Local offsets use authored origin/orientation, without model scale, parenting
+or FGD orientation adjustments. Undo can restore a deleted anchor. **New** or
+**Open** clears the attachment, retaining a resolved point as a fixed world
+point or returning to Selection center when the anchor is unavailable.
+
 ### Snap the pivot to the grid
 
 1. Set **Grid** to the required spacing.
@@ -103,6 +128,8 @@ Each world coordinate rounds to the nearest grid multiple, even when **Snap** is
 Half steps round away from zero. A selection-center pivot becomes a fixed world point;
 changing the selection does not move it. A zero result appears as **World origin**.
 Snapping a surface-picked pivot clears its old picked-surface label.
+Snapping an attached pivot detaches it at the snapped world point, even when
+the point was already aligned.
 
 Finish or cancel active tools, previews, builds and launches first.
 The pivot and snapped result must stay within ±65536 units.
@@ -122,7 +149,9 @@ or save startup defaults.
 **Close** or Escape closes the dialog.
 
 Save stores only the pivot mode and fixed world coordinates. It does not attach a pivot to a surface.
-Other open documents keep their current pivots. **New** and **Open** in the same document window also retain its current pivot.
+Detach an attached pivot before saving defaults.
+Other open documents keep their current pivots. **New** and **Open** in the same
+document window retain an unattached pivot; attached bindings are cleared.
 Finish active tools, previews, builds and launches before Apply.
 
 ### Snap objects to grid

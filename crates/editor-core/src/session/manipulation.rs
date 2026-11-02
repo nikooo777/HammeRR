@@ -483,6 +483,19 @@ impl Session {
     }
 
     pub fn set_transform_tool(&mut self, actor: Actor, tool: TransformTool) -> Result<(), String> {
+        self.set_transform_tool_with_pivot(actor, tool, false)
+    }
+
+    pub fn set_transform_tool_with_pivot(
+        &mut self,
+        actor: Actor,
+        mut tool: TransformTool,
+        replace_pivot: bool,
+    ) -> Result<(), String> {
+        self.ensure_not_closing()?;
+        if self.transform_pivot_attached() && !replace_pivot {
+            tool.pivot = self.transform_tool.pivot;
+        }
         if let Some(pivot) = tool.pivot {
             crate::pivot_preferences::validate_point(pivot)?;
         }
@@ -490,6 +503,7 @@ impl Session {
             return Err("Rotation snap must be finite and between 0 and 180 degrees".into());
         }
         if tool == self.transform_tool
+            && !(replace_pivot && self.transform_pivot_attached())
             && !self.geometry.paint.enabled
             && self.component_picking().is_none()
             && self.component_selection().is_empty()
@@ -498,7 +512,8 @@ impl Session {
         }
         self.cancel_transform_preview();
         self.cancel_area_selection();
-        if self.transform_tool.pivot != tool.pivot {
+        let detached = replace_pivot && self.clear_transform_pivot_attachment();
+        if self.transform_tool.pivot != tool.pivot || detached {
             self.pivot_preferences.local_serial += 1;
         }
         self.transform_tool = tool;
@@ -560,18 +575,13 @@ impl Session {
         }
         let mode = self.transform_tool.mode?;
         let ids = self.selected_ids();
-        let pivot = self
-            .transform_drag
-            .as_ref()
-            .map(|drag| drag.pivot)
-            .or_else(|| {
-                self.geometry
-                    .transform_preview
-                    .as_ref()
-                    .map(|preview| preview.transform.pivot)
-            })
-            .or(self.transform_tool.pivot)
-            .or_else(|| self.selection_pivot(&ids).ok())?;
+        let pivot = if let Some(drag) = &self.transform_drag {
+            drag.pivot
+        } else if let Some(preview) = &self.geometry.transform_preview {
+            preview.transform.pivot
+        } else {
+            self.resolved_transform_pivot(&ids).ok()?
+        };
         let basis = self
             .transform_drag
             .as_ref()
@@ -852,6 +862,8 @@ impl Session {
         handle: Handle,
         pointer: Option<Pointer>,
     ) -> Result<(), String> {
+        let ids = self.selected_ids();
+        let pivot = self.resolved_transform_pivot(&ids)?;
         let guide = self
             .transform_guide()
             .ok_or("Choose a transform tool and select objects")?;
@@ -872,11 +884,6 @@ impl Session {
             return Err("Handle is not supported by the selected transform tool".into());
         }
         let pointer = pointer.map(Pointer::validate).transpose()?;
-        let ids = self.selected_ids();
-        let pivot = self
-            .transform_tool
-            .pivot
-            .unwrap_or(self.selection_pivot(&ids)?);
         let basis = self.transform_basis(&ids, self.transform_tool.local)?;
         let (mins, maxs) = self
             .object_bounds_in_basis(&self.document, &ids, basis)

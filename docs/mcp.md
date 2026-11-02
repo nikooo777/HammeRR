@@ -748,10 +748,47 @@ Call `set_selection_profile` with the latest snapshot and `operation:{action:"sa
 Use a profile ID for `replace`, `apply`, `rename` or `delete`; `rename` also needs `name`.
 Only `apply` changes current rules. Profile edits leave startup defaults unchanged; default Save/Reset retain profiles. Version 1/2 files remain readable with Groups mode; explicit saves publish version 3 through the same authority and conflict guards.
 
+## Attached transform pivots
+
+Call `transform_pivot_attachment` with `action:"inspect"` to read the current
+attachment, resolved world point or resolution error, and action snapshot.
+Attachment modes include `attached_origin` and `attached_local`; point-entity
+identity is bound to its document generation.
+
+| Action | Fields | Result |
+| --- | --- | --- |
+| `attach_origin` | `snapshot`, optional `object:"entity:<id>"` | Follow the entity origin. |
+| `attach_local` | `snapshot`, optional `object` | Capture the current resolved world point in the entity's orientation frame. |
+| `detach` | `snapshot` | Keep the resolved point fixed in world space. |
+| `world_point` | `point:[x,y,z]` | Explicitly replace the pivot and attachment, including recovery from an unavailable anchor. |
+
+An omitted object requires exactly one selected valid point entity. Local
+offsets follow later entity translation and orientation. Unknown or incompatible
+action fields reject. An unavailable anchor never falls back to a cached point
+or selection center; supply an explicit `world_point` to recover. These actions
+change no geometry, history, camera or saved defaults. General brush/surface
+anchors remain unavailable.
+Local frames use authored origin/orientation, without model scale, parenting or
+FGD orientation adjustments. Undo can restore a deleted anchor; New/Open clear
+the attachment, retaining its resolved world point or using selection-center
+mode if it was unavailable.
+
+`transform_objects` accepts `pivot_source:"selection_center"`,
+`"current_transform_pivot"` or `"custom_world_point"`. Current-transform-pivot
+uses the shared resolver, including attachments. Custom source requires `pivot`;
+the other explicit sources reject coordinates. Omitted source and pivot retain
+the legacy selection-center behavior; an explicit legacy `pivot` selects a
+custom world point. `set_transform_tool` keeps an attachment when only unrelated
+controls change; explicit pivot controls replace it.
+Shared transform state includes `pivot_attachment`; `settings.pivot` contains
+the current fixed/attached point or null, with `settings.pivot_error` when an
+attachment cannot resolve. Selection-center mode keeps `settings.pivot:null`.
+
 ## Pivot grid snapping
 
 Call `transform_pivot_grid` with `action:"inspect"` for the current pivot, snapped point, grid and snapshot.
 Call it with `action:"snap"` and that `snapshot` to set a fixed custom pivot.
+An attached pivot resolves first, then detaches at the snapped world point.
 This explicit action uses the grid even with snapping off. It changes no map data, history or saved defaults.
 Finish active previews and gestures first. Coordinates must stay within ±65,536 units.
 
@@ -760,8 +797,27 @@ Finish active previews and gestures first. Coordinates must stay within ±65,536
 Use `get_transform_pivot_defaults` to inspect current and saved pivots, storage errors and the action snapshot.
 Pass that snapshot to `set_transform_pivot_defaults` with `action:"save"`, `"apply"`, `"reload"` or `"reset"`.
 Save records the current pivot for new document Sessions. Apply changes only the selected document's pivot.
-Reload and Reset do not apply a pivot. New/Open within an existing Session retain its current pivot.
+Reload and Reset do not apply a pivot. New/Open within an existing Session retain
+unattached pivots and clear attached bindings.
 Surface picks save only fixed coordinates when explicitly requested.
+Attached pivots must be detached before Save current as defaults.
+
+## Repeated placement
+
+Call `get_repeat_array`, then `preview_repeat_array` with its `snapshot` and
+`count`. `pivot_source` uses the same three values and coordinate rules as
+`transform_objects`. A preview captures the resolved world pivot once, separately
+from its requested pivot intent. `space:"local"` captures fresh source-local
+axes once for all copies. Inspect the preview, then use `apply_repeat_array` or
+`cancel_repeat_array` with its token.
+
+`get_repeat_array.last_settings` is null until an array is successfully applied.
+It then reports `count`, `translation`, `rotation`, `scale`, `space`,
+`texture_lock`, `pivot_source` and a custom `pivot` or null. It stores no old
+source IDs or captured frame. `preview_last_repeat_array` requires only a fresh
+`snapshot` and creates a preview for the current selection, resolving its center,
+current transform pivot and local frame again. It does not apply geometry.
+Preview, failure and cancellation leave the remembered settings unchanged.
 
 ## Rope bounds
 
@@ -1327,7 +1383,7 @@ These groups locate the available operations.
 | [Overlays](overlays.md) | `apply_overlay`, `browse_overlay_targets`, `cancel_overlay`, `get_overlay_state`, `overlay_corner_handles`, `preview_overlay`, `preview_overlay_corners`, `preview_overlay_rebind`, `preview_overlay_refit`, `review_overlay` |
 | [Particles](particles.md) | `apply_particle_choice`, `begin_particle_choice`, `browse_particles`, `cancel_particle_choice`, `choose_particle`, `get_particle_choice`, `inspect_particle`, `reload_particle_assets` |
 | [Face partitions](partitions.md) | `frame_component_partitions`, `get_saved_component_partitions`, `pick_component_partitions`, `place_component_partition_texture`, `preview_component_partition`, `preview_partition_extrusion`, `raise_component_partition`, `remove_saved_component_partitions`, `resume_component_partitions`, `select_component_partitions`, `store_component_partition`, `update_component_partition_cut`, `update_component_partition_material`, `update_component_partition_texture` |
-| [Surface placement](placement.md) | `apply_repeat_array`, `cancel_repeat_array`, `get_repeat_array`, `preview_repeat_array` |
+| [Repeated placement](repeated-placement.md) | `apply_repeat_array`, `cancel_repeat_array`, `get_repeat_array`, `preview_last_repeat_array`, `preview_repeat_array` |
 | [Preview defaults](preview-defaults.md) | `get_preview_defaults`, `set_preview_defaults` |
 | [Workspace layout](workspace-layout.md) | `get_workspace_preferences`, `set_workspace_layout`, `set_workspace_preferences` |
 | [Recovery](map-tools.md) | `create_recovery_snapshot`, `delete_recovery_snapshot`, `get_recovery`, `reload_recovery_settings`, `restore_recovery_snapshot`, `set_recovery_settings` |
@@ -1336,7 +1392,7 @@ These groups locate the available operations.
 | [3D sky preview](sky.md) | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `preview_terrain_vertex_set`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
-| [Transform pivots](brushes.md) | `transform_pivot_pick`, `transform_pivot_grid` |
+| [Transform pivots](brushes.md) | `transform_pivot_attachment`, `transform_pivot_pick`, `transform_pivot_grid` |
 | [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `get_view`, `inspect_baked_lightmaps`, `inspect_baked_surfaces`, `inspect_baked_prop_vertices`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_baked_surfaces`, `set_camera`, `set_fog_preview`, `set_view` |
 | [Working region](working-region.md) | `exclude_visibility_filter`, `get_editor_visibility`, `get_visibility_categories`, `get_visibility_profiles`, `get_working_region`, `remove_visibility_exclusion`, `set_editor_visibility`, `set_visibility_category`, `set_visibility_profile`, `set_working_region` |
 | [Prop leaf bounds](baked-prop-vertices.md) | `get_compiled_prop_leaf_bounds`, `set_compiled_prop_leaf_bounds` |

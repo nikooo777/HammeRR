@@ -3,14 +3,17 @@ use std::{
     rc::Rc,
 };
 
-use glam::{DMat3, DVec3};
-use map_core::{ObjectId, repeat::Options};
+use glam::DVec3;
+use map_core::ObjectId;
 use slint::ComponentHandle;
 
 use crate::{
     RepeatWindow,
     runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock},
-    session::{Actor, Session},
+    session::{
+        Actor, Session,
+        repeat::{PivotSource, Request},
+    },
 };
 
 #[derive(Clone)]
@@ -25,10 +28,10 @@ pub struct Controller {
     pub window: RepeatWindow,
     context: Rc<RefCell<Option<Context>>>,
     token: Rc<Cell<Option<u64>>>,
-    prepared: Rc<Cell<Option<(Options, bool)>>>,
+    prepared: Rc<Cell<Option<Request>>>,
 }
 
-fn options(window: &RepeatWindow) -> Result<(Options, bool), String> {
+fn options(window: &RepeatWindow) -> Result<Request, String> {
     let vector = |values: [slint::SharedString; 3]| {
         let mut result = DVec3::ZERO;
         for (index, value) in values.iter().enumerate() {
@@ -43,34 +46,98 @@ fn options(window: &RepeatWindow) -> Result<(Options, bool), String> {
         1 => true,
         _ => return Err("Choose World or Source local".into()),
     };
-    Ok((
-        Options {
-            count: u32::try_from(window.get_count()).map_err(|_| "Choose a positive copy count")?,
-            translation: vector([
-                window.get_move_x(),
-                window.get_move_y(),
-                window.get_move_z(),
-            ])?,
-            rotation: vector([
-                window.get_rotate_x(),
-                window.get_rotate_y(),
-                window.get_rotate_z(),
-            ])?,
-            scale: vector([
-                window.get_scale_x(),
-                window.get_scale_y(),
-                window.get_scale_z(),
-            ])?,
-            pivot: vector([
+    let pivot_source = match window.get_pivot_source() {
+        0 => PivotSource::SelectionCenter,
+        1 => PivotSource::CurrentTransformPivot,
+        2 => PivotSource::CustomWorldPoint,
+        _ => return Err("Choose a pivot source".into()),
+    };
+    Ok(Request {
+        count: u32::try_from(window.get_count()).map_err(|_| "Choose a positive copy count")?,
+        translation: vector([
+            window.get_move_x(),
+            window.get_move_y(),
+            window.get_move_z(),
+        ])?,
+        rotation: vector([
+            window.get_rotate_x(),
+            window.get_rotate_y(),
+            window.get_rotate_z(),
+        ])?,
+        scale: vector([
+            window.get_scale_x(),
+            window.get_scale_y(),
+            window.get_scale_z(),
+        ])?,
+        pivot: if pivot_source == PivotSource::CustomWorldPoint {
+            Some(vector([
                 window.get_pivot_x(),
                 window.get_pivot_y(),
                 window.get_pivot_z(),
-            ])?,
-            texture_lock: window.get_texture_lock(),
-            basis: DMat3::IDENTITY,
+            ])?)
+        } else {
+            None
         },
+        texture_lock: window.get_texture_lock(),
+        pivot_source: Some(pivot_source),
         local,
-    ))
+    })
+}
+
+fn load_settings(window: &RepeatWindow, request: Request) {
+    window.set_count(request.count as i32);
+    window.set_space_index(i32::from(request.local));
+    window.set_move_x(request.translation.x.to_string().into());
+    window.set_move_y(request.translation.y.to_string().into());
+    window.set_move_z(request.translation.z.to_string().into());
+    window.set_rotate_x(request.rotation.x.to_string().into());
+    window.set_rotate_y(request.rotation.y.to_string().into());
+    window.set_rotate_z(request.rotation.z.to_string().into());
+    window.set_scale_x(request.scale.x.to_string().into());
+    window.set_scale_y(request.scale.y.to_string().into());
+    window.set_scale_z(request.scale.z.to_string().into());
+    window.set_pivot_source(match request.pivot_source.unwrap_or_default() {
+        PivotSource::SelectionCenter => 0,
+        PivotSource::CurrentTransformPivot => 1,
+        PivotSource::CustomWorldPoint => 2,
+    });
+    let pivot = request.pivot.unwrap_or_default();
+    window.set_pivot_x(pivot.x.to_string().into());
+    window.set_pivot_y(pivot.y.to_string().into());
+    window.set_pivot_z(pivot.z.to_string().into());
+    window.set_texture_lock(request.texture_lock);
+}
+
+fn preview_settings(preview: &serde_json::Value) -> Result<Request, String> {
+    let request = &preview["request"];
+    let vector = |key: &str| -> Result<DVec3, String> {
+        serde_json::from_value::<[f64; 3]>(request[key].clone())
+            .map(DVec3::from_array)
+            .map_err(|_| format!("Could not read repeat {key}"))
+    };
+    let source = match request["pivot_source"].as_str() {
+        Some("selection_center") => PivotSource::SelectionCenter,
+        Some("current_transform_pivot") => PivotSource::CurrentTransformPivot,
+        Some("custom_world_point") => PivotSource::CustomWorldPoint,
+        _ => return Err("Could not read repeat pivot source".into()),
+    };
+    Ok(Request {
+        count: request["count"]
+            .as_u64()
+            .and_then(|count| u32::try_from(count).ok())
+            .ok_or("Could not read repeat count")?,
+        translation: vector("translation")?,
+        rotation: vector("rotation")?,
+        scale: vector("scale")?,
+        local: request["space"] == "local",
+        texture_lock: request["texture_lock"] == true,
+        pivot_source: Some(source),
+        pivot: if source == PivotSource::CustomWorldPoint {
+            Some(vector("pivot")?)
+        } else {
+            None
+        },
+    })
 }
 
 fn validate(
@@ -100,6 +167,11 @@ fn present(window: &RepeatWindow, report: &serde_json::Value) {
         "{} additional copies · {} new objects",
         preview["count"], preview["object_count"]
     )];
+    let pivot = &preview["pivot"];
+    lines.push(format!(
+        "Captured pivot · X {} · Y {} · Z {}",
+        pivot[0], pivot[1], pivot[2]
+    ));
     if preview["space"] == "local" {
         lines.push(format!(
             "Source local · fixed frame from {}",
@@ -188,12 +260,8 @@ impl Controller {
                         let ids = validate(&session, &context, token.get())?;
                         let requested = options(window)?;
                         let snapshot = session.repeat_stamp();
-                        let report = session.preview_repeat_array_in_space(
-                            &ids,
-                            requested.0,
-                            requested.1,
-                            &snapshot,
-                        )?;
+                        let report =
+                            session.preview_repeat_array_request(&ids, requested, &snapshot)?;
                         Ok::<_, String>((requested, report))
                     })();
                     match result {
@@ -203,9 +271,29 @@ impl Controller {
                             present(window, &report);
                         }
                         Err(error) => {
+                            prepared.set(None);
                             window.set_ready(false);
                             window.set_message(error.into());
                         }
+                    }
+                });
+            }
+        });
+        window.on_use_last_settings({
+            let target = access.downgrade();
+            let (window, prepared) = (window.as_weak(), prepared.clone());
+            move || {
+                with_window(&window, &target, |window, shared| {
+                    let request = lock(shared).last_repeat_array_settings();
+                    match request {
+                        Some(request) => {
+                            load_settings(window, request);
+                            prepared.set(None);
+                            window.set_ready(false);
+                            window.set_summary("".into());
+                            window.set_message("Last applied settings loaded. Preview array for the current selection before applying.".into());
+                        }
+                        None => window.set_message("Apply an array before reusing its settings.".into()),
                     }
                 });
             }
@@ -315,61 +403,25 @@ impl Controller {
             )
             .into(),
         );
-        let pivot = session
-            .transform_tool()
-            .pivot
-            .unwrap_or(session.selection_pivot(&ids)?);
-        let read_vector = |key: &str, fallback: DVec3| {
-            preview[key].as_array().map_or(fallback, |values| {
-                DVec3::new(
-                    values[0].as_f64().unwrap(),
-                    values[1].as_f64().unwrap(),
-                    values[2].as_f64().unwrap(),
-                )
-            })
-        };
-        let (translation, rotation, pivot) = if resume {
-            (
-                read_vector("translation", DVec3::ZERO),
-                read_vector("rotation", DVec3::ZERO),
-                read_vector("pivot", pivot),
-            )
-        } else {
-            (DVec3::X * 64.0, DVec3::ZERO, pivot)
-        };
-        self.window.set_count(if resume {
-            preview["count"].as_i64().unwrap() as i32
-        } else {
-            3
-        });
-        self.window
-            .set_space_index(if resume && preview["space"] == "local" {
-                1
+        load_settings(
+            &self.window,
+            if resume {
+                preview_settings(preview)?
             } else {
-                0
-            });
-        self.window.set_move_x(translation.x.to_string().into());
-        self.window.set_move_y(translation.y.to_string().into());
-        self.window.set_move_z(translation.z.to_string().into());
-        self.window.set_rotate_x(rotation.x.to_string().into());
-        self.window.set_rotate_y(rotation.y.to_string().into());
-        self.window.set_rotate_z(rotation.z.to_string().into());
-        let scale = if resume {
-            read_vector("scale", DVec3::ONE)
-        } else {
-            DVec3::ONE
-        };
-        self.window.set_scale_x(scale.x.to_string().into());
-        self.window.set_scale_y(scale.y.to_string().into());
-        self.window.set_scale_z(scale.z.to_string().into());
-        self.window.set_pivot_x(pivot.x.to_string().into());
-        self.window.set_pivot_y(pivot.y.to_string().into());
-        self.window.set_pivot_z(pivot.z.to_string().into());
-        self.window.set_texture_lock(if resume {
-            preview["texture_lock"] == true
-        } else {
-            session.transform_tool().texture_lock
-        });
+                Request {
+                    count: 3,
+                    translation: DVec3::X * 64.0,
+                    rotation: DVec3::ZERO,
+                    scale: DVec3::ONE,
+                    local: false,
+                    texture_lock: session.transform_tool().texture_lock,
+                    pivot_source: Some(PivotSource::SelectionCenter),
+                    pivot: None,
+                }
+            },
+        );
+        self.window
+            .set_last_settings_available(session.last_repeat_array_settings().is_some());
         self.window.set_summary("".into());
         self.window.set_ready(false);
         self.window
@@ -382,6 +434,8 @@ impl Controller {
     }
 
     pub fn refresh(&self, session: &Session) {
+        self.window
+            .set_last_settings_available(session.last_repeat_array_settings().is_some());
         if let Err(error) = validate(session, &self.context, self.token.get()) {
             self.window.set_ready(false);
             self.window.set_message(error.into());

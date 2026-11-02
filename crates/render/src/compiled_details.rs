@@ -818,6 +818,23 @@ impl SceneMesh {
                 .map(|part| part.intersects(region))
                 .collect::<Vec<_>>()
         });
+        self.append_compiled_details_included(details, included)
+    }
+
+    pub fn append_compiled_details_filtered(
+        &mut self,
+        details: &Self,
+        include: impl FnMut(&Part) -> bool,
+    ) -> Result<(), String> {
+        let included = details.detail_parts.iter().map(include).collect();
+        self.append_compiled_details_included(details, Some(included))
+    }
+
+    fn append_compiled_details_included(
+        &mut self,
+        details: &Self,
+        included: Option<Vec<bool>>,
+    ) -> Result<(), String> {
         let mut allowed_vertices = Vec::new();
         if let Some(included) = &included {
             allowed_vertices

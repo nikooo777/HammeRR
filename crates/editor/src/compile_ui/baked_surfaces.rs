@@ -608,8 +608,13 @@ impl Form {
         );
         self.window
             .set_channels("Inspect to check channel availability".into());
-        self.window
-            .set_message(observation["error"].as_str().unwrap_or("").into());
+        self.window.set_message(
+            observation["error"]
+                .as_str()
+                .or_else(|| observation["suppression_reason"].as_str())
+                .unwrap_or_default()
+                .into(),
+        );
         state.observation = Some(observation);
     }
 

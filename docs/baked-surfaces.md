@@ -59,7 +59,8 @@ prepare again. Other objects still cast shadows on the prop.
 - Supported static shaders are `LightmappedGeneric`, `WorldVertexTransition`, `WorldTwoTextureBlend` and `UnlitGeneric`. Proxies and animated effects are unavailable.
 - Face alpha requires the [supported plain material forms](brush-texture-shadows.md#material-opacity). Alpha modulation, combined cutout/translucent modes and alpha normal/blend effects reject. Translucent display sorts whole batches; intersecting surfaces can sort differently from the game.
 - Normal inputs include ordinary RGB/BGR, DXT, SSBump, signed vector formats and supported 16-bit float/UNORM formats. Undefined or uncertifiable filtered directional responses refuse explicitly.
-- Editing tools, drafts and Faces mode suppress the layer. Working regions include whole final faces and props that intersect the region; they do not clip triangles.
+- Editing tools, drafts and Faces mode suppress the layer. Working boxes, camera-following and draw distance filter whole final faces and props by their bounds; they do not clip triangles.
+- An authored query filter suppresses the layer because native faces and props have no authored object identity. Clear the filter to restore a requested layer.
 - Authored hiding, selection, picking and Undo stay separate. Face ordinals identify this preparation and channel.
 - The preview shows initial brush-model poses. Runtime motion, native adaptation, dynamic lights and exact game appearance are not simulated.
 - Static props require generated vertex lighting. Prop inspection is double-sided. Face density and smoothing groups do not apply to props. Prop lightmaps remain unavailable.

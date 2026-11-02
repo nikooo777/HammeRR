@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 78.1% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 78.7% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -26,6 +26,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [History](history.md) | Shared Undo/Redo and change summaries. | Persistent history and full property diffs. |
 | [External map comparison](map-comparison.md) | Bounded authored world-brush/whole-entity comparison by stored IDs, categorized pages and complete filtered current selection/framing. | No merge, map-settings comparison, recursive-instance expansion or geometric-equivalence claim. |
 | [Selection](selection.md) | Groups/Objects/Solids, owner-preserving child-brush edits, type filters, independent tint/outlines and complete selection bounds, startup defaults, named profiles, overlap cycling, area, volume and paint selection. | Whole-object commands require complete brush owners. |
+| [Working region](working-region.md) | Temporary boxes, camera-following, draw distance and shared object-query rules for display and picking; one Clear restores the view. | Whole owners; unresolved spatial bounds stay visible. Authored query rules suppress native compiled layers. |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | Configurable viewport commands, including temporary editor hide/show. | File, clipboard, physical-key and multi-key bindings. |
 | [Brushes](brushes.md) | Shapes, atomic block-batch import, handles, exact transforms, selection or per-object grid snapping, pivots with grid snapping and saved defaults, mirror and shear. | Magnetic snapping and surface-attached pivots. |
 | [Brush tools](brush-tools.md) | Hollow, carve with explicit cut-material policies, clip, convex merge and polygon extrusion. | Concave merge and holes. |

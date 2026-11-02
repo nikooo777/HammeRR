@@ -1,19 +1,75 @@
 import { Theme } from "theme.slint";
-import { Button, CheckBox, LineEdit } from "widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "widgets.slint";
+import { FieldRow } from "kit.slint";
 
-export component WorkingRegionWindow inherits Window {
-    background: Theme.panel;
-    title: "Working region - HammeRR";
-    preferred-width: 680px;
-    preferred-height: 460px;
+component BoundsFields inherits VerticalLayout {
+    in property <string> label-prefix;
+    in property <bool> fields-enabled: true;
     in-out property <string> min-x: "-64";
     in-out property <string> min-y: "-64";
     in-out property <string> min-z: "-64";
     in-out property <string> max-x: "64";
     in-out property <string> max-y: "64";
     in-out property <string> max-z: "64";
-    in-out property <bool> region-enabled: true;
+    spacing: Theme.space;
+    HorizontalLayout {
+        spacing: Theme.space;
+        Text { width: 84px; }
+        Text { horizontal-stretch: 1; text: "X"; color: Theme.axis-x; }
+        Text { horizontal-stretch: 1; text: "Y"; color: Theme.axis-y; }
+        Text { horizontal-stretch: 1; text: "Z"; color: Theme.axis-z; }
+    }
+    HorizontalLayout {
+        spacing: Theme.space;
+        Text { width: 84px; text: "Minimum"; color: Theme.text-muted; vertical-alignment: center; }
+        LineEdit { enabled: root.fields-enabled; min-width: 0px; horizontal-stretch: 1; text <=> root.min-x; input-type: decimal; accessible-label: root.label-prefix + " minimum X"; }
+        LineEdit { enabled: root.fields-enabled; min-width: 0px; horizontal-stretch: 1; text <=> root.min-y; input-type: decimal; accessible-label: root.label-prefix + " minimum Y"; }
+        LineEdit { enabled: root.fields-enabled; min-width: 0px; horizontal-stretch: 1; text <=> root.min-z; input-type: decimal; accessible-label: root.label-prefix + " minimum Z"; }
+    }
+    HorizontalLayout {
+        spacing: Theme.space;
+        Text { width: 84px; text: "Maximum"; color: Theme.text-muted; vertical-alignment: center; }
+        LineEdit { enabled: root.fields-enabled; min-width: 0px; horizontal-stretch: 1; text <=> root.max-x; input-type: decimal; accessible-label: root.label-prefix + " maximum X"; }
+        LineEdit { enabled: root.fields-enabled; min-width: 0px; horizontal-stretch: 1; text <=> root.max-y; input-type: decimal; accessible-label: root.label-prefix + " maximum Y"; }
+        LineEdit { enabled: root.fields-enabled; min-width: 0px; horizontal-stretch: 1; text <=> root.max-z; input-type: decimal; accessible-label: root.label-prefix + " maximum Z"; }
+    }
+}
+
+export component WorkingRegionWindow inherits Window {
+    background: Theme.panel;
+    title: "Working region - HammeRR";
+    default-font-size: Theme.font;
+    preferred-width: 720px;
+    preferred-height: 720px;
+    min-width: 540px;
+    min-height: 430px;
+    in-out property <string> min-x: "-64";
+    in-out property <string> min-y: "-64";
+    in-out property <string> min-z: "-64";
+    in-out property <string> max-x: "64";
+    in-out property <string> max-y: "64";
+    in-out property <string> max-z: "64";
+    in-out property <bool> region-enabled;
+    in-out property <bool> follow-camera;
+    in-out property <bool> draw-distance-enabled;
+    in-out property <string> draw-distance: "2048";
+    in-out property <bool> filter-enabled;
+    in-out property <string> query;
+    in-out property <int> kind;
+    in-out property <string> classname;
+    in-out property <bool> exact-class;
+    in-out property <string> targetname;
+    in-out property <string> material;
+    in-out property <int> visibility;
+    in-out property <bool> limit-filter-bounds;
+    in-out property <string> filter-min-x: "-16384";
+    in-out property <string> filter-min-y: "-16384";
+    in-out property <string> filter-min-z: "-16384";
+    in-out property <string> filter-max-x: "16384";
+    in-out property <string> filter-max-y: "16384";
+    in-out property <string> filter-max-z: "16384";
     in property <string> summary;
+    in property <string> effective-box;
     in property <string> message;
     callback use-bounds();
     callback apply();
@@ -24,37 +80,78 @@ export component WorkingRegionWindow inherits Window {
         width: parent.width; height: parent.height;
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: Theme.space-xl; spacing: 12px;
-            Text { text: "Working region visibility"; font-size: Theme.font-display; font-weight: 600; }
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: "Working region visibility"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
-            CheckBox { text: "Enabled"; checked <=> root.region-enabled; }
-            Text { text: "Whole objects touching these bounds stay visible. Hidden objects stay hidden. This changes only the editor view; saved visibility and compilation are unaffected."; wrap: word-wrap; color: Theme.text-muted; }
-            HorizontalLayout {
-                spacing: 10px;
-                Text { width: 80px; text: ""; }
-                Text { horizontal-stretch: 1; text: "X"; }
-                Text { horizontal-stretch: 1; text: "Y"; }
-                Text { horizontal-stretch: 1; text: "Z"; }
+            Text { text: "Active filters combine with AND. Matching objects stay whole; hidden objects stay hidden."; wrap: word-wrap; color: Theme.text-muted; }
+            ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    padding-right: Theme.space-xl;
+                    spacing: Theme.space-lg;
+                    Text { text: "Box · world units"; color: Theme.text; font-weight: 600; }
+                    CheckBox { text: "Enable box"; checked <=> root.region-enabled; }
+                    BoundsFields {
+                        label-prefix: "Working region";
+                        min-x <=> root.min-x; min-y <=> root.min-y; min-z <=> root.min-z;
+                        max-x <=> root.max-x; max-y <=> root.max-y; max-z <=> root.max-z;
+                    }
+                    Button { text: "Use selection bounds"; clicked => { root.use-bounds(); } }
+                    CheckBox { text: "Center box on camera"; checked <=> root.follow-camera; }
+                    Text { text: "Keeps the entered box dimensions and moves its center with the camera while the box is enabled."; wrap: word-wrap; color: Theme.text-muted; }
+                    if root.effective-box != "": Text { text: root.effective-box; wrap: word-wrap; color: Theme.text-faint; }
+                    Rectangle { height: 1px; background: Theme.border; }
+                    CheckBox { text: "Limit draw distance"; checked <=> root.draw-distance-enabled; }
+                    FieldRow {
+                        label: "Distance"; inset: false;
+                        LineEdit { enabled: root.draw-distance-enabled; text <=> root.draw-distance; input-type: decimal; accessible-label: "Draw distance in world units"; }
+                        Text { text: "world units"; color: Theme.text-muted; vertical-alignment: center; }
+                    }
+                    Text { text: "Measures from the camera to the nearest point on each whole object's bounds."; wrap: word-wrap; color: Theme.text-muted; }
+                    Rectangle { height: 1px; background: Theme.border; }
+                    CheckBox { text: "Enable object filter"; checked <=> root.filter-enabled; }
+                    FieldRow {
+                        label: "Search"; inset: false;
+                        LineEdit { enabled: root.filter-enabled; text <=> root.query; placeholder-text: "IDs, types, classes, names and materials…"; accessible-label: "Object filter search"; }
+                    }
+                    FieldRow {
+                        label: "Type"; inset: false;
+                        ComboBox { enabled: root.filter-enabled; model: ["All types", "World brushes", "All entities", "Point entities", "Brush entities"]; current-index <=> root.kind; accessible-label: "Object filter type"; }
+                    }
+                    FieldRow {
+                        label: "Class"; inset: false;
+                        LineEdit { enabled: root.filter-enabled; min-width: 0px; horizontal-stretch: 1; text <=> root.classname; placeholder-text: "Entity class contains…"; accessible-label: "Object filter entity class"; }
+                        CheckBox { enabled: root.filter-enabled; text: "Exact class"; checked <=> root.exact-class; }
+                    }
+                    FieldRow {
+                        label: "Entity name"; inset: false;
+                        LineEdit { enabled: root.filter-enabled; text <=> root.targetname; placeholder-text: "Targetname contains…"; accessible-label: "Object filter entity name"; }
+                    }
+                    FieldRow {
+                        label: "Material"; inset: false;
+                        LineEdit { enabled: root.filter-enabled; text <=> root.material; placeholder-text: "Material contains…"; accessible-label: "Object filter material"; }
+                    }
+                    FieldRow {
+                        label: "Visibility"; inset: false;
+                        ComboBox { enabled: root.filter-enabled; model: ["Visible and hidden", "Visible", "Hidden"]; current-index <=> root.visibility; accessible-label: "Object filter authored visibility"; }
+                    }
+                    Text { text: "Search, class, name and material use case-insensitive substrings. Exact class matches the complete class name. Visibility checks saved hidden state and never reveals hidden objects."; wrap: word-wrap; color: Theme.text-muted; }
+                    CheckBox { enabled: root.filter-enabled; text: "Limit object filter to bounds"; checked <=> root.limit-filter-bounds; }
+                    if root.limit-filter-bounds: BoundsFields {
+                        label-prefix: "Object filter";
+                        fields-enabled: root.filter-enabled;
+                        min-x <=> root.filter-min-x; min-y <=> root.filter-min-y; min-z <=> root.filter-min-z;
+                        max-x <=> root.filter-max-x; max-y <=> root.filter-max-y; max-z <=> root.filter-max-z;
+                    }
+                    Text { text: "Changes affect editor display and picking. Saved visibility, selection, Undo history and compilation stay unchanged."; wrap: word-wrap; color: Theme.text-muted; }
+                }
             }
-            HorizontalLayout {
-                spacing: 10px;
-                Text { width: 80px; text: "Minimum"; vertical-alignment: center; }
-                LineEdit { text <=> root.min-x; input-type: decimal; accessible-label: "Working region minimum X"; }
-                LineEdit { text <=> root.min-y; input-type: decimal; accessible-label: "Working region minimum Y"; }
-                LineEdit { text <=> root.min-z; input-type: decimal; accessible-label: "Working region minimum Z"; }
-            }
-            HorizontalLayout {
-                spacing: 10px;
-                Text { width: 80px; text: "Maximum"; vertical-alignment: center; }
-                LineEdit { text <=> root.max-x; input-type: decimal; accessible-label: "Working region maximum X"; }
-                LineEdit { text <=> root.max-y; input-type: decimal; accessible-label: "Working region maximum Y"; }
-                LineEdit { text <=> root.max-z; input-type: decimal; accessible-label: "Working region maximum Z"; }
-            }
-            Button { text: "Use selection bounds"; clicked => { root.use-bounds(); } }
             Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
-            Rectangle { vertical-stretch: 1; }
             HorizontalLayout {
-                spacing: 10px;
+                spacing: Theme.space;
                 Button { text: "Clear working region"; clicked => { root.clear(); } }
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

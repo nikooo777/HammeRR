@@ -1892,20 +1892,24 @@ impl Session {
 
     /// Moves the viewport camera from outside the viewport.
     pub fn set_camera(&mut self, camera: Camera) {
+        let previous = self.camera;
         self.saved_cameras[self.camera.projection.index()] = Some(self.camera);
         self.camera = camera;
         self.cancel_block_preview();
         self.clip_epoch += 1;
         self.interaction_camera_changed();
         self.camera_serial += 1;
+        self.working_region_camera_changed(previous);
     }
 
     /// Records the viewport's own camera movement.
     pub fn publish_camera(&mut self, camera: Camera) {
+        let previous = self.camera;
         if self.camera != camera {
             self.interaction_camera_changed();
         }
         self.camera = camera;
+        self.working_region_camera_changed(previous);
     }
 
     pub fn skybox_preview(&mut self) -> Option<Arc<render::sky::Skybox>> {

@@ -171,6 +171,63 @@ when `tool_textures:false`.
 Temporary render overrides do not change the shared camera or view settings.
 Point lights use ordinary entity markers. Their marker is not an illumination preview.
 
+## Working-region visibility
+
+1. Call `get_working_region` to read the current `snapshot`, saved `mins`/`maxs`,
+   `enabled`, `options`, `active`, effective bounds, `camera_position` and
+   `camera_anchor`.
+2. Pass that `snapshot` to `set_working_region` with one action:
+
+   | `action` | Additional fields | Effect |
+   | --- | --- | --- |
+   | `set` | Required `mins`, `maxs`; optional `enabled`, `options` | Set the saved box. `enabled` defaults to `true`. Omitted/null `options` preserves current options; an options object replaces them atomically with the box. |
+   | `selection_bounds` | Optional `enabled` | Capture current object/face selection bounds and preserve options. `enabled` defaults to `true`; empty selection rejects. |
+   | `configure` | Required `options` | Replace all options and preserve saved box/enabled state. |
+   | `clear` | None | Reset the box and all options. |
+
+3. Inspect the result or call `render_view`. Use `get_working_region` with
+   `offset` and `limit` (default 50, range 1–200) to page object/child-brush
+   inclusion reasons and bounds sources. Counts cover all display filters.
+
+`options` accepts `draw_distance` (a positive finite distance, or `null` to
+disable), `follow_camera` (default `false`) and `filter` (an object-report filter,
+or `null` to disable). Omitted fields reset to their defaults when options are
+supplied. For example:
+
+```json
+{
+  "snapshot": "<get_working_region.snapshot>",
+  "action": "configure",
+  "options": {
+    "draw_distance": 4096,
+    "filter": { "classname": "prop_static", "exact_class": true }
+  }
+}
+```
+
+The enabled box, draw distance and query filter combine with AND for whole
+owners. Distance and query filters can operate without an enabled box.
+Distance uses the closest point on each owner's bounds. `camera_anchor` is the
+perspective eye or orthographic view center; both spatial filters use it.
+`follow_camera:true` centers the enabled box's saved dimensions on the camera;
+`effective_mins`/`effective_maxs` report its current placement without changing
+the saved corners. Query filters use the same rules as `get_object_report`:
+case-insensitive substring `query`, `classname`, `targetname` and `material`;
+`exact_class:true` makes classname matching exact; `kind` accepts `solid`,
+`entity`, `point_entity` or `brush_entity`; `hidden` matches authored hidden
+state; `within:[[min_x,min_y,min_z],[max_x,max_y,max_z]]` tests bounds
+intersection. Every specified rule must match. Unknown display bounds stay
+visible to box/distance filters and report `unresolved_bounds`; `within` requires
+known bounds. Exclusions report `outside_working_region`, `outside_draw_distance`
+or `object_filter`. Saved Hide, editor-hidden exclusions and tool-texture
+filtering still apply independently.
+
+Unknown fields, fields incompatible with the action, stale snapshots and
+invalid values reject the whole request. Changes affect rendering and spatial
+picking while preserving map source, selection, Undo, compile scope and owned
+geometry/overlay drafts. Active spatial gestures are cancelled. `clear` remains
+available when every object is excluded. See [Working region](working-region.md).
+
 ## Preview authored lighting
 
 1. Call `get_view` to inspect shared viewport settings.

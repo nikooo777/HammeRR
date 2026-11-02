@@ -559,8 +559,13 @@ impl Form {
             .into(),
         );
         self.window.set_build_state("State changed. Refresh inspection to check source/output freshness and show native records.".into());
-        self.window
-            .set_message(observation["error"].as_str().unwrap_or("").into());
+        self.window.set_message(
+            observation["error"]
+                .as_str()
+                .or_else(|| observation["suppression_reason"].as_str())
+                .unwrap_or_default()
+                .into(),
+        );
         self.state.borrow_mut().offset = 0;
         self.state.borrow_mut().observation = Some(observation);
     }

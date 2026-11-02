@@ -8,7 +8,14 @@ use glam::DVec3;
 use map_core::{Document, ObjectId, query};
 use serde_json::{Value, json};
 
-use super::{Actor, Session, models::Models};
+use super::{
+    Actor, Session,
+    management::ObjectReport,
+    models::{self, Models},
+};
+
+pub mod options;
+pub use options::Options;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Key {
@@ -20,20 +27,35 @@ struct Key {
     document: usize,
     document_revision: u64,
     tools: bool,
+    camera: Option<[u64; 3]>,
 }
 
 #[derive(Default)]
 pub(super) struct State {
     pub enabled: bool,
     pub bounds: Option<[DVec3; 2]>,
+    pub(super) options: Options,
     pub(super) serial: u64,
     pub(super) editor_hidden: Arc<HashSet<ObjectId>>,
     cache: RefCell<Option<(Key, Arc<Evaluation>)>>,
 }
 
 pub enum Action {
-    Set { bounds: [DVec3; 2], enabled: bool },
-    SelectionBounds { enabled: bool },
+    Set {
+        bounds: [DVec3; 2],
+        enabled: bool,
+    },
+    SetWithOptions {
+        bounds: [DVec3; 2],
+        enabled: bool,
+        options: Options,
+    },
+    SelectionBounds {
+        enabled: bool,
+    },
+    Configure {
+        options: Options,
+    },
     Clear,
 }
 
@@ -86,10 +108,41 @@ fn intersects(bounds: [DVec3; 2], region: [DVec3; 2]) -> bool {
     bounds[0].cmple(region[1]).all() && bounds[1].cmpge(region[0]).all()
 }
 
+fn camera_anchor(camera: render::Camera) -> DVec3 {
+    let position = camera.position.as_dvec3();
+    if camera.projection == render::Projection::Perspective {
+        position
+    } else {
+        position + camera.forward().as_dvec3() * f64::from(render::Camera::ORTHO_DISTANCE)
+    }
+}
+
 fn checked_bounds(bounds: Option<(DVec3, DVec3)>) -> Option<[DVec3; 2]> {
     bounds
-        .filter(|(mins, maxs)| mins.is_finite() && maxs.is_finite())
+        .filter(|(mins, maxs)| mins.is_finite() && maxs.is_finite() && mins.cmple(*maxs).all())
         .map(|(mins, maxs)| [mins, maxs])
+}
+
+struct SpatialEligibility {
+    outside_region: bool,
+    outside_distance: bool,
+}
+
+impl SpatialEligibility {
+    fn included(&self) -> bool {
+        !self.outside_region && !self.outside_distance
+    }
+
+    fn reasons(&self) -> Vec<&'static str> {
+        let mut reasons = Vec::new();
+        if self.outside_region {
+            reasons.push("outside_working_region");
+        }
+        if self.outside_distance {
+            reasons.push("outside_draw_distance");
+        }
+        reasons
+    }
 }
 
 fn display_solid_bounds(solid: &source_formats::vmf::Solid) -> Option<[DVec3; 2]> {
@@ -118,11 +171,12 @@ fn display_solid_bounds(solid: &source_formats::vmf::Solid) -> Option<[DVec3; 2]
 }
 
 fn records(
+    session: &Session,
     document: &Document,
     models: &Models,
     helpers: &std::collections::BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
-    region: Option<[DVec3; 2]>,
 ) -> Vec<Record> {
+    #[derive(Clone, Copy)]
     enum Source<'a> {
         Solid(&'a source_formats::vmf::Solid),
         Entity(&'a source_formats::vmf::Entity),
@@ -133,6 +187,12 @@ fn records(
         .iter()
         .map(|instance| (instance.id, instance))
         .collect::<HashMap<_, _>>();
+    let filter = session
+        .working_region
+        .options
+        .filter
+        .as_ref()
+        .map(|filter| (filter, session.display_bounds_with_models(document, models)));
     let vmf = document.vmf();
     let sources = vmf
         .world
@@ -208,17 +268,24 @@ fn records(
                 }
             }
         };
-        let outside =
-            region.is_some_and(|region| bounds.is_some_and(|bounds| !intersects(bounds, region)));
+        let spatial = session.working_region_spatial_eligibility(bounds);
+        let filtered = filter.as_ref().is_some_and(|(filter, report_bounds)| {
+            let bounds = models::object_bounds(document, id, report_bounds);
+            let report = match object {
+                Source::Solid(solid) => ObjectReport::from_solid(solid, bounds),
+                Source::Entity(entity) => ObjectReport::from_entity(entity, bounds),
+            };
+            !filter.matches(&report)
+        });
         let no_visible_children =
             !children.is_empty() && children.iter().all(|(child, _)| child.hidden);
-        let included = !hidden && !outside && !no_visible_children;
-        let mut reasons = Vec::new();
+        let included = !hidden && spatial.included() && !filtered && !no_visible_children;
+        let mut reasons = spatial.reasons();
         if hidden || no_visible_children {
             reasons.push("authored_hidden");
         }
-        if outside {
-            reasons.push("outside_working_region");
+        if filtered {
+            reasons.push("object_filter");
         }
         if bounds.is_none() && !no_visible_children {
             reasons.push("unresolved_bounds");
@@ -233,15 +300,15 @@ fn records(
             error,
         });
         for (child, bounds) in children {
-            let mut reasons = Vec::new();
+            let mut reasons = spatial.reasons();
             if hidden {
                 reasons.push("owner_hidden");
             }
             if child.hidden {
                 reasons.push("authored_hidden");
             }
-            if outside {
-                reasons.push("outside_working_region");
+            if filtered {
+                reasons.push("object_filter");
             }
             if bounds.is_none() {
                 reasons.push("unresolved_bounds");
@@ -275,7 +342,70 @@ fn apply_editor_hidden(records: &mut [Record], hidden: &HashSet<ObjectId>) {
 
 impl Session {
     pub(super) fn display_visibility_filtered(&self) -> bool {
-        self.working_region.enabled || !self.working_region.editor_hidden.is_empty()
+        self.working_region_enabled() || !self.working_region.editor_hidden.is_empty()
+    }
+
+    pub(super) fn working_region_effective_bounds(&self) -> Option<[DVec3; 2]> {
+        let [mins, maxs] = self
+            .working_region
+            .enabled
+            .then_some(self.working_region.bounds)
+            .flatten()?;
+        if !self.working_region.options.follow_camera {
+            return Some([mins, maxs]);
+        }
+        let center = camera_anchor(self.camera);
+        let half = (maxs - mins) * 0.5;
+        checked_bounds(Some((center - half, center + half)))
+    }
+
+    pub(super) fn working_region_camera_dependent(&self) -> bool {
+        self.working_region.options.draw_distance.is_some()
+            || (self.working_region.enabled && self.working_region.options.follow_camera)
+    }
+
+    fn working_region_camera_key(&self) -> Option<[u64; 3]> {
+        self.working_region_camera_dependent()
+            .then(|| camera_anchor(self.camera).to_array().map(f64::to_bits))
+    }
+
+    fn working_region_spatial_eligibility(&self, bounds: Option<[DVec3; 2]>) -> SpatialEligibility {
+        let bounds = bounds.and_then(|[mins, maxs]| checked_bounds(Some((mins, maxs))));
+        let outside_region = self
+            .working_region_effective_bounds()
+            .is_some_and(|region| bounds.is_some_and(|bounds| !intersects(bounds, region)));
+        let camera = camera_anchor(self.camera);
+        let outside_distance = camera.is_finite()
+            && self
+                .working_region
+                .options
+                .draw_distance
+                .is_some_and(|distance| {
+                    bounds.is_some_and(|[mins, maxs]| {
+                        camera.distance_squared(camera.clamp(mins, maxs)) > distance * distance
+                    })
+                });
+        SpatialEligibility {
+            outside_region,
+            outside_distance,
+        }
+    }
+
+    pub(super) fn working_region_bounds_visible(&self, bounds: Option<[DVec3; 2]>) -> bool {
+        self.working_region_spatial_eligibility(bounds).included()
+    }
+
+    pub(super) fn working_region_camera_changed(&mut self, previous: render::Camera) {
+        if camera_anchor(previous) == camera_anchor(self.camera)
+            || !self.working_region_camera_dependent()
+        {
+            return;
+        }
+        self.invalidate_display_visibility_gestures();
+        self.working_region.serial += 1;
+        self.preflight_sky3d_preview();
+        self.scene_serial += 1;
+        self.view_serial += 1;
     }
 
     pub(super) fn editor_object_hidden(&self, id: ObjectId) -> bool {
@@ -306,6 +436,8 @@ impl Session {
 
     pub fn working_region_enabled(&self) -> bool {
         self.working_region.enabled
+            || self.working_region.options.draw_distance.is_some()
+            || self.working_region.options.filter.is_some()
     }
 
     pub(super) fn working_evaluation(&self, document: &Document) -> Arc<Evaluation> {
@@ -318,6 +450,7 @@ impl Session {
             document: document as *const Document as usize,
             document_revision: document.revision(),
             tools: self.view.tool_textures,
+            camera: self.working_region_camera_key(),
         };
         if let Some((old, evaluation)) = self.working_region.cache.borrow().as_ref()
             && old == &key
@@ -329,8 +462,8 @@ impl Session {
         let helpers = self.fgd_helper_appearances(document, &models);
         let mut objects = HashSet::new();
         let mut solids = HashSet::new();
-        let records = if self.working_region.enabled {
-            let mut records = records(document, &models, &helpers, self.working_region.bounds);
+        let records = if self.working_region_enabled() {
+            let mut records = records(self, document, &models, &helpers);
             apply_editor_hidden(&mut records, &self.working_region.editor_hidden);
             for record in &records {
                 if record.included {
@@ -364,7 +497,7 @@ impl Session {
             }
             Vec::new()
         };
-        let excluded = if self.working_region.enabled {
+        let excluded = if self.working_region_enabled() {
             records.iter().filter(|record| !record.included).count()
         } else {
             document
@@ -410,6 +543,15 @@ impl Session {
             || self.working_evaluation(document).objects.contains(&id)
     }
 
+    pub(super) fn working_region_filter_matches(&self, document: &Document, id: ObjectId) -> bool {
+        self.working_region.options.filter.is_none()
+            || self
+                .working_evaluation(document)
+                .records
+                .iter()
+                .any(|record| record.id == id && !record.reasons.contains(&"object_filter"))
+    }
+
     pub(super) fn working_solid_visible(&self, document: &Document, id: u32) -> bool {
         !self.display_visibility_filtered()
             || self.working_evaluation(document).solids.contains(&id)
@@ -453,13 +595,32 @@ impl Session {
         Ok([mins, maxs])
     }
 
+    pub(super) fn working_region_configuration(&self) -> Value {
+        let effective = self.working_region_effective_bounds();
+        json!({
+            "visibility_revision":self.working_region.serial,
+            "enabled":self.working_region.enabled,
+            "active":self.working_region_enabled(),
+            "mins":self.working_region.bounds.map(|bounds|bounds[0].to_array()),
+            "maxs":self.working_region.bounds.map(|bounds|bounds[1].to_array()),
+            "effective_mins":effective.map(|bounds|bounds[0].to_array()),
+            "effective_maxs":effective.map(|bounds|bounds[1].to_array()),
+            "options":self.working_region.options,
+            "camera_position":self.working_region_camera_dependent().then(||self.camera.position.to_array()),
+            "camera_anchor":self.working_region_camera_dependent().then(||camera_anchor(self.camera).to_array())
+        })
+    }
+
     pub fn working_region_summary(&self) -> Value {
         let counts = self.display_visibility_filtered().then(|| {
             let evaluation = self.working_evaluation(self.render_document());
             let selected = self
                 .selection
                 .iter()
-                .filter(|id| !evaluation.objects.contains(id))
+                .filter(|id| match id {
+                    ObjectId::Solid(solid) => !evaluation.solids.contains(solid),
+                    ObjectId::Entity(_) => !evaluation.objects.contains(id),
+                })
                 .count()
                 + self
                     .face_selection
@@ -468,7 +629,15 @@ impl Session {
                     .count();
             (evaluation.excluded, selected)
         });
-        json!({"snapshot":self.working_region_stamp(),"enabled":self.working_region.enabled,"mins":self.working_region.bounds.map(|bounds|bounds[0].to_array()),"maxs":self.working_region.bounds.map(|bounds|bounds[1].to_array()),"excluded":counts.map(|counts|counts.0),"selected_excluded":counts.map(|counts|counts.1),"counts_scope":"working_region_authored_and_editor_visibility","policy":"Session-only whole-owner bounds intersection; source, selection, history and compilation are unchanged."})
+        let mut report = self.working_region_configuration();
+        report["snapshot"] = json!(self.working_region_stamp());
+        report["excluded"] = json!(counts.map(|counts| counts.0));
+        report["selected_excluded"] = json!(counts.map(|counts| counts.1));
+        report["counts_scope"] = json!("working_region_authored_and_editor_visibility");
+        report["policy"] = json!(
+            "Session-only whole-owner intersection with the effective box, camera distance sphere and shared object filter. Unknown display bounds stay visible to spatial filters. Source, selection, history and compilation are unchanged."
+        );
+        report
     }
 
     pub fn set_working_region(
@@ -484,26 +653,49 @@ impl Session {
             return Err("Map, selection or view changed; inspect the working region again".into());
         }
         let next = match action {
-            Action::Clear => (false, None),
-            Action::Set { bounds, enabled } => (enabled, Some(bounds)),
-            Action::SelectionBounds { enabled } => {
-                (enabled, Some(self.working_region_selection_bounds()?))
+            Action::Clear => (false, None, Options::default()),
+            Action::Set { bounds, enabled } => {
+                (enabled, Some(bounds), self.working_region.options.clone())
             }
+            Action::SetWithOptions {
+                bounds,
+                enabled,
+                options,
+            } => (enabled, Some(bounds), options),
+            Action::SelectionBounds { enabled } => (
+                enabled,
+                Some(self.working_region_selection_bounds()?),
+                self.working_region.options.clone(),
+            ),
+            Action::Configure { options } => (
+                self.working_region.enabled,
+                self.working_region.bounds,
+                options,
+            ),
         };
         if let Some(bounds) = next.1 {
             validate(bounds)?;
         }
-        if (self.working_region.enabled, self.working_region.bounds) != next {
+        next.2.validate()?;
+        if (self.working_region.enabled, self.working_region.bounds) != (next.0, next.1)
+            || self.working_region.options != next.2
+        {
+            let serial = self
+                .working_region
+                .serial
+                .checked_add(1)
+                .ok_or("Working region revision exhausted")?;
             self.invalidate_display_visibility_gestures();
             self.working_region.enabled = next.0;
             self.working_region.bounds = next.1;
-            self.working_region.serial += 1;
+            self.working_region.options = next.2;
+            self.working_region.serial = serial;
             self.preflight_sky3d_preview();
             self.scene_serial += 1;
             self.view_serial += 1;
             self.log(
                 actor,
-                if next.0 {
+                if self.working_region_enabled() {
                     "Set working region visibility"
                 } else {
                     "Cleared or disabled working region visibility"
@@ -520,12 +712,12 @@ impl Session {
         self.hidden_tool_brushes();
         let document = self.render_document();
         let evaluation = self.working_evaluation(document);
-        let mut records = if self.working_region.enabled {
+        let mut records = if self.working_region_enabled() {
             evaluation.records.clone()
         } else {
-            records(document, &evaluation.models, &evaluation.helpers, None)
+            records(self, document, &evaluation.models, &evaluation.helpers)
         };
-        if !self.working_region.enabled {
+        if !self.working_region_enabled() {
             apply_editor_hidden(&mut records, &self.working_region.editor_hidden);
         }
         if !self.view.tool_textures {

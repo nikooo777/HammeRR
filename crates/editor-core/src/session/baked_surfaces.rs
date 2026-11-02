@@ -24,7 +24,7 @@ const SOURCE_MODE: baked_build::SourceVerification =
         maximum_bytes: MAX_METADATA_BYTES,
     };
 const DISPLAY_POLICY: &str = "Selected final BSP FACE and LIGHTING channel, without substitution. Stored style 0 defaults to unity; other omitted stored IDs default to zero. Linear RGBExp32/255 maps use face-isolated bilinear sampling at native luxel centers and static material directional reconstruction. Resolved compiled diffuse/blend and static tint multiply linear lighting times 2^EV, then one Reinhard transform and one sRGB output. No editor lighting or native appearance/adaptation parity.";
-const VIEW_POLICY: &str = "The compiled surface layer replaces authored brush and terrain draw surfaces. Working regions include whole final faces whose initial-pose world AABB intersects the region, without clipping triangles. Authored hiding is independent of this immutable compiled layer; no contributor-derived surface subsets are inferred. Authored selection outlines, picking, entities and helpers remain authored; native FACE ordinals are not authored identities.";
+const VIEW_POLICY: &str = "The compiled surface layer replaces authored brush and terrain draw surfaces. Working regions and draw distance include whole final faces and props by their initial-pose world AABB, without clipping triangles. Camera-following uses the effective working box. Authored query filters suppress the compiled layer because native records have no authored object identity; no contributor-derived subsets are inferred. Authored hiding, selection outlines, picking, entities and helpers remain authored; native FACE ordinals are not authored identities.";
 const PROP_POLICY: &str = "Final static-prop geometry uses the exact selected hardware draw LOD and native placement/skin. VHV RGB is decoded per hardware vertex as pow(2*byte/255,2.2_f32) before interpolation. Shared channel and exposure apply; static weight is fixed at 1 and FACE style gains do not affect VHV. Runtime point/spot style contributions are not simulated. Material coverage is independent of VHV alpha. Inspection is double-sided and does not claim native appearance/adaptation parity.";
 
 #[derive(
@@ -507,16 +507,29 @@ impl Session {
     }
 
     fn baked_surface_context_ready(&self) -> bool {
-        !self.face_mode
-            && !self.viewport_pick_conflict()
-            && !self.measurement_picking()
-            && !self.linked_path_picking()
-            && !self.paint_enabled()
-            && self.component_selection().is_empty()
-            && std::ptr::eq(self.render_document(), self.document())
-            && self.block_preview.is_none()
-            && self.property_draft().is_none()
-            && self.ensure_partitions_resolved().is_ok()
+        self.baked_surface_suppression_reason().is_none()
+    }
+
+    fn baked_surface_suppression_reason(&self) -> Option<&'static str> {
+        if self.working_region.options.filter.is_some() {
+            return Some(
+                "Clear the working-region query filter to show baked surfaces; final native faces and props have no authored object identity",
+            );
+        }
+        if self.face_mode
+            || self.viewport_pick_conflict()
+            || self.measurement_picking()
+            || self.linked_path_picking()
+            || self.paint_enabled()
+            || !self.component_selection().is_empty()
+            || !std::ptr::eq(self.render_document(), self.document())
+            || self.block_preview.is_some()
+            || self.property_draft().is_some()
+            || self.ensure_partitions_resolved().is_err()
+        {
+            return Some("Use Objects mode and finish editing tools/drafts");
+        }
+        None
     }
 
     fn baked_surface_current(&self, control: &Control) -> Result<(Value, Value, bool), String> {
@@ -578,10 +591,10 @@ impl Session {
     }
 
     pub fn baked_surfaces_observation(&self) -> Value {
-        json!({"token":self.baked_surface_token(),"status":if self.baked_surfaces.status.is_empty(){"not_loaded"}else{self.baked_surfaces.status},
-            "worker_active":self.baked_surfaces.worker.busy(),"requested":self.baked_surfaces.requested,"displayed":self.baked_surfaces.displayed,
+        json!({"token":self.baked_surface_token(),"status":if self.baked_surfaces.requested && !self.baked_surface_context_ready(){"context_suppressed"}else if self.baked_surfaces.status.is_empty(){"not_loaded"}else{self.baked_surfaces.status},
+            "worker_active":self.baked_surfaces.worker.busy(),"requested":self.baked_surfaces.requested,"displayed":self.baked_surfaces_visible(),
             "complete":self.baked_surfaces.ready.is_some(),"error":self.baked_surfaces.error,"lighting_options":self.baked_surfaces.options,"preparation_options":self.baked_surfaces.preparation,
-            "context_ready":self.baked_surface_context_ready(),"build":self.compiled_world_light_observation()})
+            "context_ready":self.baked_surface_context_ready(),"suppression_reason":self.baked_surface_suppression_reason(),"working_region":self.working_region_configuration(),"build":self.compiled_world_light_observation()})
     }
 
     pub fn baked_surfaces_options_report(&self) -> Value {
@@ -706,7 +719,7 @@ impl Session {
             "requested":self.baked_surfaces.requested,"displayed":self.baked_surfaces.displayed,"worker_active":self.baked_surfaces.worker.busy(),
             "complete":ready.is_some(),"error":self.baked_surfaces.error,"lighting_options":self.baked_surfaces.options,"preparation_options":self.baked_surfaces.preparation,"lighting":self.baked_surfaces_options_report(),
             "prepare_available":build["current"]==true && !self.baked_surfaces.worker.busy(),"prepare_unavailable_reason":if self.baked_surfaces.worker.busy(){Some("Wait for the baked surface worker")}else if build["current"]!=true{Some("Compile a current successful owned build first")}else{None},
-            "suppression_reason":if self.baked_surface_context_ready(){None}else{Some("Use Objects mode and finish editing tools/drafts")},
+            "suppression_reason":self.baked_surface_suppression_reason(),
             "record_kind":record_kind,"page":{"record_kind":record_kind,"offset":offset,"limit":limit,"total":total,"returned":rows.len(),"next_offset":total.filter(|total|offset+rows.len()<*total).map(|_|offset+rows.len()),"rows":rows},
             "record_unavailable_reason":if record_kind == RecordKind::StaticProps && prop_scene.is_none(){Some("Prepare with Compiled static props enabled to inspect static props")}else{None},
             "counts":surfaces.map(|surfaces|json!({"faces":surfaces.len(),"world_detail":surfaces.iter().filter(|surface|surface.model==0&&!surface.terrain).count(),"terrain":surfaces.iter().filter(|surface|surface.terrain).count(),"brush_model":surfaces.iter().filter(|surface|surface.model!=0&&!surface.terrain).count()})),
@@ -793,11 +806,8 @@ impl Session {
         self.check_baked_surface_token(token)?;
         if visible {
             self.inspection_viewport_ready("showing baked surfaces")?;
-            if !self.baked_surface_context_ready() {
-                return Err(
-                    "Show baked surfaces requires Objects mode and completed editing tools/drafts"
-                        .into(),
-                );
+            if let Some(reason) = self.baked_surface_suppression_reason() {
+                return Err(reason.into());
             }
             let control = Control::default();
             if !self.baked_surface_current(&control)?.2 {
@@ -903,7 +913,7 @@ impl Session {
     }
 
     pub(super) fn baked_surfaces_visible(&self) -> bool {
-        self.baked_surfaces.displayed
+        self.baked_surfaces.displayed && self.baked_surface_context_ready()
     }
 
     pub(super) fn baked_static_prop_replaces(
@@ -1007,15 +1017,10 @@ impl Session {
     }
 
     fn baked_bounds_in_region(&self, mins: [f32; 3], maxs: [f32; 3]) -> bool {
-        self.working_region
-            .enabled
-            .then_some(self.working_region.bounds)
-            .flatten()
-            .is_none_or(|region| {
-                let mins = glam::DVec3::from_array(mins.map(f64::from));
-                let maxs = glam::DVec3::from_array(maxs.map(f64::from));
-                mins.cmple(region[1]).all() && maxs.cmpge(region[0]).all()
-            })
+        self.working_region_bounds_visible(Some([
+            glam::DVec3::from_array(mins.map(f64::from)),
+            glam::DVec3::from_array(maxs.map(f64::from)),
+        ]))
     }
 
     pub(super) fn append_baked_surfaces(

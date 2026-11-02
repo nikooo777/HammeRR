@@ -403,14 +403,29 @@ impl Session {
     }
 
     fn detail_context_ready(&self) -> bool {
-        !self.face_mode
-            && !self.viewport_pick_conflict()
-            && !self.measurement_picking()
-            && !self.linked_path_picking()
-            && !self.paint_enabled()
-            && self.component_selection().is_empty()
-            && std::ptr::eq(self.render_document(), self.document())
-            && self.block_preview.is_none()
+        self.detail_suppression_reason().is_none()
+    }
+
+    fn detail_suppression_reason(&self) -> Option<&'static str> {
+        if self.working_region.options.filter.is_some() {
+            return Some(
+                "Clear the working-region query filter to show compiled details; final native props have no authored object identity",
+            );
+        }
+        if self.face_mode
+            || self.viewport_pick_conflict()
+            || self.measurement_picking()
+            || self.linked_path_picking()
+            || self.paint_enabled()
+            || !self.component_selection().is_empty()
+            || !std::ptr::eq(self.render_document(), self.document())
+            || self.block_preview.is_some()
+        {
+            return Some(
+                "Use Objects mode and finish editing tools/drafts to show the compiled detail layer",
+            );
+        }
+        None
     }
 
     fn detail_current(&self, control: &Control) -> Result<Freshness, String> {
@@ -453,12 +468,12 @@ impl Session {
 
     pub fn compiled_details_observation(&self) -> Value {
         json!({"build":self.compiled_world_light_observation(),"token":self.detail_token(),
-            "status":if self.compiled_details.status.is_empty(){"not_loaded"}else{self.compiled_details.status},
+            "status":if self.compiled_details.requested && self.compiled_details.ready.as_ref().is_some_and(|ready|ready.geometry.is_some()) && !self.detail_context_ready(){"context_suppressed"}else if self.compiled_details.status.is_empty(){"not_loaded"}else{self.compiled_details.status},
             "worker_active":self.compiled_details.worker.busy(),"requested":self.compiled_details.requested,
-            "displayed":self.compiled_details.displayed,"error":self.compiled_details.error,
+            "displayed":self.compiled_details.displayed && self.detail_context_ready(),"error":self.compiled_details.error,
             "lighting":self.compiled_details.lighting.mode.name(),"lighting_options":self.compiled_details.lighting,
             "complete":self.compiled_details.ready.as_ref().is_some_and(|ready|ready.geometry.is_some()),
-            "context_ready":self.detail_context_ready(),"working_region":{"enabled":self.working_region.enabled,"bounds":self.working_region.bounds.map(|bounds|bounds.map(|point|point.to_array()))},"total":self.compiled_details.ready.as_ref().map(|ready|ready.records.props.len())})
+            "context_ready":self.detail_context_ready(),"suppression_reason":self.detail_suppression_reason(),"working_region":self.working_region_configuration(),"total":self.compiled_details.ready.as_ref().map(|ready|ready.records.props.len())})
     }
 
     pub fn compiled_details_lighting_report(&self) -> Value {
@@ -573,6 +588,7 @@ impl Session {
             "lighting":lighting_rows.as_ref().map(|rows|&rows[ordinal-offset]),"light_styles":prop.light_styles,"light_style_count":prop.light_style_count,
             "source_association":null,
             "bounds":ready.geometry.as_ref().and_then(|mesh|mesh.detail_parts.iter().find(|part|part.ordinal==ordinal)).map(|part|part.bounds.map(|point|point.to_array())),
+            "in_working_region":ready.geometry.as_ref().and_then(|mesh|mesh.detail_parts.iter().find(|part|part.ordinal==ordinal)).map(|part|self.working_region_bounds_visible(Some(part.bounds))),
             "bounds_policy":if prop.kind==1 && prop.orientation!=0 {"conservative_camera_rotation_envelope"}else{"posed_geometry"}
         })).collect::<Vec<_>>()).unwrap_or_default();
         let status = if ready.is_some() && !state.current {
@@ -591,14 +607,14 @@ impl Session {
             "build":state.build,"preview_assets":state.preview_assets,"current":state.current,"requested":self.compiled_details.requested,"displayed":self.compiled_details.displayed,"worker_active":self.compiled_details.worker.busy(),
             "complete":ready.is_some_and(|ready|ready.geometry.is_some()),"error":self.compiled_details.error,
             "lighting":self.compiled_details_lighting_report(),
-            "suppression_reason":if self.detail_context_ready(){None}else{Some("Use Objects mode and finish editing tools/drafts to show the compiled detail layer")},
+            "suppression_reason":self.detail_suppression_reason(),"working_region":self.working_region_summary(),
             "page":{"offset":offset,"limit":limit,"total":total,"returned":rows.len(),"next_offset":total.filter(|total|offset+rows.len()<*total).map(|_|offset+rows.len()),"rows":rows},
             "sprite_material":ready.map(|ready|ready.material.as_str()),"counts":ready.map(|ready|{
                 let mut counts=[0usize;4]; for prop in &ready.records.props { counts[usize::from(prop.kind)]+=1; }
                 json!({"models":counts[0],"cards":counts[1],"cross":counts[2],"tri":counts[3]})}),
             "geometry":ready.and_then(|ready|ready.geometry.as_ref()).map(|mesh|json!({"vertices":mesh.vertices.len(),"indices":mesh.indices.len(),"wire_vertices":mesh.wire_lines.len()+mesh.detail_billboards.len()*8,"billboard_cards":mesh.detail_billboards.len(),"retained_bytes":mesh.compiled_detail_bytes()})),
             "preview_resources_bytes":ready.map(|ready|ready.asset_bytes),"notes":NOTES,
-            "view_policy":{"working_region":"whole_compiled_prop_bounds; camera-facing cards use a conservative rotation envelope","authored_editor_hiding":"independent; native records have no authored owner","eligible_records":ready.and_then(|ready|ready.geometry.as_ref()).map(|mesh|mesh.detail_parts.len()),"region_records":ready.and_then(|ready|ready.geometry.as_ref()).map(|mesh|mesh.detail_parts.iter().filter(|part|!self.working_region.enabled || self.working_region.bounds.is_none_or(|region|part.intersects(region))).count())},
+            "view_policy":{"working_region":"whole_compiled_prop_bounds with draw distance and the effective camera-following box; camera-facing cards use a conservative rotation envelope","authored_editor_hiding":"independent; native records have no authored owner","authored_query_filter":"suppresses_layer_without_authored_object_identity","eligible_records":ready.and_then(|ready|ready.geometry.as_ref()).map(|mesh|mesh.detail_parts.len()),"region_records":ready.and_then(|ready|ready.geometry.as_ref()).map(|mesh|mesh.detail_parts.iter().filter(|part|self.working_region_bounds_visible(Some(part.bounds))).count())},
             "limits":{"bsp_bytes":baked_build::MAX_BSP_BYTES,"decoded_bsp_bytes":baked_build::MAX_BSP_BYTES,"rows":MAX_ROWS,"props":source_formats::bsp::MAX_DETAIL_PROPS,"geometry_bytes":render::compiled_details::MAX_BYTES,"preview_source_bytes":assets::MAX_ASSET_BYTES,"model_asset_bytes":assets::MAX_ASSET_BYTES,"texture_payload_bytes":assets::MAX_ASSET_BYTES,"metadata_bytes":MAX_METADATA_BYTES,"active_workers":1}});
         let observed = self.detail_current(&Control::default())?;
         if observed.build["status"] == "unavailable" {
@@ -666,8 +682,8 @@ impl Session {
             return self.inspect_compiled_details(None, 0, MAX_ROWS);
         }
         self.inspection_viewport_ready("showing compiled details")?;
-        if !self.detail_context_ready() {
-            return Err("Show compiled details requires Objects mode with no active editing tool or geometry draft".into());
+        if let Some(reason) = self.detail_suppression_reason() {
+            return Err(reason.into());
         }
         let control = Control::default();
         if !self.detail_current(&control)?.current {
@@ -833,13 +849,9 @@ impl Session {
             .ready
             .as_ref()
             .and_then(|ready| ready.geometry.as_ref())
-            && let Err(error) = mesh.append_compiled_details(
-                details,
-                self.working_region
-                    .enabled
-                    .then_some(self.working_region.bounds)
-                    .flatten(),
-            )
+            && let Err(error) = mesh.append_compiled_details_filtered(details, |part| {
+                self.working_region_bounds_visible(Some(part.bounds))
+            })
         {
             self.compiled_details.requested = false;
             self.compiled_details.displayed = false;

@@ -9,13 +9,27 @@ pub struct WorkingRegionInspectArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WorkingRegionSetArgs {
-    pub snapshot: String,
-    pub action: String,
-    pub enabled: Option<bool>,
-    pub mins: Option<[f64; 3]>,
-    pub maxs: Option<[f64; 3]>,
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(extend("type" = "object"))]
+pub enum WorkingRegionSetArgs {
+    Set {
+        snapshot: String,
+        mins: [f64; 3],
+        maxs: [f64; 3],
+        enabled: Option<bool>,
+        options: Option<crate::session::working_region::Options>,
+    },
+    SelectionBounds {
+        snapshot: String,
+        enabled: Option<bool>,
+    },
+    Configure {
+        snapshot: String,
+        options: crate::session::working_region::Options,
+    },
+    Clear {
+        snapshot: String,
+    },
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

@@ -184,10 +184,6 @@ fn limits() -> Value {
     json!({"instances":instances::MAX_INSTANCES,"files":instances::MAX_FILES,"file_bytes":instances::MAX_FILE_BYTES,"total_bytes":instances::MAX_TOTAL_BYTES,"file_nodes":instances::MAX_FILE_NODES,"total_nodes":instances::MAX_TOTAL_NODES,"depth":instances::MAX_DEPTH,"expansion_depth":instances::MAX_EXPANSION_DEPTH,"objects":instances::MAX_OBJECTS,"sides":instances::MAX_SIDES,"sides_per_brush":instances::MAX_BRUSH_SIDES,"geometry_work":instances::MAX_GEOMETRY_WORK,"terrain_source_vertices":instances::MAX_TERRAIN_SOURCE_VERTICES,"terrain_expanded_vertices":instances::MAX_TERRAIN_EXPANDED_VERTICES,"terrain_grid_work":instances::MAX_TERRAIN_GRID_WORK,"terrain_context_vertices":references::MAX_VERTICES,"terrain_parent_lod":"must_match_ordinary_context","lighting_origin_name_bytes":instances::MAX_LIGHTING_ORIGIN_NAME_BYTES,"spotlight_target_name_bytes":instances::MAX_LIGHTING_ORIGIN_NAME_BYTES,"field_bytes":instances::MAX_FIELD_BYTES,"parent_bytes":instances::MAX_PARENT_BYTES,"vertices":references::MAX_VERTICES,"indices":references::MAX_INDICES,"line_vertices":references::MAX_LINES,"pick_triangles":references::MAX_TRIANGLES,"cpu_bytes":references::MAX_CPU_BYTES,"gpu_bytes":references::MAX_GPU_BYTES,"model_scene_vertices":render::models::MAX_SCENE_VERTICES,"model_scene_indices":render::models::MAX_SCENE_INDICES,"rows":MAX_ROWS,"diagnostics":MAX_DIAGNOSTICS,"active_workers":1,"cached_snapshots":1})
 }
 
-fn intersects(a: [DVec3; 2], b: [DVec3; 2]) -> bool {
-    a[0].cmple(b[1]).all() && a[1].cmpge(b[0]).all()
-}
-
 fn count_bytes(vertices: usize, indices: usize, edges: usize) -> Option<usize> {
     vertices
         .checked_mul(size_of::<Vertex>())?
@@ -1035,20 +1031,15 @@ impl Session {
         if !self.instance_owner_enabled(owner) {
             return false;
         }
-        if !self.working_region.enabled {
-            return true;
-        }
-        self.working_region.bounds.is_some_and(|region| {
-            self.instance_owner_bounds(owner)
-                .is_some_and(|bounds| intersects(bounds, region))
-                || intersects(
-                    [
-                        owner.origin - DVec3::splat(8.0),
-                        owner.origin + DVec3::splat(8.0),
-                    ],
-                    region,
-                )
-        })
+        let helper = [
+            owner.origin - DVec3::splat(map_core::query::POINT_ENTITY_HALF_SIZE),
+            owner.origin + DVec3::splat(map_core::query::POINT_ENTITY_HALF_SIZE),
+        ];
+        let bounds = self.instance_owner_bounds(owner).map_or(helper, |bounds| {
+            [bounds[0].min(helper[0]), bounds[1].max(helper[1])]
+        });
+        self.working_region_bounds_visible(Some(bounds))
+            && self.working_region_filter_matches(&self.document, ObjectId::Entity(owner.id))
     }
 
     fn instance_report(&self, enabled: bool, offset: usize, limit: usize) -> Value {

@@ -3,12 +3,13 @@ use std::collections::BTreeSet;
 use glam::DVec3;
 use map_core::{ObjectId, query};
 use serde::{Deserialize, Serialize};
-use source_formats::vmf::{Entity, Properties};
+use source_formats::vmf::{Entity, Properties, Solid};
 
 use super::{Actor, SelectMode, Session};
 use crate::inspector;
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ObjectFilter {
     pub query: Option<String>,
     pub classname: Option<String>,
@@ -33,6 +34,97 @@ pub struct ObjectReport {
     pub hidden_brushes: usize,
     pub materials: Vec<String>,
     pub bounds: Option<[[f64; 3]; 2]>,
+}
+
+impl ObjectFilter {
+    pub(super) fn validate(&self) -> Result<(), String> {
+        if self.kind.as_deref().is_some_and(|kind| {
+            !["solid", "entity", "point_entity", "brush_entity"].contains(&kind)
+        }) {
+            return Err("kind must be solid, entity, point_entity or brush_entity".into());
+        }
+        if let Some([lo, hi]) = self.within {
+            let (lo, hi) = (DVec3::from_array(lo), DVec3::from_array(hi));
+            if !lo.is_finite() || !hi.is_finite() || !lo.cmple(hi).all() {
+                return Err("Bounds need finite, ordered minimum and maximum coordinates".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn matches(&self, report: &ObjectReport) -> bool {
+        let class_matches = if self.exact_class {
+            self.classname
+                .as_ref()
+                .is_none_or(|name| report.classname.eq_ignore_ascii_case(name))
+        } else {
+            contains(&report.classname, &self.classname)
+        };
+        class_matches
+            && contains(&report.targetname, &self.targetname)
+            && self.hidden.is_none_or(|wanted| wanted == report.hidden)
+            && self.kind.as_deref().is_none_or(|wanted| {
+                wanted == report.kind || wanted == "entity" && report.kind != "solid"
+            })
+            && self.material.as_ref().is_none_or(|_| {
+                report
+                    .materials
+                    .iter()
+                    .any(|material| contains(material, &self.material))
+            })
+            && contains(
+                &format!(
+                    "{} {} {} {} {}",
+                    report.id,
+                    report.kind,
+                    report.classname,
+                    report.targetname,
+                    report.materials.join(" ")
+                ),
+                &self.query,
+            )
+            && self.within.is_none_or(|[lo, hi]| {
+                report.bounds.is_some_and(|[a, b]| {
+                    DVec3::from_array(a).cmple(DVec3::from_array(hi)).all()
+                        && DVec3::from_array(b).cmpge(DVec3::from_array(lo)).all()
+                })
+            })
+    }
+}
+
+impl ObjectReport {
+    pub(super) fn from_solid(solid: &Solid, bounds: Option<(DVec3, DVec3)>) -> Self {
+        Self {
+            object: ObjectId::Solid(solid.id),
+            id: format!("solid:{}", solid.id),
+            kind: "solid".into(),
+            classname: String::new(),
+            targetname: String::new(),
+            hidden: solid.hidden,
+            hidden_brushes: usize::from(solid.hidden),
+            materials: materials(std::iter::once(solid)),
+            bounds: bounds.map(|(lo, hi)| [lo.to_array(), hi.to_array()]),
+        }
+    }
+
+    pub(super) fn from_entity(entity: &Entity, bounds: Option<(DVec3, DVec3)>) -> Self {
+        Self {
+            object: ObjectId::Entity(entity.id),
+            id: format!("entity:{}", entity.id),
+            kind: if entity.solids.is_empty() {
+                "point_entity"
+            } else {
+                "brush_entity"
+            }
+            .into(),
+            classname: entity.classname().unwrap_or("").into(),
+            targetname: entity.properties.get("targetname").unwrap_or("").into(),
+            hidden: entity.hidden,
+            hidden_brushes: entity.solids.iter().filter(|solid| solid.hidden).count(),
+            materials: materials(&entity.solids),
+            bounds: bounds.map(|(lo, hi)| [lo.to_array(), hi.to_array()]),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
@@ -132,101 +224,36 @@ fn contains(value: &str, needle: &Option<String>) -> bool {
     })
 }
 
+fn materials<'a>(solids: impl IntoIterator<Item = &'a Solid>) -> Vec<String> {
+    solids
+        .into_iter()
+        .flat_map(|solid| solid.sides.iter().map(|side| side.material.clone()))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 impl Session {
     pub fn object_report(&self, filter: &ObjectFilter) -> Result<Vec<ObjectReport>, String> {
-        if filter.kind.as_deref().is_some_and(|kind| {
-            !["solid", "entity", "point_entity", "brush_entity"].contains(&kind)
-        }) {
-            return Err("kind must be solid, entity, point_entity or brush_entity".into());
-        }
-        if let Some([lo, hi]) = filter.within {
-            let (lo, hi) = (DVec3::from_array(lo), DVec3::from_array(hi));
-            if !lo.is_finite() || !hi.is_finite() || !lo.cmple(hi).all() {
-                return Err("Bounds need finite, ordered minimum and maximum coordinates".into());
-            }
-        }
+        filter.validate()?;
         let mut rows = Vec::new();
         let model_bounds = self.display_bounds_in(&self.document);
         for id in self.document.objects() {
-            let (kind, classname, targetname, hidden, solids) = match id {
-                ObjectId::Solid(id) => {
-                    let solid = self.document.solid(id).unwrap();
-                    ("solid", "", "", solid.hidden, vec![solid])
-                }
-                ObjectId::Entity(id) => {
-                    let entity = self.document.entity(id).unwrap();
-                    (
-                        if entity.solids.is_empty() {
-                            "point_entity"
-                        } else {
-                            "brush_entity"
-                        },
-                        entity.classname().unwrap_or(""),
-                        entity.properties.get("targetname").unwrap_or(""),
-                        entity.hidden,
-                        entity.solids.iter().collect(),
-                    )
-                }
-            };
-            let materials: Vec<String> = solids
-                .iter()
-                .flat_map(|solid| solid.sides.iter().map(|side| side.material.clone()))
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect();
-            let name = match id {
-                ObjectId::Solid(id) => format!("solid:{id}"),
-                ObjectId::Entity(id) => format!("entity:{id}"),
-            };
             let bounds = model_bounds
                 .get(&id)
                 .copied()
                 .or_else(|| query::bounds(&self.document, id));
-            let class_matches = if filter.exact_class {
-                filter
-                    .classname
-                    .as_ref()
-                    .is_none_or(|name| classname.eq_ignore_ascii_case(name))
-            } else {
-                contains(classname, &filter.classname)
+            let row = match id {
+                ObjectId::Solid(id) => {
+                    ObjectReport::from_solid(self.document.solid(id).unwrap(), bounds)
+                }
+                ObjectId::Entity(id) => {
+                    ObjectReport::from_entity(self.document.entity(id).unwrap(), bounds)
+                }
             };
-            if !class_matches
-                || !contains(targetname, &filter.targetname)
-                || filter.hidden.is_some_and(|wanted| wanted != hidden)
-                || filter.kind.as_deref().is_some_and(|wanted| {
-                    wanted != kind && !(wanted == "entity" && kind != "solid")
-                })
-                || filter.material.is_some()
-                    && !materials
-                        .iter()
-                        .any(|material| contains(material, &filter.material))
-                || !contains(
-                    &format!(
-                        "{name} {kind} {classname} {targetname} {}",
-                        materials.join(" ")
-                    ),
-                    &filter.query,
-                )
-                || filter.within.is_some_and(|[lo, hi]| {
-                    bounds.is_none_or(|(a, b)| {
-                        !a.cmple(DVec3::from_array(hi)).all()
-                            || !b.cmpge(DVec3::from_array(lo)).all()
-                    })
-                })
-            {
-                continue;
+            if filter.matches(&row) {
+                rows.push(row);
             }
-            rows.push(ObjectReport {
-                object: id,
-                id: name,
-                kind: kind.into(),
-                classname: classname.into(),
-                targetname: targetname.into(),
-                hidden,
-                hidden_brushes: solids.iter().filter(|solid| solid.hidden).count(),
-                materials,
-                bounds: bounds.map(|(lo, hi)| [lo.to_array(), hi.to_array()]),
-            });
         }
         Ok(rows)
     }

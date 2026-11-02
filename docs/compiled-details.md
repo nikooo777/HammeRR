@@ -47,7 +47,8 @@ one shared base retain that base for both channels.
 
 - Compile again after map, build-setting or tracked asset changes. Then prepare the new output.
 - Details do not affect authored selection, picking or Undo. Native ordinals belong to one build.
-- Editing tools, geometry drafts and Faces mode hide the layer. Working region filters whole native props; authored hide/show stays separate.
+- Editing tools, geometry drafts and Faces mode hide the layer. Working boxes, camera-following and draw distance filter whole native props by their bounds; camera-facing cards use a conservative rotation envelope. Authored hide/show stays separate.
+- An authored query filter suppresses the layer because native props have no authored object identity. Clear the filter to restore a requested layer.
 - Only the current session's retained BSP is eligible. Arbitrary BSP import is unavailable.
 - Models use skin 0 and body 0. Materials require supported static `UnlitGeneric` textures.
 - **Baked LDR** uses the LDR static colour, including stored style 0 at full weight. A record with runtime light styles stops the complete mode; the previous mode stays active.

@@ -2,8 +2,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 
 use compiler::sky_region;
-use glam::DVec3;
-use map_core::{ObjectId, query};
+use map_core::ObjectId;
 use render::sky3d;
 use serde_json::{Value, json};
 use source_formats::{
@@ -89,62 +88,6 @@ struct Ready {
     snapshot_bytes: usize,
 }
 
-#[derive(Clone)]
-struct Visibility {
-    hidden: Arc<HashSet<ObjectId>>,
-    region: Option<[DVec3; 2]>,
-}
-
-impl Visibility {
-    fn included(
-        &self,
-        vmf: &Vmf,
-        control: &compiler::Control,
-    ) -> Result<HashSet<ObjectId>, String> {
-        let mut included = HashSet::new();
-        for solid in &vmf.world.solids {
-            control.checkpoint()?;
-            let id = ObjectId::Solid(solid.id);
-            if !solid.hidden
-                && !self.hidden.contains(&id)
-                && self.visible_bounds(|| query::solid_bounds(solid))
-            {
-                included.insert(id);
-            }
-        }
-        for entity in &vmf.entities {
-            control.checkpoint()?;
-            let id = ObjectId::Entity(entity.id);
-            if entity.hidden || self.hidden.contains(&id) {
-                continue;
-            }
-            let visible = entity.solids.iter().filter(|solid| !solid.hidden);
-            if !entity.solids.is_empty() && visible.clone().next().is_none() {
-                continue;
-            }
-            if self.visible_bounds(|| {
-                let bounds = visible
-                    .map(query::solid_bounds)
-                    .collect::<Option<Vec<_>>>()?;
-                query::union(bounds)
-            }) {
-                included.insert(id);
-            }
-        }
-        Ok(included)
-    }
-
-    fn visible_bounds(&self, bounds: impl FnOnce() -> Option<(DVec3, DVec3)>) -> bool {
-        self.region.is_none_or(|region| {
-            bounds().is_none_or(|(mins, maxs)| {
-                !mins.is_finite()
-                    || !maxs.is_finite()
-                    || (mins.cmple(region[1]).all() && maxs.cmpge(region[0]).all())
-            })
-        })
-    }
-}
-
 pub struct Request {
     token: u64,
     identity: Arc<()>,
@@ -152,7 +95,7 @@ pub struct Request {
     key: Key,
     vmf: Vmf,
     game: Arc<GameFs>,
-    visibility: Visibility,
+    included: HashSet<ObjectId>,
     snapshot_bytes: usize,
     worker: Ticket,
 }
@@ -213,12 +156,11 @@ impl Request {
             .and_then(|bytes| bytes.checked_add(AUXILIARY_BYTES))
             .filter(|bytes| *bytes <= MAX_CPU_BYTES)
             .ok_or("3D sky preview exceeds its aggregate CPU allocation budget")?;
-        let included = self.visibility.included(&self.vmf, &self.control)?;
         let region = sky_region::resolve_controlled(
             &self.vmf,
             &self.game,
             self.key.camera,
-            |id| included.contains(&id),
+            |id| self.included.contains(&id),
             &self.control,
         )?;
         self.control.checkpoint()?;
@@ -375,14 +317,7 @@ impl Session {
             key,
             vmf,
             game: self.game.clone(),
-            visibility: Visibility {
-                hidden: self.working_region.editor_hidden.clone(),
-                region: self
-                    .working_region
-                    .enabled
-                    .then_some(self.working_region.bounds)
-                    .flatten(),
-            },
+            included: self.working_evaluation(&self.document).objects.clone(),
             snapshot_bytes,
             worker,
         })

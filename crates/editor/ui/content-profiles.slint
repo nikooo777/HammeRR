@@ -1,5 +1,5 @@
 import { Button, LineEdit, ScrollView } from "widgets.slint";
-import { Theme, Icon, FieldRow, Badge, MutedText } from "kit.slint";
+import { Theme, FieldRow, Badge, MutedText } from "kit.slint";
 
 export struct ContentProfileRow {
     id: string,
@@ -57,23 +57,7 @@ export component ContentProfilesWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl;
             spacing: Theme.space-lg;
-            HorizontalLayout {
-                spacing: Theme.space;
-                Image {
-                    width: 20px;
-                    height: 20px;
-                    source: Icon.layers;
-                    colorize: Theme.text-muted;
-                }
-                Text {
-                    text: "Content profiles";
-                    color: Theme.text;
-                    font-size: Theme.font-display;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                }
-            }
+            Text { text: "Content profiles"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
             Rectangle {
                 background: Theme.base;
                 border-color: Theme.border;
@@ -98,10 +82,12 @@ export component ContentProfilesWindow inherits Window {
                         horizontal-scrollbar-policy: always-off;
                         vertical-stretch: 1;
                         VerticalLayout {
+                            alignment: start;
+                            padding-right: Theme.space-lg;
                             spacing: Theme.space-xs;
                             for row in root.rows: Rectangle {
                                 min-height: 66px;
-                                background: row.id == root.selected-id ? Theme.active : touch.has-hover ? Theme.hover : Theme.base;
+                                background: row.id == root.selected-id ? Theme.selection : touch.has-hover ? Theme.hover : Theme.base;
                                 border-radius: Theme.radius-sm;
                                 accessible-role: button;
                                 accessible-label: row.name;
@@ -109,6 +95,7 @@ export component ContentProfilesWindow inherits Window {
                                 accessible-checked: row.id == root.selected-id;
                                 accessible-action-default => { if !root.busy { root.choose(row.id); } }
                                 VerticalLayout {
+                                    alignment: center;
                                     padding: Theme.space;
                                     spacing: Theme.space-xs;
                                     HorizontalLayout {
@@ -134,9 +121,9 @@ export component ContentProfilesWindow inherits Window {
                     horizontal-scrollbar-policy: always-off;
                     horizontal-stretch: 1;
                     VerticalLayout {
-                        padding-right: Theme.space;
+                        padding-right: Theme.space-lg;
                         spacing: Theme.space-lg;
-                        Text { text: root.selection; color: Theme.text; font-weight: 600; wrap: word-wrap; }
+                        if root.selection != "": Text { text: root.selection; color: Theme.text; font-weight: 600; wrap: word-wrap; }
                         FieldRow {
                             label: "Profile name"; label-width: 112px; inset: false;
                             LineEdit { text <=> root.profile-name; enabled: !root.busy; horizontal-stretch: 1; edited => { root.draft-changed(); } }
@@ -159,7 +146,7 @@ export component ContentProfilesWindow inherits Window {
                         }
                         MutedText { text: "CS:S root is the optional installation root for Play and native capture. Leave optional paths empty to use discovery."; }
                         Text { text: "Captured Build settings"; color: Theme.text-muted; font-weight: 600; }
-                        MutedText { text: root.build-summary; }
+                        if root.build-summary != "": MutedText { text: root.build-summary; }
                         HorizontalLayout {
                             spacing: Theme.space;
                             Button { text: "Use current Build settings"; enabled: !root.busy; clicked => { root.capture-build(); } }
@@ -175,9 +162,9 @@ export component ContentProfilesWindow inherits Window {
                     }
                 }
             }
-            MutedText { text: root.storage; font-size: Theme.font-small; }
-            Text { text: root.status; color: Theme.warning; wrap: word-wrap; }
-            Text { text: root.message; color: root.message-error ? Theme.danger : Theme.text; wrap: word-wrap; min-height: 34px; }
+            if root.storage != "": MutedText { text: root.storage; font-size: Theme.font-small; }
+            if root.status != "": Text { text: root.status; color: Theme.warning; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: root.message-error ? Theme.danger : Theme.text; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: Theme.space;
                 Button { text: "Close"; clicked => { root.close-dialog(); } }

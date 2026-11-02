@@ -108,11 +108,14 @@ export component LinkedPathWindow inherits Window {
                         edited => { root.edited(); }
                     }
                 }
-                CheckBox {
-                    enabled: root.editable && root.operation-index == 0;
-                    text: "Closed loop";
-                    checked <=> root.closed;
-                    toggled => { root.edited(); }
+                VerticalLayout {
+                    alignment: end;
+                    CheckBox {
+                        enabled: root.editable && root.operation-index == 0;
+                        text: "Closed loop";
+                        checked <=> root.closed;
+                        toggled => { root.edited(); }
+                    }
                 }
             }
             if root.existing: HorizontalLayout {
@@ -169,6 +172,8 @@ export component LinkedPathWindow inherits Window {
                         vertical-stretch: 1;
                         min-height: 200px;
                         VerticalLayout {
+                            alignment: start;
+                            padding-right: Theme.space-lg;
                             spacing: 8px;
                             for point[index] in root.points: VerticalLayout {
                                 spacing: 3px;
@@ -210,14 +215,15 @@ export component LinkedPathWindow inherits Window {
                         }
                     }
                     HorizontalLayout {
+                        spacing: Theme.space;
                         Button { text: "Add point"; enabled: root.editable && root.operation-index == 0 && root.points.length < 64; clicked => { root.add-point(); } }
                         Rectangle { horizontal-stretch: 1; }
                         Text { text: "2–64 points · ±65536 per axis"; color: Theme.text-muted; vertical-alignment: center; }
                     }
                 }
             }
-            Text { text: root.preview-status; wrap: word-wrap; min-height: 36px; }
-            Text { text: root.message; color: Theme.text-muted; wrap: word-wrap; min-height: 36px; }
+            if root.preview-status != "": Text { text: root.preview-status; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: Theme.text-muted; wrap: word-wrap; }
             if root.picking: Button { text: "Cancel position pick"; clicked => { root.cancel-pick(); } }
             if root.handling: Button { text: "Finish moving"; clicked => { root.finish-handles(); } }
             HorizontalLayout {

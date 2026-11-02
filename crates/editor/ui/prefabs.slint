@@ -140,7 +140,10 @@ export component PrefabsWindow inherits Window {
                     }
                     ScrollView {
                         min-height:220px;vertical-stretch:1;
+                        content-width:self.width;
                         VerticalLayout {
+                            alignment:start;
+                            padding-right:Theme.space-lg;
                             spacing:9px;
                             for row in root.gallery-rows:HorizontalLayout {
                                 spacing:9px;
@@ -179,7 +182,10 @@ export component PrefabsWindow inherits Window {
                     }
                     if !root.editing: ScrollView {
                       vertical-stretch:1;
+                      content-width:self.width;
                       VerticalLayout {
+                        alignment:start;
+                        padding-right:Theme.space-lg;
                         spacing:8px;
                         if !root.gallery-rendered:Rectangle {
                             height:240px;horizontal-stretch:1;background:Theme.control-strong;border-radius:8px;
@@ -192,8 +198,8 @@ export component PrefabsWindow inherits Window {
                             Text {text:"320 × 240";color:Theme.text-muted;vertical-alignment:center;horizontal-stretch:1;}
                             Button {text:root.has-thumbnail?"Refresh thumbnail":"Render thumbnail";enabled:root.can-render-thumbnail||(root.thumbnail-style==1&&root.selected!="");clicked=>{root.render-thumbnail();}}
                         }
-                        Text {text:root.thumbnail-status;wrap:word-wrap;color:Theme.text-muted;}
-                        Text {text:root.detail;wrap:word-wrap;color:Theme.text-muted;}
+                        if root.thumbnail-status!="": Text {text:root.thumbnail-status;wrap:word-wrap;color:Theme.text-muted;}
+                        if root.detail!="": Text {text:root.detail;wrap:word-wrap;color:Theme.text-muted;}
                         Text {text:"Placement position · world units";font-weight:600;}
                         HorizontalLayout {
                             spacing:8px;

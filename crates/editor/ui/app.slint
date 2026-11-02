@@ -1676,6 +1676,7 @@ export component RecentMapsWindow inherits Window {
             Text { text: "Recent maps"; font-size: Theme.font-display; font-weight: 600; }
             MutedText { text: "Reopen a map with its remembered content, definitions, Build settings and launch paths."; }
             HorizontalLayout {
+                spacing: Theme.space;
                 Text { text: root.summary; horizontal-stretch: 1; vertical-alignment: center; }
                 Button { text: "Reload saved list"; enabled: !root.busy; clicked => { root.refresh(); } }
             }
@@ -1683,11 +1684,22 @@ export component RecentMapsWindow inherits Window {
                 min-height: 140px;
                 preferred-height: 220px;
                 vertical-stretch: 1;
-                for row in root.rows: VerticalLayout {
-                    spacing: Theme.space-xs; padding-bottom: Theme.space;
-                    Button { text: row.title + (root.selected-path == row.path ? " · selected" : ""); enabled: !root.busy; clicked => { root.select-map(row.path); } }
-                    Text { text: row.path; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
-                    Text { text: row.detail; color: Theme.text-muted; font-size: Theme.font; wrap: word-wrap; }
+                for row in root.rows: Rectangle {
+                    background: root.selected-path == row.path ? Theme.selection : recent-touch.has-hover && !root.busy ? Theme.hover : transparent;
+                    border-radius: Theme.radius-sm;
+                    accessible-role: button;
+                    accessible-label: row.title;
+                    accessible-checked: root.selected-path == row.path;
+                    accessible-enabled: !root.busy;
+                    accessible-action-default => { if !root.busy { root.select-map(row.path); } }
+                    VerticalLayout {
+                        padding: Theme.space;
+                        spacing: Theme.space-xs;
+                        Text { text: row.title; color: Theme.text; font-weight: 600; overflow: elide; }
+                        Text { text: row.path; wrap: word-wrap; color: Theme.text-muted; }
+                        if row.detail != "": Text { text: row.detail; color: Theme.text-faint; font-size: Theme.font-small; wrap: word-wrap; }
+                    }
+                    recent-touch := TouchArea { enabled: !root.busy; clicked => { root.select-map(row.path); } }
                 }
             }
             Text { text: "Remembered context"; color: Theme.text; font-weight: 600; }
@@ -1698,7 +1710,8 @@ export component RecentMapsWindow inherits Window {
                 preferred-height: 240px;
                 vertical-stretch: 1;
                 VerticalLayout {
-                    padding-right: Theme.space;
+                    alignment: start;
+                    padding-right: Theme.space-lg;
                     Text { text: root.selected-detail; wrap: word-wrap; color: Theme.text-muted; }
                 }
             }
@@ -2159,6 +2172,7 @@ export component AppWindow inherits Window {
     property <length> bottom-pane-height: (root.viewport-canvas-pixel-height - root.split-pixel-height) / root.pane-scale * 1px;
     property <length> active-pane-x: root.active-pane-index == 1 ? pane1.x : root.active-pane-index == 2 ? pane2.x : root.active-pane-index == 3 ? pane3.x : pane0.x;
     property <length> active-pane-y: root.active-pane-index == 1 ? pane1.y : root.active-pane-index == 2 ? pane2.y : root.active-pane-index == 3 ? pane3.y : pane0.y;
+    changed projection-index => { active-projection.current-index = root.projection-index; }
     in property <string> map-title: "untitled.vmf";
     in property <string> message;
     in property <string> stats;
@@ -3335,6 +3349,8 @@ export component AppWindow inherits Window {
                             height: root.view-layout-index == 2 || root.view-layout-index == 3 ? root.top-pane-height : viewport.height;
                             visible: true;
                             active: root.active-pane-index == 0;
+                            split: root.view-layout-index != 0;
+                            header-visible: !self.active;
                             frame: self.active ? root.frame : root.viewport-panes[0].frame;
                             projection: self.active ? root.projection-index : root.viewport-panes[0].projection;
                             error: root.viewport-panes[0].error;
@@ -3356,6 +3372,8 @@ export component AppWindow inherits Window {
                             height: root.view-layout-index == 0 ? 0px : root.view-layout-index == 1 ? viewport.height : root.view-layout-index == 2 ? root.bottom-pane-height : root.top-pane-height;
                             visible: root.view-layout-index != 0;
                             active: root.active-pane-index == 1;
+                            split: root.view-layout-index != 0;
+                            header-visible: !self.active;
                             frame: self.active ? root.frame : root.viewport-panes[1].frame;
                             projection: self.active ? root.projection-index : root.viewport-panes[1].projection;
                             error: root.viewport-panes[1].error;
@@ -3377,6 +3395,8 @@ export component AppWindow inherits Window {
                             height: root.view-layout-index == 3 ? root.bottom-pane-height : 0px;
                             visible: root.view-layout-index == 3;
                             active: root.active-pane-index == 2;
+                            split: root.view-layout-index != 0;
+                            header-visible: !self.active;
                             frame: self.active ? root.frame : root.viewport-panes[2].frame;
                             projection: self.active ? root.projection-index : root.viewport-panes[2].projection;
                             error: root.viewport-panes[2].error;
@@ -3398,6 +3418,8 @@ export component AppWindow inherits Window {
                             height: root.view-layout-index == 3 ? root.bottom-pane-height : 0px;
                             visible: root.view-layout-index == 3;
                             active: root.active-pane-index == 3;
+                            split: root.view-layout-index != 0;
+                            header-visible: !self.active;
                             frame: self.active ? root.frame : root.viewport-panes[3].frame;
                             projection: self.active ? root.projection-index : root.viewport-panes[3].projection;
                             error: root.viewport-panes[3].error;
@@ -3421,7 +3443,7 @@ export component AppWindow inherits Window {
                         clip: true;
                         Rectangle {
                             x: Theme.space;
-                            y: Theme.viewport-header-height + Theme.space-xl;
+                            y: Theme.space;
                             width: min(view-row.preferred-width, max(0px, parent.width - Theme.space-xl));
                             height: Theme.viewport-header-height;
                             background: Theme.overlay;
@@ -3430,7 +3452,20 @@ export component AppWindow inherits Window {
                             border-radius: Theme.radius + 1px;
                             view-row := HorizontalLayout {
                                 padding: 3px;
+                                padding-left: root.view-layout-index != 0 ? Theme.space-sm : 3px;
                                 spacing: 2px;
+                                if root.view-layout-index != 0: Text { text: "\{root.active-pane-index + 1}"; color: Theme.accent; vertical-alignment: center; }
+                                if root.view-layout-index != 0: Rectangle { width: Theme.space-xs; }
+                                active-projection := ComboBox {
+                                    width: Theme.viewport-projection-width;
+                                    model: ["Perspective", "Top · XY", "Front · XZ", "Side · YZ"];
+                                    current-index: root.projection-index;
+                                    accessible-label: root.view-layout-index == 0 ? "Projection" : "Projection for view \{root.active-pane-index + 1}";
+                                    selected => {
+                                        root.pane-projection-changed(root.active-pane-index, self.current-index);
+                                        self.current-index = root.projection-index;
+                                    }
+                                }
                                 if root.viewport-width >= Theme.viewport-controls-breakpoint: ComboBox {
                                     width: 148px;
                                     model: ["Textured", "Flat shading", "Wireframe", "Lightmap density", "Smoothing groups"];
@@ -3446,7 +3481,7 @@ export component AppWindow inherits Window {
 
                         if (root.viewport-capture-pane < 0 || root.viewport-capture-pane == root.active-pane-index) && (root.overlay-handle-notice != "" || root.pivot-pick-notice != "" || root.linked-path-handling): Rectangle {
                             x: Theme.space;
-                            y: Theme.viewport-header-height * 2 + Theme.space-lg * 2;
+                            y: Theme.viewport-header-height + Theme.space * 2;
                             width: min(notice-row.preferred-width, max(0px, parent.width - Theme.space-xl));
                             height: 40px;
                             background: Theme.overlay;
@@ -3511,7 +3546,7 @@ export component AppWindow inherits Window {
                         }
                         if root.overlays-open: Rectangle {
                             x: Theme.space;
-                            y: Theme.viewport-header-height * 2 + Theme.space-lg * 2;
+                            y: Theme.viewport-header-height + Theme.space * 2;
                             width: min(320px, max(0px, parent.width - Theme.space-xl));
                             height: min(overlay-content.preferred-height + 2px, max(0px, parent.height - self.y - Theme.space));
                             TouchArea { }
@@ -3795,7 +3830,7 @@ export component AppWindow inherits Window {
                                             Button { text: "Attach origin"; enabled: root.can-attach-pivot; clicked => { root.attach-pivot-origin(); } }
                                             Button { text: "Attach local point"; enabled: root.can-attach-pivot; clicked => { root.attach-pivot-local(); } }
                                         }
-                                        MutedText { text: root.pivot-attachment-summary; font-size: Theme.font-small; }
+                                        if root.pivot-attachment-summary != "": MutedText { text: root.pivot-attachment-summary; font-size: Theme.font-small; }
                                         MutedText { text: "Point-entity local points follow authored origin and rotation, without model scale or parenting. Attach vertex… follows a picked brush, terrain or model vertex."; font-size: Theme.font-small; }
                                         if root.pivot-attached: VerticalLayout {
                                             spacing: Theme.space-sm;

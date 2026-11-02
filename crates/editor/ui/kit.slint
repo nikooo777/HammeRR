@@ -48,14 +48,15 @@ export component SectionHeader inherits Rectangle {
     in property <string> detail;
     in-out property <bool> expanded: true;
     in property <bool> collapsible: true;
+    in property <bool> inset: true;
     height: 30px;
     accessible-role: button;
     accessible-label: root.text;
     accessible-expanded: root.expanded;
     accessible-action-default => { if root.collapsible { root.expanded = !root.expanded; } }
     HorizontalLayout {
-        padding-left: Theme.space-lg;
-        padding-right: Theme.space-lg;
+        padding-left: root.inset ? Theme.space-lg : 0px;
+        padding-right: root.inset ? Theme.space-lg : 0px;
         spacing: Theme.space-sm;
         if root.collapsible: Image {
             y: (parent.height - self.height) / 2;

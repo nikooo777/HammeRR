@@ -88,11 +88,13 @@ export component RepeatWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl;
             spacing: Theme.space-lg;
-            Text { text: root.scatter-mode ? "Scatter objects on surfaces" : "Repeat selected objects"; font-size: Theme.font-display; color: Theme.text; }
+            Text { text: root.scatter-mode ? "Scatter objects on surfaces" : "Repeat selected objects"; font-size: Theme.font-display; font-weight: 600; color: Theme.text; }
             ScrollView {
                 vertical-stretch: 1;
                 content-width: self.visible-width;
                 VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
                     spacing: Theme.space-lg;
                     if root.scatter-mode: VerticalLayout {
                         spacing: Theme.space;
@@ -107,12 +109,15 @@ export component RepeatWindow inherits Window {
                             Text { text: root.target-faces; horizontal-stretch: 1; wrap: word-wrap; color: Theme.text-muted; vertical-alignment: center; }
                         }
                     }
-                    if !root.scatter-mode: Text { text: root.selection; wrap: word-wrap; color: Theme.text-muted; }
-                    if !root.scatter-mode: Button { text: "Use last array settings"; enabled: root.last-settings-available; clicked => { root.use-last-settings(); } }
+                    if !root.scatter-mode && root.selection != "": Text { text: root.selection; wrap: word-wrap; color: Theme.text-muted; }
+                    if !root.scatter-mode: HorizontalLayout {
+                        alignment: start;
+                        Button { text: "Use last array settings"; enabled: root.last-settings-available; clicked => { root.use-last-settings(); } }
+                    }
                     HorizontalLayout {
                         spacing: Theme.space;
-                        Text { text: "Additional copies"; vertical-alignment: center; color: Theme.text; }
-                        SpinBox { minimum: 1; maximum: 64; value <=> root.count; edited => { root.invalidate(); } }
+                        Text { text: "Additional copies"; width: Theme.workspace-field-label-width; vertical-alignment: center; color: Theme.text; }
+                        SpinBox { horizontal-stretch: 1; minimum: 1; maximum: 64; value <=> root.count; edited => { root.invalidate(); } }
                     }
                     if root.scatter-mode: VerticalLayout {
                         spacing: Theme.space-lg;
@@ -137,8 +142,8 @@ export component RepeatWindow inherits Window {
                         spacing: Theme.space-lg;
                         HorizontalLayout {
                             spacing: Theme.space;
-                            Text { text: "Step space"; vertical-alignment: center; color: Theme.text; }
-                            ComboBox { model: ["World", "Source local"]; current-index <=> root.space-index; selected => { root.invalidate(); } }
+                            Text { text: "Step space"; width: Theme.workspace-field-label-width; vertical-alignment: center; color: Theme.text; }
+                            ComboBox { horizontal-stretch: 1; model: ["World", "Source local"]; current-index <=> root.space-index; selected => { root.invalidate(); } }
                         }
                         VectorRow { label: "Move step · units"; value-x <=> root.move-x; value-y <=> root.move-y; value-z <=> root.move-z; edited => { root.invalidate(); } }
                         VectorRow { label: "Rotate step · °"; value-x <=> root.rotate-x; value-y <=> root.rotate-y; value-z <=> root.rotate-z; edited => { root.invalidate(); } }
@@ -158,6 +163,7 @@ export component RepeatWindow inherits Window {
                     if root.scatter-mode: Text { text: "Models require uniform scale. Preview checks the supported range."; wrap: word-wrap; color: Theme.text-muted; }
                     CheckBox { text: "Keep textures attached"; checked <=> root.texture-lock; toggled => { root.invalidate(); } }
                     SectionHeader {
+                        inset: false;
                         text: "Naming and references";
                         expanded <=> root.naming-expanded;
                         detail: root.naming-expanded ? "" : (root.name-style == 0 && root.name-prefix == "" && root.name-suffix == "_copy" && root.name-start == 1 && root.internal-links == 0 && root.external-links == 0 ? "Default names and links" : "Custom names and links");
@@ -198,7 +204,7 @@ export component RepeatWindow inherits Window {
                         }
                         Text { text: "Rotation or scaling can require you to resolve unsupported spatial metadata first."; wrap: word-wrap; color: Theme.text-muted; }
                     }
-                    Text { text: root.summary; wrap: word-wrap; color: Theme.text; vertical-alignment: top; }
+                    if root.summary != "": Text { text: root.summary; wrap: word-wrap; color: Theme.text; }
                 }
             }
             Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; min-height: Theme.row-height; }

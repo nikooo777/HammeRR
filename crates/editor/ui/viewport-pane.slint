@@ -1,4 +1,4 @@
-import { Theme, Badge } from "kit.slint";
+import { Theme } from "kit.slint";
 import { ComboBox } from "widgets.slint";
 
 export struct ViewportPane {
@@ -21,6 +21,8 @@ export component ViewportPaneView inherits Rectangle {
     in property <image> frame;
     in property <int> projection;
     in property <bool> active;
+    in property <bool> split;
+    in property <bool> header-visible: true;
     in property <string> error;
     in property <bool> navigating;
     in property <bool> crosshair;
@@ -88,18 +90,20 @@ export component ViewportPaneView inherits Rectangle {
         }
     }
     Rectangle {
+        visible: root.header-visible;
         x: Theme.space;
         y: Theme.space;
         width: min(header.preferred-width, max(0px, parent.width - Theme.space-xl));
         height: Theme.viewport-header-height;
         background: Theme.overlay;
-        border-color: root.active ? Theme.accent : Theme.border-strong;
+        border-color: Theme.border-strong;
         border-width: 1px;
-        border-radius: Theme.radius;
+        border-radius: Theme.radius + 1px;
         header := HorizontalLayout {
-            padding: Theme.space-xs;
+            padding: 3px;
+            padding-left: root.split ? Theme.space-sm : 3px;
             spacing: Theme.space-sm;
-            Text { text: "\{root.pane-id + 1}"; color: root.active ? Theme.accent : Theme.text-faint; vertical-alignment: center; }
+            if root.split: Text { text: "\{root.pane-id + 1}"; color: root.active ? Theme.accent : Theme.text-faint; vertical-alignment: center; }
             projection-picker := ComboBox {
                 width: Theme.viewport-projection-width;
                 model: ["Perspective", "Top · XY", "Front · XZ", "Side · YZ"];
@@ -110,10 +114,9 @@ export component ViewportPaneView inherits Rectangle {
                     self.current-index = root.projection;
                 }
             }
-            if root.active: Badge { text: "Active"; text-color: Theme.accent; fill: Theme.accent-soft; }
         }
     }
-    Rectangle {
+    if root.split: Rectangle {
         width: parent.width;
         height: parent.height;
         background: transparent;

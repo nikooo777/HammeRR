@@ -1838,6 +1838,26 @@ fn create_document_window(
             Err(error) => app.unwrap().set_message(error.into()),
         }
     });
+    root_callback!(app, ui, on_surface_scatter, |app| {
+        let shared = session_of(&ui);
+        if ui.borrow().repeat.is_none() {
+            match repeat_ui::Controller::new_with_access(&file_access(&ui)) {
+                Ok(controller) => ui.borrow_mut().repeat = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let ui = ui.borrow();
+        let controller = ui.repeat.as_ref().unwrap();
+        match controller.initialize_scatter(&lock(&shared)) {
+            Ok(()) => {
+                let _ = controller.window.show();
+            }
+            Err(error) => app.unwrap().set_message(error.into()),
+        }
+    });
     root_callback!(app, ui, on_object_groups, |app| {
         let mut ui = ui.borrow_mut();
         if ui.object_groups.is_none() {

@@ -11,6 +11,14 @@ pub const MAX_OBJECTS: usize = 256;
 pub const MAX_SIDES: usize = 8192;
 pub const MAX_NAME_BYTES: usize = 128;
 
+mod plan;
+mod policies;
+pub use plan::{Placement, Plan};
+pub use policies::{
+    ExternalReferences, InternalReferences, MAX_AFFIX_BYTES, MAX_NAME_INDEX, NameStyle, Naming,
+    Policies,
+};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Options {
     pub count: u32,
@@ -36,15 +44,17 @@ pub struct Name {
     pub after: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Copy {
+    pub placement: Placement,
+    pub mapping: Vec<(ObjectId, ObjectId)>,
     pub index: u32,
     pub objects: Vec<ObjectId>,
     pub names: Vec<Name>,
     pub remapped_references: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Result {
     pub copies: Vec<Copy>,
 }
@@ -68,45 +78,28 @@ pub(crate) fn validate(
     options: Options,
     catalog: &Catalog,
 ) -> std::result::Result<(), EditError> {
+    let plan = Plan::array(options, Policies::default())?;
+    validate_sources(document, ids, plan.placements.len() as u32, catalog)?;
+    validate_placements(document, ids, &plan, catalog)?;
+    Ok(())
+}
+
+pub fn validate_sources(
+    document: &Document,
+    ids: &[ObjectId],
+    count: u32,
+    catalog: &Catalog,
+) -> std::result::Result<(), EditError> {
     if ids.is_empty() || ids.len() > MAX_SOURCES {
         return Err(invalid("Choose 1–16 source objects"));
     }
-    if options.count == 0
-        || options.count > MAX_COPIES
-        || ids.len() * options.count as usize > MAX_OBJECTS
-    {
+    if count == 0 || count > MAX_COPIES || ids.len() * count as usize > MAX_OBJECTS {
         return Err(invalid(
             "Use 1–64 additional copies and at most 256 new top-level objects",
         ));
     }
     if ids.iter().copied().collect::<BTreeSet<_>>().len() != ids.len() {
         return Err(invalid("Repeat sources must be distinct"));
-    }
-    let limit = crate::primitive::MAX_COORDINATE;
-    if [options.translation, options.rotation, options.pivot]
-        .iter()
-        .any(|value| !value.is_finite() || value.abs().max_element() > limit)
-    {
-        return Err(invalid(
-            "Array steps and pivot must be finite and within ±65536",
-        ));
-    }
-    if !options.scale.is_finite() || !options.scale.cmpgt(DVec3::ZERO).all() {
-        return Err(invalid("Array scale factors must be finite and positive"));
-    }
-    let last_scale = options.copy_scale(options.count);
-    if !last_scale.is_finite() || !last_scale.cmpgt(DVec3::ZERO).all() {
-        return Err(invalid(
-            "Array copy scale overflows or collapses; reduce factors or copy count",
-        ));
-    }
-    if options.translation == DVec3::ZERO
-        && options.rotation.map(|angle| angle.rem_euclid(360.0)) == DVec3::ZERO
-        && options.scale == DVec3::ONE
-    {
-        return Err(invalid(
-            "Choose a nonzero translation or rotation step, or a scale factor other than 1",
-        ));
     }
     let mut sides = 0;
     let mut objects = 0;
@@ -123,11 +116,6 @@ pub(crate) fn validate(
                 let entity = document
                     .entity(id)
                     .ok_or(EditError::NotFound(ObjectId::Entity(id)))?;
-                if options.scale != DVec3::ONE && entity.solids.is_empty() {
-                    return Err(invalid(format!(
-                        "Repeat scaling supports brushes and brush entities; entity {id} has no scalable brush geometry",
-                    )));
-                }
                 if entity
                     .properties
                     .0
@@ -178,8 +166,7 @@ pub(crate) fn validate(
             }
         }
     }
-    if sides * options.count as usize > MAX_SIDES || objects * options.count as usize > MAX_OBJECTS
-    {
+    if sides * count as usize > MAX_SIDES || objects * count as usize > MAX_OBJECTS {
         return Err(invalid(
             "Array exceeds 256 new objects including owned brushes, or 8192 new sides",
         ));
@@ -288,44 +275,7 @@ pub(crate) fn planned_names(
     scan: &[references::Reference],
     count: u32,
 ) -> std::result::Result<Vec<BTreeMap<String, String>>, EditError> {
-    let mut occupied = document
-        .vmf()
-        .entities
-        .iter()
-        .flat_map(|entity| &entity.properties.0)
-        .filter(|(key, _)| key.eq_ignore_ascii_case("targetname"))
-        .map(|(_, name)| name.to_ascii_lowercase())
-        .collect::<BTreeSet<_>>();
-    let mut batches = Vec::new();
-    for index in 1..=count {
-        let mut batch = BTreeMap::new();
-        for (key, (_, name)) in names {
-            let stem = format!("{name}_copy{index}");
-            let mut candidate = stem.clone();
-            let mut suffix = 2;
-            while occupied.contains(&candidate.to_ascii_lowercase()) {
-                candidate = format!("{stem}_{suffix}");
-                suffix += 1;
-            }
-            if candidate.len() > MAX_NAME_BYTES {
-                return Err(invalid(format!(
-                    "Generated name for {name} exceeds 128 UTF-8 bytes; shorten the source name"
-                )));
-            }
-            if scan
-                .iter()
-                .any(|reference| connections::name_matches(&candidate, &reference.target))
-            {
-                return Err(invalid(format!(
-                    "Generated name {candidate} would acquire an existing reference; rename the source before repeating"
-                )));
-            }
-            occupied.insert(candidate.to_ascii_lowercase());
-            batch.insert(key.clone(), candidate);
-        }
-        batches.push(batch);
-    }
-    Ok(batches)
+    policies::planned_names_with(document, names, scan, count, &Policies::default())
 }
 
 pub(crate) fn copied_reference<'a>(
@@ -349,13 +299,78 @@ pub(crate) fn copied_reference<'a>(
     value.ok_or_else(|| invalid("Copied entity reference no longer matches its source"))
 }
 
+fn validate_placements(
+    document: &Document,
+    ids: &[ObjectId],
+    plan: &Plan,
+    catalog: &Catalog,
+) -> std::result::Result<Vec<Vec<(u32, f32)>>, EditError> {
+    if plan.placements.is_empty() || plan.placements.len() > MAX_COPIES as usize {
+        return Err(invalid("Use 1–64 additional placements"));
+    }
+    plan.policies.validate(plan.placements.len() as u32)?;
+    plan.placements
+        .iter()
+        .map(|placement| {
+            placement.validate()?;
+            let mut scales = Vec::new();
+            if placement.scale != DVec3::ONE
+                || placement.rotation.map(|angle| angle.rem_euclid(360.0)) != DVec3::ZERO
+            {
+                for id in ids {
+                    match *id {
+                        ObjectId::Solid(id) => {
+                            let solid = document
+                                .solid(id)
+                                .ok_or(EditError::NotFound(ObjectId::Solid(id)))?;
+                            crate::transfer::placement_solid(solid)?;
+                        }
+                        ObjectId::Entity(id) => {
+                            let entity = document
+                                .entity(id)
+                                .ok_or(EditError::NotFound(ObjectId::Entity(id)))?;
+                            if let Some(scale) = crate::transfer::placement_entity_scale(
+                                entity,
+                                catalog,
+                                placement.scale,
+                            )? {
+                                scales.push((id, scale));
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(scales)
+        })
+        .collect()
+}
+
 pub fn create(
     tx: &mut Transaction,
     ids: &[ObjectId],
     options: Options,
     catalog: &Catalog,
 ) -> std::result::Result<Result, EditError> {
-    validate(tx.document(), ids, options, catalog)?;
+    create_plan(
+        tx,
+        ids,
+        &Plan::array(options, Policies::default())?,
+        catalog,
+    )
+}
+
+pub fn create_plan(
+    tx: &mut Transaction,
+    ids: &[ObjectId],
+    plan: &Plan,
+    catalog: &Catalog,
+) -> std::result::Result<Result, EditError> {
+    if plan.placements.is_empty() || plan.placements.len() > MAX_COPIES as usize {
+        return Err(invalid("Use 1–64 additional placements"));
+    }
+    let count = plan.placements.len() as u32;
+    validate_sources(tx.document(), ids, count, catalog)?;
+    let model_scales = validate_placements(tx.document(), ids, plan, catalog)?;
     let names = source_names(tx.document(), ids)?;
     let scan = references::scan(tx.document(), catalog);
     let sources = ids
@@ -381,24 +396,63 @@ pub fn create(
                     reference.source, reference.target
                 )));
             }
-            internal.push(reference);
+            if plan.policies.internal == InternalReferences::Remap {
+                internal.push(reference);
+            }
+        } else if plan.policies.external == ExternalReferences::Reject
+            && reference.declared
+            && !reference.target.starts_with('!')
+        {
+            return Err(invalid(format!(
+                "Entity {} has an external or unresolved reference to {}; external references are rejected by this placement policy",
+                reference.source, reference.target
+            )));
         }
     }
-    let batches = planned_names(tx.document(), &names, &scan, options.count)?;
-    let mut copies = Vec::new();
-    for (batch, index) in batches.iter().zip(1..=options.count) {
+    let batches =
+        policies::planned_names_with(tx.document(), &names, &scan, count, &plan.policies)?;
+    let mut copies = Vec::with_capacity(count as usize);
+    for (offset, ((batch, placement), scales)) in batches
+        .iter()
+        .zip(&plan.placements)
+        .zip(model_scales)
+        .enumerate()
+    {
+        let index = offset as u32 + 1;
         let objects = edit::duplicate(tx, ids, DVec3::ZERO)?;
-        let mapping = ids
+        if objects.len() != ids.len() {
+            return Err(invalid(
+                "Placement copies no longer match their source objects",
+            ));
+        }
+        let source_mapping = ids
             .iter()
-            .zip(&objects)
-            .filter_map(|(old, new)| match (old, new) {
-                (ObjectId::Entity(old), ObjectId::Entity(new)) => Some((*old, *new)),
-                _ => None,
-            })
-            .collect::<BTreeMap<_, _>>();
+            .copied()
+            .zip(objects.iter().copied())
+            .collect::<Vec<_>>();
+        let mut mapping = BTreeMap::new();
+        for (source, copy) in &source_mapping {
+            match (*source, *copy) {
+                (ObjectId::Entity(source), ObjectId::Entity(copy)) => {
+                    mapping.insert(source, copy);
+                }
+                (ObjectId::Solid(_), ObjectId::Solid(_)) => {}
+                _ => {
+                    return Err(invalid(
+                        "Placement copied object kind differs from its source",
+                    ));
+                }
+            }
+        }
+        let mapped_entity = |source: u32| {
+            mapping
+                .get(&source)
+                .copied()
+                .ok_or_else(|| invalid("Copied entity no longer matches its original source"))
+        };
         let mut renamed = Vec::new();
         for (key, (source, before)) in &names {
-            let copy = mapping[source];
+            let copy = mapped_entity(*source)?;
             let after = &batch[key];
             let entity = tx.entity_mut(copy)?;
             let (_, name) = entity
@@ -416,7 +470,7 @@ pub fn create(
             });
         }
         for reference in internal.iter().rev() {
-            let entity = tx.entity_mut(mapping[&reference.source])?;
+            let entity = tx.entity_mut(mapped_entity(reference.source)?)?;
             let value = copied_reference(entity, reference)?;
             if value.get(reference.span.clone()) != Some(reference.target.as_str()) {
                 return Err(invalid("Copied reference span changed"));
@@ -426,36 +480,26 @@ pub fn create(
                 &batch[&reference.target.to_ascii_lowercase()],
             );
         }
-        let factor = f64::from(index);
-        edit::transform(
-            tx,
-            &objects,
-            edit::Transform {
-                translation: if options.basis == DMat3::IDENTITY {
-                    options.translation * factor
-                } else {
-                    options.basis * (options.translation * factor)
-                },
-                rotation: options.rotation * factor,
-                scale: options.copy_scale(index),
-                pivot: options.pivot,
-                basis: options.basis,
-                texture_lock: options.texture_lock,
-                ..edit::Transform::default()
-            },
-        )?;
+        edit::transform(tx, &objects, placement.transform())?;
+        for (source, scale) in scales {
+            tx.entity_mut(mapped_entity(source)?)?
+                .properties
+                .set("modelscale", scale.to_string());
+        }
         for id in &objects {
             let (mins, maxs) = crate::query::bounds_of(tx.document(), &[*id])
-                .ok_or_else(|| invalid("An array copy has no finite bounds"))?;
+                .ok_or_else(|| invalid("A placement copy has no finite bounds"))?;
             if !mins.is_finite()
                 || !maxs.is_finite()
                 || mins.abs().max(maxs.abs()).max_element() > crate::primitive::MAX_COORDINATE
             {
-                return Err(invalid("An array copy exceeds ±65536 world units"));
+                return Err(invalid("A placement copy exceeds ±65536 world units"));
             }
         }
         copies.push(Copy {
             index,
+            placement: *placement,
+            mapping: source_mapping,
             objects,
             names: renamed,
             remapped_references: internal.len(),

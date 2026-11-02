@@ -1,6 +1,6 @@
 use super::*;
 
-fn check_solid(solid: &Solid) -> std::result::Result<(), EditError> {
+pub(crate) fn placement_solid(solid: &Solid) -> std::result::Result<(), EditError> {
     if !solid.extra_properties.0.is_empty()
         || !solid.extra.is_empty()
         || solid.sides.iter().any(|side| {
@@ -12,35 +12,35 @@ fn check_solid(solid: &Solid) -> std::result::Result<(), EditError> {
         })
     {
         return Err(invalid(format!(
-            "Brush {} has opaque metadata; rotated/scaled prefab placement cannot transform it safely",
+            "Brush {} has opaque metadata; rotated/scaled placement cannot transform it safely",
             solid.id
         )));
     }
     Ok(())
 }
 
-fn check_entity(
+pub(crate) fn placement_entity_scale(
     entity: &Entity,
     catalog: &Catalog,
     scale: DVec3,
 ) -> std::result::Result<Option<f32>, EditError> {
     if !entity.extra.is_empty() {
         return Err(invalid(format!(
-            "Entity {} has opaque blocks; rotated/scaled prefab placement cannot transform them safely",
+            "Entity {} has opaque blocks; rotated/scaled placement cannot transform them safely",
             entity.id
         )));
     }
     for key in ["origin", "angles", "angle", "pitch"] {
         if entity.properties.get_all(key).count() > 1 {
             return Err(invalid(format!(
-                "Entity {} repeats spatial property {key}; resolve it before rotated/scaled prefab placement",
+                "Entity {} repeats spatial property {key}; resolve it before rotated/scaled placement",
                 entity.id
             )));
         }
     }
     if entity.properties.get("angles").is_some() && entity.properties.get("angle").is_some() {
         return Err(invalid(format!(
-            "Entity {} has both angle and angles; resolve its orientation before rotated/scaled prefab placement",
+            "Entity {} has both angle and angles; resolve its orientation before rotated/scaled placement",
             entity.id
         )));
     }
@@ -48,7 +48,7 @@ fn check_entity(
         for key in ["model", "modelscale"] {
             if entity.properties.get_all(key).count() > 1 {
                 return Err(invalid(format!(
-                    "Entity {} repeats spatial property {key}; resolve it before scaled prefab placement",
+                    "Entity {} repeats spatial property {key}; resolve it before scaled placement",
                     entity.id
                 )));
             }
@@ -89,13 +89,13 @@ fn check_entity(
             || (!supported_color && source_formats::vmf::parse_vec3(value).is_some());
         if spatial {
             return Err(invalid(format!(
-                "Entity {} property {key} has unsupported spatial metadata for rotated/scaled prefab placement",
+                "Entity {} property {key} has unsupported spatial metadata for rotated/scaled placement",
                 entity.id
             )));
         }
     }
     for solid in &entity.solids {
-        check_solid(solid)?;
+        placement_solid(solid)?;
     }
     scaled_model(entity, scale)
 }
@@ -103,6 +103,19 @@ fn check_entity(
 fn scaled_model(entity: &Entity, scale: DVec3) -> std::result::Result<Option<f32>, EditError> {
     if scale == DVec3::ONE || !entity.solids.is_empty() {
         return Ok(None);
+    }
+    if !source_formats::model_scale::scale_editable(entity) {
+        let factor = scale
+            .to_array()
+            .into_iter()
+            .find(|factor| *factor != 1.0)
+            .unwrap_or(1.0);
+        source_formats::model_scale::compose(entity, factor)
+            .map_err(|error| invalid(format!("Entity {}: {error}", entity.id)))?;
+    }
+    if entity.properties.get("modelscale").is_some() {
+        source_formats::model_scale::scale(entity)
+            .map_err(|error| invalid(format!("Entity {}: {error}", entity.id)))?;
     }
     let Some(model) = entity
         .properties
@@ -115,13 +128,13 @@ fn scaled_model(entity: &Entity, scale: DVec3) -> std::result::Result<Option<f32
         .map_err(|error| invalid(format!("Entity {} model: {error}", entity.id)))?;
     if !model.starts_with("models/") || !model.ends_with(".mdl") {
         return Err(invalid(format!(
-            "Entity {} has a non-MDL model reference; prefab scaling cannot change its size",
+            "Entity {} has a non-MDL model reference; placement scaling cannot change its size",
             entity.id
         )));
     }
     if scale.x != scale.y || scale.x != scale.z {
         return Err(invalid(format!(
-            "Entity {} model needs positive uniform prefab scaling; nonuniform model deformation is unsupported",
+            "Entity {} model needs positive uniform placement scaling; nonuniform model deformation is unsupported",
             entity.id
         )));
     }
@@ -153,11 +166,11 @@ impl Payload {
             return Ok(self.clone());
         }
         for solid in &self.document.vmf().world.solids {
-            check_solid(solid)?;
+            placement_solid(solid)?;
         }
         let mut model_scales = Vec::new();
         for entity in &self.document.vmf().entities {
-            if let Some(value) = check_entity(entity, catalog, scale)? {
+            if let Some(value) = placement_entity_scale(entity, catalog, scale)? {
                 model_scales.push((entity.id, value));
             }
         }

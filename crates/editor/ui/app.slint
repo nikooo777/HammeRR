@@ -2487,6 +2487,7 @@ export component AppWindow inherits Window {
     callback browse-particle();
     callback place-on-surface();
     callback repeat-array();
+    callback surface-scatter();
     callback copy-objects();
     callback cut-objects();
     callback paste-objects();
@@ -2648,6 +2649,7 @@ export component AppWindow inherits Window {
         { id: "magnetic-snapping", title: "Magnetic snapping…", group: "Brush", enabled: root.has-selection },
         { id: "place-on-surface", title: "Place on surface…", group: "Brush", enabled: root.whole-object-selection },
         { id: "repeat-array", title: "Repeat array…", group: "Brush", enabled: root.whole-object-selection },
+        { id: "surface-scatter", title: "Surface scatter…", group: "Brush", enabled: true },
         { id: "tie", title: "Tie to entity…", group: "Brush", enabled: root.can-tie },
         { id: "move-to-world", title: "Move to world", group: "Brush", enabled: root.brush-entity-selected },
         { id: "browse-materials", title: "Browse materials…", group: "Brush › Materials", enabled: true },
@@ -2823,6 +2825,7 @@ export component AppWindow inherits Window {
         else if id == "magnetic-snapping" { root.show-transform = true; root.dock-tab = 0; root.magnetic-refresh-sources(); }
         else if id == "place-on-surface" { root.place-on-surface(); }
         else if id == "repeat-array" { root.repeat-array(); }
+        else if id == "surface-scatter" { root.surface-scatter(); }
         else if id == "tie" { root.tie-entity(); }
         else if id == "move-to-world" { root.move-to-world(); }
         else if id == "browse-materials" { root.browse-material(""); }
@@ -2987,6 +2990,7 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Place on surface…"; enabled: root.whole-object-selection; activated => { root.place-on-surface(); } }
             MenuItem { title: "Repeat array…"; enabled: root.whole-object-selection; activated => { root.repeat-array(); } }
+            MenuItem { title: "Surface scatter…"; activated => { root.surface-scatter(); } }
             MenuItem { title: "Tie to entity…"; enabled: root.can-tie; activated => { root.tie-entity(); } }
             MenuItem { title: "Move to world"; enabled: root.brush-entity-selected; activated => { root.move-to-world(); } }
             MenuSeparator { }

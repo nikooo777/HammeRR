@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 82.9% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 83.3% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -51,6 +51,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [Sounds](sounds.md) | File/script browsing, short audition and assignment, with malformed-script warnings and playback errors. | Game mixing, soundscapes and sentence synthesis. |
 | [Organization](layers.md) | Groups, native layers, automatic kind/class categories, current exclusions, map-local saved query profiles, clipboard, prefabs, notes and saved views. | Prefab assets stay external. |
 | [Prefab library](prefabs.md) | Portable assemblies, byte-checked content replacement and placement, persistent categories/tags, filtered preview pages and brush/point/model-aware scaling. | Dynamic MDL models require uniform scale. Native static/detail models keep unit scale; assets stay external. |
+| [Repeated placement](repeated-placement.md) | World/source-local arrays, brush/point/model-aware scale, configurable names and internal/external links, and seeded area-weighted scatter on authored brush/terrain faces. Shared preview, Apply/Cancel and one-step Undo. | Uniform factors for MDL models; static/detail model resizing is unsupported. No overlap avoidance, physics settling, model/instance targets or live surface attachment. |
 | [Transform pivots](brushes.md#attach-the-pivot-to-a-vertex) | Fixed, picked and grid-snapped pivots; live point-origin/local-frame and brush, terrain or model vertex anchors; explicit array pivot sources and reusable applied settings. | Session-local bindings; topology, grid, model-body or asset-context changes can require rebinding. Arbitrary surface-point interpolation, parenting and animated/deformed mesh anchors are unavailable. |
 | [Spatial guides](measurements.md) | Saved rulers with brush/terrain and origin/local entity attachments; configurable 3D reference planes and plane-coordinate snapping. | Surface topology changes can require rebinding. Model surface anchors, parenting and animated bones. |
 | [Instances](instance-authoring.md) | Saved references, checked brush/terrain and static-prop mesh previews, nested light bindings, static child fog, saved child atlas regions and bounded extraction with chosen local pivots. | In-place child editing, child illumination and general replacement parameters. |

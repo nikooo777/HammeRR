@@ -1,96 +1,200 @@
 import { Theme } from "theme.slint";
-import {Button,CheckBox,ComboBox,LineEdit,ScrollView,SpinBox} from "widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView, SpinBox } from "widgets.slint";
 
 component VectorRow inherits HorizontalLayout {
     in property <string> label;
-    in-out property <string> value-x:"0";
-    in-out property <string> value-y:"0";
-    in-out property <string> value-z:"0";
+    in-out property <string> value-x: "0";
+    in-out property <string> value-y: "0";
+    in-out property <string> value-z: "0";
     callback edited();
-    spacing:8px;
-    Text {text:root.label;width:160px;vertical-alignment:center;}
-    Text {text:"X";vertical-alignment:center;}
-    LineEdit {min-width:60px;preferred-width:100px;horizontal-stretch:1;text<=>root.value-x;input-type:decimal;edited=>{root.edited();}}
-    Text {text:"Y";vertical-alignment:center;}
-    LineEdit {min-width:60px;preferred-width:100px;horizontal-stretch:1;text<=>root.value-y;input-type:decimal;edited=>{root.edited();}}
-    Text {text:"Z";vertical-alignment:center;}
-    LineEdit {min-width:60px;preferred-width:100px;horizontal-stretch:1;text<=>root.value-z;input-type:decimal;edited=>{root.edited();}}
+    spacing: Theme.space;
+    Text { text: root.label; width: 160px; vertical-alignment: center; color: Theme.text; }
+    Text { text: "X"; vertical-alignment: center; color: Theme.text-muted; }
+    LineEdit { min-width: 60px; preferred-width: 100px; horizontal-stretch: 1; text <=> root.value-x; input-type: decimal; edited => { root.edited(); } }
+    Text { text: "Y"; vertical-alignment: center; color: Theme.text-muted; }
+    LineEdit { min-width: 60px; preferred-width: 100px; horizontal-stretch: 1; text <=> root.value-y; input-type: decimal; edited => { root.edited(); } }
+    Text { text: "Z"; vertical-alignment: center; color: Theme.text-muted; }
+    LineEdit { min-width: 60px; preferred-width: 100px; horizontal-stretch: 1; text <=> root.value-z; input-type: decimal; edited => { root.edited(); } }
+}
+
+component RangeRow inherits HorizontalLayout {
+    in property <string> label;
+    in-out property <string> minimum;
+    in-out property <string> maximum;
+    callback edited();
+    spacing: Theme.space;
+    Text { text: root.label; width: 160px; vertical-alignment: center; color: Theme.text; }
+    Text { text: "From"; vertical-alignment: center; color: Theme.text-muted; }
+    LineEdit { min-width: 80px; horizontal-stretch: 1; text <=> root.minimum; input-type: decimal; edited => { root.edited(); } }
+    Text { text: "To"; vertical-alignment: center; color: Theme.text-muted; }
+    LineEdit { min-width: 80px; horizontal-stretch: 1; text <=> root.maximum; input-type: decimal; edited => { root.edited(); } }
 }
 
 export component RepeatWindow inherits Window {
     background: Theme.panel;
-    title:"Repeat array";preferred-width:660px;preferred-height:860px;
+    default-font-size: Theme.font;
+    title: root.scatter-mode ? "Surface scatter" : "Repeat array";
+    preferred-width: 720px;
+    preferred-height: 860px;
+    in property <bool> scatter-mode;
     in property <string> selection;
-    in-out property <int> count:3;
-    in-out property <int> space-index:0;
-    in-out property <int> pivot-source:0;
+    in property <string> target-faces;
+    in-out property <int> count: 3;
+    in-out property <int> space-index: 0;
+    in-out property <int> pivot-source: 0;
     in property <bool> last-settings-available;
-    in-out property <string> move-x:"64";
-    in-out property <string> move-y:"0";
-    in-out property <string> move-z:"0";
-    in-out property <string> rotate-x:"0";
-    in-out property <string> rotate-y:"0";
-    in-out property <string> rotate-z:"0";
-    in-out property <string> scale-x:"1";
-    in-out property <string> scale-y:"1";
-    in-out property <string> scale-z:"1";
-    in-out property <string> pivot-x:"0";
-    in-out property <string> pivot-y:"0";
-    in-out property <string> pivot-z:"0";
-    in-out property <bool> texture-lock:true;
+    in-out property <string> move-x: "64";
+    in-out property <string> move-y: "0";
+    in-out property <string> move-z: "0";
+    in-out property <string> rotate-x: "0";
+    in-out property <string> rotate-y: "0";
+    in-out property <string> rotate-z: "0";
+    in-out property <string> scale-x: "1";
+    in-out property <string> scale-y: "1";
+    in-out property <string> scale-z: "1";
+    in-out property <string> pivot-x: "0";
+    in-out property <string> pivot-y: "0";
+    in-out property <string> pivot-z: "0";
+    in-out property <string> seed: "1";
+    in-out property <bool> align: true;
+    in-out property <bool> automatic-anchor: true;
+    in-out property <string> heading-min: "0";
+    in-out property <string> heading-max: "360";
+    in-out property <string> uniform-scale-min: "1";
+    in-out property <string> uniform-scale-max: "1";
+    in-out property <string> normal-offset: "0";
+    in-out property <int> name-style: 0;
+    in-out property <string> name-prefix;
+    in-out property <string> name-suffix: "_copy";
+    in-out property <int> name-start: 1;
+    in-out property <int> internal-links: 0;
+    in-out property <int> external-links: 0;
+    in-out property <bool> texture-lock: true;
     in property <bool> ready;
     in property <string> summary;
     in property <string> message;
-    callback preview();callback apply();callback cancel();callback invalidate();callback use-last-settings();
-    forward-focus:dialog-focus;
-    dialog-focus:=FocusScope {
-        key-pressed(event)=>{if event.text==Key.Escape{root.cancel();accept}else{reject}}
+    callback preview();
+    callback apply();
+    callback cancel();
+    callback invalidate();
+    callback use-last-settings();
+    callback capture-sources();
+    callback capture-faces();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
-            padding: Theme.space-xl;spacing:12px;
-            Text {text:"Repeat selected objects";font-size: Theme.font-display;}
-            Text {text:root.selection;wrap:word-wrap;color:Theme.text-muted;}
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: root.scatter-mode ? "Scatter objects on surfaces" : "Repeat selected objects"; font-size: Theme.font-display; color: Theme.text; }
             ScrollView {
-                vertical-stretch:1;
-                content-width:self.visible-width;
+                vertical-stretch: 1;
+                content-width: self.visible-width;
                 VerticalLayout {
-                    spacing:Theme.space-lg;
-                    Button {text:"Use last array settings";enabled:root.last-settings-available;clicked=>{root.use-last-settings();}}
+                    spacing: Theme.space-lg;
+                    if root.scatter-mode: VerticalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Use selected objects"; clicked => { root.capture-sources(); } }
+                        Text { text: root.selection; wrap: word-wrap; color: Theme.text-muted; }
+                        Button { text: "Use selected faces"; clicked => { root.capture-faces(); } }
+                        Text { text: root.target-faces; wrap: word-wrap; color: Theme.text-muted; }
+                        Text { text: "Capture 1–16 source objects, then select and capture 1–32 target brush or terrain faces. Captured IDs stay explicit when the selection changes."; wrap: word-wrap; color: Theme.text-muted; }
+                    }
+                    if !root.scatter-mode: Text { text: root.selection; wrap: word-wrap; color: Theme.text-muted; }
+                    if !root.scatter-mode: Button { text: "Use last array settings"; enabled: root.last-settings-available; clicked => { root.use-last-settings(); } }
                     HorizontalLayout {
-                        spacing:10px;
-                        Text {text:"Additional copies";vertical-alignment:center;}
-                        SpinBox {minimum:1;maximum:64;value<=>root.count;edited=>{root.invalidate();}}
-                        Text {text:"Originals stay in place";vertical-alignment:center;color:Theme.text-muted;}
+                        spacing: Theme.space;
+                        Text { text: "Additional copies"; vertical-alignment: center; color: Theme.text; }
+                        SpinBox { minimum: 1; maximum: 64; value <=> root.count; edited => { root.invalidate(); } }
+                        Text { text: "Originals stay in place"; vertical-alignment: center; color: Theme.text-muted; }
+                    }
+                    if root.scatter-mode: VerticalLayout {
+                        spacing: Theme.space-lg;
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Text { text: "Seed"; width: 160px; vertical-alignment: center; color: Theme.text; }
+                            LineEdit { horizontal-stretch: 1; text <=> root.seed; edited => { root.invalidate(); } }
+                        }
+                        Text { text: "The same captured sources, faces, settings and seed produce the same preview. Samples are area-weighted; copies can overlap."; wrap: word-wrap; color: Theme.text-muted; }
+                        CheckBox { text: "Align to surface"; checked <=> root.align; toggled => { root.invalidate(); } }
+                        Text { text: "Align the first source frame’s local +Z axis to each sampled surface normal."; wrap: word-wrap; color: Theme.text-muted; }
+                        RangeRow { label: "Heading range · °"; minimum <=> root.heading-min; maximum <=> root.heading-max; edited => { root.invalidate(); } }
+                        RangeRow { label: "Uniform scale range"; minimum <=> root.uniform-scale-min; maximum <=> root.uniform-scale-max; edited => { root.invalidate(); } }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Text { text: "Normal offset · units"; width: 160px; vertical-alignment: center; color: Theme.text; }
+                            LineEdit { horizontal-stretch: 1; text <=> root.normal-offset; input-type: decimal; edited => { root.invalidate(); } }
+                        }
+                        Text { text: "Each copy uses one positive uniform scale factor. Offset moves the placement away from the sampled surface along its normal."; wrap: word-wrap; color: Theme.text-muted; }
+                    }
+                    if !root.scatter-mode: VerticalLayout {
+                        spacing: Theme.space-lg;
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Text { text: "Step space"; vertical-alignment: center; color: Theme.text; }
+                            ComboBox { model: ["World", "Source local"]; current-index <=> root.space-index; selected => { root.invalidate(); } }
+                        }
+                        VectorRow { label: "Move step · units"; value-x <=> root.move-x; value-y <=> root.move-y; value-z <=> root.move-z; edited => { root.invalidate(); } }
+                        VectorRow { label: "Rotate step · °"; value-x <=> root.rotate-x; value-y <=> root.rotate-y; value-z <=> root.rotate-z; edited => { root.invalidate(); } }
+                        VectorRow { label: "Scale factor per copy"; value-x <=> root.scale-x; value-y <=> root.scale-y; value-z <=> root.scale-z; edited => { root.invalidate(); } }
+                        Text { text: "1 keeps size. 1.1 adds 10% per copy: copy 2 uses 1.21. Plain point origins scale with the assembly. Authored MDL models require equal XYZ factors; their resulting model scale must stay within 1/64–64."; wrap: word-wrap; color: Theme.text-muted; }
+                        Text { text: "Every copy uses the pivot captured at Preview. Copy n scales the originals by factorⁿ, rotates by n × the step, then moves by n × the move step."; wrap: word-wrap; color: Theme.text-muted; }
+                        if root.space-index == 1: Text { text: "Source local captures one original source frame for every copy; inspect the source ID in the preview."; wrap: word-wrap; color: Theme.text-muted; }
+                    }
+                    if root.scatter-mode: CheckBox { text: "Automatic placement anchor"; checked <=> root.automatic-anchor; toggled => { root.invalidate(); } }
+                    if root.scatter-mode && root.automatic-anchor: Text { text: "One point entity uses its origin; other source assemblies use their bounds center. Preview shows the captured anchor."; wrap: word-wrap; color: Theme.text-muted; }
+                    if !root.scatter-mode || !root.automatic-anchor: HorizontalLayout {
+                        spacing: Theme.space;
+                        Text { text: "Pivot source"; width: 160px; vertical-alignment: center; color: Theme.text; }
+                        ComboBox { horizontal-stretch: 1; model: ["Selection center", "Current transform pivot", "Custom world point"]; current-index <=> root.pivot-source; selected => { root.invalidate(); } }
+                    }
+                    if (!root.scatter-mode || !root.automatic-anchor) && root.pivot-source == 2: VectorRow { label: "Custom world point"; value-x <=> root.pivot-x; value-y <=> root.pivot-y; value-z <=> root.pivot-z; edited => { root.invalidate(); } }
+                    if root.scatter-mode: Text { text: "Authored MDL models compose the uniform factor with their current model scale; the result must stay within 1/64–64. Unsupported model or spatial metadata is reported by Preview."; wrap: word-wrap; color: Theme.text-muted; }
+                    CheckBox { text: "Keep textures attached"; checked <=> root.texture-lock; toggled => { root.invalidate(); } }
+                    Text { text: "Naming and references"; font-size: Theme.font-heading; color: Theme.text; }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Text { text: "Name format"; width: 160px; vertical-alignment: center; color: Theme.text; }
+                        ComboBox { horizontal-stretch: 1; model: ["Source name + index", "Index before source name"]; current-index <=> root.name-style; selected => { root.invalidate(); } }
                     }
                     HorizontalLayout {
-                        spacing:10px;
-                        Text {text:"Step space";vertical-alignment:center;}
-                        ComboBox {model:["World", "Source local"];current-index<=>root.space-index;selected=>{root.invalidate();}}
+                        spacing: Theme.space;
+                        Text { text: "Name prefix"; width: 160px; vertical-alignment: center; color: Theme.text; }
+                        LineEdit { horizontal-stretch: 1; text <=> root.name-prefix; edited => { root.invalidate(); } }
                     }
-                    VectorRow {label:"Move step · units";value-x<=>root.move-x;value-y<=>root.move-y;value-z<=>root.move-z;edited=>{root.invalidate();}}
-                    VectorRow {label:"Rotate step · °";value-x<=>root.rotate-x;value-y<=>root.rotate-y;value-z<=>root.rotate-z;edited=>{root.invalidate();}}
-                    VectorRow {label:"Scale factor per copy";value-x<=>root.scale-x;value-y<=>root.scale-y;value-z<=>root.scale-z;edited=>{root.invalidate();}}
-                    Text {text:"1 keeps size. 1.1 adds 10% per copy: copy 2 uses 1.21. Scaling requires brushes or brush entities; point and model entities are unsupported.";wrap:word-wrap;color:Theme.text-muted;}
                     HorizontalLayout {
-                        spacing:Theme.space-lg;
-                        Text {text:"Pivot source";vertical-alignment:center;}
-                        ComboBox {model:["Selection center","Current transform pivot","Custom world point"];current-index<=>root.pivot-source;selected=>{root.invalidate();}}
+                        spacing: Theme.space;
+                        Text { text: "Name suffix"; width: 160px; vertical-alignment: center; color: Theme.text; }
+                        LineEdit { horizontal-stretch: 1; text <=> root.name-suffix; edited => { root.invalidate(); } }
                     }
-                    if root.pivot-source==2: VectorRow {label:"Custom world point";value-x<=>root.pivot-x;value-y<=>root.pivot-y;value-z<=>root.pivot-z;edited=>{root.invalidate();}}
-                    Text {text:"The chosen pivot is resolved when you preview. Every copy uses that captured world point until Apply or Cancel.";wrap:word-wrap;color:Theme.text-muted;}
-                    Text {text:root.space-index==1?"Copy n scales the originals by factorⁿ, rotates by n × the step about the world pivot, then moves by n × the move step. All axes use the same original source frame identified in the preview.":"Copy n scales the originals by factorⁿ, rotates by n × the step about the world pivot, then moves by n × the world move step.";wrap:word-wrap;color:Theme.text-muted;}
-                    CheckBox {text:"Keep textures attached";checked<=>root.texture-lock;toggled=>{root.invalidate();}}
-                    Text {text:"Names become unique name_copyN values. Exact internal entity links follow each copy; external links stay. Shared names and ambiguous internal links must be resolved first.";wrap:word-wrap;color:Theme.text-muted;}
-                    Text {text:"Named sets with scripts or dynamic I/O cannot be repeated. Other custom metadata stays verbatim. Context notes copy within the map budget; saved partitions stay on originals.";wrap:word-wrap;color:Theme.text-muted;}
-                    Button {text:"Preview array";clicked=>{root.preview();}}
-                    Text {text:root.summary;wrap:word-wrap;color:Theme.text;vertical-alignment:top;}
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Text { text: "Start index"; width: 160px; vertical-alignment: center; color: Theme.text; }
+                        SpinBox { minimum: 1; maximum: 1000000; value <=> root.name-start; edited => { root.invalidate(); } }
+                    }
+                    Text { text: root.name-style == 0 ? "Name = prefix + source name + suffix + index." : "Name = prefix + index + _ + source name + suffix."; wrap: word-wrap; color: Theme.text-muted; }
+                    Text { text: "Prefix and suffix: at most 32 UTF-8 bytes each; no wildcards, controls, commas, quotes or !. Generated names: at most 128 bytes. Collisions receive a numeric suffix; Preview shows the exact names."; wrap: word-wrap; color: Theme.text-muted; }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Text { text: "Internal links"; width: 160px; vertical-alignment: center; color: Theme.text; }
+                        ComboBox { horizontal-stretch: 1; model: ["Follow each copy", "Keep original targets"]; current-index <=> root.internal-links; selected => { root.invalidate(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Text { text: "External links"; width: 160px; vertical-alignment: center; color: Theme.text; }
+                        ComboBox { horizontal-stretch: 1; model: ["Keep external links", "Reject external links"]; current-index <=> root.external-links; selected => { root.invalidate(); } }
+                    }
+                    Text { text: "External policy covers declared entity links; procedural ! targets retain their built-in behavior. Shared names, ambiguous links, unsafe wildcard captures and unsupported scripted references still refuse. Custom metadata stays verbatim; saved partitions stay on originals."; wrap: word-wrap; color: Theme.text-muted; }
+                    Button { text: root.scatter-mode ? "Preview scatter" : "Preview array"; clicked => { root.preview(); } }
+                    Text { text: root.summary; wrap: word-wrap; color: Theme.text; vertical-alignment: top; }
                 }
             }
-            Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:32px;}
+            Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; min-height: 32px; }
             HorizontalLayout {
-                spacing:10px;
-                Button {text:"Cancel";clicked=>{root.cancel();}}
-                Rectangle {horizontal-stretch:1;}
-                Button {text:"Apply array";enabled:root.ready;clicked=>{root.apply();}}
+                spacing: Theme.space;
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Apply placement"; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

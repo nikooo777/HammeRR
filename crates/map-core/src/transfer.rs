@@ -22,6 +22,7 @@ pub const MAX_GROUPS: usize = 256;
 const KEY: &str = "hammerr_transfer";
 
 mod placement;
+pub(crate) use placement::{placement_entity_scale, placement_solid};
 
 #[derive(Clone, Debug)]
 pub struct Payload {

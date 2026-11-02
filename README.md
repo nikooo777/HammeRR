@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 82.9% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 83.3% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -61,10 +61,10 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | ![An arch cut through a brick wall](docs/images/carved-doorway.png) | ![A diagonally clipped brush](docs/images/clipped-brush.png) |
 | Subtract shapes to form doors and passages. | Cut brushes with a line, plane or three points. |
 
-| [Component editing](docs/components.md) | [Attached pivots and arrays](docs/repeated-placement.md) |
+| [Component editing](docs/components.md) | [Arrays and surface scatter](docs/repeated-placement.md) |
 | --- | --- |
-| ![A raised roof ridge](docs/images/roof-ridge.png) | ![A column array around an attached model-vertex pivot](docs/images/attached-pivot.png) |
-| Reshape corners, edges and faces. | Attach pivots to geometry and reuse arrays with safe references. |
+| ![A raised roof ridge](docs/images/roof-ridge.png) | ![Scaled barrels follow a sculpted terrain surface](docs/images/surface-scatter.png) |
+| Reshape corners, edges and faces. | Repeat or scatter assemblies with checked pivots, scale and references. |
 
 | [Materials](docs/textures.md) | [Normal maps](docs/normal-maps.md) |
 | --- | --- |

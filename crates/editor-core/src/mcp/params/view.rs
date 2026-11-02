@@ -372,7 +372,7 @@ pub struct RepeatArrayArgs {
     pub translation: Option<[f64; 3]>,
     /// XYZ degree step in the chosen frame; copy n rotates by n times this step about the fixed world pivot.
     pub rotation: Option<[f64; 3]>,
-    /// Finite positive XYZ scale factors per copy, default [1,1,1]. Copy n uses factor^n on originals, before rotation/translation in the chosen frame about the fixed world pivot. Nonidentity factors require brushes or brush entities.
+    /// Positive XYZ scale factors per copy, default [1,1,1]. Copy n uses factor^n before rotation/translation. Plain point origins follow XYZ scaling; authored MDL models require uniform factors and supported native modelscale. Static/detail model resizing is unsupported.
     pub scale: Option<[f64; 3]>,
     /// selection_center, current_transform_pivot or custom_world_point. Omitted with no pivot uses the selection center; omitted with pivot preserves the legacy custom-world-point request.
     pub pivot_source: Option<crate::session::repeat::PivotSource>,
@@ -380,8 +380,65 @@ pub struct RepeatArrayArgs {
     pub pivot: Option<[f64; 3]>,
     /// Keep textures attached to copied geometry. Defaults to true.
     pub texture_lock: Option<bool>,
+    /// Naming and internal/external reference policies. Omitted policies retain source_suffix names, remapped internal links and unchanged external links.
+    #[serde(default)]
+    pub policies: crate::session::repeat::Policies,
     /// Latest get_repeat_array.snapshot. Invalid/stale requests retain the current draft.
     pub snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceScatterArgs {
+    /// Explicit whole source object IDs. Each copy repeats this complete assembly; no selection fallback.
+    pub sources: Vec<String>,
+    /// Explicit authored brush or terrain faces. Instanced and model surfaces are unsupported.
+    pub faces: Vec<SurfaceScatterFaceArgs>,
+    /// Additional copies, excluding originals: 1–64, within the generated-object/side limits.
+    pub count: u32,
+    /// Deterministic random seed. The same admitted source, faces and settings reproduce the poses.
+    pub seed: u64,
+    /// Align the first stable source's captured local +Z to each sampled surface normal. Defaults to false.
+    #[serde(default)]
+    pub align_normal: bool,
+    /// Ordered minimum/maximum heading in degrees within ±360. Around the sampled normal when aligned, otherwise world Z. Defaults to [0,0].
+    #[serde(default)]
+    pub heading: [f64; 2],
+    /// Ordered positive minimum/maximum uniform scale factors. Defaults to [1,1]. Authored MDL modelscale limits still apply.
+    #[serde(default = "scatter_scale")]
+    pub scale: [f64; 2],
+    /// World-unit offset along the sampled normal, within ±65536. Defaults to zero.
+    #[serde(default)]
+    pub normal_offset: f64,
+    /// Keep textures attached to copied geometry. Defaults to true.
+    #[serde(default = "scatter_texture_lock")]
+    pub texture_lock: bool,
+    /// Optional selection_center, current_transform_pivot or custom_world_point. Without an explicit pivot, one point source uses its origin; other assemblies use their bounds center.
+    pub pivot_source: Option<crate::session::repeat::PivotSource>,
+    /// Source-world point mapped to each sample plus normal offset. Required for custom_world_point.
+    pub pivot: Option<[f64; 3]>,
+    /// Naming and internal/external reference policies; omitted values retain the array defaults.
+    #[serde(default)]
+    pub policies: crate::session::repeat::Policies,
+    /// get_repeat_array.document_generation recorded when capturing source and face IDs. Map replacement requires recapturing those IDs.
+    pub source_generation: u64,
+    /// Latest get_repeat_array.snapshot. Invalid/stale requests retain the current draft.
+    pub snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceScatterFaceArgs {
+    pub solid: u32,
+    pub side: u32,
+}
+
+fn scatter_scale() -> [f64; 2] {
+    [1.0; 2]
+}
+
+fn scatter_texture_lock() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

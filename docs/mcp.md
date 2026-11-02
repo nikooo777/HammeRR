@@ -891,13 +891,71 @@ from its requested pivot intent. `space:"local"` captures fresh source-local
 axes once for all copies. Inspect the preview, then use `apply_repeat_array` or
 `cancel_repeat_array` with its token.
 
+Positive XYZ scale factors apply to brushes and plain point origins. Authored
+MDL point entities require uniform factors; each result must keep native
+`modelscale` within 1/64–64. Static/detail model resizing, nonuniform model
+deformation and non-MDL model scaling refuse before replacing the current draft.
+
+Both placement tools accept `policies` with these omission defaults:
+
+```json
+{
+  "naming": {
+    "style": "source_suffix",
+    "prefix": "",
+    "suffix": "_copy",
+    "start_index": 1
+  },
+  "internal": "remap",
+  "external": "keep"
+}
+```
+
+`source_suffix` forms `prefix + source name + suffix + index`.
+`indexed_prefix` forms `prefix + index + "_" + source name + suffix`.
+Existing-name collisions receive a checked suffix. Prefix/suffix each fit
+32 UTF-8 bytes; generated names fit 128 bytes and indices stay within
+1–1,000,000. Invalid names and names that acquire existing references refuse.
+`internal:"remap"` links each copy's exact internal references to that copy;
+`"keep_original"` retains their original targets. `external:"keep"` retains
+declared named links outside the assembly and `"reject"` refuses them.
+Procedural `!` targets keep their intrinsic behavior. Ambiguous internal links
+and unsupported scripted or numeric references still refuse.
+
 `get_repeat_array.last_settings` is null until an array is successfully applied.
 It then reports `count`, `translation`, `rotation`, `scale`, `space`,
-`texture_lock`, `pivot_source` and a custom `pivot` or null. It stores no old
+`texture_lock`, `policies`, `pivot_source` and a custom `pivot` or null. It stores no old
 source IDs or captured frame. `preview_last_repeat_array` requires only a fresh
 `snapshot` and creates a preview for the current selection, resolving its center,
 current transform pivot and local frame again. It does not apply geometry.
 Preview, failure and cancellation leave the remembered settings unchanged.
+
+For surface scatter, call `preview_surface_scatter` with explicit `sources`,
+authored `faces:[{"solid":42,"side":47}]`, `count`, `seed`, and the latest
+`get_repeat_array.snapshot`. Pass the `document_generation` recorded when
+capturing those IDs as `source_generation`; recapture them after map replacement.
+Each copy repeats the whole source assembly. Targets are actual brush-face or
+prepared terrain triangles, sampled by surface area. Model and instanced
+surfaces are unsupported.
+
+Optional `align_normal` defaults to `false`; `heading:[min,max]` defaults to
+`[0,0]`, `scale:[min,max]` to `[1,1]`, `normal_offset` to `0` and `texture_lock`
+to `true`. Heading is in degrees within ±360; scale factors are positive.
+Alignment maps the first stable source's captured local +Z to the sampled normal.
+Heading rotates around that normal when aligned and world Z otherwise. The
+offset follows the sampled normal. A lone point source uses its origin as the default pivot; other
+assemblies use their bounds center. Explicit `pivot_source`/`pivot` use the
+array rules.
+
+The same admitted inputs and seed reproduce the poses. Inspect the preview's
+kind, actual poses and sampled face/triangle/point/normal with `get_repeat_array`,
+then render and Apply or Cancel using the existing token operations. Scatter
+does not update `last_settings`. Both workflows allow at most 16 sources,
+64 copies, 256 generated objects including owned brushes and 8192 generated
+sides. Scatter accepts at most 32 target faces; `limits.scatter` reports the
+surface-preparation work bounds. There is no overlap avoidance,
+physics settling or live attachment to the targets. Stale or invalid requests
+preserve the previous draft. Unknown fields and policy values refuse.
 
 ## Rope bounds
 
@@ -1533,7 +1591,7 @@ These groups locate the available operations.
 | [Overlays](overlays.md) | `apply_overlay`, `browse_overlay_targets`, `cancel_overlay`, `get_overlay_state`, `overlay_corner_handles`, `preview_overlay`, `preview_overlay_corners`, `preview_overlay_rebind`, `preview_overlay_refit`, `review_overlay` |
 | [Particles](particles.md) | `apply_particle_choice`, `begin_particle_choice`, `browse_particles`, `cancel_particle_choice`, `choose_particle`, `get_particle_choice`, `inspect_particle`, `reload_particle_assets` |
 | [Face partitions](partitions.md) | `frame_component_partitions`, `get_saved_component_partitions`, `pick_component_partitions`, `place_component_partition_texture`, `preview_component_partition`, `preview_partition_extrusion`, `raise_component_partition`, `remove_saved_component_partitions`, `resume_component_partitions`, `select_component_partitions`, `store_component_partition`, `update_component_partition_cut`, `update_component_partition_material`, `update_component_partition_texture` |
-| [Repeated placement](repeated-placement.md) | `apply_repeat_array`, `cancel_repeat_array`, `get_repeat_array`, `preview_last_repeat_array`, `preview_repeat_array` |
+| [Repeated placement](repeated-placement.md) | `apply_repeat_array`, `cancel_repeat_array`, `get_repeat_array`, `preview_last_repeat_array`, `preview_repeat_array`, `preview_surface_scatter` |
 | [Preview defaults](preview-defaults.md) | `get_preview_defaults`, `set_preview_defaults` |
 | [Workspace layout](workspace-layout.md) | `get_workspace_preferences`, `set_workspace_layout`, `set_workspace_preferences` |
 | [Recovery](map-tools.md) | `create_recovery_snapshot`, `delete_recovery_snapshot`, `get_recovery`, `reload_recovery_settings`, `restore_recovery_snapshot`, `set_recovery_settings` |

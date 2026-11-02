@@ -50,7 +50,7 @@ policies, with no old object IDs or captured source frame.
 
 ## Set names and links
 
-1. Under **Naming and references**, choose **Name format**.
+1. Expand **Naming and references** and choose **Name format**.
 2. Set **Name prefix**, **Name suffix** and **Start index**.
 3. Choose **Internal links** and **External links**.
 4. Preview and inspect the generated names and links before **Apply placement**.

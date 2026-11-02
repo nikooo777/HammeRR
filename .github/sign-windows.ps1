@@ -16,10 +16,12 @@ if (-not $signTool) { throw 'Windows SDK SignTool is missing.' }
 
 $pfxPath = Join-Path $env:RUNNER_TEMP 'hammerr-signing.pfx'
 $publicPath = Join-Path $Directory 'HammeRR-signing.cer'
+$trustStore = 'Cert:\LocalMachine\Root'
 $imported = @()
 $trusted = $null
 $password = ConvertTo-SecureString $env:WINDOWS_SIGNING_PFX_PASSWORD -AsPlainText -Force
 try {
+    Write-Host 'Import signing identity'
     [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_PFX_BASE64))
     $imported = @(Import-PfxCertificate -FilePath $pfxPath -Password $password -CertStoreLocation 'Cert:\CurrentUser\My')
     $certificates = @($imported | Where-Object HasPrivateKey)
@@ -30,13 +32,16 @@ try {
         throw 'The signing certificate is not currently valid.'
     }
     Export-Certificate -Cert $certificate -FilePath $publicPath -Type CERT | Out-Null
-    $trusted = Import-Certificate -FilePath $publicPath -CertStoreLocation 'Cert:\CurrentUser\Root'
+    Write-Host 'Trust signing certificate on the runner'
+    $trusted = Import-Certificate -FilePath $publicPath -CertStoreLocation $trustStore
     Remove-Item -LiteralPath $pfxPath -Force
     $env:WINDOWS_SIGNING_PFX_BASE64 = $null
     $env:WINDOWS_SIGNING_PFX_PASSWORD = $null
 
+    Write-Host "Sign and timestamp $($executables.Count) executables"
     & $signTool.FullName sign /s My /sha1 $certificate.Thumbprint /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $executables.FullName
     if ($LASTEXITCODE -ne 0) { throw 'Windows signing or timestamping failed.' }
+    Write-Host 'Verify signed executables'
     & $signTool.FullName verify /pa /all /tw $executables.FullName
     if ($LASTEXITCODE -ne 0) { throw 'Windows signature verification failed.' }
     foreach ($executable in $executables) {
@@ -52,7 +57,7 @@ try {
         if (Test-Path -LiteralPath $pfxPath) { Remove-Item -LiteralPath $pfxPath -Force }
     } finally {
         try {
-            if ($trusted) { Remove-Item -Path "Cert:\CurrentUser\Root\$($trusted.Thumbprint)" }
+            if ($trusted) { Remove-Item -Path (Join-Path $trustStore $trusted.Thumbprint) }
         } finally {
             foreach ($certificate in $imported) {
                 Remove-Item -Path "Cert:\CurrentUser\My\$($certificate.Thumbprint)" -DeleteKey

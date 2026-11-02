@@ -826,7 +826,7 @@ dependencies = [
 
 [[package]]
 name = "compiler"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "bnum",
  "cc",
@@ -1232,7 +1232,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "editor"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "compiler",
  "editor-core",
@@ -1250,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "editor-app-ui"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "i-slint-core",
  "slint",
@@ -1259,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "editor-build-ui"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "i-slint-core",
  "slint",
@@ -1268,7 +1268,7 @@ dependencies = [
 
 [[package]]
 name = "editor-core"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "arboard",
  "axum",
@@ -1299,7 +1299,7 @@ dependencies = [
 
 [[package]]
 name = "editor-ui"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "editor-app-ui",
  "editor-build-ui",
@@ -2933,7 +2933,7 @@ dependencies = [
 
 [[package]]
 name = "map-core"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "base64",
  "glam",
@@ -3082,7 +3082,7 @@ dependencies = [
 
 [[package]]
 name = "native-runtime"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "getrandom 0.4.3",
  "libc",
@@ -4093,7 +4093,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "render"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "bytemuck",
  "glam",
@@ -4775,7 +4775,7 @@ dependencies = [
 
 [[package]]
 name = "source-formats"
-version = "2026.11.1"
+version = "2026.11.2"
 dependencies = [
  "bytemuck",
  "crc32fast",

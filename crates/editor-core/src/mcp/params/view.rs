@@ -368,7 +368,7 @@ pub struct PreviewPrefabArgs {
     pub position: Option<[f64; 3]>,
     /// World XYZ degrees, applied after scale about the source pivot. Defaults to [0,0,0].
     pub rotation: Option<[f64; 3]>,
-    /// Finite positive world XYZ factors, default [1,1,1]. Nonidentity scale requires only brushes/brush entities.
+    /// Positive XYZ factors, default [1,1,1]. Plain point origins follow XYZ scaling; authored MDL models require uniform factors and supported native modelscale. Static/detail model resizing is unsupported.
     pub scale: Option<[f64; 3]>,
     /// Source-world pivot mapped to position. Defaults to the original authored bounds center.
     pub pivot: Option<[f64; 3]>,

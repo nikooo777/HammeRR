@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 82.1% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 82.3% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -140,5 +140,10 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | --- | --- |
 | ![A map viewport with the dock and tool rail hidden](docs/images/workspace-layout.png) | ![The same map rendered with a mod material profile](docs/images/content-profile-mod.png) |
 | Save panel visibility and sizes, or give the map more room. | Switch content per document and restore it when reopening maps. |
+
+| [Prefab library](docs/prefabs.md) |
+| --- |
+| ![A reusable brush and model assembly at three scales](docs/images/prefab-assemblies.png) |
+| Organize saved assemblies, replace their content and place scaled copies. |
 
 Counter-Strike: Source and its assets are not included.

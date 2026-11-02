@@ -24,9 +24,9 @@ const MATERIAL_BINDING_RESERVE_BYTES: usize = MAX_MATERIAL_ERROR_CHARS * 4;
 const MATERIAL_BINDINGS_ERROR: &str = "Model material state was interrupted; reload models";
 pub const MAX_SCENE_VERTICES: usize = 1_000_000;
 pub const MAX_SCENE_INDICES: usize = 6_000_000;
-pub const MIN_MODEL_SCALE: f32 = 1.0 / 64.0;
-pub const MAX_MODEL_SCALE: f32 = 64.0;
-pub const MAX_MODEL_SCALE_TEXT_BYTES: usize = 64;
+pub use source_formats::model_scale::{
+    MAX_MODEL_SCALE, MAX_MODEL_SCALE_TEXT_BYTES, MIN_MODEL_SCALE, scale, scale_editable,
+};
 
 #[derive(Debug)]
 pub struct Asset {
@@ -457,45 +457,6 @@ pub fn appearance(
         return Err("Static-prop output does not support authored render modes; use prop_dynamic for model opacity".into());
     }
     Ok(appearance)
-}
-
-pub fn scale_editable(entity: &Entity) -> bool {
-    !entity.classname().is_some_and(|name| {
-        [
-            "prop_static",
-            "prop_detail",
-            "detail_prop",
-            "prop_detail_sprite",
-        ]
-        .iter()
-        .any(|class| name.eq_ignore_ascii_case(class))
-    })
-}
-
-pub fn scale(entity: &Entity) -> Result<f32, String> {
-    let raw = entity.properties.get("modelscale");
-    let scale = raw.map_or(Ok(1.0), |raw| {
-        if raw.len() > MAX_MODEL_SCALE_TEXT_BYTES {
-            return Err(format!("Model scale exceeds {MAX_MODEL_SCALE_TEXT_BYTES} UTF-8 bytes"));
-        }
-        raw.parse::<f32>()
-            .ok()
-            .filter(|value| value.is_finite() && (MIN_MODEL_SCALE..=MAX_MODEL_SCALE).contains(value))
-            .ok_or_else(|| format!("Model scale must be a finite native float from {MIN_MODEL_SCALE} to {MAX_MODEL_SCALE}; these are editor numeric limits"))
-    })?;
-    if !scale_editable(entity) {
-        if entity
-            .classname()
-            .is_some_and(|name| name.eq_ignore_ascii_case("prop_static"))
-        {
-            if scale != 1.0 {
-                return Err("Static-prop output does not support modelscale other than 1; use a compatible dynamic model entity for scale".into());
-            }
-        } else if raw.is_some_and(|value| value.parse::<f64>().ok() != Some(1.0)) {
-            return Err("Native detail records require modelscale 1; dynamic model scaling does not apply to detail props".into());
-        }
-    }
-    Ok(scale)
 }
 
 impl Instance {

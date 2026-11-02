@@ -143,7 +143,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "List the personal portable-VMF prefab library and inspect a chosen assembly. query/offset/limit page entries (default64/max64); selected decodes one prefab with counts, authored bounds and external links. Returns snapshot for mutations and placement. No map, clipboard or history changes. Limits:128 VMFs,8 MiB each,64 MiB total,512 scanned entries. Assets stay external; private Hammer formats and instances are unavailable. UI: Prefabs….",
+        description = "List the personal portable-VMF prefab library and inspect a chosen assembly. query searches name/category/tags; category is an exact case-insensitive filter (omitted means all, empty string uncategorized); every requested tag must match exactly, case-insensitively. offset/limit page entries (default64/max64). selected decodes one prefab with counts, authored bounds, organization and external links. Unreadable organization remains name-browsable/deletable with organization:null and organization_error; complete/catalog_complete/filter_warning disclose incomplete matching or metadata coverage. Returns snapshot for mutations and placement, plus category/tag catalogs. No map, clipboard or history changes. Limits:128 VMFs,8 MiB each,64 MiB total,512 scanned entries. Assets stay external; private Hammer formats and instances are unavailable. UI: Prefabs….",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_prefabs(
@@ -151,8 +151,10 @@ impl EditorServer {
         Parameters(args): Parameters<PrefabsArgs>,
     ) -> ToolResult {
         run(|| {
-            Ok(self.session().prefab_report(
+            Ok(self.session().prefab_report_filtered(
                 args.query.as_deref().unwrap_or_default(),
+                args.category.as_deref(),
+                args.tags.as_deref().unwrap_or_default(),
                 args.offset.unwrap_or(0),
                 args.limit.unwrap_or(64),
                 args.selected.as_deref(),
@@ -205,15 +207,20 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Render one reviewed prefab library page as up to eight 320×240 PNG cards. Requires get_prefabs.snapshot; query/offset choose that catalog page, limit is1–8 (default8), style is flat (default) or textured. Uses the same lazy Session renderer and eight-image cache as Prefabs… → Render page. Source bytes, assets and final catalog are rechecked before returning. Unsupported or malformed entries have individual errors and no image; Textured never substitutes Flat. A stale catalog rejects the whole page. The first text block contains ordered entries with name and image_content_index into this result's content array, or an error. No map, clipboard, selection, placement review, camera or history changes.",
+        description = "Render one reviewed prefab library page as up to eight 320×240 PNG cards. Requires get_prefabs.snapshot and the same query/category/all-tags filters and offset; limit is1–8 (default8), style flat (default) or textured. Omitted category means all; empty string uncategorized. Uses the same lazy Session renderer and eight-image cache as Prefabs… → Render page. Source bytes, assets, filters and final catalog are rechecked before returning. Unreadable organization stays null with organization_error; complete/catalog_complete/filter_warning disclose incomplete coverage. Unsupported or malformed entries have individual errors and no image; Textured never substitutes Flat. A stale catalog rejects the whole page. The first text block contains ordered entries with name and image_content_index into this result's content array, or an error. No map, clipboard, selection, placement review, camera or history changes.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn render_prefab_gallery(
         &self,
         Parameters(args): Parameters<RenderPrefabGalleryArgs>,
     ) -> ToolResult {
-        let gallery = match self.session().render_prefab_gallery(
-            args.query.as_deref().unwrap_or_default(),
+        let filter = crate::session::prefabs::Filter {
+            query: args.query.as_deref().unwrap_or_default(),
+            category: args.category.as_deref(),
+            tags: args.tags.as_deref().unwrap_or_default(),
+        };
+        let gallery = match self.session().render_prefab_gallery_filtered(
+            filter,
             args.offset.unwrap_or_default(),
             args.limit
                 .unwrap_or(crate::session::prefabs::MAX_GALLERY_ENTRIES),
@@ -241,9 +248,9 @@ impl EditorServer {
         }
         let mut content = vec![ContentBlock::text(report.to_string())];
         content.extend(images);
-        if let Err(error) = self.session().validate_prefab_gallery(
+        if let Err(error) = self.session().validate_prefab_gallery_filtered(
             &gallery.review,
-            args.query.as_deref().unwrap_or_default(),
+            filter,
             args.offset.unwrap_or_default(),
             args.limit
                 .unwrap_or(crate::session::prefabs::MAX_GALLERY_ENTRIES),
@@ -269,7 +276,38 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview a library assembly with get_prefabs.snapshot. position (world XYZ, default0,0,0) receives the source pivot (default original authored bounds center; optional custom pivot). Positive XYZ scale applies before world XYZ rotation in degrees; defaults preserve centered translation. Nonidentity scale requires brushes/brush entities. Unsupported spatial properties and opaque geometry/entity blocks reject rotated/scaled placement. Textures stay attached. Privately validates before replacing clipboard/drafts; source files/map/history remain unchanged. Returned paste.preview.token uses shared apply_paste/cancel_paste/render_view. IDs/names/references/groups/layers/notes remap; external links require keep_external_links:true. UI: Prefabs… → Preview placement…."
+        description = "Replace one exact prefab library entry with committed whole selected or explicit objects using the reviewed get_prefabs.snapshot. ids defaults to the current selection. Preserves the entry name, category and tags; validates and atomically replaces the source without delete-then-save. Stale map/selection/library or changed source rejects. Reports committed-but-unverified writes explicitly. Placed copies and map Undo history stay unchanged; existing placement reviews from this entry must be reopened. save_prefab remains no-overwrite. UI: Prefabs… → Replace selected… → Replace prefab; Cancel preserves the entry."
+    )]
+    pub(in crate::mcp) fn replace_prefab(
+        &self,
+        Parameters(args): Parameters<ReplacePrefabArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let ids = ids_or_selection(&session, args.ids.as_deref())?;
+            session.replace_prefab(Actor::Agent, &args.name, &ids, &args.snapshot)
+        })
+    }
+
+    #[tool(
+        description = "Set an exact prefab entry's category and tags using get_prefabs.snapshot. Category is at most 48 UTF-8 bytes; up to 8 unique case-insensitive tags, at most 32 bytes each. Spaces and commas are allowed inside tags. Empty category means uncategorized; an empty tags array clears tags. Shared validation trims values and rejects controls/duplicates. Organization stays in library VMF metadata and is excluded from placed geometry. Stale library/source state rejects; reports committed-but-unverified writes explicitly. No map/history/clipboard change. UI: Prefabs… → Category and tags… → Save category and tags; Cancel preserves the organization."
+    )]
+    pub(in crate::mcp) fn organize_prefab(
+        &self,
+        Parameters(args): Parameters<OrganizePrefabArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().organize_prefab(
+                Actor::Agent,
+                &args.name,
+                &args.organization,
+                &args.snapshot,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Preview a library assembly with get_prefabs.snapshot. position (world XYZ, default0,0,0) receives the source pivot (default original authored bounds center; optional custom pivot). Positive XYZ scale applies before world XYZ rotation in degrees. Plain point origins follow independent XYZ scale. MDL point entities require uniform scale and compose native-float modelscale within 1/64–64. Scaling native static/detail models to nonunit modelscale, nonuniform MDL deformation and non-MDL model references refuse. Unit-scale placement remains unchanged. Unsupported spatial properties and opaque geometry/entity blocks reject rotated/scaled placement. Textures stay attached. Privately validates before replacing clipboard/drafts; source files/map/history remain unchanged. Returned paste.preview.token uses shared apply_paste/cancel_paste/render_view. IDs/names/references/groups/layers/notes remap; external links require keep_external_links:true. UI: Prefabs… → Preview placement…."
     )]
     pub(in crate::mcp) fn preview_prefab(
         &self,

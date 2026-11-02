@@ -1,5 +1,6 @@
 import { Theme } from "theme.slint";
-import {Button,CheckBox,ComboBox,LineEdit,ScrollView} from "widgets.slint";
+import { MutedText } from "kit.slint";
+import {Button,CheckBox,ComboBox,LineEdit,ScrollView,TextEdit} from "widgets.slint";
 export struct PrefabRow {name:string,detail:string,thumbnail:image,has-image:bool,status:string}
 export struct PrefabGalleryRow {first:PrefabRow,second:PrefabRow,has-second:bool}
 component PrefabCard inherits Rectangle {
@@ -39,6 +40,7 @@ export component PrefabsWindow inherits Window {
     in property <[PrefabGalleryRow]> gallery-rows;
     in property <bool> gallery-rendered;
     in property <string> gallery-status;
+    in property <string> filter-warning;
     in property <bool> can-render-gallery;
     in property <string> selected;
     in property <string> page-label;
@@ -55,10 +57,19 @@ export component PrefabsWindow inherits Window {
     in property <bool> saving;
     in property <bool> deleting;
     in property <bool> renaming;
+    in property <bool> replacing;
+    in property <bool> organizing;
     in property <bool> editing;
     in property <bool> can-save;
     in property <bool> can-preview;
+    in property <bool> can-replace;
+    in property <bool> can-organize;
     in-out property <string> query;
+    in-out property <int> category-mode;
+    in-out property <string> category-filter;
+    in-out property <string> tag-filter;
+    in-out property <string> organization-category;
+    in-out property <string> organization-tags;
     in-out property <string> prefab-name;
     in-out property <string> center-x:"0";
     in-out property <string> center-y:"0";
@@ -84,6 +95,10 @@ export component PrefabsWindow inherits Window {
     callback delete();
     callback begin-rename();
     callback rename();
+    callback begin-replace();
+    callback replace();
+    callback begin-organize();
+    callback organize();
     callback preview();
     callback render-thumbnail();
     callback render-gallery();
@@ -101,8 +116,10 @@ export component PrefabsWindow inherits Window {
             HorizontalLayout {
                 spacing:8px;
                 Button {text:"Save selection…";enabled:root.can-save&&!root.editing;clicked=>{root.begin-save();}}
+                Button {text:"Replace selected…";enabled:root.can-save&&root.can-replace&&!root.editing;clicked=>{root.begin-replace();}}
                 Button {text:"Refresh library";enabled:!root.editing;clicked=>{root.refresh();}}
                 Rectangle {horizontal-stretch:1;}
+                Button {text:"Category and tags…";enabled:root.can-organize&&!root.editing;clicked=>{root.begin-organize();}}
                 Button {text:"Rename…";enabled:root.selected!=""&&!root.editing;clicked=>{root.begin-rename();}}
                 Button {text:"Delete prefab…";enabled:root.selected!=""&&!root.editing;clicked=>{root.begin-delete();}}
             }
@@ -110,7 +127,12 @@ export component PrefabsWindow inherits Window {
                 spacing:20px;vertical-stretch:1;
                 VerticalLayout {
                     width:360px;spacing:8px;
-                    LineEdit {text<=>root.query;placeholder-text:"Find a prefab";enabled:!root.editing;edited=>{root.search();}}
+                    LineEdit {text<=>root.query;placeholder-text:"Search names, categories and tags";enabled:!root.editing;edited=>{root.search();}}
+                    ComboBox {model:["All categories","Uncategorized","Exact category"];current-index<=>root.category-mode;accessible-label:"Category filter";enabled:!root.editing;selected=>{root.search();}}
+                    if root.category-mode==2:LineEdit {text<=>root.category-filter;placeholder-text:"Category";accessible-label:"Exact category filter";enabled:!root.editing;edited=>{root.search();}}
+                    Text {text:"Required tags · one per line";color:Theme.text-muted;}
+                    TextEdit {text<=>root.tag-filter;accessible-label:"Required prefab tags, one per line";enabled:!root.editing;preferred-height:Theme.prefab-tags-height;edited=>{root.search();}}
+                    if root.filter-warning!="":Text {text:root.filter-warning;wrap:word-wrap;color:Theme.warning;font-size:Theme.font-small;}
                     HorizontalLayout {
                         spacing:8px;
                         ComboBox {model:["Flat","Textured"];current-index<=>root.thumbnail-style;accessible-label:"Gallery style";enabled:!root.editing;selected=>{root.thumbnail-style-changed();}}
@@ -138,7 +160,7 @@ export component PrefabsWindow inherits Window {
                 }
                 VerticalLayout {
                     horizontal-stretch:1;spacing:10px;
-                    Text {text:root.saving?"Save the current selection":root.deleting?"Delete “"+root.selected+"”?":root.renaming?"Rename “"+root.selected+"”":root.selected==""?"Choose an assembly":root.selected;font-size: Theme.font-heading;font-weight:600;wrap:word-wrap;}
+                    Text {text:root.saving?"Save the current selection":root.replacing?"Replace “"+root.selected+"” from selection?":root.organizing?"Category and tags for “"+root.selected+"”":root.deleting?"Delete “"+root.selected+"”?":root.renaming?"Rename “"+root.selected+"”":root.selected==""?"Choose an assembly":root.selected;font-size: Theme.font-heading;font-weight:600;wrap:word-wrap;}
                     if root.saving||root.renaming: VerticalLayout {
                         spacing:8px;
                         Text {text:"Prefab name";}
@@ -146,6 +168,15 @@ export component PrefabsWindow inherits Window {
                         Text {text:root.renaming?"Changes the library filename and preserves VMF bytes, object IDs and asset references. Existing placement reviews from this entry become stale; choose the renamed prefab and preview again. Existing names are never overwritten.":"Captures committed whole objects, groups, layers, supported links and object notes. Existing files are never overwritten.";wrap:word-wrap;color:Theme.text-muted;}
                     }
                     if root.deleting: Text {text:"Removes this VMF from the library. Placed copies stay in the map. Library deletion is not part of map Undo.";wrap:word-wrap;color:Theme.warning;}
+                    if root.replacing:MutedText {text:"Replace this saved assembly with the committed current selection. Its name, category and tags stay. Placed copies remain in the map; existing placement reviews must be reopened. Library replacement is separate from map Undo.";}
+                    if root.organizing:VerticalLayout {
+                        spacing:Theme.space;
+                        Text {text:"Category";color:Theme.text-muted;}
+                        LineEdit {text<=>root.organization-category;placeholder-text:"Uncategorized";accessible-label:"Prefab category";}
+                        Text {text:"Tags · one per line";color:Theme.text-muted;}
+                        TextEdit {text<=>root.organization-tags;accessible-label:"Prefab tags, one per line";preferred-height:Theme.prefab-tags-height;}
+                        MutedText {text:"Category: up to 48 UTF-8 bytes. Up to 8 unique tags, 32 bytes each. Spaces and commas belong to a tag. Saving changes library metadata; placed map copies stay unchanged.";}
+                    }
                     if !root.editing: ScrollView {
                       vertical-stretch:1;
                       VerticalLayout {
@@ -207,7 +238,7 @@ export component PrefabsWindow inherits Window {
                             Text {text:"Z";vertical-alignment:center;}
                             LineEdit {text<=>root.pivot-z;input-type:decimal;}
                         }
-                        Text {text:"Scale, then rotate about the source pivot; move that pivot to the placement position. Scaling requires only brushes or brush entities. Textures stay attached.";wrap:word-wrap;color:Theme.text-muted;}
+                        Text {text:"Scale, then rotate about the source pivot; move that pivot to the placement position. Plain point origins follow XYZ scale. MDL point entities require uniform scale and compose modelscale within 1/64–64. Scaling native static/detail models to nonunit scale and non-MDL model references is unsupported. Unit-scale placement stays unchanged; textures stay attached.";wrap:word-wrap;color:Theme.text-muted;}
                         CheckBox {text:"Keep external links by name";checked<=>root.keep-external;}
                       }
                     }
@@ -226,6 +257,8 @@ export component PrefabsWindow inherits Window {
                 if root.saving: Button {text:"Save prefab";enabled:root.prefab-name!="";clicked=>{root.save();}}
                 if root.deleting: Button {text:"Delete prefab";clicked=>{root.delete();}}
                 if root.renaming: Button {text:"Rename prefab";enabled:root.prefab-name!=""&&root.prefab-name!=root.selected;clicked=>{root.rename();}}
+                if root.replacing:Button {text:"Replace prefab";primary:true;clicked=>{root.replace();}}
+                if root.organizing:Button {text:"Save category and tags";primary:true;clicked=>{root.organize();}}
             }
         }
     }

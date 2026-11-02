@@ -1430,6 +1430,28 @@ finite `origin` and `vrad_brush_cast_shadows:"1"` through `set_entity_properties
 then use the same World emission file. Supported child poses are assembled once.
 Moving, parented or unrequested model sources reject.
 
+## Prefab library
+
+Use `get_prefabs` to inspect entries and obtain a mutation snapshot. `query` searches
+names, categories and tags. `category` matches exactly without regard to case;
+omit it for all categories, or use `""` for Uncategorized. `tags` requires every
+listed tag. Pass the same filters to `render_prefab_gallery`.
+
+`save_prefab` creates a new entry. `replace_prefab` replaces its content with the
+committed selection or explicit IDs and retains its organization. `organize_prefab`
+takes `organization: {category, tags}`. Use `rename_prefab` and `delete_prefab` for
+file management. These operations leave placed copies and map history unchanged.
+
+Malformed metadata reports `organization: null` and `organization_error`.
+Name browsing and Delete remain available. `complete`, `catalog_complete` and
+`filter_warning` disclose incomplete metadata or matches.
+
+`preview_prefab` supports XYZ origin scaling for plain points. Authored MDL models
+require uniform factors and compose their native-float `modelscale` in the
+1/64–64 range. Static/detail resizing, nonuniform model deformation and non-MDL
+model scaling refuse. Inspect the owned Paste preview, then use `apply_paste` or
+`cancel_paste` with its token.
+
 ## Spatial guides
 
 Use `get_measurements` for ruler state, attachment availability and fresh snapshots.
@@ -1458,7 +1480,7 @@ These groups locate the available operations.
 | [Atlas texturing](atlas-texturing.md) | `inspect_material_atlas`, `preview_atlas_fit`, `list_atlas_regions`, `save_atlas_region`, `choose_atlas_region`, `rename_atlas_region`, `delete_atlas_region` |
 | [Build and play](compile-and-play.md) | `apply_build_recipe`, `apply_compile_region`, `cancel_compile`, `cancel_compile_region`, `compile_map`, `delete_build_recipe`, `frame_build_diagnostic`, `frame_compile_region`, `game_log`, `get_build_recipes`, `get_compile_region`, `get_compile_settings`, `get_compile_status`, `get_native_capture_runtime`, `launch_game`, `preview_compile_region`, `reload_build_recipes`, `rename_build_recipe`, `run_map`, `run_map_checks`, `save_build_recipe`, `set_compile_settings`, `set_native_capture_runtime`, `start_compile`, `stop_game` |
 | [Map checks and reports](map-tools.md) | `apply_map_fixes`, `cancel_map_fixes`, `get_map_checks`, `get_object_report`, `preview_map_fixes`, `select_map_issue`, `select_object_report`, `set_object_visibility` |
-| [Clipboard and prefabs](clipboard.md) | `apply_paste`, `cancel_paste`, `copy_objects`, `cut_objects`, `delete_prefab`, `export_clipboard`, `get_clipboard`, `get_prefabs`, `import_clipboard`, `inspect_prefab_thumbnail`, `preview_paste`, `preview_prefab`, `rename_prefab`, `render_prefab_gallery`, `render_prefab_thumbnail`, `save_prefab` |
+| [Clipboard and prefabs](clipboard.md) | `apply_paste`, `cancel_paste`, `copy_objects`, `cut_objects`, `delete_prefab`, `export_clipboard`, `get_clipboard`, `get_prefabs`, `import_clipboard`, `inspect_prefab_thumbnail`, `organize_prefab`, `preview_paste`, `preview_prefab`, `rename_prefab`, `replace_prefab`, `render_prefab_gallery`, `render_prefab_thumbnail`, `save_prefab` |
 | [Color palette](entities.md) | `get_color_palette`, `set_color_palette` |
 | [Brush components](components.md) | `begin_component_drag`, `cancel_component_drag`, `cancel_component_edit`, `cancel_component_move`, `commit_component_drag`, `commit_component_edit`, `commit_component_move`, `get_brush_components`, `get_component_handles`, `get_component_sources`, `pick_brush_components`, `preview_component_crease`, `preview_component_move`, `preview_component_rotate`, `preview_component_scale`, `preview_component_split`, `preview_component_weld`, `select_brush_components`, `set_component_move_options`, `set_component_picking`, `set_entity_component`, `update_component_drag`, `update_component_scope` |
 | [Map design notes](map-tools.md) | `apply_context_edit`, `begin_context_edit`, `cancel_context_edit`, `delete_context_note`, `focus_context`, `get_context`, `get_context_note`, `get_context_state`, `list_context_notes`, `set_context_view`, `update_context_edit` |

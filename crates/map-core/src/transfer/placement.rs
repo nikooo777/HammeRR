@@ -22,14 +22,8 @@ fn check_solid(solid: &Solid) -> std::result::Result<(), EditError> {
 fn check_entity(
     entity: &Entity,
     catalog: &Catalog,
-    scaled: bool,
-) -> std::result::Result<(), EditError> {
-    if scaled && entity.solids.is_empty() {
-        return Err(invalid(format!(
-            "Prefab scaling supports brushes and brush entities; entity {} has no scalable brush geometry",
-            entity.id
-        )));
-    }
+    scale: DVec3,
+) -> std::result::Result<Option<f32>, EditError> {
     if !entity.extra.is_empty() {
         return Err(invalid(format!(
             "Entity {} has opaque blocks; rotated/scaled prefab placement cannot transform them safely",
@@ -49,6 +43,16 @@ fn check_entity(
             "Entity {} has both angle and angles; resolve its orientation before rotated/scaled prefab placement",
             entity.id
         )));
+    }
+    if scale != DVec3::ONE && entity.solids.is_empty() {
+        for key in ["model", "modelscale"] {
+            if entity.properties.get_all(key).count() > 1 {
+                return Err(invalid(format!(
+                    "Entity {} repeats spatial property {key}; resolve it before scaled prefab placement",
+                    entity.id
+                )));
+            }
+        }
     }
     let class = entity.classname().and_then(|name| catalog.class(name));
     let light_pitch = matches!(entity.classname(), Some("light_spot" | "light_environment"));
@@ -93,7 +97,37 @@ fn check_entity(
     for solid in &entity.solids {
         check_solid(solid)?;
     }
-    Ok(())
+    scaled_model(entity, scale)
+}
+
+fn scaled_model(entity: &Entity, scale: DVec3) -> std::result::Result<Option<f32>, EditError> {
+    if scale == DVec3::ONE || !entity.solids.is_empty() {
+        return Ok(None);
+    }
+    let Some(model) = entity
+        .properties
+        .get("model")
+        .filter(|model| !model.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let model = source_formats::gamefs::asset_relative(model.trim())
+        .map_err(|error| invalid(format!("Entity {} model: {error}", entity.id)))?;
+    if !model.starts_with("models/") || !model.ends_with(".mdl") {
+        return Err(invalid(format!(
+            "Entity {} has a non-MDL model reference; prefab scaling cannot change its size",
+            entity.id
+        )));
+    }
+    if scale.x != scale.y || scale.x != scale.z {
+        return Err(invalid(format!(
+            "Entity {} model needs positive uniform prefab scaling; nonuniform model deformation is unsupported",
+            entity.id
+        )));
+    }
+    source_formats::model_scale::compose(entity, scale.x)
+        .map(Some)
+        .map_err(|error| invalid(format!("Entity {}: {error}", entity.id)))
 }
 
 impl Payload {
@@ -121,8 +155,11 @@ impl Payload {
         for solid in &self.document.vmf().world.solids {
             check_solid(solid)?;
         }
+        let mut model_scales = Vec::new();
         for entity in &self.document.vmf().entities {
-            check_entity(entity, catalog, scale != DVec3::ONE)?;
+            if let Some(value) = check_entity(entity, catalog, scale)? {
+                model_scales.push((entity.id, value));
+            }
         }
         let mut document = self.document.preview_snapshot();
         document.edit("prepare prefab transform", |tx| {
@@ -135,7 +172,13 @@ impl Payload {
                     pivot,
                     ..Default::default()
                 },
-            )
+            )?;
+            for &(id, value) in &model_scales {
+                tx.entity_mut(id)?
+                    .properties
+                    .set("modelscale", value.to_string());
+            }
+            Ok(())
         })?;
         Self::capture(&document, &self.ids, catalog)
     }

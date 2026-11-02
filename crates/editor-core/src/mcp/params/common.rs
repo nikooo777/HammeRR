@@ -389,6 +389,10 @@ pub struct PasteArgs {
 #[serde(deny_unknown_fields)]
 pub struct PrefabsArgs {
     pub query: Option<String>,
+    /// Exact category, case-insensitive. Omit for all; empty string selects uncategorized.
+    pub category: Option<String>,
+    /// All listed tags must match exactly, case-insensitively.
+    pub tags: Option<Vec<String>>,
     pub offset: Option<usize>,
     pub limit: Option<usize>,
     pub selected: Option<String>,
@@ -417,6 +421,10 @@ pub struct RenderPrefabGalleryArgs {
     /// Reviewed get_prefabs.snapshot; stale catalog, selection or clipboard state rejects the page.
     pub snapshot: String,
     pub query: Option<String>,
+    /// Same category filter as get_prefabs; empty string selects uncategorized.
+    pub category: Option<String>,
+    /// Same all-tags filter as the reviewed get_prefabs page.
+    pub tags: Option<Vec<String>>,
     pub offset: Option<usize>,
     /// Number of entries, 1–8; default 8.
     pub limit: Option<usize>,
@@ -430,6 +438,25 @@ pub struct SavePrefabArgs {
     pub name: String,
     pub snapshot: String,
     pub ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReplacePrefabArgs {
+    /// Existing exact library entry name; its name and organization are retained.
+    pub name: String,
+    /// Reviewed get_prefabs.snapshot for this selection and library version.
+    pub snapshot: String,
+    pub ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OrganizePrefabArgs {
+    pub name: String,
+    pub snapshot: String,
+    /// Empty category means uncategorized; an empty tags array clears tags.
+    pub organization: crate::prefabs::Organization,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

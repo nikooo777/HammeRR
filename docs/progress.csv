@@ -53,7 +53,7 @@ E09,Extended FGD compatibility (++),100
 E10,Advanced color workflows (++),100
 E11,AI-first entity graph operations,60
 E12,Point-entity gallery,100
-R01,Prefab library,75
+R01,Prefab library,100
 R02,Referenced map instances,60
 R03,Create and edit instances in context (++),25
 R04,Instance collapse with shared preparation rules,70

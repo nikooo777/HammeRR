@@ -1,4 +1,4 @@
-use super::{Entry, Store};
+use super::{Entry, Organization, Store};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -51,9 +51,25 @@ pub struct Snapshot {
 }
 
 pub(crate) enum Edit<'a> {
-    Save { name: &'a str, text: &'a str },
-    Rename { name: &'a str, new_name: &'a str },
-    Delete { name: &'a str },
+    Save {
+        name: &'a str,
+        text: &'a str,
+    },
+    Replace {
+        name: &'a str,
+        text: &'a str,
+    },
+    Organize {
+        name: &'a str,
+        organization: &'a Organization,
+    },
+    Rename {
+        name: &'a str,
+        new_name: &'a str,
+    },
+    Delete {
+        name: &'a str,
+    },
 }
 
 fn directory(root: Result<PathBuf, String>) -> Result<PathBuf, String> {
@@ -155,7 +171,7 @@ impl Authority {
             state.revision = state.revision.saturating_add(1);
         }
         state.write_error = None;
-        state.store = directory.map(|directory| Store { directory });
+        state.store = directory.map(Store::new);
         state.observe();
         Ok(())
     }
@@ -243,6 +259,8 @@ impl Authority {
         let store = state.store.as_ref().map_err(Clone::clone)?;
         let result = match edit {
             Edit::Save { name, text } => store.save(name, text, stamp),
+            Edit::Replace { name, text } => store.replace(name, text, stamp),
+            Edit::Organize { name, organization } => store.organize(name, organization, stamp),
             Edit::Rename { name, new_name } => store.rename(name, new_name, stamp),
             Edit::Delete { name } => store.remove(name, stamp),
         };

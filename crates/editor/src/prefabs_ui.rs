@@ -1,9 +1,10 @@
-use crate::session::prefabs::{GalleryReview, MAX_GALLERY_ENTRIES, ThumbnailStyle};
+use crate::session::prefabs::{Filter, GalleryReview, MAX_GALLERY_ENTRIES, ThumbnailStyle};
 use crate::{
     PrefabGalleryRow, PrefabRow, PrefabsWindow, clipboard_ui,
     runtime::{DocumentAccess, DocumentContinuation, SharedSession},
     session::{Actor, Session},
 };
+use editor_core::prefabs::Organization;
 use slint::{ComponentHandle, VecModel};
 use std::{cell::RefCell, rc::Rc};
 
@@ -78,11 +79,68 @@ fn placement(window: &PrefabsWindow) -> Result<crate::session::prefabs::Placemen
     })
 }
 
+fn tags(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn category_filter(window: &PrefabsWindow) -> Option<String> {
+    match window.get_category_mode() {
+        0 => None,
+        1 => Some(String::new()),
+        _ => Some(window.get_category_filter().trim().to_owned()),
+    }
+}
+
+fn organization_label(organization: &Organization) -> String {
+    format!(
+        "Category: {}\nTags: {}",
+        if organization.category.is_empty() {
+            "Uncategorized"
+        } else {
+            &organization.category
+        },
+        if organization.tags.is_empty() {
+            "None".into()
+        } else {
+            organization.tags.join(" · ")
+        },
+    )
+}
+
+fn card_detail(bytes: u64, organization: Result<&Organization, &str>) -> String {
+    let organization = match organization {
+        Ok(organization) => organization,
+        Err(error) => {
+            return format!(
+                "Organization unavailable: {error} · {} KiB",
+                bytes.div_ceil(1024)
+            );
+        }
+    };
+    let category = if organization.category.is_empty() {
+        "Uncategorized"
+    } else {
+        &organization.category
+    };
+    let tags = if organization.tags.is_empty() {
+        String::new()
+    } else {
+        format!(" · {}", organization.tags.join(" · "))
+    };
+    format!("{category}{tags} · {} KiB", bytes.div_ceil(1024))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
     Save,
     Delete,
     Rename,
+    Replace,
+    Organize,
 }
 
 struct Draft {
@@ -100,6 +158,7 @@ struct Form {
     seen: Option<Observation>,
     gallery: Option<GalleryReview>,
     library_message: Option<String>,
+    organization: Option<Organization>,
 }
 pub struct Controller {
     pub window: PrefabsWindow,
@@ -239,8 +298,18 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
     if !force && form.seen == Some(seen) {
         return;
     }
-    let mut report = session.prefab_report(
-        &window.get_query(),
+    let query = window.get_query();
+    let category = category_filter(window);
+    let tags = tags(&window.get_tag_filter());
+    let filter = Filter {
+        query: &query,
+        category: category.as_deref(),
+        tags: &tags,
+    };
+    let mut report = session.prefab_report_filtered(
+        filter.query,
+        filter.category,
+        filter.tags,
         form.offset,
         PAGE,
         form.selected.as_deref(),
@@ -250,8 +319,10 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
         && form.offset >= total as usize
     {
         form.offset = total.saturating_sub(1) as usize / PAGE * PAGE;
-        report = session.prefab_report(
-            &window.get_query(),
+        report = session.prefab_report_filtered(
+            filter.query,
+            filter.category,
+            filter.tags,
             form.offset,
             PAGE,
             form.selected.as_deref(),
@@ -261,7 +332,7 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
     let style = thumbnail_style(window);
     if form.gallery.as_ref().is_some_and(|review| match &style {
         Ok(style) => session
-            .validate_prefab_gallery(review, &window.get_query(), form.offset, PAGE, *style)
+            .validate_prefab_gallery_filtered(review, filter, form.offset, PAGE, *style)
             .is_err(),
         Err(_) => true,
     }) {
@@ -281,6 +352,17 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
                 .require_root_objects(&session.selected_ids())
                 .is_ok(),
     );
+    form.organization = serde_json::from_value(report["selected_organization"].clone()).ok();
+    window.set_can_replace(
+        report["selected_exists"] == true
+            && form.organization.is_some()
+            && report["error"].is_null(),
+    );
+    window.set_can_organize(
+        report["selected_exists"] == true
+            && form.organization.is_some()
+            && report["error"].is_null(),
+    );
     window.set_can_preview(!report["selected"].is_null() && form.action.is_none());
     window.set_editing(form.action.is_some());
     window.set_saving(
@@ -298,12 +380,23 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
             .as_ref()
             .is_some_and(|draft| draft.action == Action::Rename),
     );
+    window.set_replacing(
+        form.action
+            .as_ref()
+            .is_some_and(|draft| draft.action == Action::Replace),
+    );
+    window.set_organizing(
+        form.action
+            .as_ref()
+            .is_some_and(|draft| draft.action == Action::Organize),
+    );
     window.set_directory(
         report["directory"]
             .as_str()
             .unwrap_or("Storage unavailable")
             .into(),
     );
+    window.set_filter_warning(report["filter_warning"].as_str().unwrap_or_default().into());
     form.stamp = report["snapshot"].as_str().unwrap_or_default().into();
     let selected = if let Some(draft) = &form.action {
         draft.source.as_deref().unwrap_or_default()
@@ -343,11 +436,19 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
         .iter()
         .map(|entry| PrefabRow {
             name: entry["name"].as_str().unwrap().into(),
-            detail: format!(
-                "{} KiB · VMF assembly",
-                entry["bytes"].as_u64().unwrap().div_ceil(1024)
-            )
-            .into(),
+            detail: serde_json::from_value::<Organization>(entry["organization"].clone())
+                .map(|organization| {
+                    card_detail(entry["bytes"].as_u64().unwrap(), Ok(&organization))
+                })
+                .unwrap_or_else(|_| {
+                    card_detail(
+                        entry["bytes"].as_u64().unwrap(),
+                        Err(entry["organization_error"]
+                            .as_str()
+                            .unwrap_or("Metadata could not be decoded")),
+                    )
+                })
+                .into(),
             ..Default::default()
         })
         .collect::<Vec<_>>();
@@ -363,22 +464,42 @@ fn refresh(window: &PrefabsWindow, session: &Session, state: &RefCell<Form>, for
     window.set_previous(form.offset > 0);
     window.set_next(!report["next_offset"].is_null());
     let selected = &report["selected"];
+    let organization = form
+        .organization
+        .as_ref()
+        .map(organization_label)
+        .or_else(|| {
+            report["selected_organization_error"]
+                .as_str()
+                .map(|error| format!("Organization unavailable: {error}"))
+        });
     window.set_detail(if selected.is_null() {
-        report["selection_error"]
-            .as_str()
-            .unwrap_or(
-                "Save an assembly from the current selection, or choose one from the library.",
-            )
-            .into()
+        let status = report["selection_error"].as_str().unwrap_or(
+            "Save an assembly from the current selection, or choose one from the library.",
+        );
+        organization.as_deref().map_or_else(
+            || status.into(),
+            |organization| format!("{status}\n{organization}").into(),
+        )
     } else {
+        let links = match selected["external_links"].as_array() {
+            Some(links) => links.len().to_string(),
+            None => format!(
+                "Unavailable: {}",
+                selected["external_links_error"]
+                    .as_str()
+                    .unwrap_or("Reference analysis could not be read")
+            ),
+        };
         format!(
-            "Objects: {} · Groups: {} · Layers: {} · Faces: {}\nExternal links: {}\n{}",
+            "Objects: {} · Groups: {} · Layers: {} · Faces: {}\nExternal links: {}\n{}\n{}",
             selected["objects"],
             selected["groups"],
             selected["layers"],
             selected["faces"],
-            selected["external_links"].as_array().map_or(0, Vec::len),
-            bounds_label(&selected["bounds"])
+            links,
+            bounds_label(&selected["bounds"]),
+            organization.unwrap_or_else(|| "Organization unavailable".into()),
         )
         .into()
     });
@@ -489,6 +610,20 @@ impl Controller {
                     let mut state = form.borrow_mut();
                     let stamp = state.stamp.clone();
                     let source = state.selected.clone();
+                    let organization = if action == Action::Organize {
+                        match state.organization.clone() {
+                            Some(organization) => Some(organization),
+                            None => {
+                                window.set_message(
+                                    "Refresh and choose a prefab with readable organization first."
+                                        .into(),
+                                );
+                                return;
+                            }
+                        }
+                    } else {
+                        None
+                    };
                     let initial_name = if action == Action::Rename {
                         source.clone().unwrap_or_default()
                     } else {
@@ -501,6 +636,10 @@ impl Controller {
                     });
                     drop(state);
                     window.set_prefab_name(initial_name.into());
+                    if let Some(organization) = organization {
+                        window.set_organization_category(organization.category.into());
+                        window.set_organization_tags(organization.tags.join("\n").into());
+                    }
                     refresh(&window, session, &form, true);
                 })
             }
@@ -508,6 +647,8 @@ impl Controller {
         window.on_begin_save(begin_callback(Action::Save));
         window.on_begin_delete(begin_callback(Action::Delete));
         window.on_begin_rename(begin_callback(Action::Rename));
+        window.on_begin_replace(begin_callback(Action::Replace));
+        window.on_begin_organize(begin_callback(Action::Organize));
         let cancel_callback = |close| {
             let (window, continuation, form) =
                 (window.as_weak(), continuation.clone(), form.clone());
@@ -520,6 +661,8 @@ impl Controller {
                 local_window.set_saving(false);
                 local_window.set_deleting(false);
                 local_window.set_renaming(false);
+                local_window.set_replacing(false);
+                local_window.set_organizing(false);
                 callback(&window, &continuation, |window, session| {
                     refresh(&window, session, &form, true)
                 });
@@ -574,16 +717,38 @@ impl Controller {
                                     &draft.stamp,
                                 )
                             }
+                            Action::Replace => {
+                                let ids = session.selected_ids();
+                                session.replace_prefab(
+                                    Actor::User,
+                                    draft.source.as_deref().ok_or("Choose a prefab first")?,
+                                    &ids,
+                                    &draft.stamp,
+                                )
+                            }
+                            Action::Organize => session.organize_prefab(
+                                Actor::User,
+                                draft.source.as_deref().ok_or("Choose a prefab first")?,
+                                &Organization {
+                                    category: window.get_organization_category().to_string(),
+                                    tags: tags(&window.get_organization_tags()),
+                                },
+                                &draft.stamp,
+                            ),
                         }
                     })();
                     match result {
                         Ok(report) => {
                             let mut state = form.borrow_mut();
-                            if action == Action::Delete {
-                                state.selected = None;
-                            } else {
-                                state.selected = Some(window.get_prefab_name().to_string());
-                            }
+                            state.selected = match action {
+                                Action::Delete => None,
+                                Action::Replace | Action::Organize => {
+                                    state.action.as_ref().and_then(|draft| draft.source.clone())
+                                }
+                                Action::Save | Action::Rename => {
+                                    Some(window.get_prefab_name().to_string())
+                                }
+                            };
                             state.action = None;
                             if action == Action::Rename {
                                 state.offset = 0;
@@ -597,6 +762,8 @@ impl Controller {
                                 Action::Rename => {
                                     "Prefab renamed. Choose it and preview again before placing it."
                                 }
+                                Action::Replace => "Prefab replaced from the current selection. Its name, category and tags were retained; placed map copies are unchanged.",
+                                Action::Organize => "Prefab category and tags saved. Placed map copies are unchanged.",
                             }
                             .into(),
                         );
@@ -621,6 +788,8 @@ impl Controller {
         window.on_save(write_callback(Action::Save));
         window.on_delete(write_callback(Action::Delete));
         window.on_rename(write_callback(Action::Rename));
+        window.on_replace(write_callback(Action::Replace));
+        window.on_organize(write_callback(Action::Organize));
         window.on_preview({
             let (window, continuation, form, paste) = (
                 window.as_weak(),
@@ -666,8 +835,15 @@ impl Controller {
                     window.set_has_thumbnail(false);
                     window.set_thumbnail(Default::default());
                     let result = thumbnail_style(&window).and_then(|style| {
-                        session.render_prefab_gallery(
-                            &window.get_query(),
+                        let query = window.get_query();
+                        let category = category_filter(&window);
+                        let tags = tags(&window.get_tag_filter());
+                        session.render_prefab_gallery_filtered(
+                            Filter {
+                                query: &query,
+                                category: category.as_deref(),
+                                tags: &tags,
+                            },
                             offset,
                             PAGE,
                             style,
@@ -697,8 +873,14 @@ impl Controller {
                                     };
                                     PrefabRow {
                                         name: entry.name.clone().into(),
-                                        detail: format!("{} KiB · VMF", entry.bytes.div_ceil(1024))
-                                            .into(),
+                                        detail: card_detail(
+                                            entry.bytes,
+                                            entry
+                                                .organization
+                                                .as_ref()
+                                                .map_err(|error| error.as_str()),
+                                        )
+                                        .into(),
                                         thumbnail,
                                         has_image,
                                         status,

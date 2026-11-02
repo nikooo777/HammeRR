@@ -7,6 +7,7 @@ pub mod gamefs;
 pub mod keyvalues;
 pub mod mdl;
 pub mod model;
+pub mod model_scale;
 pub mod particle;
 pub mod render_color;
 pub mod sound;

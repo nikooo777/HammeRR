@@ -1,4 +1,4 @@
-use super::{Session, Thumbnail, ThumbnailStyle};
+use super::{Filter, FilterKey, Session, Thumbnail, ThumbnailStyle, add_organization_status};
 use crate::prefabs::RegistrySnapshot;
 use serde_json::{Value, json};
 use source_formats::vtf::RgbaImage;
@@ -9,6 +9,7 @@ pub const MAX_GALLERY_ENTRIES: usize = 8;
 pub struct GalleryEntry {
     pub name: String,
     pub bytes: u64,
+    pub organization: Result<crate::prefabs::Organization, String>,
     pub thumbnail: Result<Thumbnail, String>,
 }
 
@@ -20,7 +21,7 @@ pub struct Gallery {
 
 pub struct GalleryReview {
     snapshot: RegistrySnapshot,
-    query: String,
+    filter: FilterKey,
     offset: usize,
     limit: usize,
     style: ThumbnailStyle,
@@ -37,39 +38,61 @@ impl Session {
         style: ThumbnailStyle,
         stamp: &str,
     ) -> Result<Gallery, String> {
+        self.render_prefab_gallery_filtered(
+            Filter {
+                query,
+                category: None,
+                tags: &[],
+            },
+            offset,
+            limit,
+            style,
+            stamp,
+        )
+    }
+
+    pub fn render_prefab_gallery_filtered(
+        &mut self,
+        filter: Filter<'_>,
+        offset: usize,
+        limit: usize,
+        style: ThumbnailStyle,
+        stamp: &str,
+    ) -> Result<Gallery, String> {
         if !(1..=MAX_GALLERY_ENTRIES).contains(&limit) {
             return Err(format!(
                 "Prefab gallery limit must be 1–{MAX_GALLERY_ENTRIES}"
             ));
         }
         let snapshot = self.checked_prefabs(stamp)?;
-        let query = query.to_lowercase();
+        let filter = FilterKey::new(filter)?;
         let matching = snapshot
             .entries
             .iter()
-            .filter(|entry| entry.name.to_lowercase().contains(&query))
+            .filter(|entry| filter.matches(entry))
             .collect::<Vec<_>>();
         let total = matching.len();
         let names = matching
             .into_iter()
             .skip(offset)
             .take(limit)
-            .map(|entry| (entry.name.clone(), entry.bytes))
+            .map(|entry| (entry.name.clone(), entry.bytes, entry.organization.clone()))
             .collect::<Vec<_>>();
         let entries = names
             .into_iter()
-            .map(|(name, bytes)| {
+            .map(|(name, bytes, organization)| {
                 let thumbnail = self.prefab_thumbnail_with_style(&name, false, style);
                 GalleryEntry {
                     name,
                     bytes,
+                    organization,
                     thumbnail,
                 }
             })
             .collect::<Vec<_>>();
         let review = GalleryReview {
             snapshot,
-            query,
+            filter,
             offset,
             limit,
             style,
@@ -122,9 +145,10 @@ impl Session {
                     .map(|thumbnail| (entry.name.clone(), Arc::downgrade(&thumbnail.image)))
             })
             .collect();
-        let (query, offset, limit) = (&review.query, review.offset, review.limit);
-        let report = json!({
-            "query":query,"offset":offset,"limit":limit,"total":total,
+        let (filter, offset, limit) = (&review.filter, review.offset, review.limit);
+        let mut report = json!({
+            "query":filter.query,"category":filter.category,"tags":filter.tags,
+            "filter":filter.report(),"offset":offset,"limit":limit,"total":total,
             "next_offset":(offset.saturating_add(limit)<total).then_some(offset.saturating_add(limit)),
             "style":style.label(),"registry_revision":review.snapshot.revision,
             "max_images":MAX_GALLERY_ENTRIES,
@@ -134,9 +158,12 @@ impl Session {
                     Err(error)=>json!({"name":entry.name,"style":style.label(),"error":error}),
                 };
                 result["bytes"] = json!(entry.bytes);
+                result["organization"] = json!(entry.organization.as_ref().ok());
+                result["organization_error"] = json!(entry.organization.as_ref().err());
                 result
             }).collect::<Vec<_>>(),
         });
+        add_organization_status(&mut report, &review.snapshot.entries, Some(filter));
         Ok(Gallery {
             report,
             entries,
@@ -152,7 +179,28 @@ impl Session {
         limit: usize,
         style: ThumbnailStyle,
     ) -> Result<(), String> {
-        if review.query != query.to_lowercase()
+        self.validate_prefab_gallery_filtered(
+            review,
+            Filter {
+                query,
+                category: None,
+                tags: &[],
+            },
+            offset,
+            limit,
+            style,
+        )
+    }
+
+    pub fn validate_prefab_gallery_filtered(
+        &self,
+        review: &GalleryReview,
+        filter: Filter<'_>,
+        offset: usize,
+        limit: usize,
+        style: ThumbnailStyle,
+    ) -> Result<(), String> {
+        if review.filter != FilterKey::new(filter)?
             || review.offset != offset
             || review.limit != limit
             || review.style != style

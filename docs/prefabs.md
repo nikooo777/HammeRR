@@ -23,6 +23,30 @@ Use **Previous** and **Next** for other pages.
 **Refresh thumbnail** rereads the current preview.
 Unavailable materials remain reported.
 
+Use **All categories**, **Uncategorized** or **Exact category** to filter the library.
+Enter required tags under **Required tags · one per line**. Each tag must match.
+Search also matches categories and tags.
+
+## Organize an assembly
+
+1. Select a prefab.
+2. Click **Category and tags…**.
+3. Enter **Category** and **Tags · one per line**. Leave Category blank for Uncategorized.
+4. Click **Save category and tags**.
+
+Categories and tags stay with the library VMF. Rename keeps them.
+**Cancel** leaves the file unchanged.
+
+## Replace saved content
+
+1. Select the new assembly objects in the map.
+2. Open **Prefabs…** and choose the saved entry.
+3. Click **Replace selected…**.
+4. Review the entry name, then click **Replace prefab**.
+
+Replacement keeps the name, category and tags. Placed copies stay unchanged.
+Library edits are separate from map Undo. **Cancel** preserves the saved assembly.
+
 ## Place an assembly
 
 1. Select the prefab.
@@ -39,10 +63,15 @@ Cancel discards only the pending placement.
 Use **Rename…** or **Delete prefab…** to manage the library.
 Review the selected name before confirming deletion.
 
+![The same brush and model assembly at three scales](images/prefab-assemblies.png)
+
 ## Limits
 
 - 128 VMFs, 8 MiB per file and 64 MiB total.
-- Positive geometry scaling cannot resize point/model entities.
+- Plain point origins follow XYZ factors. Authored MDL models require uniform factors and supported native `modelscale` from 1/64 to 64.
+- Static/detail model resizing, nonuniform model deformation and non-MDL model scaling are unsupported.
+- One category: 48 UTF-8 bytes. Up to eight unique tags: 32 bytes each.
+- Bad metadata remains visible and deletable. Filters report incomplete matches when metadata is unavailable.
 - Unsupported references follow the [clipboard rules](clipboard.md#references).
 - Thumbnails show supported editor geometry, not compiled game lighting.
 - A changed file requires a new preview before Apply.

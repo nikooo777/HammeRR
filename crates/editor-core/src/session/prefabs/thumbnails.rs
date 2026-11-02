@@ -390,7 +390,7 @@ impl Session {
             WIDTH as f32 / HEIGHT as f32,
         );
         let textures_loaded = (0..materials.len()).any(|id| materials.get(id).base.is_some());
-        let report = json!({"name":source.entry.name,"width":WIDTH,"height":HEIGHT,"style":style.label(),"textures_loaded":textures_loaded,"texture_assets":texture_report,"normal_maps":false,"authored_lighting":false,"hidden_objects_included":hidden,"objects":payload.ids().len(),"brushes":brushes,"sides":sides,"model_instances":models.instances.len(),"point_helpers":mesh.stats.point_entities - mesh.stats.model_entities,"bounds":[mins.to_array(),maxs.to_array()],"vertices":mesh.vertices.len(),"indices":mesh.indices.len(),"cached":false,"limits":limits()});
+        let report = json!({"name":source.entry.name,"organization":source.entry.organization.as_ref().ok(),"organization_error":source.entry.organization.as_ref().err(),"width":WIDTH,"height":HEIGHT,"style":style.label(),"textures_loaded":textures_loaded,"texture_assets":texture_report,"normal_maps":false,"authored_lighting":false,"hidden_objects_included":hidden,"objects":payload.ids().len(),"brushes":brushes,"sides":sides,"model_instances":models.instances.len(),"point_helpers":mesh.stats.point_entities - mesh.stats.model_entities,"bounds":[mins.to_array(),maxs.to_array()],"vertices":mesh.vertices.len(),"indices":mesh.indices.len(),"cached":false,"limits":limits()});
         Ok(Prepared {
             assets,
             mesh,

@@ -117,11 +117,21 @@ Mixed triangle tags, restricted masks and unsupported caches can prevent resizin
 
 1. Select terrain on the base faces to round.
 2. Choose **Edit terrain… → Operation → Subdivide base cage**.
-3. Click **Preview**, then **Apply** or **Cancel**.
+3. Click **Preview** and review the shape and work summary.
+4. Click **Apply** or **Cancel**.
 
 Subdivision replaces sculpted positions with a rounded base-cage surface.
-Unmatched outer edges stay fixed. Exact full and whole-to-half edges can join.
-The authoring operation supports at most two cage densities per connected component.
+Coherent full/full and whole/half chains can join across several cage densities.
+Unmatched outer edges stay fixed. Powers, start corners, blend values, triangle
+tags, materials and mapping stay fixed. Preview checks aggregate work before
+generation; rejected requests preserve the previous preview.
+
+![Connected terrain with different grid resolutions](images/terrain-subdivision.png)
+
+Four base cages rounded in one operation. Each terrain grid keeps its resolution.
+
+Work is limited to 65,536 refined quads and 73,744 intermediate sample slots.
+Ambiguous, non-manifold and corner-only cage networks reject.
 
 ## Sew borders and corners
 
@@ -184,6 +194,7 @@ Removing the last terrain face restores its parent's solid brush volume.
 - Most edits accept 1–16 faces at powers 2–4. Creation needs one world quad per parent.
 - Radius: 1–8192 units. Height/noise change: ±4096. Coordinates: ±65536.
 - Strokes accept 512 samples and 4096 input points within a shared work budget.
+- Subdivision rejects inconsistent densities, ambiguous contacts, corner-only networks and work beyond its checked budget.
 - Unsupported caches, malformed rows and nonfinite data reject before applying changes.
 - Masks are session-local and become stale after incompatible topology or source changes.
 - Holes, triangle removal and general fractional border joins remain unavailable.

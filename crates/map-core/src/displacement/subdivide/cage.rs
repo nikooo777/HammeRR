@@ -1,7 +1,8 @@
-use super::{MAX_CAGE_CELLS, Mesh, Quad, Topology, invalid};
+use super::{Mesh, Quad, SourceWork, Topology, Work, budget, invalid};
 use crate::{
     EditError,
     displacement::neighbors::{self, NeighborPair, Span},
+    surface::FaceId,
 };
 use glam::DVec3;
 use std::collections::BTreeMap;
@@ -25,12 +26,14 @@ fn density(count: usize, pairs: &[NeighborPair]) -> Result<Vec<usize>, EditError
                 let delta = i32::from(pair.second_span != Span::Full)
                     - i32::from(pair.first_span != Span::Full);
                 let (neighbor, expected) = if pair.first == source {
-                    (pair.second, level + delta)
+                    (pair.second, level.checked_add(delta))
                 } else if pair.second == source {
-                    (pair.first, level - delta)
+                    (pair.first, level.checked_sub(delta))
                 } else {
                     continue;
                 };
+                let expected =
+                    expected.ok_or_else(|| invalid("Subdivision density level overflow"))?;
                 if let Some(previous) = levels[neighbor] {
                     if previous != expected {
                         return Err(invalid(
@@ -49,18 +52,15 @@ fn density(count: usize, pairs: &[NeighborPair]) -> Result<Vec<usize>, EditError
             .map(|&source| levels[source].unwrap())
             .min()
             .unwrap();
-        let maximum = component
-            .iter()
-            .map(|&source| levels[source].unwrap())
-            .max()
-            .unwrap();
-        if maximum - minimum > MAX_CAGE_CELLS.ilog2() as i32 {
-            return Err(invalid(
-                "Subdivision supports two cage densities; nested whole-to-half chains need separate actions",
-            ));
-        }
         for source in component {
-            cells[source] = 1 << (levels[source].unwrap() - minimum);
+            let level = levels[source]
+                .unwrap()
+                .checked_sub(minimum)
+                .and_then(|level| u32::try_from(level).ok())
+                .ok_or_else(|| invalid("Subdivision density shift overflow"))?;
+            cells[source] = 1usize
+                .checked_shl(level)
+                .ok_or_else(|| invalid("Subdivision density shift overflow"))?;
         }
     }
     Ok(cells)
@@ -128,12 +128,14 @@ fn point(corners: [DVec3; 4], row: usize, column: usize, cells: usize) -> DVec3 
 pub(super) fn build(
     corners: &[[DVec3; 4]],
     pairs: &[NeighborPair],
-) -> Result<(Mesh, Vec<usize>), EditError> {
+    faces: &[FaceId],
+) -> Result<(Mesh, Work), EditError> {
     validate_contacts(corners, pairs)?;
     let cells = density(corners.len(), pairs)?;
+    let work = budget::plan(faces, &cells)?;
     let mut mesh = Mesh {
-        points: Vec::new(),
-        faces: Vec::new(),
+        points: Vec::with_capacity(work.stages[0].vertex_bound),
+        faces: Vec::with_capacity(work.seed_quads),
     };
     let mut lookup = BTreeMap::new();
     for (source, &corners) in corners.iter().enumerate() {
@@ -166,20 +168,24 @@ pub(super) fn build(
             }
         }
     }
-    Ok((mesh, cells))
+    Ok((mesh, work))
 }
 
 pub(super) fn validate_links(
     mesh: &Mesh,
     topology: &Topology,
-    cells: &[usize],
+    sources: &[SourceWork],
     pairs: &[NeighborPair],
 ) -> Result<(), EditError> {
     let mut expected = BTreeMap::new();
     for pair in pairs {
         let key = [pair.first.min(pair.second), pair.first.max(pair.second)];
-        *expected.entry(key).or_insert(0) +=
-            cells[pair.first] / if pair.first_span == Span::Full { 1 } else { 2 };
+        let edges =
+            sources[pair.first].cage_cells / if pair.first_span == Span::Full { 1 } else { 2 };
+        let count = expected.entry(key).or_insert(0usize);
+        *count = count
+            .checked_add(edges)
+            .ok_or_else(|| invalid("Subdivision shared-edge count overflow"))?;
     }
     let mut actual = BTreeMap::new();
     for edge in &topology.edges {
@@ -189,7 +195,10 @@ pub(super) fn validate_links(
         let a = mesh.faces[*first].source;
         let b = mesh.faces[*second].source;
         if a != b {
-            *actual.entry([a.min(b), a.max(b)]).or_insert(0) += 1;
+            let count = actual.entry([a.min(b), a.max(b)]).or_insert(0usize);
+            *count = count
+                .checked_add(1)
+                .ok_or_else(|| invalid("Subdivision shared-edge count overflow"))?;
         }
     }
     if actual != expected {

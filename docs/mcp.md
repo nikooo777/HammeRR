@@ -601,6 +601,21 @@ committed-source guard. Explicit targets preserve visible highlights.
 Inspect the preview, then use the existing `commit_face_preview` or
 `cancel_face_preview` with its token. Limits match the [terrain controls](terrain.md#set-exact-vertex-heights).
 
+### Subdivide connected terrain
+
+`preview_terrain_subdivision` uses the selected terrain faces or explicit
+`faces: [{solid, side}]`, up to 16 base quad cages. Four refinement rounds replace
+sculpted positions while preserving powers, start corners, blend values, flags,
+triangle tags, materials and mapping. Unmatched outer base edges stay fixed.
+
+Coherent full/full and whole/half chains can span several cage densities within
+the checked work budget. The response includes a shared `summary` and structured
+`work` report. Inconsistent densities, ambiguous contacts, other fractional spans,
+corner-only networks and excessive work reject while retaining the previous preview.
+
+Inspect `get_terrain_grids` with `preview: true` or use `render_view`, then pass
+`state.preview_token` to `commit_face_preview` or `cancel_face_preview`.
+
 ### Asset source filters
 
 `browse_materials`, `search_materials` and `browse_models` accept `source`:

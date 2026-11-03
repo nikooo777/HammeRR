@@ -286,7 +286,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Generate a rounded terrain preview from up to16 selected/explicit base quad cages. Replaces sculpted positions; retains powers, start corners, blend values, flags/tags, materials and mapping. Uses four Catmull-Clark rounds and fixed base boundary edges. Matching full/whole-to-half edges share samples on a conforming cage with two grid densities. Nested half-edge chains, inconsistent densities, fractional/ambiguous contacts and non-manifold/corner-only networks reject atomically. Saved explicit grids remain editable unless unsupported caches are present. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain… → Subdivide base cage. Returns handle and state.handle with kind=face_preview and a decimal-string token, or null when closed. Changed selection and competing geometry previews invalidate the shared face draft."
+        description = "Generate a rounded terrain preview from up to 16 selected/explicit base quad cages. Replaces sculpted positions; retains powers, start corners, blend values, flags/tags, materials and mapping. Uses four Catmull-Clark rounds and fixed base boundary edges. Matching full/whole-to-half networks can span multiple grid densities within checked aggregate work limits. Inconsistent densities, other fractional or ambiguous contacts and non-manifold/corner-only networks reject atomically, retaining the previous preview. Returns a shared summary and work report with source face IDs/cage cells, seed/refinement/final quads, sample slots and limits. Saved explicit grids remain editable unless unsupported caches are present. Inspect get_terrain_grids(preview=true), then commit/cancel_face_preview with state.preview_token. UI: Edit terrain… → Subdivide base cage. Returns handle and state.handle with kind=face_preview and a decimal-string token, or null when closed. Changed selection and competing geometry previews invalidate the shared face draft."
     )]
     pub(in crate::mcp) fn preview_terrain_subdivision(
         &self,
@@ -300,7 +300,7 @@ impl EditorServer {
             );
             let result = session.preview_terrain_subdivision(Actor::Agent, &faces)?;
             Ok(
-                json!({"faces_changed":result.changed,"shared_edges":result.shared_edges,"vertices":result.vertices,"handle":session.face_preview_handle(),"state":face_state(&session)}),
+                json!({"faces_changed":result.changed,"shared_edges":result.shared_edges,"vertices":result.vertices,"summary":result.summary(),"work":result.work_json(),"handle":session.face_preview_handle(),"state":face_state(&session)}),
             )
         })
     }

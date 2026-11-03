@@ -1,5 +1,9 @@
 use super::*;
-use map_core::surface::{PaintMode, SurfaceSample};
+use map_core::{
+    displacement::subdivide,
+    surface::{PaintMode, SurfaceSample},
+};
+use serde_json::{Value, json};
 
 #[derive(Debug, Clone, Copy)]
 pub enum GroupProjection {
@@ -30,14 +34,52 @@ pub struct TerrainSubdivision {
     pub changed: usize,
     pub shared_edges: usize,
     pub vertices: usize,
+    pub work: subdivide::Work,
 }
 
 impl TerrainSubdivision {
     pub fn summary(&self) -> String {
         format!(
-            "Preview: {} surfaces rounded across {} shared edges; {} samples. Apply to replace their sculpted positions.",
-            self.changed, self.shared_edges, self.vertices
+            "Preview: {} surfaces rounded across {} shared edges; {} samples. Work: {}/{} final quads, {}/{} sample slots. Apply to replace their sculpted positions.",
+            self.changed,
+            self.shared_edges,
+            self.vertices,
+            self.work.final_quads,
+            subdivide::MAX_FINAL_QUADS,
+            self.work.sample_slots,
+            subdivide::MAX_SAMPLE_SLOTS,
         )
+    }
+
+    pub fn work_json(&self) -> Value {
+        json!({
+            "sources": self.work.sources.iter().map(|source| json!({
+                "solid": source.face.solid,
+                "side": source.face.side,
+                "cage_cells": source.cage_cells,
+                "sample_size": source.sample_size,
+                "sample_slots": source.sample_slots,
+            })).collect::<Vec<_>>(),
+            "stages": self.work.stages.iter().map(|stage| json!({
+                "level": stage.level,
+                "quads": stage.quads,
+                "vertex_bound": stage.vertex_bound,
+                "topology_work_bound": stage.topology_work_bound,
+            })).collect::<Vec<_>>(),
+            "refinement_levels": subdivide::REFINEMENT_LEVELS,
+            "seed_quads": self.work.seed_quads,
+            "final_quads": self.work.final_quads,
+            "sample_slots": self.work.sample_slots,
+            "peak_vertices_bound": self.work.peak_vertices_bound,
+            "topology_work_bound": self.work.topology_work_bound,
+            "limits": {
+                "faces": subdivide::MAX_FACES,
+                "final_quads": subdivide::MAX_FINAL_QUADS,
+                "sample_slots": subdivide::MAX_SAMPLE_SLOTS,
+                "vertices": subdivide::MAX_VERTICES,
+                "topology_work": subdivide::MAX_TOPOLOGY_WORK,
+            },
+        })
     }
 }
 
@@ -204,8 +246,7 @@ impl Session {
         actor: Actor,
         faces: &[FaceId],
     ) -> Result<TerrainSubdivision, String> {
-        let plan = map_core::displacement::subdivide::plan(&self.document, faces)
-            .map_err(|error| error.to_string())?;
+        let plan = subdivide::plan(&self.document, faces).map_err(|error| error.to_string())?;
         let edits = plan
             .edits
             .into_iter()
@@ -226,6 +267,7 @@ impl Session {
             changed,
             shared_edges: plan.shared_edges,
             vertices: plan.vertices,
+            work: plan.work,
         })
     }
 

@@ -11,19 +11,19 @@ use crate::{
     surface::{self, FaceId},
 };
 
-const LEVELS: usize = 4;
-const CELLS: usize = 1 << LEVELS;
-const MAX_FACES: usize = 16;
-const MAX_CAGE_CELLS: usize = 2;
-const MAX_CELLS: usize = CELLS * MAX_CAGE_CELLS;
-const MAX_SIZE: usize = MAX_CELLS + 1;
-
+mod budget;
 mod cage;
+
+pub use budget::{
+    MAX_FACES, MAX_FINAL_QUADS, MAX_SAMPLE_SLOTS, MAX_TOPOLOGY_WORK, MAX_VERTICES,
+    REFINEMENT_LEVELS, SourceWork, StageWork, Work,
+};
 
 pub struct Plan {
     pub edits: Vec<(FaceId, DispInfo)>,
     pub shared_edges: usize,
     pub vertices: usize,
+    pub work: Work,
 }
 
 #[derive(Clone, Copy)]
@@ -56,12 +56,14 @@ fn invalid(message: &str) -> EditError {
 }
 
 impl Topology {
-    fn build(mesh: &Mesh) -> Result<Self, EditError> {
-        if mesh.faces.len() > MAX_FACES * MAX_CELLS * MAX_CELLS
-            || mesh.points.len() > MAX_FACES * MAX_SIZE * MAX_SIZE
-        {
-            return Err(invalid("Terrain subdivision exceeds its bounded cage size"));
-        }
+    fn build(mesh: &Mesh, stage: &StageWork, source_count: usize) -> Result<Self, EditError> {
+        budget::check_mesh(mesh.faces.len(), mesh.points.len(), stage)?;
+        let mut work = mesh
+            .faces
+            .len()
+            .checked_mul(budget::FIXED_TOPOLOGY_WORK)
+            .and_then(|work| work.checked_add(mesh.points.len()))
+            .ok_or_else(|| invalid("Subdivision topology work overflow"))?;
         let mut topology = Self {
             edges: Vec::new(),
             face_edges: Vec::with_capacity(mesh.faces.len()),
@@ -113,6 +115,11 @@ impl Topology {
         }
         for (vertex, faces) in topology.vertex_faces.iter().enumerate() {
             let edges = &topology.vertex_edges[vertex];
+            if faces.len() > 4 * source_count || edges.len() > 2 * faces.len() {
+                return Err(invalid(
+                    "Subdivision exceeds its cage corner-incidence bound",
+                ));
+            }
             let boundaries = edges
                 .iter()
                 .filter(|&&edge| topology.edges[edge].faces.len() == 1)
@@ -125,6 +132,10 @@ impl Topology {
                 let count = connected.len();
                 for &edge in edges {
                     let adjacent = &topology.edges[edge].faces;
+                    work = work
+                        .checked_add(2 * adjacent.len())
+                        .filter(|work| *work <= stage.topology_work_bound)
+                        .ok_or_else(|| invalid("Subdivision exceeds its admitted topology work"))?;
                     if adjacent.iter().any(|face| connected.contains(face)) {
                         connected.extend(adjacent);
                     }
@@ -144,8 +155,13 @@ impl Topology {
 }
 
 impl Mesh {
-    fn refine(self) -> Result<Self, EditError> {
-        let topology = Topology::build(&self)?;
+    fn refine(self, topology: &Topology, next: &StageWork) -> Result<Self, EditError> {
+        let (point_capacity, face_capacity) = budget::refinement_capacity(
+            self.points.len(),
+            topology.edges.len(),
+            self.faces.len(),
+            next,
+        )?;
         let centers = self
             .faces
             .iter()
@@ -157,8 +173,7 @@ impl Mesh {
                     * 0.25
             })
             .collect::<Vec<_>>();
-        let mut points =
-            Vec::with_capacity(self.points.len() + topology.edges.len() + centers.len());
+        let mut points = Vec::with_capacity(point_capacity);
         for (vertex, &point) in self.points.iter().enumerate() {
             let edges = &topology.vertex_edges[vertex];
             if edges
@@ -196,7 +211,7 @@ impl Mesh {
         }
         let center_start = points.len();
         points.extend(centers);
-        let mut faces = Vec::with_capacity(self.faces.len() * 4);
+        let mut faces = Vec::with_capacity(face_capacity);
         for (index, face) in self.faces.iter().enumerate() {
             let [a, b, c, d] = face.vertices;
             let [ab, bc, cd, da] = topology.face_edges[index].map(|edge| edge_start + edge);
@@ -207,11 +222,21 @@ impl Mesh {
                 (1, 1, [center, bc, c, cd]),
                 (0, 1, [da, center, cd, d]),
             ] {
+                let row = face
+                    .row
+                    .checked_mul(2)
+                    .and_then(|value| value.checked_add(row))
+                    .ok_or_else(|| invalid("Subdivision row count overflow"))?;
+                let column = face
+                    .column
+                    .checked_mul(2)
+                    .and_then(|value| value.checked_add(column))
+                    .ok_or_else(|| invalid("Subdivision column count overflow"))?;
                 faces.push(Quad {
                     vertices,
                     source: face.source,
-                    row: face.row * 2 + row,
-                    column: face.column * 2 + column,
+                    row,
+                    column,
                 });
             }
         }
@@ -229,6 +254,19 @@ impl Mesh {
 
 pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
     let grids = edit::inspect(document, faces)?;
+    for grid in &grids {
+        let info = surface::side(document, grid.face)
+            .unwrap()
+            .displacement
+            .as_ref()
+            .unwrap();
+        if !info.extra.is_empty() || grid.mesh.offset_normals_need_remapping(info) {
+            return Err(invalid(
+                "Opaque terrain blocks or offset-normal caches need remapping before subdivision",
+            ));
+        }
+        grid.mesh.validate_edit_bounds()?;
+    }
     let corners = grids
         .iter()
         .map(|grid| {
@@ -252,22 +290,24 @@ pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
             "Subdivision needs unambiguous matching full or whole-to-half cage edges",
         ));
     }
-    let (mut mesh, cage_cells) = cage::build(&corners, &neighbors.pairs)?;
-    let topology = Topology::build(&mesh)?;
-    cage::validate_links(&mesh, &topology, &cage_cells, &neighbors.pairs)?;
-    for _ in 0..LEVELS {
-        mesh = mesh.refine()?;
+    let identities = grids.iter().map(|grid| grid.face).collect::<Vec<_>>();
+    let (mut mesh, work) = cage::build(&corners, &neighbors.pairs, &identities)?;
+    let mut topology = Topology::build(&mesh, &work.stages[0], grids.len())?;
+    cage::validate_links(&mesh, &topology, &work.sources, &neighbors.pairs)?;
+    for stage in &work.stages[1..] {
+        mesh = mesh.refine(&topology, stage)?;
+        if stage.level != REFINEMENT_LEVELS {
+            topology = Topology::build(&mesh, stage, grids.len())?;
+        }
     }
-    let sizes = cage_cells
+    drop(topology);
+    let mut samples = work
+        .sources
         .iter()
-        .map(|cells| cells * CELLS + 1)
-        .collect::<Vec<_>>();
-    let mut samples = sizes
-        .iter()
-        .map(|size| vec![None; size * size])
+        .map(|source| vec![None; source.sample_slots])
         .collect::<Vec<_>>();
     for face in &mesh.faces {
-        let size = sizes[face.source];
+        let size = work.sources[face.source].sample_size;
         for (vertex, (row, column)) in face.vertices.into_iter().zip([
             (face.row, face.column),
             (face.row + 1, face.column),
@@ -281,17 +321,11 @@ pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
         }
     }
     let mut edits = Vec::with_capacity(grids.len());
-    let mut vertices = 0;
+    let mut vertices = 0usize;
     for (index, grid) in grids.iter().enumerate() {
         let side = surface::side(document, grid.face).unwrap();
         let info = side.displacement.as_ref().unwrap();
         let size = grid.mesh.size;
-        if !info.extra.is_empty() || grid.mesh.offset_normals_need_remapping(info) {
-            return Err(invalid(
-                "Opaque terrain blocks or offset-normal caches need remapping before subdivision",
-            ));
-        }
-        grid.mesh.validate_edit_bounds()?;
         let geometry = Face {
             side: 0,
             plane: crate::Plane::from_points(side.plane.0)
@@ -302,7 +336,7 @@ pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
         result.offsets = None;
         let baseline = DisplacementMesh::build(&geometry, &result)
             .map_err(|error| invalid(&error.to_string()))?;
-        let sample_size = sizes[index];
+        let sample_size = work.sources[index].sample_size;
         let stride = (sample_size - 1) / (size - 1);
         let mut offsets = vec![vec![DVec3::ZERO; size]; size];
         for (row, output) in offsets.iter_mut().enumerate() {
@@ -330,12 +364,18 @@ pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
                 ));
             }
         }
-        vertices += size * size;
+        vertices = vertices
+            .checked_add(
+                size.checked_mul(size)
+                    .ok_or_else(|| invalid("Subdivision sample count overflow"))?,
+            )
+            .ok_or_else(|| invalid("Subdivision sample count overflow"))?;
         edits.push((grid.face, result));
     }
     Ok(Plan {
         edits,
         shared_edges: neighbors.pairs.len(),
         vertices,
+        work,
     })
 }

@@ -235,6 +235,10 @@ fn pose_key(key: &str) -> Result<&str, String> {
 }
 
 pub(crate) fn initial_offset(properties: &[(String, String)]) -> Result<DVec3, String> {
+    initial_offset_for(properties, "nonzero initial lighting angles")
+}
+
+fn initial_offset_for(properties: &[(String, String)], context: &str) -> Result<DVec3, String> {
     let mut field = None;
     for (key, value) in properties {
         let base = pose_key(key)?;
@@ -242,10 +246,9 @@ pub(crate) fn initial_offset(properties: &[(String, String)]) -> Result<DVec3, S
             continue;
         }
         if base.len() != key.len() || field.is_some() {
-            return Err(
-                "nonzero initial lighting angles require one unaliased unambiguous origin field"
-                    .into(),
-            );
+            return Err(format!(
+                "{context} require one unaliased unambiguous origin field"
+            ));
         }
         field = Some(value);
     }
@@ -279,19 +282,66 @@ pub(crate) fn initial_rotation(
     classname: &str,
     properties: &[(String, String)],
 ) -> Result<Option<DMat3>, String> {
-    let mut field = None;
-    let mut parent_seen = false;
+    initial_rotation_for(classname, properties, "func_brush")
+}
+
+pub(crate) fn initial_window_rotation(
+    properties: &[(String, String)],
+) -> Result<Option<DMat3>, String> {
+    initial_rotation_for("func_areaportalwindow", properties, "func_areaportalwindow")
+}
+
+pub(crate) fn require_unparented(properties: &[(String, String)]) -> Result<(), String> {
+    require_unparented_for(properties, "initial poses", "entity")
+}
+
+fn require_unparented_for(
+    properties: &[(String, String)],
+    context: &str,
+    subject: &str,
+) -> Result<(), String> {
+    let mut seen = false;
     let mut parented = false;
-    let mut parent_ambiguous = false;
+    let mut ambiguous = false;
+    for (key, value) in properties {
+        let base = pose_key(key)?;
+        if base.eq_ignore_ascii_case("parentname") {
+            ambiguous |= seen || base.len() != key.len();
+            seen = true;
+            parented |= !value.is_empty();
+        }
+    }
+    if parented || ambiguous {
+        return Err(format!(
+            "{context} require an unparented {subject} with an unambiguous parentname"
+        ));
+    }
+    Ok(())
+}
+
+fn initial_rotation_for(
+    classname: &str,
+    properties: &[(String, String)],
+    allowed_class: &str,
+) -> Result<Option<DMat3>, String> {
+    let (context, purpose, subject) = if allowed_class == "func_areaportalwindow" {
+        (
+            "nonzero initial func_areaportalwindow angles",
+            "initial func_areaportalwindow poses",
+            "controller",
+        )
+    } else {
+        (
+            "nonzero initial lighting angles",
+            "initial brush-model lighting",
+            "model",
+        )
+    };
+    let mut field = None;
     let mut class_seen = false;
     let mut class_ambiguous = false;
     for (key, value) in properties {
         let base = pose_key(key)?;
-        if base.eq_ignore_ascii_case("parentname") {
-            parent_ambiguous |= parent_seen || base.len() != key.len();
-            parent_seen = true;
-            parented |= !value.is_empty();
-        }
         if base.eq_ignore_ascii_case("classname") {
             class_ambiguous |=
                 class_seen || key != "classname" || !value.eq_ignore_ascii_case(classname);
@@ -337,19 +387,17 @@ pub(crate) fn initial_rotation(
         return Err("nonzero angle fields require at most 127 ASCII payload bytes".into());
     }
     if count != 3 {
-        return Err(
-            "nonzero legacy scalar angle is unsupported for initial brush-model lighting".into(),
-        );
+        return Err(format!(
+            "nonzero legacy scalar angle is unsupported for {purpose}"
+        ));
     }
-    if !classname.eq_ignore_ascii_case("func_brush") || !class_seen || class_ambiguous {
-        return Err(
-            "nonzero initial lighting angles require one unambiguous func_brush class".into(),
-        );
+    if !classname.eq_ignore_ascii_case(allowed_class) || !class_seen || class_ambiguous {
+        return Err(format!(
+            "{context} require one unambiguous {allowed_class} class"
+        ));
     }
-    if parented || parent_ambiguous {
-        return Err("nonzero initial lighting angles require an unparented model with an unambiguous parentname".into());
-    }
-    let _ = initial_offset(properties)?;
+    require_unparented_for(properties, context, subject)?;
+    let _ = initial_offset_for(properties, context)?;
     let [pitch, yaw, roll] = values.map(f64::to_radians);
     let (sp, cp) = pitch.sin_cos();
     let (sy, cy) = yaw.sin_cos();

@@ -1134,6 +1134,17 @@ use `document_id` to select a map. Unknown argument names are errors. Omitting
 `path` uses the current map filename with a `.bsp` extension.
 Use `cancel_compile` to stop owned build work.
 
+For `func_areaportalwindow`, set `target` and optional `BackgroundBModel` through
+`set_entity_properties`. Nonzero initial rotation requires `func_brush` models.
+Set matching `angles` triples on the controller and each bound model, in pitch,
+yaw, roll order (rotation about Y, Z, X), with each component between −360 and 360.
+Keep them unparented. Rendered and foreground models must share `origin`; their
+posed bounds must enclose the complete portal and rendered model respectively.
+Literal names must resolve unambiguously, including native character aliases.
+The ordinary compile operations check these constraints. `FadeStartDist`,
+`FadeDist` and `TranslucencyLimit` control the rendered model's fade; the optional
+foreground does not fade. Runtime model movement is unsupported.
+
 For [occluders](occluders.md), use `tie_to_entity` with `classname:"func_occluder"`
 and set `StartActive:"0"` or `"1"` through `set_entity_properties`.
 The ordinary compile tools build one exterior boundary across all admitted helpers.
@@ -1145,7 +1156,7 @@ Read `stats.occluders`, `stats.occluder_polygons`,
 The helper count includes empty records; polygon and vertex counts include only retained geometry.
 Root `Activate`, `Deactivate` and `Toggle` connections affect retained polygons;
 they do not restore removed faces. Invalid geometry, uncertain contacts or exceeded
-shared limits fail before publication. Game behavior across area transitions and sky-camera views is not verified.
+shared limits fail before publication.
 
 `compile_map` returns its captured `job_token`; async builds expose it as
 `get_compile_status.job.token`. Diagnostic rows have a stable `index`,

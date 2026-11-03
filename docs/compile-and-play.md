@@ -118,14 +118,29 @@ For a basic areaportal:
 3. Choose **Initial State**, and name it if logic must control it.
 4. Compile and inspect **Visibility areas**, **Areaportals** and diagnostics.
 
-`func_areaportalwindow` also uses **Rendered Window**, optional **Foreground bmodel**
-and distance-fade settings. Use unique literal model names. Native matching accepts
-case variants and some other character aliases. Multiple matches fail, including
-matches to point entities. Wildcards and procedural names are unsupported.
-Models must use unrotated initial poses. **Rendered Window** must enclose the
-portal. **Foreground bmodel** must share its pivot and enclose its bounds.
-The foreground does not fade. Use a frame or grille, rather than a solid pane.
-Unsupported portal shapes or bindings stop the build.
+For a fading portal window:
+
+1. Use **Tie to entity… → func_areaportalwindow**. Set **Rendered Window** to the
+   name of its rendered brush model. **Foreground bmodel** is optional.
+2. For a nonzero initial rotation, use `func_brush` models. Select the controller
+   and each bound model in turn. Under **Advanced properties**, enter `angles`
+   in **Property key**, enter the same three values in **Value**, then press <kbd>Enter</kbd>.
+3. Use the resulting **Rotation → Pitch**, **Yaw** and **Roll** fields to adjust
+   the matching rotations. They rotate about Y, Z and X. Each value must be
+   between −360 and 360 degrees. Keep the controller and bound models unparented.
+4. If used, give the foreground model the same **Position** as the rendered model. The posed
+   **Rendered Window** bounds must enclose the complete portal volume. The
+   foreground bounds must enclose the rendered model bounds.
+5. Set **Fade Start Distance**, **Fade End Distance** and **Translucency limit**.
+   Compile and inspect diagnostics. The foreground does not fade; use a frame or grille.
+
+![Rotated portal window with a visible foreground frame](images/rotated-portal-window.jpg)
+
+Use unique literal model names. Native matching accepts case variants and some
+other character aliases. Multiple matches fail, including matches to point
+entities. Wildcards and procedural names are unsupported. Mismatched initial
+rotations, parenting, unsupported portal shapes or invalid bindings stop the build.
+Runtime model movement is unsupported.
 
 Failed BSP splits report the captured plane and volume bounds. Source candidates
 are listed separately; a shared plane does not identify one brush as the cause.

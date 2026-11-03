@@ -28,4 +28,4 @@ The target is the state immediately after that transaction.
 
 ---
 
-[← Content profiles](content-profiles.md) · [Manual](README.md) · [Compare external maps →](map-comparison.md)
+[← Open documents](open-documents.md) · [Manual](README.md) · [Keyboard shortcuts →](keyboard-shortcuts.md)

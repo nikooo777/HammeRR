@@ -43,4 +43,4 @@ See [lightmap boundary sampling](compile-and-play.md#lightmap-boundary-sampling)
 
 ---
 
-[← HDR exposure](hdr-exposure.md) · [Manual](README.md) · [Baked surfaces →](baked-surfaces.md)
+[← Cubemap faces](cubemap-faces.md) · [Manual](README.md) · [Compiled lights →](compiled-lights.md)

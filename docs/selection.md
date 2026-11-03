@@ -131,4 +131,4 @@ Assign either action under [Keyboard shortcuts…](keyboard-shortcuts.md). Both 
 
 ---
 
-[← Editor basics and saved views](basics.md) · [Manual](README.md) · [Helpers and selection presentation →](selection-presentation.md)
+[← MCP setup and tool index](mcp.md) · [Manual](README.md) · [Helpers and selection presentation →](selection-presentation.md)

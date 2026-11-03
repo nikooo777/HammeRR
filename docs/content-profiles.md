@@ -60,4 +60,4 @@ MCP: `get_content_profiles`, `save_content_profile`, `apply_content_profile`,
 
 ---
 
-[← Recent maps](recent-maps.md) · [Manual](README.md) · [History →](history.md)
+[← Recent maps](recent-maps.md) · [Manual](README.md) · [Compare external maps →](map-comparison.md)

@@ -72,4 +72,4 @@ Use `inspect_baked_surfaces` and `set_baked_surfaces` through MCP.
 
 ---
 
-[← Baked lightmaps](baked-lightmaps.md) · [Manual](README.md) · [Baked prop vertices →](baked-prop-vertices.md)
+[← HDR exposure](hdr-exposure.md) · [Manual](README.md) · [Baked prop vertices →](baked-prop-vertices.md)

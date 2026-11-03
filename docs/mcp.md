@@ -1657,4 +1657,4 @@ These groups locate the available operations.
 
 ---
 
-[← Visibility clusters](visclusters.md) · [Manual](README.md) · [Status and limits →](status.md)
+[← Editor basics and saved views](basics.md) · [Manual](README.md) · [Selection →](selection.md)

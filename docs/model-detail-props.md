@@ -34,4 +34,4 @@ The target must resolve uniquely; missing or ambiguous references fail explicitl
 
 ---
 
-[← Visibility inspection](visibility.md) · [Manual](README.md) · [Detail sprites →](detail-sprites.md)
+[← Visibility inspection](visibility.md) · [Manual](README.md) · [Final compiled details →](compiled-details.md)

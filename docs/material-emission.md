@@ -275,4 +275,4 @@ See [MCP emission](mcp.md#material-emission) for the shared property workflow.
 
 ---
 
-[← Compile and play](compile-and-play.md) · [Manual](README.md) · [Build recipes →](build-recipes.md)
+[← Compile and play](compile-and-play.md) · [Manual](README.md) · [Physics →](physics.md)

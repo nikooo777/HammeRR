@@ -25,4 +25,4 @@ Use **Reload particles** after changing assets. Reopen the browser afterward.
 
 ---
 
-[← Sprite guides](sprite-guides.md) · [Manual](README.md) · [Sounds →](sounds.md)
+[← Material source](material-source.md) · [Manual](README.md) · [Sounds →](sounds.md)

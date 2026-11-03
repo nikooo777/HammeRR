@@ -34,4 +34,4 @@ For an additive guide:
 
 ---
 
-[← Models](models.md) · [Manual](README.md) · [Particle effects →](particles.md)
+[← Models](models.md) · [Manual](README.md) · [Material source →](material-source.md)

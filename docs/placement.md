@@ -82,4 +82,4 @@ ordinary surface placement retain their own controls.
 
 ---
 
-[← Merge brushes](merge.md) · [Manual](README.md) · [Repeated placement →](repeated-placement.md)
+[← Flat partitions](partitions.md) · [Manual](README.md) · [Repeated placement →](repeated-placement.md)

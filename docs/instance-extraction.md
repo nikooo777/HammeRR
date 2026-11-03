@@ -38,4 +38,4 @@ reviewed pivot or destination. Cleanup errors remain visible.
 
 ---
 
-[← Instance references](instance-authoring.md) · [Manual](README.md) · [Instance contents →](instance-contents.md)
+[← Map checks, notes and recovery](map-tools.md) · [Manual](README.md) · [Instance contents →](instance-contents.md)

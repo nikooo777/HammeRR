@@ -35,4 +35,4 @@ Use larger equal values to brighten the image; for example, `1.625`.
 
 ---
 
-[← Cubemap faces](cubemap-faces.md) · [Manual](README.md) · [Baked lightmaps →](baked-lightmaps.md)
+[← Brush texture shadows](brush-texture-shadows.md) · [Manual](README.md) · [Baked surfaces →](baked-surfaces.md)

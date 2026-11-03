@@ -83,4 +83,4 @@ Use **Rename…** or **Delete prefab…** to manage the library.
 
 ---
 
-[← Clipboard](clipboard.md) · [Manual](README.md) · [Map checks, notes and recovery →](map-tools.md)
+[← Overlays](overlays.md) · [Manual](README.md) · [Groups →](groups.md)

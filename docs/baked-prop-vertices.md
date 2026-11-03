@@ -67,4 +67,4 @@ Camera, selection, map, history and ordinary drafts stay unchanged.
 
 ---
 
-[← Baked surfaces](baked-surfaces.md) · [Manual](README.md) · [Compiled lights →](compiled-lights.md)
+[← Baked surfaces](baked-surfaces.md) · [Manual](README.md) · [Visibility inspection →](visibility.md)

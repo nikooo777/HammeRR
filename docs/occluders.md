@@ -27,4 +27,4 @@ Supported unnamed child occluders can compile through [referenced assemblies](in
 
 ---
 
-[← Final compiled details](compiled-details.md) · [Manual](README.md) · [Visibility clusters →](visclusters.md)
+[← Material detail scattering](material-detail-scattering.md) · [Manual](README.md) · [Visibility clusters →](visclusters.md)

@@ -278,4 +278,4 @@ A failed expansion preserves the previous published BSP.
 
 ---
 
-[← Instance contents](instance-contents.md) · [Manual](README.md) · [Compile and play →](compile-and-play.md)
+[← Instance contents](instance-contents.md) · [Manual](README.md) · [Instance references →](instance-authoring.md)

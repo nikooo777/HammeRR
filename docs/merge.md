@@ -27,4 +27,4 @@ Join adjacent or overlapping brushes into one convex solid.
 
 ---
 
-[← Flat partitions](partitions.md) · [Manual](README.md) · [Surface placement →](placement.md)
+[← Terrain](terrain.md) · [Manual](README.md) · [Materials and textures →](textures.md)

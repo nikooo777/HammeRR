@@ -42,4 +42,4 @@ A marker position alone does not establish that the helper is included safely.
 
 ---
 
-[← Build recipes](build-recipes.md) · [Manual](README.md) · [Physics →](physics.md)
+[← Build recipes](build-recipes.md) · [Manual](README.md) · [Generated reflections →](reflections.md)

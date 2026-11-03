@@ -73,4 +73,4 @@ Raising or extruding applies the stored top settings.
 
 ---
 
-[← Vertices, edges and faces](components.md) · [Manual](README.md) · [Merge brushes →](merge.md)
+[← Vertices, edges and faces](components.md) · [Manual](README.md) · [Surface placement →](placement.md)

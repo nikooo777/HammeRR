@@ -88,4 +88,4 @@ A failed build preserves the previous published output.
 
 ---
 
-[← MCP setup and tool index](mcp.md) · [Manual](README.md)
+[← Visibility clusters](visclusters.md) · [Manual](README.md)

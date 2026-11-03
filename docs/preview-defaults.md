@@ -29,4 +29,4 @@ See [Saved defaults](basics.md#saved-defaults) for storage errors.
 
 ---
 
-[← Navigation defaults](navigation-defaults.md) · [Manual](README.md) · [Workspace layout →](workspace-layout.md)
+[← Navigation defaults](navigation-defaults.md) · [Manual](README.md) · [Brushes and transforms →](brushes.md)

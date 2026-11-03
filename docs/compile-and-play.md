@@ -380,4 +380,4 @@ Use `--help` for available settings. CLI, editor and MCP builds use the same com
 
 ---
 
-[← Compiled assemblies](instances.md) · [Manual](README.md) · [Material emission →](material-emission.md)
+[← Instance references](instance-authoring.md) · [Manual](README.md) · [Material emission →](material-emission.md)

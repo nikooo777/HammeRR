@@ -193,4 +193,4 @@ Removing the last terrain face restores its parent's solid brush volume.
 
 ---
 
-[← Repeated placement](repeated-placement.md) · [Manual](README.md) · [Materials and textures →](textures.md)
+[← Repeated placement](repeated-placement.md) · [Manual](README.md) · [Merge brushes →](merge.md)

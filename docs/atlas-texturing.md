@@ -95,4 +95,4 @@ After **Reload material assets**, unchanged images can reuse their regions. Chan
 
 ---
 
-[← Materials and textures](textures.md) · [Manual](README.md) · [Material source →](material-source.md)
+[← Materials and textures](textures.md) · [Manual](README.md) · [Normal-map preview →](normal-maps.md)

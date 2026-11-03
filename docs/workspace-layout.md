@@ -39,4 +39,4 @@ See [Saved defaults](basics.md#saved-defaults) for storage errors.
 
 ---
 
-[← Preview defaults](preview-defaults.md) · [Manual](README.md) · [Brushes and transforms →](brushes.md)
+[← Compare external maps](map-comparison.md) · [Manual](README.md) · [Open documents →](open-documents.md)

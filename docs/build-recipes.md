@@ -53,4 +53,4 @@ Use **Rename recipe** or **Delete recipe** to manage it.
 
 ---
 
-[← Material emission](material-emission.md) · [Manual](README.md) · [Compile regions →](compile-regions.md)
+[← Final compiled details](compiled-details.md) · [Manual](README.md) · [Compile regions →](compile-regions.md)

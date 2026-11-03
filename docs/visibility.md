@@ -80,4 +80,4 @@ output remains readable; bounds guides require current output.
 
 ---
 
-[← Compiled lights](compiled-lights.md) · [Manual](README.md) · [Model detail props →](model-detail-props.md)
+[← Baked prop vertices](baked-prop-vertices.md) · [Manual](README.md) · [Model detail props →](model-detail-props.md)

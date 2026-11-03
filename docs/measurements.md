@@ -64,4 +64,4 @@ The grid draws over geometry. Snapping uses the plane axes. **Half extent** sets
 
 ---
 
-[← Working region](working-region.md) · [Manual](README.md) · [Open documents →](open-documents.md)
+[← Working region](working-region.md) · [Manual](README.md) · [Recent maps →](recent-maps.md)

@@ -245,4 +245,4 @@ Click **Shear selection** to apply.
 
 ---
 
-[← Workspace layout](workspace-layout.md) · [Manual](README.md) · [Hollow, carve and clip →](brush-tools.md)
+[← Preview defaults](preview-defaults.md) · [Manual](README.md) · [Hollow, carve and clip →](brush-tools.md)

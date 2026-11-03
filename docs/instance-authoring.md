@@ -146,4 +146,4 @@ See [compiled assemblies](instances.md) for supported content and name fixups.
 
 ---
 
-[← Map checks, notes and recovery](map-tools.md) · [Manual](README.md) · [Extract an assembly →](instance-extraction.md)
+[← Compiled assemblies](instances.md) · [Manual](README.md) · [Compile and play →](compile-and-play.md)

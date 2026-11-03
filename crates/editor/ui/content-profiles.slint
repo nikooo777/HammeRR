@@ -1,5 +1,5 @@
 import { Button, LineEdit, ScrollView } from "widgets.slint";
-import { Theme, FieldRow, Badge, MutedText } from "kit.slint";
+import { Theme, FieldRow, Badge, MutedText, SelectableRow } from "kit.slint";
 
 export struct ContentProfileRow {
     id: string,
@@ -85,15 +85,12 @@ export component ContentProfilesWindow inherits Window {
                             alignment: start;
                             padding-right: Theme.space-lg;
                             spacing: Theme.space-xs;
-                            for row in root.rows: Rectangle {
+                            for row in root.rows: SelectableRow {
                                 min-height: 66px;
-                                background: row.id == root.selected-id ? Theme.selection : touch.has-hover ? Theme.hover : Theme.base;
-                                border-radius: Theme.radius-sm;
-                                accessible-role: button;
-                                accessible-label: row.name;
-                                accessible-enabled: !root.busy;
-                                accessible-checked: row.id == root.selected-id;
-                                accessible-action-default => { if !root.busy { root.choose(row.id); } }
+                                label: row.name;
+                                selected: row.id == root.selected-id;
+                                enabled: !root.busy;
+                                clicked => { root.choose(row.id); }
                                 VerticalLayout {
                                     alignment: center;
                                     padding: Theme.space;
@@ -104,10 +101,6 @@ export component ContentProfilesWindow inherits Window {
                                         if row.current: Badge { text: "In use"; text-color: Theme.success; fill: Theme.success-soft; }
                                     }
                                     Text { text: row.game; color: Theme.text-faint; font-size: Theme.font-small; overflow: elide; }
-                                }
-                                touch := TouchArea {
-                                    enabled: !root.busy;
-                                    clicked => { root.choose(row.id); }
                                 }
                             }
                             if root.rows.length == 0: MutedText { text: "No saved profiles."; }

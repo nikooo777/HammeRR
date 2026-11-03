@@ -42,4 +42,4 @@ Atlas textures must meet the [native texture limits](textures.md#native-texture-
 
 ---
 
-[← Model detail props](model-detail-props.md) · [Manual](README.md) · [Material detail scattering →](material-detail-scattering.md)
+[← Compiled lights](compiled-lights.md) · [Manual](README.md) · [Material detail scattering →](material-detail-scattering.md)

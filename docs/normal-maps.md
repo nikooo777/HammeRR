@@ -29,4 +29,4 @@ Use **Reload material assets** after changing material files.
 
 ---
 
-[← Material source](material-source.md) · [Manual](README.md) · [Authored lighting preview →](lighting-preview.md)
+[← Atlas-region texturing](atlas-texturing.md) · [Manual](README.md) · [Authored lighting preview →](lighting-preview.md)

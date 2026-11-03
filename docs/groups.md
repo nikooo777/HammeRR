@@ -44,4 +44,4 @@ The member geometry remains in the map.
 
 ---
 
-[← Overlays](overlays.md) · [Manual](README.md) · [Layers →](layers.md)
+[← Prefab library](prefabs.md) · [Manual](README.md) · [Layers →](layers.md)

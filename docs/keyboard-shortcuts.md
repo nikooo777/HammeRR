@@ -87,4 +87,4 @@ modifiers have changed.
 
 ---
 
-[← Compare external maps](map-comparison.md) · [Manual](README.md) · [Navigation defaults →](navigation-defaults.md)
+[← History](history.md) · [Manual](README.md) · [Navigation defaults →](navigation-defaults.md)

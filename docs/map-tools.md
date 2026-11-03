@@ -58,4 +58,4 @@ Use **Reload settings** after another editor changes recovery storage settings.
 
 ---
 
-[← Prefab library](prefabs.md) · [Manual](README.md) · [Instance references →](instance-authoring.md)
+[← Clipboard](clipboard.md) · [Manual](README.md) · [Extract an assembly →](instance-extraction.md)

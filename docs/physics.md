@@ -52,4 +52,4 @@ Eligible water generates fluid behavior. See [water](water.md) for current, pres
 
 ---
 
-[← Compile regions](compile-regions.md) · [Manual](README.md) · [Water and slime →](water.md)
+[← Material emission](material-emission.md) · [Manual](README.md) · [Water and slime →](water.md)

@@ -97,4 +97,4 @@ Rebind can replace complete eligible flat, terrain or mixed target sets.
 
 ---
 
-[← Linked paths](path-authoring.md) · [Manual](README.md) · [Groups →](groups.md)
+[← Linked paths](path-authoring.md) · [Manual](README.md) · [Prefab library →](prefabs.md)

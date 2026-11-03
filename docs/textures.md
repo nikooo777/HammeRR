@@ -174,4 +174,4 @@ Editor-only `%tooltexture` images can use only their stored levels.
 
 ---
 
-[← Terrain](terrain.md) · [Manual](README.md) · [Atlas-region texturing →](atlas-texturing.md)
+[← Merge brushes](merge.md) · [Manual](README.md) · [Atlas-region texturing →](atlas-texturing.md)

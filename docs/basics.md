@@ -185,4 +185,4 @@ See [Open documents](open-documents.md) for multiple maps.
 
 ---
 
-[← Getting started](getting-started.md) · [Manual](README.md) · [Selection →](selection.md)
+[← Getting started](getting-started.md) · [Manual](README.md) · [MCP setup and tool index →](mcp.md)

@@ -43,4 +43,4 @@ Cached first/second images retain the texture paths and material declaration ide
 
 ---
 
-[← Atlas-region texturing](atlas-texturing.md) · [Manual](README.md) · [Normal-map preview →](normal-maps.md)
+[← Sprite guides](sprite-guides.md) · [Manual](README.md) · [Particle effects →](particles.md)

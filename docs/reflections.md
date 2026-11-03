@@ -69,4 +69,4 @@ Supported samples and ordinary world/detail bindings can also come from [referen
 
 ---
 
-[← Brush texture shadows](brush-texture-shadows.md) · [Manual](README.md) · [Cubemap faces →](cubemap-faces.md)
+[← Compile regions](compile-regions.md) · [Manual](README.md) · [Cubemap faces →](cubemap-faces.md)

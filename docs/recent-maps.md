@@ -51,4 +51,4 @@ MCP: `get_recent_maps`, `open_recent_map`, `relocate_recent_map` and `cancel_rec
 
 ---
 
-[← Open documents](open-documents.md) · [Manual](README.md) · [Content profiles →](content-profiles.md)
+[← Measurements](measurements.md) · [Manual](README.md) · [Content profiles →](content-profiles.md)

@@ -1,4 +1,4 @@
-import { Theme, SectionHeader, MutedText } from "kit.slint";
+import { Theme, SectionHeader, MutedText, SelectableRow } from "kit.slint";
 import { Button, CheckBox, LineEdit, ScrollView } from "widgets.slint";
 
 export struct MeasurementRow { id: string, name: string, detail: string }
@@ -141,20 +141,16 @@ export component MeasurementsWindow inherits Window {
                                     VerticalLayout {
                                         spacing: Theme.space-sm;
                                         alignment: start;
-                                        for measurement in root.measurements: Rectangle {
-                                            background: root.selected-id == measurement.id ? Theme.selection : row-touch.has-hover ? Theme.hover : Theme.base;
-                                            border-radius: Theme.radius-sm;
-                                            accessible-role: button;
-                                            accessible-label: measurement.name;
-                                            accessible-checked: root.selected-id == measurement.id;
-                                            accessible-action-default => { root.choose(measurement.id); }
+                                        for measurement in root.measurements: SelectableRow {
+                                            label: measurement.name;
+                                            selected: root.selected-id == measurement.id;
+                                            clicked => { root.choose(measurement.id); }
                                             VerticalLayout {
                                                 padding: Theme.space;
                                                 spacing: Theme.space-xs;
                                                 Text { text: measurement.name; color: Theme.text; font-weight: 600; overflow: elide; }
                                                 Text { text: measurement.detail; color: Theme.text-faint; font-size: Theme.font-small; overflow: elide; }
                                             }
-                                            row-touch := TouchArea { clicked => { root.choose(measurement.id); } }
                                         }
                                         if root.measurements.length == 0: Text { text: "No saved measurements. Enter two endpoints, then Preview."; color: Theme.text-muted; wrap: word-wrap; }
                                     }

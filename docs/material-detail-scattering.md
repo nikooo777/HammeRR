@@ -71,4 +71,4 @@ changed consumed assets stop publication.
 
 ---
 
-[← Detail sprites](detail-sprites.md) · [Manual](README.md) · [Final compiled details →](compiled-details.md)
+[← Detail sprites](detail-sprites.md) · [Manual](README.md) · [Occluders →](occluders.md)

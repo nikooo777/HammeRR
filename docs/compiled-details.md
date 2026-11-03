@@ -64,4 +64,4 @@ Use `inspect_compiled_details` and `set_compiled_details` through MCP.
 
 ---
 
-[← Material detail scattering](material-detail-scattering.md) · [Manual](README.md) · [Occluders →](occluders.md)
+[← Model detail props](model-detail-props.md) · [Manual](README.md) · [Build recipes →](build-recipes.md)

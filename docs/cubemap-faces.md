@@ -32,4 +32,4 @@ Removing a root binding may select a child sample.
 
 ---
 
-[← Generated reflections](reflections.md) · [Manual](README.md) · [HDR exposure →](hdr-exposure.md)
+[← Generated reflections](reflections.md) · [Manual](README.md) · [Baked lightmaps →](baked-lightmaps.md)

@@ -49,4 +49,4 @@ Objects match by kind and stored ID. Both maps stay intact.
 
 ---
 
-[← History](history.md) · [Manual](README.md) · [Keyboard shortcuts →](keyboard-shortcuts.md)
+[← Content profiles](content-profiles.md) · [Manual](README.md) · [Workspace layout →](workspace-layout.md)

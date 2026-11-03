@@ -4,6 +4,45 @@ import { Switch } from "widgets.slint";
 
 export { Theme, Icon }
 
+export component SelectableRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    in property <bool> enabled: true;
+    in property <brush> fill: Theme.base;
+    callback clicked();
+    forward-focus: row-focus;
+    background: root.selected ? Theme.selection : touch.has-hover && root.enabled ? Theme.hover : root.fill;
+    border-radius: Theme.radius-sm;
+    border-width: row-focus.has-focus && root.enabled ? 1px : 0px;
+    border-color: Theme.accent;
+    opacity: root.enabled ? 1 : 0.6;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-checkable: true;
+    accessible-checked: root.selected;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    @children
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            row-focus.focus();
+            root.clicked();
+        }
+    }
+    row-focus := FocusScope {
+        width: 0px;
+        height: 0px;
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if root.enabled && (event.text == Key.Space || event.text == Key.Return) {
+                root.clicked();
+                accept
+            } else { reject }
+        }
+    }
+}
+
 export component IconButton inherits Rectangle {
     in property <image> icon;
     in property <string> tooltip;

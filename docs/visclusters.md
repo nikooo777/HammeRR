@@ -25,4 +25,4 @@ Supported child volumes also compile through referenced assemblies.
 
 ---
 
-[← Occluders](occluders.md) · [Manual](README.md) · [MCP setup and tool index →](mcp.md)
+[← Occluders](occluders.md) · [Manual](README.md) · [Status and limits →](status.md)

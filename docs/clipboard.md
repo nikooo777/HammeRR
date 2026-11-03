@@ -40,4 +40,4 @@ An intervening edit, Undo or definition reload invalidates that receipt.
 
 ---
 
-[← Layers](layers.md) · [Manual](README.md) · [Prefab library →](prefabs.md)
+[← Layers](layers.md) · [Manual](README.md) · [Map checks, notes and recovery →](map-tools.md)

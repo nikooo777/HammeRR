@@ -64,4 +64,4 @@ falloff, ray occlusion or exact finite-area visibility.
 
 ---
 
-[← Baked prop vertices](baked-prop-vertices.md) · [Manual](README.md) · [Visibility inspection →](visibility.md)
+[← Baked lightmaps](baked-lightmaps.md) · [Manual](README.md) · [Detail sprites →](detail-sprites.md)

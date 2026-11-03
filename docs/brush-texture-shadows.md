@@ -138,4 +138,4 @@ See [static-prop mesh shadows](prop-shadows.md) for model casters.
 
 ---
 
-[← Static-prop shadows](prop-shadows.md) · [Manual](README.md) · [Generated reflections →](reflections.md)
+[← Static-prop shadows](prop-shadows.md) · [Manual](README.md) · [HDR exposure →](hdr-exposure.md)

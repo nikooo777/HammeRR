@@ -55,4 +55,4 @@ See [MCP documents](mcp.md#documents) for routing and Close tokens.
 
 ---
 
-[← Measurements](measurements.md) · [Manual](README.md) · [Recent maps →](recent-maps.md)
+[← Workspace layout](workspace-layout.md) · [Manual](README.md) · [History →](history.md)

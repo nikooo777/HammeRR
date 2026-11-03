@@ -1,7 +1,7 @@
 import { Theme } from "theme.slint";
 import { ViewportPaneView, ViewportPane, ViewportPaneSize } from "viewport-pane.slint";
 export { ViewportPane, ViewportPaneSize }
-import { IconButton, Separator, SectionHeader, FieldRow, Badge, MutedText, OverlaySwitch, OverlayNote, OverlayLink, DockTab, ToolTile, Icon } from "kit.slint";
+import { IconButton, Separator, SectionHeader, FieldRow, Badge, MutedText, SelectableRow, OverlaySwitch, OverlayNote, OverlayLink, DockTab, ToolTile, Icon } from "kit.slint";
 export { ExternalComparisonWindow, ComparisonRow } from "external-comparison.slint";
 export { EntityGalleryWindow, EntityGalleryClassRow, EntityGalleryPreviewRow } from "entity-gallery.slint";
 export { EntityGraphWindow, EntityGraphRow } from "entity-graph.slint";
@@ -1684,14 +1684,12 @@ export component RecentMapsWindow inherits Window {
                 min-height: 140px;
                 preferred-height: 220px;
                 vertical-stretch: 1;
-                for row in root.rows: Rectangle {
-                    background: root.selected-path == row.path ? Theme.selection : recent-touch.has-hover && !root.busy ? Theme.hover : transparent;
-                    border-radius: Theme.radius-sm;
-                    accessible-role: button;
-                    accessible-label: row.title;
-                    accessible-checked: root.selected-path == row.path;
-                    accessible-enabled: !root.busy;
-                    accessible-action-default => { if !root.busy { root.select-map(row.path); } }
+                for row in root.rows: SelectableRow {
+                    label: row.title;
+                    selected: root.selected-path == row.path;
+                    enabled: !root.busy;
+                    fill: transparent;
+                    clicked => { root.select-map(row.path); }
                     VerticalLayout {
                         padding: Theme.space;
                         spacing: Theme.space-xs;
@@ -1699,7 +1697,6 @@ export component RecentMapsWindow inherits Window {
                         Text { text: row.path; wrap: word-wrap; color: Theme.text-muted; }
                         if row.detail != "": Text { text: row.detail; color: Theme.text-faint; font-size: Theme.font-small; wrap: word-wrap; }
                     }
-                    recent-touch := TouchArea { enabled: !root.busy; clicked => { root.select-map(row.path); } }
                 }
             }
             Text { text: "Remembered context"; color: Theme.text; font-weight: 600; }

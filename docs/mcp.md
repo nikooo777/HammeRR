@@ -271,6 +271,42 @@ refresh included files. Metadata is bounded to 1,024 material prefixes, 256
 groups, 256 classes and source declarations per group, and 256 version
 declarations; names/prefixes allow at most 256 UTF-8 bytes.
 
+## Static entity helpers
+
+`get_entity_inspector` reports `helpers.static_guides` for wire boxes, cylinders
+and implicit typed `origin`, `vecline` and `axis` property guides. Records include
+declaration identity, resolved inputs with `value_source`, `state`, `error`,
+`displayed`, `suppression_reason`, `segments` and separate `visual_bounds`.
+`helpers.omitted_static_guides` and `kind: "omitted"` records identify omitted
+declarations; `static_guide_limits` reports numeric caps and policy.
+The Inspector displays the same shared status and unavailable reasons.
+
+Select the source and set `entity_helpers: true` through `set_view` to display
+its admitted guides. Edit bindings through `set_entity_properties` or the existing
+property-draft operations. Declared lines and typed property guides can accompany
+brush/model geometry; brush line endpoints use bounded brush centers. Typed
+coordinate markers are fixed wire crosses edited through those same property
+fields. Visual bounds never replace object bounds for picking or framing.
+Wirebox vectors are offsets from the point origin or brush bounds center;
+typed coordinates are absolute world positions. Each cylinder radius resolves
+on its corresponding endpoint entity.
+
+Line and cylinder target lookup requires a unique ASCII-case-insensitive literal
+name. Wildcards, unsupported binding aliases, ambiguous targets and malformed
+declarations stay explicitly unavailable. These are static editor guides, not
+runtime beams, collision or animation.
+Declared lines support up to 64 declarations per source and 128 displayed lines
+per scene; the shared limits report exposes both caps.
+
+Zero-argument `studio()`/`studioprop()` delegate to the existing authored-model
+path: `helpers.model_guide` reports `source: "authored_model"` and
+`material_policy: "authored_model"`.
+They use `authored_models`, ordinary model bounds and picking, without adding a
+second mesh or reading an FGD-default model. An unset optional model reports
+`model_not_set`; asset/appearance/scale errors remain explicit. Authored model
+fields, declared model properties and specialized helpers retain precedence over
+fixed literal model guides; errors never trigger a fallback to another FGD asset.
+
 ## Point-entity gallery
 
 Use `browse_entity_gallery` to page through all loaded FGD point classes, including

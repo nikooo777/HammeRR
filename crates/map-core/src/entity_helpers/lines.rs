@@ -1,5 +1,8 @@
 use super::values::bounded;
-use std::collections::BTreeMap;
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+};
 
 use glam::DVec3;
 use source_formats::{
@@ -7,12 +10,13 @@ use source_formats::{
     vmf::Entity,
 };
 
-use super::MAX_HELPER_EXTENT;
-
-pub const MAX_LINES_PER_ENTITY: usize = 16;
+pub const MAX_LINES_PER_ENTITY: usize = 64;
 pub const MAX_KEY_BYTES: usize = 128;
 pub const MAX_VALUE_BYTES: usize = 256;
 pub const MAX_TARGET_ENTITIES: usize = 65_536;
+pub const MAX_ANCHOR_CACHE: usize = 512;
+
+type Anchor = Result<(DVec3, &'static str), String>;
 
 #[derive(Debug, Clone)]
 pub struct Endpoint {
@@ -22,6 +26,7 @@ pub struct Endpoint {
     pub raw_truncated: bool,
     pub value_source: &'static str,
     pub entity: Option<u32>,
+    pub position_source: Option<&'static str>,
     pub position: Option<[f64; 3]>,
     pub matches: usize,
     pub state: &'static str,
@@ -37,6 +42,7 @@ impl Endpoint {
             raw_truncated: false,
             value_source: "missing",
             entity: None,
+            position_source: None,
             position: None,
             matches: 0,
             state,
@@ -44,26 +50,24 @@ impl Endpoint {
         }
     }
 
-    fn set_position(&mut self, entity: &Entity) {
+    fn set_position(&mut self, entity: &Entity, anchor: Anchor) {
         self.entity = Some(entity.id);
-        let mut origins = entity.properties.get_all("origin");
-        let position = origins
-            .next()
-            .filter(|raw| raw.len() <= MAX_VALUE_BYTES)
-            .and_then(source_formats::vmf::parse_vec3)
-            .filter(|point| {
-                point.is_finite()
-                    && point.as_vec3().is_finite()
-                    && point.abs().max_element() <= MAX_HELPER_EXTENT
-            });
-        if origins.next().is_some() || position.is_none() {
-            self.state = "invalid_origin";
-            self.error =
-                Some("Line endpoint needs one finite authored origin within ±65536 units".into());
+        self.position_source = Some(if entity.solids.is_empty() {
+            "authored_origin"
         } else {
-            self.position = position.map(|point| point.to_array());
-            self.state = "ready";
-            self.error = None;
+            "brush_bounds_center"
+        });
+        match anchor {
+            Ok((position, source)) => {
+                self.position = Some(position.to_array());
+                self.position_source = Some(source);
+                self.state = "ready";
+                self.error = None;
+            }
+            Err(error) => {
+                self.state = "invalid_origin";
+                self.error = Some(error);
+            }
         }
     }
 }
@@ -80,6 +84,8 @@ pub struct Targets<'a> {
     names: BTreeMap<String, Vec<&'a Entity>>,
     node_ids: BTreeMap<String, Vec<&'a Entity>>,
     limited: bool,
+    anchors: RefCell<BTreeMap<u32, Anchor>>,
+    anchor_work: Cell<usize>,
 }
 
 impl<'a> Targets<'a> {
@@ -88,6 +94,8 @@ impl<'a> Targets<'a> {
             names: BTreeMap::new(),
             node_ids: BTreeMap::new(),
             limited: entities.len() > MAX_TARGET_ENTITIES,
+            anchors: Default::default(),
+            anchor_work: Cell::new(0),
         };
         if result.limited {
             return result;
@@ -143,7 +151,34 @@ impl<'a> Targets<'a> {
         result
     }
 
-    fn endpoint(&self, class: &Class, entity: &Entity, lookup: &str, key: &str) -> Endpoint {
+    pub(super) fn anchor(&self, entity: &Entity) -> Anchor {
+        if let Some(anchor) = self.anchors.borrow().get(&entity.id) {
+            return anchor.clone();
+        }
+        if self.anchors.borrow().len() == MAX_ANCHOR_CACHE {
+            return Err("Helper anchors exceed their 512-entity cache limit".into());
+        }
+        let result = super::values::anchor_work(entity).and_then(|work| {
+            let total = self
+                .anchor_work
+                .get()
+                .checked_add(work)
+                .filter(|total| *total <= super::values::MAX_ANCHOR_WORK)
+                .ok_or("Helper anchors exceed their shared brush clipping work limit")?;
+            self.anchor_work.set(total);
+            super::values::anchor(entity)
+        });
+        self.anchors.borrow_mut().insert(entity.id, result.clone());
+        result
+    }
+
+    pub(super) fn endpoint(
+        &self,
+        class: &Class,
+        entity: &Entity,
+        lookup: &str,
+        key: &str,
+    ) -> Endpoint {
         let property = class.property(key).unwrap();
         let mut result = Endpoint::unavailable(
             "missing",
@@ -205,18 +240,13 @@ impl<'a> Targets<'a> {
         }
         let candidate = candidates[0];
         let mut names = candidate.properties.get_all("targetname");
-        let name = names.next();
+        names.next();
         if names.next().is_some() {
             result.state = "duplicate_targetname";
             result.error = Some("Line endpoint has duplicate targetname keys".into());
             return result;
         }
-        if name != Some(raw) {
-            result.state = "unsupported_case_match";
-            result.error = Some("Line guides require exact-case literal names; native helper case matching is unconfirmed".into());
-            return result;
-        }
-        result.set_position(candidate);
+        result.set_position(candidate, self.anchor(candidate));
         result
     }
 
@@ -265,7 +295,7 @@ impl<'a> Targets<'a> {
                 "Line endpoint nodeid is not a canonical nonnegative 32-bit decimal ID".into(),
             );
         } else {
-            result.set_position(candidate);
+            result.set_position(candidate, self.anchor(candidate));
         }
         result
     }
@@ -310,7 +340,9 @@ pub fn resolve(class: &Class, entity: &Entity, targets: &Targets<'_>) -> Vec<Lin
             error: None,
         };
         if result.len() == MAX_LINES_PER_ENTITY {
-            line.error = Some("Line guides support at most 16 declarations per entity; remaining declarations were omitted".into());
+            line.error = Some(format!(
+                "Line guides support at most {MAX_LINES_PER_ENTITY} declarations per entity; remaining declarations were omitted"
+            ));
             result.push(line);
             break;
         }
@@ -328,7 +360,7 @@ pub fn resolve(class: &Class, entity: &Entity, targets: &Targets<'_>) -> Vec<Lin
             let mut own =
                 Endpoint::unavailable("invalid_origin", "Line source has no authored origin");
             own.value_source = "self_origin";
-            own.set_position(entity);
+            own.set_position(entity, targets.anchor(entity));
             [own, first]
         };
         if let Some(endpoint) = line

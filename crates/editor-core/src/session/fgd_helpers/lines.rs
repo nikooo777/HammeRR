@@ -9,7 +9,44 @@ use serde::Serialize;
 use super::super::{Session, working_region::Evaluation};
 
 pub(super) const MAX_DISPLAYED_LINES: usize = 128;
-pub(super) const LIMITS: &str = "Selected visible generic point sources only. line(R G B, targetname, property) draws self to the named point; the seven-argument form draws between two referenced points. nodeid pairs require declared node_dest reference properties and point endpoints with a declared readonly integer nodeid. Node IDs must be authored exactly once, canonical decimal 0–2147483647; -1 references declare no association. Numeric aliases are not rendered and cannot hide duplicate matches. No IDs are generated or inferred from VMF object IDs, order or runtime node indexes. Literal integer RGB 0–255 is independent of rendercolor. Authored reference values precede labeled FGD defaults; named endpoints need one authored targetname and all endpoints one finite authored origin. Only unique exact-case literal names are displayed; case-insensitive collisions are ambiguous and case-only matches explicit unsupported_case_match. Wildcards, !tokens and brush endpoints are unsupported. Model/light point endpoints retain their displayed origins; model/light/rope sources remain specialized. Hidden or working-region-excluded sources/endpoints suppress the line. At most 16 declarations per entity, 128 displayed lines and 65536 lookup entities/raw targetname plus eligible nodeid values; property/value previews cap at 128/256 bytes. Endpoints follow transform previews; bounds, picking, framing, selection, placement and working regions remain unchanged. These are stored FGD editor links, not runtime beams, I/O or AI nodegraph connectivity. Runtime ground-node dropping is not evaluated.";
+pub(super) const LIMITS: &str = "Selected visible declared line sources; guides coexist with brush, model, light and rope displays. line(R G B, targetname, property) draws self to the named anchor; the seven-argument form draws between two referenced anchors. nodeid pairs require declared node_dest reference properties and point endpoints with a declared readonly integer nodeid. Node IDs must be authored exactly once, canonical decimal 0–2147483647; -1 references declare no association. Numeric aliases are not rendered and cannot hide duplicate matches. No IDs are generated or inferred from VMF object IDs, order or runtime node indexes. Literal integer RGB 0–255 is independent of rendercolor. Authored reference values precede labeled FGD defaults; named endpoints need one authored targetname. Point anchors require a finite authored origin; brush anchors use the bounded brush bounds centre, reported as position_source. Unique ASCII-case-insensitive literal names are displayed; duplicate names or case aliases are ambiguous. Wildcards and !tokens are unsupported. Hidden or working-region-excluded sources/endpoints suppress the line. At most 64 declarations per entity, 128 displayed lines and 65536 lookup entities/raw targetname plus eligible nodeid values; property/value previews cap at 128/256 bytes. Each report pass shares one bounded anchor cache and clipping-work ledger; static_guide_limits reports those limits. Endpoints follow transform previews; bounds, picking, framing, selection, placement and working regions remain unchanged. These are stored FGD editor links, not runtime beams, I/O or AI nodegraph connectivity. Runtime ground-node dropping is not evaluated.";
+
+pub(super) fn source_suppression(facts: &super::classification::Facts) -> Option<&'static str> {
+    if facts.hidden {
+        Some("authored_hidden")
+    } else if facts.editor_hidden {
+        Some("editor_hidden")
+    } else if facts.outside {
+        Some("outside_working_region")
+    } else if !facts.selected {
+        Some("not_selected")
+    } else {
+        None
+    }
+}
+
+pub(super) fn endpoint_suppression(
+    document: &Document,
+    evaluation: &Evaluation,
+    endpoints: &[lines::Endpoint],
+) -> Option<&'static str> {
+    for endpoint in endpoints {
+        let Some(entity) = endpoint.entity.and_then(|id| document.entity(id)) else {
+            return Some("missing_endpoint");
+        };
+        if entity.hidden {
+            return Some("endpoint_hidden");
+        }
+        let object = ObjectId::Entity(entity.id);
+        if evaluation.editor_hidden.contains(&object) {
+            return Some("endpoint_editor_hidden");
+        }
+        if !evaluation.objects.contains(&object) {
+            return Some("endpoint_outside_working_region");
+        }
+    }
+    None
+}
 
 #[derive(Debug, Serialize)]
 pub struct Endpoint {
@@ -20,6 +57,7 @@ pub struct Endpoint {
     pub value_source: &'static str,
     pub entity: Option<u32>,
     pub position: Option<[f64; 3]>,
+    pub position_source: Option<&'static str>,
     pub matches: usize,
     pub state: &'static str,
     pub error: Option<String>,
@@ -35,6 +73,7 @@ impl From<lines::Endpoint> for Endpoint {
             value_source: value.value_source,
             entity: value.entity,
             position: value.position,
+            position_source: value.position_source,
             matches: value.matches,
             state: value.state,
             error: value.error,
@@ -93,27 +132,10 @@ impl Session {
                 continue;
             };
             let facts = context.facts(entity, class);
-            let reason = if !facts.point {
-                Some("brush_or_nonpoint")
-            } else if facts.light {
-                Some("specialized_light")
-            } else if facts.loaded {
-                Some("loaded_model")
-            } else if facts.rope {
-                Some("specialized_rope")
-            } else if facts.model_helper {
-                Some("model_helper")
-            } else if facts.hidden {
-                Some("authored_hidden")
-            } else if facts.editor_hidden {
-                Some("editor_hidden")
-            } else if facts.outside {
-                Some("outside_working_region")
-            } else if !facts.selected {
-                Some("not_selected")
-            } else {
-                None
-            };
+            let reason = source_suppression(&facts);
+            if inspected != Some(id) && (reason.is_some() || displayed == MAX_DISPLAYED_LINES) {
+                continue;
+            }
             let rows = lines::resolve(class, entity, &targets)
                 .into_iter()
                 .map(|line| {
@@ -121,26 +143,10 @@ impl Session {
                         if line.state != "ready" {
                             return Some("unavailable_endpoint");
                         }
-                        for endpoint in &line.endpoints {
-                            let Some(entity) = endpoint.entity.and_then(|id| document.entity(id))
-                            else {
-                                return Some("missing_endpoint");
-                            };
-                            if !entity.solids.is_empty() {
-                                return Some("brush_endpoint");
-                            }
-                            if entity.hidden {
-                                return Some("endpoint_hidden");
-                            }
-                            if evaluation
-                                .editor_hidden
-                                .contains(&ObjectId::Entity(entity.id))
-                            {
-                                return Some("endpoint_editor_hidden");
-                            }
-                            if !evaluation.objects.contains(&ObjectId::Entity(entity.id)) {
-                                return Some("endpoint_outside_working_region");
-                            }
+                        if let Some(reason) =
+                            endpoint_suppression(document, evaluation, &line.endpoints)
+                        {
+                            return Some(reason);
                         }
                         (displayed == MAX_DISPLAYED_LINES).then_some("scene_guide_limit")
                     });

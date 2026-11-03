@@ -11,7 +11,7 @@ const MAX_GUIDES: usize = 64;
 const MAX_VERTICES: usize = 65_536;
 const MAX_INDICES: usize = 393_216;
 const MAX_PATH_BYTES: usize = 256;
-pub(super) const LIMITS: &str = "One literal studio(models/*.mdl) or studioprop(models/*.mdl) declaration on a visible generic point entity; inherited declarations use the loaded catalog. Editor mesh only: ordinary helper bounds, picking, selection, framing, placement, snapping and working-region membership stay unchanged. Visual bounds are reported separately. Shared mounted model cache, LOD0 static/reference pose, authored angles/legacy angle, skin/body and unit-modelscale guards; no animation or engine collision claim. At most 64 eligible source evaluations, 65536 vertices and 393216 indices per scene in entity-ID order, within the existing model cache budget. Paths cap at 256 bytes and errors at 512 bytes. Authored model fields, model properties, specialized lights/ropes, sprite/decal/overlay helpers and brush sources retain precedence. Multiple declarations are ambiguous; zero-argument, property-driven and other helper forms remain unsupported. Reload models refreshes these shared assets; definition reload re-evaluates declarations. Deliberately untextured flat_editor meshes use the existing editor material and geometry renderer; no guide VMT/VTF reads, shader fidelity or animated-pose claim. Guide-only cache entries defer material-name resolution and remain excluded from material reload prefetch; a later ordinary model preview can resolve bindings on the same geometry. Authored rendercolor tints the flat mesh. Origins and complete visual bounds must remain finite within ±65536 units.";
+pub(super) const LIMITS: &str = "One studio()/studioprop() declaration delegates to the existing authored model field and its model-resource, appearance, scale, bounds and authored_models visibility policies. Missing or blank optional model fields report model_not_set without an error; no FGD model default or substitute asset is loaded. Asset/material errors and intentionally empty bodies retain the authored pipeline's status. No second mesh or helper asset read is added. One literal studio(models/*.mdl) or studioprop(models/*.mdl) declaration on a visible generic point entity provides a separate flat_editor guide; inherited declarations use the loaded catalog. Literal guides retain ordinary helper bounds, picking, selection, framing, placement, snapping and working-region membership. Visual bounds are reported separately. Shared mounted model cache, LOD0 static/reference pose, authored angles/legacy angle, skin/body and unit-modelscale guards; no animation or engine collision claim. Literal guides admit at most 64 eligible source evaluations, 65536 vertices and 393216 indices per scene in entity-ID order, within the existing model cache budget. Literal paths cap at 256 bytes and errors at 512 bytes. Authored model fields, model properties, specialized lights/ropes, sprite/decal/overlay helpers and brush sources retain precedence over literal guides. Multiple declarations are ambiguous; property-driven and other multiargument forms remain unsupported. Reload models refreshes these shared assets; definition reload re-evaluates declarations. Deliberately untextured flat_editor meshes use the existing editor material and geometry renderer; no guide VMT/VTF reads, shader fidelity or animated-pose claim. Guide-only cache entries defer material-name resolution and remain excluded from material reload prefetch; a later ordinary model preview can resolve bindings on the same geometry. Authored rendercolor tints the flat mesh. Origins and complete visual bounds must remain finite within ±65536 units.";
 
 #[derive(Debug, Serialize)]
 pub struct Report {
@@ -38,6 +38,20 @@ fn preview(value: &str, maximum: usize) -> String {
         end -= 1;
     }
     value[..end].into()
+}
+
+fn describe_instance(report: &mut Report, instance: &Instance) {
+    if instance.has_geometry() {
+        let (mins, maxs) = instance.bounds();
+        report.visual_bounds = Some([mins.to_array(), maxs.to_array()]);
+    }
+    report.pose = Some(if instance.asset.model.header.is_static_prop() {
+        "static"
+    } else {
+        "reference"
+    });
+    report.skin = Some(instance.skin);
+    report.body = Some(instance.body);
 }
 
 impl Session {
@@ -94,6 +108,64 @@ impl Session {
                 body: None,
                 material_policy: "flat_editor",
             };
+            if declarations.len() == 1 && first.arguments.is_empty() {
+                if inspected != Some(id) {
+                    continue;
+                }
+                report.source = "authored_model";
+                report.material_policy = "authored_model";
+                report.declaration_supported = true;
+                let authored = entity
+                    .properties
+                    .get("model")
+                    .filter(|path| !path.trim().is_empty());
+                report.path = authored.and_then(|path| render::models::model_path(path).ok());
+                report.error = evaluation
+                    .models
+                    .issues
+                    .get(&id)
+                    .map(|error| preview(error, 512));
+                let instance = evaluation
+                    .models
+                    .instances
+                    .iter()
+                    .find(|instance| instance.id == map_core::ObjectId::Entity(id));
+                report.state = if authored.is_none() {
+                    "model_not_set"
+                } else if let Some(instance) = instance {
+                    describe_instance(&mut report, instance);
+                    if !instance.has_geometry() {
+                        "empty_body"
+                    } else if report.error.is_some() {
+                        "ready_with_issue"
+                    } else {
+                        "ready"
+                    }
+                } else if report.error.is_some() {
+                    "unavailable"
+                } else {
+                    "not_loaded"
+                };
+                report.suppression_reason = if !entity.solids.is_empty() {
+                    Some("brush_or_nonpoint")
+                } else if crate::sprite_resource::is_source(Some(class)) {
+                    Some("sprite_resource")
+                } else if facts.hidden {
+                    Some("authored_hidden")
+                } else if facts.editor_hidden {
+                    Some("editor_hidden")
+                } else if facts.outside {
+                    Some("outside_working_region")
+                } else if !self.view.authored_models {
+                    Some("view_disabled")
+                } else {
+                    None
+                };
+                report.displayed = report.suppression_reason.is_none()
+                    && instance.is_some_and(Instance::has_geometry);
+                rows.insert(id, (report, None));
+                continue;
+            }
             let path = if declarations.len() != 1 {
                 Err("Multiple studio/studioprop declarations are ambiguous".into())
             } else if first.arguments.len() != 1 || literal.is_empty() {
@@ -178,15 +250,7 @@ impl Session {
                         } else {
                             vertices += vertex_count;
                             indices += index_count;
-                            let (mins, maxs) = instance.bounds();
-                            report.visual_bounds = Some([mins.to_array(), maxs.to_array()]);
-                            report.pose = Some(if instance.asset.model.header.is_static_prop() {
-                                "static"
-                            } else {
-                                "reference"
-                            });
-                            report.skin = Some(instance.skin);
-                            report.body = Some(instance.body);
+                            describe_instance(&mut report, &instance);
                             report.state = "ready";
                             report.displayed = true;
                             displayed = Some(instance);

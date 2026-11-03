@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 84.4% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 84.8% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -95,6 +95,11 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | --- | --- |
 | ![Real FGD light, player and prop examples before placement](docs/images/entity-gallery.png) | ![One child brush selected inside a brush entity](docs/images/solid-selection.png) |
 | Preview loaded classes and place reviewed batches in one Undo step. | Pick groups, whole objects or individual brushes inside entities. |
+
+| [Entity property guides](docs/entities.md#inspect-property-guides) |
+| --- |
+| ![Path cylinders, wire boxes and coordinate guides](docs/images/entity-property-guides.png) |
+| Inspect bound properties and linked endpoints beside brush and model geometry. |
 
 | [Reference images](docs/reference-images.md) | [Magnetic snapping](docs/placement.md#magnetic-translation) |
 | --- | --- |

@@ -3007,6 +3007,7 @@ impl Session {
         if view.entity_helpers {
             self.append_fgd_sphere_guides(&mut mesh);
             self.append_fgd_line_guides(&mut mesh);
+            self.append_fgd_static_guides(&mut mesh);
             self.append_source_projector_guides(&mut mesh);
             self.append_fgd_frustum_guides(&mut mesh);
         }

@@ -51,6 +51,22 @@ The **Entity images**, **Sprite resources** and **Entity model guides** viewport
 Selection outlines, exact bounds and known error markers remain available.
 See [Helpers and selection presentation](selection-presentation.md).
 
+### Inspect property guides
+
+1. Select an entity and enable **Overlays → Entity helpers**.
+2. Enable **Advanced properties** to read the helper summary, defaulted fields and unavailable-guide reasons.
+3. Edit the existing property fields, such as **Mins** and **Maxs** on `info_node_link_controller`, or **Path radius** on `path_track`.
+
+![Path cylinders, wire boxes and absolute-coordinate guides beside brush and model geometry](images/entity-property-guides.png)
+
+Wire boxes use offsets from the point origin or brush bounds center and remain
+world-aligned. Typed `origin`, `vecline` and `axis` guides use absolute world
+coordinates. Cylinders read each radius from its resolved endpoint entity.
+Declared lines and typed property guides can accompany brush and model geometry.
+Brush line endpoints use bounded brush centers. Typed-coordinate markers are
+fixed wire crosses; edit their existing property fields. Visual guide bounds do
+not change object bounds, picking or framing.
+
 ### Inspect a property radius
 
 Place `env_firesensor`, set **Radius**, then select it to inspect its radius guide.
@@ -68,8 +84,14 @@ Zero or negative values suppress the guide with an explanation.
 ![A projector frustum shows direction and coverage](images/projector-guide.png)
 
 The guide shows bounds, not a rendered projected light.
-Supported FGD line, node-link, sphere, frustum, icon and literal model helpers follow their declared properties.
+Supported FGD line, node-link, sphere, frustum, icon and model helpers follow their declared properties.
+Line and cylinder targets use unique literal names, ignoring ASCII letter case.
 Missing or ambiguous targets report errors rather than invented endpoints.
+Zero-argument `studio()` and `studioprop()` use the normal authored-model
+workflow and **Authored models** switch. An unset optional model stays unset.
+Authored model fields, declared model properties and specialized helpers retain
+precedence over literal FGD model guides. An authored-model error stays explicit;
+another helper asset never replaces it.
 
 ## Load extended entity definitions
 
@@ -177,6 +199,8 @@ Click **Apply properties** to keep the draft, or **Cancel** to discard it.
 - Custom classes and raw properties can be retained without being supported by the compiler.
 - Helper images, meshes and bounds do not establish game collision or runtime appearance.
 - Guides cover checked static properties, not parenting, animation, simulation or runtime I/O.
+- Declared line guides support up to 64 declarations per source and 128 displayed lines per scene.
+- Wildcard helper targets, unsupported binding aliases and malformed declarations remain unavailable with explicit reasons.
 - Reload material assets for changed icons; reload models for changed model geometry; reload FGD for changed definitions.
 - Changed source or replaced drafts require a fresh review before applying edits.
 

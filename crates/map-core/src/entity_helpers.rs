@@ -9,6 +9,7 @@ pub mod frustums;
 pub mod lines;
 pub mod projectors;
 pub mod spheres;
+pub mod static_guides;
 mod values;
 pub use values::{Value as HelperValue, bounded as bounded_preview};
 
@@ -77,6 +78,7 @@ impl Appearance {
                 !["size", "color"].contains(&helper.name.as_str())
                     && !spheres::supported(class, helper)
                     && !lines::supported(class, helper)
+                    && !static_guides::supported(class, helper)
                     && helper.name != "frustum"
                     && !(helper.name == "iconsprite"
                         && helper.arguments.len() == 1

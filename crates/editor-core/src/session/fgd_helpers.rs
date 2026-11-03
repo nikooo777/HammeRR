@@ -15,6 +15,7 @@ mod models;
 mod projectors;
 mod spheres;
 mod sprites;
+mod static_guides;
 
 #[derive(Debug, Serialize)]
 pub struct Report {
@@ -39,6 +40,9 @@ pub struct Report {
     pub sphere_limits: &'static str,
     pub lines: Vec<lines::Report>,
     pub line_limits: &'static str,
+    pub static_guides: Vec<static_guides::Report>,
+    pub omitted_static_guides: usize,
+    pub static_guide_limits: static_guides::Limits,
     pub frustums: Vec<frustums::Report>,
     pub omitted_frustum_declarations: usize,
     pub frustum_limits: &'static str,
@@ -185,16 +189,31 @@ impl Session {
             );
         }
         if let Some(guide) = &model_guide {
-            status += &format!(
-                ". FGD model guide: {}; {}({}); flat editor mesh only, ordinary helper bounds and picking",
-                if guide.displayed {
-                    "displayed"
-                } else {
-                    guide.suppression_reason.unwrap_or(guide.state)
-                },
-                guide.helper,
-                guide.path.as_deref().unwrap_or(&guide.literal)
-            );
+            let state = if guide.displayed {
+                "displayed"
+            } else {
+                guide.suppression_reason.unwrap_or(guide.state)
+            };
+            if guide.source == "authored_model" {
+                status += &format!(
+                    ". FGD model source: {state}; {}() uses authored model display and bounds; {}",
+                    guide.helper,
+                    guide
+                        .path
+                        .as_deref()
+                        .unwrap_or(if guide.state == "model_not_set" {
+                            "no authored model"
+                        } else {
+                            "authored model unavailable"
+                        })
+                );
+            } else {
+                status += &format!(
+                    ". FGD model guide: {state}; {}({}); flat editor mesh only, ordinary helper bounds and picking",
+                    guide.helper,
+                    guide.path.as_deref().unwrap_or(&guide.literal)
+                );
+            }
             if let Some(error) = &guide.error {
                 status += &format!(" ({error})");
             }
@@ -284,6 +303,8 @@ impl Session {
         }
         let spheres = self.inspected_spheres(id);
         let lines = self.inspected_lines(id);
+        let static_guides = self.inspected_static_guides(id);
+        let omitted_static_guides = static_guides.iter().map(|guide| guide.omitted).sum();
         let (frustums, omitted_frustum_declarations) = self.inspected_frustums(id);
         let source_projector = self.inspected_projector(id);
         if let Some(projector) = &source_projector {
@@ -395,6 +416,55 @@ impl Session {
                 }
             }
         }
+        if !static_guides.is_empty() {
+            let displayed = static_guides.iter().filter(|guide| guide.displayed).count();
+            let unavailable = static_guides
+                .iter()
+                .filter(|guide| guide.omitted == 0 && guide.state != "ready")
+                .count();
+            let suppressed = static_guides
+                .iter()
+                .filter(|guide| guide.omitted == 0 && guide.state == "ready" && !guide.displayed)
+                .count();
+            status += &format!(
+                ". Static guides: {displayed} displayed, {suppressed} suppressed, {unavailable} unavailable, {omitted_static_guides} omitted; visual guides retain ordinary object bounds"
+            );
+            for guide in static_guides
+                .iter()
+                .filter(|guide| !guide.displayed && guide.omitted == 0)
+                .take(3)
+            {
+                let binding = guide.property.as_deref().unwrap_or(guide.kind);
+                let state = if guide.state == "ready" {
+                    guide.suppression_reason.unwrap_or("suppressed")
+                } else {
+                    guide.state
+                };
+                status += &format!(". {binding}: {}", state.replace('_', " "));
+                if let Some(error) = &guide.error {
+                    status += &format!(" ({error})");
+                }
+            }
+            let defaults = static_guides
+                .iter()
+                .flat_map(|guide| &guide.inputs)
+                .filter(|input| input.value_source == "fgd_default")
+                .take(4)
+                .map(|input| {
+                    format!(
+                        "{}={}",
+                        map_core::entity_helpers::bounded_preview(&input.property, 32),
+                        map_core::entity_helpers::bounded_preview(
+                            input.raw.as_deref().unwrap_or_default(),
+                            32,
+                        )
+                    )
+                })
+                .collect::<Vec<_>>();
+            if !defaults.is_empty() {
+                status += &format!(". Static guide FGD defaults: {}", defaults.join(", "));
+            }
+        }
         Ok(Report {
             status,
             base_displayed,
@@ -409,6 +479,9 @@ impl Session {
             model_guide_limits: models::LIMITS,
             lines,
             line_limits: lines::LIMITS,
+            static_guides,
+            omitted_static_guides,
+            static_guide_limits: static_guides::limits(),
             frustums,
             omitted_frustum_declarations,
             frustum_limits: frustums::LIMITS,
@@ -429,7 +502,7 @@ impl Session {
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect(),
-            limits: "size() is an origin-relative, world-aligned editor box in Source units; angles and modelscale do not transform it. This is not an engine collision hull. Three integer dimensions or six ordered integer coordinates, with local box coordinates within ±65536; positive volume required. Malformed definitions retain the default box with a visible diagnostic. Includes, inheritance and extensions resolve before evaluation; per-helper file/line provenance is not retained. Sphere, targetname line, literal icon and literal studio/studioprop model guides are reported separately and never change these object bounds; other FGD helper declarations are not evaluated here. Existing authored model, light and rope previews remain independent.",
+            limits: "size() is an origin-relative, world-aligned editor box in Source units; angles and modelscale do not transform it. This is not an engine collision hull. Three integer dimensions or six ordered integer coordinates, with local box coordinates within ±65536; positive volume required. Malformed definitions retain the default box with a visible diagnostic. Includes, inheritance and extensions resolve before evaluation; per-helper file/line provenance is not retained. Sphere, literal target line, static property, literal icon and literal studio/studioprop model guides are reported separately and never change these object bounds. Zero-argument studio/studioprop delegates to existing authored-model display and bounds. Other FGD helper declarations are not evaluated here. Existing authored model, light and rope previews remain independent.",
         })
     }
 }

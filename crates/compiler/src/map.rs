@@ -225,7 +225,6 @@ pub struct Map<'a> {
     pub entities: Vec<MapEntity>,
     pub cubemaps: Vec<bsp::Cubemap>,
     pub(crate) occluders: Vec<occluders::Definition>,
-    occluder_csg: occluders::CsgBudget,
     pub terrains: Vec<Terrain>,
     terrain_materials: Option<terrain::MaterialPolicy>,
     pub(crate) area_portals: Vec<crate::areas::PortalBrush>,
@@ -283,7 +282,6 @@ impl<'a> Map<'a> {
             entities: Vec::new(),
             cubemaps: Vec::new(),
             occluders: Vec::new(),
-            occluder_csg: occluders::CsgBudget::default(),
             terrains: Vec::new(),
             terrain_materials: None,
             area_portals: Vec::new(),
@@ -467,6 +465,7 @@ impl<'a> Map<'a> {
         map.add_world(vmf);
 
         let mut hidden = 0;
+        let mut occluders = Vec::with_capacity(vmf.entities.len().min(bsp::MAX_OCCLUDERS));
         for solid in &vmf.world.solids {
             control.checkpoint()?;
             if solid.hidden {
@@ -503,7 +502,9 @@ impl<'a> Map<'a> {
                 continue;
             }
             if classname.eq_ignore_ascii_case("func_occluder") {
-                map.add_occluder(entity, report, control)?;
+                if let Some(input) = map.add_occluder(entity, occluders.len(), report, control)? {
+                    occluders.push(input);
+                }
                 continue;
             }
             if classname.eq_ignore_ascii_case("info_overlay")
@@ -586,6 +587,7 @@ impl<'a> Map<'a> {
                 crate::water_analog::admit_carrier(&mut map, index, report);
             }
         }
+        map.finalize_occluders(occluders, report, control)?;
         crate::areas::windows::validate(&map, report, control)?;
         crate::water::prepare_materials(&mut map, report, control)?;
         crate::overlays::load(vmf, &mut map, report, control)?;

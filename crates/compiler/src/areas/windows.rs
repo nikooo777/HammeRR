@@ -11,12 +11,37 @@ const FADE_FIELDS: [(&str, f32); 3] = [
     ("TranslucencyLimit", 0.2),
 ];
 const BOUNDS_TOLERANCE: f64 = 0.02;
+const MAX_NAME_MATCH_WORK: usize = 4_000_000;
+const ASCII_CASE_OFFSET: u8 = b'a' - b'A';
 
 fn value<'a>(properties: &'a [(String, String)], name: &str) -> Option<&'a str> {
     properties
         .iter()
         .rev()
         .find_map(|(key, value)| key.eq_ignore_ascii_case(name).then_some(value.as_str()))
+}
+
+fn consume_name_work(work: &mut usize, amount: usize, control: &Control) -> Result<(), String> {
+    control.checkpoint()?;
+    *work = work
+        .checked_add(amount)
+        .filter(|&work| work <= MAX_NAME_MATCH_WORK)
+        .ok_or("Window portal name matching exceeds its four-million work-unit budget")?;
+    Ok(())
+}
+
+fn literal_name_matches(candidate: &str, query: &str) -> bool {
+    // Native literal matching omits lower bounds on both ASCII offset branches.
+    candidate.len() == query.len()
+        && candidate
+            .bytes()
+            .zip(query.bytes())
+            .all(|(candidate, query)| {
+                candidate == query
+                    || (candidate <= b'Z' && candidate + ASCII_CASE_OFFSET == query)
+                    || (candidate <= b'z'
+                        && candidate.checked_sub(ASCII_CASE_OFFSET) == Some(query))
+            })
 }
 
 fn unrotated_initial_pose(entity: &MapEntity) -> Result<(), String> {
@@ -68,12 +93,17 @@ pub(crate) fn validate(
     {
         return Ok(());
     }
-    let mut names: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut names: HashMap<usize, Vec<(&str, usize)>> = HashMap::new();
+    let mut name_work = 0;
     for (index, entity) in map.entities.iter().enumerate().skip(1) {
-        control.checkpoint()?;
+        consume_name_work(
+            &mut name_work,
+            entity.properties.len().saturating_add(1),
+            control,
+        )?;
         if let Some(name) = value(&entity.properties, "targetname").filter(|name| !name.is_empty())
         {
-            names.entry(name).or_default().push(index);
+            names.entry(name.len()).or_default().push((name, index));
         }
     }
     let mut poses = HashMap::new();
@@ -104,21 +134,59 @@ pub(crate) fn validate(
             if slot == 1 && name.is_empty() {
                 continue;
             }
-            let matching = names.get(name).map(Vec::as_slice).unwrap_or_default();
-            let index = match matching {
-                &[index]
-                    if !map.entities[index].brushes.is_empty()
-                        && map.entities[index].brushes.iter().any(|&brush| {
-                            map.brushes[brush]
-                                .sides
-                                .iter()
-                                .any(|side| side.visible && !side.bevel)
-                        }) =>
+            if let Err(error) =
+                consume_name_work(&mut name_work, name.len().saturating_add(1), control)
+            {
+                control.checkpoint()?;
+                report.diagnostics.push(Diagnostic::error(
+                    error,
+                    Some(format!("entity:{}", entity.id)),
+                    entity.origin,
+                ));
+                return Ok(());
+            }
+            if name.starts_with('!') || name.contains('*') {
+                report.diagnostics.push(Diagnostic::error(
+                    format!("Window portal {label} requires a literal brush-model name; wildcard and procedural references are unsupported"),
+                    Some(format!("entity:{}", entity.id)),
+                    entity.origin,
+                ));
+                continue;
+            }
+            let candidates = names
+                .get(&name.len())
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let mut matching = None;
+            for &(candidate, index) in candidates {
+                if let Err(error) =
+                    consume_name_work(&mut name_work, candidate.len().saturating_add(1), control)
                 {
-                    Some(index)
+                    control.checkpoint()?;
+                    report.diagnostics.push(Diagnostic::error(
+                        error,
+                        Some(format!("entity:{}", entity.id)),
+                        entity.origin,
+                    ));
+                    return Ok(());
                 }
-                _ => None,
-            };
+                if literal_name_matches(candidate, name) {
+                    if matching.is_some() {
+                        matching = None;
+                        break;
+                    }
+                    matching = Some(index);
+                }
+            }
+            let index = matching.filter(|&index| {
+                !map.entities[index].brushes.is_empty()
+                    && map.entities[index].brushes.iter().any(|&brush| {
+                        map.brushes[brush]
+                            .sides
+                            .iter()
+                            .any(|side| side.visible && !side.bevel)
+                    })
+            });
             if let Some(index) = index {
                 targets[slot] = Some(index);
                 let target = &map.entities[index];

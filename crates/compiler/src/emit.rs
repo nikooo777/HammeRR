@@ -74,13 +74,22 @@ impl Geometry {
                     data.vertex_indices.push(i32::from(self.vertex(point)?));
                 }
             }
+            let empty = definition.polygons.is_empty();
             data.occluders.push(bsp::Occluder {
                 flags: definition.flags,
                 first_polygon,
                 polygon_count: index(definition.polygons.len(), "occluder polygon count")?,
-                mins: definition.mins.as_vec3().to_array(),
-                maxs: definition.maxs.as_vec3().to_array(),
-                area: definition.area,
+                mins: if empty {
+                    [f32::MAX; 3]
+                } else {
+                    definition.mins.as_vec3().to_array()
+                },
+                maxs: if empty {
+                    [-f32::MAX; 3]
+                } else {
+                    definition.maxs.as_vec3().to_array()
+                },
+                area: if empty { -1 } else { definition.area },
             });
         }
         Ok(data)

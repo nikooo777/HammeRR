@@ -70,6 +70,7 @@ The game must enable full HDR to display its HDR channel.
 - Miniature scale is an integer from 1 to 128. Camera angles do not rotate the miniature preview.
 - The miniature uses unlit textures. It does not preview fog, authored lighting, models, terrain or water.
 - Native capture and packing can impose stricter limits than viewport display.
+- Compilation rejects a `sky_camera` in visibility area 255. CS:S reserves that value for no 3D sky. Move the camera into another area.
 
 <!-- page-nav -->
 

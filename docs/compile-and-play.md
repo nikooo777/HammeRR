@@ -118,7 +118,13 @@ For a basic areaportal:
 3. Choose **Initial State**, and name it if logic must control it.
 4. Compile and inspect **Visibility areas**, **Areaportals** and diagnostics.
 
-`func_areaportalwindow` additionally uses a rendered window brush model and distance-fade settings.
+`func_areaportalwindow` also uses **Rendered Window**, optional **Foreground bmodel**
+and distance-fade settings. Use unique literal model names. Native matching accepts
+case variants and some other character aliases. Multiple matches fail, including
+matches to point entities. Wildcards and procedural names are unsupported.
+Models must use unrotated initial poses. **Rendered Window** must enclose the
+portal. **Foreground bmodel** must share its pivot and enclose its bounds.
+The foreground does not fade. Use a frame or grille, rather than a solid pane.
 Unsupported portal shapes or bindings stop the build.
 
 Failed BSP splits report the captured plane and volume bounds. Source candidates

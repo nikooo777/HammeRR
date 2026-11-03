@@ -27,6 +27,7 @@ pub mod portals;
 mod postprocess;
 pub mod prop_lighting_assets;
 mod publication;
+mod sky_areas;
 pub mod sky_assets;
 pub mod sky_region;
 pub mod static_prop_assets;
@@ -1657,6 +1658,10 @@ fn build(
         face_origins,
         &mut output.report,
     )?;
+    sky_areas::validate(&map, &emission.bsp, &mut output.report, control)?;
+    if output.report.has_errors() {
+        return Ok(());
+    }
     let visibility_inspection = visibility_inspection::Pending::capture(
         portals,
         &emission.world_leaf_nodes,

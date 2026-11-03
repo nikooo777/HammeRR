@@ -20,7 +20,6 @@ const MAX_AREA_WORK: usize = 4_000_000;
 
 #[path = "occluders/csg.rs"]
 mod csg;
-pub(super) use csg::Budget as CsgBudget;
 
 #[derive(Debug)]
 pub(crate) struct Polygon {
@@ -37,6 +36,15 @@ pub(crate) struct Definition {
     pub flags: i32,
 }
 
+pub(super) struct Input<'a> {
+    entity: usize,
+    source: &'a Entity,
+    geometries: Vec<(&'a Solid, BrushGeometry)>,
+    polygons: Vec<Vec<Polygon>>,
+    active_faces: Vec<Vec<bool>>,
+    flags: i32,
+}
+
 fn property<'a>(entity: &'a Entity, name: &str) -> Option<&'a str> {
     entity
         .properties
@@ -45,30 +53,30 @@ fn property<'a>(entity: &'a Entity, name: &str) -> Option<&'a str> {
 }
 
 impl Map<'_> {
-    pub(super) fn add_occluder(
+    pub(super) fn add_occluder<'a>(
         &mut self,
-        entity: &Entity,
+        entity: &'a Entity,
+        ordinal: usize,
         report: &mut Report,
         control: &Control,
-    ) -> Result<(), String> {
+    ) -> Result<Option<Input<'a>>, String> {
         let object = format!("entity:{}", entity.id);
         let solids = entity
             .solids
             .iter()
             .filter(|solid| !solid.hidden)
+            .take(MAX_BRUSHES_PER_OCCLUDER + 1)
             .collect::<Vec<_>>();
         if solids.is_empty() && !entity.solids.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
-        if solids.is_empty()
-            || solids.len() > MAX_BRUSHES_PER_OCCLUDER
-            || self.occluders.len() >= MAX_OCCLUDERS
+        if solids.is_empty() || solids.len() > MAX_BRUSHES_PER_OCCLUDER || ordinal >= MAX_OCCLUDERS
         {
             report.diagnostics.push(Diagnostic::error(
                 "Occluders require 1–16 visible convex brushes per entity, with at most 1024 entities (the CS:S network index limit)",
                 Some(object), entity.origin(),
             ));
-            return Ok(());
+            return Ok(None);
         }
         let active = match property(entity, "StartActive").map(str::trim) {
             None | Some("1") => true,
@@ -79,7 +87,7 @@ impl Map<'_> {
                     Some(object),
                     entity.origin(),
                 ));
-                return Ok(());
+                return Ok(None);
             }
         };
         if property(entity, "parentname").is_some_and(|value| !value.trim().is_empty()) {
@@ -87,19 +95,27 @@ impl Map<'_> {
                 "Occluder polygons are fixed in world space; remove the parent and use Activate, Deactivate or Toggle to control visibility",
                 Some(object), entity.origin(),
             ));
-            return Ok(());
+            return Ok(None);
         }
-        if solids.iter().map(|solid| solid.sides.len()).sum::<usize>() > MAX_POLYGONS_PER_OCCLUDER {
+        if solids
+            .iter()
+            .try_fold(0usize, |count, solid| {
+                count
+                    .checked_add(solid.sides.len())
+                    .filter(|&count| count <= MAX_POLYGONS_PER_OCCLUDER)
+            })
+            .is_none()
+        {
             report.diagnostics.push(Diagnostic::error(
                 "Occluder input exceeds HammeRR's combined 256-side per-entity budget",
                 Some(object),
                 entity.origin(),
             ));
-            return Ok(());
+            return Ok(None);
         }
-        let mut geometries: Vec<(&Solid, BrushGeometry)> = Vec::new();
-        let mut face_count = 0;
-        let mut vertex_count = 0;
+        let mut geometries = Vec::with_capacity(solids.len());
+        let mut face_count = 0usize;
+        let mut vertex_count = 0usize;
         for solid in solids {
             control.checkpoint()?;
             if solid.sides.iter().any(|side| side.displacement.is_some())
@@ -109,30 +125,34 @@ impl Map<'_> {
                     "Occluders require ordinary convex brush geometry without terrain or origin materials",
                     Some(object),entity.origin(),
                 ));
-                return Ok(());
+                return Ok(None);
             }
             let Some(geometry) = origins::checked_geometry(solid, report) else {
-                return Ok(());
+                return Ok(None);
             };
-            face_count += geometry.faces.len();
-            vertex_count += geometry
-                .faces
-                .iter()
-                .map(|face| face.vertices.len())
-                .sum::<usize>();
-            if face_count > MAX_POLYGONS_PER_OCCLUDER || vertex_count > MAX_VERTICES_PER_OCCLUDER {
+            let counts = face_count
+                .checked_add(geometry.faces.len())
+                .filter(|&count| count <= MAX_POLYGONS_PER_OCCLUDER)
+                .zip(geometry.faces.iter().try_fold(vertex_count, |count, face| {
+                    count
+                        .checked_add(face.vertices.len())
+                        .filter(|&count| count <= MAX_VERTICES_PER_OCCLUDER)
+                }));
+            let Some((faces, vertices)) = counts else {
                 report.diagnostics.push(Diagnostic::error(
                     "Occluder geometry exceeds HammeRR's combined per-entity budget of 256 polygons or 4096 polygon vertices",
                     Some(object),Some(geometry.center()),
                 ));
-                return Ok(());
-            }
+                return Ok(None);
+            };
+            face_count = faces;
+            vertex_count = vertices;
             geometries.push((solid, geometry));
         }
-        let mut brush_polygons = Vec::new();
-        let mut active_faces = Vec::new();
+        let mut brush_polygons = Vec::with_capacity(geometries.len());
+        let mut active_faces = Vec::with_capacity(geometries.len());
         for (solid, geometry) in &geometries {
-            let mut polygons = Vec::new();
+            let mut polygons = Vec::with_capacity(geometry.faces.len());
             let mut active = vec![false; geometry.faces.len()];
             for (index, face) in geometry.faces.iter().enumerate() {
                 control.checkpoint()?;
@@ -144,14 +164,14 @@ impl Map<'_> {
                     format!("Occluder material {} could not be loaded; mount its game content so its nodraw and trigger flags can be checked", side.material),
                     Some(object), Some(geometry.center()),
                 ));
-                    return Ok(());
+                    return Ok(None);
                 }
                 if info.hint || info.skip || !info.unsupported_flags.is_empty() {
                     report.diagnostics.push(Diagnostic::error(
                     "Occluder sides cannot use hint, skip or unsupported compile flags; use tools/toolsoccluder and tools/toolsnodraw",
                     Some(object), Some(geometry.center()),
                 ));
-                    return Ok(());
+                    return Ok(None);
                 }
                 if info.surface & surf::NODRAW != 0 && info.surface & surf::TRIGGER == 0 {
                     continue;
@@ -164,7 +184,7 @@ impl Map<'_> {
                         Some(object),
                         Some(geometry.center()),
                     ));
-                    return Ok(());
+                    return Ok(None);
                 };
                 if self.planes.len() > super::bevels::MAX_PLANES {
                     report.diagnostics.push(Diagnostic::error(
@@ -172,7 +192,7 @@ impl Map<'_> {
                         Some(object),
                         Some(geometry.center()),
                     ));
-                    return Ok(());
+                    return Ok(None);
                 }
                 let winding = Winding(face.vertices.iter().copied().map(stored_vertex).collect());
                 if winding.is_tiny() || winding.normal().dot(self.planes.get(plane).normal) < 0.99 {
@@ -180,38 +200,13 @@ impl Map<'_> {
                     "Occluder face collapses after native vertex rounding; enlarge or simplify its brush",
                     Some(object), Some(geometry.center()),
                 ));
-                    return Ok(());
+                    return Ok(None);
                 }
                 polygons.push(Polygon { plane, winding });
                 active[index] = true;
             }
             brush_polygons.push(polygons);
             active_faces.push(active);
-        }
-        let polygons = match csg::boundary(
-            &geometries,
-            brush_polygons,
-            &active_faces,
-            &self.planes,
-            &mut self.occluder_csg,
-            control,
-        ) {
-            Ok(polygons) => polygons,
-            Err(error) => {
-                control.checkpoint()?;
-                report
-                    .diagnostics
-                    .push(Diagnostic::error(error, Some(object), entity.origin()));
-                return Ok(());
-            }
-        };
-        if polygons.is_empty() {
-            report.diagnostics.push(Diagnostic::error(
-                "Occluder has no active faces; apply tools/toolsoccluder to at least one side",
-                Some(object),
-                entity.origin(),
-            ));
-            return Ok(());
         }
         let mut properties = entity
             .properties
@@ -232,26 +227,13 @@ impl Map<'_> {
         properties.extend([
             ("classname".into(), "func_occluder".into()),
             ("hammerid".into(), entity.id.to_string()),
-            ("occludernumber".into(), self.occluders.len().to_string()),
+            ("occludernumber".into(), ordinal.to_string()),
             ("StartActive".into(), if active { "1" } else { "0" }.into()),
         ]);
         for connection in entity.connections.iter().flatten() {
             properties.push((connection.output.clone(), connection.value.clone()));
         }
-        let (mins, maxs) = polygons
-            .iter()
-            .flat_map(|polygon| polygon.winding.0.iter())
-            .fold((DVec3::MAX, DVec3::MIN), |(mins, maxs), &point| {
-                (mins.min(point), maxs.max(point))
-            });
-        self.occluders.push(Definition {
-            entity: self.entities.len(),
-            polygons,
-            mins,
-            maxs,
-            area: 0,
-            flags: if active { 0 } else { OCCLUDER_INACTIVE },
-        });
+        let entity_index = self.entities.len();
         self.entities.push(MapEntity {
             id: entity.id,
             classname: "func_occluder".into(),
@@ -259,6 +241,142 @@ impl Map<'_> {
             brushes: Vec::new(),
             origin: None,
         });
+        Ok(Some(Input {
+            entity: entity_index,
+            source: entity,
+            geometries,
+            polygons: brush_polygons,
+            active_faces,
+            flags: if active { 0 } else { OCCLUDER_INACTIVE },
+        }))
+    }
+
+    pub(super) fn finalize_occluders(
+        &mut self,
+        inputs: Vec<Input<'_>>,
+        report: &mut Report,
+        control: &Control,
+    ) -> Result<(), String> {
+        if inputs.is_empty() {
+            return Ok(());
+        }
+        let brush_count = inputs.iter().try_fold(0usize, |count, input| {
+            count
+                .checked_add(input.geometries.len())
+                .filter(|&count| count <= MAX_OCCLUDERS * MAX_BRUSHES_PER_OCCLUDER)
+                .ok_or("Occluder source-brush count exceeds its bounded helper inputs")
+        })?;
+        let mut geometries = Vec::with_capacity(brush_count);
+        let mut polygons = Vec::with_capacity(brush_count);
+        let mut active_faces = Vec::with_capacity(brush_count);
+        let mut helpers = Vec::with_capacity(inputs.len());
+        for input in inputs {
+            control.checkpoint()?;
+            let brushes = geometries.len()..geometries.len() + input.geometries.len();
+            helpers.push((input.entity, input.source, input.flags, brushes));
+            geometries.extend(input.geometries);
+            polygons.extend(input.polygons);
+            active_faces.extend(input.active_faces);
+        }
+        let mut budget = csg::Budget::default();
+        let boundary = match csg::boundary_grouped(
+            &geometries,
+            polygons,
+            &active_faces,
+            &self.planes,
+            &mut budget,
+            control,
+        ) {
+            Ok(boundary) => boundary,
+            Err(failure) => {
+                control.checkpoint()?;
+                let mut reported = None;
+                for brush in failure.brushes.into_iter().flatten() {
+                    let Some((_, source, _, _)) = helpers
+                        .iter()
+                        .find(|(_, _, _, brushes)| brushes.contains(&brush))
+                    else {
+                        continue;
+                    };
+                    if reported == Some(source.id) {
+                        continue;
+                    }
+                    report.diagnostics.push(Diagnostic::error(
+                        failure.message.clone(),
+                        Some(format!("entity:{}", source.id)),
+                        source.origin(),
+                    ));
+                    reported = Some(source.id);
+                }
+                if reported.is_none() {
+                    report
+                        .diagnostics
+                        .push(Diagnostic::error(failure.message, None, None));
+                }
+                return Ok(());
+            }
+        };
+        if boundary.len() != brush_count {
+            return Err("Occluder global boundary changed its source-brush grouping".into());
+        }
+        let mut boundary = boundary.into_iter();
+        let mut definitions = Vec::with_capacity(helpers.len());
+        for (entity, source, flags, brushes) in helpers {
+            control.checkpoint()?;
+            let groups = boundary
+                .as_slice()
+                .get(..brushes.len())
+                .ok_or("Occluder global boundary lost a source brush")?;
+            let count = groups.iter().try_fold(0usize, |count, group| {
+                count
+                    .checked_add(group.len())
+                    .filter(|&count| count <= MAX_POLYGONS_PER_OCCLUDER)
+            });
+            let Some(count) = count else {
+                report.diagnostics.push(Diagnostic::error(
+                    "Occluder global union exceeds its 256 boundary-polygon per-helper budget; simplify or split the helper",
+                    Some(format!("entity:{}", source.id)),
+                    source.origin(),
+                ));
+                return Ok(());
+            };
+            if groups
+                .iter()
+                .flatten()
+                .try_fold(0usize, |count, polygon| {
+                    count
+                        .checked_add(polygon.winding.0.len())
+                        .filter(|&count| count <= MAX_VERTICES_PER_OCCLUDER)
+                })
+                .is_none()
+            {
+                report.diagnostics.push(Diagnostic::error(
+                    "Occluder global union exceeds its 4096 boundary-vertex per-helper budget; simplify or split the helper",
+                    Some(format!("entity:{}", source.id)),
+                    source.origin(),
+                ));
+                return Ok(());
+            }
+            let mut polygons = Vec::with_capacity(count);
+            polygons.extend(boundary.by_ref().take(brushes.len()).flatten());
+            let empty_bound = DVec3::splat(f64::from(f32::MAX));
+            let (mins, maxs) = polygons
+                .iter()
+                .flat_map(|polygon| polygon.winding.0.iter())
+                .fold((empty_bound, -empty_bound), |(mins, maxs), &point| {
+                    (mins.min(point), maxs.max(point))
+                });
+            definitions.push(Definition {
+                entity,
+                area: if polygons.is_empty() { -1 } else { 0 },
+                polygons,
+                mins,
+                maxs,
+                flags,
+            });
+        }
+        control.checkpoint()?;
+        self.occluders = definitions;
         Ok(())
     }
 }
@@ -299,6 +417,9 @@ pub(crate) fn assign_areas(
     }
     let (world_mins, world_maxs) = tree.nodes[0].volume.bounds();
     for definition in &mut map.occluders {
+        if definition.polygons.is_empty() {
+            continue;
+        }
         if definition.mins.cmplt(world_mins).any() || definition.maxs.cmpgt(world_maxs).any() {
             report.diagnostics.push(Diagnostic::error(
                 "Occluder lies outside the world bounds; move it inside the sealed map",

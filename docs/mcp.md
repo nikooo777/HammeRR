@@ -1134,6 +1134,19 @@ use `document_id` to select a map. Unknown argument names are errors. Omitting
 `path` uses the current map filename with a `.bsp` extension.
 Use `cancel_compile` to stop owned build work.
 
+For [occluders](occluders.md), use `tie_to_entity` with `classname:"func_occluder"`
+and set `StartActive:"0"` or `"1"` through `set_entity_properties`.
+The ordinary compile tools build one exterior boundary across all admitted helpers.
+Each helper keeps its generated control index, activation state and runtime fields.
+Valid duplicate or buried helpers can retain empty native records.
+Helpers without contributing faces can also keep empty records. Later helpers are not renumbered.
+Read `stats.occluders`, `stats.occluder_polygons`,
+`stats.occluder_vertex_refs` and `diagnostics` in the finished result.
+The helper count includes empty records; polygon and vertex counts include only retained geometry.
+Root `Activate`, `Deactivate` and `Toggle` connections affect retained polygons;
+they do not restore removed faces. Invalid geometry, uncertain contacts or exceeded
+shared limits fail before publication. Game behavior across area transitions and sky-camera views is not verified.
+
 `compile_map` returns its captured `job_token`; async builds expose it as
 `get_compile_status.job.token`. Diagnostic rows have a stable `index`,
 `position_space`, `frame_available` and `frame_unavailable_reason`.

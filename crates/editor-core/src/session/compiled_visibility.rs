@@ -57,6 +57,8 @@ pub struct PositionResult {
     pub effective_position: [f32; 3],
     pub native_leaf: usize,
     pub cluster: i16,
+    pub area: i16,
+    pub water_data: i16,
     pub contents: i32,
     pub retained_world_leaf: bool,
     pub classification: &'static str,
@@ -192,6 +194,8 @@ pub struct Summary {
 pub struct LeafRow {
     pub ordinal: usize,
     pub cluster: i16,
+    pub area: i16,
+    pub water_data: i16,
     pub contents: i32,
     pub bounds: [[f64; 3]; 2],
 }
@@ -748,6 +752,8 @@ fn leaf_row(ordinal: usize, leaves: &[Leaf]) -> Result<LeafRow, String> {
     Ok(LeafRow {
         ordinal,
         cluster: leaf.cluster,
+        area: leaf.area(),
+        water_data: leaf.water_data,
         contents: leaf.contents,
         bounds: [leaf.mins.map(f64::from), leaf.maxs.map(f64::from)],
     })
@@ -843,6 +849,8 @@ fn resolve_position(
         effective_position: hit.effective_position,
         native_leaf: hit.ordinal,
         cluster: leaf.cluster,
+        area: leaf.area(),
+        water_data: leaf.water_data,
         contents: leaf.contents,
         retained_world_leaf,
         classification: if leaf.cluster < 0 {

@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import { Button, ComboBox, LineEdit, StandardTableView, TextEdit } from "widgets.slint";
+import { Button, ComboBox, LineEdit, ScrollView, StandardTableView, TextEdit } from "widgets.slint";
 
 export component CompiledVisibilityWindow inherits Window {
     background: Theme.panel;
@@ -61,81 +61,90 @@ export component CompiledVisibilityWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl;
             spacing: 9px;
-            Text { text: "Visibility inspection"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: root.build-state; wrap: word-wrap; color: Theme.warning; }
-            Text { text: root.summary; wrap: word-wrap; }
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Target"; vertical-alignment: center; }
-                ComboBox { model: ["Summary", "Leaf", "Cluster", "Portal", "Position", "World light"]; current-value <=> root.target-kind; }
-                if root.target-kind == "World light": ComboBox { model: ["LDR", "HDR"]; current-value <=> root.world-light-channel; accessible-label: "Native light channel"; }
-                Text { text: "Ordinal"; vertical-alignment: center; }
-                LineEdit { text <=> root.ordinal; preferred-width: 110px; accessible-label: "Native leaf, cluster or light ordinal, or retained portal slot"; }
-                ComboBox { model: ["PVS", "PAS"]; current-value <=> root.visibility-kind; }
-                Button { text: "Inspect target"; clicked => { root.inspect-target(); } }
-                Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }
-            }
-            if root.world-light-result != "": Text { text: root.world-light-result; wrap: word-wrap; color: Theme.warning; }
-            Text { text: "Stored compiler PVS/PAS describes potential visibility, not native light selection, falloff or ray visibility."; wrap: word-wrap; }
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "World position"; vertical-alignment: center; }
-                Text { text: "X"; vertical-alignment: center; }
-                LineEdit { text <=> root.position-x; preferred-width: 76px; min-width: 55px; horizontal-stretch: 1; accessible-label: "World position X"; }
-                Text { text: "Y"; vertical-alignment: center; }
-                LineEdit { text <=> root.position-y; preferred-width: 76px; min-width: 55px; horizontal-stretch: 1; accessible-label: "World position Y"; }
-                Text { text: "Z"; vertical-alignment: center; }
-                LineEdit { text <=> root.position-z; preferred-width: 76px; min-width: 55px; horizontal-stretch: 1; accessible-label: "World position Z"; }
-                Button { text: "Inspect position"; clicked => { root.inspect-position(); } }
-                Button { text: "Inspect camera position"; clicked => { root.inspect-camera-position(); } }
-            }
-            if root.position-result != "": Text { text: root.position-result; wrap: word-wrap; color: Theme.warning; }
-            Text { text: root.page-label; }
-            StandardTableView {
-                rows: root.rows;
-                columns <=> root.columns;
-                current-row <=> root.current-row;
-                min-height: 130px;
-                preferred-height: 175px;
+            ScrollView {
+                content-width: self.width;
                 vertical-stretch: 1;
-                current-row-changed(row) => { root.inspect-row(row); }
-                sort-ascending(column) => { root.reset-sort(); }
-                sort-descending(column) => { root.reset-sort(); }
-                accessible-label: "Compiled world leaves, cluster members or incident portals";
+                VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
+                    spacing: 9px;
+                    Text { text: "Visibility inspection"; font-size: Theme.font-display; font-weight: 600; }
+                    Text { text: root.build-state; wrap: word-wrap; color: Theme.warning; }
+                    Text { text: root.summary; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "Target"; vertical-alignment: center; }
+                        ComboBox { model: ["Summary", "Leaf", "Cluster", "Portal", "Position", "World light"]; current-value <=> root.target-kind; }
+                        if root.target-kind == "World light": ComboBox { model: ["LDR", "HDR"]; current-value <=> root.world-light-channel; accessible-label: "Native light channel"; }
+                        Text { text: "Ordinal"; vertical-alignment: center; }
+                        LineEdit { text <=> root.ordinal; preferred-width: 110px; accessible-label: "Native leaf, cluster or light ordinal, or retained portal slot"; }
+                        ComboBox { model: ["PVS", "PAS"]; current-value <=> root.visibility-kind; }
+                        Button { text: "Inspect target"; clicked => { root.inspect-target(); } }
+                        Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }
+                    }
+                    if root.world-light-result != "": Text { text: root.world-light-result; wrap: word-wrap; color: Theme.warning; }
+                    Text { text: "Stored compiler PVS/PAS describes potential visibility, not native light selection, falloff or ray visibility."; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "World position"; vertical-alignment: center; }
+                        Text { text: "X"; vertical-alignment: center; }
+                        LineEdit { text <=> root.position-x; preferred-width: 76px; min-width: 55px; horizontal-stretch: 1; accessible-label: "World position X"; }
+                        Text { text: "Y"; vertical-alignment: center; }
+                        LineEdit { text <=> root.position-y; preferred-width: 76px; min-width: 55px; horizontal-stretch: 1; accessible-label: "World position Y"; }
+                        Text { text: "Z"; vertical-alignment: center; }
+                        LineEdit { text <=> root.position-z; preferred-width: 76px; min-width: 55px; horizontal-stretch: 1; accessible-label: "World position Z"; }
+                        Button { text: "Inspect position"; clicked => { root.inspect-position(); } }
+                        Button { text: "Inspect camera position"; clicked => { root.inspect-camera-position(); } }
+                    }
+                    if root.position-result != "": Text { text: root.position-result; wrap: word-wrap; color: Theme.warning; }
+                    Text { text: root.page-label; }
+                    StandardTableView {
+                        rows: root.rows;
+                        columns <=> root.columns;
+                        current-row <=> root.current-row;
+                        min-height: 130px;
+                        preferred-height: 175px;
+                        vertical-stretch: 1;
+                        current-row-changed(row) => { root.inspect-row(row); }
+                        sort-ascending(column) => { root.reset-sort(); }
+                        sort-descending(column) => { root.reset-sort(); }
+                        accessible-label: "Compiled world leaves, cluster members or incident portals";
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Previous rows"; enabled: root.previous-rows; clicked => { root.page-rows(-1); } }
+                        Button { text: "Next rows"; enabled: root.next-rows; clicked => { root.page-rows(1); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button { text: "Frame selection"; enabled: root.can-frame; clicked => { root.frame-selection(); } }
+                        Button { text: "Show selected guide"; enabled: root.can-frame; clicked => { root.show-guide(); } }
+                        Button { text: "Clear guide"; clicked => { root.clear-guide(); } }
+                    }
+                    Text { text: root.guide-state; wrap: word-wrap; }
+                    Text { text: root.visibility-label; }
+                    StandardTableView {
+                        rows: root.visibility-rows;
+                        columns <=> root.visibility-columns;
+                        current-row <=> root.current-destination;
+                        min-height: 80px;
+                        preferred-height: 120px;
+                        vertical-stretch: 1;
+                        current-row-changed(row) => { root.inspect-destination(row); }
+                        sort-ascending(column) => { root.reset-sort(); }
+                        sort-descending(column) => { root.reset-sort(); }
+                        accessible-label: "Native PVS or PAS destination clusters";
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "Previous destinations"; enabled: root.previous-destinations; clicked => { root.page-destinations(-1); } }
+                        Button { text: "Next destinations"; enabled: root.next-destinations; clicked => { root.page-destinations(1); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button { text: "Show PVS bounds"; enabled: root.can-show-destinations; clicked => { root.show-pvs-bounds(); } }
+                        Button { text: "Show PAS bounds"; enabled: root.can-show-destinations; clicked => { root.show-pas-bounds(); } }
+                    }
+                    TextEdit { text: root.details; read-only: true; wrap: word-wrap; min-height: 90px; preferred-height: 150px; vertical-stretch: 1; accessible-label: "Exact selected visibility record and portal vertices"; }
+                    if root.diagnostics != "": TextEdit { text: root.diagnostics; read-only: true; wrap: word-wrap; min-height: 55px; max-height: 85px; accessible-label: "Visibility inspection diagnostics"; }
+                }
             }
-            HorizontalLayout {
-                spacing: 8px;
-                Button { text: "Previous rows"; enabled: root.previous-rows; clicked => { root.page-rows(-1); } }
-                Button { text: "Next rows"; enabled: root.next-rows; clicked => { root.page-rows(1); } }
-                Rectangle { horizontal-stretch: 1; }
-                Button { text: "Frame selection"; enabled: root.can-frame; clicked => { root.frame-selection(); } }
-                Button { text: "Show selected guide"; enabled: root.can-frame; clicked => { root.show-guide(); } }
-                Button { text: "Clear guide"; clicked => { root.clear-guide(); } }
-            }
-            Text { text: root.guide-state; wrap: word-wrap; }
-            Text { text: root.visibility-label; }
-            StandardTableView {
-                rows: root.visibility-rows;
-                columns <=> root.visibility-columns;
-                current-row <=> root.current-destination;
-                min-height: 80px;
-                preferred-height: 120px;
-                vertical-stretch: 1;
-                current-row-changed(row) => { root.inspect-destination(row); }
-                sort-ascending(column) => { root.reset-sort(); }
-                sort-descending(column) => { root.reset-sort(); }
-                accessible-label: "Native PVS or PAS destination clusters";
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                Button { text: "Previous destinations"; enabled: root.previous-destinations; clicked => { root.page-destinations(-1); } }
-                Button { text: "Next destinations"; enabled: root.next-destinations; clicked => { root.page-destinations(1); } }
-                Rectangle { horizontal-stretch: 1; }
-                Button { text: "Show PVS bounds"; enabled: root.can-show-destinations; clicked => { root.show-pvs-bounds(); } }
-                Button { text: "Show PAS bounds"; enabled: root.can-show-destinations; clicked => { root.show-pas-bounds(); } }
-            }
-            TextEdit { text: root.details; read-only: true; wrap: word-wrap; min-height: 90px; preferred-height: 150px; vertical-stretch: 1; accessible-label: "Exact selected visibility record and portal vertices"; }
-            if root.diagnostics != "": TextEdit { text: root.diagnostics; read-only: true; wrap: word-wrap; min-height: 55px; max-height: 85px; accessible-label: "Visibility inspection diagnostics"; }
             HorizontalLayout { Rectangle { horizontal-stretch: 1; } Button { text: "Close"; clicked => { root.close-dialog(); } } }
         }
     }

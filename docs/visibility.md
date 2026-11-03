@@ -6,7 +6,7 @@ Inspect leaves, portals and visibility sets from the last successful build.
 
 1. Compile the map. Open **Build details… → Inspect visibility…**.
 2. Choose **Target → Summary**. Select a leaf row to inspect its native bounds,
-   cluster and incident portals.
+   cluster, visibility area, liquid region and incident portals.
 3. Choose **PVS** for potentially visible clusters or **PAS** for potentially audible clusters. Click
    **Inspect target**. Select a destination row to inspect its member leaves.
 4. Use **Previous rows**, **Next rows**, **Previous destinations** and
@@ -16,7 +16,8 @@ Inspect leaves, portals and visibility sets from the last successful build.
    **Clear guide** removes the cyan bounds box or portal ring.
 6. Enter **World position X**, **Y** and **Z**, then click **Inspect position**.
    **Inspect camera position** uses the Perspective camera eye. The result shows
-   the native leaf, cluster, solid/exterior state and effective coordinates.
+   the native leaf, cluster, visibility area, liquid region, solid/exterior state
+   and effective coordinates.
 7. With a clustered leaf or cluster selected, click **Show PVS bounds** or
    **Show PAS bounds**. The complete potential destination set appears as native
    world-leaf bounds. The readout gives the source cluster, destination cluster
@@ -24,6 +25,10 @@ Inspect leaves, portals and visibility sets from the last successful build.
    camera as source, click **Inspect camera position** first.
 8. Use **Clear guide** to remove either guide, and **Refresh inspection** after
    another build or source change.
+
+Area and liquid-region IDs belong to the captured build. Liquid region −1 means
+no region; 0 is a valid index. Leaves in the same cluster can have different
+areas and liquid regions.
 
 ![Compiler-owned portal ring in the viewport](images/visibility-portals.png)
 
@@ -52,6 +57,8 @@ output remains readable; bounds guides require current output.
   **Detailed** build, including Fullbright builds; they do not simulate game
   occlusion or sound mixing. Destination guides use the complete chosen row;
   nonclustered solid/exterior leaves have no destination membership.
+- Area and liquid-region readouts describe the captured BSP. They do not report
+  live player state or active portal and occluder culling.
 - Light-source PVS/PAS does not show native direct-light winners, falloff, ray
   occlusion or exact finite-area visibility. Directional sky, unknown light
   kinds, unbaked channels, invalid ordinals and invalid source clusters reject.

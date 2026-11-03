@@ -46,11 +46,23 @@ enum Action {
     Clear,
 }
 
+fn liquid_region_text(water_data: i16) -> String {
+    match water_data {
+        -1 => "No liquid region".into(),
+        0.. => format!("Liquid region {water_data}"),
+        _ => format!("Liquid region unavailable ({water_data})"),
+    }
+}
+
 fn row_text(row: &Row) -> String {
     match row {
         Row::Leaf(row) => format!(
-            "Leaf {} · cluster {} · contents {} · native bounds {:?} → {:?}",
-            row.ordinal, row.cluster, row.contents, row.bounds[0], row.bounds[1]
+            "Leaf {} · cluster {} · native area {} · {} · contents {}",
+            row.ordinal,
+            row.cluster,
+            row.area,
+            liquid_region_text(row.water_data),
+            row.contents
         ),
         Row::Portal(row) => format!(
             "Portal {} · leaves {:?} · final clusters {:?}{} · {} vertices",
@@ -123,7 +135,7 @@ fn present(window: &CompiledVisibilityWindow, report: &Inspection) {
             .as_ref()
             .map_or_else(String::new, |position| {
                 format!(
-                    "{} {:?} → native f32 {:?}: {} · leaf {} · cluster {}{}",
+                    "{} {:?} → native f32 {:?}: {} · leaf {} · cluster {} · native area {} · {}{}",
                     if matches!(position.source, PositionSource::Camera {}) {
                         "Current camera position at inspection"
                     } else {
@@ -138,6 +150,8 @@ fn present(window: &CompiledVisibilityWindow, report: &Inspection) {
                     },
                     position.native_leaf,
                     position.cluster,
+                    position.area,
+                    liquid_region_text(position.water_data),
                     if position.retained_world_leaf {
                         ""
                     } else {

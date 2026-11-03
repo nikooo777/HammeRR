@@ -58,4 +58,4 @@ Use **Reload settings** after another editor changes recovery storage settings.
 
 ---
 
-[← Clipboard](clipboard.md) · [Manual](README.md) · [Extract an assembly →](instance-extraction.md)
+[← Layers](layers.md) · [Manual](README.md) · [Extract an assembly →](instance-extraction.md)

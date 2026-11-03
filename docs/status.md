@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 83.7% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 84.1% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -50,7 +50,8 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [Resource previews](sprite-guides.md) | Supported sprites, [static ropes with sag-aware framing and selection bounds](ropes.md), fog and LDR/HDR/3D skies. | Complete native effects and runtime behavior. |
 | [Particles](particles.md) | Active manifest metadata and effect assignment. | Particle rendering and animation. |
 | [Sounds](sounds.md) | File/script browsing, short audition and assignment, with malformed-script warnings and playback errors. | Game mixing, soundscapes and sentence synthesis. |
-| [Organization](layers.md) | Groups, native layers, automatic kind/class categories, current exclusions, map-local saved query profiles, clipboard, prefabs, notes and saved views. | Prefab assets stay external. |
+| [Organization](layers.md) | Groups, native layers, automatic kind/class categories, current exclusions, map-local saved query profiles, prefabs, notes and saved views. | Prefab assets stay external. |
+| [Clipboard](clipboard.md) | Whole-object Copy/Cut/Paste with reviewed XYZ offset, rotation, positive scale and custom pivot; groups, layers, notes and saved face partitions transfer. Shared UI/MCP and one-step Apply Undo. | Stale/opaque partitions and unrepresentable texture plans reject. MDL models require uniform scale; static/detail resizing is unsupported. Hammer/Hammer++ handoff uses VMF files. |
 | [Prefab library](prefabs.md) | Portable assemblies, byte-checked content replacement and placement, persistent categories/tags, filtered preview pages and brush/point/model-aware scaling. | Dynamic MDL models require uniform scale. Native static/detail models keep unit scale; assets stay external. |
 | [Repeated placement](repeated-placement.md) | World/source-local arrays, brush/point/model-aware scale, configurable names and internal/external links, and seeded area-weighted scatter on authored brush/terrain faces. Shared preview, Apply/Cancel and one-step Undo. | Uniform factors for MDL models; static/detail model resizing is unsupported. No overlap avoidance, physics settling, model/instance targets or live surface attachment. |
 | [Transform pivots](brushes.md#attach-the-pivot-to-a-vertex) | Fixed, picked and grid-snapped pivots; live point-origin/local-frame and brush, terrain or model vertex anchors; explicit array pivot sources and reusable applied settings. | Session-local bindings; topology, grid, model-body or asset-context changes can require rebinding. Arbitrary surface-point interpolation, parenting and animated/deformed mesh anchors are unavailable. |

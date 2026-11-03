@@ -589,6 +589,7 @@ impl Session {
             keep_external,
             texture_lock: true,
             restore_names: false,
+            ..Default::default()
         };
         let prepared = self.prepare_paste(&payload, options, Some(source))?;
         let paste = self.finish_prefab_placement(actor, payload, prepared, stamp)?;

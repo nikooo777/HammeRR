@@ -376,8 +376,14 @@ pub struct TieArgs {
 #[serde(deny_unknown_fields)]
 pub struct PasteArgs {
     pub snapshot: String,
-    /// Omit or use [0,0,0] to paste in place. World units, within ±65536.
+    /// Final world translation after scaling and rotation; default [0,0,0], within ±65536.
     pub offset: Option<[f64; 3]>,
+    /// World X/Y/Z rotation in degrees, after scale; default [0,0,0].
+    pub rotation: Option<[f64; 3]>,
+    /// Positive world X/Y/Z scale; default [1,1,1]. MDL entities require uniform scale.
+    pub scale: Option<[f64; 3]>,
+    /// Authored source pivot for scale/rotation; omitted uses the source bounds centre.
+    pub pivot: Option<[f64; 3]>,
     pub texture_lock: Option<bool>,
     /// Explicitly retain outgoing external references by name; default false.
     pub keep_external_links: Option<bool>,

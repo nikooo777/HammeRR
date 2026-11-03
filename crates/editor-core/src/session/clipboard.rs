@@ -1,43 +1,16 @@
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use map_core::{Document, EditError, ObjectId, edit, transfer};
 use serde_json::{Value, json};
 
 use super::{Actor, SelectMode, Session};
 
+mod native;
+use native::Native;
+
 pub trait Transport: Send {
     fn read(&mut self) -> Result<String, String>;
     fn write(&mut self, text: &str) -> Result<(), String>;
-}
-
-#[derive(Default)]
-struct Native {
-    clipboard: Option<arboard::Clipboard>,
-}
-
-impl Native {
-    fn open(&mut self) -> Result<&mut arboard::Clipboard, String> {
-        if self.clipboard.is_none() {
-            self.clipboard = Some(
-                arboard::Clipboard::new()
-                    .map_err(|error| format!("System clipboard unavailable: {error}"))?,
-            );
-        }
-        Ok(self.clipboard.as_mut().unwrap())
-    }
-}
-
-impl Transport for Native {
-    fn read(&mut self) -> Result<String, String> {
-        self.open()?
-            .get_text()
-            .map_err(|error| format!("Cannot read system clipboard text: {error}"))
-    }
-    fn write(&mut self, text: &str) -> Result<(), String> {
-        self.open()?
-            .set_text(text)
-            .map_err(|error| format!("Cannot publish system clipboard text: {error}"))
-    }
 }
 
 pub struct Preview {
@@ -109,10 +82,20 @@ fn result_json(result: &transfer::Result) -> Value {
     })
 }
 
+fn cut_objects(
+    tx: &mut map_core::Transaction,
+    sources: &[ObjectId],
+    solids: &BTreeSet<u32>,
+) -> Result<(), EditError> {
+    map_core::partition_metadata::transfer::remove_for_solids(tx, solids)?;
+    edit::delete(tx, sources)
+}
+
 impl Session {
     pub fn clipboard_stamp(&self) -> String {
         format!(
-            "{}:{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}:{}",
+            self.buffer_review_scope,
             self.document_generation,
             self.document.revision(),
             self.definitions_serial,
@@ -158,6 +141,10 @@ impl Session {
             "prefab_source":preview.prefab_source.as_ref().map(|source|&source.name),
             "content_revision":preview.content,
             "offset":preview.options.offset.to_array(),
+            "rotation":preview.options.rotation.to_array(),
+            "scale":preview.options.scale.to_array(),
+            "pivot":preview.options.pivot.map(|pivot|pivot.to_array()),
+            "pivot_policy":if preview.options.pivot.is_some(){"custom"}else{"bounds_center"},
             "texture_lock":preview.options.texture_lock,
             "keep_external_links":preview.options.keep_external,
             "restore_cut_names":preview.options.restore_names,
@@ -165,9 +152,10 @@ impl Session {
             "result":result_json(&preview.result),
         })});
         json!({"snapshot":self.clipboard_stamp(),"payload":payload,"preview":preview,"can_restore_cut_names":self.can_restore_cut_names(),
-            "native_format":"UTF-8 VMF text; system access is explicit and may be unavailable on headless displays. Private Hammer clipboard formats are unsupported.",
+            "native_format":"UTF-8 VMF text; system access is explicit and may be unavailable on headless displays. Hammer++ 8872 uses a process-local object clipboard; exchange VMF files with Hammer.",
             "limits":{"bytes":transfer::MAX_BYTES,"objects":map_core::repeat::MAX_SOURCES,"objects_including_owned_brushes":map_core::repeat::MAX_OBJECTS,"sides":map_core::repeat::MAX_SIDES,"groups":transfer::MAX_GROUPS,"layers":transfer::MAX_GROUPS,"depth":transfer::MAX_DEPTH,"nodes":transfer::MAX_NODES},
-            "reference_policy":"Unique names and exact internal FGD/I/O/parent links remap. External links require explicit keep-by-name. Uncertain/script-driven links, numeric references, saved partitions reject. Opaque metadata remains verbatim.",
+            "reference_policy":"Unique names and exact internal FGD/I/O/parent links remap. External links require explicit keep-by-name. Resolvable saved partitions transfer with their attached materials and texture projections. Uncertain/script-driven links, numeric references and unsupported partition extensions reject. Other opaque metadata remains verbatim.",
+            "placement_order":"Scale in world XYZ, rotate world X/Y/Z around the source pivot (bounds centre by default), then apply the world offset.",
         })
     }
 
@@ -199,18 +187,24 @@ impl Session {
         self.ensure_partitions_resolved()?;
         let payload = transfer::Payload::capture(&self.document, sources, &self.definitions)
             .map_err(|error| error.to_string())?;
+        let solids = payload
+            .document()
+            .vmf()
+            .solids()
+            .map(|solid| solid.id)
+            .collect::<BTreeSet<_>>();
         if cut {
             let mut draft = self.document.preview_snapshot();
             draft
-                .edit("prepare cut", |tx| edit::delete(tx, sources))
+                .edit("prepare cut", |tx| cut_objects(tx, sources, &solids))
                 .map_err(|error| error.to_string())?;
         }
         if system {
             self.geometry.clipboard.transport.write(payload.text())?;
         }
-        self.install_clipboard(payload);
         if cut {
-            self.edit(actor, "cut objects", |tx| edit::delete(tx, sources))?;
+            self.edit(actor, "cut objects", |tx| cut_objects(tx, sources, &solids))?;
+            self.install_clipboard(payload);
             self.geometry.clipboard.receipt = Some(Receipt {
                 generation: self.document_generation,
                 revision: self.document.revision(),
@@ -218,6 +212,7 @@ impl Session {
                 content: self.geometry.clipboard.content,
             });
         } else {
+            self.install_clipboard(payload);
             self.log(
                 actor,
                 format!("copied {} objects to clipboard", sources.len()),

@@ -12,6 +12,7 @@ use crate::{
     context::{Metadata, Scope},
     edit, groups,
     metadata::InputBudget,
+    partition_metadata::transfer as partition_transfer,
     references, repeat,
 };
 
@@ -34,6 +35,9 @@ pub struct Payload {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Options {
     pub offset: DVec3,
+    pub rotation: DVec3,
+    pub scale: DVec3,
+    pub pivot: Option<DVec3>,
     pub texture_lock: bool,
     pub keep_external: bool,
     pub restore_names: bool,
@@ -43,6 +47,9 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             offset: DVec3::ZERO,
+            rotation: DVec3::ZERO,
+            scale: DVec3::ONE,
+            pivot: None,
             texture_lock: true,
             keep_external: false,
             restore_names: false,
@@ -180,17 +187,14 @@ impl Payload {
             };
             add_ancestors(&graph, groups::parent(editor)?, &mut included)?;
         }
-        let partitions =
-            crate::partition_metadata::Metadata::parse(source.vmf()).map_err(invalid)?;
-        if partitions
-            .entries
-            .keys()
-            .any(|face| objects.contains(&ObjectId::Solid(face.0)))
-        {
-            return Err(invalid(
-                "Resolve or remove saved partition intents on copied brushes before transferring them",
-            ));
-        }
+        let solids = objects
+            .iter()
+            .filter_map(|id| match id {
+                ObjectId::Solid(id) => Some(*id),
+                ObjectId::Entity(_) => None,
+            })
+            .collect();
+        let partitions = partition_transfer::capture(source, &solids)?;
         let names = repeat::source_names(source, ids)?;
         let entities = ids
             .iter()
@@ -283,7 +287,8 @@ impl Payload {
         }
         vmf.extra
             .push(Node::block(KEY, vec![Node::string("version", "1")]));
-        let document = Document::try_new(vmf)?;
+        let mut document = Document::try_new(vmf)?;
+        document.edit("capture partition intents", |tx| partitions.write(tx))?;
         let text = document
             .vmf()
             .try_write(&keyvalues::WriteOptions::default())
@@ -477,6 +482,14 @@ fn clone_solid(
     excluded_objects: &BTreeSet<u32>,
     excluded_sides: &BTreeSet<u32>,
 ) -> std::result::Result<(), EditError> {
+    let geometry = crate::transform::validated_geometry(solid)?;
+    if geometry.mins.abs().max(geometry.maxs.abs()).max_element() > crate::primitive::MAX_COORDINATE
+    {
+        return Err(invalid(format!(
+            "Pasted brush {} geometry exceeds ±65536",
+            solid.id
+        )));
+    }
     let old = solid.id;
     solid.id = fresh_object(tx, excluded_objects)?;
     result
@@ -501,6 +514,26 @@ pub fn paste(
     {
         return Err(invalid("Paste offset must be finite and within ±65536"));
     }
+    let pivot = match options.pivot {
+        Some(pivot) => pivot,
+        None => {
+            let (mins, maxs) = crate::query::bounds_of(payload.document(), payload.ids())
+                .ok_or_else(|| invalid("Clipboard objects need finite bounds"))?;
+            (mins + maxs) * 0.5
+        }
+    };
+    let prepared = payload.prepared_transform(
+        edit::Transform {
+            translation: options.offset,
+            rotation: options.rotation,
+            scale: options.scale,
+            pivot,
+            texture_lock: options.texture_lock,
+            ..Default::default()
+        },
+        catalog,
+    )?;
+    let payload = prepared.as_ref().unwrap_or(payload);
     tx.document()
         .vmf()
         .validate_ids()
@@ -616,7 +649,7 @@ pub fn paste(
                     &excluded_sides,
                 )?;
                 remap_group(&mut solid.editor, &group_mapping, &layer_mapping)?;
-                edit::translate_solid(&mut solid, options.offset, options.texture_lock)?;
+                edit::translate_solid(&mut solid, DVec3::ZERO, options.texture_lock)?;
                 tx.add_solid(solid)?
             }
             ObjectId::Entity(id) => {
@@ -662,7 +695,7 @@ pub fn paste(
                         &renamed[&reference.target.to_ascii_lowercase()],
                     );
                 }
-                edit::translate_entity(&mut entity, options.offset, options.texture_lock)?;
+                edit::translate_entity(&mut entity, DVec3::ZERO, options.texture_lock)?;
                 tx.add_entity(entity)?
             }
         };
@@ -676,6 +709,23 @@ pub fn paste(
         }
         result.objects.push(copy);
     }
+    let solids = result
+        .mapping
+        .iter()
+        .filter_map(|(old, new)| match (old, new) {
+            (ObjectId::Solid(old), ObjectId::Solid(new)) => Some((*old, *new)),
+            _ => None,
+        })
+        .collect();
+    let sides = result.sides.iter().copied().collect();
+    let partitions = partition_transfer::remap(
+        source,
+        tx.document(),
+        &solids,
+        &sides,
+        edit::Transform::default(),
+    )?;
+    partition_transfer::merge(tx, &partitions)?;
     let mut metadata = tx.document().context()?.clone();
     for (old, new) in &result.mapping {
         if let Some(note) = source.context()?.notes.get(&Scope::Object(*old))

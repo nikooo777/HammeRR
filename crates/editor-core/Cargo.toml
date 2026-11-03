@@ -48,8 +48,13 @@ tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "net", "s
 tempfile = "3.27.0"
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.5", features = ["fs"] }
+rustix = { version = "1.1.5", features = ["fs", "event"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wl-clipboard-rs = "0.9.4"
+x11rb = "0.13.2"
 
 [target.'cfg(windows)'.dependencies]
+clipboard-win = { version = "5.4.1", features = ["std"] }
 dunce = "1.0.5"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Registry"] }

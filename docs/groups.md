@@ -44,4 +44,4 @@ The member geometry remains in the map.
 
 ---
 
-[← Prefab library](prefabs.md) · [Manual](README.md) · [Layers →](layers.md)
+[← Cut, copy and paste](clipboard.md) · [Manual](README.md) · [Layers →](layers.md)

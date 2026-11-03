@@ -19,7 +19,7 @@ fn prefab_png(thumbnail: &crate::session::prefabs::Thumbnail) -> Result<Vec<u8>,
 #[tool_router(router = clipboard_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect the detached object clipboard, current snapshot/content revision, counts, external links, bounds, Cut-name restoration availability and owned paste preview. Does not read the system clipboard. UI: Paste…. Copy/Cut capture committed objects; paste stays detached across map replacement. Limits: 16 sources, 256 objects including owned brushes, 8192 sides, 256 groups, 8 MiB text and 64 nesting levels. Native layer ancestors and memberships transfer with fresh independent IDs. Saved partitions and numeric/uncertain/script-driven links reject. Private Hammer clipboard formats are not implemented.",
+        description = "Inspect the detached object clipboard, current snapshot/content revision, counts, external links, bounds, Cut-name restoration availability and owned paste preview. Does not read the system clipboard. UI: Paste…. Copy/Cut capture committed objects; paste stays detached across map replacement. Limits: 16 sources, 256 objects including owned brushes, 8192 sides, 256 groups, 8 MiB text and 64 nesting levels. Native layer ancestors and memberships transfer with fresh independent IDs. Resolvable saved partitions transfer with remapped incidence and attached materials/textures; unsupported partition extensions and numeric/uncertain/script-driven links reject. Hammer++ 8872 uses an in-process object clipboard; use VMF file handoff with Hammer.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_clipboard(&self) -> ToolResult {
@@ -46,7 +46,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Capture and Cut whole objects using get_clipboard.snapshot. Fully validates the detached payload and deletion first, then publishes the requested session/system clipboard before removing sources in one Undo step. Native publication failure never deletes objects. Same-map paste can restore original names only while the post-Cut map and definitions remain unchanged. Incoming links may remain broken until Paste or Undo; inspect them before Cut. UI: Cut (system)."
+        description = "Capture and Cut whole objects using get_clipboard.snapshot. Fully validates the detached payload and deletion first, then publishes the requested session/system clipboard before removing sources and their saved partition intents in one Undo step. Native publication failure never deletes objects. Same-map paste can restore original names only while the post-Cut map and definitions remain unchanged. Incoming links may remain broken until Paste or Undo; inspect them before Cut. UI: Cut (system)."
     )]
     pub(in crate::mcp) fn cut_objects(
         &self,
@@ -65,7 +65,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Import bounded UTF-8 VMF text into the shared object clipboard with get_clipboard.snapshot. Provide text OR system:true to explicitly read the computer clipboard. Geometry, history and selection stay unchanged; invalid import retains the old payload and preview. Whole VMF text transfers brushes/entities and their native group ancestors/object notes; map world settings, cameras, regions and unrelated map metadata are excluded. Text/private formats are reported explicitly. UI: Paste… → Read system clipboard."
+        description = "Import bounded UTF-8 VMF text into the shared object clipboard with get_clipboard.snapshot. Provide text OR system:true to explicitly read the computer clipboard. Geometry, history and selection stay unchanged; invalid import retains the old payload and preview. Whole VMF text transfers brushes/entities, their native group ancestors/object notes and resolvable saved partitions; map world settings, cameras, regions and unrelated map metadata are excluded. System reads bound text before parsing, use the configured Wayland or X11 backend without fallback and time out explicitly. Hammer object clipboard data is process-local; import VMF files through Open instead. UI: Paste… → Read system clipboard."
     )]
     pub(in crate::mcp) fn import_clipboard(
         &self,
@@ -99,7 +99,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview the detached clipboard in the current map using get_clipboard.snapshot. Omitted/zero offset pastes in place; offset uses world XYZ. Allocates fresh object/side/group/layer IDs, preserves nested groups and layers and object notes, and remaps exact internal references to unique names. External links reject unless keep_external_links:true; inspect payload.external_links first. restore_cut_names is permitted only for an unchanged same-map Cut; otherwise unique names apply. render_view/topology share the draft; saving and compiling use committed geometry. Invalid requests keep the last valid preview. UI: Paste… → Preview paste."
+        description = "Preview the detached clipboard in the current map using get_clipboard.snapshot. Defaults paste in place. Positive world XYZ scale applies before world X/Y/Z rotation in degrees about pivot (default source bounds centre); offset is the final world translation. MDL entities require uniform scale and preserve native modelscale admission. Unsupported spatial properties/opaque posed metadata refuse. texture_lock defaults true and keeps textures attached. Allocates fresh object/side/group/layer IDs, preserves nested groups/layers, object notes and resolvable saved partitions with attached planned textures, and remaps exact internal references to unique names. External links reject unless keep_external_links:true; inspect payload.external_links first. restore_cut_names is permitted only for an unchanged same-map Cut; otherwise unique names apply. render_view/topology share the draft; saving and compiling use committed geometry. Invalid requests keep the last valid preview. UI: Paste… → Preview paste."
     )]
     pub(in crate::mcp) fn preview_paste(
         &self,
@@ -113,6 +113,9 @@ impl EditorServer {
             session.preview_paste(
                 map_core::transfer::Options {
                     offset: args.offset.map(vec3).unwrap_or(DVec3::ZERO),
+                    rotation: args.rotation.map(vec3).unwrap_or(DVec3::ZERO),
+                    scale: args.scale.map(vec3).unwrap_or(DVec3::ONE),
+                    pivot: args.pivot.map(vec3),
                     texture_lock: args.texture_lock.unwrap_or(true),
                     keep_external: args.keep_external_links.unwrap_or(false),
                     restore_names,

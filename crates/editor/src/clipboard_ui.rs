@@ -21,27 +21,91 @@ pub struct Controller {
     prepared: Rc<Cell<Option<Options>>>,
 }
 
+fn vector(values: [slint::SharedString; 3], label: &str) -> Result<DVec3, String> {
+    let mut result = DVec3::ZERO;
+    for (axis, value) in values.into_iter().enumerate() {
+        result[axis] = value
+            .trim()
+            .parse()
+            .map_err(|_| format!("{label} requires finite X, Y and Z values"))?;
+    }
+    if !result.is_finite() {
+        return Err(format!("{label} requires finite X, Y and Z values"));
+    }
+    Ok(result)
+}
+
 fn options(window: &PasteWindow) -> Result<Options, String> {
-    let offset = if window.get_placement() == 0 {
-        DVec3::ZERO
-    } else {
-        let values = [
-            window.get_offset_x(),
-            window.get_offset_y(),
-            window.get_offset_z(),
-        ];
-        let mut result = DVec3::ZERO;
-        for (axis, value) in values.iter().enumerate() {
-            result[axis] = value.parse().map_err(|_| "Enter finite XYZ offsets")?;
-        }
-        result
+    let offset = match window.get_placement() {
+        0 => DVec3::ZERO,
+        1 => vector(
+            [
+                window.get_offset_x(),
+                window.get_offset_y(),
+                window.get_offset_z(),
+            ],
+            "Offset",
+        )?,
+        _ => return Err("Choose In place or Offset".into()),
+    };
+    let rotation = vector(
+        [
+            window.get_rotation_x(),
+            window.get_rotation_y(),
+            window.get_rotation_z(),
+        ],
+        "Rotation",
+    )?;
+    let scale = vector(
+        [
+            window.get_scale_x(),
+            window.get_scale_y(),
+            window.get_scale_z(),
+        ],
+        "Scale",
+    )?;
+    if scale.min_element() <= 0.0 {
+        return Err("Scale factors must be greater than zero".into());
+    }
+    let pivot = match window.get_pivot_mode() {
+        0 => None,
+        1 => Some(vector(
+            [
+                window.get_pivot_x(),
+                window.get_pivot_y(),
+                window.get_pivot_z(),
+            ],
+            "Source pivot",
+        )?),
+        _ => return Err("Choose Bounds center or Custom for the source pivot".into()),
     };
     Ok(Options {
         offset,
+        rotation,
+        scale,
+        pivot,
         texture_lock: window.get_texture_lock(),
         keep_external: window.get_keep_external(),
         restore_names: window.get_restore_names(),
     })
+}
+
+fn load_vector(
+    window: &PasteWindow,
+    value: &Value,
+    fallback: DVec3,
+    setters: [fn(&PasteWindow, slint::SharedString); 3],
+) {
+    for (axis, set) in setters.into_iter().enumerate() {
+        set(
+            window,
+            value[axis]
+                .as_f64()
+                .unwrap_or(fallback[axis])
+                .to_string()
+                .into(),
+        );
+    }
 }
 
 fn present(window: &PasteWindow, session: &Session, report: &Value) {
@@ -106,7 +170,7 @@ fn present(window: &PasteWindow, session: &Session, report: &Value) {
             ));
         }
     } else {
-        lines.push("Preview allocates fresh object, face, group and layer IDs. Object notes and native group/layer ancestry transfer with the objects.".into());
+        lines.push("Preview allocates fresh object, face, group and layer IDs. Object notes, saved partitions and native group/layer ancestry transfer with the objects.".into());
     }
     window.set_details(lines.join("\n").into());
 }
@@ -331,27 +395,60 @@ impl Controller {
         *self.stamp.borrow_mut() = session.clipboard_stamp();
         self.token.set(preview["token"].as_u64());
         self.prepared.set(None);
-        let offset = preview["offset"].as_array();
+        let offset = &preview["offset"];
         self.window.set_placement(i32::from(
-            offset.is_some_and(|values| values.iter().any(|value| value.as_f64() != Some(0.0))),
+            offset
+                .as_array()
+                .is_some_and(|values| values.iter().any(|value| value.as_f64() != Some(0.0))),
         ));
-        for (axis, set) in [
-            PasteWindow::set_offset_x,
-            PasteWindow::set_offset_y,
-            PasteWindow::set_offset_z,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            set(
-                &self.window,
-                offset
-                    .and_then(|values| values[axis].as_f64())
-                    .unwrap_or(0.0)
-                    .to_string()
-                    .into(),
-            );
-        }
+        load_vector(
+            &self.window,
+            offset,
+            DVec3::ZERO,
+            [
+                PasteWindow::set_offset_x,
+                PasteWindow::set_offset_y,
+                PasteWindow::set_offset_z,
+            ],
+        );
+        load_vector(
+            &self.window,
+            &preview["rotation"],
+            DVec3::ZERO,
+            [
+                PasteWindow::set_rotation_x,
+                PasteWindow::set_rotation_y,
+                PasteWindow::set_rotation_z,
+            ],
+        );
+        load_vector(
+            &self.window,
+            &preview["scale"],
+            DVec3::ONE,
+            [
+                PasteWindow::set_scale_x,
+                PasteWindow::set_scale_y,
+                PasteWindow::set_scale_z,
+            ],
+        );
+        self.window
+            .set_pivot_mode(i32::from(preview["pivot"].is_array()));
+        load_vector(
+            &self.window,
+            &preview["pivot"],
+            DVec3::ZERO,
+            [
+                PasteWindow::set_pivot_x,
+                PasteWindow::set_pivot_y,
+                PasteWindow::set_pivot_z,
+            ],
+        );
+        self.window
+            .set_transform_expanded(options(&self.window).is_ok_and(|options| {
+                options.rotation != DVec3::ZERO
+                    || options.scale != DVec3::ONE
+                    || options.pivot.is_some()
+            }));
         self.window
             .set_texture_lock(preview["texture_lock"].as_bool().unwrap_or(true));
         self.window

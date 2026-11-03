@@ -1,10 +1,53 @@
 import { Theme } from "theme.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "widgets.slint";
+import { FieldRow, SectionHeader } from "kit.slint";
+
+component PasteVectorRow inherits FieldRow {
+    in-out property <string> x-value;
+    in-out property <string> y-value;
+    in-out property <string> z-value;
+    in property <bool> inputs-enabled: true;
+    callback edited();
+    inset: false;
+    label-width: 144px;
+    Text { text: "X"; vertical-alignment: center; color: Theme.text-muted; }
+    LineEdit {
+        text <=> root.x-value;
+        enabled: root.inputs-enabled;
+        input-type: decimal;
+        min-width: Theme.placement-field-min-width;
+        horizontal-stretch: 1;
+        accessible-label: root.label + " X";
+        edited => { root.edited(); }
+    }
+    Text { text: "Y"; vertical-alignment: center; color: Theme.text-muted; }
+    LineEdit {
+        text <=> root.y-value;
+        enabled: root.inputs-enabled;
+        input-type: decimal;
+        min-width: Theme.placement-field-min-width;
+        horizontal-stretch: 1;
+        accessible-label: root.label + " Y";
+        edited => { root.edited(); }
+    }
+    Text { text: "Z"; vertical-alignment: center; color: Theme.text-muted; }
+    LineEdit {
+        text <=> root.z-value;
+        enabled: root.inputs-enabled;
+        input-type: decimal;
+        min-width: Theme.placement-field-min-width;
+        horizontal-stretch: 1;
+        accessible-label: root.label + " Z";
+        edited => { root.edited(); }
+    }
+}
 
 export component PasteWindow inherits Window {
     title: "Paste objects · HammeRR";
     preferred-width: 760px;
     preferred-height: 690px;
+    min-width: 560px;
+    min-height: 460px;
     background: Theme.hover;
     in property <string> destination;
     in property <string> payload;
@@ -17,6 +60,17 @@ export component PasteWindow inherits Window {
     in-out property <string> offset-x: "0";
     in-out property <string> offset-y: "0";
     in-out property <string> offset-z: "0";
+    in-out property <string> rotation-x: "0";
+    in-out property <string> rotation-y: "0";
+    in-out property <string> rotation-z: "0";
+    in-out property <string> scale-x: "1";
+    in-out property <string> scale-y: "1";
+    in-out property <string> scale-z: "1";
+    in-out property <int> pivot-mode;
+    in-out property <string> pivot-x: "0";
+    in-out property <string> pivot-y: "0";
+    in-out property <string> pivot-z: "0";
+    in-out property <bool> transform-expanded;
     in-out property <bool> texture-lock: true;
     in-out property <bool> keep-external;
     in-out property <bool> restore-names;
@@ -31,45 +85,99 @@ export component PasteWindow inherits Window {
         key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
         VerticalLayout {
             padding: Theme.space-xl;
-            spacing: 12px;
-            Text { text: "Paste objects"; font-size: Theme.font-display; }
+            spacing: Theme.space-lg;
+            Text { text: "Paste objects"; font-size: Theme.font-display; font-weight: 600; }
             Text { text: root.destination; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: root.payload; wrap: word-wrap; }
-            HorizontalLayout {
-                spacing: 10px;
-                Button { text: "Read system clipboard"; clicked => { root.read-system(); } }
-                Button { text: "Publish to system clipboard"; enabled: root.has-payload; clicked => { root.publish-system(); } }
-            }
-            HorizontalLayout {
-                spacing: 10px;
-                Text { text: "Placement"; vertical-alignment: center; }
-                ComboBox { model: ["In place", "Offset"]; current-index <=> root.placement; selected => { root.invalidate(); } }
-                Text { text: "World units"; vertical-alignment: center; color: Theme.text-muted; }
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "X"; vertical-alignment: center; }
-                LineEdit { text <=> root.offset-x; enabled: root.placement == 1; input-type: decimal; preferred-width: 140px; edited => { root.invalidate(); } }
-                Text { text: "Y"; vertical-alignment: center; }
-                LineEdit { text <=> root.offset-y; enabled: root.placement == 1; input-type: decimal; preferred-width: 140px; edited => { root.invalidate(); } }
-                Text { text: "Z"; vertical-alignment: center; }
-                LineEdit { text <=> root.offset-z; enabled: root.placement == 1; input-type: decimal; preferred-width: 140px; edited => { root.invalidate(); } }
-            }
-            CheckBox { text: "Keep textures attached"; checked <=> root.texture-lock; toggled => { root.invalidate(); } }
-            CheckBox { text: "Keep external links by name"; checked <=> root.keep-external; toggled => { root.invalidate(); } }
-            CheckBox { text: "Restore cut names"; checked <=> root.restore-names; enabled: root.can-restore; toggled => { root.invalidate(); } }
-            Text { text: root.can-restore ? "Cut names can reconnect incoming links while this map remains unchanged." : "Copies receive unique names. Internal links follow the pasted objects."; color: Theme.text-muted; wrap: word-wrap; }
             ScrollView {
                 vertical-stretch: 1;
-                Text { text: root.details; wrap: word-wrap; color: Theme.text; }
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
+                    spacing: Theme.space-lg;
+                    Text { text: root.payload; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Read system clipboard"; clicked => { root.read-system(); } }
+                        Button { text: "Publish to system clipboard"; enabled: root.has-payload; clicked => { root.publish-system(); } }
+                    }
+                    FieldRow {
+                        inset: false;
+                        label: "Placement";
+                        label-width: 144px;
+                        ComboBox {
+                            model: ["In place", "Offset"];
+                            current-index <=> root.placement;
+                            horizontal-stretch: 1;
+                            accessible-label: "Paste placement";
+                            selected => { root.invalidate(); }
+                        }
+                    }
+                    PasteVectorRow {
+                        label: "Offset (units)";
+                        x-value <=> root.offset-x;
+                        y-value <=> root.offset-y;
+                        z-value <=> root.offset-z;
+                        inputs-enabled: root.placement == 1;
+                        edited => { root.invalidate(); }
+                    }
+                    SectionHeader {
+                        inset: false;
+                        text: "Transform placement";
+                        expanded <=> root.transform-expanded;
+                    }
+                    if root.transform-expanded: VerticalLayout {
+                        spacing: Theme.space;
+                        PasteVectorRow {
+                            label: "Rotation (degrees)";
+                            x-value <=> root.rotation-x;
+                            y-value <=> root.rotation-y;
+                            z-value <=> root.rotation-z;
+                            edited => { root.invalidate(); }
+                        }
+                        PasteVectorRow {
+                            label: "Scale (1 = unchanged)";
+                            x-value <=> root.scale-x;
+                            y-value <=> root.scale-y;
+                            z-value <=> root.scale-z;
+                            edited => { root.invalidate(); }
+                        }
+                        FieldRow {
+                            inset: false;
+                            label: "Source pivot";
+                            label-width: 144px;
+                            ComboBox {
+                                model: ["Bounds center", "Custom"];
+                                current-index <=> root.pivot-mode;
+                                horizontal-stretch: 1;
+                                accessible-label: "Paste source pivot";
+                                selected => { root.invalidate(); }
+                            }
+                        }
+                        if root.pivot-mode == 1: PasteVectorRow {
+                            label: "Pivot (units)";
+                            x-value <=> root.pivot-x;
+                            y-value <=> root.pivot-y;
+                            z-value <=> root.pivot-z;
+                            edited => { root.invalidate(); }
+                        }
+                        Text { text: "Scale then rotate around the source pivot in world XYZ; add the offset last. Scale factors must be positive."; wrap: word-wrap; color: Theme.text-muted; }
+                    }
+                    CheckBox { text: "Keep textures attached"; checked <=> root.texture-lock; toggled => { root.invalidate(); } }
+                    CheckBox { text: "Keep external links by name"; checked <=> root.keep-external; toggled => { root.invalidate(); } }
+                    CheckBox { text: "Restore cut names"; checked <=> root.restore-names; enabled: root.can-restore; toggled => { root.invalidate(); } }
+                    Text { text: root.can-restore ? "Cut names can reconnect incoming links while this map remains unchanged." : "Copies receive unique names. Internal links follow the pasted objects."; color: Theme.text-muted; wrap: word-wrap; }
+                    if root.details != "": Text { text: root.details; wrap: word-wrap; color: Theme.text; }
+                }
             }
-            Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; min-height: 42px; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
-                spacing: 10px;
+                spacing: Theme.space;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: "Preview paste"; enabled: root.has-payload; clicked => { root.preview(); } }
-                Button { text: "Apply paste"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: "Apply paste"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
             }
         }
     }

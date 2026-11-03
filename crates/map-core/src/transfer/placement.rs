@@ -151,48 +151,85 @@ impl Payload {
         pivot: DVec3,
         catalog: &Catalog,
     ) -> std::result::Result<Self, EditError> {
-        let limit = crate::primitive::MAX_COORDINATE;
-        if [rotation, pivot]
-            .iter()
-            .any(|value| !value.is_finite() || value.abs().max_element() > limit)
-            || !scale.is_finite()
-            || !scale.cmpgt(DVec3::ZERO).all()
-        {
-            return Err(invalid(
-                "Prefab rotation and pivot must be finite within ±65536; scale factors must be finite and positive",
-            ));
-        }
-        if rotation.map(|angle| angle.rem_euclid(360.0)) == DVec3::ZERO && scale == DVec3::ONE {
-            return Ok(self.clone());
-        }
-        for solid in &self.document.vmf().world.solids {
-            placement_solid(solid)?;
-        }
-        let mut model_scales = Vec::new();
-        for entity in &self.document.vmf().entities {
-            if let Some(value) = placement_entity_scale(entity, catalog, scale)? {
-                model_scales.push((entity.id, value));
-            }
-        }
-        let mut document = self.document.preview_snapshot();
-        document.edit("prepare prefab transform", |tx| {
-            edit::transform(
-                tx,
-                &self.ids,
+        Ok(self
+            .prepared_transform(
                 edit::Transform {
                     rotation,
                     scale,
                     pivot,
                     ..Default::default()
                 },
-            )?;
+                catalog,
+            )?
+            .unwrap_or_else(|| self.clone()))
+    }
+
+    pub(super) fn prepared_transform(
+        &self,
+        transform: edit::Transform,
+        catalog: &Catalog,
+    ) -> std::result::Result<Option<Self>, EditError> {
+        let limit = crate::primitive::MAX_COORDINATE;
+        if [transform.translation, transform.rotation, transform.pivot]
+            .iter()
+            .any(|value| !value.is_finite() || value.abs().max_element() > limit)
+            || !transform.scale.is_finite()
+            || !transform.scale.cmpgt(DVec3::ZERO).all()
+        {
+            return Err(invalid(
+                "Placement offset, rotation and pivot must be finite within ±65536; scale factors must be finite and positive",
+            ));
+        }
+        let affine = transform.rotation.map(|angle| angle.rem_euclid(360.0)) != DVec3::ZERO
+            || transform.scale != DVec3::ONE;
+        if !affine && transform.translation == DVec3::ZERO {
+            return Ok(None);
+        }
+        let mut model_scales = Vec::new();
+        if affine {
+            for solid in &self.document.vmf().world.solids {
+                placement_solid(solid)?;
+            }
+            for entity in &self.document.vmf().entities {
+                if let Some(value) = placement_entity_scale(entity, catalog, transform.scale)? {
+                    model_scales.push((entity.id, value));
+                }
+            }
+        }
+        let solids = self
+            .document
+            .vmf()
+            .world
+            .solids
+            .iter()
+            .chain(
+                self.document
+                    .vmf()
+                    .entities
+                    .iter()
+                    .flat_map(|entity| &entity.solids),
+            )
+            .map(|solid| (solid.id, solid.id))
+            .collect();
+        let sides = self.document.vmf().side_ids().map(|id| (id, id)).collect();
+        let mut document = self.document.preview_snapshot();
+        document.edit("prepare placement transform", |tx| {
+            edit::transform(tx, &self.ids, transform)?;
             for &(id, value) in &model_scales {
                 tx.entity_mut(id)?
                     .properties
                     .set("modelscale", value.to_string());
             }
+            let partitions = partition_transfer::remap(
+                &self.document,
+                tx.document(),
+                &solids,
+                &sides,
+                transform,
+            )?;
+            partitions.write(tx)?;
             Ok(())
         })?;
-        Self::capture(&document, &self.ids, catalog)
+        Self::capture(&document, &self.ids, catalog).map(Some)
     }
 }

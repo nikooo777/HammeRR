@@ -6,6 +6,8 @@ use source_formats::vmf::Vmf;
 use crate::subobject::{self, Crease, Partition, VertexSource};
 use crate::{Document, EditError, Transaction};
 
+pub mod transfer;
+
 pub const KEY: &str = "hammerr_partitions";
 pub const MAX_PARTITIONS: usize = 64;
 pub const MAX_TEXT_BYTES: usize = 64 * 1024;

@@ -68,4 +68,4 @@ inheritance or wildcard patterns.
 
 ---
 
-[← Groups](groups.md) · [Manual](README.md) · [Clipboard →](clipboard.md)
+[← Groups](groups.md) · [Manual](README.md) · [Map checks, notes and recovery →](map-tools.md)

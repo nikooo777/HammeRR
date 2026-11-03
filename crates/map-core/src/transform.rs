@@ -416,6 +416,24 @@ pub fn transform_point(point: DVec3, transform: Transform) -> Result<DVec3, Edit
     Mapping::new(transform)?.point(point)
 }
 
+pub(crate) fn transform_projection(
+    projection: &crate::surface::Projection,
+    transform: Transform,
+) -> Result<crate::surface::Projection, EditError> {
+    let mapping = Mapping::new(transform)?;
+    let mut projection = projection.clone();
+    let attached = if mapping.translation_only {
+        mapping.translation_texture_lock
+    } else {
+        mapping.texture_lock
+    };
+    if attached {
+        mapping.axis(&mut projection.u)?;
+        mapping.axis(&mut projection.v)?;
+    }
+    Ok(projection)
+}
+
 pub fn transform(
     tx: &mut Transaction,
     ids: &[ObjectId],

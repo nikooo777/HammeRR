@@ -1273,6 +1273,7 @@ dependencies = [
  "arboard",
  "axum",
  "base64",
+ "clipboard-win",
  "compiler",
  "dunce",
  "futures-util",
@@ -1295,6 +1296,8 @@ dependencies = [
  "tempfile",
  "tokio",
  "windows-sys 0.61.2",
+ "wl-clipboard-rs",
+ "x11rb",
 ]
 
 [[package]]

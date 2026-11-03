@@ -2,6 +2,42 @@ use super::*;
 use crate::surface::{Projection, SurfaceEdit};
 use source_formats::vmf::Side;
 
+const PROJECTION_EPSILON: f64 = 1e-10;
+const TEXEL_EPSILON: f64 = 0.0001;
+
+fn same_projection(actual: &Projection, expected: &Projection, points: &[DVec3]) -> bool {
+    for (actual, expected) in [(actual.u, expected.u), (actual.v, expected.v)] {
+        let actual_gradient = actual.axis / actual.scale;
+        let expected_gradient = expected.axis / expected.scale;
+        if !actual_gradient.is_finite()
+            || !expected_gradient.is_finite()
+            || !actual.offset.is_finite()
+            || !expected.offset.is_finite()
+        {
+            return false;
+        }
+        let magnitude = actual_gradient
+            .abs()
+            .max(expected_gradient.abs())
+            .max_element()
+            .max(1.0);
+        if (actual_gradient - expected_gradient).abs().max_element()
+            > PROJECTION_EPSILON * magnitude
+            || (actual.offset - expected.offset).abs() > PROJECTION_EPSILON
+            || points.iter().any(|point| {
+                let actual_uv = point.dot(actual_gradient) + actual.offset;
+                let expected_uv = point.dot(expected_gradient) + expected.offset;
+                !actual_uv.is_finite()
+                    || !expected_uv.is_finite()
+                    || (actual_uv - expected_uv).abs() > TEXEL_EPSILON
+            })
+        {
+            return false;
+        }
+    }
+    true
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PartitionTexture {
     pub shift: [f64; 2],
@@ -54,6 +90,62 @@ impl PartitionTexture {
             v: side.v_axis,
             rotation: side.rotation,
         })
+    }
+
+    pub(crate) fn reproject(
+        &self,
+        source: &Side,
+        projection: &Projection,
+        points: &[DVec3],
+    ) -> Result<Self, EditError> {
+        if let Ok(current) = self.project(source)
+            && same_projection(&current, projection, points)
+        {
+            return Ok(*self);
+        }
+        let failure = || {
+            invalid(
+                "Transformed saved partition texture cannot be represented by bounded shift, scale and rotation",
+            )
+        };
+        let normal = Plane::from_points(source.plane.0)
+            .ok_or_else(failure)?
+            .normal;
+        let desired_u = projection.u.axis / projection.u.scale;
+        let source_tangent = source.u_axis.axis - normal * source.u_axis.axis.dot(normal);
+        let desired_tangent = desired_u - normal * desired_u.dot(normal);
+        let source_tangent = source_tangent.try_normalize().ok_or_else(failure)?;
+        let desired_tangent = desired_tangent.try_normalize().ok_or_else(failure)?;
+        let angle = normal
+            .dot(source_tangent.cross(desired_tangent))
+            .atan2(source_tangent.dot(desired_tangent));
+        for angle in [angle, angle + std::f64::consts::PI] {
+            let rotation = (source.rotation + angle.to_degrees()).rem_euclid(360.0);
+            let turn =
+                glam::DQuat::from_axis_angle(normal, (rotation - source.rotation).to_radians());
+            let mut texture = Self {
+                shift: [projection.u.offset, projection.v.offset],
+                scale: [0.0; 2],
+                rotation,
+            };
+            for (index, (base, desired)) in [
+                (source.u_axis.axis, projection.u),
+                (source.v_axis.axis, projection.v),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let gradient = desired.axis / desired.scale;
+                let direction = gradient.try_normalize().ok_or_else(failure)?;
+                texture.scale[index] = (turn * base).dot(direction) / gradient.length();
+            }
+            if let Ok(actual) = texture.project(source)
+                && same_projection(&actual, projection, points)
+            {
+                return Ok(texture);
+            }
+        }
+        Err(failure())
     }
 
     pub fn place(

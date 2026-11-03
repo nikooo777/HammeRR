@@ -110,7 +110,7 @@ More in this section:
 <tr>
 <td width="33%" valign="top"><a href="overlays.md"><img src="images/thumbs/overlay-native.jpg" width="260" alt=""></a><br><a href="overlays.md"><b>Overlays</b></a><br>Project a material onto compiled surfaces.</td>
 <td width="33%" valign="top"><a href="prefabs.md"><img src="images/thumbs/prefab-assemblies.jpg" width="260" alt=""></a><br><a href="prefabs.md"><b>Prefab library</b></a><br>Save and reuse brush/entity assemblies as VMF files.</td>
-<td width="33%"></td>
+<td width="33%" valign="top"><a href="clipboard.md"><img src="images/thumbs/clipboard-placement.jpg" width="260" alt=""></a><br><a href="clipboard.md"><b>Cut, copy and paste</b></a><br>Transfer whole objects with rotation, scale and saved face partitions.</td>
 </tr>
 </table>
 
@@ -118,7 +118,6 @@ More in this section:
 
 - [Groups](groups.md) — Select and edit an assembly as one group.
 - [Layers](layers.md) — Organize whole brushes and entities into named layers.
-- [Clipboard](clipboard.md) — Transfer a detached set of objects within or between maps.
 - [Map checks, notes and recovery](map-tools.md) — Find objects, check map data and retain recovery copies.
 
 ## Assemblies

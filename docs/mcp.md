@@ -1552,6 +1552,35 @@ override when picking. Working-region filtering stays common and follows the
 active camera. New/Open keeps the layout, active index and linking, reseeds
 cameras and retires old snapshots.
 
+## Clipboard
+
+`get_clipboard` reports the detached payload, external links, preview and a
+Session-scoped `snapshot`. Pass that snapshot to `copy_objects`, `cut_objects`,
+`import_clipboard` and `preview_paste`. Copy and Cut accept whole selected objects
+or explicit root-object IDs. Saved face partitions, native groups/layers and
+object notes transfer with the geometry. Cut publishes successfully before
+deleting sources.
+
+`preview_paste` accepts `rotation: [x, y, z]` in world XYZ degrees, positive
+`scale: [x, y, z]` and an optional source-world `pivot: [x, y, z]`. The default
+pivot is the copied bounds center. Scale and rotation use world XYZ axes around
+that pivot, with scale first, then the final world `offset: [x, y, z]`. Defaults
+are zero rotation and offset, and unit scale. MDL models require uniform scale;
+static/detail resizing is unsupported. Stale partitions, opaque partition extensions and
+unrepresentable transformed texture plans reject and retain the previous preview.
+
+Review names and links before `apply_paste`; use `cancel_paste` to discard the
+owned preview. Both take its `token`. External links require
+`keep_external_links: true`; `restore_cut_names: true` requires an unchanged
+same-map Cut.
+
+`export_clipboard` takes the exact `payload.content_revision`. Its default
+`destination: "response"` returns UTF-8 VMF text for `import_clipboard` in another
+session; `destination: "system"` publishes that text to the computer clipboard.
+Import accepts explicit `text` or `system: true`. Hammer/Hammer++ uses an
+in-process object clipboard, so ordinary VMF text does not provide native object
+paste there. Use VMF files for handoff between editors.
+
 ## Prefab library
 
 Use `get_prefabs` to inspect entries and obtain a mutation snapshot. `query` searches

@@ -188,12 +188,14 @@ fn build_authored_budgeted(
             "{error}; visibility work limit {budget} units; \
              captured geometry after flood/hint partitioning: {open_leaves} open world leaves, \
              {structural_brushes} structural world brush inputs ({structural_sides} non-bevel sides), \
-             {liquid_brushes} structural liquid brushes, {liquid_leaves} liquid leaves in {} liquid regions; \
+             {liquid_brushes} structural liquid brushes, {liquid_leaves} liquid leaves in {} liquid regions, \
+             {} visibility areas; \
              {} portal records before open-leaf filtering; authored viscluster preparation recorded {} work units. \
              Counts describe input size; per-brush cost attribution is unavailable. \
-             Use func_detail only for non-sealing geometry; liquid leaves are excluded from authored viscluster grouping, \
-             and grouping does not reduce solver cost",
+             Use func_detail only for non-sealing geometry; authored visclusters coarsen open-leaf visibility \
+             without changing leaf areas or liquid records, and grouping does not reduce solver cost",
             context.water.records.len(),
+            context.areas.data.areas.len().saturating_sub(1),
             portals.len(),
             map.viscluster_work,
         )

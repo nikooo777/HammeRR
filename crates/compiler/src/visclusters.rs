@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use glam::DVec3;
 use map_core::{BrushGeometry, subobject};
-use source_formats::bsp::contents;
 use source_formats::vmf::{Entity, Solid};
 
 use crate::map::{Map, origins};
@@ -417,15 +416,10 @@ pub(crate) fn partition(
     consume: &mut impl FnMut(usize) -> Result<(), String>,
 ) -> Result<Partition, String> {
     let Context {
-        map,
-        tree,
-        areas,
-        water,
-        control,
+        map, tree, control, ..
     } = context;
     let mut claims_by_leaf = vec![None; count];
     let mut members = vec![0; map.visclusters.len()];
-    let mut helper_areas = vec![None; map.visclusters.len()];
     for node in tree.preorder() {
         control.checkpoint()?;
         let Some(cluster) = clusters[node] else {
@@ -491,28 +485,6 @@ pub(crate) fn partition(
                 helper_error(report, helper, &message);
                 return Err(message);
             }
-            if tree.nodes[node].contents
-                & (contents::WATER | contents::SLIME | contents::AREAPORTAL)
-                != 0
-                || water.leaves[node] >= 0
-            {
-                let message = format!(
-                    "Viscluster entity:{} selects liquid or areaportal leaves; only dry volumes are supported",
-                    helper.entity
-                );
-                helper_error(report, helper, &message);
-                return Err(message);
-            }
-            let area = areas.indices[node];
-            if helper_areas[index].is_some_and(|previous| previous != area) {
-                let message = format!(
-                    "Viscluster entity:{} crosses visibility areas; use separate helpers",
-                    helper.entity
-                );
-                helper_error(report, helper, &message);
-                return Err(message);
-            }
-            helper_areas[index] = Some(area);
             claims_by_leaf[cluster] = Some(index);
             members[index] += 1;
         }

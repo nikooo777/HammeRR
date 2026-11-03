@@ -1134,6 +1134,17 @@ use `document_id` to select a map. Unknown argument names are errors. Omitting
 `path` uses the current map filename with a `.bsp` extension.
 Use `cancel_compile` to stop owned build work.
 
+For [visibility clusters](visclusters.md), use `tie_to_entity` with
+`classname:"func_viscluster"` and one visible convex brush. A checked intersection
+must exceed 10% of a leaf's volume. Uncertain membership or a leaf claimed by two
+helpers stops the build. Dry, wet and portal leaves can share a group across visibility
+areas. Each leaf retains its area, water data, collision and ambient samples.
+PVS/PAS can expand; solver work is unchanged. Read `stats.viscluster_helpers`,
+`stats.viscluster_groups`, `stats.viscluster_grouped_leaves` and
+`stats.visibility_solved_clusters` in the finished compile result.
+Active compile regions must contain the complete helper brush; crossing helpers
+refuse and disjoint helpers are omitted. Multi-brush helpers remain unsupported.
+
 For `func_areaportalwindow`, set `target` and optional `BackgroundBModel` through
 `set_entity_properties`. Nonzero initial rotation requires `func_brush` models.
 Set matching `angles` triples on the controller and each bound model, in pitch,

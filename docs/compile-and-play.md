@@ -142,6 +142,11 @@ entities. Wildcards and procedural names are unsupported. Mismatched initial
 rotations, parenting, unsupported portal shapes or invalid bindings stop the build.
 Runtime model movement is unsupported.
 
+Each build supports at most 191 plain and window portal controllers combined.
+Exceeding this limit stops compilation before publication.
+A compiled portal boundary supports at most 32 corners. This counts the final
+planar interface, separately from source brush sides. Use a simpler opening if exceeded.
+
 Failed BSP splits report the captured plane and volume bounds. Source candidates
 are listed separately; a shared plane does not identify one brush as the cause.
 Visibility-limit errors include refused work and input geometry counts.

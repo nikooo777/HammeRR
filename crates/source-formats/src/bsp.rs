@@ -15,7 +15,10 @@ pub use ambient::{
     LeafAmbient, LeafAmbientIndex, LeafAmbientSample, LightCube, MAX_LEAF_AMBIENT_SAMPLES,
 };
 mod areas;
-pub use areas::{AreaData, MAX_AREA_PORTALS, MAX_AREAS, MAX_CLIP_PORTAL_VERTICES};
+pub use areas::{
+    AreaData, MAX_AREA_PORTAL_KEY, MAX_AREA_PORTAL_VERTICES, MAX_AREA_PORTALS, MAX_AREAS,
+    MAX_CLIP_PORTAL_VERTICES,
+};
 mod detail_props;
 mod displacements;
 mod face_geometry;

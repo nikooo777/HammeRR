@@ -2,7 +2,8 @@ use std::collections::{BTreeSet, VecDeque};
 
 use glam::{DVec2, DVec3};
 use source_formats::bsp::{
-    Area, AreaData, AreaPortal, MAX_AREAS, MAX_CLIP_PORTAL_VERTICES, contents,
+    Area, AreaData, AreaPortal, MAX_AREA_PORTAL_VERTICES, MAX_AREAS, MAX_CLIP_PORTAL_VERTICES,
+    contents,
 };
 
 use crate::Control;
@@ -269,6 +270,12 @@ pub(crate) fn build(
             })?;
         let plane = map.planes.get(side.plane & !1);
         let polygon = hull(&points, -plane.normal, -plane.dist, &mut budget)?;
+        if polygon.0.len() > MAX_AREA_PORTAL_VERTICES {
+            return Err(format!(
+                "entity:{}: areaportal clip hull exceeds the native {MAX_AREA_PORTAL_VERTICES}-vertex input limit; simplify the interface",
+                map.entities[portal.entity].id,
+            ));
+        }
         if vertices.len() + 2 * polygon.0.len() > MAX_CLIP_PORTAL_VERTICES {
             return Err("Areaportal clip vertices exceed the native limit".into());
         }

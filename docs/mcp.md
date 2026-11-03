@@ -1156,6 +1156,13 @@ The ordinary compile operations check these constraints. `FadeStartDist`,
 `FadeDist` and `TranslucencyLimit` control the rendered model's fade; the optional
 foreground does not fade. Runtime model movement is unsupported.
 
+Plain and window portals share a limit of 191 retained controllers per build,
+with generated control keys 1–191. The separate BSP directed-record table permits
+1024 entries, including reserved entry 0. Exceeded control capacity fails the
+ordinary compile operations before publication.
+A compiled portal boundary supports at most 32 corners. This counts the final
+planar interface, separately from source brush sides. Use a simpler opening if exceeded.
+
 For [occluders](occluders.md), use `tie_to_entity` with `classname:"func_occluder"`
 and set `StartActive:"0"` or `"1"` through `set_entity_properties`.
 The ordinary compile tools build one exterior boundary across all admitted helpers.

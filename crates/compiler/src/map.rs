@@ -863,15 +863,14 @@ impl<'a> Map<'a> {
             .solids
             .iter()
             .filter(|solid| !solid.hidden)
+            .take(2)
             .collect::<Vec<_>>();
         if solids.is_empty() {
             return Ok(());
         }
-        if solids.len() != 1
-            || self.area_portals.len() >= (source_formats::bsp::MAX_AREA_PORTALS - 1) / 2
-        {
+        if solids.len() != 1 || self.area_portals.len() >= bsp::MAX_AREA_PORTAL_KEY {
             report.diagnostics.push(Diagnostic::error(
-                "Areaportals require one visible convex brush, with at most 511 portals in a map",
+                format!("Areaportals require one visible convex brush per controller, with at most {} controllers in a map (the CS:S network control limit)", bsp::MAX_AREA_PORTAL_KEY),
                 Some(format!("entity:{}", entity.id)),
                 entity.origin(),
             ));

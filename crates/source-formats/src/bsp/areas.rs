@@ -7,6 +7,9 @@ use super::{Area, AreaPortal, Bsp, Leaf, Plane, invalid, lump};
 
 pub const MAX_AREAS: usize = 256;
 pub const MAX_AREA_PORTALS: usize = 1024;
+// CS:S transmits 24 bytes of keyed portal state; key zero remains reserved.
+pub const MAX_AREA_PORTAL_KEY: usize = 24 * 8 - 1;
+pub const MAX_AREA_PORTAL_VERTICES: usize = 32;
 pub const MAX_CLIP_PORTAL_VERTICES: usize = 128_000;
 const MAX_PLANES: usize = 65_536;
 const MAX_LEAVES: usize = 65_536;
@@ -68,6 +71,11 @@ impl AreaData {
         let mut keys: BTreeMap<u16, Vec<(usize, &AreaPortal)>> = BTreeMap::new();
         for (index, portal) in self.portals.iter().enumerate().skip(1) {
             let owner = owners[index].ok_or_else(|| invalid("areaportal has no owning area"))?;
+            if usize::from(portal.portal_key) > MAX_AREA_PORTAL_KEY {
+                return Err(invalid(format!(
+                    "areaportal control key exceeds the CS:S limit of {MAX_AREA_PORTAL_KEY}"
+                )));
+            }
             if portal.portal_key == 0
                 || portal.other_area == 0
                 || usize::from(portal.other_area) >= self.areas.len()
@@ -82,10 +90,14 @@ impl AreaData {
             }
             let first = usize::from(portal.first_clip_vert);
             let count = usize::from(portal.clip_vert_count);
-            if count < 3
-                || first
-                    .checked_add(count)
-                    .is_none_or(|end| end > self.clip_vertices.len())
+            if !(3..=MAX_AREA_PORTAL_VERTICES).contains(&count) {
+                return Err(invalid(format!(
+                    "areaportal clip polygons require 3–{MAX_AREA_PORTAL_VERTICES} vertices"
+                )));
+            }
+            if first
+                .checked_add(count)
+                .is_none_or(|end| end > self.clip_vertices.len())
             {
                 return Err(invalid(
                     "areaportal clip polygon is outside the vertex array",

@@ -8,6 +8,8 @@ mod common;
 pub(super) use common::*;
 mod content_profiles;
 pub(super) use content_profiles::*;
+mod content_refresh;
+pub(super) use content_refresh::*;
 mod color_correction;
 pub(super) use color_correction::*;
 mod components;

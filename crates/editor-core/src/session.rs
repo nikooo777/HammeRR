@@ -55,6 +55,7 @@ pub mod component_drag;
 pub mod component_picking;
 pub mod components;
 pub mod content_profiles;
+pub mod content_refresh;
 pub mod context;
 pub mod cubemap_bindings;
 pub mod definitions;
@@ -286,6 +287,7 @@ pub enum SelectMode {
 
 pub struct Session {
     content_profiles: content_profiles::State,
+    content_refresh: content_refresh::State,
     reference_images: reference_images::State,
     color_correction: color_correction::State,
     file_claims: crate::path_claims::Binding,
@@ -625,6 +627,7 @@ impl Session {
         );
         let mut session = Self {
             content_profiles: content_profiles::State::default(),
+            content_refresh: content_refresh::State::default(),
             color_correction: color_correction::State::default(),
             reference_images: reference_images::State::default(),
             file_claims: crate::path_claims::Binding::default(),
@@ -1213,6 +1216,7 @@ impl Session {
         self.changed();
         self.log(actor, format!("loaded {count} entity classes"));
         self.remember_current_map_context();
+        self.content_sources_changed(None);
     }
 
     pub fn report_definitions_error(&mut self, error: String) {
@@ -2676,6 +2680,7 @@ impl Session {
         }
         self.shutdown_definitions_load();
         self.shutdown_content_profile();
+        self.shutdown_content_refresh();
         self.shutdown_recent_map();
         self.reset_instance_contents();
         self.reset_compiled_details();
@@ -2703,6 +2708,7 @@ impl Session {
 
     pub(crate) fn instance_workers_busy(&self) -> bool {
         self.content_profile_worker_busy()
+            || self.content_refresh_worker_busy()
             || self.recent_map_worker_busy()
             || self.content_workers_busy()
     }

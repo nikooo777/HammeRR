@@ -10,6 +10,7 @@ mod compiled_details;
 mod compiled_face_framing;
 mod components;
 mod content_profiles;
+mod content_refresh;
 mod context;
 mod cubemap_bindings;
 mod entities;

@@ -3,7 +3,7 @@
 //! Files are looked up by game path (`materials/tools/toolsnodraw.vmt`)
 //! through an ordered list of mounts; the first mount that has the file wins.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
 use std::io::Read;
@@ -150,6 +150,25 @@ fn existing<T>(path: &Path, result: io::Result<T>) -> io::Result<Option<T>> {
             format!("{}: {error}", path.display()),
         )),
     }
+}
+
+fn entry_metadata(path: &Path) -> io::Result<Option<fs::Metadata>> {
+    let Some(metadata) = existing(path, fs::symlink_metadata(path))? else {
+        return Ok(None);
+    };
+    if metadata.file_type().is_symlink() {
+        fs::metadata(path).map(Some)
+    } else {
+        Ok(Some(metadata))
+    }
+}
+
+fn search_path_key(path: &Path) -> Vec<u8> {
+    path.as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .map(u8::to_ascii_lowercase)
+        .collect()
 }
 
 /// Resolves `relative` under `root`, matching each component without regard
@@ -338,6 +357,18 @@ pub struct GameFs {
     pub mounts: Vec<MountedPath>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SearchPathDependencies {
+    pub wildcard_directories: Vec<PathBuf>,
+    pub literal_mounts: Vec<PathBuf>,
+}
+
+struct SearchPath {
+    ids: Vec<String>,
+    path: PathBuf,
+    wildcard: bool,
+}
+
 impl GameFs {
     pub fn from_gameinfo(gameinfo: impl AsRef<Path>) -> Result<Self, Error> {
         let gameinfo = gameinfo.as_ref();
@@ -348,13 +379,6 @@ impl GameFs {
         let gameinfo = std::path::absolute(gameinfo).map_err(io_err(gameinfo))?;
         let gameinfo = gameinfo.as_path();
         let text = fs::read_to_string(gameinfo).map_err(io_err(gameinfo))?;
-        let nodes = keyvalues::parse_lenient(&text).map_err(|source| Error::Syntax {
-            path: gameinfo.to_path_buf(),
-            source,
-        })?;
-        let search_paths = find_block(&nodes, &["GameInfo", "FileSystem", "SearchPaths"])
-            .ok_or_else(|| Error::NoSearchPaths(gameinfo.to_path_buf()))?;
-
         let game_dir = gameinfo
             .parent()
             .expect("gameinfo names a file")
@@ -365,18 +389,66 @@ impl GameFs {
             base_dir,
             mounts: Vec::new(),
         };
-        for node in search_paths {
-            let Some(value) = node.as_str() else {
-                continue;
-            };
-            let ids: Vec<String> = node
-                .key
-                .split('+')
-                .map(|id| id.trim().to_ascii_lowercase())
-                .collect();
-            gamefs.mount_search_path(ids, value)?;
+        for path in gamefs.resolved_search_paths(gameinfo, &text)? {
+            gamefs.mount_search_path(path)?;
         }
         Ok(gamefs)
+    }
+
+    fn resolved_search_paths(&self, gameinfo: &Path, text: &str) -> Result<Vec<SearchPath>, Error> {
+        let nodes = keyvalues::parse_lenient(text).map_err(|source| Error::Syntax {
+            path: gameinfo.to_owned(),
+            source,
+        })?;
+        let paths = find_block(&nodes, &["GameInfo", "FileSystem", "SearchPaths"])
+            .ok_or_else(|| Error::NoSearchPaths(gameinfo.to_owned()))?;
+        Ok(paths
+            .iter()
+            .filter_map(|node| {
+                let value = node.as_str()?;
+                let wildcard = value
+                    .strip_suffix("/*")
+                    .or_else(|| value.strip_suffix("\\*"));
+                Some(SearchPath {
+                    ids: node
+                        .key
+                        .split('+')
+                        .map(|id| id.trim().to_ascii_lowercase())
+                        .collect(),
+                    path: self.resolve(wildcard.unwrap_or(value)),
+                    wildcard: wildcard.is_some(),
+                })
+            })
+            .collect())
+    }
+
+    pub fn search_path_dependencies(
+        &self,
+        gameinfo: &Path,
+        text: &str,
+    ) -> Result<SearchPathDependencies, Error> {
+        let mut dependencies = SearchPathDependencies::default();
+        for path in self.resolved_search_paths(gameinfo, text)? {
+            if path.wildcard {
+                dependencies.wildcard_directories.push(path.path);
+            } else {
+                if path
+                    .path
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("vpk"))
+                {
+                    dependencies
+                        .literal_mounts
+                        .extend(Vpk::index_candidates(&path.path));
+                }
+                dependencies.literal_mounts.push(path.path);
+            }
+        }
+        dependencies.wildcard_directories.sort();
+        dependencies.wildcard_directories.dedup();
+        dependencies.literal_mounts.sort();
+        dependencies.literal_mounts.dedup();
+        Ok(dependencies)
     }
 
     fn resolve(&self, value: &str) -> PathBuf {
@@ -400,40 +472,94 @@ impl GameFs {
             .fold(base.clone(), |path, part| path.join(part))
     }
 
-    fn mount_search_path(&mut self, ids: Vec<String>, value: &str) -> Result<(), Error> {
-        if let Some(dir) = value
-            .strip_suffix("/*")
-            .or_else(|| value.strip_suffix("\\*"))
-        {
-            let dir = self.resolve(dir);
+    fn mount_search_path(&mut self, path: SearchPath) -> Result<(), Error> {
+        let SearchPath {
+            ids,
+            path,
+            wildcard,
+        } = path;
+        if wildcard {
+            let dir = path;
             let io_err = |source| Error::Io {
                 path: dir.clone(),
                 source,
             };
-            let Some(entries) = existing(&dir, fs::read_dir(&dir)).map_err(io_err)? else {
+            if entry_metadata(&dir).map_err(io_err)?.is_none() {
                 return Ok(());
-            };
+            }
+            let entries = fs::read_dir(&dir).map_err(io_err)?;
             let mut children = entries
                 .map(|entry| entry.map(|entry| entry.path()))
                 .collect::<io::Result<Vec<_>>>()
                 .map_err(io_err)?;
-            children.sort();
+            children.sort_by_cached_key(|path| search_path_key(path));
+            let mut candidates = Vec::new();
             for child in children {
                 let name = child
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or_default();
-                let Some(metadata) =
-                    existing(&child, fs::metadata(&child)).map_err(|source| Error::Io {
-                        path: child.clone(),
-                        source,
-                    })?
+                let Some(metadata) = entry_metadata(&child).map_err(|source| Error::Io {
+                    path: child.clone(),
+                    source,
+                })?
                 else {
                     continue;
                 };
-                if metadata.is_dir() {
+                if metadata.is_dir()
+                    || (metadata.is_file() && name.to_ascii_lowercase().ends_with(".vpk"))
+                {
+                    candidates.push((child, metadata.is_dir()));
+                }
+            }
+            if let Some(pair) = candidates.windows(2).find(|pair| {
+                pair[0].0 != pair[1].0 && search_path_key(&pair[0].0) == search_path_key(&pair[1].0)
+            }) {
+                return Err(Error::Io {
+                    path: dir,
+                    source: io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "Wildcard mount candidates differ only in ASCII case: {} and {}",
+                            pair[0].0.display(),
+                            pair[1].0.display()
+                        ),
+                    ),
+                });
+            }
+            let prefixes = candidates
+                .iter()
+                .enumerate()
+                .filter_map(|(index, (path, directory))| {
+                    if *directory {
+                        return None;
+                    }
+                    let name = path.file_name()?.to_str()?.to_ascii_lowercase();
+                    name.strip_suffix("_dir.vpk")
+                        .map(|prefix| (prefix.to_owned(), index))
+                })
+                .collect::<BTreeMap<_, _>>();
+            for (index, (child, directory)) in candidates.into_iter().enumerate() {
+                let name = child
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                if name
+                    .char_indices()
+                    .map(|(length, _)| length)
+                    .chain(std::iter::once(name.len()))
+                    .any(|length| {
+                        prefixes
+                            .get(&name[..length])
+                            .is_some_and(|preferred| index < *preferred)
+                    })
+                {
+                    continue;
+                }
+                if directory {
                     self.add(ids.clone(), Mount::Directory(child))?;
-                } else if name.ends_with("_dir.vpk") {
+                } else {
                     let vpk = Vpk::open(&child).map_err(|e| Error::Io {
                         path: child,
                         source: e,
@@ -444,23 +570,21 @@ impl GameFs {
             return Ok(());
         }
 
-        let path = self.resolve(value);
         if path
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("vpk"))
         {
-            let index = Vpk::dir_file_for(&path);
-            if existing(&index, fs::metadata(&index))
-                .map_err(|source| Error::Io {
+            if let Some(index) = Vpk::resolve_index(&path).map_err(|source| Error::Io {
+                path: path.clone(),
+                source,
+            })? {
+                let vpk = Vpk::open(&index).map_err(|source| Error::Io {
                     path: index,
                     source,
-                })?
-                .is_some_and(|metadata| metadata.is_file())
-            {
-                let vpk = Vpk::open(&path).map_err(|e| Error::Io { path, source: e })?;
+                })?;
                 self.add(ids, Mount::Pak(vpk))?;
             }
-        } else if existing(&path, fs::metadata(&path))
+        } else if entry_metadata(&path)
             .map_err(|source| Error::Io {
                 path: path.clone(),
                 source,

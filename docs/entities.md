@@ -103,7 +103,9 @@ another helper asset never replaces it.
    complete status.
 5. Search for the updated class.
 
-Reload the root after changing definitions.
+After changing the root or included definitions, use
+**File → Content refresh… → Reload content** to refresh the current content
+configuration together. Use **Load FGD…** to choose a different root.
 `@ExtendClass base(...)` uses the base members present at its declaration.
 Earlier extensions can update those property values; later-added members and
 base helper lists are not inherited. Direct extension helpers apply to the
@@ -201,7 +203,7 @@ Click **Apply properties** to keep the draft, or **Cancel** to discard it.
 - Guides cover checked static properties, not parenting, animation, simulation or runtime I/O.
 - Declared line guides support up to 64 declarations per source and 128 displayed lines per scene.
 - Wildcard helper targets, unsupported binding aliases and malformed declarations remain unavailable with explicit reasons.
-- Reload material assets for changed icons; reload models for changed model geometry; reload FGD for changed definitions.
+- Use **Reload material assets** for changed icons, **Reload models** for changed model geometry, or **File → Content refresh… → Reload content** for mounts and FGD definitions together.
 - Changed source or replaced drafts require a fresh review before applying edits.
 
 <!-- page-nav -->

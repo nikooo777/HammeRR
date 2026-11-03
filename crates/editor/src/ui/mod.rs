@@ -25,6 +25,7 @@ mod files;
 use files::*;
 mod admission;
 mod content_profiles;
+mod content_refresh;
 mod document_window;
 use document_window::DocumentWindow;
 pub(crate) use document_window::hide_window;
@@ -98,6 +99,7 @@ struct Ui {
     recovery_window: Option<RecoveryWindow>,
     recent_maps_window: Option<RecentMapsWindow>,
     content_profiles: Option<content_profiles::Controller>,
+    content_refresh: Option<content_refresh::Controller>,
     checks_window: Option<ChecksWindow>,
     context_window: Option<ContextWindow>,
     primitive_window: Option<PrimitiveWindow>,
@@ -245,6 +247,7 @@ impl Ui {
             recovery_window: None,
             recent_maps_window: None,
             content_profiles: None,
+            content_refresh: None,
             checks_window: None,
             context_window: None,
             primitive_window: None,
@@ -940,6 +943,27 @@ fn create_document_window(
         }
         if let Err(error) = ui
             .content_profiles
+            .as_ref()
+            .unwrap()
+            .show(&lock(&ui.session))
+        {
+            app.set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_content_refresh, |app| {
+        let app = app.unwrap();
+        let mut ui = ui.borrow_mut();
+        if ui.content_refresh.is_none() {
+            match content_refresh::Controller::new_with_access(&ui.document_access()) {
+                Ok(controller) => ui.content_refresh = Some(controller),
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        if let Err(error) = ui
+            .content_refresh
             .as_ref()
             .unwrap()
             .show(&lock(&ui.session))
@@ -3792,6 +3816,11 @@ fn create_document_window(
                         controller.refresh(&lock(&ui.session));
                     }
                     if let Some(controller) = &ui.content_profiles
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&lock(&ui.session));
+                    }
+                    if let Some(controller) = &ui.content_refresh
                         && controller.window.window().is_visible()
                     {
                         controller.refresh(&lock(&ui.session));

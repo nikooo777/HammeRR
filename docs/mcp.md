@@ -603,6 +603,27 @@ intact. Old compiled output and content previews retire.
 `reload_content_profiles` needs `revision` and explicitly rereads storage.
 See [Content profiles](content-profiles.md) for path requirements and limits.
 
+### Changed content
+
+1. Call `get_content_refresh {}` for the current `intent`, reload readiness and blocker, refresh status, watch coverage/errors and pending changes.
+2. Optionally call `set_content_watch {"enabled":true}` to enable native change notifications for the current mounts and effective FGD sources.
+3. Call `reload_content` with the returned `intent` to prepare and adopt the current configuration again.
+4. To cancel an active reload, pass the exact decimal string `pending.token` to `cancel_content_refresh {"token":"…"}`, then inspect until the worker retires.
+
+Reload rebuilds mounts and FGD includes, invalidates dependent asset caches and
+stale content plans, and preserves map data, history, selection, cameras and
+requested build/launch settings. `retained_old` and `error` identify failed,
+cancelled or stale preparation that kept the previous content.
+Running managed builds/games and conflicting drafts retain their refusal guards.
+
+Watching starts off, is document-local and is not saved. Notifications never
+replace content automatically. Native watching supports Linux and Windows;
+errors, overflow and incomplete coverage stay explicit, without a polling fallback.
+Successful reload registers the new sources. A running game's caches remain
+process-owned; stop the managed game before reload, then use `run_map` to rebuild
+and play with the new content.
+See [Reload mounted content and definitions](textures.md#reload-mounted-content-and-definitions).
+
 ### History navigation
 
 Use `get_history` and `navigate_history` with the same `document_id`. History
@@ -1704,6 +1725,7 @@ These groups locate the available operations.
 | [Collapse references](instances.md#collapse-references-into-editable-geometry) | `get_instance_collapse`, `set_instance_collapse` |
 | [Linked paths](path-authoring.md) | `get_linked_path`, `set_linked_path`, `get_linked_path_observation`, `start_linked_path_observation`, `cancel_linked_path_observation` |
 | [Materials and face textures](textures.md) | `apply_surface_placement`, `begin_surface_placement_pick`, `begin_texture_stroke`, `browse_materials`, `cancel_face_preview`, `cancel_surface_placement`, `cancel_texture_stroke`, `commit_face_preview`, `commit_texture_stroke`, `edit_faces`, `find_material_faces`, `get_face_selection`, `get_material_search`, `get_material_source`, `get_surface_placement`, `get_surface_placement_sources`, `get_surface_sample`, `get_texture_stroke`, `paint_face_texture`, `pick_surface_placement`, `preview_material`, `preview_surface_placement`, `project_face_group`, `propagate_face_texture`, `reload_material_assets`, `reload_material_favorites`, `replace_materials`, `sample_face_texture`, `search_materials`, `select_faces`, `select_material_faces`, `set_material`, `set_material_favorite`, `update_texture_stroke`, `vary_face_uv` |
+| [Changed content](textures.md#reload-mounted-content-and-definitions) | `cancel_content_refresh`, `get_content_refresh`, `reload_content`, `set_content_watch` |
 | [Spatial guides](measurements.md) | `get_measurements`, `set_measurement`, `get_workplane`, `set_workplane`, `intersect_workplane` |
 | [Navigation defaults](navigation-defaults.md) | `get_navigation_settings`, `set_navigation_defaults`, `set_navigation_settings` |
 | [Overlays](overlays.md) | `apply_overlay`, `browse_overlay_targets`, `cancel_overlay`, `get_overlay_state`, `overlay_corner_handles`, `preview_overlay`, `preview_overlay_corners`, `preview_overlay_rebind`, `preview_overlay_refit`, `review_overlay` |

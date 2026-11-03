@@ -1,0 +1,67 @@
+import { Button, CheckBox, ScrollView } from "widgets.slint";
+import { Theme, MutedText, SectionHeader } from "kit.slint";
+
+export component ContentRefreshWindow inherits Window {
+    background: Theme.panel;
+    title: "Content refresh - HammeRR";
+    default-font-size: Theme.font;
+    preferred-width: 660px;
+    preferred-height: 500px;
+    min-width: 500px;
+    min-height: 380px;
+    in property <string> current-path;
+    in property <string> status;
+    in property <string> blocker;
+    in property <string> error;
+    in property <string> watch-error;
+    in property <string> message;
+    in property <bool> busy;
+    in property <bool> can-reload;
+    in-out property <bool> watching;
+    callback watch-changed(bool);
+    callback reload-content();
+    callback close-dialog();
+    callback worker-finished();
+    forward-focus: keys;
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: "Content refresh"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
+            ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
+                    spacing: Theme.space-lg;
+                    SectionHeader { text: "Current content"; inset: false; collapsible: false; }
+                    MutedText { text: root.current-path; }
+                    CheckBox {
+                        text: "Watch for content changes";
+                        checked <=> root.watching;
+                        enabled: !root.busy;
+                        toggled => { root.watch-changed(self.checked); }
+                    }
+                    MutedText { text: "Changed files stay pending until Reload content. Your map and edits are preserved."; }
+                    if root.status != "": Text { text: root.status; color: Theme.text; wrap: word-wrap; }
+                    if root.blocker != "": Text { text: root.blocker; color: Theme.warning; wrap: word-wrap; }
+                    if root.error != "": Text { text: root.error; color: Theme.danger; wrap: word-wrap; }
+                    if root.watch-error != "": Text { text: root.watch-error; color: Theme.danger; wrap: word-wrap; }
+                    if root.message != "": Text { text: root.message; color: Theme.danger; wrap: word-wrap; }
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Cancel"; clicked => { root.close-dialog(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Reload content"; primary: true; enabled: root.can-reload && !root.busy; clicked => { root.reload-content(); } }
+            }
+        }
+    }
+}

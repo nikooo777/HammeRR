@@ -149,6 +149,36 @@ For unassigned faces, set **Brush smoothing angle** in **Build settings…**; 0�
 Reload refreshes thumbnails, viewport textures, model materials and sky faces.
 It does not reload model geometry, remount content or refresh a running game.
 
+## Reload mounted content and definitions
+
+1. Save the changed assets, archives, `gameinfo.txt` or FGD files.
+2. Open **File → Content refresh…**.
+3. Optionally enable **Watch for content changes** to report pending changes in the current mounted content and effective FGD sources.
+4. Finish conflicting drafts and stop any managed build or game, then click **Reload content**.
+5. Read the refresh status and watch-coverage errors. Repair failed sources before retrying.
+
+| Before reload | After reload |
+| --- | --- |
+| ![Two panels use the original brick materials](images/asset-reload-before.png) | ![The same panels display updated loose-file and VPK materials](images/asset-reload-after.png) |
+
+**Reload content** rebuilds the current mounts and FGD includes and clears the
+dependent material, model, sound and particle caches. It retains the map, Undo
+history, selection, cameras and requested build/launch settings. Failed, stale
+or cancelled preparation retains the previous content with an explicit error.
+**Cancel**, <kbd>Escape</kbd> or closing the dialog requests cancellation of an
+active reload; wait for the worker to retire before starting another.
+
+Mounts accept single-file VPKs and split archives. When both forms exist,
+`name_dir.vpk` takes precedence over `name.vpk`; a broken preferred index reports
+an error instead of substituting the other package.
+
+Watching starts off and lasts for the current document session. It reports
+changes for review; it never applies them automatically. Successful reload
+registers the updated mount and definition sources.
+
+> [!NOTE]
+> Native watching supports Linux and Windows. Errors, overflow and incomplete coverage remain explicit; there is no polling fallback. Reload does not refresh a running game's process-owned caches. Stop the managed game, reload, then choose **Run map** to build and play with the new content.
+
 ## Favorites
 
 Use **Add favorite** and **Remove favorite** to save choices.

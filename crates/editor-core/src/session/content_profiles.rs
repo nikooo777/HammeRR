@@ -17,7 +17,7 @@ use crate::game;
 use super::worker::{Slot, Ticket};
 use super::{Actor, Session};
 
-const MAX_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
+pub(super) const MAX_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_NATIVE_LIBRARY_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_MOUNTS: usize = 256;
 
@@ -162,6 +162,13 @@ fn mount_layout(game: &GameFs) -> Vec<(Vec<String>, PathBuf)> {
 }
 
 impl Candidate {
+    pub(super) fn watch_scope(
+        &self,
+        config: &Config,
+    ) -> Result<crate::content_watch::Scope, String> {
+        super::content_refresh::watch_scope(&self.game, &self.catalog, Some(config))
+    }
+
     pub(super) fn load(config: &Config, control: &compiler::Control) -> Result<Self, String> {
         control.checkpoint()?;
         config.validate()?;
@@ -330,15 +337,18 @@ impl Session {
         self.native_cleanup_result()?;
         if self.compiling() || self.launching() || self.game_running() {
             return Err(
-                "Wait for builds, launches and the managed game before applying a content profile"
-                    .into(),
+                "Wait for builds, launches and the managed game before changing content".into(),
             );
         }
         if self.content_workers_busy()
+            || self.content_refresh_worker_busy()
             || self.definitions_load_busy()
             || self.recovery.close_work()["pending"].as_bool() == Some(true)
         {
-            return Err("Wait for active content, definitions or recovery workers before applying a content profile".into());
+            return Err(
+                "Wait for active content, definitions or recovery workers before changing content"
+                    .into(),
+            );
         }
         let native = self.native_activity_status();
         if native["available"].as_bool() == Some(false) {
@@ -348,13 +358,13 @@ impl Session {
                 .into());
         }
         if !self.sounds.close_playback()["playback"].is_null() {
-            return Err("Stop the sound preview before applying a content profile".into());
+            return Err("Stop the sound preview before changing content".into());
         }
         if let Some(kind) = self.document_close_review().first_draft_except("")
             && !discard_drafts
         {
             return Err(format!(
-                "Apply or cancel the pending {kind} draft before applying a content profile"
+                "Apply or cancel the pending {kind} draft before changing content"
             ));
         }
         Ok(())
@@ -644,17 +654,27 @@ impl Session {
         config: Config,
         active: Option<Profile>,
     ) {
-        self.game = candidate.game;
-        self.game_error = None;
-        self.definitions = candidate.catalog;
-        self.definitions_error = None;
-        self.definitions_serial += 1;
         self.native_capture
             .adopt(config.engine_root.clone(), config.steam_root.clone());
         self.adopt_profile_build_settings(candidate.options);
-        self.reset_mounted_content_assets();
+        self.install_prepared_sources(candidate.game, candidate.catalog);
         self.content_profiles.current = Some(config);
         self.content_profiles.active = active;
+        self.content_sources_changed(None);
+    }
+
+    pub(super) fn adopt_refreshed_content(&mut self, candidate: Candidate) {
+        self.install_prepared_sources(candidate.game, candidate.catalog);
+    }
+
+    fn install_prepared_sources(&mut self, game: Arc<GameFs>, catalog: Catalog) {
+        self.game = game;
+        self.game_error = None;
+        self.definitions = catalog;
+        self.definitions_error = None;
+        self.definitions_serial += 1;
+        self.reset_mounted_content_assets();
+        self.changed();
     }
 
     pub fn remove_content_profile(

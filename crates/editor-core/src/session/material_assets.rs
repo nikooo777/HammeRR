@@ -21,6 +21,7 @@ pub struct Report {
 
 impl Session {
     pub(super) fn reset_mounted_content_assets(&mut self) {
+        self.invalidate_content_builds();
         self.advance_content_epoch();
         self.models.get_mut().clear();
         self.materials = render::MaterialLibrary::default();

@@ -6,6 +6,7 @@ pub mod build_settings;
 pub mod color;
 pub mod color_palette;
 pub mod content_profiles;
+pub(crate) mod content_watch;
 pub mod game;
 pub mod grid_preferences;
 pub mod identity;

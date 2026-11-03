@@ -175,6 +175,9 @@ impl Session {
     }
 
     pub fn begin_definitions_load(&mut self, path: &Path) -> Result<Request, String> {
+        if self.content_refresh_worker_busy() {
+            return Err("Wait for the current content reload before loading definitions".into());
+        }
         if self.closing {
             return Err("The editor is closing".into());
         }

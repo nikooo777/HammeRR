@@ -207,6 +207,7 @@ impl Session {
                 "collapse": self.geometry.instance_collapse.close_work(),
                 "definitions": self.definitions_load.close_work(),
                 "content_profiles": self.content_profile_close_work(),
+                "content_refresh": self.content_refresh_close_work(),
                 "recent_maps": self.recent_map_close_work(),
                 "recovery": self.recovery.close_work(),
                 "native_cleanup_error": self.native_cleanup_error,

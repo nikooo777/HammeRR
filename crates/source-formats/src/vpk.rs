@@ -1,7 +1,7 @@
 //! Valve Pak (VPK) archives, versions 1 and 2.
 //!
-//! A pak is a `<name>_dir.vpk` index plus numbered `<name>_NNN.vpk` data
-//! archives. Paths inside are lowercase with forward slashes.
+//! A pak has a `<name>_dir.vpk` index with numbered `<name>_NNN.vpk` data
+//! archives, or a single `<name>.vpk`. Paths inside are lowercase with forward slashes.
 
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -104,16 +104,23 @@ impl<'a> Cursor<'a> {
 }
 
 impl Vpk {
-    /// Opens a pak by its dir file (`x_dir.vpk`) or by its logical name
-    /// (`x.vpk`), as written in `gameinfo.txt`.
+    /// Opens a split or single-file archive using native directory-index precedence.
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
-        let dir_path = Self::dir_file_for(path);
+        let dir_path = Self::resolve_index(path)?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("VPK archive was not found: {}", path.display()),
+            )
+        })?;
         let file_name = dir_path
             .file_name()
             .and_then(|n| n.to_str())
             .ok_or_else(|| invalid("VPK path has no file name"))?;
-        let stem = file_name.strip_suffix("_dir.vpk").unwrap_or(file_name);
+        let stem = file_name
+            .strip_suffix("_dir.vpk")
+            .or_else(|| file_name.strip_suffix(".vpk"))
+            .unwrap_or(file_name);
         let archive_stem = dir_path.with_file_name(stem);
 
         let mut file = File::open(&dir_path)?;
@@ -173,6 +180,36 @@ impl Vpk {
             Some(stem) if !stem.ends_with("_dir") => path.with_file_name(format!("{stem}_dir.vpk")),
             _ => path.to_path_buf(),
         }
+    }
+
+    pub fn index_candidates(path: &Path) -> [PathBuf; 2] {
+        let preferred = Self::dir_file_for(path);
+        let single = preferred
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix("_dir.vpk"))
+            .map(|stem| preferred.with_file_name(format!("{stem}.vpk")))
+            .unwrap_or_else(|| path.to_owned());
+        [preferred, single]
+    }
+
+    pub fn resolve_index(path: &Path) -> io::Result<Option<PathBuf>> {
+        for candidate in Self::index_candidates(path) {
+            match fs::symlink_metadata(&candidate) {
+                Ok(_) => {
+                    if !fs::metadata(&candidate)?.is_file() {
+                        return Err(invalid(format!(
+                            "{} is not a VPK file",
+                            candidate.display()
+                        )));
+                    }
+                    return Ok(Some(candidate));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(None)
     }
 
     fn parse_tree(tree: &[u8]) -> io::Result<(HashMap<String, Entry>, usize)> {

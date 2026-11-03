@@ -12,6 +12,7 @@ use crate::{BakedSurfacesWindow, session::Actor};
 pub(super) struct Form {
     window: BakedSurfacesWindow,
     state: Rc<RefCell<State>>,
+    samples: Rc<super::baked_prop_samples::Form>,
 }
 
 #[derive(Default)]
@@ -161,6 +162,7 @@ fn clear_faces(window: &BakedSurfacesWindow, state: &mut State) {
     window.set_face_rows(slint::ModelRc::default());
     window.set_current_row(-1);
     window.set_can_frame(false);
+    window.set_can_inspect_prop_samples(false);
     window.set_previous(false);
     window.set_next(false);
     window.set_page("".into());
@@ -366,8 +368,10 @@ fn perform(
             if let Some(face) = state.selected_face.and_then(|index| state.faces.get(index)) {
                 window.set_face_summary(face.summary.clone().into());
                 window.set_can_frame(face.can_frame);
+                window.set_can_inspect_prop_samples(state.record_kind == RecordKind::StaticProps);
             } else {
                 window.set_can_frame(false);
+                window.set_can_inspect_prop_samples(false);
             }
             return Ok(());
         }
@@ -519,6 +523,39 @@ pub(super) fn bind(
 ) -> Result<Form, slint::PlatformError> {
     let window = BakedSurfacesWindow::new()?;
     let state = Rc::new(RefCell::new(State::default()));
+    let samples = Rc::new(super::baked_prop_samples::Form::new(access)?);
+    window.on_inspect_prop_samples({
+        let (window, target, state, samples) = (
+            window.as_weak(),
+            access.downgrade(),
+            state.clone(),
+            samples.clone(),
+        );
+        move || {
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let result = target.upgrade().and_then(|access| {
+                access.with_session(|session| {
+                    let state = state.borrow();
+                    if state.record_kind != RecordKind::StaticProps {
+                        return Err("Choose a prepared static prop first".into());
+                    }
+                    let prop = state
+                        .selected_face
+                        .and_then(|index| state.faces.get(index))
+                        .ok_or("Choose a prepared static prop first")?;
+                    let token = state.token.ok_or("Prepare baked surfaces first")?;
+                    let prop = u32::try_from(prop.face)
+                        .map_err(|_| "Static-prop ordinal exceeds its native range")?;
+                    samples.show(session, token, prop)
+                })
+            });
+            if let Err(error) = result {
+                window.set_message(error.into());
+            }
+        }
+    });
     parent.on_inspect_baked_surfaces({
         let (parent, window, target, state) = (
             parent.as_weak(),
@@ -567,12 +604,17 @@ pub(super) fn bind(
             }
         }
     });
-    Ok(Form { window, state })
+    Ok(Form {
+        window,
+        state,
+        samples,
+    })
 }
 
 impl Form {
     pub(super) fn refresh(&self, session: &Session) {
-        if !self.is_visible() {
+        self.samples.refresh(session);
+        if !self.window.window().is_visible() {
             return;
         }
         let observation = session.baked_surfaces_observation();
@@ -620,13 +662,15 @@ impl Form {
 
     pub(super) fn set_aspect(&self, aspect: f32) {
         self.window.set_aspect(aspect);
+        self.samples.set_aspect(aspect);
     }
 
     pub(super) fn is_visible(&self) -> bool {
-        self.window.window().is_visible()
+        self.window.window().is_visible() || self.samples.is_visible()
     }
 
     pub(super) fn hide_window(&self, errors: &mut Vec<String>) {
+        self.samples.hide_window(errors);
         crate::ui::hide_window("Baked surfaces", self.window.window(), errors);
     }
 }

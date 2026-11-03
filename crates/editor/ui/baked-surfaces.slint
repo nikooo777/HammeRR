@@ -19,6 +19,7 @@ export component BakedSurfacesWindow inherits Window {
     in property <bool> previous;
     in property <bool> next;
     in property <bool> can-frame;
+    in property <bool> can-inspect-prop-samples;
     in property <float> aspect: 1;
     in property <[[StandardListViewItem]]> face-rows;
     in-out property <int> current-row: -1;
@@ -42,6 +43,7 @@ export component BakedSurfacesWindow inherits Window {
     callback choose-face(int);
     callback choose-record-kind(int);
     callback frame-face();
+    callback inspect-prop-samples();
     callback close-dialog();
     forward-focus: keys;
     keys := FocusScope {
@@ -53,6 +55,7 @@ export component BakedSurfacesWindow inherits Window {
             padding: Theme.space-xl;
             spacing: 10px;
             HorizontalLayout {
+                spacing: Theme.space;
                 Text { text: "Baked surfaces"; font-size: Theme.font-display; font-weight: 600; }
                 Rectangle { horizontal-stretch: 1; }
                 Text { text: root.state; vertical-alignment: center; color: Theme.warning; }
@@ -110,7 +113,7 @@ export component BakedSurfacesWindow inherits Window {
             StandardTableView {
                 rows: root.face-rows;
                 columns: [
-                    { title: "Record", width: 72px },
+                    { title: "Record", width: 96px },
                     { title: "Receiver", width: 150px },
                     { title: "Material / model", min-width: 240px, horizontal-stretch: 1 },
                 ];
@@ -129,6 +132,7 @@ export component BakedSurfacesWindow inherits Window {
                 Text { text: root.page; vertical-alignment: center; }
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: root.record-index == 0 ? "Frame face" : "Frame static prop"; enabled: root.can-frame; clicked => { root.frame-face(); } }
+                if root.record-index == 1: Button { text: "Prepared prop samples…"; enabled: root.can-inspect-prop-samples; clicked => { root.inspect-prop-samples(); } }
             }
             Text { text: root.face-summary; wrap: word-wrap; color: Theme.text-muted; }
             ScrollView {
@@ -139,6 +143,7 @@ export component BakedSurfacesWindow inherits Window {
                 Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             }
             HorizontalLayout {
+                spacing: Theme.space;
                 Rectangle { horizontal-stretch: 1; }
                 Button { text: "Close"; clicked => { root.close-dialog(); } }
             }

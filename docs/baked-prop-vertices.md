@@ -4,6 +4,8 @@
 
 Inspect captured static-prop sources, native leaf membership and baked vertex colors.
 Use [Baked surfaces](baked-surfaces.md) to view these colors on final models and frame their mesh bounds.
+For exact world positions, point framing and a normal guide, use
+[Prepared prop samples…](baked-surfaces.md#locate-a-baked-prop-sample) after preparing **Compiled static props**.
 
 1. To read colors, enable **Bake static-prop vertex lighting** in **Build settings…**.
    Choose **Direct LDR** or **Direct LDR + HDR**.
@@ -53,7 +55,7 @@ Camera, selection, map, history and ordinary drafts stay unchanged.
 - Prop ordinals and hardware sections belong to one build. Source addresses identify captured authored entities; selection uses only a current verified capture.
 - Missing or unverified source metadata is reported separately; valid native prop and color rows remain available.
 - Captured prop metadata is limited to 8 MiB, including shared occurrence storage once. Source copies are admitted before allocation within 128 KiB per report; each report is limited to 256 KiB.
-- Raw vertex pages do not include model positions. Baked surfaces resolves the hardware layout for display.
+- Raw vertex pages do not require prepared model geometry or include model positions. **Prepared prop samples…** resolves each exact hardware occurrence through Baked surfaces.
 - Leaf boxes are conservative native bounds. They do not show exact convex cells, prop mesh clipping or runtime visibility.
 - A complete guide must fit 512 leaves and 256 KiB of bounds and renderer storage. An invalid or larger request keeps the previous guide. The bounds are never truncated.
 - Leaf guides require the original tracked directory metadata. A directory change can suppress a guide even when its BSP is intact.

@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 85.3% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 85.5% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -139,7 +139,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | [Baked surfaces](docs/baked-surfaces.md) | [Map comparison](docs/map-comparison.md) |
 | --- | --- |
 | ![Baked lighting on arches, terrain, stairs and wooden props](docs/images/baked-surfaces.png) | ![Changed objects selected after an external-map comparison](docs/images/external-map-comparison.png) |
-| View final brushes, terrain, brush models and static props with baked lighting. | Compare stored objects and select or frame current matches. |
+| View final baked surfaces and locate exact prop-lighting samples. | Compare stored objects and select or frame current matches. |
 
 | [Workspace layout](docs/workspace-layout.md) | [Content profiles](docs/content-profiles.md) |
 | --- | --- |

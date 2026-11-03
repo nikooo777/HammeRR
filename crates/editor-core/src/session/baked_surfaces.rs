@@ -15,7 +15,9 @@ use super::{
 };
 
 mod assets;
+mod prop_samples;
 mod props;
+pub use prop_samples::MAX_SAMPLE_ROWS;
 
 pub const MAX_ROWS: usize = 64;
 pub const MAX_METADATA_BYTES: usize = 32 * 1024 * 1024;
@@ -62,6 +64,11 @@ pub enum RecordKind {
 pub enum FrameTarget {
     Face(usize),
     StaticProp(u32),
+    StaticPropSample {
+        prop: u32,
+        section: usize,
+        vertex: usize,
+    },
 }
 
 struct Pending {
@@ -82,6 +89,7 @@ pub(super) struct State {
     error: Option<String>,
     options: LightingSettings,
     preparation: PreparationOptions,
+    sample_guide: Option<prop_samples::Guide>,
 }
 
 struct Ready {
@@ -509,6 +517,7 @@ impl Session {
         self.baked_surfaces.displayed = false;
         self.baked_surfaces.options = LightingSettings::default();
         self.baked_surfaces.preparation = PreparationOptions::default();
+        self.baked_surfaces.sample_guide = None;
         self.baked_surfaces.status = "not_loaded";
         self.baked_surfaces.error = None;
         self.scene_serial += 1;
@@ -568,6 +577,9 @@ impl Session {
         let observed = self.baked_surface_current(&Control::default());
         let current = observed.as_ref().is_ok_and(|(_, _, current)| *current);
         if !current {
+            if self.baked_surfaces.sample_guide.take().is_some() {
+                self.scene_serial += 1;
+            }
             if let Some(pending) = &self.baked_surfaces.pending {
                 let _ = pending.control.cancel();
             }
@@ -601,7 +613,7 @@ impl Session {
     pub fn baked_surfaces_observation(&self) -> Value {
         json!({"token":self.baked_surface_token(),"status":if self.baked_surfaces.requested && !self.baked_surface_context_ready(){"context_suppressed"}else if self.baked_surfaces.status.is_empty(){"not_loaded"}else{self.baked_surfaces.status},
             "worker_active":self.baked_surfaces.worker.busy(),"requested":self.baked_surfaces.requested,"displayed":self.baked_surfaces_visible(),
-            "complete":self.baked_surfaces.ready.is_some(),"error":self.baked_surfaces.error,"lighting_options":self.baked_surfaces.options,"preparation_options":self.baked_surfaces.preparation,
+            "complete":self.baked_surfaces.ready.is_some(),"error":self.baked_surfaces.error,"lighting_options":self.baked_surfaces.options,"preparation_options":self.baked_surfaces.preparation,"prop_sample_guide":self.prop_sample_guide_report(self.view.authored_models),
             "context_ready":self.baked_surface_context_ready(),"suppression_reason":self.baked_surface_suppression_reason(),"working_region":self.working_region_configuration(),"build":self.compiled_world_light_observation()})
     }
 
@@ -628,7 +640,7 @@ impl Session {
         });
         json!({"state":self.baked_surfaces_observation(),"lighting":self.baked_surfaces_options_report(),"applied":self.baked_surfaces_visible(),"surface_view":view.surface.name(),
             "surface_count":surfaces.map(<[_]>::len),"visible_surface_count":surfaces.map(|surfaces|surfaces.iter().filter(|surface|self.baked_surface_in_region(surface)).count()),
-            "view_policy":VIEW_POLICY})
+            "view_policy":VIEW_POLICY,"prop_sample_guide":self.prop_sample_guide_report(view.authored_models)})
     }
 
     pub fn inspect_baked_surfaces(
@@ -763,6 +775,7 @@ impl Session {
         report["build"] = build;
         report["preview_assets"] = assets;
         report["current"] = json!(current);
+        report["prop_sample_guide"] = self.prop_sample_guide_report(self.view.authored_models);
         Ok(report)
     }
 
@@ -882,6 +895,7 @@ impl Session {
             .ready
             .as_ref()
             .ok_or("Prepare baked surfaces first")?;
+        let mut sample_record = None;
         let (bounds, kind, ordinal) = match target {
             FrameTarget::Face(face) => {
                 let surface = ready
@@ -903,6 +917,18 @@ impl Session {
                     .ok_or("Baked static-prop ordinal has no prepared mesh bounds")?;
                 (bounds, RecordKind::StaticProps, prop as usize)
             }
+            FrameTarget::StaticPropSample {
+                prop,
+                section,
+                vertex,
+            } => {
+                let sample = self.prepared_prop_sample(prop, section, vertex)?;
+                let point = glam::Vec3::from_array(sample.position);
+                let half = glam::Vec3::splat(inspection_framing::ORIGIN_HALF_EXTENT);
+                let bounds = [(point - half).to_array(), (point + half).to_array()];
+                sample_record = Some(sample);
+                (bounds, RecordKind::StaticProps, prop as usize)
+            }
         };
         let mins = glam::Vec3::from_array(bounds[0]);
         let maxs = glam::Vec3::from_array(bounds[1]);
@@ -917,6 +943,10 @@ impl Session {
         } else {
             "prop"
         }] = json!(ordinal);
+        if let Some(sample) = sample_record {
+            report["frame_target"] = json!("hardware_sample");
+            report["sample"] = json!(sample);
+        }
         Ok(report)
     }
 
@@ -1078,6 +1108,7 @@ impl Session {
                             .and_then(|bytes| bytes.checked_add(lighting.cpu_byte_len().ok()?))
                             .and_then(|bytes| bytes.checked_add(metadata))
                             .ok_or("Baked surface retained working size overflow")?;
+                        self.append_baked_prop_sample_guide(mesh, authored_models);
                         props.scene.append_prepared_filtered(
                             mesh,
                             &props.materials,

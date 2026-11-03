@@ -26,6 +26,26 @@ density and smoothing groups.
 You can also prepare and show [final compiled details](compiled-details.md).
 The two layers keep separate lighting controls.
 
+## Locate a baked prop sample
+
+1. Prepare with **Compiled static props** and the required **Draw LOD**, then click **Show**.
+2. Choose **Record kind → Static props**, select a prop row, then click **Prepared prop samples…**.
+3. Select a sample in **Baked prop samples**. Use **Previous**, **Next** or **Refresh inspection** to browse its exact prepared positions, normals and colors.
+4. Click **Frame sample** to center that hardware occurrence, or **Show sample guide** to mark its point and normal in the viewport.
+5. Use **Clear guide** to remove the marker. **Cancel**, <kbd>Escape</kbd> or closing the inspector leaves an explicitly shown guide requested.
+
+Expand **Technical details** for stored color bytes and hardware identities.
+
+![A baked prop vertex marked with a point cross and surface normal](images/baked-prop-sample-guide.jpg)
+
+Repeated and unused hardware vertices remain separate samples. Section and
+vertex identify the occurrence; matching positions do not merge rows. Samples
+use the preparation's exact LOD, **Channel** and **Exposure (EV)**. Missing or
+stale data reports an error and keeps the camera unchanged. Reprepare after
+source or asset changes; inspection and guides do not edit the map or selection.
+The guide follows **Authored models**, layer visibility and whole-prop working
+regions. **Hide** retains its request; preparation retirement removes it.
+
 ## Materials and view
 
 The preview reads compiled diffuse textures, static tint and supported blend and

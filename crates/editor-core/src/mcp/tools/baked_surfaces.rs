@@ -13,6 +13,16 @@ pub struct InspectBakedSurfacesArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InspectBakedPropSamplesArgs {
+    token: String,
+    prop: u32,
+    offset: Option<usize>,
+    #[schemars(range(min = 1, max = crate::session::baked_surfaces::MAX_SAMPLE_ROWS))]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(extend("type" = "object"))]
 pub enum SetBakedSurfacesArgs {
@@ -50,10 +60,45 @@ pub enum SetBakedSurfacesArgs {
         #[schemars(range(min = 0.01, max = 100))]
         aspect: Option<f32>,
     },
+    FramePropSample {
+        token: String,
+        prop: u32,
+        section: usize,
+        vertex: usize,
+        #[schemars(range(min = 0.01, max = 100))]
+        aspect: Option<f32>,
+    },
+    ShowPropSampleGuide {
+        token: String,
+        prop: u32,
+        section: usize,
+        vertex: usize,
+    },
+    ClearPropSampleGuide {
+        token: String,
+    },
 }
 
 #[tool_router(router = baked_surfaces_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
+    #[tool(
+        description = "Inspect Prepared prop samples… for an exact prepared static-prop ordinal from inspect_baked_surfaces(record_kind=static_props), using its current opaque Baked surfaces token. Pages flatten only the preparation's exact Draw LOD in native section order and retain duplicate/unused hardware occurrences. Reports per-prop section, section-local vertex, hardware index, world position/normal, triangle usage and existing channel/EV color decode, bounded section metadata and sample-guide state. Requires current guarded preparation with Compiled static props; no model reload, second decoder, LOD/channel/root-vertex substitution, camera or source mutation. Use inspect_baked_prop_vertices independently for raw stored VHV colors, including unprepared/historical data."
+    )]
+    pub(in crate::mcp) fn inspect_baked_prop_samples(
+        &self,
+        Parameters(args): Parameters<InspectBakedPropSamplesArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session().inspect_baked_prop_samples(
+                parse_token(&args.token)?,
+                args.prop,
+                args.offset.unwrap_or(0),
+                args.limit
+                    .unwrap_or(crate::session::baked_surfaces::MAX_SAMPLE_ROWS),
+            )
+        })
+    }
+
     #[tool(
         description = "Inspect Baked surfaces through Build settings… / Build details… → Baked surfaces… → Inspect and the shared Session operation. Available before the first build; reports preparation availability, token, loading/prepared/ready/stale/cancelled/unavailable/context-suppressed state, exact owned build/output/source and display-asset freshness, shared channel/exposure, FACE stored-ID gains and preparation options. record_kind defaults faces; static_props pages expose prepared native prop ordinals, selected hardware Draw LOD, available LODs and transformed mesh bounds. limit is 1–64; nonzero pages require the returned opaque token. Native ordinals belong to this preparation, never authored picking identities. Static VHV weight is fixed at1 with no style decomposition; FACE density and smoothing are inapplicable. Runtime point/spot style contributions are not simulated; lighting.static_props.runtime_direct_lighting reports not_simulated. inspect_baked_prop_vertices retains exact stored BGRA/section inspection. Does not prepare, initialize graphics, change options, select, frame or edit."
     )]
@@ -72,7 +117,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Manage Baked surfaces through the shared Session lifecycle. prepare requires a current successful owned lit build; background defaults false, compiled_static_props defaults false and draw_lod defaults0 (explicit0–7). Compiled static props require exact published VHV/model/material inputs and the requested hardware LOD on every receiver; missing inputs/LODs fail the complete preparation without substitution. Changing Draw LOD requires Prepare. Prepare resets lighting settings; Clear cancels/releases and resets all options. Hide retains preparation/settings. cancel/clear/show/hide require the opaque token. lighting atomically sets channel ldr/hdr, exposure_ev -8..8 and style_gains [{style,gain}], distinct stored FACE IDs0–63 with finite gains0–2. FACE style0 defaults1, omitted other styles0; VHV has fixed static weight1 and no style decomposition. Runtime point/spot style contributions are not simulated. Channel/EV apply to both receiver kinds. VHV RGB decodes per hardware vertex as pow(2*byte/255,2.2_f32) before interpolation, then resolved diffuse/coverage, EV, Reinhard and one sRGB output; alpha coverage comes from materials. No native appearance/adaptation parity is claimed. Show validates original build/output/source identities and independent display assets. Working regions include whole final faces/props; only exact sealed source occurrences lose replaced authored draw surfaces, preserving authored picking/helpers/outlines and opted-out siblings. frame requires exactly face or prop from inspection; optional record_kind faces/static_props must match. It uses transformed mesh bounds and optional aspect (default1, finite0.01–100). Only Frame changes the camera."
+        description = "Manage Baked surfaces through the shared Session lifecycle. prepare requires a current successful owned lit build; background defaults false, compiled_static_props defaults false and draw_lod defaults0 (explicit0–7). Compiled static props require exact published VHV/model/material inputs and the requested hardware LOD on every receiver; missing inputs/LODs fail the complete preparation without substitution. Changing Draw LOD requires Prepare. Prepare resets lighting settings; Clear cancels/releases and resets all options. Hide retains preparation/settings. cancel/clear/show/hide require the opaque token. lighting atomically sets channel ldr/hdr, exposure_ev -8..8 and style_gains [{style,gain}], distinct stored FACE IDs0–63 with finite gains0–2. FACE style0 defaults1, omitted other styles0; VHV has fixed static weight1 and no style decomposition. Runtime point/spot style contributions are not simulated. Channel/EV apply to both receiver kinds. VHV RGB decodes per hardware vertex as pow(2*byte/255,2.2_f32) before interpolation, then resolved diffuse/coverage, EV, Reinhard and one sRGB output; alpha coverage comes from materials. No native appearance/adaptation parity is claimed. Show validates original build/output/source identities and independent display assets. Working regions include whole final faces/props; only exact sealed source occurrences lose replaced authored draw surfaces, preserving authored picking/helpers/outlines and opted-out siblings. frame requires exactly face or prop from inspection; optional record_kind faces/static_props must match. It uses transformed mesh bounds and optional aspect (default1, finite0.01–100). frame_prop_sample requires token plus exact prop, per-prop section and section-local vertex from inspect_baked_prop_samples, with optional aspect; it frames that prepared occurrence without root-vertex, LOD or channel substitution. show_prop_sample_guide uses the same exact identity and requires the actual prepared prop to be displayed in the current context, Draw LOD and working region. clear_prop_sample_guide requires only the captured token and can clear a suppressed guide. One explicit point/normal guide remains after closing the inspector until cleared or its preparation retires; no map/history/selection changes. Only frame and frame_prop_sample change the camera."
     )]
     pub(in crate::mcp) fn set_baked_surfaces(
         &self,
@@ -167,6 +212,37 @@ impl EditorServer {
                     aspect.unwrap_or(1.0),
                 )
             }
+            SetBakedSurfacesArgs::FramePropSample {
+                token,
+                prop,
+                section,
+                vertex,
+                aspect,
+            } => self.session().frame_baked_surface_record(
+                Actor::Agent,
+                parse_token(&token)?,
+                FrameTarget::StaticPropSample {
+                    prop,
+                    section,
+                    vertex,
+                },
+                aspect.unwrap_or(1.0),
+            ),
+            SetBakedSurfacesArgs::ShowPropSampleGuide {
+                token,
+                prop,
+                section,
+                vertex,
+            } => self.session().set_baked_prop_sample_guide(
+                Actor::Agent,
+                parse_token(&token)?,
+                prop,
+                section,
+                vertex,
+            ),
+            SetBakedSurfacesArgs::ClearPropSampleGuide { token } => self
+                .session()
+                .clear_baked_prop_sample_guide(Actor::Agent, parse_token(&token)?),
         })
     }
 }

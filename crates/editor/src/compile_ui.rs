@@ -8,6 +8,7 @@ use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
 use crate::session::{Actor, Session};
 
 mod baked_lightmaps;
+mod baked_prop_samples;
 mod baked_prop_vertices;
 mod baked_surfaces;
 mod brush_texture_shadows;

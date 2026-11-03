@@ -19,7 +19,8 @@ use crate::{
 
 pub const POLICY: &str = "Final native static-prop ordinals, selected skins and poses; exact ordered MDL/VVD/DX90-VTX hardware occurrences and independently baked VHV channels. RGB bytes decode per vertex as pow(2*byte/255, f64::from(2.2_f32)) before interpolation. VHV alpha is retained data, not opacity. Baked-static weight is unity with no runtime-style decomposition; shared EV follows compiled diffuse and material coverage, then Reinhard and one sRGB output. Runtime point/spot style contributions are not simulated. No native adaptation or appearance parity.";
 const MAX_PROPS: usize = 1024;
-const MAX_SECTIONS: usize = 256;
+pub const MAX_SECTIONS: usize = 256;
+pub const MAX_PAGE_SAMPLES: usize = 256;
 const MAX_NAME_BYTES: usize = 1024;
 const WIRE_COLOR: [u8; 4] = [151, 169, 191, 255];
 
@@ -47,18 +48,58 @@ pub struct Input<'a> {
     pub channels: [Option<&'a [u8]>; 2],
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VertexSample {
+    pub prop: u32,
+    pub section: usize,
+    pub vertex: usize,
+    pub lod: u8,
+    /// Per-prop hardware occurrence index across all sections and LODs.
+    pub hardware_index: usize,
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub channel: LightingChannel,
+    pub exposure_ev: f64,
+    pub used_by_triangles: bool,
     pub bgra: [u8; 4],
     pub decoded_linear: [f64; 3],
     pub pre_ev: [f64; 3],
     pub exposed: [f64; 3],
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct SectionInfo {
+    pub prop: u32,
+    pub section: usize,
+    pub lod: u8,
+    pub hardware_start: usize,
+    pub vertices: usize,
+    pub triangles: usize,
+    pub material: usize,
+    pub mins: [f32; 3],
+    pub maxs: [f32; 3],
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct SamplePage {
+    pub prop: u32,
+    pub draw_lod: u8,
+    pub channel: LightingChannel,
+    pub exposure_ev: f64,
+    /// Offset within the requested prop LOD, in native section order.
+    pub offset: usize,
+    pub limit: usize,
+    pub total: usize,
+    pub next_offset: Option<usize>,
+    pub rows: Vec<VertexSample>,
+}
+
 #[derive(Debug)]
 struct Section {
     prop: usize,
+    index: usize,
     lod: u8,
+    hardware_start: usize,
     material: usize,
     vertices: Range<usize>,
     indices: Range<usize>,
@@ -73,6 +114,7 @@ pub struct Scene {
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
     colors: [Option<Vec<Bgra8>>; 2],
+    used_by_triangles: Vec<u8>,
     retained_bytes: usize,
 }
 
@@ -94,6 +136,7 @@ impl Scene {
             vertices: Vec::new(),
             indices: Vec::new(),
             colors,
+            used_by_triangles: Vec::new(),
             retained_bytes: size_of::<Self>(),
         })
     }
@@ -227,6 +270,7 @@ impl Scene {
             input.layout.lods,
             bytes(input.layout.sections.len(), size_of::<Section>())?,
             bytes(vertex_count, size_of::<Vertex>())?,
+            bytes(vertex_count, size_of::<u8>())?,
             bytes(index_count, size_of::<u32>())?,
             bytes(
                 vertex_count,
@@ -243,6 +287,7 @@ impl Scene {
         reserve(&mut self.props, 1)?;
         reserve(&mut self.sections, input.layout.sections.len())?;
         reserve(&mut self.vertices, vertex_count)?;
+        reserve(&mut self.used_by_triangles, vertex_count)?;
         reserve(&mut self.indices, index_count)?;
         for colors in self.colors.iter_mut().flatten() {
             reserve(colors, vertex_count)?;
@@ -257,6 +302,7 @@ impl Scene {
         available_lods.extend((0..input.layout.lods).map(|lod| lod as u8));
         let mut mins = Vec3::splat(f32::INFINITY);
         let mut maxs = Vec3::splat(f32::NEG_INFINITY);
+        let prop_vertex_start = self.vertices.len();
         for (section_index, section) in input.layout.sections.iter().enumerate() {
             let start = self.vertices.len();
             let mut section_mins = Vec3::splat(f32::INFINITY);
@@ -268,13 +314,12 @@ impl Scene {
                 section_maxs = section_maxs.max(point);
                 self.vertices.push(vertex);
             }
+            self.used_by_triangles.resize(self.vertices.len(), 0);
             let first_index = self.indices.len();
-            self.indices.extend(
-                section
-                    .triangle_indices
-                    .iter()
-                    .map(|&local| start as u32 + local),
-            );
+            for &local in &section.triangle_indices {
+                self.indices.push(start as u32 + local);
+                self.used_by_triangles[start + local as usize] = 1;
+            }
             for (channel, view) in views.iter().enumerate() {
                 if let Some(view) = view {
                     let colors = view.section(section_index).map_err(message)?;
@@ -287,7 +332,9 @@ impl Scene {
             }
             self.sections.push(Section {
                 prop: self.props.len(),
+                index: section_index,
                 lod: section.lod as u8,
+                hardware_start: start - prop_vertex_start,
                 material: input.materials[section_index],
                 vertices: start..self.vertices.len(),
                 indices: first_index..self.indices.len(),
@@ -407,14 +454,131 @@ impl Scene {
         if vertex >= section.vertices.len() {
             return Err("Compiled prop local hardware vertex is unavailable".into());
         }
-        let color = self.channel(settings.channel)?[section.vertices.start + vertex];
+        let colors = self.channel(settings.channel)?;
+        Ok(self.sample_at(section, vertex, colors, settings))
+    }
+
+    pub fn sections(&self, ordinal: u32) -> Result<Vec<SectionInfo>, String> {
+        let prop = self
+            .props
+            .iter()
+            .position(|prop| prop.ordinal == ordinal)
+            .ok_or("Compiled prop ordinal is unavailable")?;
+        let mut rows = Vec::new();
+        let count = self
+            .sections
+            .iter()
+            .filter(|section| section.prop == prop)
+            .count();
+        reserve(&mut rows, count)?;
+        for section in self.sections.iter().filter(|section| section.prop == prop) {
+            rows.push(SectionInfo {
+                prop: ordinal,
+                section: section.index,
+                lod: section.lod,
+                hardware_start: section.hardware_start,
+                vertices: section.vertices.len(),
+                triangles: section.indices.len() / 3,
+                material: section.material,
+                mins: section.mins.to_array(),
+                maxs: section.maxs.to_array(),
+            });
+        }
+        Ok(rows)
+    }
+
+    pub fn sample_page(
+        &self,
+        ordinal: u32,
+        draw_lod: u8,
+        offset: usize,
+        limit: usize,
+        settings: &LightingSettings,
+    ) -> Result<SamplePage, String> {
+        if !(1..=MAX_PAGE_SAMPLES).contains(&limit) || offset.checked_add(limit).is_none() {
+            return Err(format!(
+                "Compiled prop sample pages require 1–{MAX_PAGE_SAMPLES} rows without overflow"
+            ));
+        }
+        self.validate_settings(settings, draw_lod)?;
+        let prop = self
+            .props
+            .iter()
+            .position(|prop| prop.ordinal == ordinal)
+            .ok_or("Compiled prop ordinal is unavailable")?;
+        let selected = || {
+            self.sections
+                .iter()
+                .filter(|section| section.prop == prop && section.lod == draw_lod)
+        };
+        let total = selected()
+            .try_fold(0usize, |total, section| {
+                total.checked_add(section.vertices.len())
+            })
+            .ok_or("Compiled prop sample count overflow")?;
+        if offset > total {
+            return Err("Compiled prop sample page exceeds its requested draw LOD".into());
+        }
+        let count = limit.min(total - offset);
+        let mut rows = Vec::new();
+        reserve(&mut rows, count)?;
+        let colors = self.channel(settings.channel)?;
+        let mut skip = offset;
+        for section in selected() {
+            if rows.len() == count {
+                break;
+            }
+            if skip >= section.vertices.len() {
+                skip -= section.vertices.len();
+                continue;
+            }
+            let remaining = (count - rows.len()).min(section.vertices.len() - skip);
+            let end = skip + remaining;
+            for vertex in skip..end {
+                rows.push(self.sample_at(section, vertex, colors, settings));
+            }
+            skip = 0;
+        }
+        let next = offset + rows.len();
+        Ok(SamplePage {
+            prop: ordinal,
+            draw_lod,
+            channel: settings.channel,
+            exposure_ev: settings.exposure_ev,
+            offset,
+            limit,
+            total,
+            next_offset: (next < total).then_some(next),
+            rows,
+        })
+    }
+
+    fn sample_at(
+        &self,
+        section: &Section,
+        vertex: usize,
+        colors: &[Bgra8],
+        settings: &LightingSettings,
+    ) -> VertexSample {
+        let source = section.vertices.start + vertex;
+        let color = colors[source];
         let decoded = color.linear_rgb();
-        Ok(VertexSample {
+        VertexSample {
+            prop: self.props[section.prop].ordinal,
+            section: section.index,
+            vertex,
+            lod: section.lod,
+            hardware_index: section.hardware_start + vertex,
+            position: self.vertices[source].position,
+            normal: self.vertices[source].normal,
+            channel: settings.channel,
+            exposure_ev: settings.exposure_ev,
+            used_by_triangles: self.used_by_triangles[source] != 0,
             bgra: [color.blue, color.green, color.red, color.alpha],
             decoded_linear: decoded,
             pre_ev: decoded,
             exposed: decoded.map(|value| value * settings.exposure_ev.exp2()),
-        })
+        }
     }
 
     pub fn draw_lod_sample(

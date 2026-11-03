@@ -75,7 +75,7 @@ P06,Rope preview (++),45
 P07,Particle preview (++),0
 P08,Model/entity appearance preview (++),60
 P09,Helper visibility and selection presentation,100
-P10,Lighting diagnostics (++),80
+P10,Lighting diagnostics (++),100
 P11,Reload changed assets (++),100
 P12,Physics-assisted arrangement (++),0
 P13,Editor annotations and spatial design context (++),85

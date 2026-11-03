@@ -1,0 +1,118 @@
+import { Button, ScrollView } from "widgets.slint";
+import { Theme, MutedText, SectionHeader, SelectableRow } from "kit.slint";
+
+export struct BakedPropSampleRow {
+    title: string,
+    position: string,
+}
+
+export component BakedPropSamplesWindow inherits Window {
+    background: Theme.panel;
+    title: "Baked prop samples - HammeRR";
+    default-font-size: Theme.font;
+    preferred-width: 780px;
+    preferred-height: 700px;
+    min-width: 580px;
+    min-height: 540px;
+    in property <[BakedPropSampleRow]> rows;
+    in property <int> selected: -1;
+    in property <string> summary;
+    in property <string> page;
+    in property <string> details;
+    in property <string> technical-details;
+    in property <string> sections;
+    in property <string> guide-status;
+    in property <string> availability;
+    in property <string> message;
+    in property <bool> previous;
+    in property <bool> next;
+    in property <bool> can-frame;
+    in property <bool> can-show-guide;
+    in property <bool> can-clear-guide;
+    in property <float> aspect: 1;
+    callback choose-sample(int);
+    callback page-samples(int);
+    callback refresh-inspection();
+    callback frame-sample();
+    callback show-guide();
+    callback clear-guide();
+    callback close-dialog();
+    forward-focus: keys;
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: "Baked prop samples"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
+            if root.summary != "": MutedText { text: root.summary; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Refresh inspection"; clicked => { root.refresh-inspection(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Text { text: root.page; color: Theme.text-muted; vertical-alignment: center; }
+            }
+            ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                vertical-stretch: 1;
+                min-height: 120px;
+                VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
+                    spacing: Theme.space-xs;
+                    for row[index] in root.rows: SelectableRow {
+                        label: row.title;
+                        selected: root.selected == index;
+                        min-height: 58px;
+                        clicked => { root.choose-sample(index); }
+                        VerticalLayout {
+                            padding: Theme.space;
+                            spacing: Theme.space-xs;
+                            Text { text: row.title; color: Theme.text; overflow: elide; }
+                            Text { text: row.position; color: Theme.text-muted; overflow: elide; }
+                        }
+                    }
+                    if root.rows.length == 0: MutedText { text: "No retained sample page."; }
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Previous"; enabled: root.previous; clicked => { root.page-samples(-1); } }
+                Button { text: "Next"; enabled: root.next; clicked => { root.page-samples(1); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                preferred-height: 155px;
+                min-height: 80px;
+                VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
+                    spacing: Theme.space;
+                    SectionHeader { text: "Selected sample"; inset: false; collapsible: false; }
+                    MutedText { text: root.details; }
+                    technical-header := SectionHeader { text: "Technical details"; inset: false; expanded: false; }
+                    if technical-header.expanded: MutedText { text: root.technical-details; }
+                    sections-header := SectionHeader { text: "Prepared sections"; inset: false; expanded: false; }
+                    if sections-header.expanded: MutedText { text: root.sections; }
+                }
+            }
+            if root.guide-status != "": Text { text: root.guide-status; color: Theme.text-muted; wrap: word-wrap; }
+            if root.availability != "": Text { text: root.availability; color: Theme.warning; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: Theme.danger; wrap: word-wrap; }
+            MutedText { text: "Closing keeps the guide. Use Clear guide to remove it."; font-size: Theme.font-small; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Show sample guide"; enabled: root.can-show-guide; clicked => { root.show-guide(); } }
+                Button { text: "Clear guide"; enabled: root.can-clear-guide; clicked => { root.clear-guide(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Cancel"; clicked => { root.close-dialog(); } }
+                Button { text: "Frame sample"; primary: true; enabled: root.can-frame; clicked => { root.frame-sample(); } }
+            }
+        }
+    }
+}

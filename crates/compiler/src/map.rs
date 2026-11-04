@@ -301,7 +301,7 @@ impl<'a> Map<'a> {
             .properties
             .iter()
             .filter(|(key, _)| {
-                !map_core::context::is_storage_key(key)
+                !map_core::editor_metadata::is_storage_key(key)
                     && !key.eq_ignore_ascii_case(crate::MATERIAL_EMISSION_FILE_KEY)
                     && !key.eq_ignore_ascii_case(crate::MATERIAL_EMISSION_NATIVE_DIRECT_KEY)
                     && !key.eq_ignore_ascii_case(crate::MATERIAL_EMISSION_EXACT_VISIBILITY_KEY)
@@ -463,6 +463,12 @@ impl<'a> Map<'a> {
                 .push(Diagnostic::error(error.to_string(), None, None));
             return Ok(map);
         }
+        let ordering = map_core::instance_order::read(vmf)?;
+        let origin_custody = ordering
+            .iter()
+            .flat_map(|ordering| &ordering.origin_custody)
+            .map(|custody| (custody.entity, custody))
+            .collect::<HashMap<_, _>>();
         map.add_world(vmf);
 
         let mut hidden = 0;
@@ -546,14 +552,19 @@ impl<'a> Map<'a> {
             if water_analog && !crate::water_analog::admit_source(entity, report) {
                 continue;
             }
-            let origins = map.prepare_origins(entity, report, control)?;
+            let mut origins = map.prepare_origins(entity, report, control)?;
+            if let Some(custody) = origin_custody.get(&entity.id) {
+                let pivot = crate::instances::validate_origin_custody(entity, &origins, custody)
+                    .map_err(|error| format!("Brush model entity {}: {error}", entity.id))?;
+                origins.position = Some(origins::native_position(pivot)?);
+            }
             let index = map.entities.len();
             let mut properties: Vec<(String, String)> = entity
                 .properties
                 .iter()
                 .map(|(k, v)| (k.to_owned(), v.to_owned()))
                 .collect();
-            if !origins.volumes.is_empty()
+            if entity.solids.iter().any(|solid| !solid.hidden)
                 && let Some(origin) = origins.position
             {
                 properties.retain(|(key, _)| key != "origin");

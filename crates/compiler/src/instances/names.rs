@@ -1,10 +1,10 @@
 use super::*;
 
 pub(super) fn component(name: &str) -> Result<(), String> {
-    if !valid_component(name) {
-        return Err(
-            "Lighting origin name components require ASCII letters, digits or underscores".into(),
-        );
+    if name.len() > MAX_LIGHTING_ORIGIN_NAME_BYTES || !name.split('-').all(valid_component) {
+        return Err(format!(
+            "Local instance names require at most {MAX_LIGHTING_ORIGIN_NAME_BYTES} bytes of nonempty ASCII letter, digit or underscore components joined by hyphens"
+        ));
     }
     Ok(())
 }

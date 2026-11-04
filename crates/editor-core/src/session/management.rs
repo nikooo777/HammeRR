@@ -277,7 +277,7 @@ impl Session {
             .world
             .properties
             .iter()
-            .filter(|(key, _)| !map_core::context::is_storage_key(key))
+            .filter(|(key, _)| !map_core::editor_metadata::is_storage_key(key))
     }
 
     pub fn object_report(&self, filter: &ObjectFilter) -> Result<Vec<ObjectReport>, String> {
@@ -565,9 +565,9 @@ impl Session {
             let mut emission_changed = false;
             for change in changes {
                 let key = change.key();
-                if map_core::context::is_storage_key(key) {
+                if map_core::editor_metadata::is_storage_key(key) {
                     return Err(
-                        "Design-context storage is reserved; use the context-note editor".into(),
+                        "Editor metadata storage is reserved; use its dedicated operation".into(),
                     );
                 }
                 if ["id", "classname", "targetname", "mapversion"]

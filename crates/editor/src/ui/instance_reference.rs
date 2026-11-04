@@ -6,6 +6,81 @@ use crate::InstanceReferenceWindow;
 use session::instance_collapse::Scope;
 use session::instance_reference::Changes;
 
+fn selected_collapse_scope(scope: &serde_json::Value) -> bool {
+    matches!(
+        scope.as_str(),
+        Some("selected_references" | "selected_leading_references")
+    )
+}
+
+fn collapse_scope_label(scope: &serde_json::Value) -> &'static str {
+    if selected_collapse_scope(scope) {
+        "Selected references"
+    } else {
+        "All visible references"
+    }
+}
+
+fn collapse_summary(report: &serde_json::Value) -> String {
+    let requested = collapse_scope_label(&report["scope"]);
+    let heading =
+        if report["preview_scope"].is_string() && report["preview_scope"] != report["scope"] {
+            format!(
+                "Previous preview: {} · Requested: {requested}",
+                collapse_scope_label(&report["preview_scope"])
+            )
+        } else {
+            requested.to_owned()
+        };
+    let stats = &report["stats"];
+    if !stats.is_object() {
+        return format!("{heading}\nPrepared content counts will appear here.");
+    }
+    let counts = [
+        ("world_brushes", "World brushes"),
+        ("detail_brushes", "Detail brushes"),
+        ("terrain_patches", "Terrain patches"),
+        ("brush_models", "Stationary brush models"),
+        ("static_props", "Static props"),
+        ("lighting_origins", "Lighting origins"),
+        ("point_lights", "Point lights"),
+        ("spot_lights", "Spot lights"),
+        ("environment_lights", "Sun lights"),
+        ("spotlight_targets", "Spotlight targets"),
+        ("fog_controllers", "Fog controllers"),
+        ("player_spawns", "Player spawns"),
+        ("occluders", "Occluders"),
+        ("visclusters", "Visibility clusters"),
+        ("overlays", "Overlays"),
+        ("cubemaps", "Cubemap samples"),
+    ]
+    .into_iter()
+    .filter_map(|(field, label)| {
+        let count = stats[field].as_u64().unwrap_or_default();
+        (count != 0).then(|| format!("{label}: {count}"))
+    })
+    .collect::<Vec<_>>();
+    let counts = counts
+        .chunks(3)
+        .map(|row| row.join(" · "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "{heading} · {} helper occurrences · {} files · nesting depth {}\n{}\nChild source files stay unchanged.",
+        stats["instances"].as_u64().unwrap_or_default(),
+        stats["files"].as_u64().unwrap_or_default(),
+        stats["max_expansion_depth"].as_u64().unwrap_or_default(),
+        if counts.is_empty() {
+            format!(
+                "Editable objects: {}",
+                report["objects"].as_array().map_or(0, Vec::len)
+            )
+        } else {
+            counts
+        },
+    )
+}
+
 pub(super) struct Controller {
     window: InstanceReferenceWindow,
     target: DocumentContinuation,
@@ -70,11 +145,15 @@ impl Controller {
         );
         self.window.set_source(
             format!(
-                "Parent: {}\nRelative to: {}",
+                "Parent: {}\nRelative to: {}{}",
                 report["source"]
                     .as_str()
                     .unwrap_or("Unsaved parent — save it first"),
-                report["directory"].as_str().unwrap_or("Unavailable")
+                report["directory"].as_str().unwrap_or("Unavailable"),
+                report["entity"]
+                    .as_str()
+                    .map(|entity| format!("\nEditing reference: {entity}"))
+                    .unwrap_or_default(),
             )
             .into(),
         );
@@ -166,7 +245,7 @@ impl Controller {
             self.window.set_shared_form(!owned);
             self.window.set_ready(collapse["ready"] == true);
             self.window
-                .set_collapse_scope(if collapse["scope"] == "selected_leading_references" {
+                .set_collapse_scope(if selected_collapse_scope(&collapse["scope"]) {
                     1
                 } else {
                     0
@@ -184,25 +263,7 @@ impl Controller {
                     .unwrap_or(collapse["status"].as_str().unwrap_or("Unavailable"))
                     .into(),
             );
-            let requested_scope = if collapse["scope"] == "selected_leading_references" {
-                "Selected leading references"
-            } else {
-                "All visible references"
-            };
-            let heading = if collapse["preview_scope"].is_string()
-                && collapse["preview_scope"] != collapse["scope"]
-            {
-                let previous = if collapse["preview_scope"] == "selected_leading_references" {
-                    "Selected leading references"
-                } else {
-                    "All visible references"
-                };
-                format!("Previous preview: {previous} · Requested: {requested_scope}")
-            } else {
-                requested_scope.to_owned()
-            };
-            self.window.set_contents(format!("{} · {} helper occurrences · {} world brushes · {} detail brushes · {} terrain patches\n{} static props · {} point lights · {} spot lights · {} local targets · {} cubemaps\nCollapse does not write child files.", heading, collapse["stats"]["instances"].as_u64().unwrap_or_default(), collapse["stats"]["world_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["detail_brushes"].as_u64().unwrap_or_default(), collapse["stats"]["terrain_patches"].as_u64().unwrap_or_default(), collapse["stats"]["static_props"].as_u64().unwrap_or_default(), collapse["stats"]["point_lights"].as_u64().unwrap_or_default(), collapse["stats"]["spot_lights"].as_u64().unwrap_or_default(), collapse["stats"]["spotlight_targets"].as_u64().unwrap_or_default(), collapse["stats"]["cubemaps"].as_u64().unwrap_or_default()).into());
-            let mut details = self.window.get_contents().to_string();
+            let mut details = collapse_summary(&collapse);
             if let Some(roots) = collapse["removed"].as_array() {
                 let roots = roots
                     .iter()
@@ -250,12 +311,12 @@ impl Controller {
                     .iter()
                     .filter_map(serde_json::Value::as_str)
                     .collect::<Vec<_>>()
-                    .join(" → ")
+                    .join(", ")
             })
             .unwrap_or_default();
         self.window.set_contents(
             format!(
-                "{summary}\nVisible root order: {order}{}",
+                "{summary}\nVisible root references: {order}{}",
                 if collapse["visible_root_order_truncated"] == true {
                     " … (reference limit exceeded)"
                 } else {
@@ -434,13 +495,13 @@ impl Controller {
                 let mut session = lock(shared);
                 let scope = match self.window.get_collapse_scope() {
                     0 => Ok(Scope::AllVisibleReferences),
-                    1 => Ok(Scope::SelectedLeadingReferences),
+                    1 => Ok(Scope::SelectedReferences),
                     _ => Err("Select a valid collapse scope".to_string()),
                 };
                 if applying {
                     scope.and_then(|scope| {
-                        let expected = if scope == Scope::SelectedLeadingReferences {
-                            "selected_leading_references"
+                        let expected = if scope == Scope::SelectedReferences {
+                            "selected_references"
                         } else {
                             "all_visible_references"
                         };
@@ -692,9 +753,10 @@ fn bind_controller(app: &AppWindow, controller: Rc<Controller>) {
             };
             if controller
                 .with_shared(true, |shared| {
-                    let id = single_selected_entity(&lock(shared));
-                    if let Some(id) = id {
-                        controller.open_admitted(shared, Some(id));
+                    let target = lock(shared).editable_instance_reference();
+                    match target {
+                        Ok(id) => controller.open_admitted(shared, Some(id)),
+                        Err(error) => app.set_message(error.into()),
                     }
                 })
                 .is_none()

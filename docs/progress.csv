@@ -56,7 +56,7 @@ E12,Point-entity gallery,100
 R01,Prefab library,100
 R02,Referenced map instances,60
 R03,Create and edit instances in context (++),25
-R04,Instance collapse with shared preparation rules,70
+R04,Instance collapse with shared preparation rules,100
 D01,Create and remove displacements,100
 D02,Terrain sculpting,100
 D03,Sew and subdivide,100

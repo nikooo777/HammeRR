@@ -34,11 +34,11 @@ Picking a child prop selects its outer containing reference.
 
 ## Collapse references into editable geometry
 
-1. Select a visible reference and open **Edit instance reference…**.
+1. Select the visible references and open **Edit instance reference…**.
 2. Apply or cancel any edited reference fields first.
-3. Set **Collapse scope** to **All visible references** or **Selected leading references**.
+3. Set **Collapse scope** to **All visible references** or **Selected references**.
 4. Click **Preview collapse references…**.
-5. Inspect the materialized content and brush, terrain, prop, light, target and cubemap counts.
+5. Inspect **Reviewed contents**, its content counts and source routes.
 6. Click **Apply collapse**, or **Cancel collapse** to discard the preview.
 
 ![Two collapsed arches; one arch's individual brushes are selected](images/collapsed-assembly.png)
@@ -46,57 +46,77 @@ Picking a child prop selects its outer containing reference.
 **All visible references** is the default. It converts every visible root
 reference, recursively, in one Undo step.
 
-**Selected leading references** converts only selected complete visible root
-references. **Visible root order** lists their parent entity order. The selection
-must start with the first visible root reference in that order and include every
-earlier visible root. Empty, mixed, hidden or later-only selections stop the
-batch. No unselected reference is added to the selection or converted. Arbitrary subsets are not supported.
+**Selected references** converts any nonempty set of selected complete visible
+root references. **Visible root references** lists the available roots. Empty,
+mixed or hidden selections stop the batch. No unselected reference is added to
+the selection or converted.
+
+With several references selected, **Editing reference** identifies the helper
+whose file, position and rotation fields are shown. Those fields edit that
+helper only; **Selected references** uses the complete selection.
 
 Unselected and hidden root references and child files stay unchanged.
 **Review collapse** transfers an idle shared preview to you before Apply or
 Cancel. Selection, source or dependency changes require a new preview. Cancel
 and prepare again to change the scope.
 
-Collapse supports world and ordinary `func_detail` brushes, checked terrain,
-static `light`/`light_spot` assemblies with checked local `info_target`
-helpers, supported `prop_static` entities, and checked `env_cubemap` samples.
-Collapse uses the same four-level preparation as compilation. Child object
-color and logical layout remain attached to the new objects. Each detail brush becomes an individual
-`func_detail` owner. Reference markers are
-removed, consuming their file, transform, name, marker color and marker layout.
+The result is independent editable parent content. Use **Open…** to edit a saved
+child as a separate map; collapse does not write changes back to it.
+
+Materialized content and retained references keep their original relative
+compilation order across Save, Undo and later collapse operations. Ordinary
+edits update the saved order automatically; new parent objects compile before
+the ordered instance groups. Malformed or stale ordering metadata stops
+preparation with an error.
+
+> [!WARNING]
+> Keep all HammeRR ordering metadata when saving through another editor.
+> External compilers may ignore that order and include the metadata in their
+> BSP or derive another brush-model pivot. Compile with HammeRR to retain the
+> reviewed order and placement.
+
+Collapse uses the same four-level preparation and supported content families
+as compilation: world/detail/terrain, point/spot/sun lights, fog, CS:S spawns,
+lighting origins and spotlight targets, static props, stationary brush models,
+overlays, cubemaps, visibility clusters and occluders. Nested references are
+materialized recursively. Child object color and logical layout remain attached
+to the new objects. A multi-brush `func_detail` keeps one owner and its settings;
+empty detail owners are retained. Reference markers are removed, consuming
+their file, transform, name, marker color and marker layout.
 Child file version/view settings remain local to the unchanged child files;
 the parent's settings stay authoritative.
 
-Light assemblies retain independent LDR/HDR values, appearances 0–11, composed
-poses, whole-value bindings and scoped local spotlight targets. Targeted spots
-require the compiler's named ancestor scopes. Named/switchable lights and
-runtime connections remain unsupported. New light/target entities receive fresh
-editor IDs; their compiled `hammerid` follows those IDs. Retained references
-expand again at Compile and can receive different build-local IDs and
-`hammerid` values. Other prepared entity fields, references and ordering stay
-intact.
+Lights retain their supported LDR/HDR values, appearance settings, composed poses,
+whole-value bindings and scoped local targets. Named/switchable lights and
+runtime connections remain unsupported. New objects receive fresh editor IDs.
 
-Cubemap samples keep their authored size/default fields and editor settings.
-Manual `sides` bindings follow the fresh side IDs of the same reviewed direct
-world/detail geometry. Automatic samples keep an absent `sides` field absent.
-Terrain/runtime-model manual targets and cross-occurrence references remain
-unsupported. Cubemap helpers are editable entities consumed by compilation;
-they do not gain a runtime `hammerid`.
+Overlay and cubemap face bindings follow the fresh side IDs of the same reviewed
+geometry. Their compiler restrictions still apply: overlays use supported direct
+world/detail or terrain faces; manual cubemap bindings use ordinary direct
+world/detail faces. Automatic samples keep an absent `sides` field absent.
+Cross-occurrence face references remain unsupported.
 
 Static props keep their model, skin, collision, lighting, fade and DX settings.
-Their `lightingorigin` must be empty. `info_lighting` helpers are not supported
-for collapse. Source and intermediate model bounds must pass the compiler check.
-Changes to a checked model file require a new preview. Model meshes, materials
-and physics assets are checked at Compile. Props get fresh editor IDs and remain
-compiler-handled native static props, with no runtime `hammerid`.
+Supported scoped `info_lighting` bindings are retained. Source and intermediate
+model bounds must pass the compiler check. Stationary brush models use the same
+material-aware origin and initial-pose preparation as compilation. Changes to
+checked model or material sources require a new preview. Props remain
+compiler-handled native static props; collapse does not convert their meshes
+into brushes.
 
-Other child entities, hidden child content, groups/layers, saved
+Origin brushes and their supported editor metadata stay in the editable model.
+HammeRR retains the prepared placement pivot for nested reuse, including
+asymmetric origin volumes. Compilation checks the retained volume and uses that
+saved pivot in the model's native coordinate frame. Editing the volume or
+`origin` property starts a new authored pivot; body and display edits retain it.
+
+Unsupported child entities, hidden child content, groups/layers, saved
 atlas regions, nondefault child world settings and custom metadata require
 separate preservation rules and refuse the whole batch. Reference group/layer
 membership, attached notes and incoming bindings also refuse. The preview
 reports fresh object IDs, separate complete expanded-to-authored ID maps for
-emitted entities, cubemap helpers and static props, and bounded original
-leaf-face/entity provenance.
+emitted entities, compiler helpers, cubemap helpers and static props, and bounded
+original leaf-face/entity provenance.
 The preview details include each face/entity's captured root-to-leaf helper
 route, with IDs authored in each containing file. Repeated occurrences of the
 same original face or entity remain distinct. Apply retains these routes in
@@ -245,6 +265,10 @@ Every hop must declare its binding. Implicit ancestor search, same-helper slot l
 Use **Advanced properties → Fix Up Name** and **Entity Name Fix Up → Prefix** for supported scoped names.
 Lighting-origin branches require explicit prefixes at every enclosing level.
 Child helper names and references must agree before expansion.
+Supported local helper names and their light/prop references may join nonempty
+ASCII letter, digit or underscore components with hyphens. Fully scoped names
+must fit 127 bytes. Each reference's **Fix Up Name** remains one component
+without hyphens.
 Unsupported replacements, name fixups, scripts or dynamic references fail explicitly.
 
 ## Aim a child spotlight

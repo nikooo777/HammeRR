@@ -129,6 +129,14 @@ pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result
     if instances::requires_source(vmf) {
         return Err("Extracting a parent with existing visible instance references is not supported; compiler brush order must remain unchanged".into());
     }
+    let prepared = instances::resolve(
+        vmf,
+        None,
+        &Control::default(),
+        &mut compiler::Report::default(),
+    )
+    .map_err(|error| error.message)?;
+    let vmf = prepared.vmf();
     metadata_budget(&vmf.extra, 0, &mut (0, 0))?;
     groups::Graph::read(&session.document).map_err(|error| error.to_string())?;
     layers::Graph::read(&session.document).map_err(|error| error.to_string())?;

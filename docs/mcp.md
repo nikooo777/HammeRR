@@ -816,45 +816,47 @@ See [Extract an assembly](instance-extraction.md) for bounds and file rules.
 
 ## Collapse references
 
-Call `get_instance_collapse`, then `set_instance_collapse` with
-`action:"prepare"` and its `snapshot`. This recursively converts every visible
-root reference in one batch by default. To convert only a leading selection,
-select complete visible root references and pass Prepare-only
-`scope:"selected_leading_references"`. The selection must contain every earlier
-visible reference in `visible_root_order`; other references stay intact.
-Omitted scope keeps `all_visible_references`. The owned review freezes scope
-and selection. Arbitrary subsets are unavailable because they change compiler
-order. See [Assemblies](instances.md#collapse-references-into-editable-geometry).
-Inspect counts and fresh object IDs. The complete `entity_id_map` pairs
-`expanded` compiler entity IDs with fresh `authored` emitted light/target IDs.
-The separate complete `helper_id_map` pairs newly materialized cubemap helper IDs.
-`static_prop_id_map` pairs expanded prop IDs with fresh authored prop IDs.
-Neither gains an emitted runtime `hammerid`. `entity_provenance` includes
-`emitted` and `compiler_handled` flags and reports up to 64 original root/file/entity rows with
-`entity_provenance_total` for the full count. Face provenance remains bounded.
-These mappings are retained in Apply's `captured_preview`.
-Face and entity provenance also include `occurrence`, ordered `{helper,file}`
-steps from the root reference through the leaf source, and `occurrence_label`.
-IDs belong to each containing authored file. Repeated same-file/ID occurrences
-remain distinct. Counts and ID maps remain available if the bounded provenance
-copy reports `provenance_error`.
-Use `action:"apply"` with the owned `token`, or `action:"cancel"` to discard it.
-`action:"review"` transfers an idle draft to a fresh token.
-Prepare and Apply accept optional `background:true`; poll the getter for completion.
-Apply rechecks the original saved parent and dependency bytes before one Undo edit.
-Reference markers and their validated color/layout are consumed; child object
-editor fields stay attached. Supported content includes world/detail brushes,
-terrain, supported static props with empty `lightingorigin`, checked static
-point/spot lights with local `info_target` helpers, and cubemap samples.
-Collapse retains the original MDL guard and checks every intermediate model pose.
-Changed models expire the plan. `info_lighting` helpers remain unsupported.
-Meshes, PHY files and materials keep their separate Compile checks.
-Manual cubemap `sides` remap through the reviewed fresh
-side IDs; automatic samples preserve absence of that field. Light scope includes
-existing HDR values, literal bindings and scoped target names. Fresh emitted
-entity IDs intentionally change their compiled `hammerid` values; other entity
-fields/order and native light payloads retain shared preparation. Other child
-entities and unsupported metadata refuse the whole batch.
+1. Call `get_instance_collapse`.
+2. Call `set_instance_collapse` with `action:"prepare"` and its `snapshot`.
+   Omit `scope` for `all_visible_references`, or use `selected_references` for
+   any nonempty selection of complete visible root references.
+3. Inspect the counts, fresh object IDs and source routes.
+4. Use `action:"apply"` with the owned `token`, or `action:"cancel"`.
+
+The old `selected_leading_references` spelling accepts the same selected scope;
+responses use `selected_references`. Mixed or hidden selections refuse.
+Unselected references and child files stay unchanged. Scope and selection are
+frozen. `action:"review"` transfers an idle draft to a fresh token. Prepare and
+Apply accept `background:true`; poll the getter for completion.
+
+| ID map | Contents |
+| --- | --- |
+| `entity_id_map` | Emitted runtime entities. |
+| `compiler_helper_id_map` | Compiler-handled helpers and detail owners. |
+| `helper_id_map` | Cubemap helpers; retained for compatibility. |
+| `static_prop_id_map` | Native static props. |
+
+Each map pairs `expanded` with fresh `authored` IDs. Helpers and props gain no
+runtime `hammerid`. Emitted entities gain the new authored `hammerid`.
+`entity_provenance` and face provenance show up to 64 rows, with totals and
+ordered `{helper,file}` occurrence routes. IDs belong to their authored file.
+`provenance_error` marks unavailable response copies; counts and complete ID
+maps remain available. Apply retains the reviewed report in `captured_preview`.
+
+Collapse uses the [compiled assembly catalog](instances.md#supported-contents),
+including scoped lighting origins, stationary models, overlays and visibility
+helpers. Overlay and manual cubemap `sides` follow the fresh side IDs. Automatic
+cubemap samples keep that field absent. Complete detail owners retain their
+brushes and settings. Unsupported content or unpreservable metadata refuses the
+whole batch.
+
+Apply checks original parent/dependency bytes and captured model/material
+sources before one Undo edit. A changed **Brush texture shadows** policy makes
+the preview stale. Shared saved ordering retains relative compilation order
+through Save/Open, later collapse and nested reuse. Malformed or stale ordering
+fails explicitly; private metadata is excluded from HammeRR BSP output.
+Origin volumes retain their geometry and prepared placement pivot. Editing the
+volume or `origin` retires that saved pivot; body and display edits retain it.
 
 ## Selection defaults
 

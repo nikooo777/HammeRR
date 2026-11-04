@@ -282,7 +282,7 @@ fn append_entity(
 ) -> Result<(), String> {
     text.push_str("{\n");
     for (key, value) in properties {
-        if map_core::context::is_storage_key(key) {
+        if map_core::editor_metadata::is_storage_key(key) {
             continue;
         }
         if key.contains(['"', '\0']) || value.contains(['"', '\0']) {

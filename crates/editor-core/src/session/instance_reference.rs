@@ -219,6 +219,29 @@ impl Session {
         Ok(entity)
     }
 
+    fn instance_reference_entity(&self, id: u32) -> Result<&Entity, String> {
+        self.document
+            .entity(id)
+            .filter(|entity| {
+                entity
+                    .classname()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("func_instance"))
+            })
+            .ok_or_else(|| "Select an existing func_instance helper".into())
+    }
+
+    pub fn editable_instance_reference(&self) -> Result<u32, String> {
+        if let [ObjectId::Entity(id)] = self.selected_ids().as_slice() {
+            self.instance_reference_entity(*id)?;
+            return Ok(*id);
+        }
+        let roots = self.selected_references()?;
+        match roots.first() {
+            Some(ObjectId::Entity(id)) => Ok(*id),
+            _ => Err("Select complete visible root instance references".into()),
+        }
+    }
+
     pub fn begin_instance_reference(
         &mut self,
         actor: Actor,
@@ -236,15 +259,7 @@ impl Session {
             );
         }
         let values = if let Some(id) = entity {
-            let entity = self
-                .document
-                .entity(id)
-                .filter(|entity| {
-                    entity
-                        .classname()
-                        .is_some_and(|name| name.eq_ignore_ascii_case("func_instance"))
-                })
-                .ok_or("Select an existing func_instance helper")?;
+            let entity = self.instance_reference_entity(id)?;
             [
                 entity.properties.get("file").unwrap_or("").into(),
                 entity.properties.get("origin").unwrap_or("0 0 0").into(),

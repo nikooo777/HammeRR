@@ -12,6 +12,7 @@ struct Child {
     names: names::LocalIndex,
     binding_parameters: bool,
     targets: targets::LocalIndex,
+    ordering: Arc<ordering::ScopePlan>,
 }
 
 struct EntitySpec {
@@ -28,6 +29,9 @@ pub(super) struct ExpandedSources {
     pub static_prop_bindings: StaticPropBindings,
     pub files: Vec<(String, FileIdentity)>,
     pub material_sources: Option<crate::asset_sources::BuildMaterialSources>,
+    pub ordering: BTreeMap<String, Arc<ordering::ScopePlan>>,
+    pub work: usize,
+    pub origin_custody: Vec<map_core::instance_order::OriginCustody>,
 }
 
 pub(super) struct Expansion<'a> {
@@ -53,6 +57,7 @@ pub(super) struct Expansion<'a> {
     materials: Option<crate::materials::Materials<'a>>,
     material_sources: Option<crate::asset_sources::BuildMaterialSources>,
     checked_cutouts: std::collections::BTreeSet<usize>,
+    origin_custody: Vec<map_core::instance_order::OriginCustody>,
 }
 
 impl<'a> Expansion<'a> {
@@ -62,6 +67,7 @@ impl<'a> Expansion<'a> {
         control: &'a Control,
         report: &'a mut Report,
         purpose: PreparationPurpose<'a>,
+        work: usize,
     ) -> Self {
         Self {
             source,
@@ -70,7 +76,7 @@ impl<'a> Expansion<'a> {
             files: BTreeMap::new(),
             bytes: 0,
             nodes: 0,
-            work: 0,
+            work,
             objects: vmf.object_ids().count(),
             sides: vmf.side_ids().count(),
             terrain: terrain::Budget::default(),
@@ -86,6 +92,7 @@ impl<'a> Expansion<'a> {
             materials: None,
             material_sources: None,
             checked_cutouts: std::collections::BTreeSet::new(),
+            origin_custody: Vec::new(),
         }
     }
 
@@ -189,13 +196,27 @@ impl<'a> Expansion<'a> {
                 "Instance {relative}: child Emission file is unsupported; select the assembled material declaration file in the root World settings"
             ));
         }
+        let ordering = Arc::new(
+            ordering::ScopePlan::capture(&child, false, &mut self.work, self.control)
+                .map_err(|error| format!("Instance {relative}: {error}"))?,
+        );
         let targets = targets::LocalIndex::new(&child, &mut self.work, self.control)
             .map_err(|error| format!("Instance {relative}: {error}"))?;
         let positions = targets.positions(&mut self.work, self.control)?;
         child_admission(&child, self.control, &positions)
             .map_err(|error| format!("Instance {relative}: {error}"))?;
-        if matches!(self.purpose, PreparationPurpose::Collapse) {
+        if self.purpose.is_collapse() {
             collapse::child(&child).map_err(|error| format!("Instance {relative}: {error}"))?;
+            if self.purpose.materials().is_none()
+                && child
+                    .entities
+                    .iter()
+                    .any(|entity| !entity.hidden && brush_models::is_model(entity))
+            {
+                return Err(format!(
+                    "Instance {relative}: editable brush-model collapse requires material-aware preparation"
+                ));
+            }
         }
         drop(positions);
         let ignored = child
@@ -203,7 +224,9 @@ impl<'a> Expansion<'a> {
             .properties
             .iter()
             .filter(|(key, _)| {
-                !key.eq_ignore_ascii_case("classname") && !key.eq_ignore_ascii_case("mapversion")
+                !key.eq_ignore_ascii_case("classname")
+                    && !key.eq_ignore_ascii_case("mapversion")
+                    && !map_core::editor_metadata::is_storage_key(key)
             })
             .map(|(key, _)| key)
             .collect::<Vec<_>>();
@@ -232,6 +255,7 @@ impl<'a> Expansion<'a> {
             binding_parameters,
             names,
             targets,
+            ordering,
             vmf: child,
             identity,
             bytes: input.len(),
@@ -366,7 +390,7 @@ impl<'a> Expansion<'a> {
                 let generated = result.map_err(|error| {
                     EditError::Invalid(format!("Child {} {}: {error}", kind.label(), entity.id))
                 })?;
-                if matches!(self.purpose, PreparationPurpose::Collapse) {
+                if self.purpose.is_collapse() {
                     tx.entity_mut(generated)?.editor = entity.editor.clone();
                 }
                 names::charge(&mut self.work, 1, self.control).map_err(EditError::Invalid)?;
@@ -376,7 +400,7 @@ impl<'a> Expansion<'a> {
                 self.solid(
                     tx,
                     solid,
-                    false,
+                    None,
                     owner.id,
                     &relative,
                     transforms,
@@ -424,7 +448,7 @@ impl<'a> Expansion<'a> {
                         .map_err(|error| {
                             EditError::Invalid(format!("Child cubemap {}: {error}", entity.id))
                         })?;
-                    if matches!(self.purpose, PreparationPurpose::Collapse) {
+                    if self.purpose.is_collapse() {
                         tx.entity_mut(generated)?.editor = entity.editor.clone();
                     }
                     if cubemaps::has_manual_bindings(entity) {
@@ -506,7 +530,7 @@ impl<'a> Expansion<'a> {
                         }
                         let generated =
                             self.entity(tx, &effective, spec, owner.id, &relative, transforms)?;
-                        if matches!(self.purpose, PreparationPurpose::Collapse) {
+                        if self.purpose.is_collapse() {
                             tx.entity_mut(generated)?.editor = entity.editor.clone();
                         }
                         Ok(())
@@ -515,24 +539,15 @@ impl<'a> Expansion<'a> {
                         EditError::Invalid(format!("Child {} {}: {error}", kind.label(), entity.id))
                     })?;
                 } else {
-                    for solid in entity.solids.iter().filter(|solid| !solid.hidden) {
-                        let generated = self.solid(
-                            tx,
-                            solid,
-                            true,
-                            owner.id,
-                            &relative,
-                            transforms,
-                            local_sides.as_mut(),
-                            displacement_sides.as_mut(),
-                        )?;
-                        if matches!(self.purpose, PreparationPurpose::Collapse) {
-                            let ObjectId::Entity(id) = generated else {
-                                unreachable!()
-                            };
-                            tx.entity_mut(id)?.editor = entity.editor.clone();
-                        }
-                    }
+                    self.detail(
+                        tx,
+                        entity,
+                        owner.id,
+                        &relative,
+                        transforms,
+                        local_sides.as_mut(),
+                        displacement_sides.as_mut(),
+                    )?;
                 }
             }
             for (original, generated) in manual_cubemaps {
@@ -601,7 +616,9 @@ impl<'a> Expansion<'a> {
         overlays::check_pose(original).map_err(EditError::Invalid)?;
         let mut entity = original.clone();
         entity.id = tx.new_object_id()?;
-        entity.editor = None;
+        if !self.purpose.is_collapse() {
+            entity.editor = None;
+        }
         for transform in transforms.iter().rev() {
             self.control.checkpoint().map_err(EditError::Invalid)?;
             overlays::transform(&mut entity, *transform)?;
@@ -647,7 +664,9 @@ impl<'a> Expansion<'a> {
         cubemaps::point(original).map_err(EditError::Invalid)?;
         let mut entity = original.clone();
         entity.id = tx.new_object_id()?;
-        entity.editor = None;
+        if !self.purpose.is_collapse() {
+            entity.editor = None;
+        }
         for transform in transforms.iter().rev() {
             self.control.checkpoint().map_err(EditError::Invalid)?;
             let point = cubemaps::point(&entity).map_err(EditError::Invalid)?;
@@ -718,7 +737,9 @@ impl<'a> Expansion<'a> {
         occluders::check_pose(original, self.control).map_err(EditError::Invalid)?;
         let mut entity = original.clone();
         entity.id = tx.new_object_id()?;
-        entity.editor = None;
+        if !self.purpose.is_collapse() {
+            entity.editor = None;
+        }
         entity.solids.clear();
         self.record_origin(
             format!("entity:{}", entity.id),
@@ -728,7 +749,9 @@ impl<'a> Expansion<'a> {
             self.control.checkpoint().map_err(EditError::Invalid)?;
             let mut solid = original_solid.clone();
             solid.id = tx.new_object_id()?;
-            solid.editor = None;
+            if !self.purpose.is_collapse() {
+                solid.editor = None;
+            }
             self.record_origin(
                 format!("solid:{}", solid.id),
                 (owner, relative.to_owned(), original_solid.id, None),
@@ -778,8 +801,7 @@ impl<'a> Expansion<'a> {
         })?;
         let rotation = crate::brush_model_pose::initial_rotation(classname, &original.properties.0)
             .map_err(EditError::Invalid)?;
-        let lower_pose =
-            matches!(self.purpose, PreparationPurpose::Compile(..)) && rotation.is_some();
+        let lower_pose = self.purpose.materials().is_some() && rotation.is_some();
         self.objects = self.objects.saturating_add(1 + shape.brushes);
         self.sides = self.sides.saturating_add(shape.sides);
         let property_bytes = original
@@ -792,7 +814,7 @@ impl<'a> Expansion<'a> {
             .len()
             .checked_mul(2)
             .and_then(|poses| {
-                poses.checked_add(if matches!(self.purpose, PreparationPurpose::Compile(..)) {
+                poses.checked_add(if self.purpose.materials().is_some() {
                     2
                 } else {
                     1
@@ -806,13 +828,12 @@ impl<'a> Expansion<'a> {
                 } else {
                     geometry
                 };
-                let field_bytes = property_bytes?.checked_add(
-                    if matches!(self.purpose, PreparationPurpose::Compile(..)) {
+                let field_bytes =
+                    property_bytes?.checked_add(if self.purpose.materials().is_some() {
                         MAX_FIELD_BYTES
                     } else {
                         0
-                    },
-                )?;
+                    })?;
                 let fields = field_bytes.checked_mul(transforms.len() + 1)?;
                 geometry.checked_add(fields)
             })
@@ -829,7 +850,7 @@ impl<'a> Expansion<'a> {
         }
         self.work = work;
         brush_models::check_source(original, self.control).map_err(EditError::Invalid)?;
-        let origins = if let PreparationPurpose::Compile(fs, brush_texture_shadows) = self.purpose {
+        let origins = if let Some((fs, brush_texture_shadows)) = self.purpose.materials() {
             if self.materials.is_none() {
                 let sources = crate::asset_sources::BuildMaterialSources::default();
                 self.materials = Some(crate::materials::Materials::with_build_sources(
@@ -839,22 +860,34 @@ impl<'a> Expansion<'a> {
                 ));
                 self.material_sources = Some(sources);
             }
-            Some(
-                brush_models::plan_origin(
-                    self.materials.as_mut().unwrap(),
-                    original,
-                    self.control,
-                    brush_texture_shadows,
-                    self.material_sources.as_ref().unwrap(),
-                    &mut self.checked_cutouts,
-                )
-                .map_err(EditError::Invalid)?,
+            let mut plan = brush_models::plan_origin(
+                self.materials.as_mut().unwrap(),
+                original,
+                self.control,
+                brush_texture_shadows,
+                self.material_sources.as_ref().unwrap(),
+                &mut self.checked_cutouts,
             )
+            .map_err(EditError::Invalid)?;
+            if let Some(custody) = self
+                .files
+                .get(relative)
+                .and_then(|child| child.ordering.origin_custody(original.id))
+            {
+                plan.position = Some(
+                    validate_origin_custody(original, &plan, custody)
+                        .map_err(EditError::Invalid)?,
+                );
+            }
+            Some(plan)
         } else {
             None
         };
         let mut entity = Entity::new(tx.new_object_id()?, classname);
         entity.properties = original.properties.clone();
+        if self.purpose.is_collapse() {
+            entity.editor = original.editor.clone();
+        }
         if let Some(origins) = &origins
             && !origins.volumes.is_empty()
         {
@@ -872,11 +905,19 @@ impl<'a> Expansion<'a> {
             format!("entity:{}", entity.id),
             (owner, relative.to_owned(), original.id, None),
         )?;
-        for original_solid in original.solids.iter().filter(|solid| !solid.hidden) {
+        let mut retained_origins = Vec::new();
+        for (position, original_solid) in original
+            .solids
+            .iter()
+            .filter(|solid| !solid.hidden)
+            .enumerate()
+        {
             self.control.checkpoint().map_err(EditError::Invalid)?;
             let mut solid = original_solid.clone();
             solid.id = tx.new_object_id()?;
-            solid.editor = None;
+            if !self.purpose.is_collapse() {
+                solid.editor = None;
+            }
             self.record_origin(
                 format!("solid:{}", solid.id),
                 (owner, relative.to_owned(), original_solid.id, None),
@@ -920,6 +961,15 @@ impl<'a> Expansion<'a> {
                             original_solid.id
                         ))
                     })?;
+                if self.purpose.is_collapse() {
+                    let [solid]: [Solid; 1] =
+                        validation.into_vmf().world.solids.try_into().map_err(|_| {
+                            EditError::Invalid(
+                                "Origin validation did not preserve its source brush".into(),
+                            )
+                        })?;
+                    retained_origins.push((position, solid));
+                }
                 continue;
             }
             entity.solids.push(solid);
@@ -944,9 +994,55 @@ impl<'a> Expansion<'a> {
             }
             .map_err(EditError::Invalid)?;
         }
+        let mut retained_ids = BTreeSet::new();
+        for (position, solid) in retained_origins {
+            self.control.checkpoint().map_err(EditError::Invalid)?;
+            retained_ids.insert(solid.id);
+            tx.entity_mut(generated)?.solids.insert(position, solid);
+        }
+        if !retained_ids.is_empty() {
+            names::charge(
+                &mut self.work,
+                shape
+                    .geometry_work
+                    .saturating_add(shape.sides.saturating_mul(8)),
+                self.control,
+            )
+            .map_err(EditError::Invalid)?;
+            let (_, shadows) = self.purpose.materials().unwrap();
+            let volumes = collapse::retained_origins(
+                self.materials.as_mut().unwrap(),
+                tx.entity_mut(generated)?,
+                &retained_ids,
+                self.control,
+                shadows,
+                self.material_sources.as_ref().unwrap(),
+                &mut self.checked_cutouts,
+            )
+            .map_err(EditError::Invalid)?
+            .into_iter()
+            .collect::<Vec<_>>();
+            let fingerprint =
+                map_core::instance_order::origin_fingerprint(tx.entity_mut(generated)?, &volumes)
+                    .map_err(EditError::Invalid)?;
+            names::charge(
+                &mut self.work,
+                fingerprint.len() + volumes.len(),
+                self.control,
+            )
+            .map_err(EditError::Invalid)?;
+            self.origin_custody
+                .push(map_core::instance_order::OriginCustody {
+                    entity: generated,
+                    volumes,
+                    fingerprint,
+                });
+        }
         self.stats.brush_models += 1;
-        self.stats.consumed_origin_brushes +=
-            origins.as_ref().map_or(0, |origins| origins.volumes.len());
+        if !self.purpose.is_collapse() {
+            self.stats.consumed_origin_brushes +=
+                origins.as_ref().map_or(0, |origins| origins.volumes.len());
+        }
         Ok(())
     }
 
@@ -1003,7 +1099,9 @@ impl<'a> Expansion<'a> {
         self.viscluster_pose(original)?;
         let mut entity = original.clone();
         entity.id = tx.new_object_id()?;
-        entity.editor = None;
+        if !self.purpose.is_collapse() {
+            entity.editor = None;
+        }
         self.record_origin(
             format!("entity:{}", entity.id),
             (owner, relative.to_owned(), original.id, None),
@@ -1013,7 +1111,9 @@ impl<'a> Expansion<'a> {
             self.control.checkpoint().map_err(EditError::Invalid)?;
             let mut solid = original_solid.clone();
             solid.id = tx.new_object_id()?;
-            solid.editor = None;
+            if !self.purpose.is_collapse() {
+                solid.editor = None;
+            }
             self.record_origin(
                 format!("solid:{}", solid.id),
                 (owner, relative.to_owned(), original_solid.id, None),
@@ -1122,7 +1222,9 @@ impl<'a> Expansion<'a> {
         }
         let mut entity = original.clone();
         entity.id = tx.new_object_id()?;
-        entity.editor = None;
+        if !self.purpose.is_collapse() {
+            entity.editor = None;
+        }
         if let Some((key, name)) = spec.name {
             entity.properties.set(key, name);
         }
@@ -1172,11 +1274,84 @@ impl<'a> Expansion<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn detail(
+        &mut self,
+        tx: &mut Transaction<'_>,
+        original: &Entity,
+        owner: u32,
+        relative: &str,
+        transforms: &[edit::Transform],
+        mut local_sides: Option<&mut BTreeMap<u32, u32>>,
+        mut displacement_sides: Option<&mut BTreeMap<u32, u32>>,
+    ) -> Result<(), EditError> {
+        self.control.checkpoint().map_err(EditError::Invalid)?;
+        self.objects = self.objects.saturating_add(1);
+        if self.objects > MAX_OBJECTS {
+            return Err(EditError::Invalid(
+                "Instance detail owners exceed object limit".into(),
+            ));
+        }
+        let properties = original
+            .properties
+            .iter()
+            .try_fold(0usize, |total, (key, value)| {
+                total.checked_add(key.len())?.checked_add(value.len())
+            })
+            .ok_or_else(|| EditError::Invalid("Instance detail property work overflow".into()))?;
+        let work = properties
+            .checked_mul(transforms.len() + 1)
+            .ok_or_else(|| EditError::Invalid("Instance detail property work overflow".into()))?;
+        names::charge(&mut self.work, work, self.control).map_err(EditError::Invalid)?;
+        let mut entity = original.clone();
+        if entity.properties.get("origin").is_some() {
+            let mut origin = vector(&entity, "origin").map_err(EditError::Invalid)?;
+            for transform in transforms.iter().rev() {
+                self.control.checkpoint().map_err(EditError::Invalid)?;
+                origin = map_core::transform::transform_point(origin, *transform)?;
+                if origin.abs().max_element() > crate::map::MAX_COMPILE_COORD {
+                    return Err(EditError::Invalid(
+                        "Instance detail origin exceeds Source compile bounds".into(),
+                    ));
+                }
+            }
+            entity
+                .properties
+                .set("origin", source_formats::vmf::format_vec3(origin));
+        }
+        entity.properties.remove("classname");
+        entity.properties.set("classname", "func_detail");
+        entity.id = tx.new_object_id()?;
+        entity.solids.clear();
+        if !self.purpose.is_collapse() {
+            entity.editor = None;
+        }
+        let generated = entity.id;
+        self.record_origin(
+            format!("entity:{generated}"),
+            (owner, relative.to_owned(), original.id, None),
+        )?;
+        tx.add_entity(entity)?;
+        for solid in original.solids.iter().filter(|solid| !solid.hidden) {
+            self.solid(
+                tx,
+                solid,
+                Some(generated),
+                owner,
+                relative,
+                transforms,
+                local_sides.as_deref_mut(),
+                displacement_sides.as_deref_mut(),
+            )?;
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn solid(
         &mut self,
         tx: &mut Transaction<'_>,
         original: &Solid,
-        detail: bool,
+        detail_owner: Option<u32>,
         owner: u32,
         relative: &str,
         transforms: &[edit::Transform],
@@ -1184,7 +1359,7 @@ impl<'a> Expansion<'a> {
         mut displacement_sides: Option<&mut BTreeMap<u32, u32>>,
     ) -> Result<ObjectId, EditError> {
         self.control.checkpoint().map_err(EditError::Invalid)?;
-        self.objects = self.objects.saturating_add(1 + usize::from(detail));
+        self.objects = self.objects.saturating_add(1);
         self.sides = self.sides.saturating_add(original.sides.len());
         let work = original
             .sides
@@ -1228,7 +1403,7 @@ impl<'a> Expansion<'a> {
         });
         let mut solid = original.clone();
         solid.id = tx.new_object_id()?;
-        if !matches!(self.purpose, PreparationPurpose::Collapse) {
+        if !self.purpose.is_collapse() {
             solid.editor = None;
         }
         self.record_origin(
@@ -1251,30 +1426,24 @@ impl<'a> Expansion<'a> {
                 displacement_sides.insert(original_side, side.id);
             }
         }
-        let id = if detail {
-            let id = tx.new_object_id()?;
-            let mut entity = Entity::new(id, "func_detail");
-            entity.solids.push(solid);
-            self.record_origin(
-                format!("entity:{id}"),
-                (owner, relative.to_owned(), original.id, None),
-            )?;
-            self.stats.detail_brushes += 1;
-            tx.add_entity(entity)?
-        } else {
-            self.stats.world_brushes += 1;
-            tx.add_solid(solid)?
-        };
+        let id = tx.add_solid(solid)?;
         for transform in transforms.iter().rev() {
             self.control.checkpoint().map_err(EditError::Invalid)?;
             edit::transform(tx, &[id], *transform)?;
-            match id {
-                ObjectId::Solid(id) => checked_solid_controlled(tx.solid_mut(id)?, self.control),
-                ObjectId::Entity(id) => {
-                    checked_solid_controlled(&tx.entity_mut(id)?.solids[0], self.control)
-                }
-            }
-            .map_err(EditError::Invalid)?;
+            let ObjectId::Solid(solid) = id else {
+                unreachable!()
+            };
+            checked_solid_controlled(tx.solid_mut(solid)?, self.control)
+                .map_err(EditError::Invalid)?;
+        }
+        if let Some(owner) = detail_owner {
+            let map_core::Object::Solid(solid) = tx.remove(id)? else {
+                unreachable!()
+            };
+            tx.entity_mut(owner)?.solids.push(solid);
+            self.stats.detail_brushes += 1;
+        } else {
+            self.stats.world_brushes += 1;
         }
         Ok(id)
     }
@@ -1292,7 +1461,15 @@ impl<'a> Expansion<'a> {
                 sha256: child.identity.sha256().unwrap().to_owned(),
             })
             .collect();
+        let ordering = self
+            .files
+            .iter()
+            .map(|(path, child)| (path.clone(), Arc::clone(&child.ordering)))
+            .collect();
         ExpandedSources {
+            ordering,
+            work: self.work,
+            origin_custody: self.origin_custody,
             stats: self.stats,
             provenance: self.provenance,
             occurrence_budget: self.occurrence_budget,

@@ -11,6 +11,7 @@ use std::fmt;
 use std::sync::OnceLock;
 
 use crate::context::{self, Metadata, Scope};
+use crate::instance_order::{self, Ordering};
 use source_formats::keyvalues::Node;
 
 use source_formats::vmf::{Entity, Group, Properties, Solid, VisGroup, Vmf, World};
@@ -131,21 +132,32 @@ pub struct Document {
     next_visgroup_id: u64,
     context_cache: OnceLock<Result<Metadata, String>>,
     context_fingerprint: OnceLock<String>,
+    instance_order_cache: OnceLock<Result<Option<Ordering>, String>>,
 }
 
 impl Document {
     pub fn try_new(mut vmf: Vmf) -> Result<Self, EditError> {
         vmf.validate_ids()
             .map_err(|error| EditError::Invalid(error.to_string()))?;
+        instance_order::read(&vmf).map_err(EditError::Invalid)?;
         crate::brush::normalize_precise_vmf(&mut vmf)?;
         Ok(Self::new(vmf))
     }
 
     pub fn new(mut vmf: Vmf) -> Self {
-        let object_max = vmf.object_ids().max().unwrap_or(0);
+        let ordering = instance_order::read(&vmf);
+        let ordering_roots = match &ordering {
+            Ok(Some(ordering)) => ordering.slots.as_slice(),
+            Ok(None) | Err(_) => &[],
+        };
+        let object_max = vmf
+            .object_ids()
+            .chain(ordering_roots.iter().map(|slot| slot.original_root))
+            .max()
+            .unwrap_or(0);
         let side_max = vmf.side_ids().max().unwrap_or(0);
         let context = Metadata::parse(&vmf).and_then(|metadata| {
-            if context::has_storage(&vmf) {
+            if ordering.is_ok() && context::has_storage(&vmf) {
                 context::store(&mut vmf, &metadata)?;
             }
             Ok(metadata)
@@ -153,6 +165,7 @@ impl Document {
         Self {
             context_cache: OnceLock::from(context),
             context_fingerprint: OnceLock::new(),
+            instance_order_cache: OnceLock::from(ordering),
             next_object_id: u64::from(object_max) + 1,
             next_side_id: u64::from(side_max) + 1,
             next_visgroup_id: u64::from(crate::layers::max_id(&vmf)) + 1,
@@ -221,6 +234,7 @@ impl Document {
         let mut snapshot = self.preview_snapshot_uncached();
         snapshot.context_cache = self.context_cache.clone();
         snapshot.context_fingerprint = self.context_fingerprint.clone();
+        snapshot.instance_order_cache = self.instance_order_cache.clone();
         snapshot
     }
 
@@ -236,6 +250,7 @@ impl Document {
             next_visgroup_id: self.next_visgroup_id,
             context_cache: OnceLock::new(),
             context_fingerprint: OnceLock::new(),
+            instance_order_cache: OnceLock::new(),
         }
     }
 
@@ -249,6 +264,14 @@ impl Document {
     pub fn context_map_fingerprint(&self) -> &str {
         self.context_fingerprint
             .get_or_init(|| context::map_fingerprint(&self.vmf))
+    }
+
+    pub fn instance_order(&self) -> Result<Option<&Ordering>, EditError> {
+        self.instance_order_cache
+            .get_or_init(|| instance_order::read(&self.vmf))
+            .as_ref()
+            .map(Option::as_ref)
+            .map_err(|message| EditError::Invalid(message.clone()))
     }
 
     /// Increases with every change, including undo and redo.
@@ -361,6 +384,7 @@ impl Document {
         finalize: impl FnOnce(&R) -> Result<(), EditError>,
     ) -> Result<R, EditError> {
         let label = label.into();
+        let instance_order = self.instance_order()?.cloned();
         let mut tx = Transaction {
             start_ids: (
                 self.next_object_id,
@@ -369,6 +393,8 @@ impl Document {
             ),
             doc: self,
             touched: Vec::new(),
+            removed: HashSet::new(),
+            instance_order,
             start_positions: None,
             reserved_measurement_ids: None,
             reserved_measurement_side_ids: None,
@@ -381,6 +407,7 @@ impl Document {
         let result = f(&mut tx).and_then(|value| {
             tx.reconcile_precise()?;
             tx.remove_deleted_context()?;
+            tx.reconcile_instance_order()?;
             finalize(&value)?;
             Ok(value)
         });
@@ -466,6 +493,7 @@ impl Document {
         }
         self.vmf.world.properties = properties;
         self.context_cache.take();
+        self.instance_order_cache.take();
     }
 
     fn position(&self, id: ObjectId) -> Option<usize> {
@@ -492,6 +520,7 @@ impl Document {
     }
 
     fn restore_objects(&mut self, states: impl IntoIterator<Item = (ObjectId, State)>) {
+        self.instance_order_cache.take();
         let mut insertions = Vec::new();
         for (id, state) in states {
             self.take(id);
@@ -526,6 +555,8 @@ pub struct Transaction<'a> {
     start_ids: (u64, u64, u64),
     doc: &'a mut Document,
     touched: Vec<(ObjectId, State)>,
+    removed: HashSet<ObjectId>,
+    instance_order: Option<Ordering>,
     start_positions: Option<std::collections::HashMap<ObjectId, usize>>,
     reserved_measurement_ids: Option<HashSet<u32>>,
     reserved_measurement_side_ids: Option<HashSet<u32>>,
@@ -571,6 +602,7 @@ impl Transaction<'_> {
     pub fn world_properties_mut(&mut self) -> &mut Properties {
         self.doc.context_fingerprint.take();
         self.doc.context_cache.take();
+        self.doc.instance_order_cache.take();
         self.world
             .get_or_insert_with(|| self.doc.vmf.world.properties.clone());
         &mut self.doc.vmf.world.properties
@@ -652,6 +684,7 @@ impl Transaction<'_> {
 
     fn touch(&mut self, id: ObjectId) {
         self.doc.context_fingerprint.take();
+        self.doc.instance_order_cache.take();
         if !self.touched.iter().any(|(t, _)| *t == id) {
             let mut state = self.doc.state(id);
             if let (Some(positions), Some((index, _))) = (&self.start_positions, &mut state)
@@ -753,11 +786,15 @@ impl Transaction<'_> {
                 .iter()
                 .position(|record| record.id == solid)
                 .ok_or(EditError::NotFound(id))?;
-            return Ok(Object::Solid(owner.solids.remove(index)));
+            let object = Object::Solid(owner.solids.remove(index));
+            self.removed.insert(id);
+            return Ok(object);
         }
         self.capture_object_order();
         self.touch(id);
-        self.doc.take(id).ok_or(EditError::NotFound(id))
+        let object = self.doc.take(id).ok_or(EditError::NotFound(id))?;
+        self.removed.insert(id);
+        Ok(object)
     }
 
     pub(crate) fn set_editor_metadata(&mut self, key: &str, node: Option<Node>) {
@@ -783,6 +820,39 @@ impl Transaction<'_> {
         context::store(&mut self.doc.vmf, &metadata).map_err(EditError::Invalid)?;
         self.doc.context_fingerprint.take();
         self.doc.context_cache = OnceLock::from(Ok(metadata));
+        Ok(())
+    }
+
+    pub fn set_instance_order(&mut self, ordering: &Ordering) -> Result<(), EditError> {
+        self.world
+            .get_or_insert_with(|| self.doc.vmf.world.properties.clone());
+        instance_order::store(&mut self.doc.vmf, ordering).map_err(EditError::Invalid)?;
+        self.instance_order = (!ordering.slots.is_empty()).then(|| ordering.clone());
+        self.doc.context_fingerprint.take();
+        self.doc.instance_order_cache.take();
+        if let Some(root) = ordering.slots.iter().map(|slot| slot.original_root).max() {
+            self.doc.next_object_id = self.doc.next_object_id.max(u64::from(root) + 1);
+        }
+        Ok(())
+    }
+
+    fn reconcile_instance_order(&mut self) -> Result<(), EditError> {
+        let stored = instance_order::read_structure(&self.doc.vmf).map_err(EditError::Invalid)?;
+        if stored != self.instance_order {
+            return Err(EditError::Invalid(
+                "Instance ordering properties require the shared ordering operation".into(),
+            ));
+        }
+        let Some(mut ordering) = stored else {
+            return Ok(());
+        };
+        let touched = self.touched.iter().map(|(id, _)| *id).collect();
+        ordering.reconcile(&self.doc.vmf, &self.removed, &touched);
+        if Some(&ordering) != self.instance_order.as_ref() {
+            self.set_instance_order(&ordering)?;
+        }
+        let validated = instance_order::read(&self.doc.vmf).map_err(EditError::Invalid)?;
+        self.doc.instance_order_cache = OnceLock::from(Ok(validated));
         Ok(())
     }
 

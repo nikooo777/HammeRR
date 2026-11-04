@@ -9,6 +9,19 @@ pub(crate) struct OriginPlan {
     pub volumes: BTreeSet<u32>,
 }
 
+pub(crate) fn native_position(point: DVec3) -> Result<DVec3, String> {
+    if !within_compile_bounds(point) {
+        return Err(format!(
+            "Brush-model origin requires finite coordinates within ±{MAX_COMPILE_COORD} units"
+        ));
+    }
+    let native = point.as_vec3().as_dvec3();
+    if !within_compile_bounds(native) {
+        return Err("Brush-model origin cannot be represented by finite native coordinates".into());
+    }
+    Ok(native)
+}
+
 pub(crate) fn checked_geometry(solid: &Solid, report: &mut Report) -> Option<BrushGeometry> {
     let object = format!("solid:{}", solid.id);
     if solid.sides.iter().any(|side| {
@@ -119,6 +132,30 @@ impl Map<'_> {
         report: &mut Report,
         control: &Control,
     ) -> Result<OriginPlan, String> {
-        prepare_origins(&mut self.materials, entity, report, control)
+        let brush_model = entity.solids.iter().any(|solid| !solid.hidden);
+        if brush_model {
+            if entity
+                .properties
+                .iter()
+                .any(|(key, _)| key.eq_ignore_ascii_case("origin") && key != "origin")
+            {
+                return Err("Brush-model origin requires canonical property origin".into());
+            }
+            crate::brush_model_pose::initial_offset(&entity.properties.0)?;
+            for connection in entity.connections.iter().flatten() {
+                if crate::brush_model_pose::pose_key(&connection.output)?
+                    .eq_ignore_ascii_case("origin")
+                {
+                    return Err(
+                        "Brush-model origin cannot be supplied through a connection output".into(),
+                    );
+                }
+            }
+        }
+        let mut plan = prepare_origins(&mut self.materials, entity, report, control)?;
+        if brush_model {
+            plan.position = plan.position.map(native_position).transpose()?;
+        }
+        Ok(plan)
     }
 }

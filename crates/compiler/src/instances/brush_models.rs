@@ -320,7 +320,7 @@ pub(super) fn lower_initial_pose(
     rotation: DMat3,
     control: &Control,
 ) -> Result<(), String> {
-    let pivot = origin(entity)?;
+    let pivot = crate::map::origins::native_position(origin(entity)?)?;
     let offset = crate::brush_model_pose::initial_offset(&entity.properties.0)?;
     let pose = crate::brush_model_pose::Pose {
         offset,

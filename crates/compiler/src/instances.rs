@@ -20,6 +20,7 @@ mod fog;
 mod names;
 mod occluders;
 mod occurrences;
+mod ordering;
 mod overlays;
 mod props;
 mod spawns;
@@ -27,15 +28,18 @@ mod targets;
 mod terrain;
 mod visclusters;
 
+pub(crate) use collapse::custodied_origin as validate_origin_custody;
+pub use collapse::{CollapseEntityKind, collapse_entity_kind, remap_collapsed_entity_sides};
 pub use cubemaps::remap_collapsed_cubemap_sides;
 pub use occurrences::{MAX_OCCURRENCE_BYTES, OccurrencePath, OccurrenceStep, serialize_occurrence};
+pub use ordering::{collapse_root_order, remap_collapsed_ordering};
 
-pub const MAX_INSTANCES: usize = 256;
+pub const MAX_INSTANCES: usize = map_core::instance_order::MAX_SLOTS;
 pub const MAX_EXPANSION_DEPTH: usize = 4;
 pub const MAX_FILES: usize = 32;
 pub const MAX_FILE_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_TOTAL_BYTES: usize = 32 * 1024 * 1024;
-pub const MAX_OBJECTS: usize = 16_384;
+pub const MAX_OBJECTS: usize = map_core::instance_order::MAX_IDS;
 pub const MAX_SIDES: usize = 65_536;
 pub const MAX_BRUSH_SIDES: usize = 128;
 pub const MAX_FILE_NODES: usize = 131_072;
@@ -715,7 +719,10 @@ fn child_admission(
             }
             match key.to_ascii_lowercase().as_str() {
                 "classname" => {}
-                "origin" | "angles" if vector(entity, key)? == DVec3::ZERO => {}
+                "origin"
+                    if vector(entity, key)?.abs().max_element()
+                        <= crate::map::MAX_COMPILE_COORD => {}
+                "angles" if vector(entity, key)? == DVec3::ZERO => {}
                 "mindxlevel" | "maxdxlevel" if value.trim().parse::<u32>().ok() == Some(0) => {}
                 _ => return Err(format!("Child detail property {key} is unsupported")),
             }
@@ -773,8 +780,21 @@ pub enum BrushModelPreparation {
 #[derive(Clone, Copy)]
 enum PreparationPurpose<'a> {
     Reference,
-    Collapse,
+    Collapse(Option<(&'a source_formats::gamefs::GameFs, bool)>),
     Compile(&'a source_formats::gamefs::GameFs, bool),
+}
+
+impl<'a> PreparationPurpose<'a> {
+    fn is_collapse(self) -> bool {
+        matches!(self, Self::Collapse(_))
+    }
+    fn materials(self) -> Option<(&'a source_formats::gamefs::GameFs, bool)> {
+        match self {
+            Self::Compile(fs, shadows) => Some((fs, shadows)),
+            Self::Collapse(materials) => materials,
+            Self::Reference => None,
+        }
+    }
 }
 
 pub struct PreparedInstances<'a> {
@@ -786,6 +806,7 @@ pub struct PreparedInstances<'a> {
     provenance: Provenance,
     occurrence_budget: occurrences::OccurrenceBudget,
     pub(crate) material_sources: Option<crate::asset_sources::BuildMaterialSources>,
+    collapse_order: Option<map_core::instance_order::Ordering>,
 }
 
 pub(crate) type Prepared<'a> = PreparedInstances<'a>;
@@ -799,6 +820,11 @@ pub struct InstanceBrush<'a> {
 }
 
 impl PreparedInstances<'_> {
+    pub fn collapse_ordering(&self) -> Result<&map_core::instance_order::Ordering, String> {
+        self.collapse_order
+            .as_ref()
+            .ok_or_else(|| "Prepared source has no editable collapse ordering plan".into())
+    }
     pub(crate) fn static_prop_metadata(&self) -> StaticPropMetadata<'_> {
         StaticPropMetadata {
             poses: Some(&self.static_prop_poses),
@@ -957,28 +983,27 @@ pub fn resolve<'a>(
 
 pub fn selected_collapse_roots(vmf: &Vmf, selected: &[ObjectId]) -> Result<Vec<ObjectId>, String> {
     if selected.is_empty() || selected.len() > MAX_INSTANCES {
-        return Err("Select a nonempty leading set of visible root instance references within the compiler reference limit".into());
+        return Err("Select a nonempty set of visible root instance references within the compiler reference limit".into());
     }
     let mut ids = BTreeSet::new();
     for &id in selected {
         if !matches!(id, ObjectId::Entity(_)) {
-            return Err("Select only complete visible root instance references before collapsing selected leading references".into());
+            return Err("Select only complete visible root instance references before collapsing selected references".into());
         }
         if !ids.insert(id) {
             return Err("Selected collapse root IDs must be unique".into());
         }
     }
-    let prefix = vmf
-        .entities
-        .iter()
-        .filter(|entity| !entity.hidden && is_instance(entity))
-        .take(selected.len())
-        .map(|entity| ObjectId::Entity(entity.id))
+    let ordered = collapse_root_order(vmf)?;
+    let admitted = ordered
+        .into_iter()
+        .filter(|id| ids.contains(id))
         .collect::<Vec<_>>();
-    if prefix.len() != selected.len() || prefix.iter().any(|id| !ids.contains(id)) {
-        return Err("Selected references must form a nonempty prefix of the visible root-reference order; include every earlier visible root or use All visible references".into());
+    if admitted.len() != ids.len() {
+        return Err("Select only complete visible root instance references".into());
     }
-    Ok(prefix)
+
+    Ok(admitted)
 }
 
 pub fn resolve_for_collapse<'a>(
@@ -987,7 +1012,7 @@ pub fn resolve_for_collapse<'a>(
     control: &Control,
     report: &mut Report,
 ) -> Result<PreparedInstances<'a>, Diagnostic> {
-    resolve_collapse_roots(vmf, source, control, report, None)
+    resolve_collapse_roots(vmf, source, control, report, None, None)
 }
 
 pub fn resolve_for_selected_collapse<'a>(
@@ -1005,7 +1030,52 @@ pub fn resolve_for_selected_collapse<'a>(
             _ => unreachable!(),
         })
         .collect::<BTreeSet<_>>();
-    resolve_collapse_roots(vmf, source, control, report, Some(&roots))
+    resolve_collapse_roots(vmf, source, control, report, Some(&roots), None)
+}
+
+pub fn resolve_for_collapse_with_materials<'a>(
+    vmf: &'a Vmf,
+    source: Option<&SourceContext>,
+    fs: &source_formats::gamefs::GameFs,
+    brush_texture_shadows: bool,
+    control: &Control,
+    report: &mut Report,
+) -> Result<PreparedInstances<'a>, Diagnostic> {
+    resolve_collapse_roots(
+        vmf,
+        source,
+        control,
+        report,
+        None,
+        Some((fs, brush_texture_shadows)),
+    )
+}
+
+pub fn resolve_for_selected_collapse_with_materials<'a>(
+    vmf: &'a Vmf,
+    selected: &[ObjectId],
+    source: Option<&SourceContext>,
+    fs: &source_formats::gamefs::GameFs,
+    brush_texture_shadows: bool,
+    control: &Control,
+    report: &mut Report,
+) -> Result<PreparedInstances<'a>, Diagnostic> {
+    let roots = selected_collapse_roots(vmf, selected)
+        .map_err(|message| Diagnostic::error(message, None, None))?
+        .into_iter()
+        .map(|id| match id {
+            ObjectId::Entity(id) => id,
+            _ => unreachable!(),
+        })
+        .collect::<BTreeSet<_>>();
+    resolve_collapse_roots(
+        vmf,
+        source,
+        control,
+        report,
+        Some(&roots),
+        Some((fs, brush_texture_shadows)),
+    )
 }
 
 fn resolve_collapse_roots<'a>(
@@ -1014,6 +1084,7 @@ fn resolve_collapse_roots<'a>(
     control: &Control,
     report: &mut Report,
     roots: Option<&BTreeSet<u32>>,
+    materials: Option<(&source_formats::gamefs::GameFs, bool)>,
 ) -> Result<PreparedInstances<'a>, Diagnostic> {
     for helper in vmf.entities.iter().filter(|entity| {
         !entity.hidden
@@ -1033,7 +1104,7 @@ fn resolve_collapse_roots<'a>(
         source,
         control,
         report,
-        PreparationPurpose::Collapse,
+        PreparationPurpose::Collapse(materials),
         roots,
     )
 }
@@ -1151,6 +1222,7 @@ fn prepare_purpose_roots<'a>(
         provenance: BTreeMap::new(),
         occurrence_budget: occurrences::OccurrenceBudget::default(),
         material_sources: None,
+        collapse_order: None,
     };
     for solid in vmf.solids() {
         control
@@ -1164,20 +1236,34 @@ fn prepare_purpose_roots<'a>(
         }
     }
     let vmf = prepared.vmf.as_ref();
+    let mut order_work = 0;
+    let order_plan =
+        ordering::ScopePlan::capture(vmf, purpose.is_collapse(), &mut order_work, control)
+            .map_err(|message| Diagnostic::error(message, None, None))?;
     if !requires_source(vmf) {
+        if order_plan.order.is_some() {
+            let mut output = vmf.clone();
+            ordering::apply(
+                &mut output,
+                &order_plan,
+                &BTreeMap::new(),
+                &BTreeMap::new(),
+                &mut order_work,
+                control,
+            )
+            .map_err(|message| Diagnostic::error(message, None, None))?;
+            prepared.vmf = Cow::Owned(output);
+        }
         return Ok(prepared);
     }
     let Some(source) = source else {
         return Ok(prepared);
     };
-    let helpers = vmf
-        .entities
-        .iter()
-        .filter(|entity| {
-            !entity.hidden
-                && is_instance(entity)
-                && roots.is_none_or(|roots| roots.contains(&entity.id))
-        })
+    let helpers = order_plan
+        .roots(vmf)
+        .map_err(|message| Diagnostic::error(message, None, None))?
+        .into_iter()
+        .filter(|entity| !entity.hidden && roots.is_none_or(|roots| roots.contains(&entity.id)))
         .take(MAX_INSTANCES + 1)
         .collect::<Vec<_>>();
     let failure = |entity: &Entity, message: String| {
@@ -1219,7 +1305,7 @@ fn prepare_purpose_roots<'a>(
     }
     let mut document =
         Document::try_new(vmf.clone()).map_err(|error| failure(first, error.to_string()))?;
-    let mut expansion = expand::Expansion::new(vmf, source, control, report, purpose);
+    let mut expansion = expand::Expansion::new(vmf, source, control, report, purpose, order_work);
     for helper in &helpers {
         document
             .edit("expand brush instance", |tx| {
@@ -1241,9 +1327,36 @@ fn prepare_purpose_roots<'a>(
             Ok(())
         })
         .map_err(|error| failure(first, error.to_string()))?;
-    let expanded = document.into_vmf();
+    let mut expanded = document.into_vmf();
     check(expanded.validate_ids().map_err(|error| error.to_string()))?;
-    let expanded_sources = expansion.finish();
+    let mut expanded_sources = expansion.finish();
+    ordering::apply(
+        &mut expanded,
+        &order_plan,
+        &expanded_sources.provenance,
+        &expanded_sources.ordering,
+        &mut expanded_sources.work,
+        control,
+    )
+    .map_err(|error| failure(first, error))?;
+    if purpose.is_collapse() {
+        let selected = helpers
+            .iter()
+            .map(|entity| entity.id)
+            .collect::<BTreeSet<_>>();
+        prepared.collapse_order = Some(
+            ordering::materialized(
+                &order_plan,
+                &expanded,
+                &expanded_sources.provenance,
+                &selected,
+                expanded_sources.origin_custody,
+                &mut expanded_sources.work,
+                control,
+            )
+            .map_err(|error| failure(first, error))?,
+        );
+    }
     let stats = expanded_sources.stats;
     prepared.provenance = expanded_sources.provenance;
     prepared.occurrence_budget = expanded_sources.occurrence_budget;

@@ -226,7 +226,7 @@ pub(crate) fn component(token: &str) -> Result<f64, String> {
     Ok(f64::from(native))
 }
 
-fn pose_key(key: &str) -> Result<&str, String> {
+pub(crate) fn pose_key(key: &str) -> Result<&str, String> {
     if key.len() > MAX_INITIAL_KEY_BYTES {
         return Err("initial brush-model pose keys require at most 2047 bytes".into());
     }

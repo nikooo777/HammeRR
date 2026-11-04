@@ -19,6 +19,7 @@ const MAX_PROVENANCE_SOURCE_BYTES: usize = 1024 * 1024;
 pub enum Scope {
     #[default]
     AllVisibleReferences,
+    SelectedReferences,
     SelectedLeadingReferences,
 }
 
@@ -26,15 +27,24 @@ impl Scope {
     fn label(self) -> &'static str {
         match self {
             Self::AllVisibleReferences => "all_visible_references",
-            Self::SelectedLeadingReferences => "selected_leading_references",
+            Self::SelectedReferences | Self::SelectedLeadingReferences => "selected_references",
         }
     }
 
     fn history(self) -> &'static str {
         match self {
             Self::AllVisibleReferences => "collapse all visible instance references",
-            Self::SelectedLeadingReferences => "collapse selected leading instance references",
+            Self::SelectedReferences | Self::SelectedLeadingReferences => {
+                "collapse selected instance references"
+            }
         }
+    }
+
+    fn selected(self) -> bool {
+        matches!(
+            self,
+            Self::SelectedReferences | Self::SelectedLeadingReferences
+        )
     }
 }
 
@@ -54,6 +64,7 @@ struct Key {
     selection: BTreeSet<ObjectId>,
     path: Option<PathBuf>,
     scope: Scope,
+    brush_texture_shadows: bool,
 }
 
 impl Key {
@@ -66,6 +77,7 @@ impl Key {
             selection: session.selection.clone(),
             path: session.path.clone(),
             scope,
+            brush_texture_shadows: session.compile_options().brush_texture_shadows,
         }
     }
 
@@ -76,6 +88,7 @@ impl Key {
             && self.saved == session.history_save_serial
             && self.selection == session.selection
             && self.path == session.path
+            && self.brush_texture_shadows == session.compile_options().brush_texture_shadows
     }
 }
 
@@ -108,16 +121,17 @@ struct EntityOrigin {
     file: String,
     original: u32,
     class: String,
+    kind: instances::CollapseEntityKind,
     occurrence: Arc<instances::OccurrencePath>,
 }
 
 impl EntityOrigin {
     fn emitted(&self) -> bool {
-        matches!(self.class.as_str(), "light" | "light_spot" | "info_target")
+        self.kind.emitted()
     }
 
     fn static_prop(&self) -> bool {
-        self.class == "prop_static"
+        self.kind.static_prop()
     }
 }
 
@@ -129,6 +143,7 @@ struct Plan {
     entity_origins: Vec<EntityOrigin>,
     faces: Vec<FaceOrigin>,
     added: Vec<ObjectId>,
+    ordering: map_core::instance_order::Ordering,
 }
 
 struct Ready {
@@ -137,15 +152,20 @@ struct Ready {
     plan: Plan,
     dependencies: DependencyGuard,
     prop_sources: Option<compiler::asset_sources::AssetSourceGuard>,
+    material_sources: Option<compiler::asset_sources::AssetSourceGuard>,
     stats: InstanceStats,
 }
 
 impl Ready {
+    fn asset_sources(&self) -> impl Iterator<Item = &compiler::asset_sources::AssetSourceGuard> {
+        self.prop_sources.iter().chain(self.material_sources.iter())
+    }
+
     fn verify_metadata(&self) -> Result<(), String> {
         self.dependencies
             .verify_metadata()
             .map_err(|error| error.to_string())?;
-        if let Some(sources) = &self.prop_sources {
+        for sources in self.asset_sources() {
             sources
                 .verify_metadata()
                 .map_err(|error| error.to_string())?;
@@ -161,6 +181,7 @@ enum Work {
         removed: Vec<ObjectId>,
         scope: Scope,
         catalog: CollapseCatalog,
+        brush_texture_shadows: bool,
     },
     Apply(Arc<Ready>),
 }
@@ -201,6 +222,7 @@ impl Request {
                     removed,
                     scope,
                     catalog,
+                    brush_texture_shadows,
                 } => {
                     let targets = removed.iter().map(|id| match id {
                         ObjectId::Entity(id) => *id,
@@ -209,7 +231,7 @@ impl Request {
                     if has_incoming_checked(&document, &catalog, &targets, &mut || self.control.checkpoint())? {
                         return Err("A parent reference targets an instance helper; remove the binding before collapse".into());
                     }
-                    Arc::new(prepare(*document, *source, removed, scope, &self.game, &self.control)?)
+                    Arc::new(prepare(*document, *source, removed, scope, &self.game, brush_texture_shadows, &self.control)?)
                 },
                 Work::Apply(ready) => ready,
             };
@@ -217,7 +239,7 @@ impl Request {
                 .dependencies
                 .verify(&self.control)
                 .map_err(|error| error.to_string())?;
-            if let Some(sources) = &ready.prop_sources {
+            for sources in ready.asset_sources() {
                 sources
                     .verify_sources(&self.game, &self.control)
                     .map_err(|error| error.to_string())?;
@@ -244,21 +266,31 @@ fn prepare(
     removed: Vec<ObjectId>,
     scope: Scope,
     game: &source_formats::gamefs::GameFs,
+    brush_texture_shadows: bool,
     control: &Control,
 ) -> Result<Ready, String> {
     let source = source.hydrate(control).map_err(|error| error.to_string())?;
     let mut report = compiler::Report::default();
     let prepared = match scope {
-        Scope::AllVisibleReferences => {
-            instances::resolve_for_collapse(document.vmf(), Some(&source), control, &mut report)
-        }
-        Scope::SelectedLeadingReferences => instances::resolve_for_selected_collapse(
+        Scope::AllVisibleReferences => instances::resolve_for_collapse_with_materials(
             document.vmf(),
-            &removed,
             Some(&source),
+            game,
+            brush_texture_shadows,
             control,
             &mut report,
         ),
+        Scope::SelectedReferences | Scope::SelectedLeadingReferences => {
+            instances::resolve_for_selected_collapse_with_materials(
+                document.vmf(),
+                &removed,
+                Some(&source),
+                game,
+                brush_texture_shadows,
+                control,
+                &mut report,
+            )
+        }
     }
     .map_err(|error| error.message)?;
     let dependencies = prepared
@@ -270,14 +302,20 @@ fn prepare(
         .cloned()
         .ok_or("Instance collapse statistics are missing")?;
     let prop_sources = prepared.validate_collapse_static_prop_poses(game, control)?;
+    let material_sources = prepared.collapse_material_sources(game, control)?;
     let mut plan_bytes =
         admit_collapse_snapshot(prepared.vmf(), MAX_PLAN_BYTES, &mut || control.checkpoint())?;
     plan_bytes = plan_bytes
         .checked_add(prepared.occurrence_bytes())
         .filter(|&bytes| bytes <= MAX_PLAN_BYTES)
         .ok_or("Collapsed occurrence metadata exceeds the plan limit")?;
-    for brush in prepared.generated_brushes() {
-        for side in &brush.solid.sides {
+    let ordering = prepared.collapse_ordering()?;
+    plan_bytes = plan_bytes
+        .checked_add(ordering.allocation_bytes()?)
+        .filter(|&bytes| bytes <= MAX_PLAN_BYTES)
+        .ok_or("Collapsed ordering metadata exceeds the plan limit")?;
+    for solid in collapse_solids(&prepared) {
+        for side in &solid.sides {
             control.checkpoint()?;
             let (_, file, _, _) = prepared
                 .face_origin(side.id)
@@ -295,19 +333,13 @@ fn prepare(
     let mut entity_origins = Vec::new();
     for entity in &prepared.vmf().entities {
         control.checkpoint()?;
-        if !matches!(
-            entity.classname(),
-            Some("light" | "light_spot" | "info_target" | "prop_static")
-        ) && !entity
-            .classname()
-            .is_some_and(|class| class.eq_ignore_ascii_case("env_cubemap"))
-        {
-            continue;
-        }
         let Some((owner, file, original)) = prepared.entity_origin(entity.id) else {
             continue;
         };
-        let class = entity.classname().unwrap();
+        let kind = instances::collapse_entity_kind(entity)?;
+        let class = entity
+            .classname()
+            .ok_or("Collapsed entity class is missing")?;
         plan_bytes = plan_bytes
             .checked_add(
                 std::mem::size_of::<EntityOrigin>()
@@ -324,6 +356,7 @@ fn prepare(
             file: file.to_owned(),
             original,
             class: class.to_owned(),
+            kind,
             occurrence: Arc::clone(
                 prepared
                     .entity_occurrence(entity.id)
@@ -337,7 +370,9 @@ fn prepare(
         if !brush.detail {
             world.push(brush.solid.clone());
         }
-        for side in &brush.solid.sides {
+    }
+    for solid in collapse_solids(&prepared) {
+        for side in &solid.sides {
             let (owner, file, original_solid, original_side) = prepared
                 .face_origin(side.id)
                 .ok_or("Collapsed face provenance is missing")?;
@@ -363,10 +398,7 @@ fn prepare(
         .cloned()
         .collect::<Vec<_>>();
     if world.is_empty() && entities.is_empty() {
-        return Err(
-            "Visible references contain no editable geometry, static props, lights or cubemaps"
-                .into(),
-        );
+        return Err("Visible references contain no admitted editable objects".into());
     }
     let mut plan = Plan {
         removed,
@@ -375,6 +407,7 @@ fn prepare(
         entity_origins,
         faces,
         added: Vec::new(),
+        ordering: ordering.clone(),
     };
     drop(prepared);
     document
@@ -388,8 +421,26 @@ fn prepare(
         plan,
         dependencies,
         prop_sources,
+        material_sources,
         stats,
     })
+}
+
+fn collapse_solids<'a>(
+    prepared: &'a instances::PreparedInstances<'_>,
+) -> impl Iterator<Item = &'a Solid> {
+    prepared
+        .generated_brushes()
+        .filter(|brush| !brush.detail)
+        .map(|brush| brush.solid)
+        .chain(
+            prepared
+                .vmf()
+                .entities
+                .iter()
+                .filter(|entity| prepared.root_entity(entity.id).is_some())
+                .flat_map(|entity| &entity.solids),
+        )
 }
 
 fn charge_side_work(work: &mut usize, control: &Control) -> Result<(), EditError> {
@@ -406,11 +457,18 @@ fn charge_side_work(work: &mut usize, control: &Control) -> Result<(), EditError
 fn fresh_solid(
     tx: &mut Transaction,
     solid: &mut Solid,
+    solids: &mut BTreeMap<u32, u32>,
     sides: &BTreeMap<u32, u32>,
     work: &mut usize,
     control: &Control,
 ) -> Result<(), EditError> {
+    let original = solid.id;
     solid.id = tx.new_object_id()?;
+    if solids.insert(original, solid.id).is_some() {
+        return Err(EditError::Invalid(
+            "Collapsed source solid IDs are not unique".into(),
+        ));
+    }
     for side in &mut solid.sides {
         charge_side_work(work, control)?;
         side.id = sides
@@ -447,23 +505,28 @@ fn install(tx: &mut Transaction, plan: &mut Plan, control: &Control) -> Result<(
         *authored = tx.new_side_id()?;
     }
     plan.added.clear();
+    let mut solids = BTreeMap::new();
     for solid in &mut plan.world {
-        fresh_solid(tx, solid, &sides, &mut binding_work, control)?;
+        fresh_solid(tx, solid, &mut solids, &sides, &mut binding_work, control)?;
         plan.added.push(tx.add_solid(solid.clone())?);
     }
     let mut entities = BTreeMap::new();
     for entity in &mut plan.entities {
         let original = entity.id;
         entity.id = tx.new_object_id()?;
-        entities.insert(original, entity.id);
+        if entities.insert(original, entity.id).is_some() {
+            return Err(EditError::Invalid(
+                "Collapsed source entity IDs are not unique".into(),
+            ));
+        }
         for solid in &mut entity.solids {
-            fresh_solid(tx, solid, &sides, &mut binding_work, control)?;
+            fresh_solid(tx, solid, &mut solids, &sides, &mut binding_work, control)?;
         }
         plan.added.push(tx.add_entity(entity.clone())?);
     }
     for entity in &mut plan.entities {
         if let Some(rewritten) =
-            instances::remap_collapsed_cubemap_sides(entity, &sides, &mut binding_work, control)
+            instances::remap_collapsed_entity_sides(entity, &sides, &mut binding_work, control)
                 .map_err(EditError::Invalid)?
         {
             tx.entity_mut(entity.id)?
@@ -482,21 +545,35 @@ fn install(tx: &mut Transaction, plan: &mut Plan, control: &Control) -> Result<(
             .get(&face.side)
             .ok_or_else(|| EditError::Invalid("Collapsed face ID mapping is incomplete".into()))?;
     }
+    instances::remap_collapsed_ordering(
+        &mut plan.ordering,
+        &plan.removed,
+        &solids,
+        &entities,
+        control,
+    )
+    .map_err(EditError::Invalid)?;
+    map_core::instance_order::install(tx, &plan.ordering)?;
     tx.vmf()
         .validate_ids()
         .map_err(|error| EditError::Invalid(error.to_string()))
 }
 
 impl Session {
+    pub fn selected_references(&self) -> Result<Vec<ObjectId>, String> {
+        instances::selected_collapse_roots(self.document.vmf(), &self.selected_ids())
+    }
+
     pub fn instance_collapse_stamp(&self) -> String {
         format!(
-            "{}:{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}:{}:{}",
             self.document_generation,
             self.document.revision(),
             self.definitions_serial,
             self.history_save_serial,
             self.scene_serial,
-            self.geometry.instance_collapse.serial
+            self.geometry.instance_collapse.serial,
+            u8::from(self.compile_options().brush_texture_shadows)
         )
     }
 
@@ -558,19 +635,7 @@ impl Session {
             .ok_or("Save the parent VMF through a UTF-8 path before collapsing instances")?;
         admit_collapse_snapshot(self.document.vmf(), MAX_PLAN_BYTES, &mut || Ok(()))?;
         let catalog = CollapseCatalog::capture(&self.definitions)?;
-        let removed = self
-            .document
-            .vmf()
-            .entities
-            .iter()
-            .filter(|entity| {
-                !entity.hidden
-                    && entity
-                        .classname()
-                        .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
-            })
-            .map(|entity| ObjectId::Entity(entity.id))
-            .collect::<Vec<_>>();
+        let removed = instances::collapse_root_order(self.document.vmf())?;
         if removed.is_empty() {
             return Err("There are no visible instance references to collapse".into());
         }
@@ -596,8 +661,8 @@ impl Session {
         }
         let removed = match scope {
             Scope::AllVisibleReferences => removed,
-            Scope::SelectedLeadingReferences => {
-                instances::selected_collapse_roots(self.document.vmf(), &self.selected_ids())?
+            Scope::SelectedReferences | Scope::SelectedLeadingReferences => {
+                self.selected_references()?
             }
         };
         if self.document.vmf().extra.iter().any(|node| {
@@ -657,6 +722,7 @@ impl Session {
         self.geometry.instance_collapse.serial += 1;
         let token = self.geometry.instance_collapse.serial;
         let key = Key::capture(self, scope);
+        let brush_texture_shadows = key.brush_texture_shadows;
         let identity = Arc::new(());
         let control = Control::default();
         self.geometry.instance_collapse.form = Some(Form {
@@ -681,6 +747,7 @@ impl Session {
                 removed,
                 scope,
                 catalog,
+                brush_texture_shadows,
             },
             _worker: worker,
         })
@@ -694,7 +761,7 @@ impl Session {
             .clone()
             .ok_or("Prepare an instance collapse preview first")?;
         if ready.scope != form.key.scope
-            || (ready.scope == Scope::SelectedLeadingReferences
+            || (ready.scope.selected()
                 && ready.plan.removed.iter().copied().collect::<BTreeSet<_>>()
                     != form.key.selection)
         {
@@ -739,7 +806,10 @@ impl Session {
             return Err("Review the shared collapse before changing it".into());
         }
         if !form.key.current(self) {
-            return Err("Map, selection or saved source changed; prepare collapse again".into());
+            return Err(
+                "Map, selection, material policy or saved source changed; prepare collapse again"
+                    .into(),
+            );
         }
         if form.control.cancelled() {
             return Err("Instance collapse was cancelled".into());
@@ -832,8 +902,8 @@ impl Session {
                 actor,
                 match completed.key.scope {
                     Scope::AllVisibleReferences => "collapsed all visible instance references",
-                    Scope::SelectedLeadingReferences => {
-                        "collapsed selected leading instance references"
+                    Scope::SelectedReferences | Scope::SelectedLeadingReferences => {
+                        "collapsed selected instance references"
                     }
                 },
             );
@@ -886,32 +956,31 @@ impl Session {
 
     pub fn get_instance_collapse(&self) -> Value {
         let state = &self.geometry.instance_collapse;
-        let mut root_order = self
-            .document
-            .vmf()
-            .entities
-            .iter()
-            .filter(|entity| {
-                !entity.hidden
-                    && entity
-                        .classname()
-                        .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
-            })
-            .take(instances::MAX_INSTANCES + 1)
-            .map(|entity| crate::identity::id_string(ObjectId::Entity(entity.id)))
-            .collect::<Vec<_>>();
+        let (mut root_order, root_order_error) =
+            match instances::collapse_root_order(self.document.vmf()) {
+                Ok(roots) => (
+                    roots
+                        .into_iter()
+                        .map(crate::identity::id_string)
+                        .collect::<Vec<_>>(),
+                    None,
+                ),
+                Err(error) => (Vec::new(), Some(error)),
+            };
         let root_order_truncated = root_order.len() > instances::MAX_INSTANCES;
         root_order.truncate(instances::MAX_INSTANCES);
         let Some(form) = &state.form else {
-            return json!({"snapshot":self.instance_collapse_stamp(),"token":null,"ready":false,"worker_active":state.worker.busy(),"scope":"all_visible_references","available_scopes":["all_visible_references","selected_leading_references"],"visible_root_order":root_order,"visible_root_order_truncated":root_order_truncated,"writes_child_files":false});
+            return json!({"snapshot":self.instance_collapse_stamp(),"token":null,"ready":false,"error":root_order_error,"worker_active":state.worker.busy(),"scope":"all_visible_references","available_scopes":["all_visible_references","selected_references"],"scope_aliases":{"selected_leading_references":"selected_references"},"visible_root_order":root_order,"root_order_error":root_order_error,"visible_root_order_truncated":root_order_truncated,"writes_child_files":false});
         };
-        let blocked = if !form.key.current(self) {
-            Some("Map, selection or saved source changed".to_owned())
-        } else {
-            form.ready
-                .as_ref()
-                .and_then(|ready| ready.verify_metadata().err())
-        };
+        let blocked = root_order_error.clone().or_else(|| {
+            if !form.key.current(self) {
+                Some("Map, selection, material policy or saved source changed".to_owned())
+            } else {
+                form.ready
+                    .as_ref()
+                    .and_then(|ready| ready.verify_metadata().err())
+            }
+        });
         let ready = form.ready.as_ref();
         let provenance_error = ready.and_then(|ready| {
             let bytes = ready
@@ -938,7 +1007,7 @@ impl Session {
                 .is_none()
                 .then_some("Captured provenance routes exceed the bounded response-copy budget")
         });
-        json!({"snapshot":self.instance_collapse_stamp(),"token":form.token,"owner":form.owner.label(),"status":form.status,"error":blocked.as_ref().or(form.error.as_ref()),"ready":ready.is_some() && blocked.is_none() && form.status=="ready","worker_active":state.worker.busy(),"visible_root_order":root_order,"visible_root_order_truncated":root_order_truncated,"scope":form.key.scope.label(),"preview_scope":ready.map(|ready|ready.scope.label()),"selected":form.key.selection.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>(),"recursive":true,"source":form.key.path,"stats":ready.map(|ready|&ready.stats),"removed":ready.map(|ready|ready.plan.removed.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"objects":ready.map(|ready|ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"face_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.faces.iter().take(MAX_ROWS).map(|face|json!({"side":face.side,"owner":crate::identity::id_string(ObjectId::Entity(face.owner)),"file":face.file,"original_solid":face.original_solid,"original_side":face.original_side,"occurrence":face.occurrence.as_ref(),"occurrence_label":face.occurrence.label()})).collect::<Vec<_>>()),"face_provenance_total":ready.map(|ready|ready.plan.faces.len()),"entity_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.emitted()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"helper_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.class.eq_ignore_ascii_case("env_cubemap")).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"static_prop_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.static_prop()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"entity_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.entity_origins.iter().take(MAX_ROWS).map(|origin|json!({"entity":crate::identity::id_string(ObjectId::Entity(origin.entity)),"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"owner":crate::identity::id_string(ObjectId::Entity(origin.owner)),"file":origin.file,"original_entity":origin.original,"classname":origin.class,"emitted":origin.emitted(),"compiler_handled":!origin.emitted(),"occurrence":origin.occurrence.as_ref(),"occurrence_label":origin.occurrence.label()})).collect::<Vec<_>>()),"entity_provenance_total":ready.map(|ready|ready.plan.entity_origins.len()),"provenance_error":provenance_error,"limits":{"plan_bytes":MAX_PLAN_BYTES,"provenance_source_bytes":MAX_PROVENANCE_SOURCE_BYTES,"occurrence_bytes":instances::MAX_OCCURRENCE_BYTES,"rows":MAX_ROWS,"helper_levels":instances::MAX_EXPANSION_DEPTH,"selected_scope":"nonempty_prefix_of_visible_root_reference_order"},"writes_child_files":false})
+        json!({"snapshot":self.instance_collapse_stamp(),"token":form.token,"owner":form.owner.label(),"status":form.status,"error":blocked.as_ref().or(form.error.as_ref()),"ready":ready.is_some() && blocked.is_none() && form.status=="ready","worker_active":state.worker.busy(),"visible_root_order":root_order,"root_order_error":root_order_error,"visible_root_order_truncated":root_order_truncated,"scope":form.key.scope.label(),"available_scopes":["all_visible_references","selected_references"],"scope_aliases":{"selected_leading_references":"selected_references"},"preview_scope":ready.map(|ready|ready.scope.label()),"selected":form.key.selection.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>(),"recursive":true,"source":form.key.path,"stats":ready.map(|ready|&ready.stats),"removed":ready.map(|ready|ready.plan.removed.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"objects":ready.map(|ready|ready.plan.added.iter().copied().map(crate::identity::id_string).collect::<Vec<_>>()),"face_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.faces.iter().take(MAX_ROWS).map(|face|json!({"side":face.side,"owner":crate::identity::id_string(ObjectId::Entity(face.owner)),"file":face.file,"original_solid":face.original_solid,"original_side":face.original_side,"occurrence":face.occurrence.as_ref(),"occurrence_label":face.occurrence.label()})).collect::<Vec<_>>()),"face_provenance_total":ready.map(|ready|ready.plan.faces.len()),"entity_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.emitted()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"helper_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.kind.cubemap()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"compiler_helper_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.kind.compiler_helper()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity)),"classname":origin.class})).collect::<Vec<_>>()),"static_prop_id_map":ready.map(|ready|ready.plan.entity_origins.iter().filter(|origin|origin.static_prop()).map(|origin|json!({"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"authored":crate::identity::id_string(ObjectId::Entity(origin.entity))})).collect::<Vec<_>>()),"entity_provenance":ready.filter(|_|provenance_error.is_none()).map(|ready|ready.plan.entity_origins.iter().take(MAX_ROWS).map(|origin|json!({"entity":crate::identity::id_string(ObjectId::Entity(origin.entity)),"expanded":crate::identity::id_string(ObjectId::Entity(origin.expanded)),"owner":crate::identity::id_string(ObjectId::Entity(origin.owner)),"file":origin.file,"original_entity":origin.original,"classname":origin.class,"emitted":origin.emitted(),"compiler_handled":!origin.emitted(),"occurrence":origin.occurrence.as_ref(),"occurrence_label":origin.occurrence.label()})).collect::<Vec<_>>()),"entity_provenance_total":ready.map(|ready|ready.plan.entity_origins.len()),"provenance_error":provenance_error,"limits":{"plan_bytes":MAX_PLAN_BYTES,"provenance_source_bytes":MAX_PROVENANCE_SOURCE_BYTES,"occurrence_bytes":instances::MAX_OCCURRENCE_BYTES,"rows":MAX_ROWS,"helper_levels":instances::MAX_EXPANSION_DEPTH,"selected_scope":"nonempty_subset_of_visible_root_references"},"writes_child_files":false})
     }
 }
 

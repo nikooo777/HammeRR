@@ -26,10 +26,10 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
         if !seen.insert(lower.clone()) {
             return Err(format!("Child cubemap repeats property {key}"));
         }
-        if key != lower {
+        if key != lower && lower != "sides" {
             return Err(format!("Child cubemap requires canonical property {lower}"));
         }
-        match key {
+        match lower.as_str() {
             "classname" | "origin" | "cubemapsize" | "sides" => {}
             "angles" if vector(entity, key)? == DVec3::ZERO => {}
             "angle" if value.trim().parse::<f64>().ok() == Some(0.0) => {}

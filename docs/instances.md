@@ -296,6 +296,7 @@ A failed expansion preserves the previous published BSP.
 - Source and intermediate positions must remain within ±16384.
 - General runtime entities, arbitrary parenting, dynamic scripts and unsupported initial poses remain unavailable.
 - Child overlay and cubemap bindings cannot cross occurrence scopes or target unsupported owners.
+- Child cubemaps accept case variants of `sides`; duplicate keys and unsupported aliases reject.
 - Inspect the current diagnostic for exact class and material restrictions; admission differs by compiler consumer.
 
 <!-- page-nav -->

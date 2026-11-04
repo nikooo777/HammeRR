@@ -31,6 +31,11 @@ Use ordinary world brushes to seal playable areas.
 Flatten targets the plane through the brush center. Smooth uses neighboring samples.
 Noise repeats with the same source and seed.
 
+Textures follow the flat base grid. Sculpting and XYZ vertex movement retain
+each sample's grid UVs; changing resolution retains the same continuous grid
+mapping. Nonlinear world projection onto sculpted positions is not represented
+by Source's terrain format.
+
 ## Paint blends
 
 1. Apply a supported two-base blend material.

@@ -139,6 +139,7 @@ impl Session {
             partitions,
             rise: 0.0,
             roof_texture_lock: false,
+            neighbor_texture_lock: false,
             selection: BTreeSet::new(),
         })
     }
@@ -356,6 +357,6 @@ impl Session {
             .preview_snapshot()
             .edit("check planned partition materials", |tx| draft.store(tx))
             .map_err(|error| error.to_string())?;
-        Ok(self.install_partition_preview(draft, self.document.preview_snapshot(), None))
+        self.install_partition_preview(draft, self.document.preview_snapshot(), None)
     }
 }

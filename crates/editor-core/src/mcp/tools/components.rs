@@ -244,7 +244,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview a roof/ridge crease on one selected quad face per brush, across 1–16 brushes. First select faces and inspect get_brush_components.crease_choices: each pair identifies the two neighboring face IDs at opposing source edges and their midpoints. pairs supplies {solid, edges:[neighbor_side,neighbor_side]} for every selected face; order is irrelevant. Raise both edge midpoints by rise (0.125–4096 units) along the source face normal, making two flat roof planes. Preserve all old corners, original side/solid IDs, entity ownership, lighting and unknown metadata; the additional roof side inherits the source face. roof_texture_lock defaults false (world UV projection); true preserves corresponding corner/midpoint UVs on both roof faces only. Neighboring projections remain exact. Reject nonquad, nonplanar, concave, neighboring-plane crossing, displacement, 64-face overflow and out-of-bounds results atomically before allocating IDs. Latest snapshot required. preview.crease reports new side IDs, ridge positions and the two resulting corner selections; source_selection and crease_choices remain original. Invalid updates retain the preceding draft. Apply/cancel with commit_component_edit/cancel_component_edit. Apply verifies generated IDs and records one undo step. Picking and movement of draft topology are blocked."
+        description = "Preview a roof/ridge crease on one selected quad face per brush across 1–16 brushes. Inspect get_brush_components.crease_choices, then supply pairs=[{solid,edges:[neighbor_side,neighbor_side]}] for every selected face and the latest snapshot. Raise the opposing source edge points by rise=0.125–4096 along the face normal. Independent roof_texture_lock and neighbor_texture_lock default false. Roof attachment preserves corresponding roof corner/midpoint UVs. Neighbor attachment preserves extended neighbor UVs through checked convex brush fragments with real triangular exterior faces; it can add brushes and allocate new face IDs. Inspect preview.crease.output_brushes, added_brushes, fragment_count, fragments[].faces and selected_exterior_faces before Apply. Without neighbor attachment, neighboring projections remain unchanged and the original solid/side identities follow the existing crease policy. Unsupported geometry, bindings, metadata or exhausted work/fragment bounds reject atomically and retain the previous valid preview. Source materials, ownership and supported metadata follow the shared operation. Apply/cancel with commit_component_edit/cancel_component_edit; exact replay makes one Undo step. Draft topology picking and movement remain blocked. UI: Roof ridge → Keep roof texture at corners / Keep neighboring textures at corners."
     )]
     pub(in crate::mcp) fn preview_component_crease(
         &self,
@@ -252,16 +252,13 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            if let Some(lock) = args.roof_texture_lock {
-                session.preview_component_crease_with_texture(
-                    &args.pairs,
-                    args.rise,
-                    lock,
-                    &args.snapshot,
-                )?;
-            } else {
-                session.preview_component_crease(&args.pairs, args.rise, &args.snapshot)?;
-            }
+            session.preview_component_crease_with_textures(
+                &args.pairs,
+                args.rise,
+                args.roof_texture_lock.unwrap_or(false),
+                args.neighbor_texture_lock.unwrap_or(false),
+                &args.snapshot,
+            )?;
             selected_component_report(&session)
         })
     }

@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 87.3% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 87.5% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -36,12 +36,12 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [Keyboard shortcuts](keyboard-shortcuts.md) | 36 commands, including file/clipboard and held camera directions; logical/physical keys, Ctrl/Shift/Alt/Meta, two-stroke sequences and shared MCP resolution/navigation. | Two slots per command; camera directions use one stroke. Focused controls and the operating system may consume combinations. |
 | [Brushes](brushes.md) | Shapes, checked block creation/import, handles, exact transforms, grid snapping, fixed/attached pivots, terrain mirror/shear and supported point-placement transforms. | Unknown point semantics and unrepresentable model/instance deformation; general surface interpolation. |
 | [Brush tools](brush-tools.md) | Hollow, carve with explicit cut-material policies, clip, convex merge and polygon extrusion. | Concave merge and holes. |
-| [Components](components.md) | Move, rotate, scale, weld, split, ridges and partitions. | General topology editing and arbitrary dividing lines. |
+| [Components](components.md) | Move, rotate, scale, weld, split, ridges and partitions; independent roof/neighbor UV attachment with reviewed fragment counts. | General topology editing and arbitrary dividing lines. |
 | [Materials](textures.md) | Grouped browsing, prefix/regex and resolved-shader filters, actual second blend-image inspection, winning-source filters, maps-path exclusion, favorites, mapping, painting, wrapping, replacement, saved named atlas regions, automatic face-island packing, padded image fitting with coplanar continuity, face lighting and checked native texture mip chains. | Full native shader preview. |
 | [Normal maps](normal-maps.md) | Supported flat-brush normal textures. | Terrain/model normal maps and special encodings. |
 | [Lighting preview](lighting-preview.md) | Unshadowed LDR/HDR point, spot, sun and optional constant sky ambient on checked opaque brush, terrain and model receivers. | Baked emission, shadows, sky visibility, bounce, styles, native exposure adaptation and brightness match. |
 | [Color correction](color-correction.md) | One explicit Source RGB8 `.raw` LUT, shared enable/weight controls and complete viewport display-color preview. | Native HDR, tone mapping, entities/volumes and multiple-LUT composition. |
-| [Terrain](terrain.md) | Creation, exact XYZ/Z vertex batches, height CSV import, sculpting, blending, masks, handles, resizing, sewing and subdivision through coherent full/full and whole/half chains with checked work limits. | Holes, triangle removal and general fractional joins. |
+| [Terrain](terrain.md) | Native grid-attached UVs, creation, exact XYZ/Z vertex batches, height CSV import, sculpting, blending, masks, handles, resizing, sewing and subdivision through coherent full/full and whole/half chains with checked work limits. | Holes, triangle removal and general fractional joins. |
 | [Entities](entities.md) | Typed properties, exact/substring class selection, user/map color palettes, static FGD box/radius/line/cylinder and typed-coordinate guides, extended catalogs with sourced automatic visibility groups and optional material-directory exclusions, connections, directed I/O canvas, shared layouts, caller/activator lookup scenarios, prepared-instance graphs and connected selection/framing, batch edits and safe rename. | Runtime I/O simulation; unsupported child preparation. Canvas limits: 512 nodes/2,048 relationships. |
 | [Linked paths](path-authoring.md) | Ordered corner/track chains, class and loop conversion, move handles, brush-train setup, reference-safe assembly duplication and native Stop/Start observations. | Simple unparented paths; zero-angle brush trains. Native observation requires Linux CS:S and Steam. |
 | [Reference images](reference-images.md) | Editor-only PNG planes with pose, opacity, flips, per-projection display, guarded reload and Undo. | Static PNG; external source files. |

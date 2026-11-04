@@ -97,8 +97,10 @@ pub(in crate::mcp) struct ComponentRotateArgs {
 pub(in crate::mcp) struct ComponentCreaseArgs {
     pub(in crate::mcp) pairs: Vec<crate::session::components::CreaseEdges>,
     pub(in crate::mcp) rise: f64,
-    /// Preserve the two roof faces' corresponding corner UVs; neighbors retain world projection. Default false.
+    /// Preserve roof corner UVs independently of neighbor attachment. Default false.
     pub(in crate::mcp) roof_texture_lock: Option<bool>,
+    /// Attach extended neighbor UVs using checked convex brush pieces. Default false.
+    pub(in crate::mcp) neighbor_texture_lock: Option<bool>,
     pub(in crate::mcp) snapshot: String,
 }
 
@@ -121,6 +123,8 @@ pub(in crate::mcp) struct RaisePartitionArgs {
     pub(in crate::mcp) rise: f64,
     /// Attach the two roof faces only. Omit to retain the draft's current policy; defaults false when staged.
     pub(in crate::mcp) roof_texture_lock: Option<bool>,
+    /// Attach extended neighbors using convex brush pieces. Omit to retain the draft's policy.
+    pub(in crate::mcp) neighbor_texture_lock: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

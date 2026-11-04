@@ -930,6 +930,23 @@ must be exactly −1 or −2; use explicit `angles` for other negative orientati
 Use `select_solids` and omit transform IDs to operate on selected child brushes.
 Invalid requests retain the previous draft, map and history.
 
+## Ridge texture attachment
+
+`preview_component_crease` accepts independent `roof_texture_lock` and
+`neighbor_texture_lock` flags. Both default to `false`.
+`raise_component_partition` accepts the same flags; omission retains the draft.
+
+Neighbor attachment creates convex brush pieces with real triangular exterior
+faces. Inspect `preview.crease.output_brushes`, `added_brushes` and `fragments`
+before `commit_component_edit`. The fragment report identifies source faces and
+output projections. `cancel_component_edit` discards the draft.
+`topology_space:"immutable_source"` identifies the original inspection geometry;
+the fragment report describes the displayed result.
+
+The batch permits 256 fragments. Unsupported materials, bindings and retained
+metadata reject before Apply. Terrain edits keep native base-grid UVs; arbitrary
+nonlinear projection onto displaced world positions is not a native UV mode.
+
 ## Precise VMF brush geometry
 
 `open_map` accepts complete `vertices_plus` face rings on supported convex

@@ -17,10 +17,12 @@ pub use split::{
     MAX_RISE as MAX_SPLIT_RISE, MIN_RISE as MIN_SPLIT_RISE, SplitChange, SplitFace, SplitPlan,
     split, split_with_textures,
 };
+mod ridge_fragments;
+pub use ridge_fragments::{CreaseFragment, CreaseFragmentFace, MAX_RIDGE_FRAGMENTS};
 mod crease;
 pub use crease::{
     Crease, CreaseChange, CreasePair, CreasePlan, MAX_BOUNDARY_SOURCE_CORNERS, crease,
-    crease_pairs, crease_with_roof_textures,
+    crease_pairs, crease_with_roof_textures, crease_with_texture_options,
 };
 mod partition;
 pub(crate) use partition::checked_partition;
@@ -40,7 +42,10 @@ pub use extrusion::{
 mod partition_materials;
 pub use partition_materials::{PartitionMaterial, crease_partitions_with_materials};
 mod partition_textures;
-pub use partition_textures::{PartitionTexture, PieceTexture, crease_partitions_with_surfaces};
+pub use partition_textures::{
+    PartitionTexture, PieceTexture, crease_partitions_with_surface_options,
+    crease_partitions_with_surfaces,
+};
 
 pub const MAX_SIDES: usize = 64;
 pub const MAX_SOLIDS: usize = 16;

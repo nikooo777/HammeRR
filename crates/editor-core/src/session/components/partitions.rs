@@ -35,6 +35,7 @@ pub(super) struct Draft {
     pub partitions: Vec<Partition>,
     pub rise: f64,
     pub roof_texture_lock: bool,
+    pub neighbor_texture_lock: bool,
     pub selection: BTreeSet<PartitionRef>,
     pub materials: BTreeMap<PartitionRef, String>,
     pub textures: BTreeMap<PartitionRef, subobject::PartitionTexture>,
@@ -48,7 +49,13 @@ impl Draft {
             .collect()
     }
 
-    pub fn report(&self, document: &map_core::Document) -> Value {
+    pub fn report(&self, document: &map_core::Document, crease: Option<&CreaseDraft>) -> Value {
+        let fragments = crease.map_or(0, |crease| crease.plan.fragments.len());
+        let output_brushes = if fragments == 0 {
+            self.partitions.len()
+        } else {
+            fragments
+        };
         let parameters = self
             .partitions
             .iter()
@@ -64,7 +71,7 @@ impl Draft {
                         .all(|parameters| parameters[index] == *value)
                 })
         });
-        json!({"ridge_supported":self.partitions.iter().all(|part|part.loops.iter().all(|piece|piece.vertices.len()==4)),"edge_parameters":edge_parameters,"rise":self.rise,"roof_texture_lock":self.roof_texture_lock,"temporary":true,"selection":self.selection.iter().map(|part|json!({"solid":part.solid,"partition":part.partition})).collect::<Vec<_>>(),
+        json!({"ridge_supported":self.partitions.iter().all(|part|part.loops.iter().all(|piece|piece.vertices.len()==4)),"edge_parameters":edge_parameters,"rise":self.rise,"roof_texture_lock":self.roof_texture_lock,"neighbor_texture_lock":self.neighbor_texture_lock,"output_brushes":output_brushes,"added_brushes":output_brushes.saturating_sub(self.partitions.len()),"fragment_count":fragments,"can_pick_pieces":fragments==0,"picking_error":(fragments!=0).then_some("Return to flat before picking partition pieces after neighbor attachment"),"temporary":true,"selection":self.selection.iter().map(|part|json!({"solid":part.solid,"partition":part.partition})).collect::<Vec<_>>(),
             "partitions":self.partitions.iter().map(|part| {
                 let positions = part.positions(self.rise);
                 let owner = match part.owner {ObjectId::Solid(id)=>format!("solid:{id}"),ObjectId::Entity(id)=>format!("entity:{id}")};
@@ -185,18 +192,19 @@ impl Session {
                 })
             })
             .collect();
-        Ok(self.install_partition_preview(
+        self.install_partition_preview(
             Draft {
                 partitions,
                 rise: 0.0,
                 roof_texture_lock: false,
+                neighbor_texture_lock: false,
                 selection,
                 materials,
                 textures,
             },
             self.document.preview_snapshot(),
             None,
-        ))
+        )
     }
 
     pub fn remove_saved_component_partitions(
@@ -262,35 +270,41 @@ impl Session {
         draft: Draft,
         document: Document,
         plan: Option<subobject::CreasePlan>,
-    ) -> u64 {
+    ) -> Result<u64, String> {
         let requests = draft.requests();
+        let material_sources = plan
+            .as_ref()
+            .map(|plan| {
+                self.capture_ridge_fragment_materials(&requests, plan, draft.neighbor_texture_lock)
+            })
+            .transpose()?
+            .flatten();
         let selection = plan.as_ref().map_or_else(
             || self.geometry.components.selection.clone(),
-            |plan| {
-                plan.changes
-                    .iter()
-                    .flat_map(|change| change.selection.iter().cloned())
-                    .collect()
-            },
+            ridge::component_selection,
         );
         let (replacements, crease) = match plan {
             Some(plan) => (
-                plan.replacements,
+                plan.replacements.clone(),
                 Some(CreaseDraft {
                     rise: draft.rise,
                     roof_texture_lock: draft.roof_texture_lock,
+                    neighbor_texture_lock: draft.neighbor_texture_lock,
+                    definitions: self.definitions_serial,
+                    material_generation: self.materials.generation(),
+                    material_sources,
                     requests,
-                    changes: plan.changes,
+                    plan,
                 }),
             ),
             None => (Vec::new(), None),
         };
-        self.install_component_preview(Preview {
+        Ok(self.install_component_preview(Preview {
             replacements,
             crease,
             partition: Some(draft),
             ..Preview::new(document, selection)
-        })
+        }))
     }
 
     pub fn preview_component_partition(
@@ -339,11 +353,12 @@ impl Session {
             partitions,
             rise: 0.0,
             roof_texture_lock: false,
+            neighbor_texture_lock: false,
             selection,
             materials,
             textures,
         };
-        Ok(self.install_partition_preview(draft, self.document.preview_snapshot(), None))
+        self.install_partition_preview(draft, self.document.preview_snapshot(), None)
     }
 
     pub fn update_component_partition_cut(
@@ -369,7 +384,7 @@ impl Session {
             part.loops = previous.loops.clone();
         }
         draft.partitions = partitions;
-        Ok(self.install_partition_preview(draft, self.document.preview_snapshot(), None))
+        self.install_partition_preview(draft, self.document.preview_snapshot(), None)
     }
 
     pub fn raise_component_partition(&mut self, token: u64, rise: f64) -> Result<u64, String> {
@@ -382,8 +397,19 @@ impl Session {
         rise: f64,
         roof_texture_lock: Option<bool>,
     ) -> Result<u64, String> {
+        self.raise_component_partition_with_textures(token, rise, roof_texture_lock, None)
+    }
+
+    pub fn raise_component_partition_with_textures(
+        &mut self,
+        token: u64,
+        rise: f64,
+        roof_texture_lock: Option<bool>,
+        neighbor_texture_lock: Option<bool>,
+    ) -> Result<u64, String> {
         let mut draft = self.checked_partition(token)?.clone();
         draft.roof_texture_lock = roof_texture_lock.unwrap_or(draft.roof_texture_lock);
+        draft.neighbor_texture_lock = neighbor_texture_lock.unwrap_or(draft.neighbor_texture_lock);
         if !rise.is_finite()
             || (rise != 0.0
                 && !(subobject::MIN_SPLIT_RISE..=subobject::MAX_SPLIT_RISE).contains(&rise))
@@ -391,6 +417,9 @@ impl Session {
             return Err("Partition ridge height must be zero (flat) or 0.125–4096 units".into());
         }
         let requests = draft.requests();
+        if rise != 0.0 && draft.neighbor_texture_lock {
+            self.check_ridge_fragment_references(&requests, true)?;
+        }
         let cuts = draft
             .partitions
             .iter()
@@ -419,11 +448,12 @@ impl Session {
             Some(
                 document
                     .edit("preview raised partition", |tx| {
-                        let plan = subobject::crease_partitions_with_surfaces(
+                        let plan = subobject::crease_partitions_with_surface_options(
                             tx,
                             &draft.partitions,
                             rise,
                             draft.roof_texture_lock,
+                            draft.neighbor_texture_lock,
                             &draft.material_plan(),
                             &draft.texture_plan(),
                         )?;
@@ -434,7 +464,7 @@ impl Session {
             )
         };
         draft.rise = rise;
-        Ok(self.install_partition_preview(draft, document, plan))
+        self.install_partition_preview(draft, document, plan)
     }
 
     pub fn select_component_partitions(

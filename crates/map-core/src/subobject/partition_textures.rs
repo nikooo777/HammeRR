@@ -245,6 +245,35 @@ pub(super) fn checked_textures(
     Ok(result)
 }
 
+pub fn crease_partitions_with_surface_options(
+    tx: &mut Transaction,
+    partitions: &[Partition],
+    rise: f64,
+    roof_texture_lock: bool,
+    neighbor_texture_lock: bool,
+    materials: &[PartitionMaterial],
+    textures: &[PieceTexture],
+) -> Result<CreasePlan, EditError> {
+    let originals = partitions
+        .iter()
+        .map(|part| {
+            solid(tx.document(), part.source.solid).map(|(_, source)| (source.id, source.clone()))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let mut plan = crease_partitions_with_surfaces(
+        tx,
+        partitions,
+        rise,
+        roof_texture_lock,
+        materials,
+        textures,
+    )?;
+    if neighbor_texture_lock {
+        super::ridge_fragments::attach(tx, &mut plan, &originals)?;
+    }
+    Ok(plan)
+}
+
 pub fn crease_partitions_with_surfaces(
     tx: &mut Transaction,
     partitions: &[Partition],

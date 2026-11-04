@@ -40,6 +40,16 @@ impl Session {
             return Err("Partition picking needs a valid camera".into());
         }
         let draft = self.checked_partition(token)?.clone();
+        if self
+            .checked_component_preview(token)?
+            .crease
+            .as_ref()
+            .is_some_and(|crease| !crease.plan.fragments.is_empty())
+        {
+            return Err(
+                "Return to flat before picking partition pieces after neighbor attachment".into(),
+            );
+        }
         let inward = self
             .checked_component_preview(token)?
             .extrusion

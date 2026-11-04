@@ -43,72 +43,6 @@ fn solid(solid: &Solid) -> Result<(), String> {
     editor(solid.editor.as_ref())
 }
 
-fn face_metadata(solid: &Solid) -> Result<(), String> {
-    let precise = solid
-        .precise_vertices()
-        .map_err(|error| error.to_string())?;
-    if precise
-        .as_ref()
-        .is_some_and(|rings| rings.iter().any(|ring| ring.has_opaque_fields))
-        || solid.sides.iter().any(|side| {
-            !side.extra_properties.0.is_empty()
-                || side
-                    .extra
-                    .iter()
-                    .any(|node| !source_formats::vmf::is_precise_vertices_key(&node.key))
-        })
-    {
-        return Err("Unknown face metadata cannot be proven independent of extracted IDs".into());
-    }
-    Ok(())
-}
-
-fn side_bindings(session: &Session, sides: &BTreeSet<u32>) -> Result<(), String> {
-    let existing = session.document.vmf().side_ids().collect::<BTreeSet<_>>();
-    for entity in &session.document.vmf().entities {
-        for (key, value) in entity.properties.iter() {
-            let typed = session
-                .definitions
-                .class(entity.classname().unwrap_or_default())
-                .and_then(|class| class.property(key))
-                .is_some_and(|property| matches!(property.kind.as_str(), "sidelist" | "side_list"));
-            if !key.eq_ignore_ascii_case("sides") && !typed {
-                continue;
-            }
-            if entity.properties.get_all(key).count() != 1 || value.len() > 16 * 1024 {
-                return Err(
-                    "Ambiguous or oversized inbound side binding; repair it before extraction"
-                        .into(),
-                );
-            }
-            let mut seen = BTreeSet::new();
-            for token in value.split_whitespace() {
-                let id = token
-                    .parse::<u32>()
-                    .ok()
-                    .filter(|id| *id > 0)
-                    .ok_or("Malformed inbound side binding; repair it before extraction")?;
-                if !seen.insert(id) || seen.len() > 1024 {
-                    return Err("Duplicate or oversized inbound side binding".into());
-                }
-                if !existing.contains(&id) {
-                    return Err(format!(
-                        "entity:{} {key} binds unavailable root side:{id}; extraction cannot reinterpret it as a child face",
-                        entity.id
-                    ));
-                }
-                if sides.contains(&id) {
-                    return Err(format!(
-                        "entity:{} {key} binds selected side:{id}; extraction cannot retarget child faces",
-                        entity.id
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result<Plan, String> {
     let vmf = session.document.vmf();
     vmf.validate_ids().map_err(|error| error.to_string())?;
@@ -146,50 +80,7 @@ pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result
     measurements.validate()?;
     let partitions = partition_metadata::Metadata::parse(vmf)?;
     partitions.validate()?;
-    let views = map_core::saved_views::Views::parse(vmf)?;
-    views.validate()?;
-    for solid in vmf.solids() {
-        face_metadata(solid)?;
-    }
-    if !vmf.world.extra.is_empty()
-        || !vmf.visgroups_extra.is_empty()
-        || !views.extra.is_empty()
-        || views.views.iter().any(|view| !view.extra.is_empty())
-        || vmf.world.groups.iter().any(|group| {
-            !group.extra.is_empty()
-                || !group.extra_properties.0.is_empty()
-                || group.editor.as_ref().is_some_and(|editor| {
-                    editor.iter().any(|(key, _)| {
-                        ![
-                            "name",
-                            "color",
-                            "groupid",
-                            "logicalpos",
-                            "visgroupshown",
-                            "visgroupautoshown",
-                        ]
-                        .iter()
-                        .any(|allowed| key.eq_ignore_ascii_case(allowed))
-                    })
-                })
-        })
-        || vmf.entities.iter().any(|entity| !entity.extra.is_empty())
-        || vmf
-            .solids()
-            .any(|solid| !solid.extra.is_empty() || !solid.extra_properties.0.is_empty())
-    {
-        return Err("Unknown world, group, object, face or saved-view extension metadata cannot be proven independent of extracted IDs".into());
-    }
-    let mut layers = vmf.visgroups.iter().flatten().collect::<Vec<_>>();
-    while let Some(layer) = layers.pop() {
-        if !layer.extra.is_empty() || !layer.extra_properties.0.is_empty() {
-            return Err(
-                "Unknown layer extension metadata cannot be proven independent of extracted IDs"
-                    .into(),
-            );
-        }
-        layers.extend(&layer.children);
-    }
+    super::super::components::require_known_face_topology_metadata(vmf)?;
     map_core::compile_region::active(vmf).map_err(|error| error.to_string())?;
     if !context.extra.is_empty()
         || context.notes.values().any(|note| !note.extra.is_empty())
@@ -200,21 +91,6 @@ pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result
             .any(|intent| !intent.extra.is_empty())
     {
         return Err("Unknown context or partition extension metadata cannot be proven independent of the selection".into());
-    }
-    for node in &vmf.extra {
-        if ![
-            context::METADATA_KEY,
-            measurements::KEY,
-            partition_metadata::KEY,
-            map_core::saved_views::KEY,
-        ]
-        .contains(&node.key.as_str())
-        {
-            return Err(format!(
-                "Unknown root metadata {} cannot be proven independent of extracted IDs",
-                node.key
-            ));
-        }
     }
     let mut child = Document::empty().into_vmf();
     child.version_info = None;
@@ -341,7 +217,7 @@ pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result
     {
         return Err("Selected brushes have partition intent; extraction cannot preserve it".into());
     }
-    side_bindings(session, &side_ids)?;
+    super::super::components::require_unbound_side_references(session, &side_ids)?;
     let added = 1usize + world_brushes + 2 * detail_brushes;
     let retained = vmf
         .object_ids()

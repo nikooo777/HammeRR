@@ -19,6 +19,7 @@ pub struct Crease {
 pub struct CreaseChange {
     pub source: Crease,
     pub positions: [DVec3; 2],
+    pub flat_positions: [DVec3; 2],
     pub new_side: u32,
     pub selection: Vec<Component>,
 }
@@ -27,6 +28,7 @@ pub struct CreaseChange {
 pub struct CreasePlan {
     pub replacements: Vec<Replacement>,
     pub changes: Vec<CreaseChange>,
+    pub fragments: Vec<CreaseFragment>,
 }
 
 pub fn crease_pairs(source: &Solid, side: u32) -> Result<Vec<CreasePair>, EditError> {
@@ -173,6 +175,26 @@ pub fn crease_with_roof_textures(
     roof_texture_lock: bool,
 ) -> Result<CreasePlan, EditError> {
     crease_roofs(tx, requests, rise, roof_texture_lock, &BTreeMap::new())
+}
+
+pub fn crease_with_texture_options(
+    tx: &mut Transaction,
+    requests: &[Crease],
+    rise: f64,
+    roof_texture_lock: bool,
+    neighbor_texture_lock: bool,
+) -> Result<CreasePlan, EditError> {
+    let originals = requests
+        .iter()
+        .map(|request| {
+            solid(tx.document(), request.solid).map(|(_, source)| (source.id, source.clone()))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let mut plan = crease_with_roof_textures(tx, requests, rise, roof_texture_lock)?;
+    if neighbor_texture_lock {
+        super::ridge_fragments::attach(tx, &mut plan, &originals)?;
+    }
+    Ok(plan)
 }
 
 pub(super) fn crease_partition_roofs(
@@ -400,6 +422,7 @@ fn crease_roofs(
             },
             request,
             positions,
+            flat_positions,
             index + 1,
             temporary,
             selection,
@@ -408,8 +431,11 @@ fn crease_roofs(
     let mut plan = CreasePlan {
         replacements: Vec::new(),
         changes: Vec::new(),
+        fragments: Vec::new(),
     };
-    for (mut replacement, source, positions, index, temporary, mut selection) in pending {
+    for (mut replacement, source, positions, flat_positions, index, temporary, mut selection) in
+        pending
+    {
         let new_side = tx.new_side_id()?;
         replacement.solid.sides[index].id = new_side;
         for component in &mut selection {
@@ -423,6 +449,7 @@ fn crease_roofs(
         plan.changes.push(CreaseChange {
             source,
             positions,
+            flat_positions,
             new_side,
             selection,
         });

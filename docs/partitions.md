@@ -28,10 +28,16 @@ The line must stay inside the face and produce valid pieces.
 ## Raise a ridge
 
 1. Set the ridge height.
-2. Preview the raised result.
-3. Apply the ridge.
+2. Optionally enable **Keep roof texture at corners** or **Keep neighboring textures at corners**.
+3. Click **Preview ridge** and inspect the shape and brush counts.
+4. Click **Apply raised partition**.
 
 Ridges require two four-corner pieces.
+Neighbor attachment uses convex brush pieces with triangular exterior faces;
+**Output brushes** and **Added brushes** show its cost before Apply. Roof and
+neighbor attachment are independent. **Return to flat** keeps the draft choices.
+For a neighbor-attached preview, highlight with the piece list and use **Frame
+highlighted pieces**. Return to flat before picking pieces in the viewport.
 See [Roof ridge](components.md#roof-ridge).
 
 ## Extrude pieces

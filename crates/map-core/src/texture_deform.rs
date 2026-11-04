@@ -4,7 +4,7 @@ use source_formats::vmf::{Side, UvAxis};
 use crate::surface::Projection;
 use crate::{EditError, Plane, texel_uv};
 
-const TEXEL_EPSILON: f64 = 0.0001;
+pub(crate) const TEXEL_EPSILON: f64 = 0.0001;
 
 fn invalid(message: impl Into<String>) -> EditError {
     EditError::Invalid(message.into())

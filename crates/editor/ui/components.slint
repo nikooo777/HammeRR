@@ -131,6 +131,7 @@ export component ComponentsWindow inherits Window {
     in-out property <bool> snap: true;
     in-out property <bool> texture-lock;
     in-out property <bool> roof-texture-lock;
+    in-out property <bool> neighbor-texture-lock;
     in-out property <bool> move-handles: true;
     callback refresh();
     callback change-kind();
@@ -202,7 +203,8 @@ export component ComponentsWindow inherits Window {
                     width: 305px;
                     content-width: self.width;
                     VerticalLayout {
-                    padding-right: 15px; spacing: 12px;
+                    alignment: start;
+                    padding-right: Theme.space-lg; spacing: 12px;
                     ComboBox { model: ["Move selection", "Weld corners", "Split and raise", "Scale selection", "Rotate selection", "Roof ridge", "Flat partition"]; current-index <=> root.operation; selected => { root.refresh(); root.edited(); } }
                     if root.operation == 0: VerticalLayout {
                     spacing: 12px;
@@ -272,7 +274,9 @@ export component ComponentsWindow inherits Window {
                         LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Ridge rise"; edited => { root.edited(); } }
                         Slider { minimum: 0.125; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
                         CheckBox { text: "Keep roof texture at corners"; checked <=> root.roof-texture-lock; toggled => { root.edited(); } }
-                        Text { text: root.roof-texture-lock ? "The two roof textures stretch with their pieces. Neighboring faces keep world projection." : "All faces keep their source material and world texture projection."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                        Text { text: root.roof-texture-lock ? "The two roof textures stretch with their pieces." : "Roof faces keep their source texture projection."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
+                        CheckBox { text: "Keep neighboring textures at corners"; checked <=> root.neighbor-texture-lock; toggled => { root.edited(); } }
+                        Text { text: root.neighbor-texture-lock ? "Creates convex brush pieces to attach extended neighboring textures. Review the brush count before Apply." : "Neighboring faces keep their source texture projections."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                         Text { text: "The brush must remain convex with flat roof faces. Incompatible shapes are rejected."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                     }
                     if root.operation == 6: VerticalLayout {
@@ -402,6 +406,8 @@ export component ComponentsWindow inherits Window {
                                 LineEdit { text <=> root.split-rise; input-type: decimal; accessible-label: "Partition ridge height"; edited => { root.edited(); } }
                                 Slider { minimum: 0; maximum: max(128, root.split-rise-value); value: root.split-rise-value; released(value) => { root.choose-rise(value); } }
                                 CheckBox { text: "Keep roof texture at corners"; checked <=> root.roof-texture-lock; toggled => { root.edited(); } }
+                                CheckBox { text: "Keep neighboring textures at corners"; checked <=> root.neighbor-texture-lock; toggled => { root.edited(); } }
+                                Text { text: root.neighbor-texture-lock ? "Creates convex brush pieces to attach extended neighboring textures. Review the brush count before Apply." : "Neighboring faces keep their source texture projections."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                             }
                             if root.partition-mode == 0 && root.can-raise-partition && !root.cut-is-midpoint: Text { text: "Preview checks flat, convex roofs. Adjust the cut or extrude if needed."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }
                             if root.partition-mode == 1: VerticalLayout {

@@ -176,7 +176,7 @@ impl Session {
             .preview_snapshot()
             .edit("check planned partition textures", |tx| draft.store(tx))
             .map_err(|error| error.to_string())?;
-        Ok(self.install_partition_preview(draft, self.document.preview_snapshot(), None))
+        self.install_partition_preview(draft, self.document.preview_snapshot(), None)
     }
 
     pub fn update_component_partition_texture(

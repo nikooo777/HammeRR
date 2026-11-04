@@ -59,6 +59,25 @@ fn position(point: DVec3) -> String {
     )
 }
 
+fn ridge_brush_cost(report: &serde_json::Value) -> String {
+    match (
+        report["output_brushes"].as_u64(),
+        report["added_brushes"].as_u64(),
+    ) {
+        (Some(output), Some(added)) => {
+            format!("Output brushes: {output} · Added brushes: {added}\n")
+        }
+        _ => String::new(),
+    }
+}
+
+fn partition_picking_hint(report: &serde_json::Value) -> String {
+    report["picking_error"]
+        .as_str()
+        .map(|error| format!("{error}. Use the piece list or Frame highlighted pieces.\n"))
+        .unwrap_or_default()
+}
+
 fn weld_target(window: &ComponentsWindow, session: &Session) -> Result<WeldTarget, String> {
     match window.get_weld_target_mode() {
         0 => Ok(WeldTarget::Mean),
@@ -761,7 +780,10 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
             .into(),
         );
         window.set_picking_summary(
-            "Click staged pieces · Ctrl toggles · highlight to inspect and frame".into(),
+            report["preview"]["partition"]["picking_error"]
+                .as_str()
+                .unwrap_or("Click staged pieces · Ctrl toggles · highlight to inspect and frame")
+                .into(),
         );
     }
     window.set_rows(Rc::new(VecModel::from(rows)).into());
@@ -884,6 +906,11 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                         .as_bool()
                         .unwrap_or(false),
                 );
+                window.set_neighbor_texture_lock(
+                    preview[if partition { "partition" } else { "crease" }]["neighbor_texture_lock"]
+                        .as_bool()
+                        .unwrap_or(false),
+                );
             }
         }
         window.set_texture_lock(preview["texture_lock"].as_bool().unwrap_or(false));
@@ -894,7 +921,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     window.set_token(token.into());
     window.set_ready(
         !preview.is_null()
-            && (preview["can_apply"].as_bool().unwrap_or(true) || (partition && !extrusion && window.get_partition_flat()))
+            && (preview["can_apply"] == true || (partition && !extrusion && window.get_partition_flat()))
             && session
                 .component_drag()
                 .is_none_or(|drag| drag.error.is_none())
@@ -917,9 +944,11 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
             } else if partition {
                 window.get_partition_mode() == 0 && window.get_split_rise().parse::<f64>().ok() == preview["partition"]["rise"].as_f64()
                     && window.get_roof_texture_lock() == preview["partition"]["roof_texture_lock"].as_bool().unwrap_or(false)
+                    && window.get_neighbor_texture_lock() == preview["partition"]["neighbor_texture_lock"].as_bool().unwrap_or(false)
             } else if crease {
                 window.get_split_rise().parse::<f64>().ok() == preview["crease"]["rise"].as_f64()
                     && window.get_roof_texture_lock() == preview["crease"]["roof_texture_lock"].as_bool().unwrap_or(false)
+                    && window.get_neighbor_texture_lock() == preview["crease"]["neighbor_texture_lock"].as_bool().unwrap_or(false)
                     && crease_inputs(window, session).is_ok_and(|inputs| serde_json::json!(inputs.iter().map(|pair|serde_json::json!({"solid":pair.solid,"edges":pair.edges})).collect::<Vec<_>>()) == preview["crease"]["pairs"])
             } else if split {
                 window.get_split_rise().parse::<f64>().ok() == preview["split"]["rise"].as_f64()
@@ -945,6 +974,8 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     );
     window.set_preview_summary(if preview.is_null() {
         "Preview the change before applying.".into()
+    } else if let Some(error) = preview["error"].as_str() {
+        format!("{error}\nPreview the change again before Apply.").into()
     } else if transform {
         let values = &preview["transform"]["value"];
         let pivot = &preview["transform"]["resolved_pivot"];
@@ -967,13 +998,19 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
             format!("{} flat pieces staged. The source face is unchanged.\nKeep, extrude highlighted pieces, or Cancel.",count*2).into()
         } else if rise == 0.0 {
             format!("{} flat pieces staged. The source face is unchanged.\nKeep the pieces for later, raise their shared ridge, or Cancel.",count*2).into()
+        } else if preview["partition"]["neighbor_texture_lock"] == true {
+            format!("Source brushes: {} · shared ridge raised {} units.\n{}Extended neighbor textures follow the convex brush pieces.\n{}The map is unchanged until Apply.",count,number(rise),ridge_brush_cost(&preview["partition"]),partition_picking_hint(&preview["partition"])).into()
         } else {
             format!("{} pieces · shared ridge raised {} units.\nThe map is unchanged until Apply.",count*2,number(rise)).into()
         }
     } else if crease {
         let count = preview["crease"]["changes"].as_array().unwrap().len();
         let rise = number(preview["crease"]["rise"].as_f64().unwrap());
-        format!("Raise {count} {} by {rise} units. Add {} corners and {count} {}.\nThe map is unchanged until Apply.", if count == 1 {"ridge"} else {"ridges"}, count * 2, if count == 1 {"face"} else {"faces"}).into()
+        if preview["crease"]["neighbor_texture_lock"] == true {
+            format!("Raise {count} {} by {rise} units.\n{}Extended neighbor textures follow the convex brush pieces.\nThe map is unchanged until Apply.",if count == 1 {"ridge"} else {"ridges"},ridge_brush_cost(&preview["crease"])).into()
+        } else {
+            format!("Raise {count} {} by {rise} units. Add {} corners and {count} {}.\nThe map is unchanged until Apply.", if count == 1 {"ridge"} else {"ridges"}, count * 2, if count == 1 {"face"} else {"faces"}).into()
+        }
     } else if split {
         let changes = preview["split"]["changes"].as_array().unwrap();
         let added: usize = changes.iter().map(|change| change["new_sides"].as_array().unwrap().len()).sum();
@@ -1423,13 +1460,14 @@ fn preview_edit(window: &ComponentsWindow, shared: &SharedSession) {
                 Ok(0.0)
             })
             .and_then(|rise| {
-                session.raise_component_partition_with_texture(
+                session.raise_component_partition_with_textures(
                     window
                         .get_token()
                         .parse()
                         .map_err(|_| "Stage a partition first".to_string())?,
                     rise,
                     Some(window.get_roof_texture_lock()),
+                    Some(window.get_neighbor_texture_lock()),
                 )
             })
         } else {
@@ -1445,10 +1483,11 @@ fn preview_edit(window: &ComponentsWindow, shared: &SharedSession) {
             .map_err(|_| "Enter a numeric ridge height".to_string())
             .and_then(|rise| {
                 let inputs = crease_inputs(window, &session)?;
-                session.preview_component_crease_with_texture(
+                session.preview_component_crease_with_textures(
                     &inputs,
                     rise,
                     window.get_roof_texture_lock(),
+                    window.get_neighbor_texture_lock(),
                     window.get_stamp().as_str(),
                 )
             })

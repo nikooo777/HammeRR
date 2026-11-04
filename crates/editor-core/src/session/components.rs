@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec3;
 use map_core::subobject::{
-    self, Component, ComponentTransform, Crease, CreaseChange, CreasePair, Replacement,
-    SplitChange, Topology, WeldChange, WeldTarget,
+    self, Component, ComponentTransform, Crease, CreasePair, Replacement, SplitChange, Topology,
+    WeldChange, WeldTarget,
 };
 use map_core::{Document, EditError, ObjectId};
 use serde_json::{Value, json};
@@ -13,7 +13,11 @@ use super::{Actor, SelectMode, Session};
 
 mod extrusion;
 mod partitions;
+mod ridge;
 pub use partitions::PartitionRef;
+pub(in crate::session) use ridge::{
+    require_known_face_topology_metadata, require_unbound_side_references,
+};
 
 pub const SOURCE_PAGE_SIZE: usize = 100;
 pub const MAX_SOURCE_PAGE_SIZE: usize = 256;
@@ -86,8 +90,12 @@ pub struct CreaseEdges {
 struct CreaseDraft {
     rise: f64,
     roof_texture_lock: bool,
+    neighbor_texture_lock: bool,
+    definitions: u64,
+    material_generation: u64,
+    material_sources: Option<compiler::asset_sources::AssetSourceGuard>,
     requests: Vec<Crease>,
-    changes: Vec<CreaseChange>,
+    plan: subobject::CreasePlan,
 }
 
 #[derive(Default)]
@@ -287,7 +295,11 @@ impl Session {
         if ids.len() > subobject::MAX_SOLIDS {
             return Err("Inspect at most 16 brushes at a time".into());
         }
-        let document = self.render_document();
+        let document = if self.fragmented_ridge_preview() {
+            &self.document
+        } else {
+            self.render_document()
+        };
         ids.iter()
             .map(|id| {
                 let (_, solid) =
@@ -299,6 +311,13 @@ impl Session {
 
     pub fn component_report(&self, ids: &[u32]) -> Result<Value, String> {
         let topology = self.component_topology(ids)?;
+        let ridge_error = self
+            .geometry
+            .components
+            .preview
+            .as_ref()
+            .and_then(|preview| preview.crease.as_ref())
+            .and_then(|crease| self.ridge_stale_error(crease));
         let brushes = topology.iter().map(|shape| {
             let selected = |sides: &[u32]| self.displayed_component_selection().contains(&Component { solid: shape.solid, sides: sides.to_vec() });
             json!({
@@ -309,6 +328,8 @@ impl Session {
             })
         }).collect::<Vec<_>>();
         Ok(json!({
+            "topology_space":if self.fragmented_ridge_preview(){"immutable_source"}else{"displayed"},
+            "source_state":{"generation":self.document_generation,"revision":self.document.revision()},
             "move_options":self.geometry.components.options, "drag":self.component_drag_report(),
             "picking":self.geometry.components.picking, "snapshot":self.component_stamp(), "generation":self.document_generation, "revision":self.document.revision(),
             "brushes":brushes, "selection":self.displayed_component_selection().iter().map(component_json).collect::<Vec<_>>(),
@@ -318,13 +339,13 @@ impl Session {
             "crease_choices":self.component_crease_choices()?.iter().map(|(component,pairs)|json!({"component":component_json(component),"pairs":pairs.iter().map(|pair|json!({"edges":pair.edges,"midpoints":pair.midpoints.map(|point|point.to_array())})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
             "partition_choices":self.component_partition_choices()?.iter().map(|(component,pairs)|json!({"component":component_json(component),"pairs":pairs.iter().map(|pair|json!({"edges":pair.edges,"midpoints":pair.midpoints.map(|point|point.to_array())})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
             "weld_targets":self.component_weld_targets()?.iter().map(|(component,position)|json!({"component":component_json(component),"position":position.to_array()})).collect::<Vec<_>>(),
-            "preview":self.geometry.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.extrusion.is_some() {"extrusion"} else if preview.partition.is_some() {"partition"} else if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else if preview.crease.is_some() {"crease"} else if let Some(transform) = &preview.transform { match transform.spec { ComponentTransform::Scale(_) => "scale", ComponentTransform::Rotate(_) => "rotate" } } else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.partition.as_ref().map_or(preview.replacements.len(), |draft| draft.partitions.len()),"can_apply":preview.extrusion.as_ref().map_or_else(||preview.partition.as_ref().is_none_or(|draft| draft.rise != 0.0),|extrusion|preview.partition.as_ref().is_some_and(|draft|draft.selection==extrusion.selection)),"extrusion":preview.extrusion.as_ref().map(extrusion::Draft::report),"partition":preview.partition.as_ref().map(|draft|draft.report(&self.document)),
+            "preview":self.geometry.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.extrusion.is_some() {"extrusion"} else if preview.partition.is_some() {"partition"} else if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else if preview.crease.is_some() {"crease"} else if let Some(transform) = &preview.transform { match transform.spec { ComponentTransform::Scale(_) => "scale", ComponentTransform::Rotate(_) => "rotate" } } else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.partition.as_ref().map_or(preview.replacements.len(), |draft| draft.partitions.len()),"error":ridge_error.as_deref(),"can_apply":ridge_error.is_none() && preview.extrusion.as_ref().map_or_else(||preview.partition.as_ref().is_none_or(|draft| draft.rise != 0.0),|extrusion|preview.partition.as_ref().is_some_and(|draft|draft.selection==extrusion.selection)),"extrusion":preview.extrusion.as_ref().map(extrusion::Draft::report),"partition":preview.partition.as_ref().map(|draft|draft.report(&self.document, preview.crease.as_ref())),
                 "weld_target":preview.weld_target.as_ref().map(weld_target_json),
                 "transform":preview.transform.as_ref().map(|transform|transform_json(&transform.spec,transform.pivot,transform.resolved_pivot)),
                 "weld":preview.weld.as_ref().map(|changes|changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"merged_vertices":change.merged_vertices,"removed_sides":change.removed_sides,"selection":component_json(&change.selection)})).collect::<Vec<_>>()),
-                "crease":preview.crease.as_ref().map(|crease|json!({"rise":crease.rise,"roof_texture_lock":crease.roof_texture_lock,"pairs":crease.requests.iter().map(|request|json!({"solid":request.solid,"edges":request.edges})).collect::<Vec<_>>(),"changes":crease.changes.iter().map(|change|json!({"solid":change.source.solid,"source_side":change.source.side,"edges":change.source.edges,"positions":change.positions.map(|point|point.to_array()),"new_side":change.new_side,"selection":change.selection.iter().map(component_json).collect::<Vec<_>>()})).collect::<Vec<_>>()})),
+                "crease":preview.crease.as_ref().map(CreaseDraft::report),
                 "split":preview.split.as_ref().map(|split|json!({"rise":split.rise,"changes":split.changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"source_sides":change.source_sides,"new_sides":change.new_sides,"faces":change.faces.iter().map(|face|json!({"side":face.side,"source":face.source})).collect::<Vec<_>>(),"selection":component_json(&change.selection)})).collect::<Vec<_>>()}))})),
-            "texture_mode":if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.extrusion.as_ref().is_some_and(|draft|draft.spec.texture_lock)) {if self.geometry.components.preview.as_ref().unwrap().extrusion.as_ref().unwrap().spec.height < 0.0 {"floor_attached"} else {"top_attached"}} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.crease.as_ref().is_some_and(|crease|crease.roof_texture_lock)) {"roof_attached"} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.texture_lock && preview.weld.is_some()) {"weld_attached"} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"crease_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"partition_source_corners":subobject::MAX_BOUNDARY_SOURCE_CORNERS,"partition_vertices":subobject::MAX_PARTITION_VERTICES,"partition_loop_vertices":subobject::MAX_PARTITION_LOOP_VERTICES,"extrusion_source_vertices":subobject::MAX_EXTRUSION_SOURCE_VERTICES,"extrusion_pieces":subobject::MAX_EXTRUSION_PIECES,"extrusion_planes":subobject::MAX_EXTRUSION_PLANES,"extrusion_fragments":subobject::MAX_EXTRUSION_FRAGMENTS},
+            "texture_mode":if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.crease.as_ref().is_some_and(|crease|crease.neighbor_texture_lock)) {"neighbors_attached"} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.extrusion.as_ref().is_some_and(|draft|draft.spec.texture_lock)) {if self.geometry.components.preview.as_ref().unwrap().extrusion.as_ref().unwrap().spec.height < 0.0 {"floor_attached"} else {"top_attached"}} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.crease.as_ref().is_some_and(|crease|crease.roof_texture_lock)) {"roof_attached"} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.texture_lock && preview.weld.is_some()) {"weld_attached"} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"crease_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"partition_source_corners":subobject::MAX_BOUNDARY_SOURCE_CORNERS,"partition_vertices":subobject::MAX_PARTITION_VERTICES,"partition_loop_vertices":subobject::MAX_PARTITION_LOOP_VERTICES,"extrusion_source_vertices":subobject::MAX_EXTRUSION_SOURCE_VERTICES,"extrusion_pieces":subobject::MAX_EXTRUSION_PIECES,"extrusion_planes":subobject::MAX_EXTRUSION_PLANES,"extrusion_fragments":subobject::MAX_EXTRUSION_FRAGMENTS,"ridge_fragments":subobject::MAX_RIDGE_FRAGMENTS},
         }))
     }
 
@@ -712,9 +733,20 @@ impl Session {
         roof_texture_lock: bool,
         stamp: &str,
     ) -> Result<u64, String> {
+        self.preview_component_crease_with_textures(pairs, rise, roof_texture_lock, false, stamp)
+    }
+
+    pub fn preview_component_crease_with_textures(
+        &mut self,
+        pairs: &[CreaseEdges],
+        rise: f64,
+        roof_texture_lock: bool,
+        neighbor_texture_lock: bool,
+        stamp: &str,
+    ) -> Result<u64, String> {
         self.check_component_stamp(stamp)?;
         let requests = self.crease_requests(pairs)?;
-        self.install_crease_preview(requests, rise, roof_texture_lock)
+        self.install_crease_preview(requests, rise, roof_texture_lock, neighbor_texture_lock)
     }
 
     fn crease_requests(&self, pairs: &[CreaseEdges]) -> Result<Vec<Crease>, String> {
@@ -754,25 +786,37 @@ impl Session {
         requests: Vec<Crease>,
         rise: f64,
         roof_texture_lock: bool,
+        neighbor_texture_lock: bool,
     ) -> Result<u64, String> {
+        if neighbor_texture_lock {
+            self.check_ridge_fragment_references(&requests, false)?;
+        }
         let mut document = self.document.preview_snapshot();
         let plan = document
             .edit("preview opposing-edge crease", |tx| {
-                subobject::crease_with_roof_textures(tx, &requests, rise, roof_texture_lock)
+                subobject::crease_with_texture_options(
+                    tx,
+                    &requests,
+                    rise,
+                    roof_texture_lock,
+                    neighbor_texture_lock,
+                )
             })
             .map_err(|error| error.to_string())?;
-        let selection = plan
-            .changes
-            .iter()
-            .flat_map(|change| change.selection.iter().cloned())
-            .collect();
+        let material_sources =
+            self.capture_ridge_fragment_materials(&requests, &plan, neighbor_texture_lock)?;
+        let selection = ridge::component_selection(&plan);
         Ok(self.install_component_preview(Preview {
-            replacements: plan.replacements,
+            replacements: plan.replacements.clone(),
             crease: Some(CreaseDraft {
                 rise,
                 roof_texture_lock,
+                neighbor_texture_lock,
+                definitions: self.definitions_serial,
+                material_generation: self.materials.generation(),
+                material_sources,
                 requests,
-                changes: plan.changes,
+                plan,
             }),
             ..Preview::new(document, selection)
         }))
@@ -841,6 +885,25 @@ impl Session {
         {
             return Err("Flat partitions are temporary drafts. Raise the shared ridge before Apply, or Cancel.".into());
         }
+        if let Some(crease) = &preview.crease
+            && crease.neighbor_texture_lock
+        {
+            if let Some(error) = self.ridge_stale_error(crease) {
+                return Err(error);
+            }
+            crease
+                .material_sources
+                .as_ref()
+                .unwrap()
+                .verify_sources(&self.game, &compiler::Control::default())
+                .map_err(|error| error.to_string())?;
+            self.check_ridge_fragment_references(&crease.requests, preview.partition.is_some())?;
+        }
+        let fragment_faces = preview
+            .crease
+            .as_ref()
+            .map(|crease| ridge::exterior_faces(&crease.plan))
+            .unwrap_or_default();
         let label = if preview.partition.is_some() {
             "raise flat face partitions"
         } else if preview.weld.is_some() {
@@ -867,6 +930,9 @@ impl Session {
                 crease.requests.clone(),
                 crease.rise,
                 crease.roof_texture_lock,
+                crease.neighbor_texture_lock,
+                crease.plan.clone(),
+                crease.material_sources.clone(),
             )
         });
         let components = self
@@ -876,35 +942,47 @@ impl Session {
             .iter()
             .cloned()
             .collect::<Vec<_>>();
-        let picking = self.geometry.components.picking.clone().map(|mut picking| {
-            if rise.is_some() || crease.is_some() {
-                picking.kind = super::component_picking::Kind::Vertex;
-            }
-            picking
-        });
+        let picking = self
+            .geometry
+            .components
+            .picking
+            .clone()
+            .filter(|_| fragment_faces.is_empty())
+            .map(|mut picking| {
+                if rise.is_some() || crease.is_some() {
+                    picking.kind = super::component_picking::Kind::Vertex;
+                }
+                picking
+            });
+        let game = self.game.clone();
         let result = self.edit(actor, label, |tx| {
-            if let Some((requests, rise, roof_texture_lock)) = &crease {
+            if let Some((requests, rise, roof_texture_lock, neighbor_texture_lock, expected, material_sources)) = &crease {
                 let actual = if let Some(draft) = &preview_partition {
-                    subobject::crease_partitions_with_surfaces(
+                    subobject::crease_partitions_with_surface_options(
                         tx,
                         &draft.partitions,
                         *rise,
                         *roof_texture_lock,
+                        *neighbor_texture_lock,
                         &draft.material_plan(),
                         &draft.texture_plan(),
                     )?
                 } else {
-                    subobject::crease_with_roof_textures(tx, requests, *rise, *roof_texture_lock)?
+                    subobject::crease_with_texture_options(tx, requests, *rise, *roof_texture_lock, *neighbor_texture_lock)?
                 };
-                if actual.replacements != replacements {
+                if &actual != expected {
                     return Err(EditError::Invalid(
-                        "Face allocation changed; preview the crease again".into(),
+                        "Ridge geometry, face allocation or provenance changed; preview the crease again".into(),
                     ));
                 }
                 if preview_partition.is_some() {
                     partitions::consume_saved(tx, requests)?;
                 }
-                Ok(actual.replacements.len())
+                if let Some(sources) = material_sources {
+                    sources.verify_sources(&game, &compiler::Control::default())
+                        .map_err(|error|EditError::Invalid(error.to_string()))?;
+                }
+                Ok(if actual.fragments.is_empty(){actual.replacements.len()}else{actual.fragments.len()})
             } else if let Some(rise) = rise {
                 let actual = subobject::split_with_textures(tx, &components, rise, texture_lock)?;
                 if actual.replacements != replacements {
@@ -920,6 +998,9 @@ impl Session {
         self.geometry.components.selection = selection;
         self.geometry.components.picking = picking;
         self.refresh_component_origin();
+        if !fragment_faces.is_empty() {
+            self.select_faces(&fragment_faces, SelectMode::Replace)?;
+        }
         Ok(result)
     }
 

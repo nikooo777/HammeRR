@@ -17,7 +17,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Update a staged flat partition's shared ridge height from its immutable source. Zero returns to the flat draft without allocating VMF IDs; positive 0.125–4096 raises both captured cut endpoints along the face normal through checked planar, convex crease geometry. Unequal widths are supported when both roofs remain planar; nonplanar cuts reject without resetting the parameters. Two quad pieces share the ridge regardless of highlight selection. Cuts whose pieces are not both quads reject positive ridge heights; keep or extrude them. preview.partition.ridge_supported reports this shape restriction. Source corners, side/solid IDs, owners and neighboring materials/world UVs remain. Planned top materials apply to corresponding roofs. Invalid updates retain the last valid draft; returns a replacement token. Apply with commit_component_edit (positive rise only), or cancel_component_edit. Rejects stale tokens, unsupported sources, nonplanar roofs, neighboring-plane crossings and bounds/face limits atomically."
+        description = "Update a staged partition ridge from immutable sources. Zero returns to flat; positive rise=0.125–4096 raises both captured cut endpoints along the source face normal. Two quad pieces share the ridge regardless of highlights; other piece shapes reject positive rise. Independent roof_texture_lock and neighbor_texture_lock are optional: omitted flags retain the draft settings, initially false. Roof attachment preserves roof corner UVs; neighbor attachment uses checked convex brush fragments with real triangular exterior faces and can add brushes. Inspect preview.partition.output_brushes, added_brushes and preview.crease exterior provenance before Apply. Planned top materials/placement remain independent. Unequal widths require planar convex roofs. Unsupported source geometry, bindings, metadata, stale tokens and work/fragment limits reject atomically, retaining the preceding draft. Returns a replacement token. Apply with commit_component_edit when raised, or cancel_component_edit. UI: Flat partition → Raise shared ridge → Keep roof texture at corners / Keep neighboring textures at corners."
     )]
     pub(in crate::mcp) fn raise_component_partition(
         &self,
@@ -25,10 +25,11 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            session.raise_component_partition_with_texture(
+            session.raise_component_partition_with_textures(
                 parse_token(&args.token)?,
                 args.rise,
                 args.roof_texture_lock,
+                args.neighbor_texture_lock,
             )?;
             selected_component_report(&session)
         })
@@ -237,7 +238,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Read staged flat, raised or extruded partition pieces under a viewport pixel through the same Session query as a UI click. Requires the current draft token; x/y are continuous pixels from top-left, with the camera and size of render_view. Uses the nearest visible brush surface, hidden ownership and shared tool filters. Visible extruded bodies map to their original piece refs. Returns partition refs, world hit positions and camera depth; flat/raised hits within half a pixel of a shared boundary may contain both pieces ordered by depth then solid/piece ID. Read-only. Pass a chosen ref and the same token to select_component_partitions; ordinary UI clicks replace highlights, Ctrl toggles, empty ordinary clicks clear. Source geometry, source selection, draft token and undo history stay unchanged.",
+        description = "Read staged flat, raised or extruded partition pieces under a viewport pixel through the same Session query as a UI click. Neighbor-attached ridge fragments require Return to flat first; inspect preview.partition.can_pick_pieces and picking_error. Logical piece selection and framing remain available. Requires the current draft token; x/y are continuous pixels from top-left, with the camera and size of render_view. Uses the nearest visible brush surface, hidden ownership and shared tool filters. Visible extruded bodies map to their original piece refs. Returns partition refs, world hit positions and camera depth; flat/raised hits within half a pixel of a shared boundary may contain both pieces ordered by depth then solid/piece ID. Read-only. Pass a chosen ref and the same token to select_component_partitions; ordinary UI clicks replace highlights, Ctrl toggles, empty ordinary clicks clear. Source geometry, source selection, draft token and undo history stay unchanged.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn pick_component_partitions(

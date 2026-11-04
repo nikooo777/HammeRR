@@ -70,18 +70,27 @@ The original corners remain fixed.
 2. Select a four-corner face.
 3. Choose the ridge direction.
 4. Set its height.
-5. Click **Preview ridge**.
-6. Click **Apply ridge**.
+5. Optionally enable **Keep roof texture at corners** or **Keep neighboring textures at corners**.
+6. Click **Preview ridge** and inspect the shape and brush counts.
+7. Click **Apply ridge**.
 
 ![A flat top reshaped into two roof slopes](images/roof-ridge.png)
 
 **Keep roof texture at corners** attaches the original texture to both slopes.
+**Keep neighboring textures at corners** independently attaches the extended
+neighboring faces. It divides the result into convex brush pieces with real
+triangular exterior faces. Preview reports **Output brushes** and **Added
+brushes**; Apply selects the resulting exterior faces in one Undo step.
+With this option off, neighboring faces keep their original projections.
 Use [Flat partitions](partitions.md) to divide a face before choosing a result.
 
 ## Limits
 
 - 16 brushes, 512 selected components and 64 faces per brush.
 - Split and ridge heights are 0.125–4096 units.
+- Neighbor attachment requires known solid materials on world, `func_detail`, `func_brush` or `func_wall` brushes. Liquid, clip and controller brushes reject.
+- Neighbor attachment permits 256 fragments. Bound faces, attached measurements,
+  source brush notes, retained instance order and unknown metadata reject this conversion.
 - Terrain uses its own [editing tools](terrain.md).
 - Twisted, collapsed, concave or unrepresentable texture results reject before Apply.
 

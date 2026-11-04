@@ -180,6 +180,48 @@ pub struct Materials<'a> {
     prop_lighting_sources: Option<(PropSourceMode, crate::lighting::asset_tracking::SourceReads)>,
 }
 
+pub fn capture_solid_fragment_materials<'a>(
+    game: &GameFs,
+    names: impl IntoIterator<Item = &'a str>,
+    control: &crate::Control,
+) -> Result<crate::asset_sources::AssetSourceGuard, String> {
+    let sources = crate::asset_sources::BuildMaterialSources::without_retained_payloads();
+    let mut materials =
+        Materials::with_build_sources(game, Requirements::GeometrySemantics, &sources);
+    let mut count = 0;
+    for name in names {
+        control.checkpoint()?;
+        if count
+            >= map_core::subobject::MAX_SOLIDS * map_core::subobject::MAX_SIDES
+                + 4 * map_core::subobject::MAX_EXTRUSION_FRAGMENTS
+        {
+            return Err("Solid fragment material scope exceeds its face budget".into());
+        }
+        count += 1;
+        let index = materials.load(name)?;
+        let info = materials.get(index);
+        if info.contents != contents::SOLID
+            || info.water
+            || info.hint
+            || info.skip
+            || info.surface & (surf::SKY | surf::SKY2D) != 0
+            || (!info.draws && info.surface & surf::NODRAW == 0)
+            || !info.unsupported_flags.is_empty()
+        {
+            return Err(format!(
+                "Material {} cannot preserve brush contents with solid internal cuts; use ordinary solid or nodraw surfaces",
+                info.name
+            ));
+        }
+    }
+    if count == 0 {
+        return Err("Solid fragment material scope is empty".into());
+    }
+    sources
+        .source_guard(game, control)
+        .map_err(|error| error.to_string())
+}
+
 impl<'a> Materials<'a> {
     pub fn new(fs: &'a GameFs) -> Self {
         Self::with_requirements(fs, Requirements::Compile)

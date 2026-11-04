@@ -177,7 +177,7 @@ impl Map<'_> {
                     continue;
                 }
                 let Some(plane) =
-                    support::find_authored(&mut self.planes, geometry, face, control)?
+                    support::find_occluder(&mut self.planes, geometry, face, control)?
                 else {
                     report.diagnostics.push(Diagnostic::error(
                         "Cannot preserve the occluder's native plane support; simplify its brush",

@@ -81,16 +81,24 @@ fn find_supporting(
     normal: DVec3,
     dist: f64,
     control: &Control,
+    occluder: bool,
     accept: impl Fn(&Plane) -> Result<bool, String>,
 ) -> Result<Option<usize>, String> {
     let checked = |plane: &Plane| Ok(accept(plane)? && accepts(geometry, plane, control)?);
-    let plane = planes.find_surface_checked(normal, dist, checked)?;
+    let find = |planes: &mut PlaneSet, dist| {
+        if occluder {
+            planes.find_occluder_checked(normal, dist, checked)
+        } else {
+            planes.find_surface_checked(normal, dist, checked)
+        }
+    };
+    let plane = find(planes, dist)?;
     if plane.is_some() {
         return Ok(plane);
     }
     let support = distance(geometry, normal, control)?;
     let dist = emitted_distance(normal, support, geometry, control)?;
-    planes.find_surface_checked(normal, dist, checked)
+    find(planes, dist)
 }
 
 pub(super) fn find_authored(
@@ -105,23 +113,53 @@ pub(super) fn find_authored(
         face.plane.normal,
         face.plane.dist,
         control,
+        false,
+        |plane| authored_support(face, plane, control),
+    )
+}
+
+pub(super) fn find_occluder(
+    planes: &mut PlaneSet,
+    geometry: &BrushGeometry,
+    face: &Face,
+    control: &Control,
+) -> Result<Option<usize>, String> {
+    let normal = face.plane.normal.as_vec3();
+    let dist = face.plane.dist as f32;
+    if !normal.is_finite() || normal == glam::Vec3::ZERO || !dist.is_finite() {
+        return Ok(None);
+    }
+    find_supporting(
+        planes,
+        geometry,
+        face.plane.normal,
+        face.plane.dist,
+        control,
+        true,
         |plane| {
-            let emitted_normal = plane.normal.as_vec3().as_dvec3();
-            let emitted_dist = f64::from(plane.dist as f32);
-            for (index, &point) in face.vertices.iter().enumerate() {
-                if index % CHECKPOINT_POINT_INTERVAL == 0 {
-                    control.checkpoint()?;
-                }
-                if plane.distance(point).abs() > ON_EPSILON
-                    || (emitted_normal.dot(point) - emitted_dist).abs() > ON_EPSILON
-                    || (emitted_normal.dot(stored_vertex(point)) - emitted_dist).abs() > ON_EPSILON
-                {
-                    return Ok(false);
-                }
+            if plane.normal.as_vec3() != normal || plane.dist as f32 != dist {
+                return Ok(false);
             }
-            Ok(true)
+            authored_support(face, plane, control)
         },
     )
+}
+
+fn authored_support(face: &Face, plane: &Plane, control: &Control) -> Result<bool, String> {
+    let emitted_normal = plane.normal.as_vec3().as_dvec3();
+    let emitted_dist = f64::from(plane.dist as f32);
+    for (index, &point) in face.vertices.iter().enumerate() {
+        if index % CHECKPOINT_POINT_INTERVAL == 0 {
+            control.checkpoint()?;
+        }
+        if plane.distance(point).abs() > ON_EPSILON
+            || (emitted_normal.dot(point) - emitted_dist).abs() > ON_EPSILON
+            || (emitted_normal.dot(stored_vertex(point)) - emitted_dist).abs() > ON_EPSILON
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 pub(super) fn find_axial(
@@ -131,7 +169,7 @@ pub(super) fn find_axial(
     dist: f64,
     control: &Control,
 ) -> Result<Option<usize>, String> {
-    find_supporting(planes, geometry, normal, dist, control, |plane| {
+    find_supporting(planes, geometry, normal, dist, control, false, |plane| {
         Ok(plane.normal == normal)
     })
 }

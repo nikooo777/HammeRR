@@ -4,7 +4,9 @@
 
 Inspect leaves, portals and visibility sets from the last successful build.
 
-1. Compile the map. Open **Build details… → Inspect visibility…**.
+1. Open **Build → Build settings…** and choose **Visibility quality → Fast (conservative)**
+   or **Detailed (portal clipping)**. Click **Close**, then **Compile**. Open
+   **Build details… → Inspect visibility…**.
 2. Choose **Target → Summary**. Select a leaf row to inspect its native bounds,
    cluster, visibility area, liquid region and incident portals.
 3. Choose **PVS** for potentially visible clusters or **PAS** for potentially audible clusters. Click
@@ -30,6 +32,13 @@ Area and liquid-region IDs belong to the captured build. Liquid region −1 mean
 no region; 0 is a valid index. Leaves in the same cluster can have different
 areas and liquid regions.
 
+**Fast (conservative)** keeps a looser potential visibility set.
+**Detailed (portal clipping)** can remove additional destinations by clipping
+portal chains. Both include the source cluster. PAS unions the PVS rows of
+destinations in the source PVS; it can include destinations outside that PVS.
+Game area portals, view frustums and [occluders](occluders.md) apply additional
+culling without changing these stored rows.
+
 ![Compiler-owned portal ring in the viewport](images/visibility-portals.png)
 
 | PVS destination bounds | PAS destination bounds |
@@ -51,6 +60,16 @@ output remains readable; bounds guides require current output.
 
 ## Limits
 
+- Both visibility modes admit at most 32,768 populated clusters and a 16 MiB
+  native visibility lump, within the shared 100-million-work-unit solver budget.
+  Work limits can refuse smaller maps. A failed build preserves the previous
+  published BSP; it does not publish a partial or all-visible substitute.
+- [Occluder](occluders.md) boundaries support oblique edge and point contacts,
+  shared faces and shallow overlaps when source and stored-coordinate geometry
+  can be checked. A gap, contact or generated fragment that cannot retain the
+  required boundary through native conversion refuses with source diagnostics.
+  Checked arithmetic and shared geometry budgets can also refuse the build.
+  A stored gap can be subpixel in the game; native occlusion remains view-dependent.
 - Bounds boxes are not exact convex cells. Portal rings retain compiler geometry
   and original slots, including boundaries within a coarsened visibility cluster.
 - PVS and PAS are separate native rows. They describe the captured **Fast** or

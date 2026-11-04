@@ -30,8 +30,9 @@ These inputs enable or disable retained polygons. They do not restore faces remo
 
 - Helpers stay fixed in world space. They provide no visible wall or collision geometry.
 - Each helper's retained polygons must remain inside one visibility area. Split helpers that cross areas.
-- Supported islands, contacts and overlaps across helpers retain exterior polygons and gaps.
-- Uncertain thin contacts, collapsed polygons and exceeded shared budgets fail the build. Invalid authored geometry is not replaced with an empty record.
+- Disconnected islands, oblique edge/point contacts, shared faces and checked shallow overlaps retain their exterior boundaries.
+- Source boundaries and generated cuts must keep their topology after native vertex conversion. Collapsed gaps, lost slivers, nonplanar stored rings and ambiguous conversions fail explicitly. Even a small authored offset can differ from an exact shared boundary.
+- Checked arithmetic and shared work, point and fragment limits remain. Invalid geometry is not replaced with an empty record.
 - Child runtime parenting and named control are unsupported.
 - Child helper counts do not imply parent viewport geometry or picking.
 - Native sky-view occlusion uses the player's connected-area mask. A helper in a separate sky-only area does not hide that sky's props.

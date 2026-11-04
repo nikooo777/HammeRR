@@ -1224,8 +1224,11 @@ Read `stats.occluders`, `stats.occluder_polygons`,
 `stats.occluder_vertex_refs` and `diagnostics` in the finished result.
 The helper count includes empty records; polygon and vertex counts include only retained geometry.
 Root `Activate`, `Deactivate` and `Toggle` connections affect retained polygons;
-they do not restore removed faces. Invalid geometry, uncertain contacts or exceeded
-shared limits fail before publication.
+they do not restore removed faces. Oblique edge/point contacts, shared faces and
+shallow overlaps use checked source/native boundary certificates. Native conversion
+must preserve gaps, contact features and generated positive fragments; collapsed
+slivers, nonplanar stored rings and arithmetic or shared-budget exhaustion fail
+before publication. No empty record substitutes for invalid geometry.
 
 `compile_map` returns its captured `job_token`; async builds expose it as
 `get_compile_status.job.token`. Diagnostic rows have a stable `index`,

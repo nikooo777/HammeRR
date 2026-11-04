@@ -85,7 +85,7 @@ Q02,"Inspect, focus and fix issues",100
 Q03,Pointfile controls,100
 Q04,Compiler-owned visibility inspection,100
 Q05,External map comparison,100
-C01,Visibility compilation,85
+C01,Visibility compilation,100
 C02,Lighting compilation,75
 C03,Production collision,75
 C04,Static props,65

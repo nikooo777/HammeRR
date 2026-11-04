@@ -8,7 +8,10 @@ use super::{
 use crate::Control;
 use crate::emit::stored_vertex;
 use crate::planes::PlaneSet;
-use crate::winding::{ON_EPSILON, Side, Winding};
+use crate::winding::{ON_EPSILON, Winding};
+
+#[path = "csg/certified.rs"]
+mod certified;
 
 const MAX_WORK: usize = 4_000_000;
 const MAX_ALLOCATED_POINTS: usize = 1_000_000;
@@ -77,52 +80,109 @@ impl Budget {
         self.fragments = fragments;
         Ok(())
     }
-
-    fn split(&mut self, points: usize, control: &Control) -> Result<(), String> {
-        self.reserve(points.saturating_mul(5).saturating_add(8), 2, control)
-    }
 }
 
-enum BoundsRelation {
-    Separated,
-    CollapsedGap,
-    Unproven,
-}
-
-fn bounds_relation(a: &BrushGeometry, b: &BrushGeometry) -> BoundsRelation {
+fn bounds_separated(
+    sa: &Solid,
+    a: &BrushGeometry,
+    sb: &Solid,
+    b: &BrushGeometry,
+    budget: &mut Budget,
+    control: &Control,
+) -> Result<bool, String> {
     let (a_mins, a_maxs) = (stored_vertex(a.mins), stored_vertex(a.maxs));
     let (b_mins, b_maxs) = (stored_vertex(b.mins), stored_vertex(b.maxs));
-    let mut source_gap = false;
     for axis in 0..3 {
-        if a.maxs[axis] < b.mins[axis] {
-            source_gap = true;
-            if a_maxs[axis] < b_mins[axis] {
-                return BoundsRelation::Separated;
-            }
+        let mut direction = DVec3::ZERO;
+        direction[axis] = 1.0;
+        if a_maxs[axis] < b_mins[axis]
+            && certified::source_separated(sa, a, sb, b, direction, budget, control)?
+        {
+            return Ok(true);
         }
-        if b.maxs[axis] < a.mins[axis] {
-            source_gap = true;
-            if b_maxs[axis] < a_mins[axis] {
-                return BoundsRelation::Separated;
-            }
+        if b_maxs[axis] < a_mins[axis]
+            && certified::source_separated(sb, b, sa, a, direction, budget, control)?
+        {
+            return Ok(true);
         }
     }
-    if source_gap {
-        return BoundsRelation::CollapsedGap;
-    }
-    BoundsRelation::Unproven
+    Ok(false)
 }
 
-fn no_area_contact(a: &BrushGeometry, b: &BrushGeometry) -> bool {
+fn literal_box(solid: &Solid, geometry: &BrushGeometry) -> bool {
+    if solid.sides.len() != 6 || geometry.faces.len() != 6 {
+        return false;
+    }
+    let mut sides = [false; 6];
+    for face in &geometry.faces {
+        let Some(axis) = (0..3).find(|&axis| {
+            face.plane.normal[axis].abs() == 1.0
+                && (0..3).all(|other| other == axis || face.plane.normal[other] == 0.0)
+        }) else {
+            return false;
+        };
+        let positive = face.plane.normal[axis] > 0.0;
+        let slot = axis * 2 + usize::from(positive);
+        if sides[slot] || face.vertices.len() != 4 {
+            return false;
+        }
+        sides[slot] = true;
+        let coordinate = if positive {
+            geometry.maxs[axis]
+        } else {
+            geometry.mins[axis]
+        };
+        let mut corners = [false; 4];
+        for point in &face.vertices {
+            if point[axis] != coordinate {
+                return false;
+            }
+            let mut corner = 0;
+            for other in 0..3 {
+                if other != axis {
+                    corner *= 2;
+                    if point[other] == geometry.maxs[other] {
+                        corner += 1;
+                    } else if point[other] != geometry.mins[other] {
+                        return false;
+                    }
+                }
+            }
+            if corners[corner] {
+                return false;
+            }
+            corners[corner] = true;
+        }
+        let points = solid.sides[face.side].plane.0;
+        if points[0] == points[1]
+            || points[1] == points[2]
+            || points[0] == points[2]
+            || points.iter().any(|point| !face.vertices.contains(point))
+        {
+            return false;
+        }
+    }
+    sides.into_iter().all(|present| present)
+}
+
+fn no_area_contact(
+    sa: &Solid,
+    a: &BrushGeometry,
+    sb: &Solid,
+    b: &BrushGeometry,
+    budget: &mut Budget,
+    control: &Control,
+) -> Result<bool, String> {
     let low = a.mins.max(b.mins);
     let high = a.maxs.min(b.maxs);
-    // Two exact zero-width intervals constrain intersection to a line or point;
-    // monotone native coordinate rounding preserves their shared endpoints.
-    low.cmple(high).all() && (0..3).filter(|&axis| low[axis] == high[axis]).count() >= 2
+    if !low.cmple(high).all() || (0..3).filter(|&axis| low[axis] == high[axis]).count() < 2 {
+        return Ok(false);
+    }
+    budget.consume(512, control)?;
+    Ok(literal_box(sa, a) && literal_box(sb, b))
 }
 
 struct Features {
-    points: Vec<DVec3>,
     directions: Vec<DVec3>,
 }
 
@@ -137,7 +197,7 @@ fn features(solid: &Solid, budget: &mut Budget, control: &Control) -> Result<Fea
         format!("Occluder union requires closed convex brush topology: {error}")
     })?;
     budget.reserve(topology.vertices.len() + topology.edges.len(), 0, control)?;
-    let mut directions = Vec::<DVec3>::new();
+    let mut directions = Vec::<DVec3>::with_capacity(topology.edges.len());
     for edge in &topology.edges {
         budget.consume(directions.len() + 1, control)?;
         let direction = (topology.vertices[edge.vertices[1]].position
@@ -150,111 +210,67 @@ fn features(solid: &Solid, budget: &mut Budget, control: &Control) -> Result<Fea
             directions.push(direction);
         }
     }
-    Ok(Features {
-        points: topology
-            .vertices
-            .into_iter()
-            .map(|vertex| vertex.position)
-            .collect(),
-        directions,
-    })
+    Ok(Features { directions })
 }
 
-fn overlap_on_axis(
-    a: &Features,
-    b: &Features,
+fn projection(geometry: &BrushGeometry, axis: DVec3) -> (f64, f64) {
+    let mut low = f64::MAX;
+    let mut high = f64::MIN;
+    for point in geometry.faces.iter().flat_map(|face| &face.vertices) {
+        let point = stored_vertex(*point);
+        let (mut lower, mut upper) = (0.0f64, 0.0f64);
+        for coordinate in 0..3 {
+            let product = point[coordinate] * axis[coordinate];
+            lower = (lower + product.next_down()).next_down();
+            upper = (upper + product.next_up()).next_up();
+        }
+        low = low.min(lower);
+        high = high.max(upper);
+    }
+    (low, high)
+}
+
+fn separated_on_axis(
+    sa: &Solid,
+    a: &BrushGeometry,
+    sb: &Solid,
+    b: &BrushGeometry,
     axis: DVec3,
     budget: &mut Budget,
     control: &Control,
-) -> Result<Option<f64>, String> {
-    budget.consume(a.points.len() + b.points.len() + 1, control)?;
-    let Some(axis) = axis.try_normalize() else {
-        return Ok(None);
-    };
-    let range = |points: &[DVec3]| {
-        points
-            .iter()
-            .fold((f64::MAX, f64::MIN), |(low, high), point| {
-                let value = point.dot(axis);
-                (low.min(value), high.max(value))
-            })
-    };
-    let (a_low, a_high) = range(&a.points);
-    let (b_low, b_high) = range(&b.points);
-    Ok(Some(a_high.min(b_high) - a_low.max(b_low)))
-}
-
-fn split(
-    winding: &Winding,
-    normal: DVec3,
-    distance: f64,
-    budget: &mut Budget,
-    control: &Control,
-) -> Result<(Winding, Winding), String> {
-    budget.split(winding.0.len(), control)?;
-    let (Some(front), Some(back)) = winding.split(normal, distance) else {
-        return Err("Occluder union produced a collapsed intersection; separate or simplify the touching brushes".into());
-    };
-    if front.is_tiny()
-        || back.is_tiny()
-        || (front.area() + back.area() - winding.area()).abs()
-            > (winding.area() * 1e-9).max(GEOMETRY_EPSILON)
-    {
-        return Err("Occluder union produced a sliver or imprecise intersection; separate or simplify the touching brushes".into());
-    }
-    Ok((front, back))
-}
-
-fn face_contact(
-    a: &BrushGeometry,
-    b: &BrushGeometry,
-    budget: &mut Budget,
-    control: &Control,
 ) -> Result<bool, String> {
-    for face in &a.faces {
-        for other in &b.faces {
-            budget.consume(1, control)?;
-            if (face.plane.normal + other.plane.normal).length_squared() > NORMAL_EPSILON
-                || (face.plane.dist + other.plane.dist).abs() > GEOMETRY_EPSILON
-            {
-                continue;
-            }
-            budget.reserve(face.vertices.len(), 1, control)?;
-            let mut winding = Winding(face.vertices.clone());
-            let mut outside = false;
-            for clip in &b.faces {
-                budget.consume(winding.0.len(), control)?;
-                match winding.classify(clip.plane.normal, clip.plane.dist) {
-                    Side::Front => {
-                        outside = true;
-                        break;
-                    }
-                    Side::Cross => {
-                        winding = split(
-                            &winding,
-                            clip.plane.normal,
-                            clip.plane.dist,
-                            budget,
-                            control,
-                        )?
-                        .1;
-                    }
-                    Side::On | Side::Back => {}
-                }
-            }
-            if !outside && winding.area() > ON_EPSILON * ON_EPSILON {
-                return Ok(true);
-            }
-        }
+    let Some(axis) = axis.try_normalize() else {
+        return Ok(false);
+    };
+    let points = a
+        .faces
+        .iter()
+        .chain(&b.faces)
+        .map(|face| face.vertices.len())
+        .sum::<usize>();
+    budget.consume(points.saturating_mul(20).saturating_add(1), control)?;
+    let (anl, anh) = projection(a, axis);
+    let (bnl, bnh) = projection(b, axis);
+    if anh < bnl && certified::source_separated(sa, a, sb, b, axis, budget, control)? {
+        return Ok(true);
+    }
+    if bnh < anl && certified::source_separated(sb, b, sa, a, -axis, budget, control)? {
+        return Ok(true);
     }
     Ok(false)
+}
+
+struct Interactions {
+    neighbors: Vec<Vec<usize>>,
+    brushes: Vec<Option<certified::Brush>>,
 }
 
 fn interacting(
     geometries: &[(&Solid, BrushGeometry)],
     budget: &mut Budget,
     control: &Control,
-) -> Result<Vec<Vec<usize>>, Failure> {
+) -> Result<Interactions, Failure> {
+    let mut certified = (0..geometries.len()).map(|_| None).collect::<Vec<_>>();
     let mut features_by_brush = (0..geometries.len()).map(|_| None).collect::<Vec<_>>();
     let mut neighbors = vec![Vec::new(); geometries.len()];
     for (a, (solid_a, geometry_a)) in geometries.iter().enumerate() {
@@ -267,9 +283,10 @@ fn interacting(
                 brushes: [Some(a), Some(b)],
             };
             budget.consume(1, control).map_err(context)?;
-            let bounds = bounds_relation(geometry_a, geometry_b);
-            if matches!(bounds, BoundsRelation::Separated)
-                || no_area_contact(geometry_a, geometry_b)
+            if bounds_separated(solid_a, geometry_a, solid_b, geometry_b, budget, control)
+                .map_err(context)?
+                || no_area_contact(solid_a, geometry_a, solid_b, geometry_b, budget, control)
+                    .map_err(context)?
             {
                 continue;
             }
@@ -292,87 +309,52 @@ fn interacting(
                     (axis.length_squared() > NORMAL_EPSILON).then_some(axis)
                 })
             });
-            let mut minimum = f64::MAX;
             let mut disjoint = false;
             for axis in face_axes.chain(edge_axes) {
-                let Some(overlap) =
-                    overlap_on_axis(fa, fb, axis, budget, control).map_err(context)?
-                else {
-                    continue;
-                };
-                if overlap < -ON_EPSILON {
+                if separated_on_axis(
+                    solid_a, geometry_a, solid_b, geometry_b, axis, budget, control,
+                )
+                .map_err(context)?
+                {
                     disjoint = true;
                     break;
                 }
-                minimum = minimum.min(overlap);
             }
             if disjoint {
                 continue;
             }
-            if matches!(bounds, BoundsRelation::CollapsedGap) {
-                return Err(context("Occluder brush gap collapses after native vertex rounding; separate or align the brush faces exactly".into()));
+            if certified[a].is_none() {
+                certified[a] = Some(
+                    certified::Brush::prepare(solid_a, geometry_a, budget, control)
+                        .map_err(context)?,
+                );
             }
-            if minimum <= ON_EPSILON {
-                if minimum.abs() > GEOMETRY_EPSILON {
-                    return Err(context("Occluder union has a gap or overlap within 0.01 units of a contact; separate or align the brush faces exactly".into()));
-                }
-                if !face_contact(geometry_a, geometry_b, budget, control).map_err(context)? {
-                    return Err(context("Occluder contact has no certified shared face or zero-area AABB intersection; overlap their volumes or separate the brushes".into()));
-                }
+            if certified[b].is_none() {
+                certified[b] = Some(
+                    certified::Brush::prepare(solid_b, geometry_b, budget, control)
+                        .map_err(context)?,
+                );
+            }
+            match certified::pair(
+                certified[a].as_ref().unwrap(),
+                certified[b].as_ref().unwrap(),
+                budget,
+                control,
+            )
+            .map_err(context)?
+            {
+                certified::Relation::Separate => continue,
+                certified::Relation::Contact(rank) if rank >= 2 => continue,
+                _ => {}
             }
             neighbors[a].push(b);
             neighbors[b].push(a);
         }
     }
-    Ok(neighbors)
-}
-
-fn subtract(
-    winding: Winding,
-    normal: DVec3,
-    cutter: &BrushGeometry,
-    keep_coplanar: &[bool],
-    budget: &mut Budget,
-    control: &Control,
-) -> Result<Vec<Winding>, String> {
-    for (index, face) in cutter.faces.iter().enumerate() {
-        budget.consume(winding.0.len(), control)?;
-        match winding.classify(face.plane.normal, face.plane.dist) {
-            Side::Front => return Ok(vec![winding]),
-            Side::On => {
-                if winding
-                    .0
-                    .iter()
-                    .any(|point| face.plane.distance_to(*point).abs() > GEOMETRY_EPSILON)
-                {
-                    return Err("Occluder union has nearly coplanar faces within 0.01 units; align them exactly or separate the brushes".into());
-                }
-                if normal.dot(face.plane.normal) > 0.0 && keep_coplanar[index] {
-                    return Ok(vec![winding]);
-                }
-            }
-            _ => {}
-        }
-    }
-    let mut outside = Vec::new();
-    let mut inside = winding;
-    for face in &cutter.faces {
-        budget.consume(inside.0.len(), control)?;
-        match inside.classify(face.plane.normal, face.plane.dist) {
-            Side::Front => {
-                outside.push(inside);
-                break;
-            }
-            Side::Cross => {
-                let (front, back) =
-                    split(&inside, face.plane.normal, face.plane.dist, budget, control)?;
-                outside.push(front);
-                inside = back;
-            }
-            Side::On | Side::Back => {}
-        }
-    }
-    Ok(outside)
+    Ok(Interactions {
+        neighbors,
+        brushes: certified,
+    })
 }
 
 fn native_winding(
@@ -386,11 +368,18 @@ fn native_winding(
     for point in &mut winding.0 {
         *point = stored_vertex(*point);
     }
+    if winding.is_tiny() {
+        return Err("Occluder union has an uncertified tiny native polygon".into());
+    }
+    native_support(&winding, plane, planes)?;
+    Ok(winding)
+}
+
+fn native_support(winding: &Winding, plane: usize, planes: &PlaneSet) -> Result<(), String> {
     let support = planes.get(plane);
     let normal = support.normal.as_vec3().as_dvec3();
     let distance = f64::from(support.dist as f32);
-    if winding.is_tiny()
-        || winding.normal().dot(normal) < 0.99
+    if winding.normal().dot(normal) < 0.99
         || winding
             .0
             .iter()
@@ -410,7 +399,7 @@ fn native_winding(
             return Err("Occluder union produces a collapsed or nonconvex native polygon; simplify its brushes".into());
         }
     }
-    Ok(winding)
+    Ok(())
 }
 
 fn append_boundary(
@@ -509,7 +498,8 @@ pub(super) fn boundary_grouped(
             }
         }
     }
-    let neighbors = interacting(geometries, budget, control)?;
+    let interactions = interacting(geometries, budget, control)?;
+    let neighbors = &interactions.neighbors;
     let mut grouped = Vec::new();
     for (brush, polygons) in polygons.into_iter().enumerate() {
         let source = geometries[brush].0.id;
@@ -527,62 +517,17 @@ pub(super) fn boundary_grouped(
             .1
             .faces
             .iter()
+            .enumerate()
             .zip(&active_faces[brush])
-            .filter_map(|(face, &active)| active.then_some(face));
+            .filter_map(|((index, face), &active)| active.then_some((index, face)));
         for polygon in polygons {
-            let face = faces.next().ok_or_else(|| {
+            let (face_index, _) = faces.next().ok_or_else(|| {
                 context("Occluder polygon has no matching active source face".to_owned())
             })?;
             if neighbors[brush].is_empty() {
-                append_boundary(&mut output, &mut vertices, polygon).map_err(context)?;
-                continue;
-            }
-            let normal = planes.get(polygon.plane).normal;
-            budget
-                .reserve(face.vertices.len(), 1, control)
-                .map_err(context)?;
-            let mut fragments = vec![Winding(face.vertices.clone())];
-            for &other in &neighbors[brush] {
-                let cutter = &geometries[other].1;
-                budget
-                    .consume(active_faces[other].len(), control)
-                    .map_err(context)?;
-                let keep_coplanar = active_faces[other]
-                    .iter()
-                    .map(|&active| brush < other || !active)
-                    .collect::<Vec<_>>();
-                let mut next = Vec::new();
-                for winding in fragments {
-                    next.extend(
-                        subtract(winding, normal, cutter, &keep_coplanar, budget, control)
-                            .map_err(|error| Failure {
-                                message: format!(
-                                    "Occluder brush {source} against brush {}: {error}",
-                                    geometries[other].0.id
-                                ),
-                                brushes: [Some(brush), Some(other)],
-                            })?,
-                    );
-                    if next.len() > MAX_POLYGONS_PER_OCCLUDER {
-                        return Err(context("Occluder source brush exceeds its 256 boundary-fragment budget; simplify or split the helper".into()));
-                    }
-                }
-                fragments = next;
-                if fragments.is_empty() {
-                    break;
-                }
-            }
-            for winding in fragments {
-                let winding = native_winding(winding, polygon.plane, planes, budget, control)
-                    .map_err(context)?;
-                budget.consume(winding.0.len(), control).map_err(context)?;
-                if winding
-                    .0
-                    .iter()
-                    .any(|point| point.cmplt(mins).any() || point.cmpgt(maxs).any())
-                {
-                    return Err(context("Occluder boundary exceeds its native source bounds; separate or simplify the brushes".into()));
-                }
+                let winding =
+                    native_winding(polygon.winding, polygon.plane, planes, budget, control)
+                        .map_err(context)?;
                 append_boundary(
                     &mut output,
                     &mut vertices,
@@ -592,6 +537,96 @@ pub(super) fn boundary_grouped(
                     },
                 )
                 .map_err(context)?;
+                continue;
+            }
+            {
+                let certified = interactions.brushes[brush].as_ref().unwrap();
+                budget
+                    .reserve(
+                        certified.faces[face_index].len().saturating_mul(
+                            size_of::<certified::Point>().div_ceil(size_of::<DVec3>()),
+                        ),
+                        1,
+                        control,
+                    )
+                    .map_err(context)?;
+                let mut fragments = vec![certified.faces[face_index].clone()];
+                let mut bodies = vec![certified];
+                for &other in &neighbors[brush] {
+                    let cutter = interactions.brushes[other].as_ref().unwrap();
+                    bodies.push(cutter);
+                    budget
+                        .consume(active_faces[other].len() + 1, control)
+                        .map_err(context)?;
+                    let keep_coplanar = active_faces[other]
+                        .iter()
+                        .map(|&active| brush < other || !active)
+                        .collect::<Vec<_>>();
+                    let mut next = Vec::new();
+                    for winding in fragments {
+                        next.extend(
+                            certified::subtract(
+                                winding,
+                                &certified.planes[face_index],
+                                cutter,
+                                &keep_coplanar,
+                                budget,
+                                control,
+                            )
+                            .map_err(|message| Failure {
+                                message,
+                                brushes: [Some(brush), Some(other)],
+                            })?,
+                        );
+                        if next.len() > MAX_POLYGONS_PER_OCCLUDER {
+                            return Err(context(
+                                "Exact occluder boundary exceeds the existing 256-fragment limit"
+                                    .into(),
+                            ));
+                        }
+                    }
+                    fragments = next;
+                    if fragments.is_empty() {
+                        break;
+                    }
+                }
+                for points in fragments {
+                    certified::preserves(&points, &bodies, budget, control).map_err(
+                        |(index, message)| Failure {
+                            message,
+                            brushes: [
+                                Some(brush),
+                                index.checked_sub(1).map(|index| neighbors[brush][index]),
+                            ],
+                        },
+                    )?;
+                    let winding =
+                        certified::native_winding(points, certified, face_index, budget, control)
+                            .map_err(context)?;
+                    budget
+                        .consume(winding.0.len().saturating_mul(winding.0.len()), control)
+                        .map_err(context)?;
+                    native_support(&winding, polygon.plane, planes).map_err(context)?;
+                    if winding
+                        .0
+                        .iter()
+                        .any(|point| point.cmplt(mins).any() || point.cmpgt(maxs).any())
+                    {
+                        return Err(context(
+                            "Exact occluder boundary exceeds its original native source bounds"
+                                .into(),
+                        ));
+                    }
+                    append_boundary(
+                        &mut output,
+                        &mut vertices,
+                        Polygon {
+                            plane: polygon.plane,
+                            winding,
+                        },
+                    )
+                    .map_err(context)?;
+                }
             }
         }
         grouped.push(output);

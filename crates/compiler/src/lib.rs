@@ -11,6 +11,7 @@ pub mod cubemap_assets;
 mod detail_props;
 mod emit;
 pub mod entity_origins;
+mod exact;
 pub mod face_origins;
 pub mod faces;
 mod hints;

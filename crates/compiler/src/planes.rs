@@ -28,6 +28,14 @@ pub struct PlaneSet {
     planes: Vec<Plane>,
     by_dist: HashMap<i64, Vec<usize>>,
     collision_by_dist: HashMap<i64, Vec<usize>>,
+    occluder_by_dist: HashMap<i64, Vec<usize>>,
+}
+
+#[derive(Clone, Copy)]
+enum PlanePool {
+    Surface,
+    Collision,
+    Occluder,
 }
 
 fn kind(normal: DVec3) -> i32 {
@@ -91,7 +99,7 @@ impl PlaneSet {
                 }
             }
         }
-        self.insert(normal, dist, false)
+        self.insert(normal, dist, PlanePool::Surface)
     }
 
     pub(crate) fn find_checked<E>(
@@ -100,7 +108,7 @@ impl PlaneSet {
         dist: f64,
         accept: impl Fn(&Plane) -> Result<bool, E>,
     ) -> Result<Option<usize>, E> {
-        self.find_checked_in(normal, dist, accept, true)
+        self.find_checked_in(normal, dist, accept, PlanePool::Collision)
     }
 
     pub(crate) fn find_surface_checked<E>(
@@ -109,7 +117,16 @@ impl PlaneSet {
         dist: f64,
         accept: impl Fn(&Plane) -> Result<bool, E>,
     ) -> Result<Option<usize>, E> {
-        self.find_checked_in(normal, dist, accept, false)
+        self.find_checked_in(normal, dist, accept, PlanePool::Surface)
+    }
+
+    pub(crate) fn find_occluder_checked<E>(
+        &mut self,
+        normal: DVec3,
+        dist: f64,
+        accept: impl Fn(&Plane) -> Result<bool, E>,
+    ) -> Result<Option<usize>, E> {
+        self.find_checked_in(normal, dist, accept, PlanePool::Occluder)
     }
 
     fn find_checked_in<E>(
@@ -117,7 +134,7 @@ impl PlaneSet {
         normal: DVec3,
         dist: f64,
         accept: impl Fn(&Plane) -> Result<bool, E>,
-        collision: bool,
+        pool: PlanePool,
     ) -> Result<Option<usize>, E> {
         let (snapped_normal, snapped_dist) = snap(normal, dist);
         let mut candidate = Plane {
@@ -136,10 +153,13 @@ impl PlaneSet {
         let normal = candidate.normal;
         let dist = candidate.dist;
         let key = dist.floor() as i64;
-        let hashes = [&self.by_dist, &self.collision_by_dist];
-        let hashes = &hashes[..if collision { 2 } else { 1 }];
+        let extra = match pool {
+            PlanePool::Surface => None,
+            PlanePool::Collision => Some(&self.collision_by_dist),
+            PlanePool::Occluder => Some(&self.occluder_by_dist),
+        };
         for k in [key - 1, key, key + 1] {
-            for hash in hashes {
+            for hash in std::iter::once(&self.by_dist).chain(extra) {
                 for &i in hash.get(&k).into_iter().flatten() {
                     let p = &self.planes[i];
                     if (p.normal - normal).abs().max_element() < NORMAL_EPSILON
@@ -151,10 +171,10 @@ impl PlaneSet {
                 }
             }
         }
-        Ok(Some(self.insert(normal, dist, collision)))
+        Ok(Some(self.insert(normal, dist, pool)))
     }
 
-    fn insert(&mut self, normal: DVec3, dist: f64, collision: bool) -> usize {
+    fn insert(&mut self, normal: DVec3, dist: f64, pool: PlanePool) -> usize {
         let kind = kind(normal);
         let positive = normal[(kind % 3) as usize] >= 0.0;
         let (even_normal, even_dist) = if positive {
@@ -163,10 +183,10 @@ impl PlaneSet {
             (-normal, -dist)
         };
         let index = self.planes.len();
-        let by_dist = if collision {
-            &mut self.collision_by_dist
-        } else {
-            &mut self.by_dist
+        let by_dist = match pool {
+            PlanePool::Surface => &mut self.by_dist,
+            PlanePool::Collision => &mut self.collision_by_dist,
+            PlanePool::Occluder => &mut self.occluder_by_dist,
         };
         for (n, d) in [(even_normal, even_dist), (-even_normal, -even_dist)] {
             by_dist

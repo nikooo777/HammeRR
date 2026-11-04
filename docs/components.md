@@ -82,6 +82,11 @@ neighboring faces. It divides the result into convex brush pieces with real
 triangular exterior faces. Preview reports **Output brushes** and **Added
 brushes**; Apply selects the resulting exterior faces in one Undo step.
 With this option off, neighboring faces keep their original projections.
+Manual cubemap bindings on a split world/detail top face follow both roof faces.
+With neighbor attachment, bindings follow every replacement exterior triangle.
+Preview shows **Cubemap samples** and the before/after
+**Changed face bindings** counts. Retained instance ordering expands
+a replaced world brush into its fragments at the original compilation slot.
 Use [Flat partitions](partitions.md) to divide a face before choosing a result.
 
 ## Limits
@@ -89,8 +94,9 @@ Use [Flat partitions](partitions.md) to divide a face before choosing a result.
 - 16 brushes, 512 selected components and 64 faces per brush.
 - Split and ridge heights are 0.125–4096 units.
 - Neighbor attachment requires known solid materials on world, `func_detail`, `func_brush` or `func_wall` brushes. Liquid, clip and controller brushes reject.
-- Neighbor attachment permits 256 fragments. Bound faces, attached measurements,
-  source brush notes, retained instance order and unknown metadata reject this conversion.
+- Neighbor attachment permits 256 fragments. Overlays and other unsupported face
+  bindings, attached measurements, source brush notes, retained origin volumes
+  and unknown metadata reject this conversion.
 - Terrain uses its own [editing tools](terrain.md).
 - Twisted, collapsed, concave or unrepresentable texture results reject before Apply.
 

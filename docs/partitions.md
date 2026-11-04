@@ -36,6 +36,10 @@ Ridges require two four-corner pieces.
 Neighbor attachment uses convex brush pieces with triangular exterior faces;
 **Output brushes** and **Added brushes** show its cost before Apply. Roof and
 neighbor attachment are independent. **Return to flat** keeps the draft choices.
+Manual cubemap top-face bindings follow both slopes, including without neighbor
+attachment. Fragmented bindings follow all replacement exterior triangles;
+the preview shows changed sample and binding counts. Retained instance
+ordering keeps world-brush fragments in their source compilation slots.
 For a neighbor-attached preview, highlight with the piece list and use **Frame
 highlighted pieces**. Return to flat before picking pieces in the viewport.
 See [Roof ridge](components.md#roof-ridge).

@@ -941,10 +941,22 @@ faces. Inspect `preview.crease.output_brushes`, `added_brushes` and `fragments`
 before `commit_component_edit`. The fragment report identifies source faces and
 output projections. `cancel_component_edit` discards the draft.
 `topology_space:"immutable_source"` identifies the original inspection geometry;
-the fragment report describes the displayed result.
+`source_state` gives its generation/revision. The fragment report describes the
+displayed result.
 
-The batch permits 256 fragments. Unsupported materials, bindings and retained
-metadata reject before Apply. Terrain edits keep native base-grid UVs; arbitrary
+`preview.crease.cubemap_bindings` reports changed `helpers`, summed
+`source_sides`/`exterior_sides` reference counts and exact `writes` with helper
+IDs, original key spelling, before/after values and source/output side IDs.
+Supported world/detail `env_cubemap.sides` bindings follow both roof faces without
+fragmentation, or all replacement exterior triangles with neighbor attachment.
+Apply replays these writes with the geometry in one Undo
+step. Retained instance-order world-brush slots expand in place.
+Existing cubemap-binding and ordering budgets still apply.
+
+Neighbor fragmentation permits 256 fragments. Overlays and other unsupported
+face bindings, materials, attached measurements, brush notes, origin-volume
+custody and unknown metadata reject that conversion before Apply.
+Terrain edits keep native base-grid UVs; arbitrary
 nonlinear projection onto displaced world positions is not a native UV mode.
 
 ## Precise VMF brush geometry

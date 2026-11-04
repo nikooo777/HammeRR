@@ -71,6 +71,20 @@ fn ridge_brush_cost(report: &serde_json::Value) -> String {
     }
 }
 
+fn ridge_cubemap_cost(report: &serde_json::Value) -> String {
+    let bindings = &report["cubemap_bindings"];
+    match (
+        bindings["helpers"].as_u64(),
+        bindings["source_sides"].as_u64(),
+        bindings["exterior_sides"].as_u64(),
+    ) {
+        (Some(helpers), Some(source), Some(exterior)) if helpers != 0 => {
+            format!("Cubemap samples: {helpers} · Changed face bindings: {source} → {exterior}\n")
+        }
+        _ => String::new(),
+    }
+}
+
 fn partition_picking_hint(report: &serde_json::Value) -> String {
     report["picking_error"]
         .as_str()
@@ -999,17 +1013,17 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         } else if rise == 0.0 {
             format!("{} flat pieces staged. The source face is unchanged.\nKeep the pieces for later, raise their shared ridge, or Cancel.",count*2).into()
         } else if preview["partition"]["neighbor_texture_lock"] == true {
-            format!("Source brushes: {} · shared ridge raised {} units.\n{}Extended neighbor textures follow the convex brush pieces.\n{}The map is unchanged until Apply.",count,number(rise),ridge_brush_cost(&preview["partition"]),partition_picking_hint(&preview["partition"])).into()
+            format!("Source brushes: {} · shared ridge raised {} units.\n{}{}Extended neighbor textures follow the convex brush pieces.\n{}The map is unchanged until Apply.",count,number(rise),ridge_brush_cost(&preview["partition"]),ridge_cubemap_cost(&preview["crease"]),partition_picking_hint(&preview["partition"])).into()
         } else {
-            format!("{} pieces · shared ridge raised {} units.\nThe map is unchanged until Apply.",count*2,number(rise)).into()
+            format!("{} pieces · shared ridge raised {} units.\n{}The map is unchanged until Apply.",count*2,number(rise),ridge_cubemap_cost(&preview["crease"])).into()
         }
     } else if crease {
         let count = preview["crease"]["changes"].as_array().unwrap().len();
         let rise = number(preview["crease"]["rise"].as_f64().unwrap());
         if preview["crease"]["neighbor_texture_lock"] == true {
-            format!("Raise {count} {} by {rise} units.\n{}Extended neighbor textures follow the convex brush pieces.\nThe map is unchanged until Apply.",if count == 1 {"ridge"} else {"ridges"},ridge_brush_cost(&preview["crease"])).into()
+            format!("Raise {count} {} by {rise} units.\n{}{}Extended neighbor textures follow the convex brush pieces.\nThe map is unchanged until Apply.",if count == 1 {"ridge"} else {"ridges"},ridge_brush_cost(&preview["crease"]),ridge_cubemap_cost(&preview["crease"])).into()
         } else {
-            format!("Raise {count} {} by {rise} units. Add {} corners and {count} {}.\nThe map is unchanged until Apply.", if count == 1 {"ridge"} else {"ridges"}, count * 2, if count == 1 {"face"} else {"faces"}).into()
+            format!("Raise {count} {} by {rise} units. Add {} corners and {count} {}.\n{}The map is unchanged until Apply.", if count == 1 {"ridge"} else {"ridges"}, count * 2, if count == 1 {"face"} else {"faces"},ridge_cubemap_cost(&preview["crease"])).into()
         }
     } else if split {
         let changes = preview["split"]["changes"].as_array().unwrap();

@@ -14,6 +14,7 @@ use super::{Actor, SelectMode, Session};
 mod extrusion;
 mod partitions;
 mod ridge;
+mod ridge_bindings;
 pub use partitions::PartitionRef;
 pub(in crate::session) use ridge::{
     require_known_face_topology_metadata, require_unbound_side_references,
@@ -94,6 +95,7 @@ struct CreaseDraft {
     definitions: u64,
     material_generation: u64,
     material_sources: Option<compiler::asset_sources::AssetSourceGuard>,
+    cubemap_bindings: ridge_bindings::Plan,
     requests: Vec<Crease>,
     plan: subobject::CreasePlan,
 }
@@ -805,6 +807,7 @@ impl Session {
             .map_err(|error| error.to_string())?;
         let material_sources =
             self.capture_ridge_fragment_materials(&requests, &plan, neighbor_texture_lock)?;
+        let cubemap_bindings = self.prepare_ridge_cubemap_bindings(&mut document, &plan)?;
         let selection = ridge::component_selection(&plan);
         Ok(self.install_component_preview(Preview {
             replacements: plan.replacements.clone(),
@@ -815,6 +818,7 @@ impl Session {
                 definitions: self.definitions_serial,
                 material_generation: self.materials.generation(),
                 material_sources,
+                cubemap_bindings,
                 requests,
                 plan,
             }),
@@ -885,19 +889,28 @@ impl Session {
         {
             return Err("Flat partitions are temporary drafts. Raise the shared ridge before Apply, or Cancel.".into());
         }
-        if let Some(crease) = &preview.crease
-            && crease.neighbor_texture_lock
-        {
+        if let Some(crease) = &preview.crease {
             if let Some(error) = self.ridge_stale_error(crease) {
                 return Err(error);
             }
-            crease
-                .material_sources
-                .as_ref()
-                .unwrap()
-                .verify_sources(&self.game, &compiler::Control::default())
-                .map_err(|error| error.to_string())?;
-            self.check_ridge_fragment_references(&crease.requests, preview.partition.is_some())?;
+            for sources in &crease.cubemap_bindings.sources {
+                sources.verify(&self.game, &compiler::Control::default())?;
+            }
+            if crease.plan.fragments.is_empty() {
+                self.check_ordinary_ridge_references(&crease.plan)?;
+            }
+            if crease.neighbor_texture_lock {
+                crease
+                    .material_sources
+                    .as_ref()
+                    .unwrap()
+                    .verify_sources(&self.game, &compiler::Control::default())
+                    .map_err(|error| error.to_string())?;
+                self.check_ridge_fragment_references(
+                    &crease.requests,
+                    preview.partition.is_some(),
+                )?;
+            }
         }
         let fragment_faces = preview
             .crease
@@ -933,6 +946,8 @@ impl Session {
                 crease.neighbor_texture_lock,
                 crease.plan.clone(),
                 crease.material_sources.clone(),
+                crease.cubemap_bindings.writes.clone(),
+                crease.cubemap_bindings.sources.clone(),
             )
         });
         let components = self
@@ -956,7 +971,10 @@ impl Session {
             });
         let game = self.game.clone();
         let result = self.edit(actor, label, |tx| {
-            if let Some((requests, rise, roof_texture_lock, neighbor_texture_lock, expected, material_sources)) = &crease {
+            if let Some((requests, rise, roof_texture_lock, neighbor_texture_lock, expected, material_sources, cubemap_writes, cubemap_sources)) = &crease {
+                if ridge_bindings::writes(tx.vmf(),expected).map_err(EditError::Invalid)? != *cubemap_writes {
+                    return Err(EditError::Invalid("Cubemap binding plan changed; preview the ridge again".into()));
+                }
                 let actual = if let Some(draft) = &preview_partition {
                     subobject::crease_partitions_with_surface_options(
                         tx,
@@ -978,9 +996,13 @@ impl Session {
                 if preview_partition.is_some() {
                     partitions::consume_saved(tx, requests)?;
                 }
+                ridge_bindings::apply(tx,cubemap_writes)?;
                 if let Some(sources) = material_sources {
                     sources.verify_sources(&game, &compiler::Control::default())
                         .map_err(|error|EditError::Invalid(error.to_string()))?;
+                }
+                for sources in cubemap_sources {
+                    sources.verify(&game,&compiler::Control::default()).map_err(EditError::Invalid)?;
                 }
                 Ok(if actual.fragments.is_empty(){actual.replacements.len()}else{actual.fragments.len()})
             } else if let Some(rise) = rise {

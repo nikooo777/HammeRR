@@ -241,7 +241,7 @@ fn report_json(vmf: &Vmf, inspection: &CubemapBindingInspection) -> Value {
 }
 
 impl Session {
-    fn cubemap_binding_source(&self) -> String {
+    pub(in crate::session) fn cubemap_binding_source(&self) -> String {
         format!(
             "{}:{}:{}:{}:{}:{}:{}:{:?}:{:?}",
             self.document_generation,
@@ -289,7 +289,7 @@ impl Session {
         )
     }
 
-    fn cubemap_binding_namespace(&self) -> Result<String, String> {
+    pub(in crate::session) fn cubemap_binding_namespace(&self) -> Result<String, String> {
         self.binding_output_namespace()
             .map(|namespace| namespace.unwrap_or_else(|| "untitled".into()))
     }
@@ -356,7 +356,7 @@ impl Session {
         })
     }
 
-    fn inspect_cubemap_binding_map(
+    pub(in crate::session) fn inspect_cubemap_binding_map(
         &self,
         vmf: &Vmf,
         query: &CubemapBindingQuery,

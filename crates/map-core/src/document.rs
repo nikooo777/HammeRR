@@ -724,6 +724,16 @@ impl Transaction<'_> {
 
     /// Appends a world brush. Its id must be unused.
     pub fn add_solid(&mut self, solid: Solid) -> Result<ObjectId, EditError> {
+        self.insert_solid(self.doc.vmf.world.solids.len(), solid)
+    }
+
+    /// Inserts a world brush at an existing position or the end. Its id must be unused.
+    pub fn insert_solid(&mut self, index: usize, solid: Solid) -> Result<ObjectId, EditError> {
+        if index > self.doc.vmf.world.solids.len() {
+            return Err(EditError::Invalid(
+                "World brush insertion index exceeds the current brush count".into(),
+            ));
+        }
         let id = ObjectId::Solid(solid.id);
         self.reserve_inserted_ids(
             std::iter::once(solid.id),
@@ -731,7 +741,7 @@ impl Transaction<'_> {
         )?;
         self.capture_object_order();
         self.touch(id);
-        self.doc.vmf.world.solids.push(solid);
+        self.doc.vmf.world.solids.insert(index, solid);
         Ok(id)
     }
 

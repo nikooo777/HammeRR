@@ -37,7 +37,7 @@ impl CreaseDraft {
             self.plan.fragments.len()
         };
         json!({"rise":self.rise,"roof_texture_lock":self.roof_texture_lock,"neighbor_texture_lock":self.neighbor_texture_lock,
-            "output_brushes":output_brushes,"added_brushes":output_brushes.saturating_sub(self.requests.len()),"fragment_count":self.plan.fragments.len(),
+            "output_brushes":output_brushes,"added_brushes":output_brushes.saturating_sub(self.requests.len()),"fragment_count":self.plan.fragments.len(),"cubemap_bindings":self.cubemap_bindings.report(),
             "pairs":self.requests.iter().map(|request|json!({"solid":request.solid,"edges":request.edges})).collect::<Vec<_>>(),
             "changes":self.plan.changes.iter().map(|change|json!({"solid":change.source.solid,"source_side":change.source.side,"edges":change.source.edges,"positions":change.positions.map(|point|point.to_array()),"flat_positions":change.flat_positions.map(|point|point.to_array()),"new_side":change.new_side,"selection":if self.plan.fragments.is_empty(){change.selection.iter().map(component_json).collect::<Vec<_>>()}else{Vec::new()}})).collect::<Vec<_>>(),
             "selected_exterior_faces":exterior_faces(&self.plan).iter().map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>(),
@@ -94,11 +94,14 @@ impl Session {
     }
 
     pub(super) fn ridge_stale_error(&self, crease: &CreaseDraft) -> Option<String> {
-        if !crease.neighbor_texture_lock {
-            return None;
+        if let Some(error) = crease.cubemap_bindings.stale_error(self) {
+            return Some(error);
         }
         if crease.definitions != self.definitions_serial {
             return Some("Definitions changed; preview ridge attachment again".into());
+        }
+        if !crease.neighbor_texture_lock {
+            return None;
         }
         if crease.material_generation != self.materials.generation() {
             return Some("Material assets were reloaded; preview ridge attachment again".into());
@@ -176,24 +179,15 @@ impl Session {
             }
             sides.extend(solid.sides.iter().map(|side| side.id));
         }
-        if let Some(ordering) = map_core::instance_order::read(self.document.vmf())? {
-            if ordering.slots.iter().any(|slot| match &slot.content {
-                map_core::instance_order::Content::Materialized { world, .. } => {
-                    world.iter().any(|id| objects.contains(id))
-                }
-                map_core::instance_order::Content::LiveReference => false,
-            }) {
-                return Err("A source brush belongs to retained instance ordering; its one-to-many ridge order cannot be rebound".into());
-            }
-            if ordering
+        if let Some(ordering) = map_core::instance_order::read(self.document.vmf())?
+            && ordering
                 .origin_custody
                 .iter()
                 .any(|custody| custody.volumes.iter().any(|id| objects.contains(id)))
-            {
-                return Err("A source brush is retained origin-volume custody; it cannot become ridge fragments".into());
-            }
+        {
+            return Err("A source brush is retained origin-volume custody; it cannot become ridge fragments".into());
         }
-        require_unbound_side_references(self, &sides)?;
+        check_side_references(self, &sides, true)?;
         map_core::measurements::Measurements::parse(self.document.vmf())?
             .validate_retained_references(&objects, &sides)?;
         let context = map_core::context::Metadata::parse(self.document.vmf())?;
@@ -226,11 +220,31 @@ impl Session {
         }
         Ok(())
     }
+
+    pub(super) fn check_ordinary_ridge_references(
+        &self,
+        plan: &subobject::CreasePlan,
+    ) -> Result<(), String> {
+        let sides = plan
+            .changes
+            .iter()
+            .map(|change| change.source.side)
+            .collect();
+        check_side_references(self, &sides, true)
+    }
 }
 
 pub(in crate::session) fn require_unbound_side_references(
     session: &Session,
     sides: &BTreeSet<u32>,
+) -> Result<(), String> {
+    check_side_references(session, sides, false)
+}
+
+fn check_side_references(
+    session: &Session,
+    sides: &BTreeSet<u32>,
+    cubemaps: bool,
 ) -> Result<(), String> {
     let existing = session.document.vmf().side_ids().collect::<BTreeSet<_>>();
     for entity in &session.document.vmf().entities {
@@ -243,36 +257,54 @@ pub(in crate::session) fn require_unbound_side_references(
             if !key.eq_ignore_ascii_case("sides") && !typed {
                 continue;
             }
-            if entity.properties.get_all(key).count() != 1 || value.len() > 16 * 1024 {
-                return Err(
-                    "Ambiguous or oversized inbound side binding; repair it before changing face topology"
-                        .into(),
-                );
-            }
-            let mut seen = BTreeSet::new();
-            for token in value.split_whitespace() {
-                let id = token.parse::<u32>().ok().filter(|id| *id > 0).ok_or(
-                    "Malformed inbound side binding; repair it before changing face topology",
-                )?;
-                if !seen.insert(id) || seen.len() > 1024 {
-                    return Err("Duplicate or oversized inbound side binding".into());
-                }
-                if !existing.contains(&id) {
-                    return Err(format!(
-                        "entity:{} {key} binds unavailable root side:{id}; the operation cannot reinterpret its face binding",
-                        entity.id
-                    ));
-                }
-                if sides.contains(&id) {
-                    return Err(format!(
-                        "entity:{} {key} binds selected side:{id}; the operation requires one-to-many face rebinding",
-                        entity.id
-                    ));
-                }
+            let ids = parsed_side_references(entity, key, value, &existing)?;
+            if ids.iter().any(|id| sides.contains(id))
+                && !(cubemaps
+                    && key.eq_ignore_ascii_case("sides")
+                    && super::ridge_bindings::is_cubemap(entity))
+            {
+                return Err(format!(
+                    "entity:{} {key} binds a selected face; the operation requires one-to-many face rebinding",
+                    entity.id
+                ));
             }
         }
     }
     Ok(())
+}
+
+pub(super) fn parsed_side_references(
+    entity: &source_formats::vmf::Entity,
+    key: &str,
+    value: &str,
+    existing: &BTreeSet<u32>,
+) -> Result<Vec<u32>, String> {
+    if entity.properties.get_all(key).count() != 1 || value.len() > 16 * 1024 {
+        return Err(
+            "Ambiguous or oversized inbound side binding; repair it before changing face topology"
+                .into(),
+        );
+    }
+    let mut seen = BTreeSet::new();
+    let mut ids = Vec::new();
+    for token in value.split_whitespace() {
+        let id = token
+            .parse::<u32>()
+            .ok()
+            .filter(|id| *id > 0)
+            .ok_or("Malformed inbound side binding; repair it before changing face topology")?;
+        if !seen.insert(id) || seen.len() > 1024 {
+            return Err("Duplicate or oversized inbound side binding".into());
+        }
+        if !existing.contains(&id) {
+            return Err(format!(
+                "entity:{} {key} binds unavailable root side:{id}; the operation cannot reinterpret its face binding",
+                entity.id
+            ));
+        }
+        ids.push(id);
+    }
+    Ok(ids)
 }
 
 fn face_metadata(solid: &Solid) -> Result<(), String> {

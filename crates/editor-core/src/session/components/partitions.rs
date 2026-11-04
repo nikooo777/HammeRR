@@ -268,7 +268,7 @@ impl Session {
     fn install_partition_preview(
         &mut self,
         draft: Draft,
-        document: Document,
+        mut document: Document,
         plan: Option<subobject::CreasePlan>,
     ) -> Result<u64, String> {
         let requests = draft.requests();
@@ -279,6 +279,11 @@ impl Session {
             })
             .transpose()?
             .flatten();
+        let cubemap_bindings = plan
+            .as_ref()
+            .map(|plan| self.prepare_ridge_cubemap_bindings(&mut document, plan))
+            .transpose()?
+            .unwrap_or_default();
         let selection = plan.as_ref().map_or_else(
             || self.geometry.components.selection.clone(),
             ridge::component_selection,
@@ -293,6 +298,7 @@ impl Session {
                     definitions: self.definitions_serial,
                     material_generation: self.materials.generation(),
                     material_sources,
+                    cubemap_bindings,
                     requests,
                     plan,
                 }),

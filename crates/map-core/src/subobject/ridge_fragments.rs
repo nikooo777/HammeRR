@@ -439,11 +439,79 @@ fn admit_source(source: &Solid) -> Result<(), EditError> {
     Ok(())
 }
 
+fn remap_world_order(
+    tx: &mut Transaction,
+    ordering: Option<crate::instance_order::Ordering>,
+    fragments: &[CreaseFragment],
+) -> Result<(), EditError> {
+    let Some(mut ordering) = ordering else {
+        return Ok(());
+    };
+    let mut identities = BTreeSet::new();
+    let mut replacements = BTreeMap::<u32, Vec<u32>>::new();
+    for fragment in fragments {
+        if !identities.insert(fragment.solid.id) {
+            return Err(invalid("Ridge ordering has duplicate fragment identities"));
+        }
+        if let ObjectId::Solid(owner) = fragment.owner {
+            if owner != fragment.source {
+                return Err(invalid(
+                    "Ridge world fragment has inconsistent source ownership",
+                ));
+            }
+            replacements
+                .entry(fragment.source)
+                .or_default()
+                .push(fragment.solid.id);
+        }
+    }
+    if replacements
+        .iter()
+        .any(|(source, fragments)| fragments.first() != Some(source))
+    {
+        return Err(invalid(
+            "Ridge ordering did not retain its source brush identity",
+        ));
+    }
+    let mut changed = false;
+    for slot in &mut ordering.slots {
+        let crate::instance_order::Content::Materialized { world, .. } = &mut slot.content else {
+            continue;
+        };
+        let mut count = 0usize;
+        for id in world.iter() {
+            count = count
+                .checked_add(replacements.get(id).map_or(1, Vec::len))
+                .filter(|count| *count <= crate::instance_order::MAX_IDS)
+                .ok_or_else(|| {
+                    invalid("Ridge fragments exceed instance ordering's referenced-ID limit")
+                })?;
+        }
+        let mut expanded = Vec::with_capacity(count);
+        for id in world.iter() {
+            expanded.extend_from_slice(
+                replacements
+                    .get(id)
+                    .map_or(std::slice::from_ref(id), Vec::as_slice),
+            );
+        }
+        if expanded != *world {
+            *world = expanded;
+            changed = true;
+        }
+    }
+    if changed {
+        crate::instance_order::install(tx, &ordering)?;
+    }
+    Ok(())
+}
+
 pub(super) fn attach(
     tx: &mut Transaction,
     plan: &mut CreasePlan,
     originals: &BTreeMap<u32, Solid>,
 ) -> Result<(), EditError> {
+    let ordering = crate::instance_order::read(tx.vmf()).map_err(invalid)?;
     let mut fragments = Vec::new();
     for replacement in &plan.replacements {
         let source = originals
@@ -497,9 +565,16 @@ pub(super) fn attach(
             .collect::<Vec<_>>();
         match replacement.owner {
             ObjectId::Solid(_) => {
+                let index = tx
+                    .vmf()
+                    .world
+                    .solids
+                    .iter()
+                    .position(|solid| solid.id == source)
+                    .ok_or(EditError::NotFound(ObjectId::Solid(source)))?;
                 *tx.solid_mut(source)? = pieces[0].solid.clone();
-                for piece in &pieces[1..] {
-                    tx.add_solid(piece.solid.clone())?;
+                for (offset, piece) in pieces.iter().enumerate().skip(1) {
+                    tx.insert_solid(index + offset, piece.solid.clone())?;
                 }
             }
             ObjectId::Entity(owner) => {
@@ -516,6 +591,7 @@ pub(super) fn attach(
             }
         }
     }
+    remap_world_order(tx, ordering, &fragments)?;
     plan.fragments = fragments;
     Ok(())
 }

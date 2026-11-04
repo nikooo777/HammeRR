@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 85.9% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 86.1% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -33,7 +33,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [Selection](selection.md) | Groups/Objects/Solids, owner-preserving child-brush edits, type filters, independent tint/outlines and complete selection bounds, startup defaults, named profiles, overlap cycling, area, volume and paint selection. | Whole-object commands require complete brush owners. |
 | [Working region](working-region.md) | Temporary boxes, camera-following, draw distance and shared object-query rules for display and picking; one Clear restores the view. | Whole owners; unresolved spatial bounds stay visible. Authored query rules suppress native compiled layers. |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | 36 commands, including file/clipboard and held camera directions; logical/physical keys, Ctrl/Shift/Alt/Meta, two-stroke sequences and shared MCP resolution/navigation. | Two slots per command; camera directions use one stroke. Focused controls and the operating system may consume combinations. |
-| [Brushes](brushes.md) | Shapes, checked block creation/import, handles, exact transforms, selection or per-object grid snapping, fixed/attached pivots and saved defaults, mirror and shear. | Point-entity and displacement reflection/shear; general surface interpolation. |
+| [Brushes](brushes.md) | Shapes, checked block creation/import, handles, exact transforms, grid snapping, fixed/attached pivots, terrain mirror/shear and supported point-placement transforms. | Unknown point semantics and unrepresentable model/instance deformation; general surface interpolation. |
 | [Brush tools](brush-tools.md) | Hollow, carve with explicit cut-material policies, clip, convex merge and polygon extrusion. | Concave merge and holes. |
 | [Components](components.md) | Move, rotate, scale, weld, split, ridges and partitions. | General topology editing and arbitrary dividing lines. |
 | [Materials](textures.md) | Grouped browsing, prefix/regex and resolved-shader filters, actual second blend-image inspection, winning-source filters, maps-path exclusion, favorites, mapping, painting, wrapping, replacement, saved named atlas regions, automatic face-island packing, padded image fitting with coplanar continuity, face lighting and checked native texture mip chains. | Full native shader preview. |

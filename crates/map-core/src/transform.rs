@@ -7,6 +7,9 @@ use source_formats::vmf::{
 
 use crate::{BrushGeometry, EditError, ObjectId, Plane, Transaction};
 
+mod entities;
+mod terrain;
+
 pub const MAX_SHEAR_FACTOR: f64 = 64.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -48,6 +51,7 @@ impl Default for Transform {
 struct Mapping {
     linear: DMat3,
     inverse_transpose: DMat3,
+    orientation_linear: DMat3,
     rotation: DQuat,
     offset: DVec3,
     texture_lock: bool,
@@ -55,7 +59,8 @@ struct Mapping {
     texture_inverse_transpose: DMat3,
     texture_offset: DVec3,
     translation_only: bool,
-    brush_only: bool,
+    deforms: bool,
+    rigid_orientation: bool,
     reverses_winding: bool,
 }
 
@@ -119,18 +124,26 @@ impl Mapping {
             columns[shear.reference][shear.axis] = shear.factor;
             shear_matrix = DMat3::from_cols(columns[0], columns[1], columns[2]);
         }
-        let brush_only = reflected || shear_matrix != DMat3::IDENTITY;
-        if brush_only && transform.pivot.abs().max_element() > crate::primitive::MAX_COORDINATE {
+        let deforms = reflected || shear_matrix != DMat3::IDENTITY;
+        if deforms && transform.pivot.abs().max_element() > crate::primitive::MAX_COORDINATE {
             return Err(invalid(
                 "Brush deformation pivot exceeds the editor's coordinate bounds",
             ));
         }
-        let signed_scale = transform.scale
-            * DVec3::from_array(
-                transform
-                    .reflection
-                    .map(|axis| if axis { -1.0 } else { 1.0 }),
-            );
+        let reflection = DVec3::from_array(
+            transform
+                .reflection
+                .map(|axis| if axis { -1.0 } else { 1.0 }),
+        );
+        let signed_scale = transform.scale * reflection;
+        let reflection = DMat3::from_diagonal(reflection);
+        let reverses_winding = transform
+            .reflection
+            .into_iter()
+            .filter(|axis| *axis)
+            .count()
+            % 2
+            == 1;
         let deformation = shear_matrix * DMat3::from_diagonal(signed_scale);
         let angles = transform
             .rotation
@@ -147,6 +160,15 @@ impl Mapping {
             transform.basis * local_rotation * transform.basis.transpose()
         };
         let rotation = DQuat::from_mat3(&rotation_matrix);
+        let orientation_linear = if deforms {
+            rotation_matrix
+                * transform.basis
+                * shear_matrix
+                * reflection
+                * transform.basis.transpose()
+        } else {
+            rotation_matrix
+        };
         let linear = if deformation == DMat3::IDENTITY {
             rotation_matrix
         } else {
@@ -181,6 +203,7 @@ impl Mapping {
         Ok(Self {
             linear,
             inverse_transpose,
+            orientation_linear,
             rotation,
             offset,
             texture_lock: transform.texture_lock || scale_lock,
@@ -188,14 +211,9 @@ impl Mapping {
             texture_inverse_transpose,
             texture_offset,
             translation_only: angles == DVec3::ZERO && deformation == DMat3::IDENTITY,
-            brush_only,
-            reverses_winding: transform
-                .reflection
-                .into_iter()
-                .filter(|axis| *axis)
-                .count()
-                % 2
-                == 1,
+            deforms,
+            rigid_orientation: shear_matrix == DMat3::IDENTITY && !reverses_winding,
+            reverses_winding,
         })
     }
 
@@ -213,8 +231,13 @@ impl Mapping {
         }
         let transformed = self.texture_inverse_transpose * axis.axis;
         let length = transformed.length();
-        let scale = if axis.scale == 0.0 { 1.0 } else { axis.scale };
-        if !length.is_finite() || length <= 0.0 || !scale.is_finite() || !axis.offset.is_finite() {
+        let scale = axis.scale;
+        if !length.is_finite()
+            || length <= 0.0
+            || !scale.is_finite()
+            || scale == 0.0
+            || !axis.offset.is_finite()
+        {
             return Err(invalid("Cannot lock an invalid texture projection"));
         }
         axis.axis = transformed / length;
@@ -227,80 +250,18 @@ impl Mapping {
     }
 
     fn displacement(&self, disp: &mut DispInfo, normal: DVec3) -> Result<(), EditError> {
-        if !(2..=4).contains(&disp.power) {
-            return Err(invalid(
-                "Displacement transforms support powers 2 through 4",
-            ));
-        }
-        let size = (1 << disp.power) + 1;
-        disp.start_position = self.point(disp.start_position)?;
-        let elevation = self.linear * normal * disp.elevation;
-        if !elevation.is_finite() {
-            return Err(invalid("Displacement elevation must be finite"));
-        }
-        if let (Some(normals), Some(distances)) = (&mut disp.normals, &mut disp.distances) {
-            if normals.len() != size
-                || distances.len() != size
-                || normals.iter().any(|row| row.len() != size)
-                || distances.iter().any(|row| row.len() != size)
-            {
-                return Err(invalid(
-                    "Displacement normal/distance rows have invalid dimensions",
-                ));
-            }
-            for (normal, distance) in normals
-                .iter_mut()
-                .flatten()
-                .zip(distances.iter_mut().flatten())
-            {
-                let vector = self.linear * *normal;
-                let length = vector.length();
-                if !length.is_finite() || !distance.is_finite() {
-                    return Err(invalid("Displacement vectors must be finite"));
-                }
-                *normal = vector.normalize_or_zero();
-                *distance *= length;
-                if !distance.is_finite() {
-                    return Err(invalid("Displacement distance overflow"));
-                }
-            }
-        }
-        if elevation != DVec3::ZERO && disp.offsets.is_none() {
-            disp.offsets = Some(vec![vec![DVec3::ZERO; size]; size]);
-        }
-        if let Some(offsets) = &mut disp.offsets {
-            if offsets.len() != size || offsets.iter().any(|row| row.len() != size) {
-                return Err(invalid("Displacement offset rows have invalid dimensions"));
-            }
-            for offset in offsets.iter_mut().flatten() {
-                *offset = self.linear * *offset + elevation;
-                if !offset.is_finite() {
-                    return Err(invalid("Displacement offset overflow"));
-                }
-            }
-        }
-        disp.elevation = 0.0;
-        if let Some(normals) = &mut disp.offset_normals {
-            for normal in normals.iter_mut().flatten() {
-                let transformed = self.inverse_transpose * *normal;
-                if !transformed.is_finite() {
-                    return Err(invalid("Displacement normal overflow"));
-                }
-                *normal = transformed.normalize_or_zero();
-            }
-        }
-        Ok(())
+        terrain::transform(self, disp, normal)
     }
 
     fn solid(&self, solid: &mut Solid) -> Result<(), EditError> {
-        if self.brush_only && solid.sides.iter().any(|side| side.displacement.is_some()) {
-            return Err(invalid(
-                "Brush deformation does not yet support displacement brushes",
-            ));
-        }
         if self.translation_only {
             return crate::edit::translate_solid(solid, self.offset, self.translation_texture_lock);
         }
+        let terrain_surfaces = if self.deforms {
+            terrain::capture(self, solid)?
+        } else {
+            Vec::new()
+        };
         for side in &mut solid.sides {
             if side.plane.0.iter().any(|point| !point.is_finite())
                 || side
@@ -328,7 +289,8 @@ impl Mapping {
             }
         }
         let geometry = validated_geometry(solid)?;
-        if self.brush_only
+        terrain::verify(self, solid, &geometry, &terrain_surfaces)?;
+        if self.deforms
             && geometry.mins.abs().max(geometry.maxs.abs()).max_element()
                 > crate::primitive::MAX_COORDINATE
         {
@@ -341,10 +303,8 @@ impl Mapping {
     }
 
     fn entity(&self, entity: &mut Entity, rotate: bool) -> Result<(), EditError> {
-        if self.brush_only && entity.solids.is_empty() {
-            return Err(invalid(
-                "Brush deformation currently supports brushes and brush entities only",
-            ));
+        if self.deforms && entity.solids.is_empty() {
+            return entities::deform(self, entity, rotate);
         }
         if let Some(origin) = crate::edit::checked_entity_origin(entity)? {
             entity
@@ -450,7 +410,7 @@ pub fn transform(
             continue;
         }
         if !rotate
-            && !mapping.brush_only
+            && !mapping.deforms
             && transform.scale == DVec3::ONE
             && transform.translation == DVec3::ZERO
         {

@@ -900,6 +900,34 @@ Saved-hidden vertex owners are unavailable; editor display filters affect
 picking without invalidating existing bindings. No cached-point fallback or
 arbitrary barycentric surface attachment is provided.
 
+## Numeric reflection and shear
+
+Use `transform_objects` with `reflection:[true,false,false]` or
+`shear:{"axis":"z","reference":"x","factor":0.125}`. These use the selected
+world/local frame and pivot. Set `preview:true` to inspect a draft, then call
+`commit_transform_preview` or `cancel_transform_preview`.
+Both operations support ordinary brushes and power-2/3/4 terrain. Terrain grids,
+alpha weights, source-row triangle tags and allowed-vertex masks follow the edit.
+Odd reflection rejects unknown payloads that need an unverified index remap.
+Public terrain triangle IDs remain in their existing inspection order; VMF and
+native tag arrays use row-major cell pairs.
+
+Supported unparented point classes:
+
+| Classes | Placement rule |
+| --- | --- |
+| `info_null`, `info_lighting`, `env_cubemap`, `light` | Affine origins; fixed helper size and light radius. Explicit rotation keeps its existing angle behavior. |
+| Untargeted `light_spot`, `light_environment` | Affine origins and transformed light directions. |
+| `info_target`, `info_landmark`, `info_player_start`, `info_player_deathmatch`, `info_player_teamspawn`, `info_player_terrorist`, `info_player_counterterrorist` | Proper Source frames only: even mirror parity and zero shear. |
+| `prop_static`, `prop_detail`, `detail_prop`, `prop_dynamic`, `prop_dynamic_override`, `prop_physics`, `prop_physics_override`, `prop_physics_multiplayer`, `func_instance` | Same proper-frame rule. Props require a valid MDL reference and scale. Instance fields must match the compiler's supported catalog. |
+
+Positive scale changes point spacing, without changing orientation or intrinsic
+model/instance size. Unknown fields/classes, duplicate keys, unsupported targets
+and invalid geometry reject atomically. Full-frame legacy negative `angle` values
+must be exactly −1 or −2; use explicit `angles` for other negative orientations.
+Use `select_solids` and omit transform IDs to operate on selected child brushes.
+Invalid requests retain the previous draft, map and history.
+
 ## Attached transform pivots
 
 Call `transform_pivot_attachment` with `action:"inspect"` to read the current

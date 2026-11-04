@@ -221,7 +221,8 @@ Clear these options to retain the world texture projection.
 
 Choose **Mirror X**, **Mirror Y** or **Mirror Z**, then click **Mirror selection**.
 **Mirror textures with geometry** also reflects the texture.
-Point entities and terrain cannot be mirrored with this operation.
+Brushes and power-2/3/4 terrain support all mirror-axis combinations.
+Terrain keeps the physical positions of its heights, blend weights and triangle tags.
 
 ### Shear
 
@@ -230,6 +231,18 @@ Set **Factor** to the required proportional shift.
 For example, X by Y at 0.5 shifts X by half the Y distance from the pivot.
 Use **Keep textures attached while shearing** when required.
 Click **Shear selection** to apply.
+
+### Point placements
+
+| Selected object | Mirror and shear behavior |
+| --- | --- |
+| Point lights, lighting origins, null helpers and cubemap samples | Move their origins. Light brightness, radius and helper sizes stay unchanged. |
+| Untargeted spotlights and environment lights | Move their origins and map their light directions. Positive scale changes spacing, not light direction. |
+| Player poses, targets, landmarks, supported MDL props and instances | Two-axis mirrors can encode a proper rotation. Odd mirrors and nonzero shear stop the edit. Model and instance sizes stay unchanged. |
+
+Point placements require unparented objects with supported fields. Unknown classes,
+ambiguous spatial keys and unsupported metadata stop the whole batch.
+See the [MCP catalog](mcp.md#numeric-reflection-and-shear) for exact classes.
 
 ## Limits
 

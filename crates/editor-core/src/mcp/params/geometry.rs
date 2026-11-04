@@ -135,17 +135,17 @@ pub struct GridSnapArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TransformArgs {
-    /// Object IDs; omitted uses the shared selection. Repeated IDs are applied once.
+    /// World-brush or entity IDs; omitted uses the shared selection, including selected entity child brushes. Repeated IDs are applied once.
     pub ids: Option<Vec<String>>,
-    /// Exact world offset [dx, dy, dz], applied last; defaults to zero.
+    /// Exact offset [dx, dy, dz] in the chosen world/local frame, applied last; defaults to zero.
     pub translation: Option<[f64; 3]>,
-    /// Right-handed degrees around world [X, Y, Z], applied X then Y then Z; defaults to zero.
+    /// Right-handed degrees around [X, Y, Z] in the chosen frame, applied X then Y then Z; defaults to zero.
     pub rotation: Option<[f64; 3]>,
-    /// Positive world-axis factors [sx, sy, sz], applied before rotation; defaults to [1,1,1].
+    /// Positive factors [sx, sy, sz] in the chosen frame, applied before rotation; defaults to [1,1,1].
     pub scale: Option<[f64; 3]>,
-    /// Mirror chosen world/local axes about the pivot. Brushes and brush entities only; displacement brushes and point entities are rejected atomically.
+    /// Mirror chosen world/local axes about the pivot. Supports admitted brushes, power 2–4 terrain and point placements. Complete point/model/instance orientation frames require even reflection parity and zero shear. Unsupported selections reject atomically.
     pub reflection: Option<[bool; 3]>,
-    /// Shift one coordinate by factor times another coordinate about the pivot, after scale/reflection and before rotation. Brushes and brush entities only. Factor range -64..64.
+    /// Shift one coordinate by factor times another about the pivot, after scale/reflection and before rotation. Supports admitted brushes, terrain, origin-only points and untargeted directional lights; complete point/model/instance frames reject nonzero shear. Factor range -64..64.
     pub shear: Option<ShearArgs>,
     /// selection_center, current_transform_pivot or custom_world_point. Omitted with no pivot retains the selection-center default; omitted with pivot means a custom world point.
     pub pivot_source: Option<crate::session::transform_pivot::PivotSource>,
@@ -153,9 +153,9 @@ pub struct TransformArgs {
     pub pivot: Option<[f64; 3]>,
     /// Follow translation/rotation about the pivot; default true.
     pub texture_lock: Option<bool>,
-    /// Stretch textures with scale about the pivot. Omitted inherits texture_lock for backward compatibility.
+    /// Follow scale, reflection and shear about the pivot. Omitted inherits texture_lock.
     pub texture_scale_lock: Option<bool>,
-    /// world (default) or local; local follows the first selected object's frame.
+    /// world (default) or local; local follows the first canonical object ID's frame.
     pub space: Option<String>,
     /// Draft geometry without changing the document or history; commit or cancel separately.
     #[serde(default)]

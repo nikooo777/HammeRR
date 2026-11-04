@@ -7,15 +7,15 @@
 mod values;
 
 pub use values::{
-    Color, Plane, UvAxis, format_number, format_vec3, numeric_tokens, parse_numbers, parse_vec3,
+    Color, Plane, UvAxis, format_number, format_vec3, format_vec3_bracketed, numeric_tokens,
+    parse_numbers, parse_vec3,
 };
 
 use glam::DVec3;
 
 use crate::keyvalues::{self, Node, Value, WriteOptions};
 use values::{
-    format_int_list, format_number_list, format_vec3_bracketed, format_vec3_list, parse_int_list,
-    parse_vec3_list,
+    format_int_list, format_number_list, format_vec3_list, parse_int_list, parse_vec3_list,
 };
 
 #[derive(Debug, thiserror::Error)]

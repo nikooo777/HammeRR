@@ -124,6 +124,21 @@ fn grid<'a, T>(
     Ok(Some(rows.iter().flatten()))
 }
 
+pub(crate) fn grid_triangles(size: usize) -> impl Iterator<Item = [usize; 3]> {
+    let n = size;
+    (0..n - 1).flat_map(move |row| {
+        (0..n - 1).flat_map(move |col| {
+            let a = row * n + col;
+            let (b, c, d) = (a + 1, a + n, a + n + 1);
+            if (row + col) % 2 == 0 {
+                [[a, c, d], [a, d, b]]
+            } else {
+                [[a, c, b], [c, d, b]]
+            }
+        })
+    })
+}
+
 impl DisplacementMesh {
     fn validate_edit_bounds(&self) -> Result<(), crate::EditError> {
         if self
@@ -247,18 +262,7 @@ impl DisplacementMesh {
     /// Triangles over the grid, wound like the source face. Diagonals
     /// alternate per quad, as in the engine, so slopes tessellate evenly.
     pub fn triangles(&self) -> impl Iterator<Item = [usize; 3]> + '_ {
-        let n = self.size;
-        (0..n - 1).flat_map(move |row| {
-            (0..n - 1).flat_map(move |col| {
-                let a = row * n + col;
-                let (b, c, d) = (a + 1, a + n, a + n + 1);
-                if (row + col) % 2 == 0 {
-                    [[a, c, d], [a, d, b]]
-                } else {
-                    [[a, c, b], [c, d, b]]
-                }
-            })
-        })
+        grid_triangles(self.size)
     }
 
     /// Vertex indices on the grid border.

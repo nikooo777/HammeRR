@@ -2354,18 +2354,29 @@ impl Session {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        let operation = if transform.rotation == DVec3::ZERO && transform.scale == DVec3::ONE {
-            "move"
-        } else if transform.translation == DVec3::ZERO && transform.scale == DVec3::ONE {
-            "rotate"
-        } else if transform.translation == DVec3::ZERO && transform.rotation == DVec3::ZERO {
-            "scale"
-        } else {
-            "transform"
+        let mut operations = [
+            ("move", transform.translation != DVec3::ZERO),
+            ("rotate", transform.rotation != DVec3::ZERO),
+            ("scale", transform.scale != DVec3::ONE),
+            ("mirror", transform.reflection.into_iter().any(|axis| axis)),
+            (
+                "shear",
+                transform.shear.is_some_and(|shear| shear.factor != 0.0),
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(operation, active)| active.then_some(operation));
+        let operation = match (operations.next(), operations.next()) {
+            (Some(operation), None) => operation,
+            (None, None) => "move",
+            _ => "transform",
         };
-        self.edit(actor, &format!("{operation} {} objects", ids.len()), |tx| {
-            map_core::edit::transform(tx, &ids, transform)
-        })?;
+        let objects = if ids.len() == 1 { "object" } else { "objects" };
+        self.edit(
+            actor,
+            &format!("{operation} {} {objects}", ids.len()),
+            |tx| map_core::edit::transform(tx, &ids, transform),
+        )?;
         Ok(transform.pivot)
     }
 

@@ -11,7 +11,7 @@ V09,Working-region visibility,100
 V10,Reference images (++),100
 G01,Interactive brush creation,100
 G02,Additional brush primitives,100
-G03,Full numeric transforms,80
+G03,Full numeric transforms,100
 G04,Transform handles (++),100
 G05,Transform pivots (++),100
 G06,"Vertex, edge and face geometry editing",80

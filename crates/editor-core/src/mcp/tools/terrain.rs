@@ -158,7 +158,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect 1–16 selected/explicit terrain faces in native triangle order (IDs0–31/127/511). Returns each triangle's grid indices, world positions, centroid, optional raw VMF source_tags, effective walkable/buildable classifications, optional forced overrides, removed and unknown_tags. VMF source bits differ from BSP bits. preview=true inspects the rendered draft. Removed/unknown tags remain inspectable but cannot compile. UI: Terrain triangles…. No selection or history change.",
+        description = "Inspect 1–16 selected/explicit terrain faces in stable inspection fan order (IDs0–31/127/511). VMF and native tag arrays use separate row-major cell pairs; returned tags belong to the inspected physical triangle. Returns each triangle's grid indices, world positions, centroid, optional raw VMF source_tags, effective walkable/buildable classifications, optional forced overrides, removed and unknown_tags. VMF source bits differ from BSP bits. preview=true inspects the rendered draft. Removed/unknown tags remain inspectable but cannot compile. UI: Terrain triangles…. No selection or history change.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_terrain_triangles(
@@ -639,7 +639,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview walkability/buildability classifications on arbitrary native triangle subsets in1–16 terrain faces. targets=[{face:{solid,side},triangles:[native IDs]}], one target per face. walkable/buildable accept automatic/enabled/disabled; omitted settings preserve current values. Automatic recomputes selected cached classification from source slope; enabled/disabled author a VMF force override. These are engine classifications, not collision switches. Geometry, alpha, IDs, other triangle tags and metadata remain. Invalid IDs/malformed rows reject atomically. Inspect get_terrain_triangles(preview=true), then commit/cancel_face_preview with state.preview_token. No removal authoring yet. UI: Terrain triangles…."
+        description = "Preview walkability/buildability classifications on arbitrary native triangle subsets in1–16 terrain faces. targets=[{face:{solid,side},triangles:[stable inspection IDs]}], one target per face. walkable/buildable accept automatic/enabled/disabled; omitted settings preserve current values. Automatic recomputes selected cached classification from source slope; enabled/disabled author a VMF force override. These are engine classifications, not collision switches. Geometry, alpha, IDs, other triangle tags and metadata remain. Invalid IDs/malformed rows reject atomically. Inspect get_terrain_triangles(preview=true), then commit/cancel_face_preview with state.preview_token. No removal authoring yet. UI: Terrain triangles…."
     )]
     pub(in crate::mcp) fn preview_terrain_triangle_tags(
         &self,

@@ -182,6 +182,19 @@ Choose **Textured** and enable **Unshadowed authored lighting**.
 Only supported opaque, single-base terrain receives this preview; blends and bump/detail materials are excluded.
 See [lighting preview](lighting-preview.md).
 
+## Mirror or shear terrain
+
+1. Select the terrain's parent brush, or its child brush inside a detail entity.
+2. Expand **Transform**. Choose **Mirror** or **Shear**.
+3. Set the axes, pivot and texture option. For shear, set **Factor**.
+4. Click **Mirror selection** or **Shear selection**.
+
+Grid samples, blend weights and triangle classifications follow the geometry.
+Odd mirrors transpose the grid while keeping the transformed start corner.
+Requery vertex and triangle IDs after the edit. **Undo** restores the original.
+Rebind terrain attachments if the changed grid order makes them unavailable.
+Unknown displacement payloads stop odd mirrors when their indices cannot be remapped.
+
 ## Remove terrain
 
 Select terrain faces, then click **Remove terrain**. Undo restores the complete grid.

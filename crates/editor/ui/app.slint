@@ -3851,7 +3851,7 @@ export component AppWindow inherits Window {
                                     if root.can-apply-material && root.transform-mode < 3: CheckBox { text: "Follow move and rotation"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-lock; toggled => { root.transform-tool-changed(); } }
                                     if root.can-apply-material && root.transform-mode == 2: CheckBox { text: "Stretch textures when scaling"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
                                     if root.can-apply-material && root.transform-mode >= 3: CheckBox { text: root.transform-mode == 3 ? "Mirror textures with geometry" : "Keep textures attached while shearing"; enabled: !root.has-transform-preview; checked <=> root.transform-texture-scale-lock; toggled => { root.transform-tool-changed(); } }
-                                    if root.transform-mode >= 3: MutedText { text: "Edits brushes and brush entities. Point entities and terrain require separate support."; font-size: Theme.font-small; }
+                                    if root.transform-mode >= 3: MutedText { text: "Mirror and shear support brushes, terrain and supported point placements. Props, player poses and instances support two-axis mirrors only."; font-size: Theme.font-small; }
                                     Button {
                                         primary: true;
                                         text: root.transform-mode == 0 ? "Move selection" : root.transform-mode == 1 ? "Rotate selection" : root.transform-mode == 2 ? "Scale selection" : root.transform-mode == 3 ? "Mirror selection" : "Shear selection";

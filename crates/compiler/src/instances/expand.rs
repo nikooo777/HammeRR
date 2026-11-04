@@ -957,28 +957,30 @@ impl<'a> Expansion<'a> {
         transforms: &[edit::Transform],
     ) -> Result<(), EditError> {
         self.control.checkpoint().map_err(EditError::Invalid)?;
-        let Some(original_solid) =
-            crate::visclusters::source_solid(original).map_err(EditError::Invalid)?
-        else {
+        let original_solids =
+            crate::visclusters::source_solids(original).map_err(EditError::Invalid)?;
+        if original_solids.is_empty() {
             return Ok(());
-        };
-        self.objects = self.objects.saturating_add(2);
-        self.sides = self.sides.saturating_add(original_solid.sides.len());
+        }
+        self.objects = self.objects.saturating_add(original_solids.len() + 1);
+        self.sides = self
+            .sides
+            .saturating_add(original_solids.iter().map(|solid| solid.sides.len()).sum());
         let property_bytes = original
             .properties
             .iter()
             .try_fold(0_usize, |bytes, (key, value)| {
                 bytes.checked_add(key.len())?.checked_add(value.len())
             });
-        let work = original_solid
-            .sides
-            .len()
-            .checked_pow(3)
-            .and_then(|work| work.checked_mul(transforms.len()))
-            .and_then(|work| {
-                let hull_work = crate::visclusters::hull_work(original_solid.sides.len())
-                    .checked_mul(transforms.len() + 1)?;
-                work.checked_add(hull_work)
+        let work = original_solids
+            .iter()
+            .try_fold(0_usize, |work, solid| {
+                let transforms = solid
+                    .sides
+                    .len()
+                    .checked_pow(3)?
+                    .checked_mul(transforms.len())?;
+                work.checked_add(transforms)
             })
             .and_then(|work| {
                 let field_work = property_bytes?.checked_mul(transforms.len() + 1)?;
@@ -1004,27 +1006,31 @@ impl<'a> Expansion<'a> {
             format!("entity:{}", entity.id),
             (owner, relative.to_owned(), original.id, None),
         )?;
-        let mut solid = original_solid.clone();
-        solid.id = tx.new_object_id()?;
-        solid.editor = None;
-        self.record_origin(
-            format!("solid:{}", solid.id),
-            (owner, relative.to_owned(), original_solid.id, None),
-        )?;
-        for side in &mut solid.sides {
-            let original_side = side.id;
-            side.id = tx.new_side_id()?;
+        entity.solids.clear();
+        for original_solid in original_solids {
+            self.control.checkpoint().map_err(EditError::Invalid)?;
+            let mut solid = original_solid.clone();
+            solid.id = tx.new_object_id()?;
+            solid.editor = None;
             self.record_origin(
-                format!("side:{}", side.id),
-                (
-                    owner,
-                    relative.to_owned(),
-                    original_side,
-                    Some(original_solid.id),
-                ),
+                format!("solid:{}", solid.id),
+                (owner, relative.to_owned(), original_solid.id, None),
             )?;
+            for side in &mut solid.sides {
+                let original_side = side.id;
+                side.id = tx.new_side_id()?;
+                self.record_origin(
+                    format!("side:{}", side.id),
+                    (
+                        owner,
+                        relative.to_owned(),
+                        original_side,
+                        Some(original_solid.id),
+                    ),
+                )?;
+            }
+            entity.solids.push(solid);
         }
-        entity.solids = vec![solid];
         let generated = entity.id;
         let id = tx.add_entity(entity)?;
         for transform in transforms.iter().rev() {
@@ -1039,19 +1045,31 @@ impl<'a> Expansion<'a> {
     fn viscluster_pose(&mut self, entity: &Entity) -> Result<(), EditError> {
         self.control.checkpoint().map_err(EditError::Invalid)?;
         visclusters::check_pose(entity).map_err(EditError::Invalid)?;
-        let Some(solid) = crate::visclusters::source_solid(entity).map_err(EditError::Invalid)?
-        else {
+        let solids = crate::visclusters::source_solids(entity).map_err(EditError::Invalid)?;
+        if solids.is_empty() {
             return Err(EditError::Invalid(
                 "Expanded viscluster has no visible brush".into(),
             ));
-        };
-        crate::visclusters::source_rules(entity, solid).map_err(EditError::Invalid)?;
-        let geometry =
-            checked_solid_geometry_controlled(solid, self.control).map_err(EditError::Invalid)?;
-        let refund =
-            crate::visclusters::checked_hull(solid, &geometry).map_err(EditError::Invalid)?;
-        self.control.checkpoint().map_err(EditError::Invalid)?;
-        self.work -= refund;
+        }
+        let mut hulls = crate::visclusters::HullBudget::default();
+        for solid in solids {
+            self.control.checkpoint().map_err(EditError::Invalid)?;
+            self.work = self
+                .work
+                .checked_add(crate::visclusters::hull_work(solid.sides.len()))
+                .filter(|&work| work <= MAX_GEOMETRY_WORK)
+                .ok_or_else(|| {
+                    EditError::Invalid(
+                        "Instance expansion exceeds its combined geometry-work limit".into(),
+                    )
+                })?;
+            crate::visclusters::source_rules(entity, solid).map_err(EditError::Invalid)?;
+            let geometry = checked_solid_geometry_controlled(solid, self.control)
+                .map_err(EditError::Invalid)?;
+            let refund = hulls.check(solid, &geometry).map_err(EditError::Invalid)?;
+            self.control.checkpoint().map_err(EditError::Invalid)?;
+            self.work -= refund;
+        }
         Ok(())
     }
 

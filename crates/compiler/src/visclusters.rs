@@ -9,6 +9,9 @@ use crate::{Control, Diagnostic, Report};
 
 const MAX_HELPERS: usize = 16;
 const MAX_SIDES: usize = 64;
+const MAX_BRUSHES: usize = 16;
+const MAX_SOURCE_SIDES: usize = 256;
+const MAX_SOURCE_POINTS: usize = 8192;
 const MAX_INTERSECTION_PLANES: usize = 128;
 const MAX_POINTS: usize = 2048;
 const POINT_EPSILON: f64 = 1e-6;
@@ -18,10 +21,25 @@ const RELATIVE_VOLUME_MARGIN: f64 = 1e-10;
 const OVERLAP_FRACTION: f64 = 0.1;
 const GEOMETRY_MARGIN: f64 = crate::winding::ON_EPSILON * 2.0;
 
-pub(crate) struct Definition {
-    entity: u32,
+mod union;
+
+struct Volume {
     solid: u32,
     geometry: BrushGeometry,
+}
+
+pub(crate) struct Definition {
+    entity: u32,
+    volumes: Vec<Volume>,
+    volume_error: f64,
+    mins: DVec3,
+    maxs: DVec3,
+}
+
+impl Definition {
+    fn center(&self) -> DVec3 {
+        (self.mins + self.maxs) * 0.5
+    }
 }
 
 #[derive(Default)]
@@ -42,27 +60,29 @@ fn clipping_work(sides: usize) -> usize {
     sides * sides * (sides + 8)
 }
 
-pub(crate) fn source_solid(entity: &Entity) -> Result<Option<&Solid>, String> {
-    let mut visible = entity.solids.iter().filter(|solid| !solid.hidden);
-    let Some(solid) = visible.next() else {
-        return if entity.solids.is_empty() {
-            Err(
-                "Visclusters require one visible convex brush per helper and at most 16 helpers"
-                    .into(),
-            )
-        } else {
-            Ok(None)
-        };
-    };
-    if visible.next().is_some() {
-        return Err(
-            "Visclusters require one visible convex brush per helper and at most 16 helpers".into(),
-        );
+pub(crate) fn source_solids(entity: &Entity) -> Result<Vec<&Solid>, String> {
+    let mut solids = Vec::new();
+    let mut sides = 0;
+    for solid in entity.solids.iter().filter(|solid| !solid.hidden) {
+        if solids.len() >= MAX_BRUSHES {
+            return Err("Visclusters support at most 16 visible convex brushes per helper".into());
+        }
+        if solid.sides.len() > MAX_SIDES {
+            return Err(format!(
+                "Viscluster solid:{} exceeds its 64-side budget",
+                solid.id
+            ));
+        }
+        sides += solid.sides.len();
+        if sides > MAX_SOURCE_SIDES {
+            return Err("Viscluster brushes exceed their combined 256-side budget".into());
+        }
+        solids.push(solid);
     }
-    if solid.sides.len() > MAX_SIDES {
-        return Err("Viscluster brushes support at most 64 sides".into());
+    if entity.solids.is_empty() {
+        return Err("Visclusters require visible convex brush geometry".into());
     }
-    Ok(Some(solid))
+    Ok(solids)
 }
 
 pub(crate) fn source_rules(entity: &Entity, solid: &Solid) -> Result<(), String> {
@@ -95,7 +115,32 @@ pub(crate) fn hull_work(sides: usize) -> usize {
     clipping_work(sides) * 2 + MAX_POINTS * MAX_POINTS
 }
 
-pub(crate) fn checked_hull(solid: &Solid, geometry: &BrushGeometry) -> Result<usize, String> {
+#[derive(Default)]
+pub(crate) struct HullBudget {
+    points: usize,
+}
+
+impl HullBudget {
+    pub(crate) fn check(
+        &mut self,
+        solid: &Solid,
+        geometry: &BrushGeometry,
+    ) -> Result<usize, String> {
+        let points = point_count(geometry);
+        self.points += points;
+        if self.points > MAX_SOURCE_POINTS {
+            return Err("Viscluster brushes exceed their combined 8192-point hull budget".into());
+        }
+        checked_hull(solid, geometry)
+            .map_err(|message| format!("Viscluster solid:{}: {message}", solid.id))
+    }
+}
+
+fn point_count(geometry: &BrushGeometry) -> usize {
+    geometry.faces.iter().map(|face| face.vertices.len()).sum()
+}
+
+fn checked_hull(solid: &Solid, geometry: &BrushGeometry) -> Result<usize, String> {
     let point_count = geometry
         .faces
         .iter()
@@ -128,33 +173,60 @@ pub(crate) fn load(
             );
         }
         map.viscluster_attempts += 1;
-        let Some(solid) = source_solid(entity)? else {
+        let solids = source_solids(entity)?;
+        if solids.is_empty() {
             return Ok(None);
-        };
-        let reserved = hull_work(solid.sides.len());
-        map.viscluster_work = map
-            .viscluster_work
-            .checked_add(reserved)
-            .filter(|&work| work <= crate::visibility::MAX_VISIBILITY_WORK)
-            .ok_or("Viscluster input exhausted the shared visibility work budget")?;
-        source_rules(entity, solid)?;
-        if origins::origin_material(&mut map.materials, solid, control)? {
-            return Err(
-                "Visclusters require ordinary convex geometry without terrain or origin materials"
-                    .into(),
-            );
         }
-        control.checkpoint()?;
-        let Some(geometry) = origins::checked_geometry(solid, report) else {
-            return Ok(None);
+        let mut hulls = HullBudget::default();
+        let mut volumes = Vec::with_capacity(solids.len());
+        let mut mins = DVec3::MAX;
+        let mut maxs = DVec3::MIN;
+        for solid in solids {
+            control.checkpoint()?;
+            let reserved = hull_work(solid.sides.len());
+            map.viscluster_work = map
+                .viscluster_work
+                .checked_add(reserved)
+                .filter(|&work| work <= crate::visibility::MAX_VISIBILITY_WORK)
+                .ok_or("Viscluster input exhausted the shared visibility work budget")?;
+            source_rules(entity, solid)
+                .map_err(|message| format!("Viscluster solid:{}: {message}", solid.id))?;
+            if origins::origin_material(&mut map.materials, solid, control)? {
+                return Err(format!(
+                    "Viscluster solid:{} requires ordinary convex geometry without terrain or origin materials",
+                    solid.id
+                ));
+            }
+            control.checkpoint()?;
+            let Some(geometry) = origins::checked_geometry(solid, report) else {
+                return Ok(None);
+            };
+            let refund = hulls.check(solid, &geometry)?;
+            control.checkpoint()?;
+            map.viscluster_work -= refund;
+            mins = mins.min(geometry.mins);
+            maxs = maxs.max(geometry.maxs);
+            volumes.push(Volume {
+                solid: solid.id,
+                geometry,
+            });
+        }
+        let mut consume = |amount| {
+            control.checkpoint()?;
+            map.viscluster_work = map
+                .viscluster_work
+                .checked_add(amount)
+                .filter(|&work| work <= crate::visibility::MAX_VISIBILITY_WORK)
+                .ok_or("Viscluster union exhausted the shared visibility work budget")?;
+            Ok(())
         };
-        let refund = checked_hull(solid, &geometry)?;
-        control.checkpoint()?;
-        map.viscluster_work -= refund;
+        let (volumes, volume_error) = union::build(volumes, &mut consume)?;
         Ok(Some(Definition {
             entity: entity.id,
-            solid: solid.id,
-            geometry,
+            volumes,
+            volume_error,
+            mins,
+            maxs,
         }))
     })();
     match result {
@@ -323,13 +395,13 @@ fn measure(geometry: &BrushGeometry) -> Result<Measurement, String> {
     Ok(Measurement { volume, area })
 }
 
-fn claims(
+fn intersection(
     helper: &BrushGeometry,
     leaf: &BrushGeometry,
     consume: &mut impl FnMut(usize) -> Result<(), String>,
-) -> Result<bool, String> {
-    if helper.maxs.cmple(leaf.mins).any() || leaf.maxs.cmple(helper.mins).any() {
-        return Ok(false);
+) -> Result<Option<Measurement>, String> {
+    if union::separated(helper, leaf, consume)? {
+        return Ok(None);
     }
     let planes = helper
         .faces
@@ -340,51 +412,54 @@ fn claims(
     if planes.len() > MAX_INTERSECTION_PLANES {
         return Err("Viscluster intersection exceeds its 128-plane budget".into());
     }
-    let points = leaf
-        .faces
-        .iter()
-        .map(|face| face.vertices.len())
-        .sum::<usize>();
-    consume(clipping_work(planes.len()) + points * points)?;
-    let base = measure(leaf)?;
-    if helper.faces.iter().any(|face| {
-        leaf.faces
-            .iter()
-            .flat_map(|side| &side.vertices)
-            .all(|&point| face.plane.distance_to(point) > GEOMETRY_MARGIN)
-    }) || leaf.faces.iter().any(|face| {
-        helper
-            .faces
-            .iter()
-            .flat_map(|side| &side.vertices)
-            .all(|&point| face.plane.distance_to(point) > GEOMETRY_MARGIN)
-    }) {
-        return Ok(false);
-    }
+    consume(clipping_work(planes.len()))?;
     let intersection = match BrushGeometry::from_planes(&planes) {
         Ok(intersection) => intersection,
-        Err(_) if separated_edges(helper, leaf, consume)? => return Ok(false),
+        Err(_) if separated_edges(helper, leaf, consume)? => return Ok(None),
         Err(_) => return Err(
             "Viscluster intersection is empty or numerically uncertain; separate the boundaries"
                 .into(),
         ),
     };
-    let intersection_points = intersection
-        .faces
-        .iter()
-        .map(|face| face.vertices.len())
-        .sum::<usize>();
-    if intersection_points > MAX_POINTS {
+    let points = point_count(&intersection);
+    if points > MAX_POINTS {
         return Err("Viscluster intersection exceeds its 2048-point budget".into());
     }
-    consume(intersection_points * intersection_points)?;
-    let overlap = measure(&intersection)?;
-    if overlap.volume > base.volume + base.area * GEOMETRY_MARGIN {
-        return Err("Viscluster intersection exceeds its leaf volume".into());
+    consume(points * points)?;
+    measure(&intersection).map(Some)
+}
+
+fn claims(
+    helper: &Definition,
+    leaf: &BrushGeometry,
+    consume: &mut impl FnMut(usize) -> Result<(), String>,
+) -> Result<bool, String> {
+    let points = point_count(leaf);
+    consume(points * points)?;
+    let base = measure(leaf)?;
+    let mut overlap = Measurement {
+        volume: 0.0,
+        area: 0.0,
+    };
+    for volume in &helper.volumes {
+        consume(1)?;
+        if let Some(part) = intersection(&volume.geometry, leaf, consume)
+            .map_err(|message| format!("solid:{}: {message}", volume.solid))?
+        {
+            overlap.volume += part.volume;
+            overlap.area += part.area;
+        }
+    }
+    if overlap.volume == 0.0 && helper.volume_error == 0.0 {
+        return Ok(false);
+    }
+    if overlap.volume > base.volume + base.area * GEOMETRY_MARGIN + helper.volume_error {
+        return Err("Viscluster union intersection exceeds its leaf volume".into());
     }
     let difference = overlap.volume - base.volume * OVERLAP_FRACTION;
     let uncertainty = (overlap.area + base.area * OVERLAP_FRACTION) * GEOMETRY_MARGIN
-        + base.volume * RELATIVE_VOLUME_MARGIN;
+        + base.volume * RELATIVE_VOLUME_MARGIN
+        + helper.volume_error;
     if difference.abs() <= uncertainty {
         return Err("Viscluster overlap is numerically uncertain at the strict 10% leaf-volume threshold; move its boundary".into());
     }
@@ -404,7 +479,7 @@ fn helper_error(report: &mut Report, helper: &Definition, message: &str) {
     report.diagnostics.push(Diagnostic::error(
         message,
         Some(format!("entity:{}", helper.entity)),
-        Some(helper.geometry.center()),
+        Some(helper.center()),
     ));
 }
 
@@ -429,13 +504,10 @@ pub(crate) fn partition(
         let (mins, maxs) = volume.bounds();
         for (index, helper) in map.visclusters.iter().enumerate() {
             consume(1)?;
-            if helper.geometry.maxs.cmple(mins).any() || maxs.cmple(helper.geometry.mins).any() {
+            if helper.maxs.cmple(mins).any() || maxs.cmple(helper.mins).any() {
                 continue;
             }
             let result = (|| -> Result<bool, String> {
-                if volume.sides.len() + helper.geometry.faces.len() > MAX_INTERSECTION_PLANES {
-                    return Err("Viscluster intersection exceeds its 128-plane budget".into());
-                }
                 let point_count = volume
                     .sides
                     .iter()
@@ -462,13 +534,10 @@ pub(crate) fn partition(
                     mins,
                     maxs,
                 };
-                claims(&helper.geometry, &leaf, consume)
+                claims(helper, &leaf, consume)
             })()
             .map_err(|message| {
-                let message = format!(
-                    "func_viscluster entity:{} solid:{}: {message}",
-                    helper.entity, helper.solid
-                );
+                let message = format!("func_viscluster entity:{}: {message}", helper.entity);
                 helper_error(report, helper, &message);
                 message
             })?;
@@ -514,7 +583,7 @@ pub(crate) fn partition(
                     "Viscluster selects {members} open leaves and does not reduce cluster count"
                 ),
                 Some(format!("entity:{}", helper.entity)),
-                Some(helper.geometry.center()),
+                Some(helper.center()),
             ));
         }
     }

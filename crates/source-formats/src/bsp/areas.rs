@@ -13,6 +13,31 @@ pub const MAX_AREA_PORTAL_VERTICES: usize = 32;
 pub const MAX_CLIP_PORTAL_VERTICES: usize = 128_000;
 const MAX_PLANES: usize = 65_536;
 const MAX_LEAVES: usize = 65_536;
+type FragmentKey = (usize, usize, i32, Vec<[u32; 3]>);
+
+fn canonical_ring(vertices: &[[f32; 3]]) -> Vec<[u32; 3]> {
+    let points = vertices
+        .iter()
+        .map(|point| point.map(|value| if value == 0.0 { 0 } else { value.to_bits() }))
+        .collect::<Vec<_>>();
+    (0..points.len())
+        .flat_map(|start| {
+            [false, true].map(|reverse| {
+                (0..points.len())
+                    .map(|step| {
+                        let index = if reverse {
+                            (start + points.len() - step) % points.len()
+                        } else {
+                            (start + step) % points.len()
+                        };
+                        points[index]
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .min()
+        .unwrap_or_default()
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AreaData {
@@ -108,14 +133,32 @@ impl AreaData {
                 .push((owner, portal));
         }
         for entries in keys.values() {
-            let &[(first, a), (second, b)] = entries.as_slice() else {
-                return Err(invalid("areaportal key must have two reciprocal records"));
-            };
-            if usize::from(a.other_area) != second
-                || usize::from(b.other_area) != first
-                || a.plane ^ 1 != b.plane
-            {
-                return Err(invalid("areaportal areas and planes are not reciprocal"));
+            let mut planes = BTreeMap::new();
+            let mut fragments: BTreeMap<FragmentKey, i32> = BTreeMap::new();
+            for &(owner, portal) in entries {
+                if planes
+                    .insert(owner, portal.plane)
+                    .is_some_and(|plane| plane != portal.plane)
+                {
+                    return Err(invalid(
+                        "areaportal fragments in one area must share one directed plane",
+                    ));
+                }
+                let other = usize::from(portal.other_area);
+                let first = usize::from(portal.first_clip_vert);
+                let end = first + usize::from(portal.clip_vert_count);
+                let ring = canonical_ring(&self.clip_vertices[first..end]);
+                let (key, direction) = if owner < other {
+                    ((owner, other, portal.plane, ring), 1)
+                } else {
+                    ((other, owner, portal.plane ^ 1, ring), -1)
+                };
+                *fragments.entry(key).or_default() += direction;
+            }
+            if planes.len() != 2 || fragments.values().any(|&count| count != 0) {
+                return Err(invalid(
+                    "areaportal key must connect two areas with reciprocal planes and clip fragments",
+                ));
             }
         }
         Ok(())

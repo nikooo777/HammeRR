@@ -863,14 +863,25 @@ impl<'a> Map<'a> {
             .solids
             .iter()
             .filter(|solid| !solid.hidden)
-            .take(2)
+            .take(crate::areas::MAX_PORTAL_BRUSHES + 1)
             .collect::<Vec<_>>();
         if solids.is_empty() {
             return Ok(());
         }
-        if solids.len() != 1 || self.area_portals.len() >= bsp::MAX_AREA_PORTAL_KEY {
+        if solids.len() > crate::areas::MAX_PORTAL_BRUSHES {
             report.diagnostics.push(Diagnostic::error(
-                format!("Areaportals require one visible convex brush per controller, with at most {} controllers in a map (the CS:S network control limit)", bsp::MAX_AREA_PORTAL_KEY),
+                format!(
+                    "Areaportal controllers support at most {} visible convex brushes",
+                    crate::areas::MAX_PORTAL_BRUSHES
+                ),
+                Some(format!("entity:{}", entity.id)),
+                entity.origin(),
+            ));
+            return Ok(());
+        }
+        if self.area_portals.len() >= bsp::MAX_AREA_PORTAL_KEY {
+            report.diagnostics.push(Diagnostic::error(
+                format!("Areaportals support at most {} controllers in a map (the CS:S network control limit)", bsp::MAX_AREA_PORTAL_KEY),
                 Some(format!("entity:{}", entity.id)),
                 entity.origin(),
             ));
@@ -912,15 +923,22 @@ impl<'a> Map<'a> {
             brushes: Vec::new(),
             origin: None,
         });
-        let brush = self.brushes.len();
-        self.add_brush(solids[0], 0, contents::AREAPORTAL, report, control)?;
-        if self.brushes.len() != brush {
+        let mut brushes = Vec::with_capacity(solids.len());
+        for solid in solids {
+            control.checkpoint()?;
+            let brush = self.brushes.len();
+            self.add_brush(solid, 0, contents::AREAPORTAL, report, control)?;
+            if self.brushes.len() != brush {
+                brushes.push(brush);
+            } else if !report.has_errors() {
+                report.diagnostics.push(Diagnostic::error("Areaportal brush could not be compiled; use a convex volume without hint, origin or displacement tooling", Some(format!("solid:{}", solid.id)), entity.origin()));
+            }
+        }
+        if !brushes.is_empty() {
             self.area_portals.push(crate::areas::PortalBrush {
                 entity: index,
-                brush,
+                brushes,
             });
-        } else if !report.has_errors() {
-            report.diagnostics.push(Diagnostic::error("Areaportal brush could not be compiled; use a convex volume without hint, origin or displacement tooling", Some(format!("entity:{}", entity.id)), entity.origin()));
         }
         Ok(())
     }

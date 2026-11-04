@@ -1,27 +1,27 @@
 use std::collections::{BTreeSet, VecDeque};
 
-use glam::{DVec2, DVec3};
 use source_formats::bsp::{
-    Area, AreaData, AreaPortal, MAX_AREA_PORTAL_VERTICES, MAX_AREAS, MAX_CLIP_PORTAL_VERTICES,
-    contents,
+    Area, AreaData, AreaPortal, MAX_AREA_PORTAL_VERTICES, MAX_AREA_PORTALS, MAX_AREAS,
+    MAX_CLIP_PORTAL_VERTICES, contents,
 };
 
 use crate::Control;
 use crate::map::Map;
 use crate::portals::Portal;
 use crate::tree::Tree;
-use crate::winding::Winding;
 
 pub(crate) mod windows;
 
 const MAX_WORK: usize = 4_000_000;
 const MAX_CLIP_POINTS: usize = 4096;
+pub(crate) const MAX_PORTAL_BRUSHES: usize = 4096;
 const PLANE_TOLERANCE: f64 = 0.02;
+const NORMAL_TOLERANCE: f64 = 1e-8;
 
 #[derive(Debug)]
 pub(crate) struct PortalBrush {
     pub entity: usize,
-    pub brush: usize,
+    pub brushes: Vec<usize>,
 }
 
 pub(crate) struct Areas {
@@ -48,64 +48,6 @@ impl Budget<'_> {
     }
 }
 
-fn hull(
-    points: &[DVec3],
-    normal: DVec3,
-    dist: f64,
-    budget: &mut Budget<'_>,
-) -> Result<Winding, String> {
-    if points.len() < 3 || points.len() > MAX_CLIP_POINTS {
-        return Err("Areaportal clip geometry needs 3–4096 input points".into());
-    }
-    budget.consume(points.len() * (points.len().ilog2() as usize + 1))?;
-    let right = normal.any_orthonormal_vector();
-    let up = normal.cross(right);
-    let mut projected = points
-        .iter()
-        .map(|&point| {
-            let point = point - normal * (normal.dot(point) - dist);
-            (DVec2::new(right.dot(point), up.dot(point)), point)
-        })
-        .collect::<Vec<_>>();
-    projected.sort_by(|a, b| a.0.x.total_cmp(&b.0.x).then(a.0.y.total_cmp(&b.0.y)));
-    projected.dedup_by(|a, b| a.0.distance_squared(b.0) < 1e-10);
-    let mut perimeter: Vec<(DVec2, DVec3)> = Vec::new();
-    for pass in 0..2 {
-        let begin = if pass == 0 {
-            0
-        } else {
-            perimeter.len().saturating_sub(1)
-        };
-        for step in (if pass == 0 { 0 } else { 1 })..projected.len() {
-            let index = if pass == 0 {
-                step
-            } else {
-                projected.len() - 1 - step
-            };
-            let point = projected[index];
-            while perimeter.len() >= begin + 2 {
-                budget.consume(1)?;
-                let a = perimeter[perimeter.len() - 2].0;
-                let b = perimeter[perimeter.len() - 1].0;
-                if (b - a).perp_dot(point.0 - b) > 1e-8 {
-                    break;
-                }
-                perimeter.pop();
-            }
-            perimeter.push(point);
-        }
-    }
-    perimeter.pop();
-    if perimeter.len() < 3 {
-        return Err("Areaportal clip polygon is degenerate".into());
-    }
-    let mut winding = Winding(perimeter.into_iter().map(|(_, point)| point).collect());
-    if winding.normal().dot(normal) < 0.0 {
-        winding = winding.reversed();
-    }
-    Ok(winding)
-}
-
 pub(crate) fn build(
     map: &mut Map<'_>,
     tree: &Tree,
@@ -130,11 +72,14 @@ pub(crate) fn build(
             indices: leaves,
         });
     }
-    let mut owners = vec![None; tree.nodes.len()];
+    let mut owners: Vec<Option<usize>> = vec![None; tree.nodes.len()];
     let mut brush_owners = vec![None; map.brushes.len()];
     let mut portal_nodes = vec![Vec::new(); map.area_portals.len()];
     for (owner, portal) in map.area_portals.iter().enumerate() {
-        brush_owners[portal.brush] = Some(owner);
+        for &brush in &portal.brushes {
+            budget.consume(1)?;
+            brush_owners[brush] = Some(owner);
+        }
     }
     for (node_index, node) in tree.nodes.iter().enumerate() {
         budget.consume(node.brushes.len() + 1)?;
@@ -143,8 +88,14 @@ pub(crate) fn build(
         }
         for &brush in &node.brushes {
             if let Some(owner) = brush_owners[brush] {
-                if owners[node_index].is_some_and(|existing| existing != owner) {
-                    return Err("Areaportal brush volumes overlap".into());
+                if let Some(existing) = owners[node_index]
+                    && existing != owner
+                {
+                    return Err(format!(
+                        "entity:{}: areaportal volume overlaps entity:{}",
+                        map.entities[map.area_portals[owner].entity].id,
+                        map.entities[map.area_portals[existing].entity].id,
+                    ));
                 }
                 owners[node_index] = Some(owner);
             }
@@ -192,32 +143,52 @@ pub(crate) fn build(
         }
         count += 1;
     }
-    let mut targets = vec![BTreeSet::new(); map.area_portals.len()];
-    for (node, owner) in owners.iter().enumerate() {
-        let Some(owner) = owner else { continue };
-        for &(other, _) in &adjacency[node] {
+    let mut visited = vec![false; tree.nodes.len()];
+    let mut pairs = vec![None; map.area_portals.len()];
+    for (index, nodes) in portal_nodes.iter().enumerate() {
+        let entity = map.entities[map.area_portals[index].entity].id;
+        for &start in nodes {
             budget.consume(1)?;
-            if let Some(other_owner) = owners[other] {
-                if *owner != other_owner {
-                    return Err("Touching areaportal brush volumes are not supported yet".into());
-                }
-            } else if leaves[other] > 0 {
-                targets[*owner].insert(leaves[other]);
+            if visited[start] {
+                continue;
             }
+            visited[start] = true;
+            let mut target = BTreeSet::new();
+            let mut pending = VecDeque::from([start]);
+            while let Some(node) = pending.pop_front() {
+                for &(other, _) in &adjacency[node] {
+                    budget.consume(1)?;
+                    if owners[other] == Some(index) {
+                        if !visited[other] {
+                            visited[other] = true;
+                            pending.push_back(other);
+                        }
+                    } else if owners[other].is_none() && leaves[other] > 0 {
+                        target.insert(leaves[other]);
+                    }
+                }
+            }
+            let areas = target.into_iter().collect::<Vec<_>>();
+            let &[a, b] = areas.as_slice() else {
+                return Err(format!(
+                    "entity:{entity}: every connected areaportal volume must separate exactly two distinct open areas; found {}. Seal the opening around each volume; serial touching portals are unsupported",
+                    areas.len()
+                ));
+            };
+            if pairs[index].is_some_and(|pair| pair != [a, b]) {
+                return Err(format!(
+                    "entity:{entity}: all areaportal volumes under one controller must separate the same two open areas"
+                ));
+            }
+            pairs[index] = Some([a, b]);
+        }
+        if pairs[index].is_none() {
+            return Err(format!(
+                "entity:{entity}: areaportal has no open volume separating two areas"
+            ));
         }
     }
-    let mut pairs = Vec::new();
-    for (index, target) in targets.iter().enumerate() {
-        let entity = map.entities[map.area_portals[index].entity].id;
-        let areas = target.iter().copied().collect::<Vec<_>>();
-        let &[a, b] = areas.as_slice() else {
-            return Err(format!(
-                "entity:{entity}: areaportal must separate exactly two distinct areas; found {}. Seal the opening around the portal brush",
-                areas.len()
-            ));
-        };
-        pairs.push([a, b]);
-    }
+    let pairs = pairs.into_iter().flatten().collect::<Vec<_>>();
     for (node, owner) in owners.iter().enumerate() {
         if let Some(owner) = owner {
             leaves[node] = pairs[*owner][0];
@@ -235,70 +206,120 @@ pub(crate) fn build(
     }
     let mut by_area = vec![Vec::new(); count];
     let mut vertices = Vec::new();
+    let mut record_count = 1;
     for (index, portal) in map.area_portals.iter().enumerate() {
         let [a, b] = pairs[index];
-        let mut points = Vec::new();
+        let entity = map.entities[portal.entity].id;
+        let mut interface = None;
+        let mut point_count = 0;
         for &node in &portal_nodes[index] {
             budget.consume(1)?;
             for &(other, edge) in &adjacency[node] {
                 budget.consume(1)?;
-                if owners[other].is_none() && leaves[other] == b {
-                    if points.len() + portals[edge].winding.0.len() > MAX_CLIP_POINTS {
-                        return Err(
-                            "Areaportal clip geometry exceeds its bounded point limit".into()
-                        );
+                if owners[other].is_some() || leaves[other] != b {
+                    continue;
+                }
+                let fragment = &portals[edge];
+                let winding = &fragment.winding;
+                point_count += winding.0.len();
+                budget.consume(winding.0.len())?;
+                if point_count > MAX_CLIP_POINTS {
+                    return Err(format!(
+                        "entity:{entity}: areaportal clip geometry exceeds its {MAX_CLIP_POINTS}-point input limit"
+                    ));
+                }
+                if !(3..=MAX_AREA_PORTAL_VERTICES).contains(&winding.0.len()) {
+                    return Err(format!(
+                        "entity:{entity}: areaportal clip fragments require 3–{MAX_AREA_PORTAL_VERTICES} vertices; simplify the interface"
+                    ));
+                }
+                let normal = if fragment.leaves[0] == other {
+                    winding.normal()
+                } else {
+                    -winding.normal()
+                };
+                let mut side_plane = None;
+                for &brush in &tree.nodes[node].brushes {
+                    budget.consume(1)?;
+                    if brush_owners[brush] != Some(index) {
+                        continue;
                     }
-                    points.extend_from_slice(&portals[edge].winding.0);
+                    for side in &map.brushes[brush].sides {
+                        budget.consume(winding.0.len() + 1)?;
+                        let plane = map.planes.get(side.plane);
+                        if !side.bevel
+                            && plane.normal.dot(normal) >= 1.0 - NORMAL_TOLERANCE
+                            && winding.0.iter().all(|&point| {
+                                plane.distance(point).abs() <= PLANE_TOLERANCE
+                                    && plane.distance(point.as_vec3().as_dvec3()).abs()
+                                        <= PLANE_TOLERANCE
+                            })
+                        {
+                            side_plane = Some(side.plane);
+                            break;
+                        }
+                    }
+                    if side_plane.is_some() {
+                        break;
+                    }
+                }
+                let plane = side_plane.ok_or_else(|| {
+                    format!(
+                        "entity:{entity}: areaportal clip fragment has no matching outward authored face"
+                    )
+                })?;
+                if interface.is_some_and(|existing| existing != plane) {
+                    return Err(format!(
+                        "entity:{entity}: all areaportal clip fragments under one controller must share one plane and orientation"
+                    ));
+                }
+                interface = Some(plane);
+                record_count += 2;
+                if record_count > MAX_AREA_PORTALS {
+                    return Err(format!(
+                        "Areaportal fragments exceed Source's {MAX_AREA_PORTALS}-directed-record limit"
+                    ));
+                }
+                if vertices.len() + 2 * winding.0.len() > MAX_CLIP_PORTAL_VERTICES {
+                    return Err("Areaportal clip vertices exceed the native limit".into());
+                }
+                for (owner, other, plane) in [(a, b, plane ^ 1), (b, a, plane)] {
+                    let first = u16::try_from(vertices.len()).map_err(
+                        |_| "Areaportal clip offset exceeds the native unsigned-short limit",
+                    )?;
+                    vertices.extend(winding.0.iter().map(|point| point.as_vec3().to_array()));
+                    by_area[owner as usize].push(AreaPortal {
+                        portal_key: (index + 1) as u16,
+                        other_area: other as u16,
+                        first_clip_vert: first,
+                        clip_vert_count: winding.0.len() as u16,
+                        plane: plane as i32,
+                    });
                 }
             }
         }
-        let brush = &map.brushes[portal.brush];
-        let side = brush
-            .sides
-            .iter()
-            .find(|side| {
-                let plane = map.planes.get(side.plane);
-                points
-                    .iter()
-                    .all(|&point| plane.distance(point).abs() <= PLANE_TOLERANCE)
-            })
-            .ok_or_else(|| {
-                format!(
-                    "entity:{}: areaportal needs one planar interface between its two areas",
-                    map.entities[portal.entity].id
-                )
-            })?;
-        let plane = map.planes.get(side.plane & !1);
-        let polygon = hull(&points, -plane.normal, -plane.dist, &mut budget)?;
-        if polygon.0.len() > MAX_AREA_PORTAL_VERTICES {
-            return Err(format!(
-                "entity:{}: areaportal clip hull exceeds the native {MAX_AREA_PORTAL_VERTICES}-vertex input limit; simplify the interface",
-                map.entities[portal.entity].id,
-            ));
-        }
-        if vertices.len() + 2 * polygon.0.len() > MAX_CLIP_PORTAL_VERTICES {
-            return Err("Areaportal clip vertices exceed the native limit".into());
-        }
-        for (owner, other, plane, winding) in [
-            (a, b, side.plane ^ 1, polygon.clone()),
-            (b, a, side.plane, polygon.clone()),
-        ] {
-            let first = u16::try_from(vertices.len())
-                .map_err(|_| "Areaportal clip offset exceeds the native unsigned-short limit")?;
-            let count = u16::try_from(winding.0.len())
-                .map_err(|_| "Areaportal clip count exceeds the native unsigned-short limit")?;
-            vertices.extend(winding.0.iter().map(|point| point.as_vec3().to_array()));
-            by_area[owner as usize].push(AreaPortal {
-                portal_key: (index + 1) as u16,
-                other_area: other as u16,
-                first_clip_vert: first,
-                clip_vert_count: count,
-                plane: plane as i32,
-            });
-        }
+        interface.ok_or_else(|| {
+            format!("entity:{entity}: areaportal has no clip interface between its two areas")
+        })?;
         map.entities[portal.entity]
             .properties
             .push(("portalnumber".into(), (index + 1).to_string()));
+    }
+    for (node, owner) in owners.iter().enumerate() {
+        let Some(owner) = owner else { continue };
+        for &(other, _) in &adjacency[node] {
+            budget.consume(1)?;
+            if let Some(other_owner) = owners[other]
+                && *owner != other_owner
+                && pairs[*owner] != pairs[other_owner]
+            {
+                return Err(format!(
+                    "entity:{}: touching areaportal controllers must separate the same two areas (touches entity:{})",
+                    map.entities[map.area_portals[*owner].entity].id,
+                    map.entities[map.area_portals[other_owner].entity].id,
+                ));
+            }
+        }
     }
     let mut data = AreaData {
         areas: Vec::with_capacity(count),

@@ -113,7 +113,7 @@ split; this does not form a general union of detail brushes.
 
 For a basic areaportal:
 
-1. Put a sealing brush across an opening.
+1. Put a sealing brush across each opening. Select the brushes that need one control.
 2. Use **Tie to entity… → func_areaportal**.
 3. Choose **Initial State**, and name it if logic must control it.
 4. Compile and inspect **Visibility areas**, **Areaportals** and diagnostics.
@@ -142,10 +142,20 @@ entities. Wildcards and procedural names are unsupported. Mismatched initial
 rotations, parenting, unsupported portal shapes or invalid bindings stop the build.
 Runtime model movement is unsupported.
 
+One controller can cover multiple coplanar openings between the same two areas.
+Each connected portal volume must reach both areas. The compiler preserves separate
+convex interface fragments, including gaps between openings. Touching controls can
+use separate keys when both separate the same two areas. Overlapping controls,
+serial touching volumes and noncoplanar interfaces under one key stop the build.
+
+A closed areaportal draws no wall. Close it behind an opaque door or other cover.
+Areas remain connected while any parallel portal is open.
+Portal visibility in water reflections can be incorrect in CS:S.
+
 Each build supports at most 191 plain and window portal controllers combined.
 Exceeding this limit stops compilation before publication.
-A compiled portal boundary supports at most 32 corners. This counts the final
-planar interface, separately from source brush sides. Use a simpler opening if exceeded.
+Each compiled interface fragment supports at most 32 corners. A controller supports
+up to 4096 visible source brushes, subject to native record, vertex and work limits.
 
 Failed BSP splits report the captured plane and volume bounds. Source candidates
 are listed separately; a shared plane does not identify one brush as the cause.

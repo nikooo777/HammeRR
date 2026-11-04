@@ -7,9 +7,10 @@ pub(super) fn is_helper(entity: &Entity) -> bool {
 }
 
 pub(super) fn admit(entity: &Entity) -> Result<(), String> {
-    let Some(solid) = crate::visclusters::source_solid(entity)? else {
+    let solids = crate::visclusters::source_solids(entity)?;
+    if solids.is_empty() {
         return Ok(());
-    };
+    }
     if !entity.extra.is_empty()
         || entity
             .connections
@@ -45,7 +46,10 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
     if entity.properties.get("classname").is_none() {
         return Err("Child viscluster requires canonical property classname".into());
     }
-    crate::visclusters::source_rules(entity, solid)?;
+    for solid in solids {
+        crate::visclusters::source_rules(entity, solid)
+            .map_err(|message| format!("solid:{}: {message}", solid.id))?;
+    }
     check_pose(entity)
 }
 

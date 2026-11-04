@@ -277,14 +277,16 @@ pub(crate) fn validate(
             )?;
             let (low, high) = map.model_bounds(target);
             let origin = map.entities[target].origin.unwrap_or(DVec3::ZERO);
-            let brush = &map.brushes[portal.brush];
             let rotated = rotation.is_some() || target_pose.rotation.is_some();
             let draw_pose = Pose {
                 offset: target_pose.offset.as_vec3().as_dvec3(),
                 rotation,
             };
-            let enclosure = if rotated {
-                draw_pose
+            for &brush in &portal.brushes {
+                consume(&mut work, 1, control)?;
+                let brush = &map.brushes[brush];
+                let enclosure = if rotated {
+                    draw_pose
                     .raw_and_stored_bounds(
                         low.min(low.as_vec3().as_dvec3()),
                         high.max(high.as_vec3().as_dvec3()),
@@ -308,24 +310,25 @@ pub(crate) fn validate(
                         }
                         Ok(())
                     })
-            } else if !(low + origin - DVec3::splat(BOUNDS_TOLERANCE))
-                .cmple(brush.mins)
-                .all()
-                || !(high + origin + DVec3::splat(BOUNDS_TOLERANCE))
-                    .cmpge(brush.maxs)
+                } else if !(low + origin - DVec3::splat(BOUNDS_TOLERANCE))
+                    .cmple(brush.mins)
                     .all()
-            {
-                Err("Rendered Window bounds must enclose the portal volume".into())
-            } else {
-                Ok(())
-            };
-            if let Err(error) = enclosure {
-                control.checkpoint()?;
-                report.diagnostics.push(Diagnostic::error(
-                    format!("Window portal {error}"),
-                    Some(format!("entity:{}", entity.id)),
-                    None,
-                ));
+                    || !(high + origin + DVec3::splat(BOUNDS_TOLERANCE))
+                        .cmpge(brush.maxs)
+                        .all()
+                {
+                    Err("Rendered Window bounds must enclose the portal volume".into())
+                } else {
+                    Ok(())
+                };
+                if let Err(error) = enclosure {
+                    control.checkpoint()?;
+                    report.diagnostics.push(Diagnostic::error(
+                        format!("Window portal {error}"),
+                        Some(format!("entity:{}", entity.id)),
+                        None,
+                    ));
+                }
             }
             if let Some(background) = targets[1] {
                 consume(

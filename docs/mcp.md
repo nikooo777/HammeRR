@@ -1135,15 +1135,17 @@ use `document_id` to select a map. Unknown argument names are errors. Omitting
 Use `cancel_compile` to stop owned build work.
 
 For [visibility clusters](visclusters.md), use `tie_to_entity` with
-`classname:"func_viscluster"` and one visible convex brush. A checked intersection
-must exceed 10% of a leaf's volume. Uncertain membership or a leaf claimed by two
+`classname:"func_viscluster"` and 1–16 visible convex brushes. Their union counts
+overlapping volume once. Its checked intersection must exceed 10% of a leaf's
+volume. Uncertain membership or a leaf claimed by two
 helpers stops the build. Dry, wet and portal leaves can share a group across visibility
 areas. Each leaf retains its area, water data, collision and ambient samples.
 PVS/PAS can expand; solver work is unchanged. Read `stats.viscluster_helpers`,
 `stats.viscluster_groups`, `stats.viscluster_grouped_leaves` and
 `stats.visibility_solved_clusters` in the finished compile result.
-Active compile regions must contain the complete helper brush; crossing helpers
-refuse and disjoint helpers are omitted. Multi-brush helpers remain unsupported.
+Active compile regions must contain every visible helper brush; crossing helpers
+refuse and disjoint helpers are omitted. Root and child helpers share the same
+source bounds: 64 sides per brush, 256 combined sides and 8192 source hull points.
 
 For `func_areaportalwindow`, set `target` and optional `BackgroundBModel` through
 `set_entity_properties`. Nonzero initial rotation requires `func_brush` models.
@@ -1160,8 +1162,15 @@ Plain and window portals share a limit of 191 retained controllers per build,
 with generated control keys 1–191. The separate BSP directed-record table permits
 1024 entries, including reserved entry 0. Exceeded control capacity fails the
 ordinary compile operations before publication.
-A compiled portal boundary supports at most 32 corners. This counts the final
-planar interface, separately from source brush sides. Use a simpler opening if exceeded.
+A controller can own multiple convex brushes and disconnected openings. Every
+connected volume must separate the same two open areas, with one interface plane
+and orientation per controller. Original convex interface fragments remain separate;
+the compiler does not fill gaps. Touching controllers keep independent keys and
+must separate the same two areas. Overlapping controllers and serial touching
+volumes are unsupported. Use `tie_to_entity` to bind the brushes and
+`set_entity_properties` to set their controls.
+Each native fragment supports at most 32 corners. The source limit is 4096 visible
+brushes per controller; native record, vertex and work limits can be reached first.
 
 For [occluders](occluders.md), use `tie_to_entity` with `classname:"func_occluder"`
 and set `StartActive:"0"` or `"1"` through `set_entity_properties`.

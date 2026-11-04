@@ -376,12 +376,15 @@ pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result
         return Err("Instance extraction does not support nonempty replacement defaults; author light bindings on an ordinary instance reference".into());
     }
     instances::helper_admission(&helper)?;
-    let allocator_metadata = vmf
+    let mut allocator_metadata = vmf
         .extra
         .iter()
-        .filter(|node| matches!(node.key.as_str(), context::METADATA_KEY | measurements::KEY))
+        .filter(|node| node.key == measurements::KEY)
         .cloned()
         .collect::<Vec<_>>();
+    if context::has_storage(vmf) {
+        allocator_metadata.push(context.to_node());
+    }
     let allocator_bytes = allocator_metadata.capacity()
         * std::mem::size_of::<source_formats::keyvalues::Node>()
         + allocator_metadata.iter().map(node_bytes).sum::<usize>();

@@ -129,9 +129,8 @@ impl EditorServer {
             (
                 "worldspawn".into(),
                 json!(
-                    vmf.world
-                        .properties
-                        .iter()
+                    session
+                        .world_properties()
                         .map(|(k, v)| json!([k, v]))
                         .collect::<Vec<_>>()
                 ),

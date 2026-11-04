@@ -282,6 +282,9 @@ fn append_entity(
 ) -> Result<(), String> {
     text.push_str("{\n");
     for (key, value) in properties {
+        if map_core::context::is_storage_key(key) {
+            continue;
+        }
         if key.contains(['"', '\0']) || value.contains(['"', '\0']) {
             return Err(format!("entity:{} contains an invalid key/value", id));
         }

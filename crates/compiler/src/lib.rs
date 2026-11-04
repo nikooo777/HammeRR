@@ -1117,6 +1117,7 @@ fn build(
     control: &Control,
 ) -> Result<(), String> {
     let vmf = prepared_instances.compilation_vmf()?;
+    map_core::context::Metadata::parse(vmf)?;
     let mut face_origins = face_origins::FaceOrigins::prepare(vmf, prepared_instances);
     options.validate()?;
     let emission_file = lighting::emission::file(&vmf.world.properties)?;

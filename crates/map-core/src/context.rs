@@ -18,6 +18,10 @@ pub const DEFAULT_CONTEXT_BYTES: usize = 8192;
 pub const MAX_REGION_COORDINATE: f64 = 1_000_000.0;
 const VERSION: &str = "1";
 
+mod storage;
+pub(crate) use storage::store;
+pub use storage::{has_storage, is_storage_key};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Scope {
     Map,
@@ -165,13 +169,31 @@ fn decode(value: &str) -> Result<String, String> {
 
 impl Metadata {
     pub fn parse(vmf: &Vmf) -> Result<Self, String> {
-        let mut blocks = vmf.extra.iter().filter(|node| node.key == METADATA_KEY);
-        let Some(block) = blocks.next() else {
-            return Ok(Self::default());
-        };
+        let mut blocks = vmf
+            .extra
+            .iter()
+            .filter(|node| node.key.eq_ignore_ascii_case(METADATA_KEY));
+        let legacy = blocks.next();
         if blocks.next().is_some() {
             return Err("Map contains more than one HammeRR context block".into());
         }
+        if legacy.is_some_and(|block| block.key != METADATA_KEY) {
+            return Err("HammeRR context block requires its canonical lowercase key".into());
+        }
+        let carrier = storage::read(vmf)?;
+        let legacy = legacy.map(Self::parse_node).transpose()?;
+        let carrier = carrier.as_ref().map(Self::parse_node).transpose()?;
+        match (legacy, carrier) {
+            (Some(legacy), Some(carrier)) if legacy != carrier => {
+                Err("Legacy and transported HammeRR context disagree; resolve both copies before opening the map".into())
+            }
+            (Some(metadata), _) | (_, Some(metadata)) => Ok(metadata),
+            (None, None) => Ok(Self::default()),
+        }
+    }
+
+    fn parse_node(block: &Node) -> Result<Self, String> {
+        storage::validate_node(block)?;
         let children = block
             .children()
             .ok_or("HammeRR context must be a metadata block")?;
@@ -272,7 +294,7 @@ impl Metadata {
                 "A map supports at most {MAX_REGIONS} context regions; consolidate existing regions"
             ));
         }
-        Ok(())
+        storage::validate_metadata(self)
     }
 
     pub fn to_node(&self) -> Node {
@@ -329,7 +351,7 @@ pub fn map_fingerprint(vmf: &Vmf) -> String {
     let mut properties = vmf.world.properties.clone();
     properties
         .0
-        .retain(|(key, _)| !key.eq_ignore_ascii_case("mapversion"));
+        .retain(|(key, _)| !key.eq_ignore_ascii_case("mapversion") && !is_storage_key(key));
     let _ = write!(
         fingerprint,
         "{properties:?}{:?}{:?}",

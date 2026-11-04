@@ -1263,6 +1263,14 @@ impl Session {
         } else {
             class.map_or_else(BTreeMap::new, |class| class.defaults())
         };
+        if values
+            .keys()
+            .any(|key| map_core::context::is_storage_key(key))
+        {
+            return Err(
+                "Design-context storage is reserved; remove it from entity defaults".into(),
+            );
+        }
         for (key, value) in properties {
             if key.eq_ignore_ascii_case("classname") {
                 if !value.eq_ignore_ascii_case(classname) {
@@ -1304,6 +1312,9 @@ impl Session {
     ) -> Result<(), String> {
         if key.trim().is_empty() {
             return Err("property name must not be empty".into());
+        }
+        if map_core::context::is_storage_key(key) {
+            return Err("Design-context storage is reserved; use the context-note editor".into());
         }
         source_formats::keyvalues::validate_string(key).map_err(|error| error.to_string())?;
         if let Some(value) = value {

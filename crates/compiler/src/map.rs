@@ -301,7 +301,8 @@ impl<'a> Map<'a> {
             .properties
             .iter()
             .filter(|(key, _)| {
-                !key.eq_ignore_ascii_case(crate::MATERIAL_EMISSION_FILE_KEY)
+                !map_core::context::is_storage_key(key)
+                    && !key.eq_ignore_ascii_case(crate::MATERIAL_EMISSION_FILE_KEY)
                     && !key.eq_ignore_ascii_case(crate::MATERIAL_EMISSION_NATIVE_DIRECT_KEY)
                     && !key.eq_ignore_ascii_case(crate::MATERIAL_EMISSION_EXACT_VISIBILITY_KEY)
                     && !key.eq_ignore_ascii_case(crate::GENERATED_DETAIL_LIGHTING_TINT_KEY)

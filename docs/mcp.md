@@ -1794,6 +1794,47 @@ plane. Set numeric axes with `update`, capture a fixed pose with `from_face` or
 in plane coordinates. Ruler `begin_pick` with `mode: "plane"` uses this same policy.
 The plane clears on New/Open and does not edit the map, history or camera.
 
+## Design context
+
+Use `get_context_state` for limits, storage usage and the current shared draft.
+`list_context_notes` searches map, object and region summaries;
+`get_context_note` returns full text, authorship and source-change status.
+
+Start `begin_context_edit` with `scope: "map"`, `"selection"`, an explicit
+`solid:<id>` / `entity:<id>` / `region:<id>`, or `"new_region"`. Use its
+`draft.token` with `update_context_edit`, then `apply_context_edit` or
+`cancel_context_edit`. Updates change only the draft. Apply creates one Undo
+step and records agent authorship and the current source state. A replaced
+token or changed map rejects the write.
+
+Context uses a checked, segmented VMF world-property envelope. Valid legacy
+root notes migrate on ordinary Open/Save. Property order can change; missing,
+duplicate, malformed or conflicting copies reject before document replacement.
+Unknown supported-schema fields survive. World-property reports omit the reserved
+fields, and direct property edits reject. HammeRR excludes them from BSP output;
+external compilers may retain them.
+
+Each scope has one note: a summary of 1–200 characters and at most 4,096 UTF-8
+bytes of combined summary/body text. The shared map text budget is 1 MiB,
+including copied notes. Up to 256 editor-only regions have finite positive
+extents within ±1,000,000 units. Draft feedback reports validation errors and
+the resulting text usage; invalid drafts cannot be applied.
+
+`get_context` accepts one object, point or bounds query and includes the map
+brief by default. Object queries include notes on owned brushes; overlapping
+regions appear smallest first. Responses default to 8 KiB of serialized JSON,
+with `max_bytes` from 2–64 KiB. Follow `next_cursor` for the same unchanged
+query/map. Fetch a `body_omitted` note through `get_context_note`.
+
+`delete_context_note` requires the current `generation` and `revision` from a
+fresh read. Object deletion removes attached notes; Undo restores both.
+Duplicates retain copied text/authorship but mark the copied observation
+changed. Orphaned notes remain readable and deletable, while editing and
+focusing require an unambiguous existing attachment. `set_context_view` changes
+region-guide visibility; `focus_context` frames the attachment without adding
+game geometry. Region change status conservatively observes the whole map and
+region bounds. Note edits and saving alone do not stale other observations.
+
 ## Tool reference
 
 The server publishes the complete parameter schema for every tool.

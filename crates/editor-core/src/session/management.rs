@@ -271,6 +271,15 @@ fn materials<'a>(solids: impl IntoIterator<Item = &'a Solid>) -> Vec<String> {
 }
 
 impl Session {
+    pub fn world_properties(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.document
+            .vmf()
+            .world
+            .properties
+            .iter()
+            .filter(|(key, _)| !map_core::context::is_storage_key(key))
+    }
+
     pub fn object_report(&self, filter: &ObjectFilter) -> Result<Vec<ObjectReport>, String> {
         filter.validate()?;
         let mut rows = Vec::new();
@@ -556,6 +565,11 @@ impl Session {
             let mut emission_changed = false;
             for change in changes {
                 let key = change.key();
+                if map_core::context::is_storage_key(key) {
+                    return Err(
+                        "Design-context storage is reserved; use the context-note editor".into(),
+                    );
+                }
                 if ["id", "classname", "targetname", "mapversion"]
                     .iter()
                     .any(|name| key.eq_ignore_ascii_case(name))

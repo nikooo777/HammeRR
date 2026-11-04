@@ -31,11 +31,20 @@ Checks do not certify every compiler or engine behavior.
 
 1. Open **Design context…**.
 2. Choose **Map brief**, **Note on selection** or **New region**.
-3. Enter the relevant design context.
-4. Click **Save note**, or **Cancel**.
+3. Enter **Summary** and **Intent, constraints and observations**. For a region, set **Minimum**, **Maximum** and **Guide color**.
+4. Click **Save note**, or **Cancel edit** to discard the draft.
+5. Use the note filters or search, then **Focus in map** to locate an attachment. **Show region guides** controls editor-only region outlines.
 
-Notes are map metadata for humans and MCP clients. They do not compile into gameplay entities.
-The complete design-context payload is limited to 32 KiB.
+Each note allows 200 summary characters and 4 KiB of combined summary/body UTF-8 text. A map allows 1 MiB of note text and 256 regions. Region bounds must have positive extents within ±1,000,000 units.
+
+Source changes mark notes as changed. Region notes observe the whole map, so a distant edit can change their status. Saving a note records the current source state; it does not retest the text.
+
+Duplication copies notes and marks their observations changed. Deletion removes attached notes; **Undo** restores them. To remove one note, check **Remove this note**, then click **Delete note** or **Delete region**.
+
+Notes use checked, segmented VMF world properties. Old HammeRR root-block notes migrate when opened and saved. Missing, altered or conflicting segments stop Open. Use the note editor to change notes; ordinary world-property editing hides and protects their storage.
+
+> [!NOTE]
+> Hammer++ retains these short world properties through its load/save format. Other editors must preserve all segments. Compile with HammeRR to exclude notes from the BSP; external compilers can emit them as world properties.
 
 ## Autosave and recovery
 

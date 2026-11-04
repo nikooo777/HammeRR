@@ -587,6 +587,7 @@ pub fn inspect(entity: &Entity, class: Option<&Class>) -> Inspector {
     }
     let mut properties: Vec<Field> = names
         .into_iter()
+        .filter(|(key, _)| !map_core::context::is_storage_key(key))
         .map(|(key, value)| field(entity, class, key, value))
         .collect();
     properties.sort_by_key(|field| {

@@ -2,6 +2,12 @@ use map_core::texture_atlas::regions::{KEY, Regions};
 use source_formats::vmf::Vmf;
 
 pub(super) fn admit(child: &Vmf) -> Result<(), String> {
+    if map_core::context::has_storage(child) {
+        return Err(
+            "Instance child design context is unsupported; notes remain in the original child map"
+                .into(),
+        );
+    }
     if child.extra.iter().any(|node| {
         node.key != KEY
             && node.key != map_core::color_palette::KEY

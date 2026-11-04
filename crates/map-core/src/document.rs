@@ -140,10 +140,15 @@ impl Document {
         Ok(Self::new(vmf))
     }
 
-    pub fn new(vmf: Vmf) -> Self {
+    pub fn new(mut vmf: Vmf) -> Self {
         let object_max = vmf.object_ids().max().unwrap_or(0);
         let side_max = vmf.side_ids().max().unwrap_or(0);
-        let context = Metadata::parse(&vmf);
+        let context = Metadata::parse(&vmf).and_then(|metadata| {
+            if context::has_storage(&vmf) {
+                context::store(&mut vmf, &metadata)?;
+            }
+            Ok(metadata)
+        });
         Self {
             context_cache: OnceLock::from(context),
             context_fingerprint: OnceLock::new(),
@@ -458,6 +463,7 @@ impl Document {
             properties.set("mapversion", version);
         }
         self.vmf.world.properties = properties;
+        self.context_cache.take();
     }
 
     fn position(&self, id: ObjectId) -> Option<usize> {
@@ -562,6 +568,7 @@ impl Transaction<'_> {
 
     pub fn world_properties_mut(&mut self) -> &mut Properties {
         self.doc.context_fingerprint.take();
+        self.doc.context_cache.take();
         self.world
             .get_or_insert_with(|| self.doc.vmf.world.properties.clone());
         &mut self.doc.vmf.world.properties
@@ -768,24 +775,11 @@ impl Transaction<'_> {
     }
 
     pub fn set_context(&mut self, metadata: Metadata) -> Result<(), EditError> {
-        metadata.validate().map_err(EditError::Invalid)?;
         self.extra.get_or_insert_with(|| self.doc.vmf.extra.clone());
-        let existing = self
-            .doc
-            .vmf
-            .extra
-            .iter()
-            .position(|node| node.key == context::METADATA_KEY);
-        self.doc
-            .vmf
-            .extra
-            .retain(|node| node.key != context::METADATA_KEY);
-        if !metadata.notes.is_empty() || !metadata.extra.is_empty() {
-            let index = existing
-                .unwrap_or(self.doc.vmf.extra.len())
-                .min(self.doc.vmf.extra.len());
-            self.doc.vmf.extra.insert(index, metadata.to_node());
-        }
+        self.world
+            .get_or_insert_with(|| self.doc.vmf.world.properties.clone());
+        context::store(&mut self.doc.vmf, &metadata).map_err(EditError::Invalid)?;
+        self.doc.context_fingerprint.take();
         self.doc.context_cache = OnceLock::from(Ok(metadata));
         Ok(())
     }
@@ -885,6 +879,7 @@ impl Transaction<'_> {
         }
         if let Some(before) = self.world {
             self.doc.vmf.world.properties = before;
+            self.doc.context_cache.take();
         }
         self.doc.restore_objects(self.touched);
     }

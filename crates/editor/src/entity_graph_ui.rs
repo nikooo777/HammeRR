@@ -15,6 +15,7 @@ use crate::{EntityGraphEdge, EntityGraphNode, EntityGraphRow, EntityGraphWindow}
 
 const MAX_CANVAS_NODES: usize = 512;
 const MAX_CANVAS_EDGES: usize = 2048;
+const LOOP_CLEARANCE: f64 = 56.0;
 
 #[derive(Default)]
 struct State {
@@ -135,11 +136,23 @@ fn present_diagram(window: &EntityGraphWindow, diagram: &Diagram) -> Result<(), 
             virtual_node: node.id != node.owner,
         })
         .collect::<Vec<_>>();
+    let mut lane_counts = BTreeMap::<(&str, &str), i32>::new();
+    let lanes = diagram
+        .edges
+        .iter()
+        .map(|edge| {
+            let count = lane_counts
+                .entry((edge.source.as_str(), edge.target.as_str()))
+                .or_default();
+            *count += 1;
+            *count - 1
+        })
+        .collect::<Vec<_>>();
     let edges = diagram
         .edges
         .iter()
-        .enumerate()
-        .map(|(index, edge)| {
+        .zip(lanes)
+        .map(|(edge, lane)| {
             let source = positions
                 .get(edge.source.as_str())
                 .ok_or("Graph relationship has no source node")?;
@@ -154,10 +167,30 @@ fn present_diagram(window: &EntityGraphWindow, diagram: &Diagram) -> Result<(), 
                 target_x: target[0] as f32,
                 target_y: target[1] as f32,
                 label: format!("{} → {}", edge.output, edge.input).into(),
-                slot: index as i32,
+                lane,
+                lanes: lane_counts[&(edge.source.as_str(), edge.target.as_str())],
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
+    let [width, height] = diagram.node_size;
+    let bounds = diagram.nodes.iter().fold(
+        [f64::MAX, f64::MAX, f64::MIN, f64::MIN],
+        |[left, top, right, bottom], node| {
+            [
+                left.min(node.position[0]),
+                top.min(node.position[1]),
+                right.max(node.position[0] + width),
+                bottom.max(node.position[1] + height + LOOP_CLEARANCE),
+            ]
+        },
+    );
+    if !diagram.nodes.is_empty() {
+        let [left, top, right, bottom] = bounds.map(|value| value as f32);
+        window.set_graph_left(left);
+        window.set_graph_top(top);
+        window.set_graph_right(right);
+        window.set_graph_bottom(bottom);
+    }
     window.set_graph_nodes(slint::ModelRc::new(slint::VecModel::from(nodes)));
     window.set_graph_edges(slint::ModelRc::new(slint::VecModel::from(edges)));
     window.set_layout(
@@ -240,9 +273,35 @@ fn choose_node(window: &EntityGraphWindow, state: &RefCell<State>, id: &str) {
         },
     );
     if let Some(provenance) = &node.provenance {
-        details.push_str(&format!("\nInstance source: {provenance}"));
+        details.push_str(&format!(
+            "\nInstance source {}",
+            provenance_text(provenance)
+        ));
     }
     window.set_selection_details(details.into());
+}
+
+fn provenance_text(provenance: &serde_json::Value) -> String {
+    let path = provenance["occurrence"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|step| {
+            format!(
+                "entity:{} → {}",
+                step["helper"],
+                step["file"].as_str().unwrap_or("unknown file")
+            )
+        })
+        .collect::<Vec<_>>();
+    if path.is_empty() {
+        return provenance.to_string();
+    }
+    format!(
+        "{} · child entity:{}",
+        path.join(" → "),
+        provenance["entity"]
+    )
 }
 
 fn choose_edge(window: &EntityGraphWindow, state: &RefCell<State>, index: i32) {
@@ -435,7 +494,7 @@ fn present(window: &EntityGraphWindow, report: &Inspection) {
                         "{} · authored owner {} · depth {}{}{}",
                         row.id, row.owner, row.depth,
                         if row.root { " · root" } else { "" },
-                        row.provenance.as_ref().map(|value| format!("\nInstance source: {value}")).unwrap_or_default(),
+                        row.provenance.as_ref().map(|value| format!("\nInstance source {}", provenance_text(value))).unwrap_or_default(),
                     )
                     .into(),
                 })

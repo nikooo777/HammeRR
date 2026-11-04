@@ -152,9 +152,9 @@ FGD suggestions describe available names and parameters; they do not prove runti
 1. Open **Entity graph…**.
 2. Select entities in the map, then click **Use selected entities**. Their captured names and classes appear above the lists; **Root IDs (advanced)** also accepts explicit IDs.
 3. Choose **Direction**: **Outgoing**, **Incoming** or **Both**. Set **Depth** from 1 to 16; the default is 2. Choose **Scope → Authored** or **Expanded instances**.
-4. Optionally enter an **Activator ID** or **Caller ID** for a lookup scenario, using a source ID shown in node details. A blank **Caller ID** uses each output's owner; **Unbound caller** leaves it unresolved.
+4. Optionally expand **Lookup scenario** and enter an **Activator ID** or **Caller ID**, using a source ID shown in node details. A blank **Caller ID** uses each output's owner; **Unbound caller** leaves it unresolved.
 5. Click **Inspect graph**.
-6. In **Canvas**, choose **Layered** or **Grid**, then click **Arrange**. Drag empty space to pan, use the wheel or **+**/**−** to zoom, and drag nodes to place them. Click a node or an edge label for details. **Select owner** selects that node's authored owner; **Frame node** frames its prepared position. **Reset diagram** restores the initial layout and view.
+6. In **Canvas**, choose **Layered** or **Grid**, then click **Arrange**. Drag empty space to pan, use the wheel or **+**/**−** to zoom, click **Fit graph** to show every node, and drag nodes to place them. Click a node or an edge label for details; relationships of the chosen node are highlighted. **Select owner** selects that node's authored owner; **Frame node** frames its prepared position. **Reset diagram** restores the initial layout and view.
 7. In **List**, choose **Nodes**, **Relationships** or **Unresolved (whole map)**. Use **Search rows**, then **Inspect graph**, to filter the lists. **Previous page** and **Next page** display at most 64 rows.
 8. Choose **Replace**, **Add**, **Remove** or **Toggle**, then click **Select connected** to act on every reached node, including roots. Search and pages do not restrict this selection. **Frame connected** frames the complete reached set while preserving selection.
 

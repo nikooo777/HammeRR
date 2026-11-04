@@ -1,9 +1,9 @@
-import { Theme } from "theme.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "widgets.slint";
+import { Theme, Icon, IconButton, FieldRow, SectionHeader, MutedText } from "kit.slint";
 
 export struct EntityGraphRow { title: string, details: string }
 export struct EntityGraphNode { id: string, owner: string, title: string, subtitle: string, x: float, y: float, is-root: bool, virtual-node: bool }
-export struct EntityGraphEdge { source: string, target: string, source-x: float, source-y: float, target-x: float, target-y: float, label: string, slot: int }
+export struct EntityGraphEdge { source: string, target: string, source-x: float, source-y: float, target-x: float, target-y: float, label: string, lane: int, lanes: int }
 
 component GraphEdge inherits Rectangle {
     in property <EntityGraphEdge> edge;
@@ -14,63 +14,107 @@ component GraphEdge inherits Rectangle {
     in property <float> drag-x;
     in property <float> drag-y;
     in property <bool> selected;
+    in property <bool> related;
+    in property <bool> dimmed;
     callback choose();
-    private property <float> sx: pan-x + zoom * (edge.source == dragging ? drag-x : edge.source-x);
-    private property <float> sy: pan-y + zoom * (edge.source == dragging ? drag-y : edge.source-y);
-    private property <float> tx: pan-x + zoom * (edge.target == dragging ? drag-x : edge.target-x);
-    private property <float> ty: pan-y + zoom * (edge.target == dragging ? drag-y : edge.target-y);
-    private property <bool> upper: tx <= sx;
-    private property <float> start-x: sx + (upper ? 110 : 220) * zoom;
-    private property <float> start-y: sy + (upper ? 78 : 39) * zoom;
-    private property <float> end-x: tx + (upper ? (edge.source == edge.target ? 166 : 110) : 0) * zoom;
-    private property <float> end-y: ty + (upper ? 78 : 39) * zoom;
-    private property <float> middle-x: (start-x + end-x) / 2 + mod(edge.slot, 5) * 6 * zoom;
-    private property <float> rail-y: max(sy, ty) + (106 + mod(edge.slot, 5) * 7) * zoom;
-    private property <float> label-x: upper ? (start-x + end-x) / 2 : middle-x;
-    private property <float> label-y: upper ? rail-y : max(sy, ty) + 94 * zoom;
+    private property <bool> emphasized: root.selected || root.related;
+    private property <color> tint: root.emphasized ? Theme.accent : root.dimmed ? Theme.info.transparentize(0.75) : Theme.info.transparentize(0.15);
+    private property <float> node-width: 220 * root.zoom;
+    private property <float> node-height: 78 * root.zoom;
+    private property <float> sx: root.pan-x + root.zoom * (root.edge.source == root.dragging ? root.drag-x : root.edge.source-x);
+    private property <float> sy: root.pan-y + root.zoom * (root.edge.source == root.dragging ? root.drag-y : root.edge.source-y);
+    private property <float> tx: root.pan-x + root.zoom * (root.edge.target == root.dragging ? root.drag-x : root.edge.target-x);
+    private property <float> ty: root.pan-y + root.zoom * (root.edge.target == root.dragging ? root.drag-y : root.edge.target-y);
+    private property <bool> self-loop: root.edge.source == root.edge.target;
+    private property <int> route: root.self-loop ? 2 : root.tx >= root.sx + root.node-width / 2 ? 0 : abs(root.tx - root.sx) < root.node-width / 2 ? 1 : 2;
+    private property <float> spread: (root.edge.lane - (root.edge.lanes - 1) * 0.5) * 22 * root.zoom;
+    private property <float> start-x: root.route == 2 ? root.sx + root.node-width * (root.self-loop ? 0.65 : 0.5) : root.sx + root.node-width;
+    private property <float> start-y: root.route == 2 ? root.sy + root.node-height : root.sy + root.node-height / 2;
+    private property <float> end-x: root.route == 0 ? root.tx : root.route == 1 ? root.tx + root.node-width : root.tx + root.node-width * (root.self-loop ? 0.35 : 0.5);
+    private property <float> end-y: root.route == 2 ? root.ty + root.node-height : root.ty + root.node-height / 2;
+    private property <float> reach: root.route == 0 ? max(40 * root.zoom, (root.end-x - root.start-x) / 2) : (44 + root.edge.lane * 18) * root.zoom;
+    private property <float> floor: max(root.start-y, root.end-y);
+    private property <float> c1-x: root.route == 0 ? root.start-x + root.reach : root.route == 1 ? root.start-x + root.reach * 4 / 3 : root.start-x;
+    private property <float> c1-y: root.route == 0 ? root.start-y + root.spread * 4 / 3 : root.route == 1 ? root.start-y : root.floor + root.reach * 4 / 3;
+    private property <float> c2-x: root.route == 0 ? root.end-x - root.reach : root.route == 1 ? root.end-x + root.reach * 4 / 3 : root.end-x;
+    private property <float> c2-y: root.route == 0 ? root.end-y + root.spread * 4 / 3 : root.route == 1 ? root.end-y : root.floor + root.reach * 4 / 3;
+    private property <float> mid-x: 0.125 * (root.start-x + root.end-x) + 0.375 * (root.c1-x + root.c2-x);
+    private property <float> mid-y: 0.125 * (root.start-y + root.end-y) + 0.375 * (root.c1-y + root.c2-y);
+    private property <float> arrow: 7 * max(0.7, min(root.zoom, 1.4));
     Path {
         width: parent.width;
         height: parent.height;
         viewbox-width: self.width / 1px;
         viewbox-height: self.height / 1px;
-        stroke: root.selected ? Theme.accent : Theme.info;
-        stroke-width: root.selected ? 2px : 1px;
+        stroke: root.tint;
+        stroke-width: root.selected ? 2px : root.related ? 1.5px : 1.2px;
         MoveTo { x: root.start-x; y: root.start-y; }
-        LineTo { x: root.upper ? root.start-x : root.middle-x; y: root.upper ? root.rail-y : root.start-y; }
-        LineTo { x: root.upper ? root.end-x : root.middle-x; y: root.upper ? root.rail-y : root.end-y; }
-        LineTo { x: root.end-x; y: root.end-y; }
-        MoveTo { x: root.end-x - (root.upper ? 4 : 7); y: root.end-y + (root.upper ? 7 : -4); }
-        LineTo { x: root.end-x; y: root.end-y; }
-        LineTo { x: root.end-x + (root.upper ? 4 : -7); y: root.end-y + (root.upper ? 7 : 4); }
-        MoveTo { x: root.label-x; y: root.upper ? root.rail-y : max(root.start-y, root.end-y); }
-        LineTo { x: root.label-x; y: root.label-y; }
+        CubicTo {
+            control-1-x: root.c1-x;
+            control-1-y: root.c1-y;
+            control-2-x: root.c2-x;
+            control-2-y: root.c2-y;
+            x: root.end-x;
+            y: root.end-y;
+        }
     }
-    if root.zoom >= 0.7 || root.selected: Rectangle {
-        x: root.label-x * 1px - self.width / 2;
-        y: root.label-y * 1px - self.height / 2;
-        width: 174px * root.zoom;
-        height: 20px * root.zoom;
-        background: root.selected ? Theme.accent-soft : Theme.canvas;
-        border-radius: Theme.radius-sm;
-        Text {
+    Rectangle {
+        x: root.start-x * 1px - 3px;
+        y: root.start-y * 1px - 3px;
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        background: root.tint;
+    }
+    Path {
+        x: (root.route == 0 ? root.end-x - root.arrow : root.route == 1 ? root.end-x : root.end-x - root.arrow / 2) * 1px;
+        y: (root.route == 2 ? root.end-y : root.end-y - root.arrow / 2) * 1px;
+        width: root.arrow * 1px;
+        height: root.arrow * 1px;
+        viewbox-width: 1;
+        viewbox-height: 1;
+        fill: root.tint;
+        commands: root.route == 0 ? "M 0 0 L 1 0.5 L 0 1 Z" : root.route == 1 ? "M 1 0 L 0 0.5 L 1 1 Z" : "M 0 1 L 0.5 0 L 1 1 Z";
+    }
+    if root.zoom >= 0.7 || root.emphasized: Rectangle {
+        width: min(caption.preferred-width + 14px, 132px * max(root.zoom, 0.7));
+        height: caption.preferred-height + 4px;
+        x: root.route == 1 ? (root.mid-x + 6 * root.zoom) * 1px : root.mid-x * 1px - self.width / 2;
+        y: root.mid-y * 1px - self.height / 2;
+        background: root.emphasized ? Theme.accent-soft : Theme.panel;
+        border-width: 1px;
+        border-color: root.emphasized ? Theme.accent : Theme.border-strong;
+        border-radius: self.height / 2;
+        opacity: root.dimmed ? 0.45 : 1;
+        caption := Text {
+            x: 7px;
+            y: 0px;
+            width: parent.width - 14px;
+            height: parent.height;
             text: root.edge.label;
-            color: root.selected ? Theme.accent : Theme.text-muted;
-            font-size: max(8px, Theme.font-small * root.zoom);
+            color: root.emphasized ? Theme.accent : Theme.text-muted;
+            font-size: max(8px, Theme.font-small * min(root.zoom, 1.25));
             horizontal-alignment: center;
             vertical-alignment: center;
             overflow: elide;
         }
-        TouchArea { mouse-cursor: pointer; clicked => { root.choose(); } accessible-role: button; accessible-label: root.edge.label; }
+        TouchArea {
+            mouse-cursor: pointer;
+            accessible-role: button;
+            accessible-label: root.edge.label;
+            clicked => { root.choose(); }
+        }
     }
 }
 
 export component EntityGraphWindow inherits Window {
     background: Theme.panel;
     title: "Entity graph - HammeRR";
-    preferred-width: 1060px;
-    preferred-height: 960px;
-    min-width: 760px;
-    min-height: 800px;
+    default-font-size: Theme.font;
+    preferred-width: 1240px;
+    preferred-height: 900px;
+    min-width: 900px;
+    min-height: 640px;
     in-out property <string> roots;
     in property <string> root-summary;
     in-out property <string> direction: "Outgoing";
@@ -89,6 +133,10 @@ export component EntityGraphWindow inherits Window {
     in property <[EntityGraphRow]> rows;
     in property <[EntityGraphNode]> graph-nodes;
     in property <[EntityGraphEdge]> graph-edges;
+    in property <float> graph-left;
+    in property <float> graph-top;
+    in property <float> graph-right: 1;
+    in property <float> graph-bottom: 1;
     in property <string> canvas-message;
     in property <bool> canvas-ready;
     in-out property <string> layout: "Layered";
@@ -136,6 +184,17 @@ export component EntityGraphWindow inherits Window {
         root.zoom = next;
         root.view-pending = true;
     }
+    function fit-view() {
+        if root.canvas-width <= 64px || root.canvas-height <= 64px { return; }
+        let graph-width = max(1, root.graph-right - root.graph-left);
+        let graph-height = max(1, root.graph-bottom - root.graph-top);
+        let next = min(1.25, max(0.1, min((root.canvas-width / 1px - 64) / graph-width, (root.canvas-height / 1px - 64) / graph-height)));
+        root.zoom = next;
+        root.pan-x = (root.canvas-width / 1px - graph-width * next) / 2 - root.graph-left * next;
+        root.pan-y = (root.canvas-height / 1px - graph-height * next) / 2 - root.graph-top * next;
+        root.view-pending = false;
+        root.change-view(root.pan-x, root.pan-y, root.zoom);
+    }
     Timer {
         interval: 160ms;
         running: root.view-pending && root.canvas-ready;
@@ -152,183 +211,250 @@ export component EntityGraphWindow inherits Window {
         }
         VerticalLayout {
             padding: Theme.space-xl;
-            spacing: 8px;
-            Text { text: "Entity graph"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: "Inspect committed I/O. Expanded instance nodes are read-only source views; selection maps to their authored owner. Unapplied drafts and saved-hidden entities are excluded."; wrap: word-wrap; color: Theme.text-muted; }
-            HorizontalLayout {
-                spacing: 8px;
-                Button { text: "Use selected entities"; clicked => { root.roots-from-selection(); } }
-                Text { text: root.root-summary; wrap: word-wrap; horizontal-stretch: 1; }
+            spacing: Theme.space-lg;
+            VerticalLayout {
+                spacing: Theme.space-xs;
+                Text { text: "Entity graph"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
+                MutedText { text: "Inspect committed I/O. Expanded instance nodes are read-only source views; selection maps to their authored owner. Unapplied drafts and saved-hidden entities are excluded."; }
             }
             HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Root IDs (advanced)"; vertical-alignment: center; color: Theme.text-muted; }
-                LineEdit { text <=> root.roots; placeholder-text: "entity:12, entity:34"; edited => { root.fields-changed(); } accessible-label: "Graph root entity IDs"; }
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Direction"; vertical-alignment: center; }
-                ComboBox { model: ["Outgoing", "Incoming", "Both"]; current-value <=> root.direction; selected => { root.fields-changed(); } }
-                Text { text: "Depth"; vertical-alignment: center; }
-                LineEdit { text <=> root.depth; preferred-width: 48px; edited => { root.fields-changed(); } accessible-label: "Graph depth"; }
-                Text { text: "Scope"; vertical-alignment: center; }
-                ComboBox { model: ["Authored", "Expanded instances"]; current-value <=> root.scope; selected => { root.fields-changed(); } }
-                Button { text: "Inspect graph"; clicked => { root.inspect(); } }
-                Rectangle { horizontal-stretch: 1; }
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Activator ID"; vertical-alignment: center; color: Theme.text-muted; }
-                LineEdit { text <=> root.activator; placeholder-text: "Optional source ID"; edited => { root.fields-changed(); } accessible-label: "Graph activator source ID"; }
-                Text { text: "Caller ID"; vertical-alignment: center; color: Theme.text-muted; }
-                LineEdit { text <=> root.caller; enabled: !root.caller-unbound; placeholder-text: "Blank uses output owner"; edited => { root.fields-changed(); } accessible-label: "Graph caller source ID"; }
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                CheckBox { text: "Unbound caller"; checked <=> root.caller-unbound; toggled => { root.fields-changed(); } }
-                Text { text: "Activator requires an ID. Context describes one lookup scenario, without simulating event propagation."; wrap: word-wrap; color: Theme.text-muted; horizontal-stretch: 1; }
-            }
-            Text { text: root.summary; wrap: word-wrap; }
-            HorizontalLayout {
-                spacing: 8px;
-                ComboBox { model: ["Canvas", "List"]; current-value <=> root.presentation; accessible-label: "Graph presentation"; }
-                if root.presentation == "Canvas": ComboBox { model: ["Layered", "Grid"]; current-value <=> root.layout; accessible-label: "Graph layout"; }
-                if root.presentation == "Canvas": Button { text: "Arrange"; enabled: root.canvas-ready; clicked => { root.arrange(); } }
-                if root.presentation == "Canvas": Button { text: "Reset diagram"; enabled: root.canvas-ready; clicked => { root.reset-diagram(); } }
-                Rectangle { horizontal-stretch: 1; }
-                if root.presentation == "Canvas": Button { text: "−"; enabled: root.canvas-ready; clicked => { root.zoom-at(1 / 1.2, root.canvas-width / 2px, root.canvas-height / 2px); } accessible-label: "Zoom graph out"; }
-                if root.presentation == "Canvas": Text { text: round(root.zoom * 100) + "%"; vertical-alignment: center; color: Theme.text-muted; }
-                if root.presentation == "Canvas": Button { text: "+"; enabled: root.canvas-ready; clicked => { root.zoom-at(1.2, root.canvas-width / 2px, root.canvas-height / 2px); } accessible-label: "Zoom graph in"; }
-            }
-            if root.presentation == "Canvas": graph-canvas := Rectangle {
-                background: Theme.canvas;
-                border-width: 1px;
-                border-color: Theme.border-strong;
-                border-radius: Theme.radius;
-                clip: true;
+                spacing: Theme.space-xl;
                 vertical-stretch: 1;
-                min-height: 220px;
-                changed width => { root.canvas-width = self.width; }
-                changed height => { root.canvas-height = self.height; }
-                pan := TouchArea {
-                    enabled: root.canvas-ready;
-                    mouse-cursor: root.panning ? move : grab;
-                    pointer-event(event) => {
-                        if event.kind == PointerEventKind.cancel { root.panning = false; root.pan-x = root.pan-start-x; root.pan-y = root.pan-start-y; }
-                        else if event.button == PointerEventButton.left || event.button == PointerEventButton.middle {
-                            if event.kind == PointerEventKind.down { keys.focus(); root.pan-start-x = root.pan-x; root.pan-start-y = root.pan-y; root.panning = true; }
-                            else if event.kind == PointerEventKind.up && root.panning {
-                                root.panning = false;
-                                if root.pan-x != root.pan-start-x || root.pan-y != root.pan-start-y { root.change-view(root.pan-x, root.pan-y, root.zoom); }
+                ScrollView {
+                    width: 296px;
+                    content-width: self.width;
+                    horizontal-scrollbar-policy: always-off;
+                    VerticalLayout {
+                        alignment: start;
+                        padding-right: Theme.space-lg;
+                        spacing: Theme.space;
+                        SectionHeader { text: "Roots"; inset: false; collapsible: false; }
+                        Button { text: "Use selected entities"; clicked => { root.roots-from-selection(); } }
+                        if root.root-summary != "": Text { text: root.root-summary; color: Theme.text; wrap: word-wrap; }
+                        VerticalLayout {
+                            spacing: Theme.space-xs;
+                            Text { text: "Root IDs (advanced)"; color: Theme.text-muted; }
+                            LineEdit { text <=> root.roots; placeholder-text: "entity:12, entity:34"; edited => { root.fields-changed(); } accessible-label: "Graph root entity IDs"; }
+                        }
+                        SectionHeader { text: "Traversal"; inset: false; collapsible: false; }
+                        FieldRow {
+                            inset: false;
+                            label: "Direction";
+                            label-width: 72px;
+                            ComboBox { model: ["Outgoing", "Incoming", "Both"]; current-value <=> root.direction; horizontal-stretch: 1; selected => { root.fields-changed(); } }
+                        }
+                        FieldRow {
+                            inset: false;
+                            label: "Depth";
+                            label-width: 72px;
+                            LineEdit { text <=> root.depth; input-type: number; horizontal-stretch: 1; edited => { root.fields-changed(); } accessible-label: "Graph depth"; }
+                        }
+                        FieldRow {
+                            inset: false;
+                            label: "Scope";
+                            label-width: 72px;
+                            ComboBox { model: ["Authored", "Expanded instances"]; current-value <=> root.scope; horizontal-stretch: 1; selected => { root.fields-changed(); } }
+                        }
+                        scenario := SectionHeader {
+                            text: "Lookup scenario";
+                            detail: root.activator != "" || root.caller != "" || root.caller-unbound ? "Custom" : "Output owners";
+                            inset: false;
+                            expanded: false;
+                        }
+                        if scenario.expanded: VerticalLayout {
+                            spacing: Theme.space;
+                            FieldRow {
+                                inset: false;
+                                label: "Activator ID";
+                                label-width: 72px;
+                                LineEdit { text <=> root.activator; placeholder-text: "Optional source ID"; horizontal-stretch: 1; edited => { root.fields-changed(); } accessible-label: "Graph activator source ID"; }
                             }
+                            FieldRow {
+                                inset: false;
+                                label: "Caller ID";
+                                label-width: 72px;
+                                LineEdit { text <=> root.caller; enabled: !root.caller-unbound; placeholder-text: "Blank uses output owner"; horizontal-stretch: 1; edited => { root.fields-changed(); } accessible-label: "Graph caller source ID"; }
+                            }
+                            CheckBox { text: "Unbound caller"; checked <=> root.caller-unbound; toggled => { root.fields-changed(); } }
+                            MutedText { text: "Activator requires an ID. Context describes one lookup scenario, without simulating event propagation."; font-size: Theme.font-small; }
+                        }
+                        Button { text: "Inspect graph"; primary: true; clicked => { root.inspect(); } }
+                        if root.summary != "": MutedText { text: root.summary; }
+                        if root.selection-details != "": VerticalLayout {
+                            spacing: Theme.space;
+                            SectionHeader { text: root.chosen-node != "" ? "Selected node" : "Selected relationship"; inset: false; collapsible: false; }
+                            Text { text: root.selection-details; color: Theme.text; wrap: word-wrap; }
+                            if root.chosen-node != "": HorizontalLayout {
+                                spacing: Theme.space;
+                                Button { text: "Select owner"; enabled: root.can-act; clicked => { root.select-node(); } }
+                                Button { text: "Frame node"; enabled: root.can-act; clicked => { root.frame-node(); } }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            if root.chosen-node != "": MutedText { text: "Captured roots stay fixed when selection changes."; font-size: Theme.font-small; }
                         }
                     }
-                    moved => {
-                        if root.panning { root.pan-x = root.pan-start-x + (self.mouse-x - self.pressed-x) / 1px; root.pan-y = root.pan-start-y + (self.mouse-y - self.pressed-y) / 1px; }
-                    }
-                    scroll-event(event) => { root.zoom-at(event.delta-y > 0px ? 1.15 : 1 / 1.15, self.mouse-x / 1px, self.mouse-y / 1px); accept }
                 }
-                for edge[index] in root.graph-edges: GraphEdge {
-                    width: parent.width; height: parent.height;
-                    edge: edge; pan-x: root.pan-x; pan-y: root.pan-y; zoom: root.zoom;
-                    dragging: root.dragging; drag-x: root.drag-x; drag-y: root.drag-y;
-                    selected: root.chosen-edge == index;
-                    choose => { root.choose-edge(index); }
-                }
-                for node in root.graph-nodes: card := Rectangle {
-                    x: (root.pan-x + root.zoom * (root.dragging == node.id ? root.drag-x : node.x)) * 1px;
-                    y: (root.pan-y + root.zoom * (root.dragging == node.id ? root.drag-y : node.y)) * 1px;
-                    width: 220px * root.zoom;
-                    height: 78px * root.zoom;
-                    background: root.chosen-node == node.id ? Theme.selection : node.virtual-node ? Theme.agent-soft : Theme.control;
-                    border-color: root.chosen-node == node.id ? Theme.accent : node.is-root ? Theme.info : Theme.border-strong;
-                    border-width: node.is-root || root.chosen-node == node.id ? 2px : 1px;
-                    border-radius: Theme.radius;
-                    VerticalLayout {
-                        padding: 9px * root.zoom;
-                        spacing: 4px * root.zoom;
-                        Text { text: node.title; color: Theme.text; font-weight: 600; font-size: max(8px, Theme.font * root.zoom); overflow: elide; }
-                        Text { text: node.subtitle; color: Theme.text-muted; font-size: max(8px, Theme.font-small * root.zoom); overflow: elide; }
-                        Text { text: node.virtual-node ? "Read-only instance source" : node.is-root ? "Captured root" : node.id; color: node.virtual-node ? Theme.agent-text : Theme.info; font-size: max(8px, Theme.font-small * root.zoom); overflow: elide; }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: Theme.space;
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        ComboBox { width: 104px; model: ["Canvas", "List"]; current-value <=> root.presentation; accessible-label: "Graph presentation"; }
+                        if root.presentation == "Canvas": ComboBox { width: 112px; model: ["Layered", "Grid"]; current-value <=> root.layout; accessible-label: "Graph layout"; }
+                        if root.presentation == "Canvas": Button { text: "Arrange"; enabled: root.canvas-ready; clicked => { root.arrange(); } }
+                        if root.presentation == "Canvas": Button { text: "Reset diagram"; enabled: root.canvas-ready; clicked => { root.reset-diagram(); } }
+                        if root.presentation == "Canvas": Rectangle { horizontal-stretch: 1; }
+                        if root.presentation == "Canvas": IconButton { icon: Icon.minus; tooltip: "Zoom graph out"; enabled: root.canvas-ready; clicked => { root.zoom-at(1 / 1.2, root.canvas-width / 2px, root.canvas-height / 2px); } }
+                        if root.presentation == "Canvas": Text { text: round(root.zoom * 100) + "%"; min-width: 40px; horizontal-alignment: center; vertical-alignment: center; color: Theme.text-muted; }
+                        if root.presentation == "Canvas": IconButton { icon: Icon.plus; tooltip: "Zoom graph in"; enabled: root.canvas-ready; clicked => { root.zoom-at(1.2, root.canvas-width / 2px, root.canvas-height / 2px); } }
+                        if root.presentation == "Canvas": IconButton { icon: Icon.frame; tooltip: "Fit graph"; enabled: root.canvas-ready; clicked => { root.fit-view(); } }
+                        if root.presentation == "List": Text { text: "Search rows"; vertical-alignment: center; color: Theme.text-muted; }
+                        if root.presentation == "List": LineEdit { text <=> root.search; placeholder-text: "Name, class, entity ID, output or input"; horizontal-stretch: 1; edited => { root.fields-changed(); } accessible-label: "Search graph rows"; }
+                        if root.presentation == "List": ComboBox { width: 196px; model: ["Nodes", "Relationships", "Unresolved (whole map)"]; current-value <=> root.section; selected => { root.change-section(); } }
                     }
-                    node-touch := TouchArea {
-                        mouse-cursor: move;
-                        accessible-role: checkbox;
-                        accessible-label: node.title + ", " + node.subtitle;
-                        accessible-checked: root.chosen-node == node.id;
-                        pointer-event(event) => {
-                            if event.kind == PointerEventKind.cancel { root.dragging = ""; }
-                            else if event.button == PointerEventButton.left {
-                                if event.kind == PointerEventKind.down {
-                                    keys.focus(); root.choose-node(node.id); root.dragging = node.id;
-                                    root.drag-x = node.x; root.drag-y = node.y;
-                                    root.grab-x = self.mouse-x / 1px / root.zoom; root.grab-y = self.mouse-y / 1px / root.zoom;
-                                } else if event.kind == PointerEventKind.up && root.dragging == node.id {
-                                    if root.drag-x != node.x || root.drag-y != node.y { root.move-node(node.id, root.drag-x, root.drag-y); }
-                                    root.dragging = "";
+                    if root.presentation == "Canvas": Rectangle {
+                        background: Theme.canvas;
+                        border-width: 1px;
+                        border-color: Theme.border-strong;
+                        border-radius: Theme.radius;
+                        clip: true;
+                        vertical-stretch: 1;
+                        min-height: 260px;
+                        init => { root.canvas-width = self.width; root.canvas-height = self.height; }
+                        changed width => { root.canvas-width = self.width; }
+                        changed height => { root.canvas-height = self.height; }
+                        TouchArea {
+                            enabled: root.canvas-ready;
+                            mouse-cursor: root.panning ? move : grab;
+                            pointer-event(event) => {
+                                if event.kind == PointerEventKind.cancel { root.panning = false; root.pan-x = root.pan-start-x; root.pan-y = root.pan-start-y; }
+                                else if event.button == PointerEventButton.left || event.button == PointerEventButton.middle {
+                                    if event.kind == PointerEventKind.down { keys.focus(); root.pan-start-x = root.pan-x; root.pan-start-y = root.pan-y; root.panning = true; }
+                                    else if event.kind == PointerEventKind.up && root.panning {
+                                        root.panning = false;
+                                        if root.pan-x != root.pan-start-x || root.pan-y != root.pan-start-y { root.change-view(root.pan-x, root.pan-y, root.zoom); }
+                                    }
                                 }
                             }
+                            moved => {
+                                if root.panning { root.pan-x = root.pan-start-x + (self.mouse-x - self.pressed-x) / 1px; root.pan-y = root.pan-start-y + (self.mouse-y - self.pressed-y) / 1px; }
+                            }
+                            scroll-event(event) => { root.zoom-at(event.delta-y > 0px ? 1.15 : 1 / 1.15, self.mouse-x / 1px, self.mouse-y / 1px); accept }
                         }
-                        moved => {
-                            if root.dragging == node.id {
-                                root.drag-x = (card.x / 1px + self.mouse-x / 1px - root.pan-x) / root.zoom - root.grab-x;
-                                root.drag-y = (card.y / 1px + self.mouse-y / 1px - root.pan-y) / root.zoom - root.grab-y;
+                        for edge[index] in root.graph-edges: GraphEdge {
+                            width: parent.width;
+                            height: parent.height;
+                            edge: edge;
+                            pan-x: root.pan-x;
+                            pan-y: root.pan-y;
+                            zoom: root.zoom;
+                            dragging: root.dragging;
+                            drag-x: root.drag-x;
+                            drag-y: root.drag-y;
+                            selected: root.chosen-edge == index;
+                            related: root.chosen-node != "" && (edge.source == root.chosen-node || edge.target == root.chosen-node);
+                            dimmed: (root.chosen-node != "" && edge.source != root.chosen-node && edge.target != root.chosen-node) || (root.chosen-edge >= 0 && root.chosen-edge != index);
+                            choose => { root.choose-edge(index); }
+                        }
+                        for node in root.graph-nodes: card := Rectangle {
+                            x: (root.pan-x + root.zoom * (root.dragging == node.id ? root.drag-x : node.x)) * 1px;
+                            y: (root.pan-y + root.zoom * (root.dragging == node.id ? root.drag-y : node.y)) * 1px;
+                            width: 220px * root.zoom;
+                            height: 78px * root.zoom;
+                            background: root.chosen-node == node.id ? Theme.accent-soft : node.virtual-node ? Theme.agent-soft : Theme.control;
+                            border-color: root.chosen-node == node.id ? Theme.accent : node.is-root ? Theme.info : node.virtual-node ? Theme.agent-border : Theme.border-strong;
+                            border-width: node.is-root || root.chosen-node == node.id ? 2px : 1px;
+                            border-radius: Theme.radius;
+                            drop-shadow-blur: 10px;
+                            drop-shadow-offset-y: 2px;
+                            drop-shadow-color: Theme.scrim;
+                            VerticalLayout {
+                                padding-left: 12px * root.zoom;
+                                padding-right: 12px * root.zoom;
+                                alignment: center;
+                                spacing: 3px * root.zoom;
+                                Text { text: node.title; color: Theme.text; font-weight: 600; font-size: max(8px, Theme.font-title * root.zoom); overflow: elide; }
+                                Text { text: node.subtitle; color: Theme.text-muted; font-size: max(8px, Theme.font-small * root.zoom); overflow: elide; }
+                                Text {
+                                    text: node.virtual-node ? "Read-only instance source" : node.is-root ? "Captured root" : node.id;
+                                    color: node.virtual-node ? Theme.agent-text : node.is-root ? Theme.info : Theme.text-faint;
+                                    font-size: max(8px, Theme.font-small * root.zoom);
+                                    overflow: elide;
+                                }
+                            }
+                            TouchArea {
+                                mouse-cursor: move;
+                                accessible-role: checkbox;
+                                accessible-label: node.title + ", " + node.subtitle;
+                                accessible-checked: root.chosen-node == node.id;
+                                pointer-event(event) => {
+                                    if event.kind == PointerEventKind.cancel { root.dragging = ""; }
+                                    else if event.button == PointerEventButton.left {
+                                        if event.kind == PointerEventKind.down {
+                                            keys.focus(); root.choose-node(node.id); root.dragging = node.id;
+                                            root.drag-x = node.x; root.drag-y = node.y;
+                                            root.grab-x = self.mouse-x / 1px / root.zoom; root.grab-y = self.mouse-y / 1px / root.zoom;
+                                        } else if event.kind == PointerEventKind.up && root.dragging == node.id {
+                                            if root.drag-x != node.x || root.drag-y != node.y { root.move-node(node.id, root.drag-x, root.drag-y); }
+                                            root.dragging = "";
+                                        }
+                                    }
+                                }
+                                moved => {
+                                    if root.dragging == node.id {
+                                        root.drag-x = (card.x / 1px + self.mouse-x / 1px - root.pan-x) / root.zoom - root.grab-x;
+                                        root.drag-y = (card.y / 1px + self.mouse-y / 1px - root.pan-y) / root.zoom - root.grab-y;
+                                    }
+                                }
+                                scroll-event(event) => { root.zoom-at(event.delta-y > 0px ? 1.15 : 1 / 1.15, (card.x + self.mouse-x) / 1px, (card.y + self.mouse-y) / 1px); accept }
                             }
                         }
-                        scroll-event(event) => { root.zoom-at(event.delta-y > 0px ? 1.15 : 1 / 1.15, (card.x + self.mouse-x) / 1px, (card.y + self.mouse-y) / 1px); accept }
+                        if !root.canvas-ready: Text {
+                            x: 32px;
+                            width: parent.width - 64px;
+                            text: root.canvas-message;
+                            color: Theme.text-faint;
+                            wrap: word-wrap;
+                            horizontal-alignment: center;
+                        }
+                    }
+                    if root.presentation == "Canvas": MutedText { text: "Drag empty space to pan · wheel or +/− to zoom · drag nodes to place · click an edge label for I/O details. Layout and view are session-local."; font-size: Theme.font-small; }
+                    if root.presentation == "List": Text { text: root.page-summary; color: Theme.text-muted; }
+                    if root.presentation == "List": ScrollView {
+                        content-width: self.width;
+                        horizontal-scrollbar-policy: always-off;
+                        vertical-stretch: 1;
+                        min-height: 260px;
+                        VerticalLayout {
+                            alignment: start;
+                            padding-right: Theme.space-lg;
+                            spacing: Theme.space-xs;
+                            for row in root.rows: Rectangle {
+                                background: Theme.base;
+                                border-radius: Theme.radius-sm;
+                                VerticalLayout {
+                                    padding: Theme.space;
+                                    spacing: Theme.space-xs;
+                                    Text { text: row.title; color: Theme.text; font-weight: 600; wrap: word-wrap; }
+                                    Text { text: row.details; color: Theme.text-muted; font-size: Theme.font-small; wrap: word-wrap; }
+                                }
+                            }
+                            if root.rows.length == 0: MutedText { text: "No rows on this page."; }
+                        }
+                    }
+                    if root.presentation == "List": HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Previous page"; enabled: root.has-previous; clicked => { root.page(-1); } }
+                        Button { text: "Next page"; enabled: root.has-next; clicked => { root.page(1); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                 }
-                if !root.canvas-ready: Text { x: 20px; y: 20px; width: parent.width - 40px; text: root.canvas-message; wrap: word-wrap; color: Theme.text-muted; }
-            }
-            if root.presentation == "Canvas": Text { text: "Drag empty space to pan · wheel or +/− to zoom · drag nodes to place · click an edge label for I/O details. Layout and view are session-local."; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font-small; }
-            if root.presentation == "List": HorizontalLayout {
-                spacing: 8px;
-                Text { text: "Search rows"; vertical-alignment: center; }
-                LineEdit { text <=> root.search; placeholder-text: "Name, class, entity ID, output or input"; edited => { root.fields-changed(); } accessible-label: "Search graph rows"; }
-                ComboBox { model: ["Nodes", "Relationships", "Unresolved (whole map)"]; current-value <=> root.section; selected => { root.change-section(); } }
-            }
-            if root.presentation == "List": Text { text: root.page-summary; }
-            if root.presentation == "List": ScrollView {
-                content-width: self.width;
-                vertical-stretch: 1;
-                min-height: 220px;
-                VerticalLayout {
-                    alignment: start;
-                    padding-right: Theme.space-lg;
-                    spacing: 8px;
-                    for row in root.rows: VerticalLayout {
-                        padding: 8px;
-                        spacing: 4px;
-                        Text { text: row.title; font-weight: 600; wrap: word-wrap; }
-                        Text { text: row.details; wrap: word-wrap; color: Theme.text-muted; }
-                    }
-                }
-            }
-            if root.presentation == "List": HorizontalLayout {
-                spacing: 8px;
-                Button { text: "Previous page"; enabled: root.has-previous; clicked => { root.page(-1); } }
-                Button { text: "Next page"; enabled: root.has-next; clicked => { root.page(1); } }
-                Rectangle { horizontal-stretch: 1; }
-            }
-            if root.selection-details != "": ScrollView {
-                content-width: self.width;
-                vertical-stretch: 0;
-                min-height: 48px;
-                preferred-height: 74px;
-                max-height: 96px;
-                VerticalLayout { alignment: start; padding-right: Theme.space-lg; spacing: 4px; Text { text: root.selection-details; wrap: word-wrap; } }
-            }
-            if root.chosen-node != "": HorizontalLayout {
-                spacing: 8px;
-                Button { text: "Select owner"; enabled: root.can-act; clicked => { root.select-node(); } }
-                Button { text: "Frame node"; enabled: root.can-act; clicked => { root.frame-node(); } }
-                Text { text: "Captured roots stay fixed when selection changes."; color: Theme.text-muted; wrap: word-wrap; }
-                Rectangle { horizontal-stretch: 1; }
             }
             if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
-                spacing: 8px;
-                ComboBox { model: ["Replace", "Add", "Remove", "Toggle"]; current-value <=> root.mode; }
+                spacing: Theme.space;
+                Text { text: "Reached nodes"; vertical-alignment: center; color: Theme.text-muted; }
+                ComboBox { width: 112px; model: ["Replace", "Add", "Remove", "Toggle"]; current-value <=> root.mode; accessible-label: "Connected selection mode"; }
                 Button { text: "Select connected"; enabled: root.can-act; clicked => { root.select-connected(); } }
                 Button { text: "Frame connected"; enabled: root.can-act; clicked => { root.frame-connected(); } }
                 Rectangle { horizontal-stretch: 1; }

@@ -48,7 +48,7 @@ export component PasteWindow inherits Window {
     preferred-height: 690px;
     min-width: 560px;
     min-height: 460px;
-    background: Theme.hover;
+    background: Theme.panel;
     in property <string> destination;
     in property <string> payload;
     in property <string> details;
@@ -101,6 +101,7 @@ export component PasteWindow inherits Window {
                         spacing: Theme.space;
                         Button { text: "Read system clipboard"; clicked => { root.read-system(); } }
                         Button { text: "Publish to system clipboard"; enabled: root.has-payload; clicked => { root.publish-system(); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                     FieldRow {
                         inset: false;

@@ -60,7 +60,8 @@ export component CompiledVisibilityWindow inherits Window {
         }
         VerticalLayout {
             padding: Theme.space-xl;
-            spacing: 9px;
+            spacing: Theme.space-lg;
+            Text { text: "Visibility inspection"; font-size: Theme.font-display; font-weight: 600; }
             ScrollView {
                 content-width: self.width;
                 vertical-stretch: 1;
@@ -68,9 +69,8 @@ export component CompiledVisibilityWindow inherits Window {
                     alignment: start;
                     padding-right: Theme.space-lg;
                     spacing: 9px;
-                    Text { text: "Visibility inspection"; font-size: Theme.font-display; font-weight: 600; }
-                    Text { text: root.build-state; wrap: word-wrap; color: Theme.warning; }
-                    Text { text: root.summary; wrap: word-wrap; }
+                    if root.build-state != "": Text { text: root.build-state; wrap: word-wrap; color: Theme.warning; }
+                    if root.summary != "": Text { text: root.summary; wrap: word-wrap; }
                     HorizontalLayout {
                         spacing: 8px;
                         Text { text: "Target"; vertical-alignment: center; }
@@ -97,7 +97,7 @@ export component CompiledVisibilityWindow inherits Window {
                         Button { text: "Inspect camera position"; clicked => { root.inspect-camera-position(); } }
                     }
                     if root.position-result != "": Text { text: root.position-result; wrap: word-wrap; color: Theme.warning; }
-                    Text { text: root.page-label; }
+                    if root.page-label != "": Text { text: root.page-label; }
                     StandardTableView {
                         rows: root.rows;
                         columns <=> root.columns;
@@ -119,8 +119,8 @@ export component CompiledVisibilityWindow inherits Window {
                         Button { text: "Show selected guide"; enabled: root.can-frame; clicked => { root.show-guide(); } }
                         Button { text: "Clear guide"; clicked => { root.clear-guide(); } }
                     }
-                    Text { text: root.guide-state; wrap: word-wrap; }
-                    Text { text: root.visibility-label; }
+                    if root.guide-state != "": Text { text: root.guide-state; wrap: word-wrap; }
+                    if root.visibility-label != "": Text { text: root.visibility-label; }
                     StandardTableView {
                         rows: root.visibility-rows;
                         columns <=> root.visibility-columns;
@@ -145,7 +145,7 @@ export component CompiledVisibilityWindow inherits Window {
                     if root.diagnostics != "": TextEdit { text: root.diagnostics; read-only: true; wrap: word-wrap; min-height: 55px; max-height: 85px; accessible-label: "Visibility inspection diagnostics"; }
                 }
             }
-            HorizontalLayout { Rectangle { horizontal-stretch: 1; } Button { text: "Close"; clicked => { root.close-dialog(); } } }
+            HorizontalLayout { spacing: Theme.space; Rectangle { horizontal-stretch: 1; } Button { text: "Close"; clicked => { root.close-dialog(); } } }
         }
     }
 }

@@ -9,7 +9,7 @@ use super::{
 
 pub const NODE_WIDTH: f64 = 220.0;
 pub const NODE_HEIGHT: f64 = 78.0;
-const COLUMN_STEP: f64 = 300.0;
+const COLUMN_STEP: f64 = 360.0;
 const ROW_STEP: f64 = 110.0;
 const MAX_COORDINATE: f64 = 1_000_000.0;
 
@@ -125,6 +125,13 @@ impl Graph<'_> {
         let mut nodes = Vec::new();
         reserve(&mut nodes, self.selected.len())?;
         let mut ranks = BTreeMap::<usize, usize>::new();
+        let mut column_sizes = BTreeMap::<usize, usize>::new();
+        for &index in &self.selected {
+            *column_sizes
+                .entry(self.distances[index].unwrap())
+                .or_default() += 1;
+        }
+        let tallest = column_sizes.values().copied().max().unwrap_or(0);
         let columns = (self.selected.len() as f64).sqrt().ceil().max(1.0) as usize;
         for (ordinal, &index) in self.selected.iter().enumerate() {
             let entity = self.entity(index);
@@ -133,7 +140,11 @@ impl Graph<'_> {
             let automatic = match state.layout {
                 Layout::Layered => {
                     let rank = ranks.entry(depth).or_default();
-                    let position = [depth as f64 * COLUMN_STEP, *rank as f64 * ROW_STEP];
+                    let centering = (tallest - column_sizes[&depth]) as f64 / 2.0;
+                    let position = [
+                        depth as f64 * COLUMN_STEP,
+                        (*rank as f64 + centering) * ROW_STEP,
+                    ];
                     *rank += 1;
                     position
                 }

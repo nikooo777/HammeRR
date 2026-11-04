@@ -111,15 +111,20 @@ export component InstanceReferenceWindow inherits Window {
                     if !root.collapse-active || root.shared-form: HorizontalLayout {
                         spacing: Theme.space;
                         if !root.collapse-active: Button { text: "Check file"; enabled: root.owned; clicked => { root.check-file(); } }
+                        if !root.collapse-active: Button { text: "Refresh instance contents"; clicked => { root.refresh-contents(); } }
                         if root.shared-form: Button { text: root.collapse-active ? "Review collapse" : "Review shared form"; clicked => { root.review(); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                     if root.status != "": Text { text: root.status; color: Theme.text-muted; wrap: word-wrap; }
-                    if !root.collapse-active: Button { text: "Refresh instance contents"; clicked => { root.refresh-contents(); } }
                     if root.edit-mode || root.collapse-active: FieldRow {
                         inset: false; label: "Collapse scope"; label-width: root.field-label-width;
                         ComboBox { model: ["All visible references", "Selected references"]; current-index <=> root.collapse-scope; enabled: root.can-collapse && !root.collapse-active; accessible-label: "Collapse scope"; horizontal-stretch: 1; }
                     }
-                    if root.edit-mode && !root.collapse-active: Button { text: "Preview collapse references…"; enabled: root.can-collapse; clicked => { root.preview-collapse(); } }
+                    if root.edit-mode && !root.collapse-active: HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Preview collapse references…"; enabled: root.can-collapse; clicked => { root.preview-collapse(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
                     if (root.edit-mode || root.collapse-active) && root.collapse-scope == 1: Text { text: "Select any set of complete visible root references. Unselected and hidden references stay unchanged."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font; }
                     SectionHeader { inset: false; text: root.collapse-active ? "Reviewed contents" : "Instance contents"; collapsible: false; }
                     if root.contents != "": Text { text: root.contents; color: Theme.text-muted; wrap: word-wrap; }

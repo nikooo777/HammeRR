@@ -254,6 +254,7 @@ impl Mapping {
     }
 
     fn solid(&self, solid: &mut Solid) -> Result<(), EditError> {
+        crate::brush::canonicalize_precise(solid)?;
         if self.translation_only {
             return crate::edit::translate_solid(solid, self.offset, self.translation_texture_lock);
         }
@@ -288,6 +289,7 @@ impl Mapping {
                 self.displacement(disp, normal)?;
             }
         }
+        crate::brush::transform_precise(solid, self.linear, self.offset)?;
         let geometry = validated_geometry(solid)?;
         terrain::verify(self, solid, &geometry, &terrain_surfaces)?;
         if self.deforms

@@ -244,6 +244,29 @@ Point placements require unparented objects with supported fields. Unknown class
 ambiguous spatial keys and unsupported metadata stop the whole batch.
 See the [MCP catalog](mcp.md#numeric-reflection-and-shear) for exact classes.
 
+## Precision and other editors
+
+HammeRR keeps supported brush coordinates at double precision through edits and
+VMF saves. Compatible precise face windings stay consistent with the brush's
+plane data.
+
+Precise data must cover every side of a closed, convex brush with planar faces:
+at most 64 sides, with 3–64 vertices per face, inside ±65536 units.
+Unknown scalar fields inside a precise block are preserved on save. They block
+geometry edits.
+
+1. Click **Open…** and choose the VMF.
+2. Edit the brush using **Transform**.
+3. Click **Save** to retain the geometry and its compatible precise vertex data.
+4. Use **Open…** to continue working from the saved VMF.
+
+> [!WARNING]
+> In Hammer++, enable **Use precise vertex data** before opening the map and
+> leave it enabled when saving. Hammer++ uses float32 coordinates, saves six
+> significant digits, rounds coordinates within about 0.01 units of an integer
+> and merges vertices closer than about 0.1 units. Its selected game's coordinate
+> range also applies. Saving in another editor can change geometry and precision.
+
 ## Limits
 
 - Geometry must stay within ±65536 units. Playable coordinates have stricter [compiler limits](compile-and-play.md#coordinate-limits).

@@ -3,6 +3,12 @@ use source_formats::vmf::{Side, Solid};
 
 use crate::plane::{ON_EPSILON, Plane};
 
+pub(crate) mod precise;
+pub use precise::{
+    canonicalize_precise, has_precise_vertices, normalize_precise_vmf, prepare_precise_edit,
+    refresh_precise, transform_precise,
+};
+
 /// One visible polygon of a brush.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Face {
@@ -23,9 +29,14 @@ pub struct BrushGeometry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrushError {
     /// The side's three plane points are collinear.
-    DegeneratePlane { side: usize },
+    DegeneratePlane {
+        side: usize,
+    },
     /// The half-spaces don't enclose any volume.
     NoVolume,
+    InvalidPrecision {
+        message: String,
+    },
 }
 
 impl std::fmt::Display for BrushError {
@@ -33,6 +44,7 @@ impl std::fmt::Display for BrushError {
         match self {
             Self::DegeneratePlane { side } => write!(f, "side {side} has collinear plane points"),
             Self::NoVolume => f.write_str("brush planes enclose no volume"),
+            Self::InvalidPrecision { message } => f.write_str(message),
         }
     }
 }
@@ -40,9 +52,16 @@ impl std::fmt::Display for BrushError {
 impl std::error::Error for BrushError {}
 
 impl BrushGeometry {
-    /// Intersects the solid's half-spaces into face polygons. Sides whose
-    /// polygon is clipped away entirely (redundant planes) produce no face.
+    /// Uses complete validated precise rings when present, otherwise intersects
+    /// the solid's half-spaces. Redundant planes produce no face.
     pub fn from_solid(solid: &Solid) -> Result<Self, BrushError> {
+        if let Some(geometry) =
+            precise::geometry(solid, false).map_err(|error| BrushError::InvalidPrecision {
+                message: error.to_string(),
+            })?
+        {
+            return Ok(geometry);
+        }
         let planes = solid
             .sides
             .iter()

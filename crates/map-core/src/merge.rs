@@ -58,6 +58,7 @@ fn plan(document: &Document, sources: &[u32]) -> std::result::Result<(Solid, Res
                 "Brush {id}: merging displacements is unsupported"
             )));
         }
+        crate::brush::precise::ensure_editable(solid)?;
         let shape = subobject::topology(solid)?;
         vertices.extend(shape.vertices.into_iter().map(|vertex| vertex.position));
         for side in &solid.sides {
@@ -71,6 +72,9 @@ fn plan(document: &Document, sources: &[u32]) -> std::result::Result<(Solid, Res
     }
     let (owner, first) = inputs[0];
     let mut merged = first.clone();
+    let precise = inputs
+        .iter()
+        .any(|(_, solid)| crate::brush::has_precise_vertices(solid));
     merged.sides.clear();
     let mut planes: Vec<Plane> = Vec::new();
     let mut faces = Vec::new();
@@ -95,6 +99,7 @@ fn plan(document: &Document, sources: &[u32]) -> std::result::Result<(Solid, Res
             });
         }
     }
+    crate::brush::refresh_precise(&mut merged, precise)?;
     subobject::topology(&merged).map_err(|error| {
         invalid(format!(
             "The brush union is not a supported convex solid: {error}"

@@ -1,11 +1,20 @@
 use super::*;
 
 pub(crate) fn placement_solid(solid: &Solid) -> std::result::Result<(), EditError> {
+    let precise = solid
+        .precise_vertices()
+        .map_err(|error| invalid(error.to_string()))?;
     if !solid.extra_properties.0.is_empty()
         || !solid.extra.is_empty()
+        || precise
+            .as_ref()
+            .is_some_and(|rings| rings.iter().any(|ring| ring.has_opaque_fields))
         || solid.sides.iter().any(|side| {
             !side.extra_properties.0.is_empty()
-                || !side.extra.is_empty()
+                || side
+                    .extra
+                    .iter()
+                    .any(|node| !source_formats::vmf::is_precise_vertices_key(&node.key))
                 || side.displacement.as_ref().is_some_and(|disp| {
                     !disp.extra_properties.0.is_empty() || !disp.extra.is_empty()
                 })

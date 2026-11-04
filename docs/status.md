@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 86.2% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 86.5% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -26,7 +26,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [Changed content](textures.md#reload-mounted-content-and-definitions) | Explicit current-mount and FGD refresh with dependent cache invalidation, atomic failure retention and optional native change watching. | Changes require explicit Reload content. Watch coverage/errors remain visible; running games require stop/restart. |
 | [Workspace layout](workspace-layout.md) | Save dock, Agent feed and tool-rail visibility and preferred sizes; save 13 [preview defaults](preview-defaults.md), including surface view. Shared live changes and explicit Save/Apply/Reload/Reset. | Preferred sizes fit the window; window placement stays with the operating system. |
 | [Coordinated views](basics.md#coordinated-views) | Single, two-column, two-row and four-pane layouts; independent cameras, shared selection/editing, linked orthographic navigation and Frame all views. | Session-local configuration; four panes and 16,777,216 physical canvas pixels. |
-| [VMF and recovery](map-tools.md) | Preserved imported fields, checked Open/Save, selected-camera validation, bounded VPK mounting, recovery snapshots and map checks. | Other-editor round trips; general automatic repairs. |
+| [VMF and recovery](map-tools.md) | Preserved imported fields, checked Open/Save and precise brush windings, selected-camera validation, bounded VPK mounting, recovery snapshots and map checks. | Unsupported external-editor extensions; general automatic repairs. |
 | [Design notes](map-tools.md#design-notes) | Bounded map, object and region notes; shared drafts, source-change status, Undo and checked segmented VMF storage retained by the Hammer++ format. | Other editors must retain all segments. External compilers can emit the storage keys. |
 | [Recent maps](recent-maps.md) | Frozen content/FGD/build/launch context, guarded background reopen, cancellation and explicit relocation with preserved source routes. | Assets do not move with the map. Old records retain compatible legacy build context. |
 | [History](history.md) | Shared Undo/Redo, document-bound navigation and change summaries. | Persistent history and full property diffs. |

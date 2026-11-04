@@ -55,7 +55,8 @@ fn main() {
 
     let start = Instant::now();
     let fs = GameFs::from_gameinfo(gameinfo).expect("mount game");
-    let vmf = Vmf::parse(&std::fs::read_to_string(map).expect("read map")).expect("parse map");
+    let mut vmf = Vmf::parse(&std::fs::read_to_string(map).expect("read map")).expect("parse map");
+    map_core::brush::normalize_precise_vmf(&mut vmf).expect("validate precise face vertices");
     let parsed = start.elapsed();
     let mut library = MaterialLibrary::default();
     let mesh = SceneMesh::build(&vmf, &fs, &mut library, &HashSet::new());

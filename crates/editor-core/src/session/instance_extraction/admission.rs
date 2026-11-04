@@ -33,10 +33,7 @@ fn solid(solid: &Solid) -> Result<(), String> {
         || !solid.extra.is_empty()
         || !solid.extra_properties.0.is_empty()
         || solid.sides.iter().any(|side| {
-            side.material.len() > instances::MAX_FIELD_BYTES
-                || side.displacement.is_some()
-                || !side.extra.is_empty()
-                || !side.extra_properties.0.is_empty()
+            side.material.len() > instances::MAX_FIELD_BYTES || side.displacement.is_some()
         })
     {
         return Err(
@@ -44,6 +41,26 @@ fn solid(solid: &Solid) -> Result<(), String> {
         );
     }
     editor(solid.editor.as_ref())
+}
+
+fn face_metadata(solid: &Solid) -> Result<(), String> {
+    let precise = solid
+        .precise_vertices()
+        .map_err(|error| error.to_string())?;
+    if precise
+        .as_ref()
+        .is_some_and(|rings| rings.iter().any(|ring| ring.has_opaque_fields))
+        || solid.sides.iter().any(|side| {
+            !side.extra_properties.0.is_empty()
+                || side
+                    .extra
+                    .iter()
+                    .any(|node| !source_formats::vmf::is_precise_vertices_key(&node.key))
+        })
+    {
+        return Err("Unknown face metadata cannot be proven independent of extracted IDs".into());
+    }
+    Ok(())
 }
 
 fn side_bindings(session: &Session, sides: &BTreeSet<u32>) -> Result<(), String> {
@@ -123,6 +140,9 @@ pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result
     partitions.validate()?;
     let views = map_core::saved_views::Views::parse(vmf)?;
     views.validate()?;
+    for solid in vmf.solids() {
+        face_metadata(solid)?;
+    }
     if !vmf.world.extra.is_empty()
         || !vmf.visgroups_extra.is_empty()
         || !views.extra.is_empty()
@@ -146,14 +166,9 @@ pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result
                 })
         })
         || vmf.entities.iter().any(|entity| !entity.extra.is_empty())
-        || vmf.solids().any(|solid| {
-            !solid.extra.is_empty()
-                || !solid.extra_properties.0.is_empty()
-                || solid
-                    .sides
-                    .iter()
-                    .any(|side| !side.extra.is_empty() || !side.extra_properties.0.is_empty())
-        })
+        || vmf
+            .solids()
+            .any(|solid| !solid.extra.is_empty() || !solid.extra_properties.0.is_empty())
     {
         return Err("Unknown world, group, object, face or saved-view extension metadata cannot be proven independent of extracted IDs".into());
     }
@@ -438,7 +453,11 @@ fn solid_bytes(solid: &Solid) -> usize {
         + solid
             .sides
             .iter()
-            .map(|side| side.material.capacity())
+            .map(|side| {
+                side.material.capacity()
+                    + side.extra.capacity() * std::mem::size_of::<source_formats::keyvalues::Node>()
+                    + side.extra.iter().map(node_bytes).sum::<usize>()
+            })
             .sum::<usize>()
         + solid.editor.as_ref().map_or(0, properties_bytes)
 }

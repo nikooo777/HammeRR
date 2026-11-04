@@ -246,6 +246,7 @@ pub fn translate_solid(
     if !delta.is_finite() {
         return Err(EditError::Invalid("Translation must be finite".into()));
     }
+    crate::brush::canonicalize_precise(solid)?;
     for side in &mut solid.sides {
         for p in &mut side.plane.0 {
             *p += delta;
@@ -270,6 +271,7 @@ pub fn translate_solid(
             }
         }
     }
+    crate::brush::transform_precise(solid, glam::DMat3::IDENTITY, delta)?;
     crate::transform::validated_geometry(solid)?;
     Ok(())
 }

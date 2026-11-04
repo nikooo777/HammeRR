@@ -121,6 +121,7 @@ pub fn plan_weld_with_textures(
             })
             .collect::<Vec<_>>();
         let mut replacement = source.clone();
+        let precise = crate::brush::prepare_precise_edit(&mut replacement)?;
         replacement.sides.clear();
         let mut removed_sides = Vec::new();
         for original in &source.sides {
@@ -208,6 +209,7 @@ pub fn plan_weld_with_textures(
             }
             replacement.sides.push(side);
         }
+        crate::brush::refresh_precise(&mut replacement, precise)?;
         let after = topology(&replacement)?;
         let mut unique = Vec::<DVec3>::new();
         for point in &positions {

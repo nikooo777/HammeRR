@@ -145,6 +145,7 @@ pub(crate) fn checked_half(
     material: &str,
 ) -> std::result::Result<Solid, HalfError> {
     let mut part = solid.clone();
+    let precise = crate::brush::prepare_precise_edit(&mut part).map_err(HalfError::Invalid)?;
     let (u, v) = world_texture_axes(plane.normal);
     part.sides.push(Side {
         id: 0,
@@ -183,6 +184,7 @@ pub(crate) fn checked_half(
         )));
     }
     checked_geometry(&part)?;
+    crate::brush::refresh_precise(&mut part, precise).map_err(HalfError::Invalid)?;
     Ok(part)
 }
 

@@ -130,6 +130,7 @@ pub fn split_with_textures(
             .chain([position])
             .collect::<Vec<_>>();
         let mut replacement = source.clone();
+        let precise = crate::brush::prepare_precise_edit(&mut replacement)?;
         replacement.sides.clear();
         let mut new_sides = Vec::new();
         let mut faces = Vec::new();
@@ -203,6 +204,7 @@ pub fn split_with_textures(
                 "Brush {id}: split exceeds the 64-face limit"
             )));
         }
+        crate::brush::refresh_precise(&mut replacement, precise)?;
         let after = topology(&replacement)?;
         if after.vertices.len() != positions.len()
             || positions.iter().any(|point| {

@@ -13,7 +13,7 @@ const MAX_PARSE_DEPTH: usize = 64;
 const MAX_PARSE_NODES: usize = 65536;
 const MAX_SEARCH: usize = 512;
 const MAX_REPORT: usize = 1024 * 1024;
-const SCOPE: &str = "Committed root-world brushes and whole root entities, including saved hidden content. Keys are object kind and authored ID. Canonical typed VMF node equality counts IDs, editor fields, hidden flags, ordered properties/connections/brushes/sides, opaque blocks and effective entity child layout. Existing typed parsing/writing normalizes numeric spellings and signed zero. Root object order, map settings/world properties/groups/cameras, expanded instances and unapplied drafts are excluded. No geometric equivalence or merge. Actions use all filtered eligible current objects across pages. Captured rows are verified for each explicit request, not continuously watched.";
+const SCOPE: &str = "Committed root-world brushes and whole root entities, including saved hidden content. Keys are object kind and authored ID. Canonical typed VMF node equality counts IDs, editor fields, hidden flags, ordered properties/connections/brushes/sides, opaque blocks and effective entity child layout. Existing typed parsing/writing normalizes numeric spellings and signed zero. Complete validated precise face rings define canonical plane points. Root object order, map settings/world properties/groups/cameras, expanded instances and unapplied drafts are excluded. No geometric equivalence or merge. Actions use all filtered eligible current objects across pages. Captured rows are verified for each explicit request, not continuously watched.";
 
 #[derive(Default)]
 pub(super) struct State {
@@ -174,10 +174,20 @@ impl Request {
                     comparison::admit_parsed(&parsed, &mut budget, &mut || {
                         self.control.checkpoint()
                     })?;
-                    let external = source_formats::vmf::Vmf::from_nodes(&parsed)
+                    let mut external = source_formats::vmf::Vmf::from_nodes(&parsed)
                         .map_err(|error| error.to_string())?;
                     drop(parsed);
                     drop(bytes);
+                    for solid in external.world.solids.iter_mut().chain(
+                        external
+                            .entities
+                            .iter_mut()
+                            .flat_map(|entity| &mut entity.solids),
+                    ) {
+                        budget.checkpoint(&mut || self.control.checkpoint())?;
+                        map_core::brush::canonicalize_precise(solid)
+                            .map_err(|error| error.to_string())?;
+                    }
                     self.control.checkpoint()?;
                     let rows =
                         comparison::compare(document.vmf(), &external, &mut budget, &mut || {

@@ -64,11 +64,13 @@ fn incidence(vertex: &PartitionVertex) -> BTreeSet<u32> {
     }
 }
 
-fn side_on_plane(template: &Side, id: u32, points: [DVec3; 3]) -> Side {
+fn side_on_plane(template: &Side, id: u32, points: [DVec3; 3]) -> Result<Side, EditError> {
     let mut side = template.clone();
+    side.clear_precise_vertices()
+        .map_err(|error| invalid(error.to_string()))?;
     side.id = id;
     side.plane = source_formats::vmf::Plane(points);
-    side
+    Ok(side)
 }
 
 pub fn plan_partition_extrusion(
@@ -188,7 +190,7 @@ pub fn plan_partition_extrusion_with_surfaces(
             polygons.push(vec![bottom[index], bottom[next], top[next], top[index]]);
         }
         let planes = crate::primitive::convex_planes(polygons)?;
-        let mut top_side = side_on_plane(original, 1, planes[0]);
+        let mut top_side = side_on_plane(original, 1, planes[0])?;
         if let Some(material) = materials.get(&(solid_id, partition_id)) {
             top_side.material.clone_from(material);
         }
@@ -203,7 +205,7 @@ pub fn plan_partition_extrusion_with_surfaces(
             top_side.v_axis = projection.v;
             top_side.rotation = projection.rotation;
         }
-        let mut sides = vec![top_side, side_on_plane(original, 2, planes[1])];
+        let mut sides = vec![top_side, side_on_plane(original, 2, planes[1])?];
         let mut faces = vec![
             ExtrusionFace {
                 side: 1,
@@ -229,7 +231,7 @@ pub fn plan_partition_extrusion_with_surfaces(
                 .and_then(|id| source.sides.iter().find(|side| side.id == id))
                 .unwrap_or(original);
             let id = (index + 3) as u32;
-            let mut side = side_on_plane(template, id, planes[index + 2]);
+            let mut side = side_on_plane(template, id, planes[index + 2])?;
             let normal = Plane::from_points(side.plane.0).unwrap().normal;
             let (u, v) = crate::edit::world_texture_axes(normal);
             side.u_axis = UvAxis {
@@ -258,7 +260,7 @@ pub fn plan_partition_extrusion_with_surfaces(
                 },
             });
         }
-        let prism = Solid {
+        let mut prism = Solid {
             id: 1,
             sides,
             editor: source.editor.clone(),
@@ -266,6 +268,7 @@ pub fn plan_partition_extrusion_with_surfaces(
             extra_properties: Properties::default(),
             extra: Vec::new(),
         };
+        crate::brush::refresh_precise(&mut prism, crate::brush::has_precise_vertices(source))?;
         let shape = topology(&prism)?;
         if shape.vertices.len() != count * 2
             || shape.faces.iter().any(|face| {

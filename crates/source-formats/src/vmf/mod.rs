@@ -4,7 +4,13 @@
 //! and written back after the known ones, so files from other Hammer versions
 //! (including Hammer++) survive a load/save cycle.
 
+mod precise_vertices;
 mod values;
+
+pub use precise_vertices::{
+    MAX_PRECISE_COORDINATE, MAX_PRECISE_ENTRIES, MAX_PRECISE_FIELDS, MAX_PRECISE_SIDES,
+    MAX_PRECISE_VERTICES, PreciseVertices, is_precise_vertices_key,
+};
 
 pub use values::{
     Color, Plane, UvAxis, format_number, format_vec3, format_vec3_bracketed, numeric_tokens,
@@ -720,14 +726,16 @@ impl Solid {
                 (Value::Block(_), _) => extra.push(node.clone()),
             }
         }
-        Ok(Self {
+        let solid = Self {
             id: required(id, &path, "id")?,
             sides,
             editor,
             hidden,
             extra_properties,
             extra,
-        })
+        };
+        solid.precise_vertices()?;
+        Ok(solid)
     }
 
     pub fn to_node(&self) -> Node {

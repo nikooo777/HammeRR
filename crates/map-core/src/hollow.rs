@@ -117,6 +117,8 @@ fn plan(
         }
         let mut outer = source.clone();
         let mut inner = source.clone();
+        let precise_outer = crate::brush::prepare_precise_edit(&mut outer)?;
+        let precise_inner = crate::brush::prepare_precise_edit(&mut inner)?;
         for (index, side) in source.sides.iter().enumerate() {
             if openings.contains(&side.id) {
                 continue;
@@ -134,6 +136,8 @@ fn plan(
                 });
             }
         }
+        crate::brush::refresh_precise(&mut outer, precise_outer)?;
+        crate::brush::refresh_precise(&mut inner, precise_inner)?;
         let inner_shape = subobject::topology(&inner).map_err(|error| {
             invalid(format!(
                 "Brush {id}: thickness leaves no valid inner space ({error})"
@@ -173,10 +177,10 @@ fn plan(
                 },
                 &side.material,
             )?;
-            inherit_cap(&mut part, side);
+            inherit_cap(&mut part, side)?;
             parts.push(part);
             remainder = clip::half(&remainder, plane, &side.material)?;
-            inherit_cap(&mut remainder, side);
+            inherit_cap(&mut remainder, side)?;
         }
         total += parts.len();
         if total > MAX_PARTS {
@@ -194,12 +198,14 @@ fn plan(
     Ok(shells)
 }
 
-fn inherit_cap(solid: &mut Solid, source: &source_formats::vmf::Side) {
+fn inherit_cap(
+    solid: &mut Solid,
+    source: &source_formats::vmf::Side,
+) -> std::result::Result<(), EditError> {
     let cap = solid.sides.last_mut().unwrap();
-    let plane = cap.plane;
-    *cap = source.clone();
+    *cap = crate::brush::precise::inherit_surface(source, cap)?;
     cap.id = 0;
-    cap.plane = plane;
+    Ok(())
 }
 
 pub fn hollow(

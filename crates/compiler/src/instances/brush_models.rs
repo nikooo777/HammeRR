@@ -341,6 +341,8 @@ pub(super) fn lower_initial_pose(
                 axis.offset -= translation.dot(axis.axis) / axis.scale;
             }
         }
+        map_core::brush::transform_precise(solid, rotation, translation)
+            .map_err(|error| format!("Child brush model solid {}: {error}", solid.id))?;
     }
     entity
         .properties

@@ -928,6 +928,20 @@ must be exactly −1 or −2; use explicit `angles` for other negative orientati
 Use `select_solids` and omit transform IDs to operate on selected child brushes.
 Invalid requests retain the previous draft, map and history.
 
+## Precise VMF brush geometry
+
+`open_map` accepts complete `vertices_plus` face rings on supported convex
+brushes. `get_brush_components` reports these authoritative coordinates.
+Shared transforms, component edits, clipping, CSG and Save keep the rings and
+plane points consistent. No separate editing API is required.
+
+The profile permits 4–64 sides, 3–64 vertices per face and coordinates within
+±65536 units. Partial, malformed, nonplanar, open or ambiguous data rejects.
+Unknown scalar fields survive Open/Save but prevent geometry changes. Identity
+copies retain them. Instance and clipboard placement require the known schema.
+See [precision and other editors](brushes.md#precision-and-other-editors) for
+Hammer++ rounding and option limits.
+
 ## Attached transform pivots
 
 Call `transform_pivot_attachment` with `action:"inspect"` to read the current

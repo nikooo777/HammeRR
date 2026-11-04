@@ -109,9 +109,7 @@ fn checked_half(
 ) -> std::result::Result<Solid, clip::HalfError> {
     let mut part = clip::checked_half(solid, plane, &source.material)?;
     let cap = part.sides.last_mut().unwrap();
-    let plane = cap.plane;
-    *cap = source.clone();
-    cap.plane = plane;
+    *cap = crate::brush::precise::inherit_surface(source, cap).map_err(clip::HalfError::Invalid)?;
     subobject::topology(&part).map_err(clip::HalfError::Invalid)?;
     Ok(part)
 }
@@ -402,9 +400,7 @@ pub fn carve_many_with_material(
                         },
                         source.id,
                     );
-                    let plane = side.plane;
-                    let mut surface = source.clone();
-                    surface.plane = plane;
+                    let mut surface = crate::brush::precise::inherit_surface(source, side)?;
                     if let CutMaterialPolicy::Material(material) = &cut_material {
                         surface.material = material.clone();
                     }

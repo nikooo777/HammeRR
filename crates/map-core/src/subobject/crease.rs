@@ -322,6 +322,7 @@ fn crease_roofs(
             .find(|id| source.sides.iter().all(|side| side.id != *id))
             .unwrap();
         let mut replacement = source.clone();
+        let precise = crate::brush::prepare_precise_edit(&mut replacement)?;
         let index = replacement
             .sides
             .iter()
@@ -365,6 +366,7 @@ fn crease_roofs(
                 replacement.sides[index + roof_index].v_axis = projection.v;
             }
         }
+        crate::brush::refresh_precise(&mut replacement, precise)?;
         let after = topology(&replacement)?;
         if after.vertices.len() != points.len()
             || points.iter().any(|point| {

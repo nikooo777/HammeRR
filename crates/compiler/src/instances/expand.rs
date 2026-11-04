@@ -167,7 +167,9 @@ impl<'a> Expansion<'a> {
         if self.nodes > MAX_TOTAL_NODES {
             return Err(format!("Instance sources exceed {MAX_TOTAL_NODES} nodes"));
         }
-        let child = Vmf::from_nodes(&parsed).map_err(|error| error.to_string())?;
+        let mut child = Vmf::from_nodes(&parsed).map_err(|error| error.to_string())?;
+        normalize_precise(&mut child, self.control)
+            .map_err(|error| format!("Instance {relative}: {error}"))?;
         if crate::lighting::emission::material_emission_native_direct(&child.world.properties)
             .map_err(|error| format!("Instance {relative}: {error}"))?
         {

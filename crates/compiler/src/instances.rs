@@ -569,9 +569,15 @@ pub(crate) fn checked_solid_geometry_controlled(
     solid: &Solid,
     control: &Control,
 ) -> Result<BrushGeometry, String> {
+    let precise = solid
+        .precise_vertices()
+        .map_err(|error| error.to_string())?;
     if solid.sides.len() > MAX_BRUSH_SIDES
         || !solid.extra.is_empty()
         || !solid.extra_properties.0.is_empty()
+        || precise
+            .as_ref()
+            .is_some_and(|rings| rings.iter().any(|ring| ring.has_opaque_fields))
     {
         return Err(format!(
             "Child brush {} exceeds {MAX_BRUSH_SIDES} sides or has opaque metadata",
@@ -586,7 +592,12 @@ pub(crate) fn checked_solid_geometry_controlled(
                 side.id
             ));
         }
-        if !side.extra.is_empty() || !side.extra_properties.0.is_empty() {
+        if side
+            .extra
+            .iter()
+            .any(|node| !source_formats::vmf::is_precise_vertices_key(&node.key))
+            || !side.extra_properties.0.is_empty()
+        {
             return Err(format!("Child side {} has opaque metadata", side.id));
         }
         for axis in [&side.u_axis, &side.v_axis] {
@@ -1136,6 +1147,18 @@ fn prepare_purpose_roots<'a>(
         occurrence_budget: occurrences::OccurrenceBudget::default(),
         material_sources: None,
     };
+    for solid in vmf.solids() {
+        control
+            .checkpoint()
+            .map_err(|message| Diagnostic::error(message, None, None))?;
+        if map_core::brush::has_precise_vertices(solid) {
+            prepared.vmf = Cow::Owned(vmf.clone());
+            normalize_precise(prepared.vmf.to_mut(), control)
+                .map_err(|message| Diagnostic::error(message, None, None))?;
+            break;
+        }
+    }
+    let vmf = prepared.vmf.as_ref();
     if !requires_source(vmf) {
         return Ok(prepared);
     }
@@ -1244,4 +1267,17 @@ fn prepare_purpose_roots<'a>(
         ));
     }
     Ok(prepared)
+}
+
+fn normalize_precise(vmf: &mut Vmf, control: &Control) -> Result<(), String> {
+    for solid in vmf.world.solids.iter_mut().chain(
+        vmf.entities
+            .iter_mut()
+            .flat_map(|entity| &mut entity.solids),
+    ) {
+        control.checkpoint()?;
+        map_core::brush::canonicalize_precise(solid)
+            .map_err(|error| format!("Brush {}: {error}", solid.id))?;
+    }
+    Ok(())
 }

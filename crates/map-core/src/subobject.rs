@@ -45,7 +45,7 @@ pub use partition_textures::{PartitionTexture, PieceTexture, crease_partitions_w
 pub const MAX_SIDES: usize = 64;
 pub const MAX_SOLIDS: usize = 16;
 pub const MAX_COMPONENTS: usize = 512;
-const EPSILON: f64 = 0.000_01;
+pub(crate) const EPSILON: f64 = 0.000_01;
 const MIN_EDGE: f64 = 0.002;
 const MAX_COORDINATE: f64 = 65_536.0;
 
@@ -111,6 +111,24 @@ pub fn solid(document: &Document, id: u32) -> Result<(ObjectId, &Solid), EditErr
 }
 
 pub fn topology(solid: &Solid) -> Result<Topology, EditError> {
+    topology_input(solid, true)?;
+    let geometry = BrushGeometry::from_solid(solid)
+        .map_err(|error| invalid(format!("Brush {}: {error}", solid.id)))?;
+    topology_from_geometry(solid, &geometry)
+}
+
+pub(crate) fn topology_from_geometry(
+    solid: &Solid,
+    geometry: &BrushGeometry,
+) -> Result<Topology, EditError> {
+    topology_with_geometry(solid, geometry, true)
+}
+
+pub(crate) fn validate_geometry(solid: &Solid, geometry: &BrushGeometry) -> Result<(), EditError> {
+    topology_with_geometry(solid, geometry, false).map(|_| ())
+}
+
+fn topology_input(solid: &Solid, identities: bool) -> Result<(), EditError> {
     let fail = |message: &str| invalid(format!("Brush {}: {message}", solid.id));
     if !(4..=MAX_SIDES).contains(&solid.sides.len()) {
         return Err(fail("component editing requires 4–64 sides"));
@@ -120,7 +138,7 @@ pub fn topology(solid: &Solid) -> Result<Topology, EditError> {
         .iter()
         .map(|side| side.id)
         .collect::<BTreeSet<_>>();
-    if ids.len() != solid.sides.len() {
+    if identities && ids.len() != solid.sides.len() {
         return Err(fail("duplicate face IDs make components ambiguous"));
     }
     if solid
@@ -130,7 +148,16 @@ pub fn topology(solid: &Solid) -> Result<Topology, EditError> {
     {
         return Err(fail("plane points must be finite"));
     }
-    let geometry = BrushGeometry::from_solid(solid).map_err(|error| fail(&error.to_string()))?;
+    Ok(())
+}
+
+fn topology_with_geometry(
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    identities: bool,
+) -> Result<Topology, EditError> {
+    topology_input(solid, identities)?;
+    let fail = |message: &str| invalid(format!("Brush {}: {message}", solid.id));
     if geometry.faces.len() != solid.sides.len() {
         return Err(fail(
             "redundant or missing faces; repair the brush before editing components",
@@ -140,7 +167,11 @@ pub fn topology(solid: &Solid) -> Result<Topology, EditError> {
     let mut faces = Vec::new();
     let mut adjacency: BTreeMap<[usize; 2], Vec<u32>> = BTreeMap::new();
     for face in &geometry.faces {
-        let side = solid.sides[face.side].id;
+        let side = if identities {
+            solid.sides[face.side].id
+        } else {
+            face.side as u32 + 1
+        };
         let mut ring = Vec::new();
         for point in &face.vertices {
             if !point.is_finite() || point.abs().max_element() > MAX_COORDINATE {
@@ -382,6 +413,7 @@ fn plan_affine(
             }
         }
         let mut replacement = source.clone();
+        let precise = crate::brush::prepare_precise_edit(&mut replacement)?;
         for face in &topology.faces {
             let ring = face
                 .vertices
@@ -466,6 +498,7 @@ fn plan_affine(
                 target.plane.0 = triple;
             }
         }
+        crate::brush::refresh_precise(&mut replacement, precise)?;
         let rebuilt = self::topology(&replacement)?;
         if rebuilt.vertices.len() != topology.vertices.len()
             || rebuilt.edges.len() != topology.edges.len()

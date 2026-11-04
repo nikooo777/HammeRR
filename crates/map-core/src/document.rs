@@ -134,9 +134,10 @@ pub struct Document {
 }
 
 impl Document {
-    pub fn try_new(vmf: Vmf) -> Result<Self, EditError> {
+    pub fn try_new(mut vmf: Vmf) -> Result<Self, EditError> {
         vmf.validate_ids()
             .map_err(|error| EditError::Invalid(error.to_string()))?;
+        crate::brush::normalize_precise_vmf(&mut vmf)?;
         Ok(Self::new(vmf))
     }
 
@@ -378,6 +379,7 @@ impl Document {
             visgroups: None,
         };
         let result = f(&mut tx).and_then(|value| {
+            tx.reconcile_precise()?;
             tx.remove_deleted_context()?;
             finalize(&value)?;
             Ok(value)
@@ -800,6 +802,44 @@ impl Transaction<'_> {
         }
         removed.retain(|id| !context::object_exists(self.doc, *id));
         context::remove_notes_for(self, &removed)
+    }
+
+    fn reconcile_precise(&mut self) -> Result<(), EditError> {
+        if self.touched.is_empty() {
+            return Ok(());
+        }
+        let mut before = std::collections::BTreeMap::new();
+        let mut owners = HashSet::new();
+        for (id, state) in &self.touched {
+            owners.insert(*id);
+            if let Some((_, object)) = state {
+                match object {
+                    Object::Solid(solid) => {
+                        before.insert(solid.id, solid);
+                    }
+                    Object::Entity(entity) => {
+                        for solid in &entity.solids {
+                            before.insert(solid.id, solid);
+                        }
+                    }
+                }
+            }
+        }
+        for solid in &mut self.doc.vmf.world.solids {
+            if owners.contains(&ObjectId::Solid(solid.id)) {
+                let previous = before.get(&solid.id).copied();
+                crate::brush::precise::reconcile(solid, previous)?;
+            }
+        }
+        for entity in &mut self.doc.vmf.entities {
+            if owners.contains(&ObjectId::Entity(entity.id)) {
+                for solid in &mut entity.solids {
+                    let previous = before.get(&solid.id).copied();
+                    crate::brush::precise::reconcile(solid, previous)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn commit(self, label: String) {

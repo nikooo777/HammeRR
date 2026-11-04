@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 86.5% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 86.9% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -42,7 +42,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [Lighting preview](lighting-preview.md) | Unshadowed LDR/HDR point, spot, sun and optional constant sky ambient on checked opaque brush, terrain and model receivers. | Baked emission, shadows, sky visibility, bounce, styles, native exposure adaptation and brightness match. |
 | [Color correction](color-correction.md) | One explicit Source RGB8 `.raw` LUT, shared enable/weight controls and complete viewport display-color preview. | Native HDR, tone mapping, entities/volumes and multiple-LUT composition. |
 | [Terrain](terrain.md) | Creation, exact XYZ/Z vertex batches, height CSV import, sculpting, blending, masks, handles, resizing, sewing and subdivision through coherent full/full and whole/half chains with checked work limits. | Holes, triangle removal and general fractional joins. |
-| [Entities](entities.md) | Typed properties, exact/substring class selection, user/map color palettes, static FGD box/radius/line/cylinder and typed-coordinate guides, extended catalogs with sourced automatic visibility groups and optional material-directory exclusions, connections, bounded I/O graph queries/connected selection/framing, batch edits and safe rename. | General graph canvas layouts and runtime simulation. |
+| [Entities](entities.md) | Typed properties, exact/substring class selection, user/map color palettes, static FGD box/radius/line/cylinder and typed-coordinate guides, extended catalogs with sourced automatic visibility groups and optional material-directory exclusions, connections, directed I/O canvas, shared layouts, caller/activator lookup scenarios, prepared-instance graphs and connected selection/framing, batch edits and safe rename. | Runtime I/O simulation; unsupported child preparation. Canvas limits: 512 nodes/2,048 relationships. |
 | [Linked paths](path-authoring.md) | Ordered corner/track chains, class and loop conversion, move handles, brush-train setup, reference-safe assembly duplication and native Stop/Start observations. | Simple unparented paths; zero-angle brush trains. Native observation requires Linux CS:S and Steam. |
 | [Reference images](reference-images.md) | Editor-only PNG planes with pose, opacity, flips, per-projection display, guarded reload and Undo. | Static PNG; external source files. |
 | [Helper display](selection-presentation.md) | Independent authored-model, sprite, FGD-resource and helper controls; declared lines and typed property guides alongside brush/model geometry; complete mixed-selection counts and bounds. | Editor-only visual guides retain source-object picking/framing bounds. Runtime effects remain unavailable. |

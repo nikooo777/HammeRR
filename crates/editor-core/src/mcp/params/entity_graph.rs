@@ -8,6 +8,10 @@ pub struct EntityGraphArgs {
     pub direction: crate::session::entity_graph::Direction,
     /// Traversal depth 1–16; defaults to 2.
     pub depth: Option<usize>,
+    #[serde(default)]
+    pub scope: crate::session::entity_graph::Scope,
+    #[serde(default)]
+    pub context: crate::session::entity_graph::Context,
     /// Filters displayed rows only, never connected selection/framing; at most 128 bytes.
     pub search: Option<String>,
     /// Returned snapshot is required for nonzero page offsets; stale pages reject.
@@ -39,6 +43,8 @@ impl EntityGraphArgs {
             roots,
             direction: self.direction,
             depth: self.depth.unwrap_or(2),
+            scope: self.scope,
+            context: self.context.clone(),
         })
     }
 }
@@ -49,10 +55,16 @@ pub struct SelectEntityGraphArgs {
     pub roots: Vec<String>,
     pub direction: crate::session::entity_graph::Direction,
     pub depth: Option<usize>,
+    #[serde(default)]
+    pub scope: crate::session::entity_graph::Scope,
+    #[serde(default)]
+    pub context: crate::session::entity_graph::Context,
     /// Exact snapshot from inspect_entity_graph for the same roots/direction/depth.
     pub snapshot: String,
     /// replace (default), add, remove or toggle; explicit graph IDs bypass click seed filters.
     pub mode: Option<String>,
+    /// Optional exact diagram node IDs; omission selects the complete traversal.
+    pub nodes: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -61,20 +73,30 @@ pub struct FrameEntityGraphArgs {
     pub roots: Vec<String>,
     pub direction: crate::session::entity_graph::Direction,
     pub depth: Option<usize>,
+    #[serde(default)]
+    pub scope: crate::session::entity_graph::Scope,
+    #[serde(default)]
+    pub context: crate::session::entity_graph::Context,
     pub snapshot: String,
     /// Viewport aspect 0.01–100; defaults to 1.
     pub aspect: Option<f32>,
+    /// Optional exact diagram node IDs; omission frames the complete traversal.
+    pub nodes: Option<Vec<String>>,
 }
 
 pub(in crate::mcp) fn entity_graph_traversal(
     roots: Vec<String>,
     direction: crate::session::entity_graph::Direction,
     depth: Option<usize>,
+    scope: crate::session::entity_graph::Scope,
+    context: crate::session::entity_graph::Context,
 ) -> Result<crate::session::entity_graph::Traversal, String> {
     EntityGraphArgs {
         roots,
         direction,
         depth,
+        scope,
+        context,
         search: None,
         snapshot: None,
         node_offset: 0,
@@ -83,4 +105,47 @@ pub(in crate::mcp) fn entity_graph_traversal(
         limit: None,
     }
     .traversal()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EntityGraphDiagramArgs {
+    pub roots: Vec<String>,
+    pub direction: crate::session::entity_graph::Direction,
+    pub depth: Option<usize>,
+    #[serde(default)]
+    pub scope: crate::session::entity_graph::Scope,
+    #[serde(default)]
+    pub context: crate::session::entity_graph::Context,
+    pub snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LayoutEntityGraphArgs {
+    pub roots: Vec<String>,
+    pub direction: crate::session::entity_graph::Direction,
+    pub depth: Option<usize>,
+    #[serde(default)]
+    pub scope: crate::session::entity_graph::Scope,
+    #[serde(default)]
+    pub context: crate::session::entity_graph::Context,
+    pub snapshot: String,
+    pub layout: crate::session::entity_graph::Layout,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateEntityGraphDiagramArgs {
+    pub roots: Vec<String>,
+    pub direction: crate::session::entity_graph::Direction,
+    pub depth: Option<usize>,
+    #[serde(default)]
+    pub scope: crate::session::entity_graph::Scope,
+    #[serde(default)]
+    pub context: crate::session::entity_graph::Context,
+    pub snapshot: String,
+    #[serde(default)]
+    pub positions: Vec<crate::session::entity_graph::NodePosition>,
+    pub view: Option<crate::session::entity_graph::View>,
 }

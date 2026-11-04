@@ -2,8 +2,19 @@ use std::collections::{BTreeMap, VecDeque};
 use std::io::{self, Write};
 
 use map_core::{ObjectId, connections};
+
+mod diagram;
+mod expanded;
+mod resolve;
+mod source;
+
+pub(crate) use diagram::State;
+pub use diagram::{
+    Diagram, DiagramEdge, DiagramNode, Layout, NODE_HEIGHT, NODE_WIDTH, NodePosition, View,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use source::Source;
 
 use super::{Actor, SelectMode, Session};
 
@@ -20,7 +31,7 @@ pub const MAX_WORK: usize = 1_000_000;
 pub const MAX_SCRATCH_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_REPORT_BYTES: usize = 1024 * 1024;
 const MAX_CANDIDATES: usize = 16;
-const SCOPE: &str = "Committed authored root-map entities except saved hidden entities; temporary editor exclusions do not alter connectivity. Unapplied drafts and expanded instance contents are excluded. Exact named fan-out and !self links are traversed. Wildcard-prefix candidates, class/runtime-dependent and invalid records are not followed. Edges include all exact links between reached nodes, including boundary cycles. Unresolved pages cover the whole admitted root map. Search filters displayed rows only; selection/framing use the complete bounded traversal, including roots, within the requested depth.";
+const SCOPE: &str = "Committed entities in the requested source scope; saved-hidden entities and unapplied drafts are excluded. Expanded scope uses checked instance preparation and exact source provenance, never an authored-scope fallback. Native event targets use name matches first and class fallback only when no names match, with the installed byte/wildcard rules. !self and !caller use the supplied event caller, defaulting to each output owner; !activator needs the supplied scenario identity. Player/picker and unknown dynamic identities stay unresolved. This is an authored scenario, not runtime execution. Search/pages filter displayed rows only; selection and framing use the complete bounded traversal. Virtual selections map to authored owners; framing uses prepared positions or refuses explicitly.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -30,8 +41,29 @@ pub enum Direction {
     Both,
 }
 
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Scope {
+    #[default]
+    Authored,
+    Expanded,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Context {
+    pub activator: Option<String>,
+    pub caller: Option<String>,
+    #[serde(default)]
+    pub caller_unbound: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Traversal {
+    pub scope: Scope,
+    pub context: Context,
     pub roots: Vec<u32>,
     pub direction: Direction,
     pub depth: usize,
@@ -58,6 +90,8 @@ pub struct Page<T> {
 #[derive(Debug, Serialize)]
 pub struct Node {
     pub id: String,
+    pub owner: String,
+    pub provenance: Option<serde_json::Value>,
     pub classname: String,
     pub targetname: String,
     pub depth: usize,
@@ -99,6 +133,8 @@ pub struct Inspection {
     pub roots: Vec<String>,
     pub direction: Direction,
     pub depth: usize,
+    pub source_scope: Scope,
+    pub context: Context,
     pub traversal_nodes: usize,
     pub traversal_edges: usize,
     pub depth_boundary_nodes: usize,
@@ -131,6 +167,7 @@ struct Record {
     reason: String,
     candidates: Vec<u32>,
     candidates_total: usize,
+    resolved: bool,
 }
 struct Link {
     source: usize,
@@ -138,7 +175,8 @@ struct Link {
     record: usize,
 }
 struct Graph<'a> {
-    entities: Vec<&'a source_formats::vmf::Entity>,
+    source: Source<'a>,
+    entities: Vec<usize>,
     records: Vec<Record>,
     links: Vec<Link>,
     distances: Vec<Option<usize>>,
@@ -178,13 +216,23 @@ fn storage_bound(nodes: usize, connections: usize, source_bytes: usize) -> Resul
             bytes.checked_add(MAX_CONNECTIONS * (size_of::<Link>() + 4 * size_of::<usize>()))
         })
         .and_then(|bytes| bytes.checked_add(2 * source_bytes))
-        .and_then(|bytes| bytes.checked_add(4 * MAX_REPORT_BYTES))
+        .and_then(|bytes| bytes.checked_add(6 * MAX_REPORT_BYTES))
         .filter(|&bytes| bytes <= MAX_SCRATCH_BYTES)
         .ok_or("Entity graph exceeds its scratch-storage limit")?;
     Ok(bytes)
 }
 
 fn validate(traversal: &Traversal) -> Result<Vec<u32>, String> {
+    if traversal.context.caller_unbound && traversal.context.caller.is_some() {
+        return Err("Supply a caller ID or an unbound caller, not both".into());
+    }
+    if [&traversal.context.activator, &traversal.context.caller]
+        .into_iter()
+        .flatten()
+        .any(|value| value.len() > MAX_FIELD_BYTES)
+    {
+        return Err("Graph scenario ID exceeds the field byte limit".into());
+    }
     if traversal.roots.is_empty() || traversal.roots.len() > MAX_ROOTS {
         return Err(format!(
             "Graph requires 1–{MAX_ROOTS} explicit root entity IDs"
@@ -249,14 +297,23 @@ impl Write for ReportSize {
 }
 
 impl Session {
-    fn entity_graph_snapshot(&self, traversal: &Traversal, roots: &[u32]) -> String {
+    fn entity_graph_snapshot(&self, traversal: &Traversal, graph: &Graph<'_>) -> String {
         let mut hash = Sha256::new();
         hash.update(self.buffer_review_scope.as_bytes());
         hash.update(self.document_generation.to_le_bytes());
         hash.update(self.document.revision().to_le_bytes());
-        hash.update([traversal.direction as u8]);
+        hash.update([traversal.direction as u8, traversal.scope as u8]);
+        for value in [&traversal.context.activator, &traversal.context.caller] {
+            hash.update([u8::from(value.is_some())]);
+            if let Some(value) = value {
+                hash.update((value.len() as u64).to_le_bytes());
+                hash.update(value.as_bytes());
+            }
+        }
+        hash.update([u8::from(traversal.context.caller_unbound)]);
+        graph.source.hash(&mut hash);
         hash.update((traversal.depth as u64).to_le_bytes());
-        for root in roots {
+        for root in &graph.roots {
             hash.update(root.to_le_bytes());
         }
         format!("{:x}", hash.finalize())
@@ -264,12 +321,20 @@ impl Session {
 
     fn entity_graph(&self, traversal: &Traversal) -> Result<Graph<'_>, String> {
         let roots = validate(traversal)?;
-        let source = &self.document.vmf().entities;
+        let prepared = Source::prepare(self, traversal.scope)?;
+        let roots = prepared.seeds(&roots)?;
+        if roots.is_empty() || roots.len() > MAX_GRAPH_NODES {
+            return Err(
+                "Expanded graph roots exceed the reached-node limit or contain no entities".into(),
+            );
+        }
+        let source = &prepared.document().vmf().entities;
         if source.len() > MAX_MAP_NODES {
             return Err(format!(
                 "Entity graph admits at most {MAX_MAP_NODES} map entities"
             ));
         }
+        let scenario = resolve::Scenario::prepare(&prepared, &traversal.context)?;
         let mut bytes = 0usize;
         let mut count = 0usize;
         let mut work = 0usize;
@@ -301,7 +366,10 @@ impl Session {
         if bytes > MAX_SOURCE_BYTES || count > MAX_CONNECTIONS {
             return Err("Entity graph exceeds its source-byte or connection-count limit".into());
         }
-        let live_bound = storage_bound(source.len(), count, bytes)?;
+        let live_bound = storage_bound(source.len(), count, bytes)?
+            .checked_add(prepared.retained_bytes())
+            .filter(|&bytes| bytes <= MAX_SCRATCH_BYTES)
+            .ok_or("Expanded entity graph exceeds its retained scratch-storage limit")?;
         charge(&mut work, bytes + source.len())?;
         let mut entities = Vec::new();
         reserve(&mut entities, source.len())?;
@@ -333,39 +401,21 @@ impl Session {
                 let (spec, status, reason, candidates, candidates_total) = match parsed {
                     Err(error) => (None, "invalid", error, Vec::new(), 0),
                     Ok(spec) => {
-                        let matches = connections::targets(&self.document, entity.id, &spec.target);
+                        let resolution = resolve::targets(
+                            &prepared,
+                            entity.id,
+                            &spec.target,
+                            &scenario,
+                            &mut work,
+                        )?;
+                        let matches = resolution.matches;
                         let total = matches.len();
-                        let (status, reason) = if spec.target == "!self" {
-                            ("self", String::new())
-                        } else if spec.target.starts_with('!') {
-                            (
-                                "runtime_dependent",
-                                "Special target is resolved at runtime".into(),
-                            )
-                        } else if spec.target.contains('*') {
-                            ("wildcard_candidates", "Existing editor prefix matching supplies candidates, not engine-complete wildcard resolution".into())
-                        } else if matches.is_empty() {
-                            charge(&mut work, entities.len())?;
-                            if entities.iter().any(|entity| {
-                                entity
-                                    .classname()
-                                    .is_some_and(|class| class.eq_ignore_ascii_case(&spec.target))
-                            }) {
-                                ("class_or_runtime", "No visible named target matches; class/runtime lookup is not resolved by this authored graph".into())
-                            } else {
-                                (
-                                    "missing",
-                                    "No visible named target matches; it may be created at runtime"
-                                        .into(),
-                                )
-                            }
-                        } else {
-                            ("named", String::new())
-                        };
-                        if matches!(status, "named" | "self") {
+                        let status = resolution.status;
+                        let reason = resolution.reason;
+                        if resolution.resolved {
                             if links.len().saturating_add(matches.len()) > MAX_CONNECTIONS {
                                 return Err(
-                                    "Entity graph exact fan-out exceeds the map-edge limit".into(),
+                                    "Entity graph fan-out exceeds the map-edge limit".into()
                                 );
                             }
                             for target in &matches {
@@ -377,7 +427,7 @@ impl Session {
                             }
                         }
                         let mut candidates = Vec::new();
-                        if !matches!(status, "named" | "self") {
+                        if !resolve::is_resolved(status) {
                             reserve(&mut candidates, matches.len().min(MAX_CANDIDATES))?;
                             candidates.extend(matches.iter().take(MAX_CANDIDATES).copied());
                         }
@@ -392,6 +442,7 @@ impl Session {
                     reason,
                     candidates,
                     candidates_total,
+                    resolved: resolve::is_resolved(status),
                 });
             }
         }
@@ -475,7 +526,15 @@ impl Session {
             }
         }
         selected.sort_unstable_by_key(|&index| (distances[index], entities[index].id));
+        charge(&mut work, source.len())?;
+        drop(entities);
+        let entities = source
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entity)| (!entity.hidden).then_some(index))
+            .collect();
         Ok(Graph {
+            source: prepared,
             entities,
             records,
             links,
@@ -492,8 +551,8 @@ impl Session {
         if query.limit == 0 || query.limit > MAX_PAGE || query.search.len() > 128 {
             return Err("Graph page limit must be 1–64 and search at most 128 bytes".into());
         }
-        let roots = validate(&query.traversal)?;
-        let snapshot = self.entity_graph_snapshot(&query.traversal, &roots);
+        let graph = self.entity_graph(&query.traversal)?;
+        let snapshot = self.entity_graph_snapshot(&query.traversal, &graph);
         if query
             .snapshot
             .as_ref()
@@ -509,14 +568,13 @@ impl Session {
         {
             return Err("Retained graph pages require the current matching snapshot".into());
         }
-        let graph = self.entity_graph(&query.traversal)?;
         let search = query.search.to_ascii_lowercase();
         let mut work = graph.work;
         let mut nodes = Vec::new();
         reserve(&mut nodes, graph.selected.len())?;
         for &index in &graph.selected {
-            let entity = graph.entities[index];
-            let identity = id(entity.id);
+            let entity = graph.entity(index);
+            let identity = graph.id(index);
             let fields = [
                 identity.as_str(),
                 entity.classname().unwrap_or_default(),
@@ -536,20 +594,21 @@ impl Session {
         for &index in &graph.graph_links {
             let link = &graph.links[index];
             let spec = graph.records[link.record].spec.as_ref().unwrap();
-            let source = id(graph.entities[link.source].id);
-            let target = id(graph.entities[link.target].id);
+            let source = graph.id(link.source);
+            let target = graph.id(link.target);
             let fields = [
                 source.as_str(),
                 target.as_str(),
                 spec.output.as_str(),
                 spec.input.as_str(),
                 spec.target.as_str(),
-                graph.entities[link.source]
+                graph
+                    .entity(link.source)
                     .properties
                     .get("targetname")
                     .unwrap_or_default(),
-                graph.entities[link.source].classname().unwrap_or_default(),
-                graph.entities[link.target].classname().unwrap_or_default(),
+                graph.entity(link.source).classname().unwrap_or_default(),
+                graph.entity(link.target).classname().unwrap_or_default(),
             ];
             charge(&mut work, fields.iter().map(|field| field.len()).sum())?;
             if search.is_empty()
@@ -563,12 +622,12 @@ impl Session {
         let mut unresolved = Vec::new();
         reserve(&mut unresolved, graph.records.len())?;
         for (index, record) in graph.records.iter().enumerate() {
-            if matches!(record.status, "named" | "self") {
+            if record.resolved {
                 continue;
             }
-            let entity = graph.entities[record.source];
+            let entity = graph.entity(record.source);
             let raw = &entity.connections.as_ref().unwrap()[record.index];
-            let source = id(entity.id);
+            let source = graph.id(record.source);
             let fields = [
                 source.as_str(),
                 raw.output.as_str(),
@@ -587,13 +646,24 @@ impl Session {
                 unresolved.push(index);
             }
         }
+        nodes
+            .iter()
+            .skip(query.node_offset)
+            .take(query.limit)
+            .try_fold(0usize, |total, &index| {
+                total.checked_add(graph.source.provenance_bound(graph.entity(index).id))
+            })
+            .filter(|&bytes| bytes <= MAX_REPORT_BYTES)
+            .ok_or("Graph node provenance exceeds its report-storage limit")?;
         let report = Inspection {
             snapshot,
             generation: self.document_generation,
             revision: self.document.revision(),
-            roots: graph.roots.iter().map(|&entity| id(entity)).collect(),
+            roots: validate(&query.traversal)?.into_iter().map(id).collect(),
             direction: query.traversal.direction,
             depth: query.traversal.depth,
+            source_scope: query.traversal.scope,
+            context: query.traversal.context.clone(),
             traversal_nodes: graph.selected.len(),
             traversal_edges: graph.graph_links.len(),
             depth_boundary_nodes: graph
@@ -604,12 +674,14 @@ impl Session {
             unresolved_connections: graph
                 .records
                 .iter()
-                .filter(|record| !matches!(record.status, "named" | "self"))
+                .filter(|record| !record.resolved)
                 .count(),
             nodes: page(nodes, query.node_offset, query.limit, |index| {
-                let entity = graph.entities[index];
+                let entity = graph.entity(index);
                 Node {
-                    id: id(entity.id),
+                    id: graph.id(index),
+                    owner: id(graph.owner(index)),
+                    provenance: graph.source.provenance(entity.id),
                     classname: entity.classname().unwrap_or_default().into(),
                     targetname: entity
                         .properties
@@ -625,10 +697,10 @@ impl Session {
                 let record = &graph.records[link.record];
                 let spec = record.spec.as_ref().unwrap();
                 Edge {
-                    source: id(graph.entities[link.source].id),
-                    source_label: label(graph.entities[link.source]),
-                    target: id(graph.entities[link.target].id),
-                    target_label: label(graph.entities[link.target]),
+                    source: graph.id(link.source),
+                    source_label: label(graph.entity(link.source)),
+                    target: graph.id(link.target),
+                    target_label: label(graph.entity(link.target)),
                     target_reference: spec.target.clone(),
                     connection_index: record.index,
                     output: spec.output.clone(),
@@ -641,17 +713,21 @@ impl Session {
             })?,
             unresolved: page(unresolved, query.unresolved_offset, query.limit, |index| {
                 let record = &graph.records[index];
-                let entity = graph.entities[record.source];
+                let entity = graph.entity(record.source);
                 let raw = &entity.connections.as_ref().unwrap()[record.index];
                 Unresolved {
-                    source: id(entity.id),
+                    source: graph.id(record.source),
                     source_label: label(entity),
                     connection_index: record.index,
                     output: raw.output.clone(),
                     raw: raw.value.clone(),
                     status: record.status,
                     reason: record.reason.clone(),
-                    candidates: record.candidates.iter().map(|&entity| id(entity)).collect(),
+                    candidates: record
+                        .candidates
+                        .iter()
+                        .map(|&entity| graph.source.id(entity))
+                        .collect(),
                     candidates_total: record.candidates_total,
                     candidates_truncated: record.candidates_total > record.candidates.len(),
                 }
@@ -659,6 +735,7 @@ impl Session {
             scope: SCOPE,
             limits: serde_json::json!({"map_nodes":MAX_MAP_NODES,"map_connections":MAX_CONNECTIONS,"graph_nodes":MAX_GRAPH_NODES,"graph_edges":MAX_GRAPH_EDGES,"depth":MAX_DEPTH,"roots":MAX_ROOTS,"page":MAX_PAGE,"source_bytes":MAX_SOURCE_BYTES,"field_bytes":MAX_FIELD_BYTES,"work":MAX_WORK,"report_bytes":MAX_REPORT_BYTES,"candidate_ids":MAX_CANDIDATES,"scratch_bytes":MAX_SCRATCH_BYTES,"conservative_live_bytes":graph.live_bound,"work_unit":"source/search byte, target candidate or adjacency entry"}),
         };
+        graph.source.verify()?;
         serde_json::to_writer(ReportSize(0), &report).map_err(|error| error.to_string())?;
         Ok(report)
     }
@@ -669,8 +746,8 @@ impl Session {
         snapshot: &str,
     ) -> Result<Graph<'_>, String> {
         self.ensure_not_closing()?;
-        let roots = validate(traversal)?;
-        if snapshot.len() != 64 || snapshot != self.entity_graph_snapshot(traversal, &roots) {
+        let graph = self.entity_graph(traversal)?;
+        if snapshot.len() != 64 || snapshot != self.entity_graph_snapshot(traversal, &graph) {
             return Err("Entity graph snapshot changed; refresh the graph before acting".into());
         }
         if self.viewport_pick_conflict()
@@ -681,7 +758,8 @@ impl Session {
         {
             return Err("Finish or cancel active geometry drafts and viewport gestures before selecting or framing graph nodes".into());
         }
-        self.entity_graph(traversal)
+        graph.source.verify()?;
+        Ok(graph)
     }
 
     pub fn select_entity_graph(
@@ -691,15 +769,49 @@ impl Session {
         snapshot: &str,
         mode: SelectMode,
     ) -> Result<Selection, String> {
+        self.select_entity_graph_impl(actor, traversal, snapshot, None, mode)
+    }
+
+    pub fn select_entity_graph_nodes(
+        &mut self,
+        actor: Actor,
+        traversal: &Traversal,
+        snapshot: &str,
+        nodes: &[String],
+        mode: SelectMode,
+    ) -> Result<Selection, String> {
+        self.select_entity_graph_impl(actor, traversal, snapshot, Some(nodes), mode)
+    }
+
+    fn select_entity_graph_impl(
+        &mut self,
+        actor: Actor,
+        traversal: &Traversal,
+        snapshot: &str,
+        nodes: Option<&[String]>,
+        mode: SelectMode,
+    ) -> Result<Selection, String> {
         let graph = self.entity_graph_action(traversal, snapshot)?;
-        let ids = graph
-            .selected
-            .iter()
-            .map(|&index| ObjectId::Entity(graph.entities[index].id))
-            .collect::<Vec<_>>();
-        let matched = ids.len();
+        let selected = graph.requested(nodes)?;
+        let matched = selected.len();
+        let mut owners = match &graph.source {
+            Source::Authored(_) => selected
+                .iter()
+                .map(|&index| graph.entity(index).id)
+                .collect::<Vec<_>>(),
+            Source::Expanded(source) => source.selection(
+                &selected
+                    .iter()
+                    .map(|&index| graph.entity(index).id)
+                    .collect::<Vec<_>>(),
+            )?,
+        };
+        owners.sort_unstable();
+        owners.dedup();
+        let ids = owners.into_iter().map(ObjectId::Entity).collect::<Vec<_>>();
+        graph.source.verify()?;
         self.select(&ids, mode)?;
-        self.log(actor, "selected connected entity graph");
+        self.log(actor, "selected entity graph nodes");
         Ok(Selection {
             snapshot: snapshot.into(),
             matched,
@@ -714,28 +826,68 @@ impl Session {
         snapshot: &str,
         aspect: f32,
     ) -> Result<Frame, String> {
+        self.frame_entity_graph_impl(actor, traversal, snapshot, None, aspect)
+    }
+
+    pub fn frame_entity_graph_nodes(
+        &mut self,
+        actor: Actor,
+        traversal: &Traversal,
+        snapshot: &str,
+        nodes: &[String],
+        aspect: f32,
+    ) -> Result<Frame, String> {
+        self.frame_entity_graph_impl(actor, traversal, snapshot, Some(nodes), aspect)
+    }
+
+    fn frame_entity_graph_impl(
+        &mut self,
+        actor: Actor,
+        traversal: &Traversal,
+        snapshot: &str,
+        nodes: Option<&[String]>,
+        aspect: f32,
+    ) -> Result<Frame, String> {
         if !aspect.is_finite() || !(0.01..=100.0).contains(&aspect) {
             return Err("Graph framing aspect must be finite and between 0.01 and 100".into());
         }
         let graph = self.entity_graph_action(traversal, snapshot)?;
-        let ids = graph
-            .selected
-            .iter()
-            .map(|&index| ObjectId::Entity(graph.entities[index].id))
-            .collect::<Vec<_>>();
-        let matched = ids.len();
-        let presentation = self.presentation_bounds_in(&self.document, None);
-        let mut bounds = Vec::new();
-        reserve(&mut bounds, ids.len())?;
-        for id in &ids {
-            let (mins, maxs) = super::models::object_bounds(&self.document, *id, &presentation)
-                .ok_or_else(|| format!("Graph node {id} has no framing bounds"))?;
-            if !mins.is_finite() || !maxs.is_finite() || !mins.cmple(maxs).all() {
-                return Err(format!(
-                    "Graph node {id} has nonfinite or unordered framing bounds"
-                ));
+        let selected = graph.requested(nodes)?;
+        let matched = selected.len();
+        let mut bounds = match &graph.source {
+            Source::Authored(_) => {
+                let presentation = self.presentation_bounds_in(&self.document, None);
+                let mut bounds = Vec::new();
+                reserve(&mut bounds, selected.len())?;
+                for &index in &selected {
+                    bounds.push(
+                        super::models::object_bounds(
+                            &self.document,
+                            ObjectId::Entity(graph.entity(index).id),
+                            &presentation,
+                        )
+                        .ok_or_else(|| {
+                            format!("Graph node {} has no framing bounds", graph.id(index))
+                        })?,
+                    );
+                }
+                bounds
             }
-            bounds.push((mins, maxs));
+            Source::Expanded(source) => {
+                let ids = selected
+                    .iter()
+                    .map(|&index| graph.entity(index).id)
+                    .collect::<Vec<_>>();
+                source.bounds(self, &ids)?
+            }
+        };
+        if bounds.len() != matched {
+            return Err("Graph framing requires bounds for every requested node".into());
+        }
+        for (mins, maxs) in &mut bounds {
+            if !mins.is_finite() || !maxs.is_finite() || !mins.cmple(*maxs).all() {
+                return Err("Graph node has nonfinite or unordered framing bounds".into());
+            }
         }
         let (mins, maxs) =
             map_core::query::union(bounds).ok_or("Graph nodes have no framing bounds")?;
@@ -745,13 +897,53 @@ impl Session {
         if !camera.position.is_finite() || !camera.view_projection(aspect).is_finite() {
             return Err("Graph nodes have no finite framing camera".into());
         }
+        graph.source.verify()?;
         self.try_set_camera(camera)?;
-        self.log(actor, "framed connected entity graph");
+        self.log(actor, "framed entity graph nodes");
         Ok(Frame {
             snapshot: snapshot.into(),
             matched,
             bounds: [mins.to_array(), maxs.to_array()],
             camera,
         })
+    }
+}
+
+impl Graph<'_> {
+    fn entity(&self, index: usize) -> &source_formats::vmf::Entity {
+        &self.source.document().vmf().entities[self.entities[index]]
+    }
+    fn id(&self, index: usize) -> String {
+        self.source.id(self.entity(index).id)
+    }
+    fn owner(&self, index: usize) -> u32 {
+        self.source.owner(self.entity(index).id)
+    }
+    fn requested(&self, ids: Option<&[String]>) -> Result<Vec<usize>, String> {
+        let Some(ids) = ids else {
+            return Ok(self.selected.clone());
+        };
+        if ids.is_empty() || ids.len() > MAX_GRAPH_NODES {
+            return Err("Graph node actions require 1–2048 node IDs".into());
+        }
+        let indices = self
+            .selected
+            .iter()
+            .map(|&index| (self.id(index), index))
+            .collect::<BTreeMap<_, _>>();
+        let mut result = Vec::new();
+        reserve(&mut result, ids.len())?;
+        for id in ids {
+            if id.len() > MAX_FIELD_BYTES {
+                return Err("Graph node ID exceeds its byte limit".into());
+            }
+            let index = indices
+                .get(id)
+                .ok_or_else(|| format!("Graph node {id} is outside the current traversal"))?;
+            result.push(*index);
+        }
+        result.sort_unstable();
+        result.dedup();
+        Ok(result)
     }
 }

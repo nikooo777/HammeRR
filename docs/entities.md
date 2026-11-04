@@ -151,15 +151,20 @@ FGD suggestions describe available names and parameters; they do not prove runti
 
 1. Open **Entity graph…**.
 2. Select entities in the map, then click **Use selected entities**. Their captured names and classes appear above the lists; **Root IDs (advanced)** also accepts explicit IDs.
-3. Choose **Direction**: **Outgoing**, **Incoming** or **Both**. Set **Depth** from 1 to 16; the default is 2.
-4. Click **Inspect graph**.
-5. Choose **Nodes**, **Relationships** or **Unresolved (whole map)**. Use **Search rows**, then **Inspect graph**, to filter the lists. **Previous page** and **Next page** display at most 64 rows.
-6. Choose **Replace**, **Add**, **Remove** or **Toggle**, then click **Select connected** to act on every reached node, including roots. Search and pages do not restrict this selection.
-7. Click **Frame connected** to frame those nodes while preserving selection.
+3. Choose **Direction**: **Outgoing**, **Incoming** or **Both**. Set **Depth** from 1 to 16; the default is 2. Choose **Scope → Authored** or **Expanded instances**.
+4. Optionally enter an **Activator ID** or **Caller ID** for a lookup scenario, using a source ID shown in node details. A blank **Caller ID** uses each output's owner; **Unbound caller** leaves it unresolved.
+5. Click **Inspect graph**.
+6. In **Canvas**, choose **Layered** or **Grid**, then click **Arrange**. Drag empty space to pan, use the wheel or **+**/**−** to zoom, and drag nodes to place them. Click a node or an edge label for details. **Select owner** selects that node's authored owner; **Frame node** frames its prepared position. **Reset diagram** restores the initial layout and view.
+7. In **List**, choose **Nodes**, **Relationships** or **Unresolved (whole map)**. Use **Search rows**, then **Inspect graph**, to filter the lists. **Previous page** and **Next page** display at most 64 rows.
+8. Choose **Replace**, **Add**, **Remove** or **Toggle**, then click **Select connected** to act on every reached node, including roots. Search and pages do not restrict this selection. **Frame connected** frames the complete reached set while preserving selection.
 
-Exact names reach every matching entity, including intentional fan-out. Cycles appear once per stored connection/target pair. `!self` is concrete. Missing targets, malformed records, wildcard-prefix candidates and class/runtime-dependent targets remain explicit unresolved records; the graph does not guess their runtime endpoints. Unresolved rows cover the whole admitted map, independently of the chosen roots.
+![A directed entity graph with read-only instance lights](images/entity-graph-canvas.png)
 
-Saved **Hide** entities and expanded instance contents are excluded; temporary editor exclusions do not change connectivity. Unapplied drafts are excluded. Finish geometry drafts and active viewport gestures before selection or framing. A changed map requires **Inspect graph** again.
+Name matches reach every matching entity before classname fallback is considered. Patterns follow installed CS:S byte matching, rather than general glob syntax. Each relationship reports its lookup rule; distinct stored connections and fan-out targets remain separate. Cycles are retained. `!self` and `!caller` use the scenario caller; `!activator` needs an explicit scenario identity. Player, picker and other live-game identities remain unresolved. The scenario describes lookup without executing inputs or simulating event propagation.
+
+**Expanded instances** uses checked [instance preparation](instances.md), including child name fixups and source provenance. Selecting an instance helper as a root includes its prepared child entities. Child nodes are read-only; selecting them selects the original root helper. Framing uses prepared transforms and refuses unresolved brush-model pivots or missing model presentation. Unsupported child content refuses expanded inspection instead of falling back to the authored graph.
+
+Saved **Hide** entities and unapplied drafts are excluded; temporary editor exclusions do not change connectivity. Unresolved rows cover the whole admitted source scope, independently of the chosen roots. Finish geometry drafts and active viewport gestures before selection or framing. Map, scenario or referenced-source changes require **Inspect graph** again. Diagram positions and view are session-local and reset when the graph snapshot changes.
 
 ## Select by class
 
@@ -193,11 +198,11 @@ Click **Apply properties** to keep the draft, or **Cancel** to discard it.
 
 ## Limits
 
-- The graph is a bounded query and list view. General canvas layouts and runtime I/O simulation remain unavailable.
-- Graph admission caps the root map at 8,192 entities, 32,768 stored connections and 8 MiB of inspected source text. Individual labels/connection fields cap at 4,096 bytes. Work and storage limits can refuse smaller maps explicitly.
-- A traversal reaches at most 2,048 nodes and 8,192 relationships within the chosen depth. Relationships include exact links between reached nodes, including boundary cycles. Actions recompute the complete bounded traversal; a page is never treated as the full selection.
-- Wildcard candidates use the existing editor's prefix matching, which does not establish engine-complete wildcard semantics. At most 16 candidate IDs are shown with the full candidate count.
-
+- The graph describes authored or prepared I/O; it does not execute inputs, predict runtime spawning or establish input support.
+- Graph admission caps the chosen source scope at 8,192 entities, 32,768 stored connections and 8 MiB of inspected source text. Individual labels/connection fields cap at 4,096 bytes. Expanded inspection also uses the existing instance preparation limits. Work and storage limits can refuse smaller maps explicitly.
+- A traversal reaches at most 2,048 nodes and 8,192 relationships within the chosen depth, including boundary cycles. Actions recompute the complete traversal; a page is never treated as the full selection.
+- The desktop **Canvas** admits at most 512 nodes and 2,048 relationships. Larger traversals remain available through **List** and connected selection/framing; no partial canvas is drawn. Zoom ranges from 10% to 400%.
+- An instance containing only world brushes supplies no entity graph roots. Expanded framing requires bounds for every requested node and may refuse when inspection and selection are available.
 - Custom classes and raw properties can be retained without being supported by the compiler.
 - Helper images, meshes and bounds do not establish game collision or runtime appearance.
 - Guides cover checked static properties, not parenting, animation, simulation or runtime I/O.

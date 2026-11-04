@@ -811,6 +811,11 @@ impl PreparedInstances<'_> {
         self.vmf.as_ref()
     }
 
+    /// Consumes reference source; material-dependent brush-model pivots may remain deferred.
+    pub fn into_vmf(self) -> Vmf {
+        self.vmf.into_owned()
+    }
+
     pub fn brush_model_preparation(&self) -> BrushModelPreparation {
         if !self.has_brush_models() {
             BrushModelPreparation::Absent

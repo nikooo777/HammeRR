@@ -292,6 +292,7 @@ pub struct Session {
     color_correction: color_correction::State,
     file_claims: crate::path_claims::Binding,
     instance_contents: instance_contents::State,
+    entity_graph: entity_graph::State,
     compile_region: compile_region::State,
     overlay: overlay::State,
     cubemap_bindings: cubemap_bindings::State,
@@ -632,6 +633,7 @@ impl Session {
             reference_images: reference_images::State::default(),
             file_claims: crate::path_claims::Binding::default(),
             instance_contents: instance_contents::State::default(),
+            entity_graph: entity_graph::State::default(),
             geometry: previews::State::default(),
             compile_region: compile_region::State::default(),
             overlay: overlay::State::default(),
@@ -1639,6 +1641,7 @@ impl Session {
         self.reference_images = reference_images::State::default();
         self.clear_external_comparison();
         self.reset_instance_contents();
+        self.entity_graph = entity_graph::State::default();
         self.reset_compiled_details();
         self.reset_baked_surfaces();
         self.reset_sky3d_preview();

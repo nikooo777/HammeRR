@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 86.5% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 86.9% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -151,9 +151,9 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | ![A reusable brush and model assembly at three scales](docs/images/prefab-assemblies.png) | ![Four interactive views share the selected bridges](docs/images/coordinated-views.png) |
 | Organize saved assemblies, replace their content and place scaled copies. | Edit through independent cameras with linked orthographic navigation. |
 
-| [Linked paths and trains](docs/path-authoring.md) |
-| --- |
-| ![Directed train path with a node move handle](docs/images/linked-path-handles.png) |
-| Edit path nodes, configure trains and duplicate linked assemblies. |
+| [Linked paths and trains](docs/path-authoring.md) | [Entity graphs](docs/entities.md#inspect-connected-logic) |
+| --- | --- |
+| ![Directed train path with a node move handle](docs/images/linked-path-handles.png) | ![Directed logic with prepared instance lights](docs/images/entity-graph-canvas.png) |
+| Edit path nodes, configure trains and duplicate linked assemblies. | Trace logic, arrange nodes and inspect instance sources. |
 
 Counter-Strike: Source and its assets are not included.

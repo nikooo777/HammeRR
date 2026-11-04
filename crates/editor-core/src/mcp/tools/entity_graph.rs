@@ -3,7 +3,7 @@ use super::super::*;
 #[tool_router(router = entity_graph_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect a bounded authored entity I/O graph from explicit roots and direction outgoing/incoming/both; depth defaults2, range1–16. Uses committed visible root-map entities and existing checked I/O parsing/name matching. Follows every exact named fan-out and !self edge, safely deduplicating cycles. Wildcard-prefix candidates, class/runtime-dependent, missing and malformed records are explicit unresolved diagnostics, never guessed concrete edges. Saved-hidden entities, expanded instance contents and unapplied drafts are excluded. Returns session-owned snapshot, structured nodes/edges, separate node/edge/unresolved pages (limit1–64), complete traversal counts and limits. Unresolved pages cover the admitted whole root map. Search filters rows only. Nonzero page offsets require the returned snapshot; stale pages reject. Hard-cap exhaustion refuses without an incomplete traversal. UI: Entity graph… → Inspect graph.",
+        description = "Inspect a bounded committed entity I/O graph from explicit authored roots, direction outgoing/incoming/both and depth1–16. scope authored(default) or expanded uses checked source preparation; expanded instance helpers seed contained entities. Native event matching follows every name match, then class matches only when no names match, with installed CSS byte/wildcard semantics. context.activator/caller supplies explicit source-scoped scenario IDs; caller omission defaults to each output owner, caller_unbound models null. !self uses caller. Player/picker and unknown runtime identities remain unresolved. Virtual IDs retain source provenance and select authored helper owners. Returns snapshot-bound separate pages(max64), full traversal counts and limits; search/pages never restrict connected selection/framing. Expanded source/dependency failures do not fall back to root scope. Cap exhaustion refuses rather than truncating. UI: Entity graph… → Inspect graph.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn inspect_entity_graph(
@@ -26,42 +26,163 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Select the complete bounded exact-link entity traversal from roots/direction/depth and matching inspect_entity_graph.snapshot. Includes roots and every reached visible authored entity, independent of result pages and search. mode replace/add/remove/toggle uses ordinary shared explicit-ID selection. Revalidates current session/map/query ownership and recomputes all nodes before mutation; stale tokens, cap exhaustion, geometry drafts and active gestures refuse atomically. Map/history/camera stay unchanged. Runtime/wildcard/class uncertainty is not followed. UI: Entity graph… → Select connected."
+        description = "Select the complete bounded graph traversal or optional exact diagram node IDs using the matching traversal/scope/context snapshot. Source-scoped virtual nodes map to authored helper owners, deduplicated before ordinary replace/add/remove/toggle selection. Search/pages never restrict the complete action. Stale source/query/dependency, cap exhaustion and active geometry work refuse atomically; map/history/camera remain unchanged. UI: Entity graph… → Select connected / Select owner."
     )]
     pub(in crate::mcp) fn select_entity_graph(
         &self,
         Parameters(args): Parameters<SelectEntityGraphArgs>,
     ) -> ToolResult {
         run(|| {
-            let traversal = entity_graph_traversal(args.roots, args.direction, args.depth)?;
+            let traversal = entity_graph_traversal(
+                args.roots,
+                args.direction,
+                args.depth,
+                args.scope,
+                args.context,
+            )?;
             let mode = parse_select_mode(args.mode.as_deref().unwrap_or("replace"))?;
-            Ok(json!(self.session().select_entity_graph(
-                Actor::Agent,
-                &traversal,
-                &args.snapshot,
-                mode
-            )?))
+            let mut session = self.session();
+            let report = match args.nodes {
+                Some(nodes) => session.select_entity_graph_nodes(
+                    Actor::Agent,
+                    &traversal,
+                    &args.snapshot,
+                    &nodes,
+                    mode,
+                )?,
+                None => {
+                    session.select_entity_graph(Actor::Agent, &traversal, &args.snapshot, mode)?
+                }
+            };
+            Ok(json!(report))
         })
     }
 
     #[tool(
-        description = "Frame every node in the complete bounded exact-link entity graph, using matching roots/direction/depth and inspect_entity_graph.snapshot. Optional aspect defaults1, range0.01–100. Preserves selection, map and history; uses ordinary authored-object framing bounds and camera publication. Search/page filters do not restrict framing. Revalidates snapshot and refuses active geometry drafts/gestures, missing bounds or invalid camera/aspect before mutation. No instance expansion or source-file opening. UI: Entity graph… → Frame connected."
+        description = "Frame the complete graph traversal or optional exact diagram node IDs using the matching traversal/scope/context snapshot. Uses every requested authored/prepared node position; missing or deferred bounds refuse the whole action explicitly. Optional aspect0.01–100 defaults1. Preserves selection/map/history; uses ordinary camera publication. Search/pages do not restrict the complete action. UI: Entity graph… → Frame connected / Frame node."
     )]
     pub(in crate::mcp) fn frame_entity_graph(
         &self,
         Parameters(args): Parameters<FrameEntityGraphArgs>,
     ) -> ToolResult {
         run(|| {
-            let traversal = entity_graph_traversal(args.roots, args.direction, args.depth)?;
-            let frame = self.session().frame_entity_graph(
-                Actor::Agent,
-                &traversal,
-                &args.snapshot,
-                args.aspect.unwrap_or(1.0),
+            let traversal = entity_graph_traversal(
+                args.roots,
+                args.direction,
+                args.depth,
+                args.scope,
+                args.context,
             )?;
+            let mut session = self.session();
+            let frame = match args.nodes {
+                Some(nodes) => session.frame_entity_graph_nodes(
+                    Actor::Agent,
+                    &traversal,
+                    &args.snapshot,
+                    &nodes,
+                    args.aspect.unwrap_or(1.0),
+                )?,
+                None => session.frame_entity_graph(
+                    Actor::Agent,
+                    &traversal,
+                    &args.snapshot,
+                    args.aspect.unwrap_or(1.0),
+                )?,
+            };
             Ok(
                 json!({"snapshot":frame.snapshot,"matched":frame.matched,"bounds":frame.bounds,"camera":camera_json(&frame.camera)}),
             )
+        })
+    }
+    #[tool(
+        description = "Read the complete bounded entity graph diagram for the current traversal snapshot. Returns source-scoped nodes, full edge details, deterministic positions and shared session-local pan/zoom. Search and pages do not restrict it. Report limit1MiB; no partial canvas is returned. UI: Entity graph… → Canvas.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn inspect_entity_graph_diagram(
+        &self,
+        Parameters(args): Parameters<EntityGraphDiagramArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let traversal = entity_graph_traversal(
+                args.roots,
+                args.direction,
+                args.depth,
+                args.scope,
+                args.context,
+            )?;
+            Ok(json!(self.session().inspect_entity_graph_diagram(
+                &traversal,
+                &args.snapshot
+            )?))
+        })
+    }
+
+    #[tool(
+        description = "Arrange the complete graph diagram using layered BFS-depth columns or a deterministic grid. Cycles remain edges. Clears custom node positions and preserves current pan/zoom. Session-local presentation only; no map or Undo changes. UI: Entity graph… → Layered / Grid."
+    )]
+    pub(in crate::mcp) fn layout_entity_graph(
+        &self,
+        Parameters(args): Parameters<LayoutEntityGraphArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let traversal = entity_graph_traversal(
+                args.roots,
+                args.direction,
+                args.depth,
+                args.scope,
+                args.context,
+            )?;
+            Ok(json!(self.session().layout_entity_graph(
+                &traversal,
+                &args.snapshot,
+                args.layout
+            )?))
+        })
+    }
+
+    #[tool(
+        description = "Commit diagram node positions and/or view for a matching graph snapshot. Positions/pan are finite within ±1000000, zoom0.1–4. IDs must belong to the complete traversal. One atomic presentation update; map, history, selection and camera remain unchanged. UI commits node/pan gestures on release."
+    )]
+    pub(in crate::mcp) fn update_entity_graph_diagram(
+        &self,
+        Parameters(args): Parameters<UpdateEntityGraphDiagramArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let traversal = entity_graph_traversal(
+                args.roots,
+                args.direction,
+                args.depth,
+                args.scope,
+                args.context,
+            )?;
+            Ok(json!(self.session().update_entity_graph_diagram(
+                &traversal,
+                &args.snapshot,
+                &args.positions,
+                args.view
+            )?))
+        })
+    }
+
+    #[tool(
+        description = "Reset graph presentation to the deterministic layered layout, no custom positions, pan[24,24] and zoom1. Uses the current traversal snapshot. Session-local presentation only; no source/history changes. UI: Entity graph… → Reset diagram."
+    )]
+    pub(in crate::mcp) fn reset_entity_graph_diagram(
+        &self,
+        Parameters(args): Parameters<EntityGraphDiagramArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let traversal = entity_graph_traversal(
+                args.roots,
+                args.direction,
+                args.depth,
+                args.scope,
+                args.context,
+            )?;
+            Ok(json!(
+                self.session()
+                    .reset_entity_graph_diagram(&traversal, &args.snapshot)?
+            ))
         })
     }
 }

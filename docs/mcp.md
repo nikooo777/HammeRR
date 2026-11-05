@@ -789,7 +789,10 @@ Both sides produces ten patches; the short side has four power-2 patches,
 and the long side has six power-2/3 patches.
 Connected borders must retain complete native full/half links, sample spacing
 and active LOD. The combined candidate preserves unchanged neighbor grids and
-each retained original triangle. Quarter links, LOD coarsening, overlapping or
+each retained original triangle. Unselected coarsened neighbors can remain only
+with identical masks, active flags, snapped positions, encoded vertices and
+max-allowed triangles. Selected or resulting coarsened patches reject.
+Quarter links, changed neighbor LOD, overlapping or
 unmatched contacts, arbitrary cuts and unsupported bindings or metadata refuse
 before changing the map. Carrier-face material does not create
 a physical wall beneath the cut.

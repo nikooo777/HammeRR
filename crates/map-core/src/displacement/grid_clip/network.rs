@@ -103,6 +103,71 @@ struct Links {
 
 struct Graph {
     links: Links,
+    lod: Vec<Option<LodState>>,
+}
+
+#[derive(PartialEq, Eq)]
+struct LodState {
+    mask: [u32; crate::displacement::ALLOWED_VERTEX_MASK_WORDS],
+    active: Vec<bool>,
+    ideal_positions: Vec<[u64; 3]>,
+    encoded_vertices: Vec<[u32; 5]>,
+    emitted_positions: Vec<[u32; 3]>,
+    indices: Vec<[usize; 3]>,
+}
+
+fn lod_state(
+    surface: &Surface<'_>,
+    patch: lod::Patch,
+    work: &mut Work,
+) -> Result<LodState, EditError> {
+    work.consume(surface.vertices.len() * 4 + patch.indices.len())
+        .map_err(invalid)?;
+    let vertices =
+        lod::encoded_vertices(&surface.vertices, &surface.positions, &patch).map_err(invalid)?;
+    let encoded_vertices = vertices
+        .iter()
+        .map(|vertex| {
+            [
+                vertex.direction[0].to_bits(),
+                vertex.direction[1].to_bits(),
+                vertex.direction[2].to_bits(),
+                vertex.distance.to_bits(),
+                vertex.alpha.to_bits(),
+            ]
+        })
+        .collect();
+    let base: [DVec3; 4] = surface
+        .raw
+        .face
+        .vertices
+        .as_slice()
+        .try_into()
+        .map_err(|_| invalid("Terrain LOD certificate needs a native quad base"))?;
+    let info = bsp::DisplacementInfo {
+        start: native::stored_vertex(surface.mesh.base_positions[0])
+            .as_vec3()
+            .to_array(),
+        power: surface.raw.side.displacement.as_ref().unwrap().power as i32,
+        ..Default::default()
+    };
+    let emitted_positions = native::positions(base, info, vertices)
+        .map_err(invalid)?
+        .into_iter()
+        .map(|point| point.map(f32::to_bits))
+        .collect();
+    Ok(LodState {
+        mask: patch.mask,
+        active: patch.active,
+        ideal_positions: patch
+            .positions
+            .into_iter()
+            .map(|point| point.to_array().map(f64::to_bits))
+            .collect(),
+        encoded_vertices,
+        emitted_positions,
+        indices: patch.indices,
+    })
 }
 
 fn collect(vmf: &Vmf) -> Result<Vec<Raw<'_>>, EditError> {
@@ -264,11 +329,15 @@ fn graph(surfaces: &[Surface<'_>], work: &mut Work) -> Result<Graph, EditError> 
             .map_err(invalid)?;
     let (lod, _) = lod::prepare(&grids, &neighbors.pairs, &mut |amount| work.consume(amount))
         .map_err(invalid)?;
-    if lod.iter().any(Option::is_some) {
-        return Err(invalid(
-            "Terrain clipping cannot change an existing LOD-coarsened neighbor component",
-        ));
-    }
+    let lod = surfaces
+        .iter()
+        .zip(lod)
+        .map(|(surface, patch)| {
+            patch
+                .map(|patch| lod_state(surface, patch, work))
+                .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut links = Links::default();
     let mut connected = BTreeSet::new();
     for link in &neighbors.pairs {
@@ -350,7 +419,7 @@ fn graph(surfaces: &[Surface<'_>], work: &mut Work) -> Result<Graph, EditError> 
             }
         }
     }
-    Ok(Graph { links })
+    Ok(Graph { links, lod })
 }
 
 fn canonical(mut triangle: [usize; 3]) -> [usize; 3] {
@@ -573,6 +642,15 @@ pub(crate) fn certify(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let previous = graph(&before, &mut work)?;
+    if before
+        .iter()
+        .zip(&previous.lod)
+        .any(|(surface, lod)| selected.contains(&surface.raw.id) && lod.is_some())
+    {
+        return Err(invalid(
+            "Selected terrain uses LOD-coarsened native geometry and cannot be clipped",
+        ));
+    }
     let mut after = Vec::new();
     for surface in &before {
         if let Some(replacement) = replacements
@@ -620,6 +698,15 @@ pub(crate) fn certify(
         }
     }
     let current = graph(&after, &mut work)?;
+    if after
+        .iter()
+        .zip(&current.lod)
+        .any(|(surface, lod)| selected.contains(&surface.raw.id) && lod.is_some())
+    {
+        return Err(invalid(
+            "Clipped terrain would require LOD-coarsened native geometry",
+        ));
+    }
     let mut retained = BTreeSet::new();
     for surface in &after {
         retained.extend((0..surface.vertices.len()).map(|index| surface.vertex(index)));
@@ -649,7 +736,7 @@ pub(crate) fn certify(
             "Terrain clipping cannot preserve every retained native neighbor span and corner",
         ));
     }
-    for original in &before {
+    for (original_index, original) in before.iter().enumerate() {
         let mut expected = BTreeMap::new();
         for (index, triangle) in original.indices.iter().enumerate() {
             let key = canonical(*triangle);
@@ -661,10 +748,20 @@ pub(crate) fn certify(
             }
         }
         let mut actual = BTreeMap::new();
-        for output in after
+        for (output_index, output) in after
             .iter()
-            .filter(|surface| surface.raw.id == original.raw.id)
+            .enumerate()
+            .filter(|(_, surface)| surface.raw.id == original.raw.id)
         {
+            if !selected.contains(&original.raw.id) {
+                work.consume(original.vertices.len() * 4 + original.indices.len())
+                    .map_err(invalid)?;
+                if previous.lod[original_index] != current.lod[output_index] {
+                    return Err(invalid(
+                        "Terrain clipping changed an unselected native neighbor LOD state",
+                    ));
+                }
+            }
             if !selected.contains(&original.raw.id)
                 && (output.raw.side != original.raw.side
                     || output.positions != original.positions

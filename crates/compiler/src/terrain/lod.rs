@@ -28,27 +28,19 @@ pub(super) fn prepare(
         .zip(patches)
         .enumerate()
         .map(|(index, (terrain, patch))| {
-            patch.map(|patch| {
-                let mut vertices = terrain.vertices.clone();
-                for (vertex, &active) in patch.active.iter().enumerate() {
-                    if active {
-                        continue;
-                    }
-                    let delta =
-                        (patch.positions[vertex] - grids[index].positions[vertex]).as_vec3();
-                    let old = vertices[vertex];
-                    vertices[vertex].direction =
-                        (glam::Vec3::from_array(old.direction) * old.distance + delta).to_array();
-                    vertices[vertex].distance = 1.0;
-                }
-                Patch {
-                    mask: patch.mask,
-                    positions: patch.positions,
-                    vertices,
-                    indices: patch.indices,
-                }
-            })
+            patch
+                .map(|patch| {
+                    let vertices =
+                        lod::encoded_vertices(&terrain.vertices, grids[index].positions, &patch)?;
+                    Ok(Patch {
+                        mask: patch.mask,
+                        positions: patch.positions,
+                        vertices,
+                        indices: patch.indices,
+                    })
+                })
+                .transpose()
         })
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?;
     Ok((patches, stats))
 }

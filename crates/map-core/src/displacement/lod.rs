@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use super::neighbors::{self, NeighborPair, Span, SurfaceGrid};
 use glam::DVec3;
-use source_formats::bsp::DisplacementInfo;
+use source_formats::bsp::{DisplacementInfo, DisplacementVertex};
 
 const MAX_WORK: usize = 2_000_000;
 
@@ -14,6 +14,32 @@ pub struct Patch {
     pub positions: Vec<DVec3>,
     pub active: Vec<bool>,
     pub indices: Vec<[usize; 3]>,
+}
+
+pub fn encoded_vertices(
+    vertices: &[DisplacementVertex],
+    original_positions: &[DVec3],
+    patch: &Patch,
+) -> Result<Vec<DisplacementVertex>, String> {
+    if vertices.len() > super::MAX_GRID_VERTICES
+        || original_positions.len() != vertices.len()
+        || patch.positions.len() != vertices.len()
+        || patch.active.len() != vertices.len()
+    {
+        return Err("Terrain LOD encoding requires matching bounded vertex grids".into());
+    }
+    let mut vertices = vertices.to_vec();
+    for (vertex, &active) in patch.active.iter().enumerate() {
+        if active {
+            continue;
+        }
+        let delta = (patch.positions[vertex] - original_positions[vertex]).as_vec3();
+        let old = vertices[vertex];
+        vertices[vertex].direction =
+            (glam::Vec3::from_array(old.direction) * old.distance + delta).to_array();
+        vertices[vertex].distance = 1.0;
+    }
+    Ok(vertices)
 }
 
 #[derive(Default)]

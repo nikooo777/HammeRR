@@ -6,6 +6,7 @@ use crate::brush::Face;
 pub mod brush;
 pub mod collision;
 pub mod edit;
+pub(crate) mod grid_clip;
 pub mod lod;
 pub mod native;
 pub mod neighbors;
@@ -18,6 +19,7 @@ pub mod surface;
 pub mod triangles;
 
 pub const MAX_GRID_VERTICES: usize = 289;
+pub const ALLOWED_VERTEX_MASK_WORDS: usize = 10;
 
 #[derive(Debug, Clone, Copy)]
 pub enum VertexValue {

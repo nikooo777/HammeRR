@@ -1,15 +1,21 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec3;
 use source_formats::vmf::{Side, Solid, UvAxis};
 
 use crate::edit::{DEFAULT_LIGHTMAP_SCALE, DEFAULT_TEXTURE_SCALE, world_texture_axes};
 use crate::plane::ON_EPSILON;
+use crate::surface::FaceId;
 use crate::{BrushGeometry, EditError, ObjectId, Plane, Transaction};
 
 const PLANE_POINT_SPAN: f64 = 64.0;
 const MAX_COORDINATE: f64 = 65_536.0;
 const MIN_VOLUME: f64 = 1e-6;
+
+pub const MAX_TERRAIN_SOURCES: usize = 16;
+pub const MAX_TERRAIN_PATCHES: usize = MAX_TERRAIN_SOURCES * 4;
+pub const MAX_TERRAIN_VERTICES: usize = MAX_TERRAIN_PATCHES * 81;
+pub const MAX_TERRAIN_TRIANGLES: usize = MAX_TERRAIN_PATCHES * 128;
 
 #[derive(Debug)]
 pub(crate) enum HalfError {
@@ -46,6 +52,18 @@ pub struct ClipResult {
     pub cuts: Vec<Cut>,
     pub objects: Vec<ObjectId>,
     pub unchanged: Vec<u32>,
+    pub side_mapping: BTreeMap<u32, Vec<u32>>,
+    pub terrain: Vec<TerrainCut>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TerrainCut {
+    pub source: FaceId,
+    pub faces: Vec<FaceId>,
+    pub source_power: u32,
+    pub output_power: u32,
+    pub vertices: usize,
+    pub triangles: usize,
 }
 
 fn invalid(message: impl Into<String>) -> EditError {
@@ -192,6 +210,8 @@ struct PlannedCut {
     owner: ObjectId,
     source: u32,
     parts: Vec<Solid>,
+    source_sides: Vec<u32>,
+    terrain: Option<TerrainCut>,
 }
 
 pub fn clip(
@@ -210,6 +230,8 @@ pub fn clip(
     }
     let mut planned = Vec::new();
     let mut unchanged = Vec::new();
+    let mut terrain_sources = 0;
+    let mut terrain_patches = 0;
     for owner in ids.iter().copied().collect::<BTreeSet<_>>() {
         let solids: Vec<_> = match owner {
             ObjectId::Solid(id) => vec![tx.document().solid(id).ok_or(EditError::NotFound(owner))?],
@@ -225,6 +247,43 @@ pub fn clip(
         };
         for solid in solids {
             let shape = geometry(solid)?;
+            let material = material.map(str::trim).unwrap_or(&solid.sides[0].material);
+            if solid.sides.iter().any(|side| side.displacement.is_some()) {
+                let plan = crate::displacement::grid_clip::plan(
+                    tx.document(),
+                    solid,
+                    &shape,
+                    plane,
+                    keep,
+                    material,
+                )?;
+                let Some(plan) = plan else {
+                    unchanged.push(solid.id);
+                    continue;
+                };
+                terrain_sources += 1;
+                terrain_patches += plan.parts.len();
+                if terrain_sources > MAX_TERRAIN_SOURCES || terrain_patches > MAX_TERRAIN_PATCHES {
+                    return Err(invalid(
+                        "Terrain clipping exceeds its source or patch limit",
+                    ));
+                }
+                planned.push(PlannedCut {
+                    owner,
+                    source: solid.id,
+                    parts: plan.parts,
+                    source_sides: solid.sides.iter().map(|side| side.id).collect(),
+                    terrain: Some(TerrainCut {
+                        source: plan.source,
+                        faces: Vec::new(),
+                        source_power: plan.source_power,
+                        output_power: plan.output_power,
+                        vertices: plan.vertices,
+                        triangles: plan.triangles,
+                    }),
+                });
+                continue;
+            }
             let mut front = false;
             let mut back = false;
             for point in shape.faces.iter().flat_map(|face| &face.vertices) {
@@ -236,13 +295,6 @@ pub fn clip(
                 unchanged.push(solid.id);
                 continue;
             }
-            if solid.sides.iter().any(|side| side.displacement.is_some()) {
-                return Err(invalid(format!(
-                    "Brush {} has a displacement; remove it before clipping",
-                    solid.id
-                )));
-            }
-            let material = material.map(str::trim).unwrap_or(&solid.sides[0].material);
             let mut parts = Vec::new();
             if matches!(keep, Keep::Back | Keep::Both) {
                 parts.push(half(solid, plane, material)?);
@@ -261,6 +313,8 @@ pub fn clip(
                 owner,
                 source: solid.id,
                 parts,
+                source_sides: solid.sides.iter().map(|side| side.id).collect(),
+                terrain: None,
             });
         }
     }
@@ -269,19 +323,57 @@ pub fn clip(
             "Cut plane does not cross any selected brush; nothing changed",
         ));
     }
+    if terrain_sources != 0 {
+        let vmf = tx.vmf();
+        let existing = vmf
+            .world
+            .solids
+            .iter()
+            .chain(vmf.entities.iter().flat_map(|entity| &entity.solids))
+            .flat_map(|solid| &solid.sides)
+            .filter(|side| side.displacement.is_some())
+            .count();
+        let final_count = existing
+            .checked_sub(terrain_sources)
+            .and_then(|count| count.checked_add(terrain_patches))
+            .ok_or_else(|| invalid("Terrain clipping patch count overflow"))?;
+        if final_count > source_formats::bsp::MAX_DISPLACEMENTS {
+            return Err(invalid(
+                "Terrain clipping exceeds the native displacement patch limit",
+            ));
+        }
+    }
     let mut result = ClipResult {
         cuts: Vec::new(),
         objects: Vec::new(),
         unchanged,
+        side_mapping: BTreeMap::new(),
+        terrain: Vec::new(),
     };
+    let mut terrain_fragments = Vec::new();
     for mut cut in planned {
+        for source in cut.source_sides {
+            result.side_mapping.entry(source).or_default();
+        }
         for (index, part) in cut.parts.iter_mut().enumerate() {
-            if index == 0 {
-                part.sides.last_mut().unwrap().id = tx.new_side_id()?;
-            } else {
+            if index != 0 {
                 part.id = tx.new_object_id()?;
-                for side in &mut part.sides {
+            }
+            for side in &mut part.sides {
+                let source = side.id;
+                if index != 0 || source == 0 {
                     side.id = tx.new_side_id()?;
+                }
+                if source != 0 {
+                    result.side_mapping.entry(source).or_default().push(side.id);
+                }
+                if side.displacement.is_some()
+                    && let Some(terrain) = &mut cut.terrain
+                {
+                    terrain.faces.push(FaceId {
+                        solid: part.id,
+                        side: side.id,
+                    });
                 }
             }
         }
@@ -289,6 +381,18 @@ pub fn clip(
             source: cut.source,
             solids: cut.parts.iter().map(|solid| solid.id).collect(),
         });
+        if let Some(terrain) = cut.terrain {
+            result
+                .objects
+                .extend(cut.parts.iter().map(|part| ObjectId::Solid(part.id)));
+            result.terrain.push(terrain);
+            terrain_fragments.extend(
+                cut.parts
+                    .into_iter()
+                    .map(|part| (cut.source, cut.owner, part)),
+            );
+            continue;
+        }
         match cut.owner {
             ObjectId::Solid(id) => {
                 *tx.solid_mut(id)? = cut.parts.remove(0);
@@ -308,6 +412,9 @@ pub fn clip(
                 result.objects.push(cut.owner);
             }
         }
+    }
+    if !terrain_fragments.is_empty() {
+        crate::subobject::fragments::install(tx, terrain_fragments)?;
     }
     result.objects.sort();
     result.objects.dedup();

@@ -2,11 +2,10 @@ use glam::DVec3;
 use source_formats::vmf::{DispInfo, Solid, format_vec3_bracketed, parse_vec3};
 
 use super::{Mapping, invalid};
-use crate::displacement::{DisplacementMesh, triangles};
+use crate::displacement::{ALLOWED_VERTEX_MASK_WORDS, DisplacementMesh, triangles};
 use crate::{BrushGeometry, EditError};
 
 const SAMPLE_EPSILON: f64 = 1e-5;
-const MASK_WORDS: usize = 10;
 const MASK_BITS: usize = i32::BITS as usize;
 
 pub(super) struct Surface {
@@ -51,7 +50,7 @@ fn validate(info: &DispInfo, size: usize) -> Result<(), EditError> {
     if info
         .allowed_verts
         .as_ref()
-        .is_some_and(|mask| mask.len() != MASK_WORDS)
+        .is_some_and(|mask| mask.len() != ALLOWED_VERTEX_MASK_WORDS)
     {
         return Err(invalid(
             "Displacement affine transforms require a ten-word allowed-vertex mask",
@@ -103,7 +102,7 @@ fn allowed(info: &mut DispInfo, size: usize) -> Result<(), EditError> {
     let Some(mask) = &mut info.allowed_verts else {
         return Ok(());
     };
-    if mask.len() != MASK_WORDS {
+    if mask.len() != ALLOWED_VERTEX_MASK_WORDS {
         return Err(invalid(
             "Displacement reflection requires a ten-word allowed-vertex mask",
         ));

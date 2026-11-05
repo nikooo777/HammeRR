@@ -4,7 +4,7 @@ use source_formats::vmf::{Entity, Vmf};
 use std::sync::Arc;
 
 #[derive(Clone, PartialEq, Eq)]
-pub(super) struct Write {
+pub(in crate::session) struct Write {
     helper: u32,
     key: String,
     before: String,
@@ -13,8 +13,8 @@ pub(super) struct Write {
     exterior_sides: Vec<u32>,
 }
 
-#[derive(Default)]
-pub(super) struct Plan {
+#[derive(Clone, Default)]
+pub(in crate::session) struct Plan {
     pub writes: Vec<Write>,
     pub sources: Vec<Arc<CubemapBindingSources>>,
     context: Option<String>,
@@ -54,7 +54,7 @@ pub(super) fn writes(vmf: &Vmf, plan: &subobject::CreasePlan) -> Result<Vec<Writ
     writes_for_mapping(vmf, &mapping)
 }
 
-pub(super) fn writes_for_mapping(
+pub(in crate::session) fn writes_for_mapping(
     vmf: &Vmf,
     mapping: &BTreeMap<u32, Vec<u32>>,
 ) -> Result<Vec<Write>, String> {
@@ -127,6 +127,12 @@ pub(super) fn writes_for_mapping(
                 entity.id
             ));
         }
+        if output.is_empty() {
+            return Err(format!(
+                "entity:{}: the cut removes every manually bound cubemap face; rebind the helper first",
+                entity.id
+            ));
+        }
         let after = output
             .iter()
             .map(u32::to_string)
@@ -147,7 +153,10 @@ pub(super) fn writes_for_mapping(
     Ok(result)
 }
 
-pub(super) fn apply(tx: &mut map_core::Transaction, writes: &[Write]) -> Result<(), EditError> {
+pub(in crate::session) fn apply(
+    tx: &mut map_core::Transaction,
+    writes: &[Write],
+) -> Result<(), EditError> {
     for write in writes {
         let entity = tx.entity_mut(write.helper)?;
         if !is_cubemap(entity)
@@ -168,7 +177,13 @@ pub(super) fn apply(tx: &mut map_core::Transaction, writes: &[Write]) -> Result<
 }
 
 impl Plan {
-    pub(super) fn stale_error(&self, session: &Session) -> Option<String> {
+    pub(in crate::session) fn retain_after_selection(&mut self, session: &Session) {
+        if self.context.is_some() {
+            self.context = Some(session.cubemap_binding_source());
+        }
+    }
+
+    pub(in crate::session) fn stale_error(&self, session: &Session) -> Option<String> {
         if self
             .context
             .as_ref()
@@ -183,7 +198,7 @@ impl Plan {
             .find_map(|sources| sources.verify_metadata().err())
     }
 
-    pub(super) fn report(&self) -> Value {
+    pub(in crate::session) fn report(&self) -> Value {
         json!({"helpers":self.writes.len(),"source_sides":self.writes.iter().map(|write|write.source_sides.len()).sum::<usize>(),
             "exterior_sides":self.writes.iter().map(|write|write.exterior_sides.len()).sum::<usize>(),
             "writes":self.writes.iter().map(|write|json!({"helper":format!("entity:{}",write.helper),"key":write.key,"before":write.before,"after":write.after,
@@ -204,7 +219,7 @@ impl Session {
         self.prepare_topology_cubemap_writes(document, writes)
     }
 
-    pub(super) fn prepare_fragment_cubemap_bindings(
+    pub(in crate::session) fn prepare_fragment_cubemap_bindings(
         &self,
         document: &mut Document,
         mapping: &BTreeMap<u32, Vec<u32>>,

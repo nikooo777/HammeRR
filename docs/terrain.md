@@ -200,6 +200,11 @@ Requery vertex and triangle IDs after the edit. **Undo** restores the original.
 Rebind terrain attachments if the changed grid order makes them unavailable.
 Unknown displacement payloads stop odd mirrors when their indices cannot be remapped.
 
+## Split on the existing grid
+
+Use [plane clipping](brush-tools.md#cut-terrain-on-its-existing-grid) to split an
+isolated power-3/4 world patch at an existing middle grid line without resampling.
+
 ## Remove terrain
 
 Select terrain faces, then click **Remove terrain**. Undo restores the complete grid.

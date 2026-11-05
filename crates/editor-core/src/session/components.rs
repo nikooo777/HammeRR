@@ -14,10 +14,10 @@ use super::{Actor, SelectMode, Session};
 mod extrusion;
 mod partitions;
 mod ridge;
-mod ridge_bindings;
+pub(in crate::session) mod ridge_bindings;
 pub use partitions::{FaceCut, PartitionRef};
 pub(in crate::session) use ridge::{
-    require_known_face_topology_metadata, require_unbound_side_references,
+    admit_fragment_snapshot, require_known_face_topology_metadata, require_unbound_side_references,
 };
 
 pub const SOURCE_PAGE_SIZE: usize = 100;

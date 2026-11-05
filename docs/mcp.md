@@ -769,6 +769,25 @@ The default is cutter settings. Target mode requires unique corresponding
 original target faces. Results keep geometric source IDs and add
 `surface_source_solid`/`surface_source_side` for inherited settings.
 
+### Clip an existing terrain grid
+
+1. Call `clip_brushes` with the brush `ids`, `plane`, `keep` and `preview:true`.
+2. Inspect `get_clip_preview` and `render_view`.
+3. Call `commit_clip_preview` or `cancel_clip_preview`.
+
+An isolated world terrain patch at power 3 or 4 can split along a complete
+existing middle row or column. `keep:"both"` produces four native patches;
+`"front"` or `"back"` produces two. Grid spacing, alpha samples, UV placement
+and physical triangle tags remain unchanged. Child power is one lower.
+Arbitrary cuts, external terrain neighbors, unresolved instances and unsupported
+bindings or metadata refuse before changing the map. Carrier-face material does
+not create a physical wall beneath the cut.
+
+Results include `terrain` source/output faces and powers, `side_mapping` and
+`terrain_work` counts and limits. The preview also reports `cubemap_bindings`.
+Manual face bindings use the checked replacement faces; removing every manual
+face refuses rather than changing the helper to automatic binding.
+
 ### Exact terrain positions
 
 Read `get_terrain_vertices` with `preview:false`, then copy its `source` guard

@@ -58,12 +58,31 @@ the complete preview; use cutter or named material mode for oblique cuts.
 Use **Move plane** or **Rotate plane** to adjust the cut with handles.
 **Cancel cut** or Escape discards the preview.
 
+### Cut terrain on its existing grid
+
+1. Select an isolated world terrain brush with power 3 or 4.
+2. Click **Clip selected brushes**.
+3. Set a plane through the grid's complete middle row or column.
+4. Choose **Arrow side**, **Opposite side** or **Both sides**.
+5. Inspect the native terrain patches, then click **Apply cut**.
+
+Each retained half has two patches. **Both sides** produces four patches.
+Their power decreases by one; grid spacing, paint samples and triangle flags
+stay the same. The cut follows the displaced surface, not its backing brush.
+It does not create a wall beneath the cut.
+
+![A painted terrain grid split into four native patches, with the cut plane visible](images/terrain-grid-cut.png)
+
 ## Limits
 
 - Hollow: 16 brushes, 64 faces per brush, 256 walls; thickness 0.125–4096 units.
 - Carve: 1–8 cutters, 16 targets, 256 pieces, 64 faces per piece.
 - Carving away every child brush of an entity rejects.
-- Terrain cannot be hollowed or carved. A clip through terrain rejects.
+- Terrain cannot be hollowed or carved. Terrain clipping requires an isolated
+  power-3/4 world patch and an existing complete middle grid line. Arbitrary
+  cuts, power-2 splitting, connected terrain and unresolved map instances reject.
+- Terrain cuts accept 16 sources and 64 output patches. Unsupported bindings,
+  notes, masks and opaque payloads reject before the map changes.
 - Invalid, collapsed or excessively thin results reject before the map changes.
 
 <!-- page-nav -->

@@ -1,8 +1,11 @@
-use super::previews;
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::{components, components::ridge_bindings, previews};
 use glam::{DVec2, DVec3};
 use map_core::clip::{self, ClipResult, Keep};
-use map_core::{Document, ObjectId, Plane};
+use map_core::{Document, EditError, ObjectId, Plane};
 use render::Projection;
+use serde_json::Value;
 
 use super::{Actor, SelectMode, Session};
 
@@ -17,6 +20,27 @@ pub struct ClipPreview {
     pub result: ClipResult,
     generation: u64,
     revision: u64,
+    definitions: u64,
+    terrain_mapping: BTreeMap<u32, Vec<u32>>,
+    cubemap_bindings: ridge_bindings::Plan,
+}
+
+impl ClipPreview {
+    pub fn cubemap_bindings_report(&self) -> Value {
+        self.cubemap_bindings.report()
+    }
+
+    fn stale_error(&self, session: &Session) -> Option<String> {
+        if self.generation != session.document_generation
+            || self.revision != session.document.revision()
+        {
+            return Some("The map changed; draw the cut again".into());
+        }
+        if !self.result.terrain.is_empty() && self.definitions != session.definitions_serial {
+            return Some("Definitions changed; preview the terrain cut again".into());
+        }
+        self.cubemap_bindings.stale_error(session)
+    }
 }
 
 impl Session {
@@ -130,24 +154,26 @@ impl Session {
         preview: bool,
     ) -> Result<ClipResult, String> {
         let plane = clip::normalized_plane(plane).map_err(|error| error.to_string())?;
-        if preview {
-            if let Some(previous) = &self.geometry.clip_preview
-                && previous.ids == ids
-                && previous.plane == plane
-                && previous.keep == keep
-                && previous.material == material
-            {
-                return Ok(previous.result.clone());
+        if preview
+            && let Some(previous) = &self.geometry.clip_preview
+            && previous.ids == ids
+            && previous.plane == plane
+            && previous.keep == keep
+            && previous.material == material
+        {
+            if let Some(error) = previous.stale_error(self) {
+                return Err(error);
             }
-            let mut document = self.document.preview_snapshot();
-            let result = document
-                .edit("preview clip", |tx| {
-                    clip::clip(tx, ids, plane, keep, material.as_deref())
-                })
-                .map_err(|error| error.to_string())?;
-            let (mins, maxs) = map_core::query::bounds_of(&self.document, ids)
-                .ok_or("Selected brushes have no bounds")?;
+            return Ok(previous.result.clone());
+        }
+        let mut prepared = self.prepare_clip(ids, plane, keep, material)?;
+        if preview {
+            let result = prepared.result.clone();
             self.select(ids, SelectMode::Replace)?;
+            prepared.cubemap_bindings.retain_after_selection(self);
+            if !result.terrain.is_empty() {
+                self.retire_clipped_terrain_state();
+            }
             self.clip_drag = None;
             self.clear_geometry_previews_except(&[previews::Kind::Clip, previews::Kind::Paint]);
 
@@ -158,32 +184,150 @@ impl Session {
             self.spatial.draw_block = false;
 
             self.cancel_block_preview();
-            self.geometry.clip_preview = Some(ClipPreview {
-                document,
-                ids: ids.to_vec(),
-                plane,
-                keep,
-                material,
-                bounds: [mins, maxs],
-                result: result.clone(),
-                generation: self.document_generation,
-                revision: self.document.revision(),
-            });
+            self.geometry.clip_preview = Some(prepared);
             self.clip_epoch += 1;
             self.scene_serial += 1;
             self.view_serial += 1;
             Ok(result)
         } else {
-            let result = self.edit(actor, "clip brushes", |tx| {
-                clip::clip(tx, ids, plane, keep, material.as_deref())
-            })?;
-            let mut selection = ids.to_vec();
-            selection.extend(&result.objects);
-            self.select(&selection, SelectMode::Replace)?;
-            self.clip_tool = false;
-            self.view_serial += 1;
-            Ok(result)
+            self.apply_prepared_clip(actor, prepared)
         }
+    }
+
+    fn prepare_clip(
+        &self,
+        ids: &[ObjectId],
+        plane: Plane,
+        keep: Keep,
+        material: Option<String>,
+    ) -> Result<ClipPreview, String> {
+        let has_terrain = ids.iter().any(|id| match id {
+            ObjectId::Solid(id) => self
+                .document
+                .solid(*id)
+                .is_some_and(|solid| solid.sides.iter().any(|side| side.displacement.is_some())),
+            ObjectId::Entity(id) => self.document.entity(*id).is_some_and(|entity| {
+                entity
+                    .solids
+                    .iter()
+                    .any(|solid| solid.sides.iter().any(|side| side.displacement.is_some()))
+            }),
+        });
+        if has_terrain {
+            components::admit_fragment_snapshot(self.document.vmf())?;
+        }
+        let mut document = self.document.preview_snapshot();
+        let result = document
+            .edit("preview clip", |tx| {
+                clip::clip(tx, ids, plane, keep, material.as_deref())
+            })
+            .map_err(|error| error.to_string())?;
+        let terrain_sources = result
+            .terrain
+            .iter()
+            .map(|cut| cut.source.solid)
+            .collect::<BTreeSet<_>>();
+        let mut terrain_mapping = BTreeMap::new();
+        if !terrain_sources.is_empty() {
+            self.check_fragment_references(&terrain_sources, &BTreeSet::new(), &BTreeSet::new())?;
+            for source in terrain_sources {
+                let solid = self
+                    .document
+                    .solid(source)
+                    .ok_or("Terrain cut source is unavailable")?;
+                for side in &solid.sides {
+                    let targets = result
+                        .side_mapping
+                        .get(&side.id)
+                        .ok_or("Terrain cut is missing a source face replacement")?;
+                    terrain_mapping.insert(side.id, targets.clone());
+                }
+            }
+        }
+        let cubemap_bindings =
+            self.prepare_fragment_cubemap_bindings(&mut document, &terrain_mapping)?;
+        let (mins, maxs) = map_core::query::bounds_of(&self.document, ids)
+            .ok_or("Selected brushes have no bounds")?;
+        Ok(ClipPreview {
+            document,
+            ids: ids.to_vec(),
+            plane,
+            keep,
+            material,
+            bounds: [mins, maxs],
+            result,
+            generation: self.document_generation,
+            revision: self.document.revision(),
+            definitions: self.definitions_serial,
+            terrain_mapping,
+            cubemap_bindings,
+        })
+    }
+
+    fn retire_clipped_terrain_state(&mut self) {
+        self.retire_terrain_move_handles();
+        self.working_region_end_terrain_stroke();
+        let _ = self.clear_terrain_triangle_highlight(None);
+    }
+
+    fn apply_prepared_clip(
+        &mut self,
+        actor: Actor,
+        preview: ClipPreview,
+    ) -> Result<ClipResult, String> {
+        if let Some(error) = preview.stale_error(self) {
+            return Err(error);
+        }
+        if !preview.result.terrain.is_empty() {
+            self.check_fragment_references(
+                &preview
+                    .result
+                    .terrain
+                    .iter()
+                    .map(|cut| cut.source.solid)
+                    .collect(),
+                &BTreeSet::new(),
+                &BTreeSet::new(),
+            )?;
+        }
+        let game = self.game.clone();
+        let result = self.edit(actor, "clip brushes", |tx| {
+            let writes = ridge_bindings::writes_for_mapping(tx.vmf(), &preview.terrain_mapping)
+                .map_err(EditError::Invalid)?;
+            if writes != preview.cubemap_bindings.writes {
+                return Err(EditError::Invalid(
+                    "Cubemap bindings changed; preview the terrain cut again".into(),
+                ));
+            }
+            let result = clip::clip(
+                tx,
+                &preview.ids,
+                preview.plane,
+                preview.keep,
+                preview.material.as_deref(),
+            )?;
+            if result != preview.result {
+                return Err(EditError::Invalid(
+                    "Cut geometry or allocation changed; preview the cut again".into(),
+                ));
+            }
+            ridge_bindings::apply(tx, &writes)?;
+            for sources in &preview.cubemap_bindings.sources {
+                sources
+                    .verify(&game, &compiler::Control::default())
+                    .map_err(EditError::Invalid)?;
+            }
+            Ok(result)
+        })?;
+        if !result.terrain.is_empty() {
+            self.retire_clipped_terrain_state();
+        }
+        let mut selection = preview.ids;
+        selection.extend(&result.objects);
+        self.select(&selection, SelectMode::Replace)?;
+        self.clip_tool = false;
+        self.view_serial += 1;
+        Ok(result)
     }
 
     pub fn commit_clip_preview(&mut self, actor: Actor) -> Result<ClipResult, String> {
@@ -195,22 +339,14 @@ impl Session {
         let preview = self
             .geometry
             .clip_preview
-            .take()
+            .as_ref()
             .ok_or("No clip preview to apply")?;
+        if let Some(error) = preview.stale_error(self) {
+            return Err(error);
+        }
+        let preview = self.geometry.clip_preview.take().unwrap();
         self.scene_serial += 1;
         self.view_serial += 1;
-        if preview.generation != self.document_generation
-            || preview.revision != self.document.revision()
-        {
-            return Err("The map changed; draw the cut again".into());
-        }
-        self.clip_brushes(
-            actor,
-            &preview.ids,
-            preview.plane,
-            preview.keep,
-            preview.material,
-            false,
-        )
+        self.apply_prepared_clip(actor, preview)
     }
 }

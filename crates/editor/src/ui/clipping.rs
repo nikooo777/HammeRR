@@ -43,7 +43,7 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
             map_core::clip::Keep::Both => 2,
         });
         app.set_clip_material(preview.material.clone().unwrap_or_default().into());
-        app.set_clip_summary(
+        let summary = if preview.result.terrain.is_empty() {
             format!(
                 "{} brushes cut · {} pieces · {} unchanged · preview only",
                 preview.result.cuts.len(),
@@ -55,8 +55,20 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
                     .sum::<usize>(),
                 preview.result.unchanged.len()
             )
-            .into(),
-        );
+        } else {
+            format!(
+                "{} brushes cut · {} native terrain patches · {} unchanged · preview only",
+                preview.result.cuts.len(),
+                preview
+                    .result
+                    .terrain
+                    .iter()
+                    .map(|cut| cut.faces.len())
+                    .sum::<usize>(),
+                preview.result.unchanged.len()
+            )
+        };
+        app.set_clip_summary(summary.into());
         if let Some(error) = session.clip_drag().and_then(|drag| drag.error.as_ref()) {
             app.set_clip_summary(error.clone().into());
         }
@@ -115,8 +127,22 @@ pub(super) fn preview_clip_plane(app: &AppWindow, session: &mut Session) {
 
 pub(super) fn apply_clip(app: &AppWindow, session: &mut Session) {
     match session.commit_clip_preview(Actor::User) {
-        Ok(result) => app
-            .set_message(format!("Clipped {} brushes in one undo step", result.cuts.len()).into()),
+        Ok(result) => {
+            let message = if result.terrain.is_empty() {
+                format!("Clipped {} brushes in one undo step", result.cuts.len())
+            } else {
+                format!(
+                    "Clipped {} brushes · {} native terrain patches · one undo step",
+                    result.cuts.len(),
+                    result
+                        .terrain
+                        .iter()
+                        .map(|cut| cut.faces.len())
+                        .sum::<usize>()
+                )
+            };
+            app.set_message(message.into());
+        }
         Err(error) => app.set_message(error.into()),
     }
     refresh_spatial(app, session);

@@ -489,7 +489,7 @@ pub struct ClipArgs {
     pub plane: ClipPlane,
     /// front is the arrow/positive-normal side, back the opposite; defaults to both.
     pub keep: Option<String>,
-    /// New cap material; omitted inherits each source brush's first material.
+    /// New cap/carrier-face material; omitted inherits the source's first material. Native terrain has no sealed cut wall.
     pub material: Option<String>,
     #[serde(default)]
     pub preview: bool,
@@ -531,7 +531,22 @@ pub(in crate::mcp) struct ClipPointsArgs {
 }
 
 pub(in crate::mcp) fn clip_result(result: &map_core::clip::ClipResult) -> Value {
-    json!({"cuts": result.cuts.iter().map(|cut| json!({"source": cut.source, "solids": cut.solids})).collect::<Vec<_>>(), "objects": result.objects.iter().copied().map(id_string).collect::<Vec<_>>(), "unchanged": result.unchanged})
+    json!({"cuts": result.cuts.iter().map(|cut| json!({"source": cut.source, "solids": cut.solids})).collect::<Vec<_>>(),
+    "objects": result.objects.iter().copied().map(id_string).collect::<Vec<_>>(), "unchanged": result.unchanged,
+    "side_mapping":result.side_mapping,
+    "terrain":result.terrain.iter().map(|cut|json!({
+        "source":{"solid":cut.source.solid,"side":cut.source.side},
+        "faces":cut.faces.iter().map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>(),
+        "source_power":cut.source_power,"output_power":cut.output_power,"vertices":cut.vertices,"triangles":cut.triangles,
+    })).collect::<Vec<_>>(),
+    "terrain_work":{
+        "sources":result.terrain.len(),"patches":result.terrain.iter().map(|cut|cut.faces.len()).sum::<usize>(),
+        "vertices":result.terrain.iter().map(|cut|cut.vertices).sum::<usize>(),
+        "triangles":result.terrain.iter().map(|cut|cut.triangles).sum::<usize>(),
+        "limits":{"sources":map_core::clip::MAX_TERRAIN_SOURCES,"patches":map_core::clip::MAX_TERRAIN_PATCHES,
+            "vertices":map_core::clip::MAX_TERRAIN_VERTICES,"triangles":map_core::clip::MAX_TERRAIN_TRIANGLES,
+            "native_map_patches":source_formats::bsp::MAX_DISPLACEMENTS}
+    }})
 }
 
 pub(in crate::mcp) fn clip_state(session: &Session) -> Value {
@@ -540,6 +555,7 @@ pub(in crate::mcp) fn clip_state(session: &Session) -> Value {
         "keep": match preview.keep { map_core::clip::Keep::Front => "front", map_core::clip::Keep::Back => "back", map_core::clip::Keep::Both => "both" },
         "material": preview.material, "ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(),
         "result": clip_result(&preview.result),
+        "cubemap_bindings":preview.cubemap_bindings_report(),
         "pieces": preview.result.cuts.iter().flat_map(|cut| &cut.solids)
             .filter_map(|id| map_core::surface::solid(&preview.document, *id))
             .map(solid_detail).collect::<Vec<_>>()

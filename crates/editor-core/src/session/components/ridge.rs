@@ -3,7 +3,13 @@ use map_core::surface::FaceId;
 use map_core::{context, measurements, partition_metadata};
 use source_formats::vmf::{Solid, Vmf};
 
-const MAX_RIDGE_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_FRAGMENT_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
+
+pub(in crate::session) fn admit_fragment_snapshot(vmf: &Vmf) -> Result<(), String> {
+    vmf.validate_ids().map_err(|error| error.to_string())?;
+    map_core::references::admit_snapshot_storage(vmf, MAX_FRAGMENT_SNAPSHOT_BYTES, &mut || Ok(()))
+        .map(|_| ())
+}
 
 pub(super) fn component_selection(plan: &subobject::CreasePlan) -> BTreeSet<Component> {
     if !plan.fragments.is_empty() {
@@ -143,21 +149,13 @@ impl Session {
         self.check_fragment_references(&objects, &consumed, &BTreeSet::new())
     }
 
-    pub(super) fn check_fragment_references(
+    pub(in crate::session) fn check_fragment_references(
         &self,
         objects: &BTreeSet<u32>,
         consumed_partitions: &BTreeSet<(u32, u32)>,
         consumed_free_partitions: &BTreeSet<(u32, u32)>,
     ) -> Result<(), String> {
-        self.document
-            .vmf()
-            .validate_ids()
-            .map_err(|error| error.to_string())?;
-        map_core::references::admit_snapshot_storage(
-            self.document.vmf(),
-            MAX_RIDGE_SNAPSHOT_BYTES,
-            &mut || Ok(()),
-        )?;
+        admit_fragment_snapshot(self.document.vmf())?;
         map_core::groups::Graph::read(&self.document).map_err(|error| error.to_string())?;
         map_core::layers::Graph::read(&self.document).map_err(|error| error.to_string())?;
         require_known_face_topology_metadata(self.document.vmf())?;

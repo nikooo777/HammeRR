@@ -529,7 +529,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Clip selected world brushes or brush entities by normal/distance, three VMF-wound points, or a snapped planar line. Keep front (positive-normal arrow side), back or both. Non-crossing brushes stay unchanged; point entities and intersected displacements are rejected atomically. Existing UVs/metadata survive; caps use material or inherit the first source material. preview=true leaves document and undo untouched; inspect with get_clip_preview and render_view, then commit or cancel."
+        description = "Clip selected world brushes or brush entities by normal/distance, three VMF-wound points, or a snapped planar line. Keep front (positive-normal arrow side), back or both. Non-crossing brushes and terrain sheets stay unchanged; point entities reject. Isolated power-3/4 world terrain supports original grid half-line cuts into two/four native power-2/3 patches without resampling; other terrain cuts, external terrain contacts and incompatible bindings/metadata reject atomically. Existing UVs/metadata survive; caps use material or inherit the first source material. Terrain carrier faces do not create sealed terrain walls. preview=true leaves document and undo untouched; inspect native face outputs, side mappings and work with get_clip_preview and render_view, then commit or cancel."
     )]
     pub(in crate::mcp) fn clip_brushes(
         &self,
@@ -558,7 +558,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect the shared clipping tool and cut preview, including normalized plane, keep side, material, result IDs, piece bounds and face projections.",
+        description = "Inspect the shared clipping tool and cut preview, including normalized plane, keep side, material, result IDs, piece bounds and face projections. Native terrain results include source/output faces, grid powers, side mappings, bounded patch/sample work and manual cubemap rebindings.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_clip_preview(&self) -> ToolResult {

@@ -1,0 +1,142 @@
+import { Theme, SelectableRow } from "kit.slint";
+import { Button, CheckBox, LineEdit, ScrollView } from "widgets.slint";
+
+export struct BatchConnectionRow {
+    source: string,
+    identity: string,
+    label: string,
+    detail: string,
+    selected: bool,
+}
+
+component BatchConnectionField inherits HorizontalLayout {
+    in property <string> label;
+    in property <bool> choose;
+    in property <bool> editable;
+    in property <bool> mixed;
+    in-out property <bool> replace;
+    in-out property <string> value;
+    callback changed();
+    spacing: Theme.space;
+    Text { text: root.label; width: 96px; vertical-alignment: center; color: Theme.text; }
+    if root.choose: CheckBox {
+        text: "Replace"; checked <=> root.replace;
+        enabled: root.editable;
+        toggled => { root.changed(); }
+    }
+    LineEdit {
+        text <=> root.value;
+        placeholder-text: root.mixed ? "Mixed — unchanged unless replaced" : "";
+        enabled: root.editable && (!root.choose || root.replace);
+        accessible-label: root.label;
+        edited => { root.changed(); }
+    }
+}
+
+export component ConnectionBatchWindow inherits Window {
+    title: "Batch connections - HammeRR";
+    background: Theme.panel;
+    preferred-width: 900px;
+    preferred-height: 860px;
+    in-out property <[string]> sources;
+    in-out property <string> snapshot;
+    in-out property <[BatchConnectionRow]> rows;
+    in-out property <string> draft-token;
+    in property <string> sources-label;
+    in property <bool> current-capture;
+    in property <bool> has-plan;
+    in property <bool> add-plan;
+    in property <bool> remove-plan;
+    in property <bool> can-apply;
+    in property <string> summary;
+    in property <string> message;
+    in property <string> warnings;
+    in-out property <string> output;
+    in-out property <string> target;
+    in-out property <string> input;
+    in-out property <string> parameter;
+    in-out property <string> delay;
+    in-out property <string> times;
+    in-out property <bool> replace-output;
+    in-out property <bool> replace-target;
+    in-out property <bool> replace-input;
+    in-out property <bool> replace-parameter;
+    in-out property <bool> replace-delay;
+    in-out property <bool> replace-times;
+    in property <bool> mixed-output;
+    in property <bool> mixed-target;
+    in property <bool> mixed-input;
+    in property <bool> mixed-parameter;
+    in property <bool> mixed-delay;
+    in property <bool> mixed-times;
+    callback capture();
+    callback toggle-row(string);
+    callback begin-add();
+    callback begin-edit();
+    callback begin-remove();
+    callback fields-changed();
+    callback apply();
+    callback cancel-plan();
+    callback close-window();
+    VerticalLayout {
+        padding: Theme.space-xl; spacing: Theme.space;
+        Text { text: "Batch connections"; font-size: Theme.font-display; font-weight: 600; color: Theme.text; }
+        ScrollView {
+            min-height: 36px; max-height: 80px; content-width: self.width;
+            VerticalLayout { alignment: start; padding-right: Theme.space-lg; Text { text: root.sources-label; wrap: word-wrap; color: Theme.text-muted; } }
+        }
+        Text { text: "Highlight exact rows to edit or remove. Equal row numbers on different entities have no shared meaning."; wrap: word-wrap; color: Theme.text-muted; }
+        HorizontalLayout {
+            spacing: Theme.space;
+            Button { text: "Use selected sources"; enabled: !root.has-plan; clicked => { root.capture(); } }
+            Button { text: "Add on selected sources"; enabled: root.current-capture && !root.has-plan; clicked => { root.begin-add(); } }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        HorizontalLayout {
+            spacing: Theme.space;
+            Button { text: "Edit highlighted rows"; enabled: root.current-capture && !root.has-plan; clicked => { root.begin-edit(); } }
+            Button { text: "Remove highlighted rows"; enabled: root.current-capture && !root.has-plan; clicked => { root.begin-remove(); } }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        ScrollView {
+            vertical-stretch: 1; min-height: 110px; content-width: self.width;
+            VerticalLayout {
+                alignment: start; spacing: Theme.space-sm; padding-right: Theme.space-lg;
+                for row in root.rows: SelectableRow {
+                    label: row.label;
+                    selected: row.selected;
+                    enabled: !root.has-plan;
+                    clicked => { root.toggle-row(row.identity); }
+                    VerticalLayout {
+                        padding: Theme.space; spacing: Theme.space-sm;
+                        Text { text: row.label; color: Theme.text; wrap: word-wrap; }
+                        Text { text: row.detail; color: Theme.text-muted; wrap: word-wrap; }
+                    }
+                }
+            }
+        }
+        if root.has-plan: Text { text: root.summary; color: Theme.text; wrap: word-wrap; font-weight: 600; }
+        if root.has-plan && !root.remove-plan: VerticalLayout {
+            spacing: Theme.space-sm;
+            BatchConnectionField { label: "Output"; choose: !root.add-plan; editable: true; mixed: root.mixed-output; replace <=> root.replace-output; value <=> root.output; changed => { root.fields-changed(); } }
+            BatchConnectionField { label: "Target"; choose: !root.add-plan; editable: true; mixed: root.mixed-target; replace <=> root.replace-target; value <=> root.target; changed => { root.fields-changed(); } }
+            BatchConnectionField { label: "Input"; choose: !root.add-plan; editable: true; mixed: root.mixed-input; replace <=> root.replace-input; value <=> root.input; changed => { root.fields-changed(); } }
+            BatchConnectionField { label: "Parameter"; choose: !root.add-plan; editable: true; mixed: root.mixed-parameter; replace <=> root.replace-parameter; value <=> root.parameter; changed => { root.fields-changed(); } }
+            BatchConnectionField { label: "Delay (s)"; choose: !root.add-plan; editable: true; mixed: root.mixed-delay; replace <=> root.replace-delay; value <=> root.delay; changed => { root.fields-changed(); } }
+            BatchConnectionField { label: "Firing count"; choose: !root.add-plan; editable: true; mixed: root.mixed-times; replace <=> root.replace-times; value <=> root.times; changed => { root.fields-changed(); } }
+            Text { text: "Unchecked fields retain each row's original value. Firing count: -1 unlimited, 1 once, or a positive count."; wrap: word-wrap; color: Theme.text-muted; }
+        }
+        if root.warnings != "": ScrollView {
+            max-height: 130px; min-height: 54px; content-width: self.width;
+            VerticalLayout { alignment: start; padding-right: Theme.space-lg; Text { text: root.warnings; color: Theme.warning; wrap: word-wrap; } }
+        }
+        if root.message != "": Text { text: root.message; color: Theme.text-muted; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: Theme.space;
+            Button { text: "Apply connections"; primary: true; enabled: root.has-plan && root.can-apply; clicked => { root.apply(); } }
+            Button { text: "Cancel plan"; enabled: root.has-plan; clicked => { root.cancel-plan(); } }
+            Button { text: "Close"; clicked => { root.close-window(); } }
+            Rectangle { horizontal-stretch: 1; }
+        }
+    }
+}

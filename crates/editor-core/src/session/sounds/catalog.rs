@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use compiler::{Control, asset_sources::BuildMaterialSources};
 use source_formats::{
     gamefs::{GameFs, asset_relative},
     sound::{self, Cue},
@@ -9,6 +10,21 @@ const MAX_FILES: usize = 100_000;
 const MAX_SCRIPTS: usize = 128;
 const MAX_SCRIPT_TOTAL: usize = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 32768;
+const MAX_SOURCE_PATHS: usize = 4096;
+const MAX_SOURCE_LOOKUPS: usize = 8192;
+const MAX_SOURCE_METADATA: usize = 16 * 1024 * 1024;
+
+pub(super) fn source_capture(bytes: usize, paths: usize) -> BuildMaterialSources {
+    BuildMaterialSources::bounded(bytes, paths, MAX_SOURCE_PATHS, MAX_SOURCE_LOOKUPS)
+}
+
+pub(super) fn verify_sources(sources: &BuildMaterialSources, game: &GameFs) -> Result<(), String> {
+    let control = Control::default();
+    sources.original_source_guard(&control, MAX_SOURCE_METADATA)
+        .and_then(|_| sources.source_guard(game, &control))
+        .map(|_| ())
+        .map_err(|error| format!("Sound sources changed or are unavailable; inspect again, or Reload sounds and reopen a script choice: {error}"))
+}
 
 #[derive(Clone)]
 pub(super) struct Entry {
@@ -50,6 +66,21 @@ pub(super) struct Catalog {
     pub aliases: BTreeMap<String, usize>,
     pub ambiguous: BTreeSet<String>,
     pub warnings: Vec<String>,
+    sources: BuildMaterialSources,
+    source_paths: Vec<String>,
+}
+
+impl Catalog {
+    pub(super) fn verify(&self, game: &GameFs) -> Result<(), String> {
+        for path in &self.source_paths {
+            self.sources
+                .read_asset(game, path, sound::MAX_SCRIPT_BYTES)
+                .map_err(|error| {
+                    format!("Sound catalog changed; Reload sounds and reopen this choice: {error}")
+                })?;
+        }
+        verify_sources(&self.sources, game)
+    }
 }
 
 pub(super) fn load(game: &GameFs) -> Result<Catalog, String> {
@@ -76,22 +107,27 @@ pub(super) fn load(game: &GameFs) -> Result<Catalog, String> {
         aliases: BTreeMap::new(),
         ambiguous: BTreeSet::new(),
         warnings: Vec::new(),
+        sources: source_capture(MAX_SCRIPT_TOTAL, MAX_SCRIPTS + 1),
+        source_paths: vec!["scripts/game_sounds_manifest.txt".into()],
     };
-    let manifest =
-        match game.read_limited("scripts/game_sounds_manifest.txt", sound::MAX_SCRIPT_BYTES) {
-            Ok(Some(manifest)) => manifest,
-            Ok(None) => {
-                catalog.warnings.push(
-                    "No game_sounds_manifest.txt is mounted; only sound files are listed".into(),
-                );
-                return Ok(catalog);
-            }
-            Err(error) => {
-                catalog.warnings.push(format!("Sound manifest: {error}"));
-                return Ok(catalog);
-            }
-        };
-    let roots = match std::str::from_utf8(&manifest)
+    let manifest = match catalog.sources.read_asset(
+        game,
+        "scripts/game_sounds_manifest.txt",
+        sound::MAX_SCRIPT_BYTES,
+    ) {
+        Ok(Some(manifest)) => manifest,
+        Ok(None) => {
+            catalog
+                .warnings
+                .push("No game_sounds_manifest.txt is mounted; only sound files are listed".into());
+            return Ok(catalog);
+        }
+        Err(error) => {
+            catalog.warnings.push(format!("Sound manifest: {error}"));
+            return Ok(catalog);
+        }
+    };
+    let roots = match std::str::from_utf8(manifest.bytes())
         .map_err(|error| error.to_string())
         .and_then(|text| sound::document(text).map_err(|error| error.to_string()))
     {
@@ -122,7 +158,7 @@ pub(super) fn load(game: &GameFs) -> Result<Catalog, String> {
     if scripts.len() > MAX_SCRIPTS {
         return Err("Sound manifest exceeds 128 scripts".into());
     }
-    let mut bytes = manifest.len();
+    let mut bytes = manifest.bytes().len();
     let mut seen = BTreeSet::new();
     let mut cue_count = 0;
     for path in scripts {
@@ -138,16 +174,18 @@ pub(super) fn load(game: &GameFs) -> Result<Catalog, String> {
         if !seen.insert(path.clone()) {
             continue;
         }
+        catalog.source_paths.push(path.clone());
         let result = (|| {
-            let data = game
-                .read_limited(&path, sound::MAX_SCRIPT_BYTES)
+            let data = catalog
+                .sources
+                .read_asset(game, &path, sound::MAX_SCRIPT_BYTES)
                 .map_err(|error| error.to_string())?
                 .ok_or("Script is missing")?;
-            bytes += data.len();
+            bytes += data.bytes().len();
             if bytes > MAX_SCRIPT_TOTAL {
                 return Err("Sound scripts exceed 32 MiB".into());
             }
-            let text = std::str::from_utf8(&data).map_err(|_| "Script is not UTF-8")?;
+            let text = std::str::from_utf8(data.bytes()).map_err(|_| "Script is not UTF-8")?;
             sound::parse_script(text).map_err(|error| error.to_string())
         })();
         if bytes > MAX_SCRIPT_TOTAL {

@@ -12,6 +12,31 @@ const MAX_STORAGE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_SCAN_WORK: usize = 64 * 1024 * 1024;
 const MAX_TARGETS: usize = 256;
 
+pub(super) fn scan_checked(
+    document: &Document,
+    catalog: &Catalog,
+) -> Result<Vec<super::Reference>, String> {
+    let mut checkpoint = || Ok(());
+    admit_snapshot_storage(document.vmf(), MAX_STORAGE_BYTES, &mut checkpoint)?;
+    let captured = CollapseCatalog::capture(catalog)?;
+    let mut work = ScanWork {
+        remaining: MAX_SCAN_WORK,
+        checkpoint: Some(&mut checkpoint),
+    };
+    let mut references = Vec::new();
+    scan_visit(
+        document,
+        &|name| catalog.class(name),
+        (captured.name_bytes, captured.classes.len()),
+        &mut work,
+        &mut |reference, _| {
+            references.push(reference.to_owned());
+            Ok(false)
+        },
+    )?;
+    Ok(references)
+}
+
 struct Admission<'a> {
     input: InputBudget,
     bytes: usize,

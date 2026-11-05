@@ -2,6 +2,8 @@ mod assets;
 mod atlas;
 pub(super) mod baked_surfaces;
 mod build;
+mod bulk_entities;
+mod bulk_rename;
 mod checks;
 mod clipboard;
 mod color_correction;

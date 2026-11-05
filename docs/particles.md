@@ -4,16 +4,21 @@
 
 Find a named particle system and assign it to an entity.
 
-1. Select `info_particle_system`.
-2. Click **Browse…** beside **Particle System Name**.
+1. Select one or more `info_particle_system` entities.
+2. Click **Browse…** beside **Particle System Name**, or open **Entity → Choose particles…**.
 3. Search by system, particle file or material.
 4. Select a result to inspect its definition and child systems.
-5. Click **Apply**, or **Cancel** to discard the choice.
+5. Click **Apply** to assign the effect to every captured entity in one Undo
+   step, or **Cancel** to discard the choice.
+
+The browser lists each captured source value. Mixed values do not select an
+asset automatically.
 
 Use **Reload particles** after changing assets. Reopen the browser afterward.
 
 ## Limits
 
+- Up to 64 compatible whole entities per captured choice. Apply rechecks the current manifest and PCF definition before writing any entity.
 - Definition metadata only. The editor does not render or animate particles.
 - Discovery uses the active `particles/particles_manifest.txt` and mounted content order.
 - Supported PCFs use DMX binary 2, format pcf 1.

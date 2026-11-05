@@ -86,6 +86,8 @@ struct Ui {
     entity_graph: Option<entity_graph_ui::Form>,
     external_comparison: Option<Rc<external_comparison::Controller>>,
     connection_window: Option<ConnectionWindow>,
+    connection_batch_window: Option<ConnectionBatchWindow>,
+    bulk_entities: Option<bulk_entities_ui::Controller>,
     seen_connections: (u64, u64, u64),
     properties_window: Option<PropertiesWindow>,
     property_pickers: Option<management_ui::PropertyPickers>,
@@ -112,6 +114,7 @@ struct Ui {
     seen_recent_maps: (u64, u64, u64),
     seen_management: (u64, u64, u64),
     rename_window: Option<RenameWindow>,
+    bulk_rename: Option<bulk_rename_ui::Controller>,
     seen_rename: (u64, u64, u64),
     color_window: Option<ColorWindow>,
     model: Option<model_ui::Controller>,
@@ -234,6 +237,8 @@ impl Ui {
             entity_graph: None,
             external_comparison: None,
             connection_window: None,
+            connection_batch_window: None,
+            bulk_entities: None,
             seen_connections: (0, 0, 0),
             properties_window: None,
             property_pickers: None,
@@ -260,6 +265,7 @@ impl Ui {
             seen_recent_maps: (0, 0, 0),
             seen_management: (0, 0, 0),
             rename_window: None,
+            bulk_rename: None,
             seen_rename: (0, 0, 0),
             color_window: None,
             model: None,
@@ -680,11 +686,15 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
                         .is_some_and(|path| !path.trim().is_empty())
             }),
     );
-    app.set_brush_entity_selected(
-        single_selected_entity(session)
-            .and_then(|id| doc.entity(id))
-            .is_some_and(|entity| !entity.solids.is_empty()),
-    );
+    let entity_selection = app.get_whole_object_selection()
+        && session
+            .selection()
+            .iter()
+            .all(|id| matches!(id, ObjectId::Entity(_)));
+    app.set_whole_entity_selection(entity_selection);
+    app.set_brush_entity_selected(entity_selection && session.selection().iter().all(|id| {
+        matches!(id, ObjectId::Entity(id) if doc.entity(*id).is_some_and(|entity| !entity.solids.is_empty()))
+    }));
     app.set_can_tie(
         !session.selection().is_empty()
             && session
@@ -1209,14 +1219,16 @@ fn create_document_window(
         &ui,
         true
     ));
-    root_callback!(app, ui, on_move_to_world, |app| {
-        let shared = session_of(&ui);
-        let mut session = lock(&shared);
-        if let Some(entity) = single_selected_entity(&session)
-            && let Err(error) = session.move_to_world(Actor::User, entity)
-        {
-            app.unwrap().set_message(error.into());
-        }
+    root_callback!(app, ui, on_move_to_world, |app| show_bulk_entities_window(
+        &app.unwrap(),
+        &ui,
+        true
+    ));
+    root_callback!(app, ui, on_change_entity_class, |app| {
+        show_bulk_entities_window(&app.unwrap(), &ui, false)
+    });
+    root_callback!(app, ui, on_bulk_connections, |app| {
+        show_connection_batch_window(&app.unwrap(), &ui)
     });
     root_callback!(app, ui, on_delete_selection, |app| {
         let shared = session_of(&ui);
@@ -2048,13 +2060,13 @@ fn create_document_window(
         let controller = ui.particles.as_ref().unwrap();
         let result = {
             let mut session = lock(&shared);
-            single_selected_entity(&session)
-                .ok_or("Select a particle system entity".to_owned())
-                .and_then(|id| controller.initialize(&mut session, id))
+            controller.initialize_selected(&mut session)
         };
         match result {
             Ok(()) => {
-                let _ = controller.window.show();
+                if let Err(error) = controller.window.show() {
+                    app.unwrap().set_message(error.to_string().into());
+                }
             }
             Err(error) => app.unwrap().set_message(error.into()),
         }
@@ -2074,9 +2086,7 @@ fn create_document_window(
         let controller = ui.sounds.as_ref().unwrap();
         let result = {
             let mut session = lock(&shared);
-            single_selected_entity(&session)
-                .ok_or("Select an entity with a sound field".to_owned())
-                .and_then(|id| controller.initialize(&mut session, id, &key))
+            controller.initialize_selected(&mut session, &key)
         };
         match result {
             Ok(()) => {
@@ -2100,13 +2110,14 @@ fn create_document_window(
         let controller = ui.model_browser.as_ref().unwrap();
         let result = {
             let mut session = lock(&shared);
-            single_selected_entity(&session)
-                .ok_or("Select a model entity".to_owned())
-                .and_then(|id| controller.initialize(&mut session, id))
+            controller.initialize_selected(&mut session)
         };
         match result {
             Ok(()) => {
-                if !controller.window.get_path().is_empty() && !controller.window.get_can_apply() {
+                if !controller.window.get_source_mixed()
+                    && !controller.window.get_path().is_empty()
+                    && !controller.window.get_can_apply()
+                {
                     controller.window.invoke_preview_model();
                 }
                 let _ = controller.window.show();
@@ -2135,6 +2146,10 @@ fn create_document_window(
             app.set_message(error.into());
         }
     });
+    root_callback!(app, ui, on_bulk_rename, |app| show_bulk_rename_window(
+        &app.unwrap(),
+        &ui
+    ));
     root_callback!(app, ui, on_edit_references, |app| show_rename_window(
         &app.unwrap(),
         &ui,
@@ -3585,7 +3600,18 @@ fn create_document_window(
                         {
                             connection_ui::refresh(window, &session);
                         }
+                        if let Some(window) = &ui.connection_batch_window
+                            && window.window().is_visible()
+                        {
+                            connection_ui::refresh_batch(window, &session);
+                        }
                     }
+                    if let Some(controller) = &ui.bulk_entities
+                        && controller.window.window().is_visible()
+                    {
+                        controller.refresh(&session);
+                    }
+
                     let management = (
                         session.management_serial(),
                         session.scene_serial(),
@@ -3672,6 +3698,11 @@ fn create_document_window(
                             && window.window().is_visible()
                         {
                             rename_ui::refresh(window, &session);
+                        }
+                        if let Some(controller) = &ui.bulk_rename
+                            && controller.window.window().is_visible()
+                        {
+                            controller.refresh(&session);
                         }
                     }
                     if panel_dirty {

@@ -3,7 +3,12 @@ use std::ops::Range;
 
 use source_formats::fgd::{Catalog, Class};
 
+mod batch;
 mod checked;
+pub use batch::{
+    BulkRenamePlan, EntityNameChange, MAX_BULK_RENAME_ENTITIES, MAX_BULK_RENAME_MAP_ENTITIES,
+    apply_many, plan_many,
+};
 pub use checked::{
     CollapseCatalog, admit_collapse_snapshot, admit_snapshot_storage, has_incoming_checked,
 };
@@ -54,6 +59,19 @@ pub struct RenamePlan {
     pub entities: Vec<u32>,
     pub references: Vec<Change>,
     pub error: Option<String>,
+}
+
+fn name_error(name: &str) -> Option<String> {
+    if name.trim().is_empty() || name != name.trim() {
+        Some("Enter a nonempty name without leading or trailing whitespace".into())
+    } else if name.starts_with('!')
+        || name.contains(['*', ',', '"'])
+        || name.chars().any(char::is_control)
+    {
+        Some("Names cannot contain wildcards, commas, quotes or controls, or start with !".into())
+    } else {
+        None
+    }
 }
 
 fn reference_kind(kind: &str) -> bool {
@@ -462,13 +480,8 @@ pub fn plan(
     } else {
         vec![entity]
     };
-    let error = if new_name.trim().is_empty() || new_name != new_name.trim() {
-        Some("Enter a nonempty name without leading or trailing whitespace".into())
-    } else if new_name.starts_with('!')
-        || new_name.contains(['*', ',', '"'])
-        || new_name.chars().any(char::is_control)
-    {
-        Some("Names cannot contain wildcards, commas, quotes or controls, or start with !".into())
+    let error = if let Some(error) = name_error(new_name) {
+        Some(error)
     } else if shared.len() > 1 && !group && new_name != old_name {
         Some(format!(
             "{old_name} is used by {} entities. Choose to rename all of them to preserve their links.",
@@ -576,6 +589,71 @@ fn record_key(reference: &Reference) -> (u32, bool, usize) {
     }
 }
 
+fn checked_changes<'a>(
+    document: &Document,
+    changes: &'a [Change],
+) -> Result<Vec<&'a Change>, EditError> {
+    let mut records = BTreeMap::<_, &Change>::new();
+    for change in changes.iter().filter(|change| change.changed) {
+        if let Some(previous) = records.insert(record_key(&change.reference), change)
+            && (previous.reference.value != change.reference.value
+                || previous.after != change.after)
+        {
+            return Err(EditError::Invalid(
+                "Reference plan contains inconsistent record changes".into(),
+            ));
+        }
+        let entity = document
+            .entity(change.reference.source)
+            .ok_or_else(|| EditError::Invalid("Reference source no longer exists".into()))?;
+        let value = match &change.reference.location {
+            Location::Property { index, key } => entity
+                .properties
+                .0
+                .get(*index)
+                .filter(|(name, _)| name == key)
+                .map(|(_, value)| value.as_str()),
+            Location::Connection { index, output, .. } => entity
+                .connections
+                .as_ref()
+                .and_then(|connections| connections.get(*index))
+                .filter(|connection| &connection.output == output)
+                .map(|connection| connection.value.as_str()),
+        };
+        if value != Some(change.reference.value.as_str()) {
+            return Err(EditError::Invalid(
+                "Reference changed; refresh the rename preview".into(),
+            ));
+        }
+    }
+    Ok(records.into_values().collect())
+}
+
+fn apply_changes(tx: &mut Transaction, changes: &[&Change]) -> Result<(), EditError> {
+    for change in changes {
+        let entity = tx.entity_mut(change.reference.source)?;
+        let value = match &change.reference.location {
+            Location::Property { index, key } => entity
+                .properties
+                .0
+                .get_mut(*index)
+                .filter(|(name, _)| name == key)
+                .map(|(_, value)| value),
+            Location::Connection { index, output, .. } => entity
+                .connections
+                .as_mut()
+                .and_then(|connections| connections.get_mut(*index))
+                .filter(|connection| &connection.output == output)
+                .map(|connection| &mut connection.value),
+        }
+        .ok_or_else(|| {
+            EditError::Invalid("Reference changed; refresh the rename preview".into())
+        })?;
+        value.clone_from(&change.after);
+    }
+    Ok(())
+}
+
 pub fn apply(
     tx: &mut Transaction,
     plan: &RenamePlan,
@@ -594,6 +672,7 @@ pub fn apply(
             "Review the unchanged references before applying".into(),
         ));
     }
+    let changes = checked_changes(tx.document(), &plan.references)?;
     for id in &plan.entities {
         let entity = tx.entity_mut(*id)?;
         if !entity
@@ -610,33 +689,5 @@ pub fn apply(
             entity.properties.set("targetname", plan.new_name.clone());
         }
     }
-    for change in plan.references.iter().rev() {
-        if !change.changed {
-            continue;
-        }
-        let entity = tx.entity_mut(change.reference.source)?;
-        let value = match &change.reference.location {
-            Location::Property { index, key } => entity
-                .properties
-                .0
-                .get_mut(*index)
-                .filter(|(name, _)| name == key)
-                .map(|(_, value)| value),
-            Location::Connection { index, output, .. } => entity
-                .connections
-                .as_mut()
-                .and_then(|connections| connections.get_mut(*index))
-                .filter(|connection| &connection.output == output)
-                .map(|connection| &mut connection.value),
-        }
-        .ok_or_else(|| EditError::Invalid("Reference changed; refresh the preview".into()))?;
-        // Multiple fields in one connection are replaced from right to left.
-        if value.get(change.reference.span.clone()) != Some(change.reference.target.as_str()) {
-            return Err(EditError::Invalid(
-                "Reference changed; refresh the preview".into(),
-            ));
-        }
-        value.replace_range(change.reference.span.clone(), &plan.new_name);
-    }
-    Ok(())
+    apply_changes(tx, &changes)
 }

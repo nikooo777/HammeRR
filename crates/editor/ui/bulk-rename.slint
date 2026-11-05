@@ -1,0 +1,117 @@
+import { Theme, SectionHeader } from "kit.slint";
+import { Button, LineEdit, ListView } from "widgets.slint";
+
+export struct BulkRenameNameRow {
+    entity: string,
+    label: string,
+    old-name: string,
+    new-name: string,
+}
+
+export struct BulkRenameReferenceRow {
+    label: string,
+    before: string,
+    after: string,
+    reason: string,
+    changed: bool,
+}
+
+export component BulkRenameWindow inherits Window {
+    title: "Rename Selected Entities - HammeRR";
+    background: Theme.panel;
+    preferred-width: 900px;
+    preferred-height: 760px;
+    min-width: 600px;
+    min-height: 580px;
+    in-out property <[BulkRenameNameRow]> names;
+    in property <[BulkRenameReferenceRow]> references;
+    in property <string> draft-token;
+    in property <string> summary;
+    in property <string> status;
+    in property <bool> can-apply;
+    in property <bool> ready;
+    in-out property <bool> dirty;
+    private property <length> name-column-width: 260px;
+    callback names-edited();
+    callback preview();
+    callback apply();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: "Rename selected entities"; font-size: Theme.font-display; font-weight: 600; }
+            Text {
+                text: "Enter a distinct name for every captured entity. Preview all names to review reference updates; swaps and chains apply together.";
+                wrap: word-wrap;
+                color: Theme.text-muted;
+            }
+            HorizontalLayout {
+                spacing: Theme.space-lg;
+                padding-right: Theme.space-lg;
+                Text { text: "Entity · current name"; width: root.name-column-width; font-weight: 600; }
+                Text { text: "New name"; horizontal-stretch: 1; font-weight: 600; }
+            }
+            if root.names.length == 0: Text {
+                text: "No captured entities. Select complete entities and reopen this window.";
+                wrap: word-wrap;
+            }
+            ListView {
+                vertical-stretch: 2;
+                content-width: self.width;
+                for row in root.names: HorizontalLayout {
+                    spacing: Theme.space-lg;
+                    padding-bottom: Theme.space;
+                    padding-right: Theme.space-lg;
+                    VerticalLayout {
+                        width: root.name-column-width;
+                        spacing: Theme.space-xs;
+                        Text { text: row.label + " · " + row.entity; wrap: word-wrap; }
+                        Text { text: row.old-name == "" ? "Unnamed" : row.old-name; wrap: word-wrap; color: Theme.text-muted; }
+                    }
+                    LineEdit {
+                        horizontal-stretch: 1;
+                        text <=> row.new-name;
+                        enabled: root.ready;
+                        accessible-label: "New name for " + row.entity;
+                        edited => { root.names-edited(); }
+                    }
+                }
+            }
+            Text { text: root.summary; wrap: word-wrap; font-weight: 600; }
+            SectionHeader { text: "Reference updates"; inset: false; }
+            if root.references.length == 0 && root.names.length > 0: Text {
+                text: root.dirty ? "Preview all names to refresh reference updates." : root.status != "" ? "Reference review is unavailable. Resolve the reported issue, then preview all names." : "No affected references in this preview.";
+                wrap: word-wrap;
+                color: Theme.text-muted;
+            }
+            ListView {
+                vertical-stretch: 1;
+                content-width: self.width;
+                for row in root.references: VerticalLayout {
+                    spacing: Theme.space-xs;
+                    padding-bottom: Theme.space-lg;
+                    padding-right: Theme.space-lg;
+                    alignment: start;
+                    Text { text: row.label; wrap: word-wrap; font-weight: 600; }
+                    Text { text: row.changed ? row.before + " → " + row.after : row.before + " (unchanged)"; wrap: word-wrap; }
+                    Text { text: row.reason; wrap: word-wrap; color: Theme.text-muted; }
+                }
+            }
+            if root.status != "": Text { text: root.status; wrap: word-wrap; color: Theme.warning; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Preview all names"; enabled: root.ready && root.names.length > 0; clicked => { root.preview(); } }
+                Button { text: "Apply renames"; primary: true; enabled: root.can-apply && !root.dirty; clicked => { root.apply(); } }
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+    }
+}

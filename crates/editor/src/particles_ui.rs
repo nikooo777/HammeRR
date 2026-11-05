@@ -54,11 +54,54 @@ fn choice(report: &serde_json::Value) -> Option<Choice> {
     })
 }
 
+fn present_targets(window: &ParticleBrowserWindow, report: &serde_json::Value) {
+    let count = report["count"].as_u64().unwrap();
+    window.set_target(
+        format!(
+            "{count} captured {} · {}{}",
+            if count == 1 { "entity" } else { "entities" },
+            report["label"].as_str().unwrap(),
+            if report["mixed"]["effect_name"] == true {
+                " · mixed source values"
+            } else {
+                ""
+            }
+        )
+        .into(),
+    );
+    let values = report["source_fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|source| {
+            let value = match source["value"].as_str() {
+                None => "No stored override".to_owned(),
+                Some("") => "Explicit empty override".to_owned(),
+                Some(value) => format!("{value:?}"),
+            };
+            format!(
+                "{} · {value}{}",
+                source["entity"].as_str().unwrap(),
+                if source["hidden"] == true {
+                    " · hidden in map"
+                } else if source["editor_hidden"] == true {
+                    " · hidden in editor"
+                } else {
+                    ""
+                }
+            )
+            .into()
+        })
+        .collect::<Vec<slint::SharedString>>();
+    window.set_source_values(slint::ModelRc::new(slint::VecModel::from(values)));
+}
+
 fn present(
     window: &ParticleBrowserWindow,
     report: &serde_json::Value,
     seen: &RefCell<Option<Choice>>,
 ) {
+    present_targets(window, report);
     let Some(key) = choice(report) else {
         return;
     };
@@ -118,7 +161,7 @@ fn present(
     ));
     window.set_details(details.join("\n\n").into());
     window.set_can_apply(true);
-    window.set_message("Apply sets Particle effect on the captured entity. Search and inspection leave the map unchanged.".into());
+    window.set_message("Apply sets Particle effect on every captured entity together. Search and inspection leave the map unchanged.".into());
     *seen.borrow_mut() = Some(key);
 }
 
@@ -299,7 +342,13 @@ impl Controller {
                             Ok(true)
                         });
                     match result {
-                        Ok(true) => window.invoke_cancel(),
+                        Ok(true) => {
+                            token.set(None);
+                            window.set_can_apply(false);
+                            if let Err(error) = window.hide() {
+                                window.set_message(format!("The particle choice is applied, but the window could not be hidden: {error}").into());
+                            }
+                        }
                         Ok(false) => window
                             .set_message("Particle choice changed. Review it before Apply.".into()),
                         Err(error) => {
@@ -313,14 +362,23 @@ impl Controller {
         window.on_cancel({
             let (window, target, token) = (window.as_weak(), target.clone(), token.clone());
             move || {
-                let token = token.take();
-                admitted(&window, &target, |_, shared| {
-                    if let Some(token) = token {
-                        let _ = lock(shared).cancel_particle_choice(token);
-                    }
+                let Some(local_window) = window.upgrade() else {
+                    return;
+                };
+                let result = target.upgrade().and_then(|access| {
+                    access.with_session(|session| {
+                        if let Some(current) = token.get() {
+                            session.cancel_particle_choice(current)?;
+                            token.set(None);
+                        }
+                        local_window.hide().map_err(|error| {
+                            format!("The particle choice is closed, but the window could not be hidden: {error}")
+                        })
+                    })
                 });
-                if let Some(window) = window.upgrade() {
-                    let _ = window.hide();
+                if let Err(error) = result {
+                    local_window.set_can_apply(false);
+                    local_window.set_message(error.into());
                 }
             }
         });
@@ -330,7 +388,7 @@ impl Controller {
                 if let Some(window) = window.upgrade() {
                     window.invoke_cancel();
                 }
-                slint::CloseRequestResponse::HideWindow
+                slint::CloseRequestResponse::KeepWindowShown
             }
         });
         Ok(Self {
@@ -341,17 +399,16 @@ impl Controller {
         })
     }
 
-    pub fn initialize(&self, session: &mut Session, id: u32) -> Result<(), String> {
-        let report = session.begin_particle_choice(id, true)?;
+    pub fn initialize_selected(&self, session: &mut Session) -> Result<(), String> {
+        let ids = session.whole_entity_targets(&session.selected_ids())?;
+        self.initialize_many(session, &ids)
+    }
+
+    pub fn initialize_many(&self, session: &mut Session, ids: &[u32]) -> Result<(), String> {
+        let report = session.begin_particle_choices(ids, true)?;
         self.token.set(report["token"].as_u64());
         *self.seen.borrow_mut() = None;
-        self.window.set_target(
-            format!(
-                "Particle system · entity:{id} · {}",
-                report["label"].as_str().unwrap()
-            )
-            .into(),
-        );
+        present_targets(&self.window, &report);
         self.window.set_query("".into());
         self.window.set_group_index(0);
         *self.catalog.borrow_mut() = Catalog::default();
@@ -359,12 +416,18 @@ impl Controller {
             .set_value(report["value"].as_str().unwrap_or("").into());
         self.window.set_details("".into());
         self.window.set_can_apply(false);
-        self.window
-            .set_message("Choose a named system to inspect its definition.".into());
+        self.window.set_message(
+            if report["mixed"]["effect_name"] == true {
+                "Source particle effects are mixed. Choose a common named system explicitly."
+            } else {
+                "Choose a named system to inspect its definition."
+            }
+            .into(),
+        );
         catalog(&self.window, session, &mut self.catalog.borrow_mut());
         if !report["particle"].is_null() {
             present(&self.window, &report, &self.seen);
-        } else if !self.window.get_value().is_empty() {
+        } else if report["mixed"]["effect_name"] != true && !self.window.get_value().is_empty() {
             match session
                 .choose_particle(report["token"].as_u64().unwrap(), &self.window.get_value())
             {

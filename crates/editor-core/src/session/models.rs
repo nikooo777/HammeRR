@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use glam::{DMat3, DVec3};
 use map_core::{Document, ObjectId};
-use render::models::{Instance, MAX_SCENE_INDICES, MAX_SCENE_VERTICES};
+use render::models::{Asset, Instance, MAX_SCENE_INDICES, MAX_SCENE_VERTICES};
 use serde_json::{Value, json};
 
 use super::{Actor, Session};
@@ -97,6 +98,14 @@ fn scale_report(entity: &source_formats::vmf::Entity) -> Value {
 
 impl Session {
     pub(super) fn model_instances(&self, document: &Document) -> Models {
+        self.model_instances_with_choice(document, self.model_choice_override(document))
+    }
+
+    pub(super) fn model_instances_with_choice(
+        &self,
+        document: &Document,
+        choice: Option<(&[u32], &Arc<Asset>)>,
+    ) -> Models {
         let mut models = Models {
             instances: Vec::new(),
             issues: BTreeMap::new(),
@@ -116,6 +125,7 @@ impl Session {
             ) {
                 continue;
             }
+            let replacement = choice.filter(|(ids, _)| ids.contains(&entity.id));
             let Some(path) = entity
                 .properties
                 .get("model")
@@ -123,11 +133,11 @@ impl Session {
             else {
                 continue;
             };
-            let result = self
-                .models
-                .borrow_mut()
-                .get(&self.game, path)
-                .and_then(|asset| Instance::new(entity, asset));
+            let asset = match replacement {
+                Some((_, asset)) => Ok(asset.clone()),
+                None => self.models.borrow_mut().get(&self.game, path),
+            };
+            let result = asset.and_then(|asset| Instance::new(entity, asset));
             match result {
                 Ok(instance) => {
                     let count = instance
@@ -240,16 +250,8 @@ impl Session {
             .properties
             .get("model")
             .ok_or("This entity has no model path")?;
-        let skin = entity.properties.get("skin").map_or(Ok(0), |value| {
-            value
-                .parse::<usize>()
-                .map_err(|_| "Model skin must be a nonnegative integer")
-        })?;
-        let body = entity.properties.get("body").map_or(Ok(0), |value| {
-            value
-                .parse::<u32>()
-                .map_err(|_| "Model body must be a nonnegative native integer")
-        })?;
+        let skin = render::models::skin(entity)?;
+        let body = render::models::body(entity)?;
         let asset = self.inspect_model_body(path, skin, body)?;
         let appearance = appearance_report(entity);
         let mut scale = scale_report(entity);

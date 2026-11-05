@@ -87,4 +87,4 @@ scene. `apply_entity_gallery` and `cancel_entity_gallery` require its owned toke
 
 ---
 
-[← Entities and logic](entities.md) · [Manual](README.md) · [Linked paths →](path-authoring.md)
+[← Bulk entity workflows](bulk-entities.md) · [Manual](README.md) · [Linked paths →](path-authoring.md)

@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { SelectableRow } from "kit.slint";
 import {Button, ComboBox, LineEdit, ListView, ScrollView, SpinBox, TextEdit} from "widgets.slint";
 
 export struct ModelChoiceRow { path:string, name:string, folder:string, source:string }
@@ -35,6 +36,8 @@ export component ModelBrowserWindow inherits Window {
     in property <int> material-count;
     in-out property <bool> show-materials;
     in property <string> message;
+    in property <string> source-summary;
+    in property <bool> source-mixed;
     callback search();
     callback group-changed();
     callback page(int);
@@ -51,6 +54,7 @@ export component ModelBrowserWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl;spacing:12px;
             Text {text:"Choose a model";font-size: Theme.font-display;font-weight:600;}
+            Text {text:root.source-summary;wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:10px;
                 LineEdit {text<=>root.query;placeholder-text:"Search model names or folders…";edited=>{root.search();}horizontal-stretch:1;}
@@ -66,16 +70,15 @@ export component ModelBrowserWindow inherits Window {
                 VerticalLayout {
                     spacing:8px;horizontal-stretch:1;
                     ListView {
-                        for row in root.rows:Rectangle {
-                            height:72px;border-radius:5px;
-                            background:root.path==row.path ? Theme.control-strong : touch.has-hover ? Theme.control-strong : Theme.hover;
+                        for row in root.rows:SelectableRow {
+                            height:72px;label:row.path;selected:root.path==row.path;
+                            clicked=>{root.choose(row.path);}
                             VerticalLayout {
                                 padding:8px;spacing:3px;
                                 Text {text:row.name;color:Theme.text;overflow:elide;}
                                 Text {text:row.folder;color:Theme.text-faint;font-size: Theme.font-small;overflow:elide;}
                                 Text {text:row.source;color:Theme.text-faint;font-size:10px;overflow:elide;}
                             }
-                            touch:=TouchArea {clicked=>{root.choose(row.path);}}
                         }
                     }
                     HorizontalLayout {
@@ -101,8 +104,9 @@ export component ModelBrowserWindow inherits Window {
                     if root.skin-count <= 1:Text {text:"Default skin";color:Theme.text-muted;}
                     if root.bodygroups.length > 0:ScrollView {
                         height:min(130px,root.bodygroups.length*58px);
+                        content-width:self.width;
                         VerticalLayout {
-                            spacing:8px;
+                            alignment:start;padding-right:Theme.space-lg;spacing:8px;
                             for group in root.bodygroups:VerticalLayout {
                                 spacing:4px;
                                 Text {text:group.label;color:Theme.text-muted;}
@@ -122,13 +126,13 @@ export component ModelBrowserWindow inherits Window {
                 LineEdit {text<=>root.path;placeholder-text:"models/...mdl";horizontal-stretch:1;edited=>{root.invalidate();}accepted=>{root.preview-model();}}
                 Button {text:"Preview model";clicked=>{root.preview-model();}}
             }
-            Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:32px;}
+            if root.message != "":Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:8px;
                 Button {text:"Cancel";clicked=>{root.cancel();}}
                 Rectangle {horizontal-stretch:1;}
-                Text {text:"Scale 1";vertical-alignment:center;color:Theme.text-faint;font-size: Theme.font;}
-                Button {text:"Use model";enabled:root.can-apply;clicked=>{root.apply();}}
+                Text {text:"Asset preview · scale 1";vertical-alignment:center;color:Theme.text-faint;font-size: Theme.font;}
+                Button {text:"Use model";primary:true;enabled:root.can-apply;clicked=>{root.apply();}}
             }
         }
     }

@@ -91,6 +91,21 @@ impl Asset {
         self.source_identity
     }
 
+    pub fn verify_source(&self, fs: &GameFs) -> Result<(), String> {
+        let stem = self.path.strip_suffix(".mdl").unwrap();
+        let mdl = read(fs, &self.path)?;
+        let vvd = read(fs, &format!("{stem}.vvd"))?;
+        let vtx = read(fs, &format!("{stem}.dx90.vtx"))?;
+        if self.source_identity != Some(source_identity(&mdl.data, &vvd.data, &vtx.data))
+            || self.source_origins.as_ref() != Some(&[mdl.origin, vvd.origin, vtx.origin])
+        {
+            return Err(
+                "Model sources changed since loading; Reload models and choose again".into(),
+            );
+        }
+        Ok(())
+    }
+
     pub fn memory_bytes(&self) -> usize {
         self.memory_bytes_with(self.material_bytes.load(Ordering::Relaxed))
     }
@@ -148,6 +163,26 @@ pub fn model_path(path: &str) -> Result<String, String> {
         return Err("Model must name a models/*.mdl asset".into());
     }
     Ok(path)
+}
+
+pub fn skin(entity: &Entity) -> Result<usize, String> {
+    entity.properties.get("skin").map_or(Ok(0), |value| {
+        value
+            .parse::<usize>()
+            .map_err(|_| "Model skin must be a nonnegative integer".into())
+    })
+}
+
+pub fn body(entity: &Entity) -> Result<u32, String> {
+    let body = entity.properties.get("body").map_or(Ok(0), |value| {
+        value
+            .parse::<u32>()
+            .map_err(|_| "Model body must be a nonnegative native integer")
+    })?;
+    if body > i32::MAX as u32 {
+        return Err("Model body must fit a nonnegative native integer".into());
+    }
+    Ok(body)
 }
 
 fn read(fs: &GameFs, path: &str) -> Result<MountedAsset, String> {
@@ -535,14 +570,7 @@ impl Instance {
         } else {
             1.0
         };
-        let body = entity.properties.get("body").map_or(Ok(0), |value| {
-            value
-                .parse::<u32>()
-                .map_err(|_| "Model body must be a nonnegative native integer")
-        })?;
-        if body > i32::MAX as u32 {
-            return Err("Model body must fit a nonnegative native integer".into());
-        }
+        let body = body(entity)?;
         if body != 0
             && entity
                 .classname()
@@ -550,11 +578,7 @@ impl Instance {
         {
             return Err("Static props require body 0; use prop_dynamic for bodygroups".into());
         }
-        let skin = entity.properties.get("skin").map_or(Ok(0), |value| {
-            value
-                .parse::<usize>()
-                .map_err(|_| "Model skin must be a nonnegative integer")
-        })?;
+        let skin = skin(entity)?;
         if skin >= asset.model.skins.len() {
             return Err("Model skin is outside the asset's skin families".into());
         }

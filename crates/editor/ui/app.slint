@@ -1,3 +1,6 @@
+export { BulkRenameWindow, BulkRenameNameRow, BulkRenameReferenceRow } from "bulk-rename.slint";
+export { BulkEntitiesWindow } from "bulk-entities.slint";
+export { ConnectionBatchWindow, BatchConnectionRow } from "bulk-connections.slint";
 import { Theme } from "theme.slint";
 import { DocumentTabs, WorkspaceDocumentTab } from "workspace-shell.slint";
 export { WorkspaceWindow } from "workspace-shell.slint";
@@ -2212,6 +2215,7 @@ export component AppWindow inherits Window {
     in property <bool> game-running;
     in property <bool> has-selection;
     in property <bool> whole-object-selection;
+    in property <bool> whole-entity-selection;
     in property <bool> face-mode;
     in property <bool> has-faces;
     in property <bool> can-sample-face;
@@ -2504,6 +2508,9 @@ export component AppWindow inherits Window {
     callback sample-face-texture();
     callback browse-material(key: string);
     callback browse-model();
+    callback change-entity-class();
+    callback bulk-connections();
+    callback bulk-rename();
     callback browse-sound(string);
     callback browse-particle();
     callback place-on-surface();
@@ -2683,6 +2690,12 @@ export component AppWindow inherits Window {
         { id: "overlay", title: "Overlay…", group: "Brush › Materials", enabled: true },
         { id: "place-entity", title: "Place entity…", group: "Entity", enabled: true },
         { id: "batch-properties", title: "Edit selected entity properties…", group: "Entity", enabled: true },
+        { id: "change-entity-class", title: "Change entity classes…", group: "Entity", enabled: root.whole-entity-selection },
+        { id: "browse-model", title: "Choose models…", group: "Entity", enabled: root.whole-entity-selection },
+        { id: "browse-sound", title: "Choose sounds…", group: "Entity", enabled: root.whole-entity-selection },
+        { id: "browse-particle", title: "Choose particles…", group: "Entity", enabled: root.whole-entity-selection },
+        { id: "bulk-connections", title: "Batch connections…", group: "Entity", enabled: root.whole-entity-selection },
+        { id: "bulk-rename", title: "Rename selected entities…", group: "Entity", enabled: root.whole-entity-selection },
         { id: "connections", title: "Connections…", group: "Entity", enabled: root.entity-selected },
         { id: "references", title: "References and rename…", group: "Entity", enabled: root.entity-selected },
         { id: "model-details", title: "Model details…", group: "Entity", enabled: root.can-inspect-model },
@@ -2860,6 +2873,12 @@ export component AppWindow inherits Window {
         else if id == "overlay" { root.create-overlay(); }
         else if id == "place-entity" { root.place-entity(); }
         else if id == "batch-properties" { root.batch-properties(); }
+        else if id == "change-entity-class" { root.change-entity-class(); }
+        else if id == "browse-model" { root.browse-model(); }
+        else if id == "browse-sound" { root.browse-sound(""); }
+        else if id == "browse-particle" { root.browse-particle(); }
+        else if id == "bulk-connections" { root.bulk-connections(); }
+        else if id == "bulk-rename" { root.bulk-rename(); }
         else if id == "connections" { root.edit-connections(); }
         else if id == "references" { root.edit-references(); }
         else if id == "model-details" { root.inspect-model(); }
@@ -3033,6 +3052,12 @@ export component AppWindow inherits Window {
             title: "Entity";
             MenuItem { title: "Place entity…"; activated => { root.place-entity(); } }
             MenuItem { title: "Edit selected entity properties…"; activated => { root.batch-properties(); } }
+            MenuItem { title: "Change entity classes…"; enabled: root.whole-entity-selection; activated => { root.change-entity-class(); } }
+            MenuItem { title: "Choose models…"; enabled: root.whole-entity-selection; activated => { root.browse-model(); } }
+            MenuItem { title: "Choose sounds…"; enabled: root.whole-entity-selection; activated => { root.browse-sound(""); } }
+            MenuItem { title: "Choose particles…"; enabled: root.whole-entity-selection; activated => { root.browse-particle(); } }
+            MenuItem { title: "Batch connections…"; enabled: root.whole-entity-selection; activated => { root.bulk-connections(); } }
+            MenuItem { title: "Rename selected entities…"; enabled: root.whole-entity-selection; activated => { root.bulk-rename(); } }
             MenuItem { title: "Connections…"; enabled: root.entity-selected; activated => { root.edit-connections(); } }
             MenuItem { title: "References and rename…"; enabled: root.entity-selected; activated => { root.edit-references(); } }
             MenuItem { title: "Model details…"; enabled: root.can-inspect-model; activated => { root.inspect-model(); } }

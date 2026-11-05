@@ -17,6 +17,7 @@ struct Guide {
     scene: u64,
     entity: u32,
     attachment: usize,
+    model_choice: Option<u64>,
 }
 
 pub(super) fn report(
@@ -33,6 +34,17 @@ pub(super) fn report(
 }
 
 impl State {
+    pub(super) fn choice_changed(&mut self, owner: Option<u64>) {
+        if self
+            .guide
+            .as_ref()
+            .is_some_and(|guide| guide.model_choice == owner)
+        {
+            self.guide = None;
+            self.serial += 1;
+        }
+    }
+
     pub(super) fn materials_reloaded(&mut self, previous: u64, current: u64) {
         if let Some(guide) = &mut self.guide
             && guide.scene == previous
@@ -44,19 +56,17 @@ impl State {
 
 impl Session {
     fn model_attachment(&self, entity: u32, index: usize) -> Result<Value, String> {
-        if !std::ptr::eq(self.render_document(), &self.document) {
+        if !std::ptr::eq(self.geometry.document(&self.document), &self.document) {
             return Err("Apply or cancel the active geometry preview first".into());
         }
-        let source = self
-            .document
-            .entity(entity)
-            .ok_or("Model entity is missing")?;
+        let document = self.render_document();
+        let source = document.entity(entity).ok_or("Model entity is missing")?;
         if source.hidden {
             return Err(
                 "Show the model entity before inspecting its attachment in the viewport".into(),
             );
         }
-        let models = self.model_instances(&self.document);
+        let models = self.model_instances(document);
         let instance = models
             .instances
             .iter()
@@ -83,7 +93,10 @@ impl Session {
         let point = self.model_attachment(entity, attachment)?;
         self.model_attachments.serial += 1;
         let token = self.model_attachments.serial;
+        let previous = self.scene_serial;
         self.scene_serial += 1;
+        self.model_browser
+            .scene_changed(previous, self.scene_serial);
         self.model_attachments.guide = Some(Guide {
             token,
             generation: self.document_generation,
@@ -91,10 +104,11 @@ impl Session {
             scene: self.scene_serial,
             entity,
             attachment,
+            model_choice: self.model_choice_preview_token(),
         });
         self.view_serial += 1;
         Ok(
-            json!({"token":token,"entity":format!("entity:{entity}"),"valid":true,"attachment":point}),
+            json!({"token":token,"entity":format!("entity:{entity}"),"valid":true,"model_choice_token":self.model_choice_preview_token(),"attachment":point}),
         )
     }
 
@@ -102,6 +116,7 @@ impl Session {
         if guide.generation != self.document_generation
             || guide.revision != self.document.revision()
             || guide.scene != self.scene_serial
+            || guide.model_choice != self.model_choice_preview_token()
         {
             return Err("Map, selection or model assets changed; show the attachment again".into());
         }
@@ -114,10 +129,10 @@ impl Session {
         };
         match self.checked_model_attachment_guide(guide) {
             Ok(point) => {
-                json!({"token":guide.token,"entity":format!("entity:{}",guide.entity),"valid":true,"attachment":point})
+                json!({"token":guide.token,"entity":format!("entity:{}",guide.entity),"valid":true,"model_choice_token":guide.model_choice,"attachment":point})
             }
             Err(error) => {
-                json!({"token":guide.token,"entity":format!("entity:{}",guide.entity),"valid":false,"error":error})
+                json!({"token":guide.token,"entity":format!("entity:{}",guide.entity),"valid":false,"model_choice_token":guide.model_choice,"error":error})
             }
         }
     }
@@ -132,7 +147,10 @@ impl Session {
             return Err("Model attachment guide was cleared or replaced".into());
         }
         self.model_attachments.guide = None;
+        let previous = self.scene_serial;
         self.scene_serial += 1;
+        self.model_browser
+            .scene_changed(previous, self.scene_serial);
         self.view_serial += 1;
         Ok(())
     }

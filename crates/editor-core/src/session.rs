@@ -30,6 +30,7 @@ pub mod baked_prop_vertices;
 pub mod baked_surfaces;
 pub mod brush_batch;
 mod buffer_replacement;
+pub mod bulk_entities;
 pub mod compiled_details;
 mod compiled_source_selection;
 pub mod compiled_visibility;
@@ -145,7 +146,10 @@ pub(crate) use recovery::RecoveryCompletion;
 pub use recovery::RecoveryRequest;
 pub use surfaces::GroupProjection;
 mod connections;
-pub use connections::{ConnectionDraft, ConnectionFields, ConnectionRecord};
+pub use connections::{
+    ConnectionBatchAction, ConnectionBatchDraft, ConnectionDraft, ConnectionFields,
+    ConnectionPatch, ConnectionRecord, ConnectionRowTarget,
+};
 pub mod reference_images;
 mod references;
 pub use references::RenameDraft;
@@ -352,6 +356,7 @@ pub struct Session {
     rename_draft: Option<RenameDraft>,
     rename_serial: u64,
     property_draft: Option<PropertyDraft>,
+    bulk_entities: bulk_entities::State,
     management_serial: u64,
     visibility_restore: Option<management::VisibilityRestore>,
     working_region: working_region::State,
@@ -693,6 +698,7 @@ impl Session {
             rename_draft: None,
             rename_serial: 0,
             property_draft: None,
+            bulk_entities: bulk_entities::State::default(),
             management_serial: 0,
             visibility_restore: None,
             working_region: working_region::State::default(),
@@ -1413,49 +1419,7 @@ impl Session {
         entity: u32,
         changes: &[(String, Option<String>)],
     ) -> Result<(), String> {
-        let current = self
-            .document
-            .entity(entity)
-            .ok_or_else(|| format!("entity:{entity} does not exist"))?;
-        let classname = changes
-            .iter()
-            .rev()
-            .find(|(key, _)| key.eq_ignore_ascii_case("classname"))
-            .and_then(|(_, value)| value.as_deref())
-            .or_else(|| current.classname())
-            .unwrap_or("");
-        if classname.trim().is_empty() {
-            return Err("classname must not be empty".into());
-        }
-        if let Some(class) = self.definitions.class(classname) {
-            let kind = if current.solids.is_empty() {
-                ClassKind::Point
-            } else {
-                ClassKind::Solid
-            };
-            if class.kind != kind {
-                return Err(format!(
-                    "{} is a {} entity class",
-                    class.name,
-                    class.kind.label()
-                ));
-            }
-        }
-        for (key, value) in changes {
-            self.validate_property(classname, key, value.as_deref())?;
-        }
-        let canonical = self
-            .definitions
-            .class(classname)
-            .map(|class| class.name.clone());
-        let mut changes = changes.to_vec();
-        if let Some(canonical) = canonical {
-            for (key, value) in &mut changes {
-                if key.eq_ignore_ascii_case("classname") && value.is_some() {
-                    *value = Some(canonical.clone());
-                }
-            }
-        }
+        let changes = self.checked_entity_property_changes(entity, changes)?;
         self.edit(actor, "edit entity properties", |tx| {
             map_core::edit::set_properties(tx, entity, &changes)
         })
@@ -1502,11 +1466,17 @@ impl Session {
     }
 
     pub fn move_to_world(&mut self, actor: Actor, entity: u32) -> Result<Vec<ObjectId>, String> {
-        let solids = self.edit(actor, "move to world", |tx| {
-            map_core::edit::move_to_world(tx, entity)
-        })?;
-        self.select(&solids, SelectMode::Replace)?;
-        Ok(solids)
+        self.move_entities_to_world(actor, &[ObjectId::Entity(entity)])
+    }
+
+    fn has_entity_edit_draft(&self) -> bool {
+        self.property_draft.is_some()
+            || self.rename_draft.is_some()
+            || self.connection_draft.is_some()
+            || self.model_browser.has_draft()
+            || self.particles.has_draft()
+            || self.sounds.has_draft()
+            || self.bulk_entities.is_some()
     }
 
     pub fn document(&self) -> &Document {
@@ -1597,6 +1567,7 @@ impl Session {
         self.ensure_not_closing()?;
         if !discard_changes {
             self.ensure_partitions_resolved()?;
+            self.ensure_bulk_entities_resolved()?;
         }
         if self.document.is_dirty() && !discard_changes {
             return Err(format!(
@@ -1658,6 +1629,10 @@ impl Session {
         self.context.focused = None;
         self.context.serial += 1;
         self.property_draft = None;
+        self.bulk_entities.clear();
+        self.model_browser.clear_document_draft();
+        self.particles.clear_document_draft();
+        self.sounds.clear_document_draft();
         self.management_serial += 1;
         self.visibility_restore = None;
         self.working_region = working_region::State::default();
@@ -1761,6 +1736,7 @@ impl Session {
         self.ensure_partitions_resolved()?;
         self.ensure_entity_placement_resolved()?;
         self.ensure_entity_gallery_resolved()?;
+        self.ensure_bulk_entities_resolved()?;
         let explicit_destination = path.is_some();
         let path = path
             .map(Path::to_owned)
@@ -2436,6 +2412,7 @@ impl Session {
         self.ensure_partitions_resolved()?;
         self.ensure_entity_placement_resolved()?;
         self.ensure_entity_gallery_resolved()?;
+        self.ensure_bulk_entities_resolved()?;
         if self.closing {
             return Err("the editor is closing".into());
         }
@@ -2862,7 +2839,9 @@ impl Session {
 
     fn hidden_brushes_for(&mut self, render: bool) -> HashSet<u32> {
         let document = if render {
-            self.geometry.document(&self.document)
+            self.model_browser
+                .document(self)
+                .unwrap_or(self.geometry.document(&self.document))
         } else {
             &self.document
         };
@@ -2881,7 +2860,9 @@ impl Session {
         }
         if self.display_visibility_filtered() {
             let document = if render {
-                self.geometry.document(&self.document)
+                self.model_browser
+                    .document(self)
+                    .unwrap_or(self.geometry.document(&self.document))
             } else {
                 &self.document
             };
@@ -2898,7 +2879,9 @@ impl Session {
     }
 
     pub fn render_document(&self) -> &Document {
-        self.geometry.document(&self.document)
+        self.model_browser
+            .document(self)
+            .unwrap_or(self.geometry.document(&self.document))
     }
 
     pub fn build_scene(&mut self) -> SceneMesh {
@@ -2923,7 +2906,10 @@ impl Session {
         let (selected, selected_faces) = self.displayed_selection();
         let overlays = self.partition_face_overlays();
         let mut references = self.instance_contents_preview(view.instance_contents);
-        let document = self.geometry.document(&self.document);
+        let document = self
+            .model_browser
+            .document(self)
+            .unwrap_or(self.geometry.document(&self.document));
         let evaluation = self.working_evaluation(document);
         let icons = self.fgd_icon_instances(
             document,

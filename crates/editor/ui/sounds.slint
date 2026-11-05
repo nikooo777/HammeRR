@@ -1,4 +1,5 @@
 import { Theme } from "theme.slint";
+import { SelectableRow } from "kit.slint";
 import {Button, ComboBox, LineEdit, ListView, ScrollView, Slider} from "widgets.slint";
 
 export struct SoundChoiceRow {value:string,name:string,detail:string}
@@ -16,6 +17,10 @@ export component SoundBrowserWindow inherits Window {
     in property <bool> can-next;
     in-out property <string> value;
     in property <string> target;
+    in property <string> source-summary;
+    in property <[string]> field-labels;
+    in-out property <int> field-index;
+    in property <bool> field-selected;
     in property <string> details;
     in property <string> script-info;
     in property <[string]> waves;
@@ -25,6 +30,7 @@ export component SoundBrowserWindow inherits Window {
     in property <bool> can-stop;
     in property <string> playback;
     in property <string> message;
+    callback field-changed(int);
     callback search();callback group-changed();callback page(int);callback choose(string);
     callback inspect();callback variant-changed();callback invalidate();
     callback volume-changed();callback play();callback stop();callback reload();
@@ -35,7 +41,19 @@ export component SoundBrowserWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl;spacing:12px;
             Text {text:"Choose a sound";font-size: Theme.font-display;font-weight:600;}
-            Text {text:root.target;color:Theme.text-muted;}
+            Text {text:root.target;color:Theme.text-muted;wrap:word-wrap;}
+            HorizontalLayout {
+                spacing:Theme.space;
+                Text {text:"Sound field";width:100px;vertical-alignment:center;}
+                ComboBox {model:root.field-labels;current-index<=>root.field-index;selected=>{root.field-changed(self.current-index);}}
+            }
+            if root.source-summary != "": ScrollView {
+                min-height:24px;max-height:96px;content-width:self.width;
+                VerticalLayout {
+                    alignment:start;padding-right:Theme.space-lg;
+                    Text {text:root.source-summary;color:Theme.text-muted;wrap:word-wrap;}
+                }
+            }
             HorizontalLayout {
                 spacing:10px;
                 LineEdit {text<=>root.query;placeholder-text:"Search sound files or script names";horizontal-stretch:1;edited=>{root.search();}}
@@ -46,14 +64,14 @@ export component SoundBrowserWindow inherits Window {
                 VerticalLayout {
                     horizontal-stretch:1;spacing:10px;
                     ListView {
-                        for row in root.rows:Rectangle {
-                            height:58px;background:row.value==root.value ? Theme.control-strong : (touch.has-hover ? Theme.control-strong : Theme.hover);border-radius:5px;
+                        for row in root.rows:SelectableRow {
+                            height:58px;label:row.value;selected:row.value==root.value;enabled:root.field-selected;
+                            clicked=>{root.choose(row.value);}
                             VerticalLayout {
                                 padding:8px;spacing:4px;
                                 Text {text:row.name;color:Theme.text;overflow:elide;}
                                 Text {text:row.detail;color:Theme.text-faint;font-size: Theme.font-small;overflow:elide;}
                             }
-                            touch:=TouchArea {clicked=>{root.choose(row.value);}}
                         }
                     }
                     HorizontalLayout {
@@ -64,8 +82,8 @@ export component SoundBrowserWindow inherits Window {
                     }
                 }
                 ScrollView {
-                    width:400px;
-                    VerticalLayout {spacing:12px;
+                    width:400px;content-width:self.width;
+                    VerticalLayout {alignment:start;padding-right:Theme.space-lg;spacing:12px;
                     Text {text:root.value=="" ? "Select a sound to inspect it" : root.value;wrap:word-wrap;font-size: Theme.font-heading;}
                     Text {text:root.details;wrap:word-wrap;color:Theme.text-muted;}
                     if root.waves.length>0:VerticalLayout {
@@ -74,7 +92,6 @@ export component SoundBrowserWindow inherits Window {
                         ComboBox {model:root.waves;current-index<=>root.variant;selected=>{root.variant-changed();}}
                     }
                     if root.script-info!="":Text {text:root.script-info;wrap:word-wrap;color:Theme.text-muted;}
-                    Rectangle {vertical-stretch:1;}
                     Text {text:"Preview volume · \{round(root.volume)}%";}
                     Slider {minimum:0;maximum:100;value<=>root.volume;changed=>{root.volume-changed();}}
                     Text {text:"Applies to the next preview, separate from game volume.";font-size: Theme.font;wrap:word-wrap;color:Theme.text-faint;}
@@ -83,23 +100,23 @@ export component SoundBrowserWindow inherits Window {
                         Button {text:"Play";enabled:root.can-apply;clicked=>{root.play();}}
                         Button {text:"Stop";enabled:root.can-stop;clicked=>{root.stop();}}
                     }
-                    Text {text:root.playback;wrap:word-wrap;color:Theme.text-muted;min-height:30px;}
+                    if root.playback != "":Text {text:root.playback;wrap:word-wrap;color:Theme.text-muted;}
                     Text {text:"Up to 10 seconds · no game mixing or distance effects";font-size: Theme.font;wrap:word-wrap;color:Theme.text-faint;}
                     }
                 }
             }
             HorizontalLayout {
                 spacing:8px;
-                LineEdit {text<=>root.value;placeholder-text:"Sound path or script name";horizontal-stretch:1;edited=>{root.invalidate();}accepted=>{root.inspect();}}
-                Button {text:"Inspect sound";clicked=>{root.inspect();}}
+                LineEdit {text<=>root.value;enabled:root.field-selected;placeholder-text:"Sound path or script name";horizontal-stretch:1;edited=>{root.invalidate();}accepted=>{root.inspect();}}
+                Button {text:"Inspect sound";enabled:root.field-selected;clicked=>{root.inspect();}}
             }
-            Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;min-height:32px;}
+            if root.message != "":Text {text:root.message;wrap:word-wrap;color:Theme.text-muted;}
             HorizontalLayout {
                 spacing:8px;
                 Button {text:"Cancel";clicked=>{root.cancel();}}
                 Button {text:"Reload sounds";clicked=>{root.reload();}}
                 Rectangle {horizontal-stretch:1;}
-                Button {text:"Use sound";enabled:root.can-apply;clicked=>{root.apply();}}
+                Button {text:"Use sound";primary:true;enabled:root.can-apply;clicked=>{root.apply();}}
             }
         }
     }

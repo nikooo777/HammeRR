@@ -1247,6 +1247,7 @@ impl Session {
         self.ensure_partitions_resolved()?;
         self.ensure_entity_placement_resolved()?;
         self.ensure_entity_gallery_resolved()?;
+        self.ensure_bulk_entities_resolved()?;
         if self.closing {
             return Err("the editor is closing".into());
         }

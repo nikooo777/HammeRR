@@ -228,6 +228,22 @@ fn ids_or_selection(session: &Session, ids: Option<&[String]>) -> Result<Vec<Obj
     Ok(ids)
 }
 
+fn entity_choice_targets(
+    session: &Session,
+    id: Option<&str>,
+    ids: Option<&[String]>,
+) -> Result<Vec<u32>, String> {
+    if ids.is_some_and(|ids| ids.len() > crate::session::bulk_entities::MAX_BULK_ENTITIES) {
+        return Err("Capture at most 64 whole entities".into());
+    }
+    let ids = match (id, ids) {
+        (Some(_), Some(_)) => return Err("Use id or ids, not both".into()),
+        (Some(id), None) => vec![parse_id(id)?],
+        (None, ids) => ids_or_selection(session, ids)?,
+    };
+    session.whole_entity_targets(&ids)
+}
+
 fn vec3(v: [f64; 3]) -> DVec3 {
     DVec3::from_array(v)
 }
@@ -730,6 +746,8 @@ where
 impl EditorServer {
     fn tool_router() -> ToolRouter<Self> {
         Self::assets_tools()
+            + Self::bulk_rename_tools()
+            + Self::bulk_entities_tools()
             + Self::atlas_tools()
             + Self::baked_surfaces_tools()
             + Self::build_tools()

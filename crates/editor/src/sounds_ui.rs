@@ -12,7 +12,7 @@ use crate::{
 };
 
 const PAGE_SIZE: usize = 60;
-type Choice = (u64, String, usize);
+type Choice = (u64, String, usize, u64);
 
 #[derive(Default)]
 struct Catalog {
@@ -24,6 +24,8 @@ pub struct Controller {
     pub window: SoundBrowserWindow,
     token: Rc<Cell<Option<u64>>>,
     seen: Rc<RefCell<Option<Choice>>>,
+    dirty: Rc<Cell<bool>>,
+    fields: Rc<RefCell<Vec<String>>>,
     catalog: Rc<RefCell<Catalog>>,
     owned_playback: Rc<Cell<Option<u64>>>,
     displayed_playback: Rc<Cell<Option<u64>>>,
@@ -56,8 +58,97 @@ fn choice(report: &serde_json::Value) -> Option<Choice> {
             report["token"].as_u64().unwrap(),
             sound["value"].as_str().unwrap().into(),
             sound["variant"].as_u64().unwrap() as usize,
+            report["choice_sequence"].as_u64().unwrap(),
         )
     })
+}
+
+fn stop_owned_preview(session: &mut Session, owned: &Cell<Option<u64>>) -> Result<(), String> {
+    if let Some(token) = owned.get() {
+        if session.sound_preview_status()["token"].as_u64() == Some(token) {
+            session.stop_sound_preview(token)?;
+        }
+        owned.set(None);
+    }
+    Ok(())
+}
+
+fn present_target(window: &SoundBrowserWindow, report: &serde_json::Value) {
+    let count = report["count"].as_u64().unwrap();
+    let label = report["label"]
+        .as_str()
+        .filter(|label| !label.is_empty())
+        .or_else(|| report["key"].as_str())
+        .unwrap_or("Choose a sound field");
+    window.set_target(
+        format!(
+            "{count} captured {} · {label}",
+            if count == 1 { "entity" } else { "entities" }
+        )
+        .into(),
+    );
+    window.set_field_selected(report["key"].is_string());
+    window.set_source_summary(if report["key"].is_null() {
+        "Choose a common FGD sound field before inspecting a sound.".into()
+    } else if report["mixed"] == true {
+        "Source values: mixed".into()
+    } else if let Some(value) = report["source_fields"][0]["value"].as_str() {
+        if value.is_empty() {
+            "Source value: empty".into()
+        } else {
+            format!("Source value: {value}").into()
+        }
+    } else {
+        "Source value: not authored".into()
+    });
+}
+
+fn reset_choice(
+    window: &SoundBrowserWindow,
+    report: &serde_json::Value,
+    fields: &RefCell<Vec<String>>,
+    seen: &RefCell<Option<Choice>>,
+) {
+    present_target(window, report);
+    let mut keys = Vec::new();
+    let mut labels = Vec::new();
+    if report["key"].is_null() {
+        keys.push(String::new());
+        labels.push("Choose a sound field…".into());
+    }
+    for field in report["available_fields"].as_array().unwrap() {
+        let key = field["key"].as_str().unwrap();
+        let label = field["label"]
+            .as_str()
+            .filter(|label| !label.is_empty())
+            .unwrap_or(key);
+        keys.push(key.to_owned());
+        labels.push(format!("{label} ({key})").into());
+    }
+    let index = report["key"]
+        .as_str()
+        .and_then(|key| keys.iter().position(|candidate| candidate == key))
+        .unwrap_or(0);
+    *fields.borrow_mut() = keys;
+    window.set_field_labels(slint::ModelRc::new(slint::VecModel::from(labels)));
+    window.set_field_index(index as i32);
+    window.set_value(report["value"].as_str().unwrap_or("").into());
+    window.set_variant(0);
+    window.set_waves(Default::default());
+    window.set_details("".into());
+    window.set_script_info("".into());
+    window.set_can_apply(false);
+    *seen.borrow_mut() = None;
+    window.set_message(
+        if report["key"].is_null() {
+            "Select the sound field to edit on every captured entity."
+        } else if report["mixed"] == true {
+            "Source values are mixed. Choose one sound for all captured entities."
+        } else {
+            "Choose a sound; nothing plays until Play."
+        }
+        .into(),
+    );
 }
 
 fn present(
@@ -65,6 +156,7 @@ fn present(
     report: &serde_json::Value,
     seen: &RefCell<Option<Choice>>,
 ) {
+    present_target(window, report);
     let Some(key) = choice(report) else {
         return;
     };
@@ -113,9 +205,23 @@ fn present(
     })
     .collect::<Vec<_>>()
     .join("\n");
-    window.set_script_info(script.into());
+    let audio_source = &sound["audio_source"];
+    let source = audio_source["mount"].as_str().map(|mount| {
+        format!(
+            "Captured audio source · {} · {mount}",
+            audio_source["kind"].as_str().unwrap_or("unknown")
+        )
+    });
+    window.set_script_info(
+        [Some(script).filter(|text| !text.is_empty()), source]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into(),
+    );
     window.set_can_apply(true);
-    window.set_message(if sound["kind"]=="script" {"Use sound applies the script name. The audition variant is a preview choice; the game selects its own variant.".into()}else{"Inspect and Play leave the map unchanged. Use sound applies this file to the captured field.".into()});
+    window.set_message(if sound["kind"]=="script" {"Use sound applies this script name to every captured field. The audition variant is a preview choice; the game selects its own variant.".into()}else{"Inspect and Play leave the map unchanged. Use sound applies this file to every captured field.".into()});
     *seen.borrow_mut() = Some(key);
 }
 
@@ -124,6 +230,7 @@ fn inspect(
     session: &mut Session,
     token: Option<u64>,
     seen: &RefCell<Option<Choice>>,
+    dirty: &Cell<bool>,
 ) {
     let result = token
         .ok_or("Reopen the sound browser".to_owned())
@@ -135,8 +242,12 @@ fn inspect(
             )
         });
     match result {
-        Ok(report) => present(window, &report, seen),
+        Ok(report) => {
+            dirty.set(false);
+            present(window, &report, seen);
+        }
         Err(error) => {
+            dirty.set(true);
             window.set_can_apply(false);
             window.set_details("".into());
             window.set_script_info("".into());
@@ -243,6 +354,8 @@ impl Controller {
             .set_size(slint::LogicalSize::new(960.0, 700.0));
         let token = Rc::new(Cell::new(None));
         let seen = Rc::new(RefCell::new(None));
+        let dirty = Rc::new(Cell::new(false));
+        let fields = Rc::new(RefCell::new(Vec::<String>::new()));
         let catalog_state = Rc::new(RefCell::new(Catalog::default()));
         let owned_playback = Rc::new(Cell::new(None::<u64>));
         let displayed_playback = Rc::new(Cell::new(None::<u64>));
@@ -278,16 +391,71 @@ impl Controller {
                 })
             }
         });
+        window.on_field_changed({
+            let (window, target, token, fields, seen, dirty) = (
+                window.as_weak(),
+                target.clone(),
+                token.clone(),
+                fields.clone(),
+                seen.clone(),
+                dirty.clone(),
+            );
+            move |index| {
+                admitted(&window, &target, |window, shared| {
+                    let result = token
+                        .get()
+                        .ok_or("Reopen the sound browser".to_owned())
+                        .and_then(|current| {
+                            let key = fields
+                                .borrow()
+                                .get(index.max(0) as usize)
+                                .cloned()
+                                .ok_or("Choose a sound field")?;
+                            lock(shared).set_sound_choice_field(current, &key)
+                        });
+                    match result {
+                        Ok(report) => {
+                            let next = report["token"].as_u64();
+                            if token.get() != next {
+                                token.set(next);
+                                dirty.set(false);
+                                reset_choice(&window, &report, &fields, &seen);
+                            }
+                        }
+                        Err(error) => {
+                            dirty.set(true);
+                            window.set_can_apply(false);
+                            if let Some(current) = token.get()
+                                && let Ok(report) = lock(shared).sound_choice(current)
+                            {
+                                let index = report["key"]
+                                    .as_str()
+                                    .and_then(|key| {
+                                        fields
+                                            .borrow()
+                                            .iter()
+                                            .position(|candidate| candidate == key)
+                                    })
+                                    .unwrap_or(0);
+                                window.set_field_index(index as i32);
+                            }
+                            window.set_message(error.into());
+                        }
+                    }
+                })
+            }
+        });
         window.on_inspect({
-            let (window, target, token, seen) = (
+            let (window, target, token, seen, dirty) = (
                 window.as_weak(),
                 target.clone(),
                 token.clone(),
                 seen.clone(),
+                dirty.clone(),
             );
             move || {
                 admitted(&window, &target, |window, shared| {
-                    inspect(&window, &mut lock(shared), token.get(), &seen)
+                    inspect(&window, &mut lock(shared), token.get(), &seen, &dirty)
                 })
             }
         });
@@ -311,11 +479,12 @@ impl Controller {
             }
         });
         window.on_invalidate({
-            let window = window.as_weak();
+            let (window, dirty) = (window.as_weak(), dirty.clone());
             move || {
                 let Some(window) = window.upgrade() else {
                     return;
                 };
+                dirty.set(true);
                 window.set_can_apply(false);
                 window.set_message("Inspect the sound before applying it.".into());
             }
@@ -352,12 +521,12 @@ impl Controller {
             let (window, target, displayed) =
                 (window.as_weak(), target.clone(), displayed_playback.clone());
             move || {
-                let token = displayed.take();
                 admitted(&window, &target, |window, shared| {
-                    if let Some(token) = token
-                        && let Err(error) = lock(shared).stop_sound_preview(token)
-                    {
-                        window.set_message(error.into());
+                    if let Some(token) = displayed.get() {
+                        match lock(shared).stop_sound_preview(token) {
+                            Ok(()) => displayed.set(None),
+                            Err(error) => window.set_message(error.into()),
+                        }
                     }
                 });
             }
@@ -372,32 +541,41 @@ impl Controller {
             }
         });
         window.on_apply({
-            let (window, target, token, seen) = (
-                window.as_weak(),
-                target.clone(),
-                token.clone(),
-                seen.clone(),
+            let (window, target, token, seen, dirty, owned, fields) = (
+                window.as_weak(), target.clone(), token.clone(), seen.clone(), dirty.clone(), owned_playback.clone(), fields.clone(),
             );
             move || {
                 admitted(&window, &target, |window, shared| {
-                    let result = token
-                        .get()
-                        .ok_or("Reopen the sound browser".to_owned())
-                        .and_then(|token| {
-                            let mut session = lock(shared);
-                            let report = session.sound_choice(token)?;
-                            if *seen.borrow() != choice(&report) {
-                                present(&window, &report, &seen);
-                                return Ok(false);
-                            }
-                            session.apply_sound_choice(Actor::User, token)?;
-                            Ok(true)
-                        });
+                    let result = token.get().ok_or("Reopen the sound browser".to_owned()).and_then(|current| {
+                        if dirty.get() {
+                            return Err("Inspect the sound value before Use sound".into());
+                        }
+                        let mut session = lock(shared);
+                        let report = session.sound_choice(current)?;
+                        if *seen.borrow() != choice(&report) {
+                            present(&window, &report, &seen);
+                            return Ok(false);
+                        }
+                        let selected_field = fields.borrow().get(window.get_field_index().max(0) as usize).cloned();
+                        if selected_field.as_deref() != report["key"].as_str() {
+                            return Err("Choose and inspect the sound field before Use sound".into());
+                        }
+                        let sound = &report["sound"];
+                        if sound["value"].as_str() != Some(window.get_value().as_str())
+                            || sound["variant"].as_u64() != Some(window.get_variant().max(0) as u64)
+                        {
+                            return Err("Inspect the sound value before Use sound".into());
+                        }
+                        session.apply_sound_choice(Actor::User, current)?;
+                        token.set(None);
+                        window.set_can_apply(false);
+                        stop_owned_preview(&mut session, &owned).map_err(|error| format!("Sound assignment applied, but audition cleanup failed: {error}"))?;
+                        window.hide().map_err(|error| format!("Sound assignment applied, but the window could not be hidden: {error}"))?;
+                        Ok(true)
+                    });
                     match result {
-                        Ok(true) => window.invoke_cancel(),
-                        Ok(false) => window.set_message(
-                            "Sound choice changed. Review it before Use sound.".into(),
-                        ),
+                        Ok(true) => (),
+                        Ok(false) => window.set_message("Sound choice changed. Review it before Use sound.".into()),
                         Err(error) => {
                             window.set_can_apply(false);
                             window.set_message(error.into());
@@ -414,19 +592,28 @@ impl Controller {
                 owned_playback.clone(),
             );
             move || {
-                let token = token.take();
-                let owned = owned.take();
-                admitted(&window, &target, |_, shared| {
-                    let mut session = lock(shared);
-                    if let Some(token) = token {
-                        let _ = session.cancel_sound_choice(token);
-                    }
-                    if let Some(token) = owned {
-                        let _ = session.stop_sound_preview(token);
-                    }
+                let Some(local_window) = window.upgrade() else {
+                    return;
+                };
+                let result = target.upgrade().and_then(|access| {
+                    access.with_session(|session| {
+                        if let Some(current) = token.get() {
+                            session.cancel_sound_choice(current)?;
+                            token.set(None);
+                        }
+                        stop_owned_preview(session, &owned).map_err(|error| {
+                            format!("Sound choice closed, but audition cleanup failed: {error}")
+                        })?;
+                        local_window.hide().map_err(|error| {
+                            format!(
+                                "Sound choice closed, but the window could not be hidden: {error}"
+                            )
+                        })
+                    })
                 });
-                if let Some(window) = window.upgrade() {
-                    let _ = window.hide();
+                if let Err(error) = result {
+                    local_window.set_can_apply(false);
+                    local_window.set_message(error.into());
                 }
             }
         });
@@ -436,51 +623,59 @@ impl Controller {
                 if let Some(window) = window.upgrade() {
                     window.invoke_cancel();
                 }
-                slint::CloseRequestResponse::HideWindow
+                slint::CloseRequestResponse::KeepWindowShown
             }
         });
         Ok(Self {
             window,
             token,
             seen,
+            dirty,
+            fields,
             catalog: catalog_state,
             owned_playback,
             displayed_playback,
         })
     }
 
-    pub fn initialize(&self, session: &mut Session, id: u32, key: &str) -> Result<(), String> {
-        if let Some(token) = self.owned_playback.take() {
-            let _ = session.stop_sound_preview(token);
+    pub fn initialize_selected(&self, session: &mut Session, key: &str) -> Result<(), String> {
+        let ids = session.whole_entity_targets(&session.selected_ids())?;
+        if ids.len() == 1 && !key.is_empty() {
+            self.initialize(session, ids[0], key)
+        } else {
+            self.initialize_many(session, &ids, (!key.is_empty()).then_some(key))
         }
-        let report = session.begin_sound_choice(id, key, true)?;
+    }
+
+    pub fn initialize(&self, session: &mut Session, id: u32, key: &str) -> Result<(), String> {
+        self.initialize_many(session, &[id], Some(key))
+    }
+
+    pub fn initialize_many(
+        &self,
+        session: &mut Session,
+        ids: &[u32],
+        key: Option<&str>,
+    ) -> Result<(), String> {
+        stop_owned_preview(session, &self.owned_playback)?;
+        let report = session.begin_sound_choices(ids, key, true)?;
         self.token.set(report["token"].as_u64());
-        *self.seen.borrow_mut() = None;
-        self.window.set_target(
-            format!(
-                "{} · {}",
-                report["title"].as_str().unwrap(),
-                report["label"].as_str().unwrap()
-            )
-            .into(),
-        );
+        self.dirty.set(false);
+        reset_choice(&self.window, &report, &self.fields, &self.seen);
         self.window.set_query("".into());
         self.window.set_group_index(0);
         *self.catalog.borrow_mut() = Catalog::default();
-        self.window
-            .set_value(report["value"].as_str().unwrap_or("").into());
-        self.window.set_variant(0);
-        self.window.set_waves(Default::default());
-        self.window.set_details("".into());
-        self.window.set_script_info("".into());
-        self.window.set_can_apply(false);
-        self.window
-            .set_message("Choose a sound; nothing plays until Play.".into());
         catalog(&self.window, session, &mut self.catalog.borrow_mut());
         if !report["sound"].is_null() {
             present(&self.window, &report, &self.seen);
-        } else if !self.window.get_value().is_empty() {
-            inspect(&self.window, session, self.token.get(), &self.seen);
+        } else if report["key"].is_string() && !self.window.get_value().is_empty() {
+            inspect(
+                &self.window,
+                session,
+                self.token.get(),
+                &self.seen,
+                &self.dirty,
+            );
         }
         self.refresh_playback(session);
         Ok(())
@@ -492,7 +687,9 @@ impl Controller {
         if let Some(token) = self.token.get() {
             match session.sound_choice(token) {
                 Ok(report) => {
-                    if *self.seen.borrow() != choice(&report) {
+                    if self.dirty.get() {
+                        self.window.set_can_apply(false);
+                    } else if *self.seen.borrow() != choice(&report) {
                         present(&self.window, &report, &self.seen);
                     }
                 }

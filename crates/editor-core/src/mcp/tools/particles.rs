@@ -32,7 +32,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Begin an owned effect_name choice for an info_particle_system point entity. Omit id for single selection; resume=true reuses a valid same-target draft. Shared with the inspector Browse… control. Source/history/camera remain unchanged until Apply."
+        description = "Capture an owned effect_name choice for 1–64 whole info_particle_system point entities. Use id or ids; omit both for the exact current selection. Rejects incompatible members, duplicate or malformed target fields, unavailable/read-only definitions and active geometry previews without replacing the prior draft. Returns exact captured entities, actual stored source values and explicit mixed state; mixed values never select a default effect. resume=true reuses only a valid identical target set. Shared with Entity → Choose particles… and inspector Browse…. Source/history/camera remain unchanged until Apply."
     )]
     pub(in crate::mcp) fn begin_particle_choice(
         &self,
@@ -40,13 +40,14 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            let id = single_entity(&session, args.id.as_deref())?;
-            session.begin_particle_choice(id, args.resume)
+            let entities =
+                entity_choice_targets(&session, args.id.as_deref(), args.ids.as_deref())?;
+            session.begin_particle_choices(&entities, args.resume)
         })
     }
 
     #[tool(
-        description = "Choose and inspect a listed particle system in the owned draft. Does not edit effect_name until apply_particle_choice. Failed inspection preserves the prior choice."
+        description = "Choose and inspect one unambiguous active-manifest particle system for every captured entity, validating every target against the current loaded definitions before accepting the choice. Does not edit effect_name until apply_particle_choice. Invalid target or particle inspection preserves the prior choice. Definition metadata only; no animation or viewport preview."
     )]
     pub(in crate::mcp) fn choose_particle(
         &self,
@@ -56,7 +57,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect the shared particle choice. Omit token to discover the active/stale token and validity; explicit token enforces captured map, selection, definitions, assets and geometry-preview guards.",
+        description = "Inspect exact captured entities, stored effect_name values, mixed state and the shared particle choice. Omit token to discover active/stale targets and validity; explicit token enforces captured map, selection, definitions, content, assets and geometry-preview guards. Definition metadata only; no animation or viewport preview.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_particle_choice(
@@ -73,7 +74,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply the owned particle name to captured info_particle_system.effect_name in one undoable transaction. Rechecks active manifest and definition data plus draft guards. UI: Apply."
+        description = "Apply the owned particle name to every captured info_particle_system.effect_name in one atomic undoable transaction. Revalidates all target fields, reloads and compares the active manifest/PCF definition data, and enforces stale/replaced-token guards before writing anything. Preserves each entity's other properties and hidden state. UI: Apply."
     )]
     pub(in crate::mcp) fn apply_particle_choice(
         &self,

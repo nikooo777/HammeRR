@@ -24,6 +24,11 @@ pub fn refresh(window: &RenameWindow, session: &Session) {
         );
         return;
     };
+    if draft.batch.is_some() {
+        clear_rows(window);
+        window.set_message("A selected-entity rename replaced this preview. Cancel and reopen References and rename.".into());
+        return;
+    }
     window.set_draft_token(draft.token.to_string().into());
     window.set_new_name(draft.new_name.clone().into());
     window.set_rename_group(draft.rename_group);

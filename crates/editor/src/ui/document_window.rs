@@ -253,6 +253,7 @@ impl Ui {
             game_log_window,
             entity_window,
             connection_window,
+            connection_batch_window,
             properties_window,
             report_window,
             statistics_window,
@@ -272,6 +273,8 @@ impl Ui {
             surface_window,
         );
         hide_controller!(
+            bulk_entities,
+            bulk_rename,
             polygon,
             linked_path,
             model,

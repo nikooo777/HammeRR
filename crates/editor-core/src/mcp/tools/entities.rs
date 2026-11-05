@@ -3,6 +3,69 @@ use super::super::*;
 #[tool_router(router = entities_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
+        description = "Capture whole source entities and their source-qualified connection rows for batch I/O editing. ids defaults to the current whole-entity selection. Returns snapshot, sources and rows with source, index and opaque identity; never infer that equal indices mean equal connections on different entities. Bounded to 1–64 distinct sources, 256 rows and 64 KiB captured text. Read-only; selection, map and history stay unchanged.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_connection_batch_state(
+        &self,
+        Parameters(args): Parameters<ConnectionBatchSourcesArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let session = self.session();
+            let sources = connection_source_ids(args.ids.as_deref())?;
+            session.connection_batch_state(sources.as_deref())
+        })
+    }
+
+    #[tool(
+        description = "Begin a captured connection batch through the shared Captured connections controls. Supply snapshot from get_connection_batch_state and action:add|edit|remove. Add takes ids of whole sources (or the current selection) and no rows; it starts one new connection per captured source with blank output/target/input and delay0/times-1. Edit/Remove take exact rows [{source:entity_ID,identity:opaque_row_identity}] and no ids; rows can span sources and different ordinals. Captures map generation/revision and definitions. Edit reports common fields as values or null for Mixed and starts with every field unchanged; use update_connection_batch to choose replacements. All actions report actual affected rows and per-source diagnostics. Custom/unresolved I/O remains warning-only as in the single editor. Malformed imported field counts require single-row repair before Edit; Remove retains exact raw identities. Replaces only the existing connection draft, leaves map/history unchanged, and retains captured sources across selection changes. Cancel through cancel_connection_edit with the returned token."
+    )]
+    pub(in crate::mcp) fn begin_connection_batch(
+        &self,
+        Parameters(args): Parameters<ConnectionBatchBeginArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            let sources = connection_source_ids(args.ids.as_deref())?;
+            let rows = args.row_targets()?;
+            session.begin_connection_batch(
+                args.action,
+                sources.as_deref(),
+                &rows,
+                &args.snapshot,
+            )?;
+            Ok(session.connection_batch_report())
+        })
+    }
+
+    #[tool(
+        description = "Update the owned connection batch by token. patch contains optional output,target,input,parameter,delay,times strings. For Edit, this replaces the complete pending field mask: omitted/null fields keep each original row's value, including mixed values; explicit empty strings clear a field where allowed. Add updates only supplied fields of its new common connection. Numeric strings may be unfinished and return validation feedback without writing. Remove has no fields. Every row retains its original separator; per-source FGD and target diagnostics remain explicit. Selection never retargets the batch. Invalid plans cannot Apply and Cancel changes nothing."
+    )]
+    pub(in crate::mcp) fn update_connection_batch(
+        &self,
+        Parameters(args): Parameters<ConnectionBatchUpdateArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.update_connection_batch(args.token, args.patch)?;
+            Ok(session.connection_batch_report())
+        })
+    }
+
+    #[tool(
+        description = "Apply the owned captured connection batch by token in one atomic Undo step. Revalidates every source and exact raw row, map generation/revision, definitions, requested fields and original separators before changing anything. Add creates one reviewed connection on every source; Edit replaces only explicitly chosen fields on every selected row; Remove deletes the exact captured rows in safe descending per-source order. Missing sources, foreign/stale row identities, stale definitions, invalid fields or work bounds reject the whole operation and retain the draft. Custom or unresolved I/O warnings do not silently drop rows. Returns affected_rows, sources and changed; a semantically unchanged request creates no extra history. Cancel uses cancel_connection_edit."
+    )]
+    pub(in crate::mcp) fn commit_connection_batch(
+        &self,
+        Parameters(args): Parameters<ConnectionBatchTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .commit_connection_batch(Actor::Agent, args.token)
+        })
+    }
+
+    #[tool(
         description = "Inspect world settings or common entity properties with typed controls, mixed values, individual stored values, FGD defaults and mixed flags. Absent values are reported separately from explicit overrides. World settings include Emission file, default-off Exact emission visibility (_hammerr_emission_exact_visibility, exactly 0/1) and default-off Native direct emission (_hammerr_emission_native_direct, exactly 0/1). Exact visibility requires a nonblank valid emission path and requests finite-source shadow subtraction for uniquely owned world/detail or eligible stationary Shadows Yes func_brush emitting faces at root or assembled-child scope. Exact sources use a certified ordinary native outward triangle fan with a simple convex projection, without primitive overrides or displacement. Planar and nonplanar faces are admitted only within that fan certificate. Each nondegenerate original native triangle uses its actual plane for facing, support, clipping and the finite-area kernel; all source coordinates are retained. Nonzero-residual planar texture partitions keep their exact original-face coverage proof. Nonplanar textures require exact subcoverage of each original native fan triangle before RGB groups merge. The native fan must cover the actual surface once. Each subcoverage must cover its original native triangle once, with exact target-plane support, positive outward area, target containment, pairwise disjoint interiors and exact total projected area across all RGB groups, including black, with no floating coverage allowance. Existing planar, sampled and native point approximation paths are unchanged. Colour selection retains nearest mip0 RGB and binary64 UV semantics; the coverage proof does not certify real-arithmetic UV boundaries or native filtering parity. The retained plane keeps original custody and native direct-emission semantics; every applicable owning hull still blocks light to other receivers, including real source self-occlusion. The whole emitting BSP face is excluded from its own emission; fan triangles do not exchange that face's light, and receiver grids stay unchanged, including retained-plane sampling for brush receivers. It uses applicable original opaque or supported binary-cutout brush hulls certified closed, bounded and convex from their final planes, including oblique planes, plus actual two-sided opaque or supported binary-cutout native terrain and static-prop mesh triangles. Cutouts use the retained static alpha sampler, transform, nearest mip0 classification and clamp/repeat. Brush masks require Brush texture shadows; prop masks require the original MDL CAST_TEXTURE_SHADOWS flag. No prerequisite is enabled automatically. Exact hull events use strict segment endpoints and maximum coverage at exactly coincident boundary faces; sampled near-tie tolerance bands remain separate. Fragment conversion must certify binary64 kernel vertices exactly on each actual source triangle plane and all converted coverage inside the exact visible region. Terrain and prop emitting sources, moving, parented or unrequested brush-model emitting sources, and fractional/colored transmission or unqualified prop shadow providers remain unsupported. Unsupported providers, uncertain support, fragment conversion/conditioning and exhausted bounds reject compilation without sampled fallback; Fullbright validates without exact geometry admission. The native policy requires a nonblank valid emission path and opts into centroid-point native selected/folded runtime direct lighting, replacing intrinsic direct emission in indexed probes while preserving baked static receivers and reflected ambient; the exact visibility policy selects emission shadow handling. Native slots/folding are an approximation; full-VHV props affected by dynamic lights may also receive inherited static-cache lighting. World settings include Liquid current · world units/s (_hammerr_water_current_velocity), an XYZ vector of at most 128 units/s defaulting to zero, and Liquid pressure damping (_hammerr_water_damping), a dimensionless number from 0 to 0.01 defaulting to 0.01. These intrinsic defaults do not write overrides or invent FGD defaults. Damping affects the native projected-pressure term; zero retains the fixed pressure term. Stored controls require engine physics and emitted structural-world WATER or supported opaque SLIME and do not drive player/NPC movement. Use the shared property draft to stage, commit or remove overrides.",
         annotations(read_only_hint = true)
     )]

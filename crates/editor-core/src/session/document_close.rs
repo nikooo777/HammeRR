@@ -82,6 +82,7 @@ impl Session {
     pub fn document_close_review(&self) -> DocumentCloseReview {
         let mut drafts = BTreeMap::new();
         for (kind, state) in [
+            ("bulk_entities", self.bulk_entities.close_draft()),
             ("entity_gallery", self.geometry.entity_gallery.close_draft()),
             (
                 "entity_placement",

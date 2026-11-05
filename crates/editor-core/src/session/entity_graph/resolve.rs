@@ -1,4 +1,5 @@
 use super::{Context, MAX_FIELD_BYTES, charge, source::Source};
+use map_core::connections::event_name_matches as name_matches;
 
 pub(super) struct Scenario {
     activator: Option<u32>,
@@ -34,23 +35,6 @@ impl Scenario {
             caller_unbound: context.caller_unbound,
         })
     }
-}
-
-// Installed CSS NameMatchesComplex compares raw bytes, including non-letter ±0x20 pairs.
-fn name_matches(name: &str, query: &str) -> bool {
-    let name = name.as_bytes().split(|&byte| byte == 0).next().unwrap();
-    let query = query.as_bytes().split(|&byte| byte == 0).next().unwrap();
-    let mut index = 0;
-    while let (Some(&n), Some(&q)) = (name.get(index), query.get(index)) {
-        if n != q
-            && !(n <= 0x5a && i32::from(q) == i32::from(n) + 0x20)
-            && !(n <= 0x7a && i32::from(q) == i32::from(n) - 0x20)
-        {
-            break;
-        }
-        index += 1;
-    }
-    (index == name.len() && index == query.len()) || query.get(index) == Some(&b'*')
 }
 
 pub(super) fn targets(

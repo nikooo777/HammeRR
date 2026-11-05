@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 88.1% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 88.5% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -86,10 +86,10 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | ![HDR authored lighting on brick and concrete](docs/images/authored-lighting-hdr.png) | ![Red and blue translucent terrain casts colored baked shadows](docs/images/texture-shadows-colored.png) |
 | Inspect unshadowed LDR/HDR point, spot and sun lighting. | Bake LDR/HDR, colored shadows, emission and brush/prop bounces. |
 
-| [Models](docs/models.md) | [Surface placement](docs/placement.md) |
+| [Models and bulk editing](docs/bulk-entities.md) | [Surface placement](docs/placement.md) |
 | --- | --- |
-| ![A model at three scales](docs/images/model-scales.png) | ![A barrel aligned with a sloping surface](docs/images/slope-placement.png) |
-| Choose skins, bodygroups, scale, tint and opacity. | Place objects on floors, ceilings or picked surfaces. |
+| ![Six props replaced together](docs/images/bulk-entities.png) | ![A barrel aligned with a sloping surface](docs/images/slope-placement.png) |
+| Choose model sets, skins, bodygroups, scale, tint and opacity. | Place objects on floors, ceilings or picked surfaces. |
 
 | [Point-entity gallery](docs/entity-gallery.md) | [Selection modes](docs/selection.md#choose-the-object-selection-unit) |
 | --- | --- |

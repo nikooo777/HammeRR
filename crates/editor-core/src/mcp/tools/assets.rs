@@ -35,7 +35,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Begin an owned sound-field choice for an entity id and FGD sound property key (for example ambient_generic.message). resume=true reuses a valid same-target choice. Finish geometry previews first. Source, history, selection and camera remain unchanged."
+        description = "Capture an owned sound choice for 1–64 complete entities sharing a writable FGD sound field. Use id or ids; omit both for the exact selection. Optional key chooses a common field; when several fields exist, inspect available_fields and call set_sound_choice_field explicitly. Reports captured source values and mixed state. resume=true reuses only a valid identical target set. Finish geometry previews first. No autoplay or source/history/camera changes. Shared with Entity → Choose sounds… and inspector Browse…."
     )]
     pub(in crate::mcp) fn begin_sound_choice(
         &self,
@@ -43,9 +43,20 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            let id = single_entity(&session, args.id.as_deref())?;
-            session.begin_sound_choice(id, &args.key, args.resume)
+            let entities =
+                entity_choice_targets(&session, args.id.as_deref(), args.ids.as_deref())?;
+            session.begin_sound_choices(&entities, args.key.as_deref(), args.resume)
         })
+    }
+
+    #[tool(
+        description = "Choose an advertised common FGD sound field on the exact captured target set. A changed field returns a new token and clears the pending asset choice. No map changes; invalid fields preserve the prior choice. UI: Choose sounds… → Sound field."
+    )]
+    pub(in crate::mcp) fn set_sound_choice_field(
+        &self,
+        Parameters(args): Parameters<SoundChoiceFieldArgs>,
+    ) -> ToolResult {
+        run(|| self.session().set_sound_choice_field(args.token, &args.key))
     }
 
     #[tool(
@@ -242,7 +253,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Begin an isolated model choice for a point entity's World Model field, including an empty field. Returns an owned token; resume=true reuses a valid same-target choice, otherwise replaces only the previous model choice. Does not change source, selection, camera or geometry previews. Finish active geometry previews first."
+        description = "Capture a model choice for 1–64 whole point entities with World Model fields, including empty fields. Use id or ids; omit both for the entire selection. Rejects every incompatible object, malformed authored skin/body and active geometry preview. Returns exact entities, common or mixed source fields and an owned token; resume=true reuses only a valid identical target set. Source, selection and camera stay unchanged."
     )]
     pub(in crate::mcp) fn begin_model_choice(
         &self,
@@ -250,17 +261,17 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            let id = single_entity(&session, args.id.as_deref())?;
+            let ids = entity_choice_targets(&session, args.id.as_deref(), args.ids.as_deref())?;
             if args.resume {
-                session.resume_model_choice(id)
+                session.resume_model_choices(&ids)
             } else {
-                session.begin_model_choice(id)
+                session.begin_model_choices(&ids)
             }
         })
     }
 
     #[tool(
-        description = "Choose a supported model, zero-based skin and native body value (defaults 0) in an owned model-choice draft. Validates the captured entity pose, asset, skin and body without changing source/history/camera. Returns CPU asset details; render_model_preview provides the browser image."
+        description = "Choose one decoded model, zero-based skin and native body value (defaults 0) for every captured entity. Validates each retained class, transform and appearance with the shared model instance rules, scene budgets and original MDL/VVD/VTX bytes/origins. Failure retains the last valid draft. Viewports temporarily preview the whole visible set; source/history/camera stay unchanged. Returns CPU asset details; render_model_preview provides the isolated browser image."
     )]
     pub(in crate::mcp) fn choose_model(
         &self,
@@ -278,7 +289,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Choose a named bodygroup variant by its group/variant indices from inspect_model.bodygroups in an owned model choice. Preserves other group contributions and the skin; validates entity eligibility and updates the shared UI preview without editing source. UI: bodygroup dropdowns in Browse…."
+        description = "Choose a named bodygroup variant by its group/variant indices from inspect_model.bodygroups in an owned model choice. Preserves other group contributions and the skin; validates every captured entity and updates all shared previews without editing source. UI: bodygroup dropdowns in Browse…."
     )]
     pub(in crate::mcp) fn choose_model_bodygroup(
         &self,
@@ -345,7 +356,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect a model choice and its shared model/skin/body draft. Omit token to discover the active token, including stale choices with valid=false and an error; explicit token checks map, selection, definitions and geometry-preview guards.",
+        description = "Inspect captured entities, explicit mixed source fields and the common model/skin/body draft. Omit token to discover active or stale choices; an explicit token checks map, selection, definitions, content epoch and geometry-preview guards. Disk model bytes/origins are checked by Choose and Apply.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_model_choice(
@@ -362,7 +373,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply the owned model choice's path and skin together through the shared entity operation, as one Undo step. Rejects stale/replaced drafts. UI: Use model."
+        description = "Apply the captured model, skin and body to every target in one atomic Undo step. Revalidates every target and original model bytes/origins; rejects stale/replaced map, definition, content and geometry-preview contexts. Other entity fields and transforms are preserved. UI: Use model."
     )]
     pub(in crate::mcp) fn apply_model_choice(
         &self,

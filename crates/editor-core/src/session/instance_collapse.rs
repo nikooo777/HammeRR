@@ -586,9 +586,7 @@ impl Session {
         }
         if (self.history_navigation_blocked().is_some()
             && self.geometry.instance_collapse.document().is_none())
-            || self.property_draft.is_some()
-            || self.rename_draft.is_some()
-            || self.connection_draft.is_some()
+            || self.has_entity_edit_draft()
             || self.face_mode
             || self.clip_tool
             || self.spatial.draw_block

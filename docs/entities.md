@@ -132,7 +132,9 @@ instead of being silently skipped.
 2. Click **Tie to entity…**.
 3. Choose a class, then click **Tie selected brushes to entity**.
 
-Use **Move to world** to return eligible brushes to the world.
+Use **Move to world** to return eligible brush entities to the world.
+For class changes, model choices, connections and names across selected sets,
+see [Bulk entity workflows](bulk-entities.md).
 An `origin` material brush can define a supported runtime pivot; see [compilation](compile-and-play.md#brush-entities-and-pivots).
 
 ## Connections
@@ -215,4 +217,4 @@ Click **Apply properties** to keep the draft, or **Cancel** to discard it.
 
 ---
 
-[← Sounds](sounds.md) · [Manual](README.md) · [Point-entity gallery →](entity-gallery.md)
+[← Sounds](sounds.md) · [Manual](README.md) · [Bulk entity workflows →](bulk-entities.md)

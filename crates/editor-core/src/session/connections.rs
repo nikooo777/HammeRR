@@ -7,7 +7,12 @@ use source_formats::fgd::{Io, Property};
 use super::{Actor, Session};
 use source_formats::vmf::Connection;
 
-#[derive(Debug, Clone, Serialize)]
+mod batch;
+pub use batch::{
+    ConnectionBatchAction, ConnectionBatchDraft, ConnectionPatch, ConnectionRowTarget,
+};
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ConnectionFields {
     pub output: String,
     pub target: String,
@@ -18,6 +23,19 @@ pub struct ConnectionFields {
 }
 
 impl ConnectionFields {
+    fn from_raw(raw: &Connection) -> Self {
+        let fields = raw.fields().collect::<Vec<_>>();
+        let field = |index: usize| fields.get(index).copied().unwrap_or_default().to_owned();
+        Self {
+            output: raw.output.clone(),
+            target: field(0),
+            input: field(1),
+            parameter: field(2),
+            delay: field(3),
+            times: field(4),
+        }
+    }
+
     pub fn spec(&self) -> Result<Spec, String> {
         Ok(Spec {
             output: self.output.trim().into(),
@@ -46,6 +64,8 @@ pub struct ConnectionDraft {
     pub fields: ConnectionFields,
     pub generation: u64,
     pub revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub batch: Option<ConnectionBatchDraft>,
 }
 
 pub struct ConnectionRecord {
@@ -55,6 +75,7 @@ pub struct ConnectionRecord {
     pub spec: Option<Spec>,
     pub targets: Vec<u32>,
     pub warnings: Vec<String>,
+    pub identity: String,
 }
 
 impl Session {
@@ -67,6 +88,13 @@ impl Session {
     }
 
     pub fn connection_draft_report(&self) -> serde_json::Value {
+        if self
+            .connection_draft
+            .as_ref()
+            .is_some_and(|draft| draft.batch.is_some())
+        {
+            return self.connection_batch_report();
+        }
         let (error, warnings) = self.connection_draft_feedback();
         self.connection_draft().map_or(serde_json::Value::Null, |draft| {
             serde_json::json!({
@@ -155,6 +183,17 @@ impl Session {
     }
 
     fn connection_feedback(&self, source: u32, spec: &Spec, include_context: bool) -> Vec<String> {
+        let targets = connections::targets(&self.document, source, &spec.target);
+        self.connection_feedback_with_targets(source, spec, include_context, &targets)
+    }
+
+    fn connection_feedback_with_targets(
+        &self,
+        source: u32,
+        spec: &Spec,
+        include_context: bool,
+        targets: &[u32],
+    ) -> Vec<String> {
         let check_definitions = include_context || self.definitions.classes().next().is_some();
         let mut warnings = Vec::new();
         if check_definitions
@@ -168,7 +207,6 @@ impl Session {
                 spec.output
             ));
         }
-        let targets = connections::targets(&self.document, source, &spec.target);
         if spec.target.starts_with('!') && spec.target != "!self" {
             if include_context {
                 warnings.push(
@@ -188,7 +226,7 @@ impl Session {
                 targets.len()
             ));
         }
-        for id in targets {
+        for &id in targets {
             if !check_definitions {
                 continue;
             }
@@ -283,6 +321,7 @@ impl Session {
             spec,
             targets,
             warnings,
+            identity: self.connection_row_identity(source, index, raw),
         }
     }
 
@@ -320,16 +359,7 @@ impl Session {
                 .unwrap_or_default()
                 .get(index)
                 .ok_or("Connection no longer exists")?;
-            let fields: Vec<_> = raw.fields().collect();
-            let field = |index: usize| fields.get(index).copied().unwrap_or_default().to_owned();
-            ConnectionFields {
-                output: raw.output.clone(),
-                target: field(0),
-                input: field(1),
-                parameter: field(2),
-                delay: field(3),
-                times: field(4),
-            }
+            ConnectionFields::from_raw(raw)
         } else {
             ConnectionFields {
                 output: self
@@ -351,12 +381,20 @@ impl Session {
             fields,
             generation: self.document_generation,
             revision: self.document.revision(),
+            batch: None,
         });
         self.connection_serial += 1;
         Ok(())
     }
 
     pub fn update_connection_draft(&mut self, fields: ConnectionFields) -> Result<(), String> {
+        if self
+            .connection_draft
+            .as_ref()
+            .is_some_and(|draft| draft.batch.is_some())
+        {
+            return Err("Use the captured connection batch controls for this draft".into());
+        }
         self.connection_draft
             .as_mut()
             .ok_or("Begin a connection edit first")?
@@ -366,6 +404,13 @@ impl Session {
     }
 
     pub fn connection_draft_feedback(&self) -> (Option<String>, Vec<String>) {
+        if self
+            .connection_draft
+            .as_ref()
+            .is_some_and(|draft| draft.batch.is_some())
+        {
+            return self.connection_batch_feedback();
+        }
         let Some(draft) = &self.connection_draft else {
             return (None, Vec::new());
         };
@@ -448,6 +493,9 @@ impl Session {
             .connection_draft
             .clone()
             .ok_or("Begin a connection edit first")?;
+        if draft.batch.is_some() {
+            return Err("Use Apply captured connections for this draft".into());
+        }
         self.check_connection_snapshot(draft.generation, draft.revision)?;
         let index =
             self.set_entity_connection(actor, draft.source, draft.index, &draft.fields.spec()?)?;

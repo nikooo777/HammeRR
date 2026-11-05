@@ -14,6 +14,9 @@ Place Source model meshes with their materials, skins and reference poses.
 6. Choose **Skin** and named bodygroups, if available.
 7. Click **Use model**.
 
+For several entities, use **Entity → Choose models…**. See
+[Bulk entity workflows](bulk-entities.md#choose-models-together).
+
 **Cancel** leaves the entity unchanged. **Reference pose** means animation is not playing.
 Use [surface placement](placement.md) to put the model on a floor or slope.
 
@@ -66,7 +69,8 @@ Use **Reload models** for changed geometry or model material directories.
 Reloading geometry ends affected placement and selection reviews; start them again.
 Catalog sources describe current lookups. Model inspection retains the MDL,
 VVD and VTX origins captured when that cached model loaded; it does not verify
-that those files are still current.
+that those files are still current. **Preview model** and **Use model** check
+their bytes and winning source origins before accepting a model choice.
 
 ## Limits
 

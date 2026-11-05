@@ -1,4 +1,71 @@
 use super::*;
+use crate::session::{ConnectionBatchAction, ConnectionPatch, ConnectionRowTarget};
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionBatchSourcesArgs {
+    pub ids: Option<Vec<String>>,
+}
+
+pub(in crate::mcp) fn connection_source_ids(
+    ids: Option<&[String]>,
+) -> Result<Option<Vec<u32>>, String> {
+    ids.map(|ids| {
+        ids.iter()
+            .map(|id| match parse_id(id)? {
+                ObjectId::Entity(id) => Ok(id),
+                _ => Err("Connection batches require whole entity IDs".into()),
+            })
+            .collect()
+    })
+    .transpose()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionBatchRowArgs {
+    pub source: String,
+    pub identity: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionBatchBeginArgs {
+    pub action: ConnectionBatchAction,
+    pub ids: Option<Vec<String>>,
+    pub rows: Option<Vec<ConnectionBatchRowArgs>>,
+    pub snapshot: String,
+}
+
+impl ConnectionBatchBeginArgs {
+    pub(in crate::mcp) fn row_targets(&self) -> Result<Vec<ConnectionRowTarget>, String> {
+        self.rows
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|row| match parse_id(&row.source)? {
+                ObjectId::Entity(source) => Ok(ConnectionRowTarget {
+                    source,
+                    identity: row.identity.clone(),
+                }),
+                _ => Err("Connection rows require source entity IDs".into()),
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionBatchUpdateArgs {
+    pub token: u64,
+    pub patch: ConnectionPatch,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectionBatchTokenArgs {
+    pub token: u64,
+}
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct PropertyTargetArgs {
@@ -221,7 +288,7 @@ pub struct ConnectionDraftArgs {
 }
 
 pub(in crate::mcp) fn connection_json(record: ConnectionRecord) -> Value {
-    json!({"source": id_string(ObjectId::Entity(record.source)), "index": record.index,
+    json!({"source": id_string(ObjectId::Entity(record.source)), "index": record.index,"identity":record.identity,
         "output": record.raw.output, "raw": record.raw.value,
         "fields": record.spec.map(|spec| json!({"output":spec.output,"target":spec.target,"input":spec.input,"parameter":spec.parameter,"delay":spec.delay,"times":spec.times})),
         "targets": record.targets.into_iter().map(|id| id_string(ObjectId::Entity(id))).collect::<Vec<_>>(), "warnings":record.warnings})

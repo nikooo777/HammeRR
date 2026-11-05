@@ -743,7 +743,7 @@ pub(super) fn show_rename_window(app: &AppWindow, ui: &SharedUi, name: Option<St
     let begin = if name.is_none()
         && session
             .rename_draft()
-            .is_some_and(|draft| draft.entity == entity)
+            .is_some_and(|draft| draft.batch.is_none() && draft.entity == entity)
     {
         Ok(())
     } else {
@@ -901,5 +901,89 @@ pub(super) fn single_selected_entity(session: &Session) -> Option<u32> {
     match session.selected_ids()[..] {
         [ObjectId::Entity(n)] => Some(n),
         _ => None,
+    }
+}
+
+pub(super) fn show_bulk_entities_window(app: &AppWindow, ui: &SharedUi, move_to_world: bool) {
+    if ui.borrow().bulk_entities.is_none() {
+        match bulk_entities_ui::Controller::new(&file_access(ui)) {
+            Ok(controller) => ui.borrow_mut().bulk_entities = Some(controller),
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        }
+    }
+    let shared = session_of(ui);
+    let mut session = lock(&shared);
+    let ids = session.selected_ids();
+    if let Err(error) =
+        ui.borrow()
+            .bulk_entities
+            .as_ref()
+            .unwrap()
+            .show(&mut session, &ids, move_to_world)
+    {
+        app.set_message(error.into());
+    }
+}
+
+pub(super) fn show_connection_batch_window(app: &AppWindow, ui: &SharedUi) {
+    if ui.borrow().connection_batch_window.is_none() {
+        match ConnectionBatchWindow::new() {
+            Ok(window) => {
+                connection_ui::bind_batch_with_access(&window, &file_access(ui));
+                ui.borrow_mut().connection_batch_window = Some(window);
+            }
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        }
+    }
+    let window = ui
+        .borrow()
+        .connection_batch_window
+        .as_ref()
+        .unwrap()
+        .clone_strong();
+    let shared = session_of(ui);
+    connection_ui::load_batch_selection(&window, &lock(&shared));
+    if let Err(error) = window.show() {
+        app.set_message(error.to_string().into());
+    }
+}
+
+pub(super) fn show_bulk_rename_window(app: &AppWindow, ui: &SharedUi) {
+    if ui.borrow().bulk_rename.is_none() {
+        match bulk_rename_ui::Controller::new_with_access(&file_access(ui)) {
+            Ok(controller) => ui.borrow_mut().bulk_rename = Some(controller),
+            Err(error) => {
+                app.set_message(error.to_string().into());
+                return;
+            }
+        }
+    }
+    let shared = session_of(ui);
+    let mut session = lock(&shared);
+    if let Err(error) = ui
+        .borrow()
+        .bulk_rename
+        .as_ref()
+        .unwrap()
+        .initialize(&mut session)
+    {
+        app.set_message(error.into());
+        return;
+    }
+    let window = ui
+        .borrow()
+        .bulk_rename
+        .as_ref()
+        .unwrap()
+        .window
+        .clone_strong();
+    if let Err(error) = window.show() {
+        app.set_message(error.to_string().into());
     }
 }

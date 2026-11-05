@@ -129,6 +129,7 @@ impl Session {
             self.repeat_array_handle(),
             self.face_preview_handle(),
             self.terrain_stroke_handle(),
+            self.bulk_entities_handle(),
         ]
         .into_iter()
         .filter(|handle| !handle.is_null())

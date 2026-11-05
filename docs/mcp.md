@@ -197,6 +197,57 @@ normalizing motion. The result reports actual position, projection and
 commands report the existing tools that need paths, IDs or transfer tokens;
 they do not open native dialogs through MCP. See [Keyboard shortcuts](keyboard-shortcuts.md).
 
+## Bulk entity edits
+
+All tools use the same captured plans and Apply/Cancel operations as
+[Bulk entity workflows](bulk-entities.md).
+
+| Task | Capture and preview | Apply / Cancel |
+| --- | --- | --- |
+| Class changes | `preview_entity_class_change` with `ids` and `classname` | `apply_bulk_entities` / `cancel_bulk_entities` |
+| Brush entities to world | `preview_move_entities_to_world` with `ids` | `apply_bulk_entities` / `cancel_bulk_entities` |
+| Models, skins and bodygroups | `begin_model_choice` with `ids`, then `choose_model` or `choose_model_bodygroup` | `apply_model_choice` / `cancel_model_choice` |
+| Connections | `get_connection_batch_state`, `begin_connection_batch`, `update_connection_batch` | `commit_connection_batch` / `cancel_connection_edit` |
+| Sounds | `begin_sound_choice` with `ids`, optional `key`, then `choose_sound` | `apply_sound_choice` / `cancel_sound_choice` |
+| Particle effects | `begin_particle_choice` with `ids`, then `choose_particle` | `apply_particle_choice` / `cancel_particle_choice` |
+| Distinct names and references | `begin_entity_rename_batch`, `update_entity_rename_batch` | `commit_entity_rename_batch` / `cancel_entity_rename_batch` |
+
+Class/world plans return an owned `token`; `get_bulk_entities` reports its
+current validity. Optional `generation` and `revision` must be supplied together.
+`definitions` can pin the loaded FGD serial.
+
+Model capture accepts `id` or `ids`, never both. Omit both to capture the
+complete entity selection. Reports include all source values, mixed fields and
+`state`: `captured`, `preview`, `stale` or `closed`. Choose previews all visible
+captured entities without changing the source map. Choose and Apply check
+current MDL/VVD/VTX bytes and origins; cached inspection does not recheck disk.
+Attachment guides report their `model_choice_token` and cannot survive a change
+to that displayed choice.
+
+Sound and particle capture accept `id` or `ids`, with the same whole-selection
+rule. Mixed stored values stay explicit; no asset is chosen automatically.
+Sound capture exposes `available_fields`; an omitted `key` uses a unique common
+field or returns `state:"choose_field"`. Call `set_sound_choice_field` with a
+listed key; changing it returns a new token and clears the pending asset.
+`choice_sequence` identifies the reviewed sound inspection. Choose and Apply
+check captured script/wave sources. Particle Apply rereads the current manifest
+and PCF definition. No sound plays automatically; particle choice does not
+render or animate the effect.
+
+For connections, pass the capture's `snapshot` and `action:"add"`, `"edit"` or
+`"remove"`. Add takes source `ids`. Edit/Remove take exact
+`rows:[{source:"entity:2",identity:"…"}]` from the capture, with no `ids`.
+`update_connection_batch` takes `patch`; omitted fields retain each row's value.
+An explicit empty string clears a field when that field permits it. Inspect
+`get_map_info.connection_draft` before Apply. Source-qualified identities prevent edits
+to unrelated rows at equal indices.
+
+Rename capture needs current `generation` and `revision`. Update takes every
+captured `{entity,new_name}` pair once. A changed proposal returns a new token;
+use it for the next preview, Apply or Cancel. `get_entity_rename_batch` reports
+all changed reference fields and any blocking reason. Swaps and chains resolve
+from the original graph; Apply commits the complete plan in one Undo step.
+
 ## Saved colors
 
 1. Call `get_color_palette` with `source:"user"` (the default) or `source:"map"`.
@@ -1952,7 +2003,7 @@ These groups locate the available operations.
 | Area | Tools |
 | --- | --- |
 | Documents and workspace | `list_documents`, `new_document`, `open_document`, `save_all_named_maps`, `show_document`, `get_saved_workspace`, `save_workspace`, `get_workspace_restore_review`, `restore_workspace`, `get_quit_review`, `quit_all` |
-| [Models, sounds and assets](models.md) | `apply_model_choice`, `apply_sound_choice`, `begin_model_choice`, `begin_sound_choice`, `browse_models`, `browse_sounds`, `cancel_model_choice`, `cancel_sound_choice`, `choose_model`, `choose_model_bodygroup`, `choose_sound`, `clear_model_attachment`, `frame_model_attachment`, `get_model_attachment_guide`, `get_model_choice`, `get_sound_choice`, `get_sound_preview`, `inspect_entity_model`, `inspect_model`, `inspect_sound`, `play_sound_preview`, `reload_model_assets`, `reload_sound_assets`, `render_model_preview`, `render_sound_preview`, `set_sound_preview_volume`, `show_model_attachment`, `stop_sound_preview` |
+| [Models, sounds and assets](models.md) | `apply_model_choice`, `apply_sound_choice`, `begin_model_choice`, `begin_sound_choice`, `browse_models`, `browse_sounds`, `cancel_model_choice`, `cancel_sound_choice`, `choose_model`, `choose_model_bodygroup`, `choose_sound`, `clear_model_attachment`, `frame_model_attachment`, `get_model_attachment_guide`, `get_model_choice`, `get_sound_choice`, `get_sound_preview`, `inspect_entity_model`, `inspect_model`, `inspect_sound`, `play_sound_preview`, `reload_model_assets`, `reload_sound_assets`, `render_model_preview`, `render_sound_preview`, `set_sound_choice_field`, `set_sound_preview_volume`, `show_model_attachment`, `stop_sound_preview` |
 | [Atlas texturing](atlas-texturing.md) | `inspect_material_atlas`, `preview_atlas_fit`, `list_atlas_regions`, `save_atlas_region`, `choose_atlas_region`, `rename_atlas_region`, `delete_atlas_region` |
 | [Build and play](compile-and-play.md) | `apply_build_recipe`, `apply_compile_region`, `cancel_compile`, `cancel_compile_region`, `compile_map`, `delete_build_recipe`, `frame_build_diagnostic`, `frame_compile_region`, `game_log`, `get_build_recipes`, `get_compile_region`, `get_compile_settings`, `get_compile_status`, `get_native_capture_runtime`, `launch_game`, `preview_compile_region`, `reload_build_recipes`, `rename_build_recipe`, `run_map`, `run_map_checks`, `save_build_recipe`, `set_compile_settings`, `set_native_capture_runtime`, `start_compile`, `stop_game` |
 | [Map checks and reports](map-tools.md) | `apply_map_fixes`, `cancel_map_fixes`, `get_map_checks`, `get_object_report`, `preview_map_fixes`, `select_map_issue`, `select_object_report`, `set_object_visibility` |
@@ -1962,6 +2013,7 @@ These groups locate the available operations.
 | [Map design notes](map-tools.md) | `apply_context_edit`, `begin_context_edit`, `cancel_context_edit`, `delete_context_note`, `focus_context`, `get_context`, `get_context_note`, `get_context_state`, `list_context_notes`, `set_context_view`, `update_context_edit` |
 | [Reflection bindings](cubemap-faces.md) | `get_cubemap_bindings`, `set_cubemap_bindings` |
 | [Entity properties and connections](entities.md) | `begin_connection_edit`, `begin_entity_rename`, `begin_property_edit`, `cancel_connection_edit`, `cancel_entity_rename`, `cancel_property_edit`, `commit_connection_edit`, `commit_entity_rename`, `commit_property_edit`, `convert_color`, `create_entity`, `delete_entity_connection`, `get_connection_choices`, `get_entity_class`, `get_entity_connections`, `inspect_entity_graph`, `inspect_entity_graph_diagram`, `layout_entity_graph`, `update_entity_graph_diagram`, `reset_entity_graph_diagram`, `select_entity_graph`, `frame_entity_graph`, `get_entity_definitions`, `get_entity_inspector`, `get_entity_references`, `get_property_edit`, `get_property_inspector`, `load_entity_definitions`, `move_to_world`, `search_entity_classes`, `set_entity_color`, `set_entity_color_space`, `set_entity_properties`, `tie_to_entity`, `update_connection_draft`, `update_entity_rename`, `update_property_edit` |
+| [Bulk entity workflows](bulk-entities.md) | `apply_bulk_entities`, `begin_connection_batch`, `begin_entity_rename_batch`, `cancel_bulk_entities`, `cancel_entity_rename_batch`, `commit_connection_batch`, `commit_entity_rename_batch`, `get_bulk_entities`, `get_connection_batch_state`, `get_entity_rename_batch`, `preview_entity_class_change`, `preview_move_entities_to_world`, `update_connection_batch`, `update_entity_rename_batch` |
 | [Entity placement](entities.md) | `apply_entity_placement`, `begin_entity_placement`, `cancel_entity_placement`, `get_entity_placement`, `pick_entity_placement`, `review_entity_placement` |
 | [Map files](getting-started.md) | `clear_recent_maps`, `close_document`, `find_objects`, `get_map_info`, `get_map_statistics`, `get_objects`, `get_recent_maps`, `new_map`, `open_map`, `open_recent_map`, `relocate_recent_map`, `cancel_recent_map`, `redo`, `reload_recent_maps`, `remove_recent_map`, `save_map`, `undo` |
 | [Reference images](reference-images.md) | `add_reference_image`, `delete_reference_image`, `frame_reference_image`, `get_reference_images`, `reload_reference_image`, `update_reference_image` |

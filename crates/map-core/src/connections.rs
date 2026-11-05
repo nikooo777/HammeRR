@@ -74,10 +74,13 @@ pub fn set(
     index: Option<usize>,
     spec: &Spec,
 ) -> Result<usize, EditError> {
-    let entity = tx.entity_mut(entity)?;
+    let current = tx
+        .document()
+        .entity(entity)
+        .ok_or(EditError::NotFound(crate::ObjectId::Entity(entity)))?;
     let previous = match index {
         Some(index) => Some(
-            entity
+            current
                 .connections
                 .as_deref()
                 .unwrap_or_default()
@@ -98,6 +101,7 @@ pub fn set(
             spec.target, spec.input, spec.parameter, spec.delay, spec.times
         ),
     };
+    let entity = tx.entity_mut(entity)?;
     let connections = entity.connections.get_or_insert_with(Vec::new);
     if let Some(index) = index {
         connections[index] = connection;
@@ -133,17 +137,60 @@ pub fn targets(document: &Document, source: u32, target: &str) -> Vec<u32> {
     if target.is_empty() || target.starts_with('!') {
         return Vec::new();
     }
+    matching_targets(document, target).collect()
+}
+
+fn matching_targets<'a>(document: &'a Document, target: &'a str) -> impl Iterator<Item = u32> + 'a {
     document
         .vmf()
         .entities
         .iter()
         .filter(|entity| !entity.hidden)
-        .filter(|entity| {
+        .filter(move |entity| {
             let name = entity.properties.get("targetname").unwrap_or_default();
             name_matches(name, target)
         })
         .map(|entity| entity.id)
-        .collect()
+}
+
+pub fn targets_bounded(
+    document: &Document,
+    source: u32,
+    target: &str,
+    limit: usize,
+) -> Result<Vec<u32>, String> {
+    let targets = if target == "!self" {
+        targets(document, source, target)
+    } else if target.is_empty() || target.starts_with('!') {
+        Vec::new()
+    } else {
+        matching_targets(document, target)
+            .take(limit.saturating_add(1))
+            .collect()
+    };
+    if targets.len() > limit {
+        return Err(format!(
+            "Connection target matches exceed the remaining limit of {limit}"
+        ));
+    }
+    Ok(targets)
+}
+
+// Installed CSS NameMatchesComplex compares raw bytes, including non-letter ±0x20 pairs.
+pub fn event_name_matches(name: &str, query: &str) -> bool {
+    let name = name.as_bytes().split(|&byte| byte == 0).next().unwrap();
+    let query = query.as_bytes().split(|&byte| byte == 0).next().unwrap();
+    let mut index = 0;
+    while let (Some(&n), Some(&q)) = (name.get(index), query.get(index)) {
+        if n != q
+            && !(n <= 0x5a && i32::from(q) == i32::from(n) + 0x20)
+            && !(n <= 0x7a && i32::from(q) == i32::from(n) - 0x20)
+        {
+            break;
+        }
+        index += 1;
+    }
+    (index == name.len() && index == query.len()) || query.get(index) == Some(&b'*')
 }
 
 pub fn name_matches(name: &str, target: &str) -> bool {

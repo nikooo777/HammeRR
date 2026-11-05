@@ -103,13 +103,18 @@ More in this section:
 <table>
 <tr>
 <td width="33%" valign="top"><a href="entities.md"><img src="images/thumbs/spotlight-guide.jpg" width="260" alt=""></a><br><a href="entities.md"><b>Entities and logic</b></a><br>Place game objects, edit their properties and connect outputs to inputs.</td>
+<td width="33%" valign="top"><a href="bulk-entities.md"><img src="images/thumbs/bulk-entities.jpg" width="260" alt=""></a><br><a href="bulk-entities.md"><b>Bulk entity workflows</b></a><br>Change captured classes, models, sounds, effects, names and connections together, or return brush entities to world.</td>
 <td width="33%" valign="top"><a href="entity-gallery.md"><img src="images/thumbs/entity-gallery.jpg" width="260" alt=""></a><br><a href="entity-gallery.md"><b>Point-entity gallery</b></a><br>Browse the loaded FGD point classes and inspect actual examples in the main viewport before adding a batch to your map.</td>
-<td width="33%" valign="top"><a href="path-authoring.md"><img src="images/thumbs/linked-path-handles.jpg" width="260" alt=""></a><br><a href="path-authoring.md"><b>Linked paths</b></a><br>Create linked nodes, configure a brush train and inspect its native motion.</td>
 </tr>
 <tr>
+<td width="33%" valign="top"><a href="path-authoring.md"><img src="images/thumbs/linked-path-handles.jpg" width="260" alt=""></a><br><a href="path-authoring.md"><b>Linked paths</b></a><br>Create linked nodes, configure a brush train and inspect its native motion.</td>
 <td width="33%" valign="top"><a href="overlays.md"><img src="images/thumbs/overlay-native.jpg" width="260" alt=""></a><br><a href="overlays.md"><b>Overlays</b></a><br>Project a material onto compiled surfaces.</td>
 <td width="33%" valign="top"><a href="prefabs.md"><img src="images/thumbs/prefab-assemblies.jpg" width="260" alt=""></a><br><a href="prefabs.md"><b>Prefab library</b></a><br>Save and reuse brush/entity assemblies as VMF files.</td>
+</tr>
+<tr>
 <td width="33%" valign="top"><a href="clipboard.md"><img src="images/thumbs/clipboard-placement.jpg" width="260" alt=""></a><br><a href="clipboard.md"><b>Cut, copy and paste</b></a><br>Transfer whole objects with rotation, scale and saved face partitions.</td>
+<td width="33%"></td>
+<td width="33%"></td>
 </tr>
 </table>
 

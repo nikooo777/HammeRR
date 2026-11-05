@@ -1,5 +1,8 @@
 #![recursion_limit = "256"]
 
+mod bulk_entities_ui;
+mod bulk_rename_ui;
+
 mod atlas_ui;
 mod carve_ui;
 mod checks_ui;

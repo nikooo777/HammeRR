@@ -140,11 +140,7 @@ impl Session {
         Ok(())
     }
     fn instance_reference_context(&self) -> Result<(), String> {
-        if self.history_navigation_blocked().is_some()
-            || self.property_draft.is_some()
-            || self.rename_draft.is_some()
-            || self.connection_draft.is_some()
-        {
+        if self.history_navigation_blocked().is_some() || self.has_entity_edit_draft() {
             return Err("Finish the active build, launch or editing draft before authoring an instance reference".into());
         }
         Ok(())

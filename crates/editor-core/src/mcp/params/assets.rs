@@ -86,37 +86,6 @@ pub struct BrowseModelsArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct ChooseModelArgs {
-    pub token: u64,
-    pub path: String,
-    pub skin: Option<usize>,
-    pub body: Option<u32>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BeginModelChoiceArgs {
-    pub id: Option<String>,
-    #[serde(default)]
-    pub resume: bool,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelChoiceQueryArgs {
-    pub token: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ModelBodygroupArgs {
-    pub token: u64,
-    pub group: usize,
-    pub variant: usize,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct BrowseSoundsArgs {
     pub query: Option<String>,
     pub group: Option<String>,
@@ -142,10 +111,21 @@ pub struct SoundPreviewArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BeginSoundChoiceArgs {
+    /// One whole entity; exclusive with ids. Omit both to capture the selection.
     pub id: Option<String>,
-    pub key: String,
+    #[schemars(length(min = 1, max = 64))]
+    pub ids: Option<Vec<String>>,
+    /// Common writable FGD sound property. Omit to choose a unique field or request an explicit field choice.
+    pub key: Option<String>,
     #[serde(default)]
     pub resume: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SoundChoiceFieldArgs {
+    pub token: u64,
+    pub key: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -249,7 +229,11 @@ pub struct ParticleNameArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BeginParticleChoiceArgs {
+    /// One whole entity; exclusive with ids. Omit both to capture the selection.
     pub id: Option<String>,
+    /// Whole entity IDs, all compatible particle systems.
+    #[schemars(length(min = 1, max = 64))]
+    pub ids: Option<Vec<String>>,
     #[serde(default)]
     pub resume: bool,
 }

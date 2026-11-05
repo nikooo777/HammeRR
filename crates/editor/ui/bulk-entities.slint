@@ -1,0 +1,78 @@
+import { Theme } from "theme.slint";
+import { Button, LineEdit, ScrollView } from "widgets.slint";
+import { FieldRow, SectionHeader } from "kit.slint";
+
+export component BulkEntitiesWindow inherits Window {
+    title: root.move-to-world ? "Move to world" : "Change entity classes";
+    background: Theme.panel;
+    default-font-size: Theme.font;
+    preferred-width: 660px;
+    preferred-height: 640px;
+    min-width: 420px;
+    min-height: 420px;
+    in property <bool> move-to-world;
+    in-out property <string> classname;
+    in property <string> summary;
+    in property <[string]> targets;
+    in property <string> warning;
+    in property <string> message;
+    in property <bool> can-apply;
+    callback preview();
+    callback fields-changed();
+    callback apply();
+    callback cancel();
+    forward-focus: dialog-focus;
+    dialog-focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text {
+                text: root.move-to-world ? "Move to world" : "Change entity classes";
+                font-size: Theme.font-display;
+                font-weight: 600;
+                wrap: word-wrap;
+            }
+            Text { text: root.summary; wrap: word-wrap; color: Theme.text-muted; }
+            if !root.move-to-world: FieldRow {
+                label: "Class name";
+                label-width: 86px;
+                inset: false;
+                LineEdit {
+                    text <=> root.classname;
+                    accessible-label: "New loaded entity class name";
+                    edited => { root.fields-changed(); }
+                }
+            }
+            if !root.move-to-world: HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Preview class changes"; clicked => { root.preview(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            SectionHeader { text: root.move-to-world ? "Entities and removed behavior" : "Captured entities"; inset: false; collapsible: false; }
+            ScrollView {
+                vertical-stretch: 1;
+                content-width: self.width;
+                VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
+                    spacing: Theme.space-lg;
+                    for target in root.targets: Text {
+                        text: target;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            if root.warning != "": Text { text: root.warning; wrap: word-wrap; color: Theme.text-muted; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Apply"; primary: true; enabled: root.can-apply; clicked => { root.apply(); } }
+                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+    }
+}

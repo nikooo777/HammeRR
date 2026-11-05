@@ -1,4 +1,10 @@
+mod bulk_rename;
+pub(super) use bulk_rename::*;
+mod bulk_entities;
+pub(super) use bulk_entities::*;
+mod model_choice;
 use super::*;
+pub(super) use model_choice::*;
 
 mod assets;
 pub(super) use assets::*;

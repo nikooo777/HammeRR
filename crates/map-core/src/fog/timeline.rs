@@ -3,7 +3,7 @@ use super::{Input, Profile};
 
 pub const MAX_EVENTS: usize = 128;
 pub const MAX_TIMELINE_SECONDS: f64 = 3600.0;
-pub const TIMELINE_POLICY: &str = "Preview time zero is a settled post-spawn authored baseline, not global engine curtime zero. No transition deadline is active until StartFogTransition. Nominal scheduled time: due controller Think commits run before an input at the same nominal time; input append order is stable. Controller arithmetic uses float32 time and the installed unclamped client interpolation: color interpolates while lerp_end >= now; range interpolates only while lerp_end > now. This does not reproduce live server ticks, network delivery or game I/O scheduling.";
+pub const TIMELINE_POLICY: &str = "Preview time zero is a settled post-initialization baseline, not global engine curtime zero. No transition deadline is active until StartFogTransition. Nominal scheduled time: due controller Think commits run before an input at the same nominal time; input append order is stable. Controller arithmetic uses float32 time and the installed unclamped client interpolation: color interpolates while lerp_end >= now; range interpolates only while lerp_end > now. This does not reproduce live server ticks, network delivery or game I/O scheduling.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Event {

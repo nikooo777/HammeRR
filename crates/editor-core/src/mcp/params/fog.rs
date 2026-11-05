@@ -79,6 +79,8 @@ pub struct FogPreviewSettingsArgs {
     pub selection: crate::session::fog::SelectionMode,
     /// LDR is qualified; HDR requests remain explicitly unavailable in the current native profile.
     pub channel: crate::session::fog::Channel,
+    /// Initial controller radial context: authored or css_official_map; omitted preserves the current setting.
+    pub initial_radial_context: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

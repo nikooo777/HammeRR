@@ -143,6 +143,8 @@ impl Session {
             }
             Command::Settings(settings) => {
                 settings.channel.validate()?;
+                let context_changed = settings.initial_radial_context
+                    != self.fog_preview.settings.initial_radial_context;
                 let fresh = !self
                     .fog_preview
                     .key
@@ -163,14 +165,21 @@ impl Session {
                             .parsed
                             .as_ref()
                             .map_err(Clone::clone)?;
-                    } else {
+                    } else if !context_changed {
                         self.fog_profile(id, self.fog_preview.time)?;
+                    } else {
+                        self.initial_fog_profile(id)?;
                     }
                 }
                 if fresh {
                     self.fog_baseline(captured);
                 } else if let Some(catalog) = captured {
                     self.fog_preview.catalog = Some(catalog);
+                }
+                if context_changed {
+                    self.fog_preview.timelines.clear();
+                    self.fog_preview.time = 0.0;
+                    self.fog_preview.playing = false;
                 }
                 self.fog_preview.settings = settings;
                 if !settings.enabled {
@@ -252,7 +261,7 @@ impl Session {
                 if let std::collections::btree_map::Entry::Vacant(entry) =
                     timelines.entry(controller)
                 {
-                    entry.insert(Timeline::new(self.fog_profile(controller, 0.0)?)?);
+                    entry.insert(Timeline::new(self.initial_fog_profile(controller)?)?);
                 }
                 timelines.get_mut(&controller).unwrap().push(Event {
                     time: self.fog_preview.time,
@@ -350,6 +359,7 @@ impl Session {
             controller,
             selection: SelectionMode::Explicit,
             channel: self.fog_preview.settings.channel,
+            initial_radial_context: self.fog_preview.settings.initial_radial_context,
         };
         match self.fog_preview_command(Actor::User, snapshot, Command::Settings(settings))? {
             Update::State(report) => Ok(report),

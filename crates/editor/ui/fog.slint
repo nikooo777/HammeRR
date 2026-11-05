@@ -27,6 +27,9 @@ export component FogWindow inherits Window {
     in-out property <int> environment-index;
     in property <[string]> environments;
     in property <string> environment-detail;
+    in-out property <int> initial-rule-index;
+    in property <[string]> initial-rules;
+    in property <string> initial-rule-detail;
     in property <bool> environment-busy;
     in property <bool> environment-automatic;
     in property <bool> can-prepare-environment;
@@ -157,7 +160,7 @@ export component FogWindow inherits Window {
                         Text { text: root.time-label; color: Theme.text-muted; }
                         Text { text: (root.time-dirty || root.scrub-dirty ? "Unsubmitted time · " : "") + root.time-limits; color: Theme.text-faint; horizontal-alignment: right; horizontal-stretch: 1; }
                     }
-                    Text { text: "Reset clears preview inputs and restores authored initial values. Seek preserves the input sequence."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
+                    Text { text: "Reset clears preview inputs and restores initial values under the selected rule. Seek preserves the input sequence."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
                     SectionHeader { text: "Environment"; inset: false; expanded <=> root.environment-expanded; }
                     if root.environment-expanded: VerticalLayout {
                         spacing: Theme.space;
@@ -171,6 +174,17 @@ export component FogWindow inherits Window {
                             }
                         }
                         if root.environment-detail != "": Text { text: root.environment-detail; color: Theme.text-faint; wrap: word-wrap; }
+                        FieldRow {
+                            inset: false; label: "Initial rule"; label-width: 104px;
+                            ComboBox {
+                                model: root.initial-rules; current-index <=> root.initial-rule-index;
+                                accessible-label: "Initial fog rule";
+                                enabled: root.available;
+                                selected => { root.selection-dirty = true; root.choice-changed(); }
+                            }
+                        }
+                        if root.initial-rule-detail != "": Text { text: root.initial-rule-detail; color: Theme.text-faint; wrap: word-wrap; }
+                        Text { text: "Applying a different rule resets preview inputs and time and pauses playback."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
                         if root.environment-automatic || root.environment-busy: HorizontalLayout {
                             spacing: Theme.space;
                             Button { text: root.environment-busy ? "Preparing environment…" : "Prepare environment"; enabled: root.can-prepare-environment; clicked => { root.prepare-environment(); } }

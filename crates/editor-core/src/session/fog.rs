@@ -1,4 +1,4 @@
-use map_core::fog::{Profile, Timeline};
+use map_core::fog::{CSS_OFFICIAL_MAP_CATALOG, INITIAL_RADIAL_CONTEXTS, Profile, Timeline};
 use render::fog::{ViewFog, WaterFog};
 use serde_json::{Value, json};
 
@@ -11,6 +11,7 @@ mod preparation;
 mod state;
 
 pub(crate) use controls::Update;
+pub use map_core::fog::InitialRadialContext;
 pub(crate) use preparation::RenderGuard;
 pub use preparation::{Completed, Request};
 pub(crate) use state::ClockLease;
@@ -65,7 +66,47 @@ impl Session {
             channel: overrides
                 .channel
                 .unwrap_or(self.fog_preview.settings.channel),
+            initial_radial_context: self.fog_preview.settings.initial_radial_context,
         })
+    }
+
+    fn initial_fog_profile(&self, id: u32) -> Result<Profile, String> {
+        if self
+            .fog_preview
+            .key
+            .as_ref()
+            .is_some_and(|key| key.current(self))
+            && let Some(timeline) = self.fog_preview.timelines.get(&id)
+        {
+            return Ok(timeline.initial());
+        }
+        let parsed = if self
+            .fog_preview
+            .key
+            .as_ref()
+            .is_some_and(|key| key.current(self))
+            && let Some(catalog) = &self.fog_preview.catalog
+        {
+            catalog
+                .controllers
+                .get(&id)
+                .ok_or_else(|| format!("entity:{id} is not in the current fog catalog"))?
+                .parsed
+                .as_ref()
+                .map(|parsed| parsed.profile)
+                .map_err(Clone::clone)?
+        } else {
+            let entity = self
+                .render_document()
+                .entity(id)
+                .ok_or_else(|| format!("entity:{id} no longer exists; choose a fog controller"))?;
+            catalog::parse(self.render_document().vmf(), entity)?.profile
+        };
+        Ok(self
+            .fog_preview
+            .settings
+            .initial_radial_context
+            .initial_profile(parsed))
     }
 
     fn fog_profile(&self, id: u32, time: f64) -> Result<Profile, String> {
@@ -74,28 +115,11 @@ impl Session {
             .key
             .as_ref()
             .is_some_and(|key| key.current(self))
+            && let Some(timeline) = self.fog_preview.timelines.get(&id)
         {
-            if let Some(timeline) = self.fog_preview.timelines.get(&id) {
-                return timeline.evaluate(time);
-            }
-            if let Some(controller) = self
-                .fog_preview
-                .catalog
-                .as_ref()
-                .and_then(|catalog| catalog.controllers.get(&id))
-            {
-                return controller
-                    .parsed
-                    .as_ref()
-                    .map(|parsed| parsed.profile)
-                    .map_err(Clone::clone);
-            }
+            return timeline.evaluate(time);
         }
-        let entity = self
-            .render_document()
-            .entity(id)
-            .ok_or_else(|| format!("entity:{id} no longer exists; choose a fog controller"))?;
-        catalog::parse(self.render_document().vmf(), entity).map(|parsed| parsed.profile)
+        self.initial_fog_profile(id)
     }
 
     pub fn fog_render_state_for_view(
@@ -108,7 +132,7 @@ impl Session {
         if !settings.enabled {
             return Ok(FogView {
                 fog: None,
-                report: json!({"enabled":false,"applied":false,"channel":settings.channel,"selection":settings.selection}),
+                report: json!({"enabled":false,"applied":false,"channel":settings.channel,"selection":settings.selection,"initial_radial_context":settings.initial_radial_context.name()}),
             });
         }
         settings.channel.validate()?;
@@ -145,6 +169,9 @@ impl Session {
         let profile = id
             .map(|id| self.fog_profile(id, self.fog_preview.time))
             .transpose()?;
+        let initial_radial = id
+            .map(|id| self.initial_fog_profile(id).map(|profile| profile.radial))
+            .transpose()?;
         let water_report=water.as_ref().map(|water|json!({"solid":format!("solid:{}",water.solid),"contents":water.contents,
             "source_solids":water.source_solids,"material":water.material,"surface_material":water.surface_material,"surface_z":water.surface_z,"color_normalized":water.color_normalized,"start":water.start,"end":water.end,"enabled":water.enabled}));
         let fog = if let Some(water) = water {
@@ -164,6 +191,7 @@ impl Session {
             fog,
             report: json!({"enabled":true,"ready":true,"applied":color.is_some_and(|fog|fog.enabled() && fog.max_density()>0.0),
             "controller":id.map(|id|format!("entity:{id}")),"selection":settings.selection,"selection_reason":reason,"channel":settings.channel,
+            "initial_radial_context":settings.initial_radial_context.name(),"initial_radial":initial_radial,
             "time_seconds":self.fog_preview.time,"profile":profile.map(profile_report),"water":water_report,"far_z":far_z,
             "color_linear":color.map(|fog|fog.color_for_camera(camera)),"preview_only":true}),
         })
@@ -295,12 +323,14 @@ impl Session {
         let controllers=catalog.as_ref().map(|catalog|catalog.controllers.iter().map(|(&id,controller)| {
             json!({"id":format!("entity:{id}"),"label":controller.targetname.as_deref().filter(|name|!name.is_empty()).map_or_else(||format!("entity:{id}"),|name|format!("{name} · entity:{id}")),
                 "targetname":controller.targetname,"ready":controller.parsed.is_ok(),"settings":controller.parsed.as_ref().ok().map(|parsed|profile_report(parsed.profile)),
+                "initial_settings":controller.parsed.as_ref().ok().map(|parsed|profile_report(self.fog_preview.settings.initial_radial_context.initial_profile(parsed.profile))),
                 "issue":controller.parsed.as_ref().err(),"detail":controller.parsed.as_ref().err(),
                 "defaults":controller.parsed.as_ref().ok().map(|parsed|&parsed.defaults),"inert_keys":controller.parsed.as_ref().ok().map(|parsed|&parsed.inert_keys),
                 "parent_chain":controller.parsed.as_ref().ok().map(|parsed|parsed.parent_chain.iter().map(|id|format!("entity:{id}")).collect::<Vec<_>>())})
         }).collect::<Vec<_>>()).unwrap_or_default();
         let inputs=map_core::fog::input_choices().iter().map(|choice|json!({"id":choice.name,"name":choice.name,"label":choice.name,"kind":choice.kind,"help":choice.help,"has_value":choice.has_value})).collect::<Vec<_>>();
         let events=self.fog_preview.timelines.iter().flat_map(|(&id,timeline)|timeline.events().iter().map(move |event|json!({"controller":format!("entity:{id}"),"time_seconds":event.time,"input":event.input.name(),"value":event.input.value()}))).collect::<Vec<_>>();
+        let initial_radial_contexts=INITIAL_RADIAL_CONTEXTS.map(|context|json!({"id":context.name(),"label":context.label(),"ready":true,"detail":context.detail()}));
         let detail = if let Some(error) = &issue {
             error.clone()
         } else if let Some(current) = current {
@@ -318,6 +348,8 @@ impl Session {
         json!({"snapshot":clock.snapshot,"serial":clock.serial,"frame_serial":clock.frame_serial,"status":clock.status,"playback_status":clock.status,
             "enabled":self.fog_preview.settings.enabled,"configured_controller":self.fog_preview.settings.controller.map(|id|format!("entity:{id}")),
             "controller":current.and_then(|current|current.get("controller")),"selection":self.fog_preview.settings.selection,"channel":self.fog_preview.settings.channel,
+            "initial_radial_context":self.fog_preview.settings.initial_radial_context.name(),"initial_radial_contexts":initial_radial_contexts,
+            "initial_radial_context_source":"explicit_preview_setting","css_official_map_catalog":CSS_OFFICIAL_MAP_CATALOG,
             "settings":self.fog_preview.settings,"ready":query.is_ok()&&!clock.busy,"active":current.is_some_and(|current|current["applied"]==true),
             "summary":self.fog_preview_summary(),"detail":detail,"issue":issue,"error":issue,"catalog_issue":catalog.err(),
             "controllers":controllers,"channels":[{"id":"ldr","label":"LDR","ready":true,"detail":"World fog · LDR"},{"id":"hdr","label":"HDR","ready":false,"detail":"HDR fog display is unavailable"}],
@@ -332,7 +364,8 @@ impl Session {
             "transitioning":self.fog_preview.timelines.values().any(|timeline|timeline.events().iter().any(|event|matches!(event.input,map_core::fog::Input::StartFogTransition))),
             "limits":{"controllers":catalog::MAX_CONTROLLERS,"entities":catalog::MAX_ENTITIES,"controller_property_bytes":catalog::MAX_CONTROLLER_BYTES,"events":map_core::fog::MAX_EVENTS,"time_seconds":map_core::fog::MAX_TIMELINE_SECONDS,"advance_seconds":state::MAX_ADVANCE_SECONDS,"source_snapshot_bytes":state::MAX_SOURCE_BYTES,"workers":1},
             "timeline_policy":map_core::fog::TIMELINE_POLICY,
-            "playback_policy":"One shared runtime clock drives Play in desktop and headless sessions. Hidden or inactive presentation suspends wall time without catch-up. Seek pauses; explicit Advance remains available. Reset clears preview inputs and restores the settled authored baseline at time zero. Cancel stops environment preparation and playback; Clear also disables and clears preview state.",
+            "initial_radial_context_policy":"The selected rule applies to every controller's initial profile before preview inputs. Changing it clears inputs, resets time and pauses, while retaining a current prepared environment. Later SetRadial inputs override the initial value. No running map name or file path is inferred.",
+            "playback_policy":"One shared runtime clock drives Play in desktop and headless sessions. Hidden or inactive presentation suspends wall time without catch-up. Seek pauses; explicit Advance remains available. Reset clears preview inputs and restores the current-context initial profile at time zero. Cancel stops environment preparation and playback; Clear also disables and clears preview state.",
             "selection_policy":"Manual controller selection snaps. Automatic mode uses initial first-controller/last-Master selection and current-camera prepared water context. Trigger history, player controller-switch blends, fog volumes, runtime I/O and native scheduler/network timing are not simulated.",
             "persistence":"Session view state only; no VMF edits, Undo steps or saved controller mutation. HDRColorScale and ZoomFogScale remain inert foreign metadata in this installed CSS path."})
     }

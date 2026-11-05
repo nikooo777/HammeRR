@@ -7,7 +7,7 @@ use slint::{ComponentHandle, VecModel};
 
 use crate::FogWindow;
 use crate::runtime::{DocumentAccess, DocumentContinuation, DocumentLifecycle};
-use crate::session::fog::{Channel, Command, SelectionMode, Settings};
+use crate::session::fog::{Channel, Command, InitialRadialContext, SelectionMode, Settings};
 use crate::session::{Actor, Session};
 
 const REPORT_INTERVAL: Duration = Duration::from_millis(125);
@@ -22,10 +22,12 @@ struct Form {
     choices: Vec<Value>,
     channels: Vec<Value>,
     selections: Vec<Value>,
+    initial_rules: Vec<Value>,
     inputs: Vec<Value>,
     controller_labels: Vec<slint::SharedString>,
     channel_labels: Vec<slint::SharedString>,
     selection_labels: Vec<slint::SharedString>,
+    initial_rule_labels: Vec<slint::SharedString>,
     input_labels: Vec<slint::SharedString>,
     report: Value,
     action_error: Option<String>,
@@ -106,6 +108,7 @@ fn update_choice(window: &FogWindow, form: &Form) {
     let controller = selected(&form.choices, window.get_controller_index() - 1);
     let channel = selected(&form.channels, window.get_channel_index());
     let selection = selected(&form.selections, window.get_environment_index());
+    let initial_rule = selected(&form.initial_rules, window.get_initial_rule_index());
     let explicit = selection.is_some_and(|selection| selection["id"] == "explicit");
     window.set_environment_automatic(
         selection.is_some_and(|selection| selection["id"] == "environment"),
@@ -132,6 +135,7 @@ fn update_choice(window: &FogWindow, form: &Form) {
                 .is_none_or(|snapshot| snapshot == &form.snapshot)
             && channel.is_some_and(|channel| channel["ready"] == true)
             && selection.is_some_and(|selection| selection["ready"] == true)
+            && initial_rule.is_some_and(|initial_rule| initial_rule["ready"] == true)
             && (!window.get_preview_enabled()
                 || !explicit
                 || controller.is_some_and(|controller| controller["ready"] == true)),
@@ -157,6 +161,12 @@ fn update_choice(window: &FogWindow, form: &Form) {
             && !window.get_environment_busy()
             && !window.get_selection_dirty()
             && form.report["can_prepare_environment"] == true,
+    );
+    window.set_initial_rule_detail(
+        initial_rule
+            .and_then(|initial_rule| initial_rule["detail"].as_str())
+            .unwrap_or_default()
+            .into(),
     );
     update_input(window, form);
 }
@@ -351,6 +361,17 @@ fn settings_detail(report: &Value) -> String {
             .into(),
         );
     }
+    if let Some(rule) = report["initial_radial_contexts"]
+        .as_array()
+        .and_then(|rules| {
+            rules
+                .iter()
+                .find(|rule| rule["id"] == report["initial_radial_context"])
+        })
+        && let Some(label) = rule["label"].as_str()
+    {
+        lines.insert(0, format!("Initial rule: {label}"));
+    }
     lines.join("\n")
 }
 
@@ -423,12 +444,18 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
             .then(|| selected(&form.selections, window.get_environment_index()))
             .flatten()
             .cloned();
+        let initial_rule = dirty
+            .then(|| selected(&form.initial_rules, window.get_initial_rule_index()))
+            .flatten()
+            .cloned();
         let mut choices = array(&report, "controllers")?;
         let mut channels = array(&report, "channels")?;
         let mut selections = array(&report, "selections")?;
+        let mut initial_rules = array(&report, "initial_radial_contexts")?;
         retain_choice(&mut choices, controller.as_ref());
         retain_choice(&mut channels, channel.as_ref());
         retain_choice(&mut selections, selection.as_ref());
+        retain_choice(&mut initial_rules, initial_rule.as_ref());
         set_catalog(
             &choices,
             Some("Choose a controller"),
@@ -441,9 +468,16 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
         set_catalog(&selections, None, &mut form.selection_labels, |model| {
             window.set_environments(model)
         });
+        set_catalog(
+            &initial_rules,
+            None,
+            &mut form.initial_rule_labels,
+            |model| window.set_initial_rules(model),
+        );
         form.choices = choices;
         form.channels = channels;
         form.selections = selections;
+        form.initial_rules = initial_rules;
         window.set_controller_index(
             index_of(
                 &form.choices,
@@ -467,6 +501,12 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
             selection
                 .as_ref()
                 .map_or(&report["selection"], |choice| &choice["id"]),
+        ));
+        window.set_initial_rule_index(index_of(
+            &form.initial_rules,
+            initial_rule
+                .as_ref()
+                .map_or(&report["initial_radial_context"], |choice| &choice["id"]),
         ));
         if !dirty {
             window.set_preview_enabled(report["enabled"] == true);
@@ -587,6 +627,11 @@ fn command(window: &FogWindow, form: &Form, action: Action) -> Result<(String, C
                 &form.channels,
                 window.get_channel_index(),
                 "fog channel",
+            )?)?,
+            initial_radial_context: InitialRadialContext::parse(catalog_id(
+                &form.initial_rules,
+                window.get_initial_rule_index(),
+                "initial fog rule",
             )?)?,
         }),
         Action::Playback if window.get_playing() => Command::Pause,

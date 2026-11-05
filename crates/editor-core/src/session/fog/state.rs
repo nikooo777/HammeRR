@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use map_core::{Document, fog::Timeline};
+use map_core::{
+    Document,
+    fog::{InitialRadialContext, Timeline},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -83,6 +86,32 @@ pub struct Settings {
     pub controller: Option<u32>,
     pub selection: SelectionMode,
     pub channel: Channel,
+    #[serde(default, with = "initial_radial_context_serde")]
+    #[schemars(schema_with = "initial_radial_context_schema")]
+    pub initial_radial_context: InitialRadialContext,
+}
+
+mod initial_radial_context_serde {
+    use map_core::fog::InitialRadialContext;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(
+        context: &InitialRadialContext,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(context.name())
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<InitialRadialContext, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        InitialRadialContext::parse(&value).map_err(serde::de::Error::custom)
+    }
+}
+
+fn initial_radial_context_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"string","enum":map_core::fog::INITIAL_RADIAL_CONTEXTS.map(InitialRadialContext::name)})
 }
 
 #[derive(Debug, Clone, Copy, Default)]

@@ -1254,7 +1254,7 @@ See [Linked paths](path-authoring.md) for supported paths and trains.
 | `play`, `pause` | None | Start or stop the shared preview clock. |
 | `seek` | `time_seconds`, optional `background` | Inspect a requested preview time, preserving the input sequence. |
 | `advance` | `seconds`, optional `background` | Advance preview time explicitly by 0–60 seconds. |
-| `reset` | Optional `background` | Clear the input sequence, return to time 0 and restore authored initial values. |
+| `reset` | Optional `background` | Clear the input sequence, return to time 0 and restore the selected rule's initial values. |
 | `cancel` | None | Stop pending work and playback, retaining the current published state. |
 | `clear` | None | Disable preview and clear controller, environment, input sequence and time. |
 
@@ -1262,6 +1262,20 @@ The complete `settings` object contains `enabled`, `controller` (an
 `entity:<id>` or `null`), `selection` (`explicit` or `environment`) and `channel`
 (`ldr` or `hdr`). HDR is unavailable and refuses explicitly. The stored
 `configured_controller` and effective `controller` are reported separately.
+Optional `settings.initial_radial_context` accepts `authored` or
+`css_official_map`; omission or `null` preserves the current choice. The legacy
+`set_fog_preview` operation also preserves it.
+
+`authored` keeps authored radial values. `css_official_map` applies radial
+initialization once to every controller, including disabled and non-Master
+controllers; later `SetRadial` inputs override it. Changing context pauses and
+clears input events and time, retaining the prepared environment. Reset restores
+the selected context's baseline. This explicit setting does not inspect source
+or private output names and does not detect the running game's map. Render and
+pick overrides use the current context without a temporary context field.
+Inspect `controllers[].initial_settings`, `current.initial_radial` and
+`current.profile.radial` to distinguish initialization from later evaluated inputs.
+
 Each controller's `parent_chain` lists its accepted fixed parent entity IDs.
 With `use_angles`, exact named `info_target` chains support up to 16 parents;
 the controller retains its authored world angles. Missing, ambiguous, hidden,

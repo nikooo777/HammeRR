@@ -1,8 +1,11 @@
 use super::super::*;
-use crate::session::fog::{Command, Settings};
+use crate::session::fog::{Command, InitialRadialContext, Settings};
 
 impl FogPreviewControlArgs {
-    fn command(self) -> Result<(String, Command, bool), String> {
+    fn command(
+        self,
+        initial_radial_context: InitialRadialContext,
+    ) -> Result<(String, Command, bool), String> {
         let settings = self.settings.is_some();
         let controller = self.controller.is_some();
         let input = self.input.is_some() || self.value.is_some();
@@ -19,6 +22,12 @@ impl FogPreviewControlArgs {
                     controller: fog_controller_id(settings.controller.as_deref())?,
                     selection: settings.selection,
                     channel: settings.channel,
+                    initial_radial_context: settings
+                        .initial_radial_context
+                        .as_deref()
+                        .map(InitialRadialContext::parse)
+                        .transpose()?
+                        .unwrap_or(initial_radial_context),
                 })
             }
             FogPreviewAction::Input => {
@@ -92,7 +101,7 @@ impl FogPreviewControlArgs {
 #[tool_router(router = fog_preview_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
-        description = "Inspect the shared Fog preview, authored controller choices, effective settings, readiness and diagnostics. Returns the current opaque snapshot for reviewed preview operations. Preview controls do not edit VMF properties or Undo history.",
+        description = "Inspect the shared Fog preview, authored controller and initial radial context choices, effective settings, readiness and diagnostics. Returns the current opaque snapshot for reviewed preview operations. Preview controls do not edit VMF properties or Undo history.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_fog_preview(&self) -> ToolResult {
@@ -100,7 +109,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply the compatibility Fog preview operation through the shared Session. Pass enabled, an explicit env_fog_controller entity:<id> when enabling, and the latest get_fog_preview.snapshot. Invalid controllers and stale snapshots refuse without changing settings. Disabling remains available with a current snapshot. Preview controls preserve the map and Undo history."
+        description = "Apply the compatibility Fog preview operation through the shared Session. Pass enabled, an explicit env_fog_controller entity:<id> when enabling, and the latest get_fog_preview.snapshot. Preserves the current initial radial context. Invalid controllers and stale snapshots refuse without changing settings. Disabling remains available with a current snapshot. Preview controls preserve the map and Undo history."
     )]
     pub(in crate::mcp) fn set_fog_preview(
         &self,
@@ -108,7 +117,7 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let controller = fog_controller_id(args.controller.as_deref())?;
-            let channel = self.session().fog_preview_settings().channel;
+            let current = self.session().fog_preview_settings();
             self.document_access().fog_preview(
                 Actor::Agent,
                 &args.snapshot,
@@ -116,7 +125,8 @@ impl EditorServer {
                     enabled: args.enabled,
                     controller,
                     selection: crate::session::fog::SelectionMode::Explicit,
-                    channel,
+                    channel: current.channel,
+                    initial_radial_context: current.initial_radial_context,
                 }),
                 false,
             )
@@ -124,14 +134,15 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Control the shared Fog preview through the same Settings, Prepare environment, native controller inputs and transport operations as the desktop. Inspect get_fog_preview first and pass its current expected_snapshot. Settings requires a complete settings object with enabled, controller, selection and channel; null controller clears the explicit choice. LDR is qualified; HDR requests refuse explicitly. Input requires an env_fog_controller entity:<id>, its exact native input name and raw parameter value when needed; the shared input parser owns value semantics and unsupported-input errors. Play and Pause control the shared preview clock; headless clients can Advance explicitly. Seek selects preview time while retaining the input sequence. Reset clears inputs and returns to authored initial values at time zero, retaining settings and a current prepared environment. Cancel stops pending work and playback while retaining a current published state; Clear disables the preview and clears its controller, environment, input sequence and time. Background requests return owned pending status when work is needed; synchronous requests wait outside the Session lock. Invalid fields, stale snapshots and unsupported sources refuse explicitly. Preview controls preserve VMF properties and Undo history."
+        description = "Control the shared Fog preview through the same Settings, Prepare environment, native controller inputs and transport operations as the desktop. Inspect get_fog_preview first and pass its current expected_snapshot. Settings requires a complete settings object with enabled, controller, selection and channel; null controller clears the explicit choice. Optional initial_radial_context accepts authored or css_official_map; omission preserves the current context. It initializes controllers before input replay; later SetRadial inputs override it. Changing context clears preview inputs, rewinds time and pauses, retaining a current prepared environment. LDR is qualified; HDR requests refuse explicitly. Input requires an env_fog_controller entity:<id>, its exact native input name and raw parameter value when needed; the shared input parser owns value semantics and unsupported-input errors. Play and Pause control the shared preview clock; headless clients can Advance explicitly. Seek selects preview time while retaining the input sequence. Reset clears inputs and returns to initial values under the current context at time zero, retaining settings and a current prepared environment. Cancel stops pending work and playback while retaining a current published state; Clear disables the preview and clears its controller, environment, input sequence and time. Background requests return owned pending status when work is needed; synchronous requests wait outside the Session lock. Invalid fields, stale snapshots and unsupported sources refuse explicitly. Preview controls preserve VMF properties and Undo history."
     )]
     pub(in crate::mcp) fn control_fog_preview(
         &self,
         Parameters(args): Parameters<FogPreviewControlArgs>,
     ) -> ToolResult {
         run(|| {
-            let (snapshot, command, background) = args.command()?;
+            let context = self.session().fog_preview_settings().initial_radial_context;
+            let (snapshot, command, background) = args.command(context)?;
             self.document_access()
                 .fog_preview(Actor::Agent, &snapshot, command, background)
         })

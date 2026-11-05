@@ -1,10 +1,12 @@
 use source_formats::vmf::Entity;
 
+mod context;
 mod inputs;
 mod parents;
 mod profile;
 mod timeline;
 
+pub use context::{CSS_OFFICIAL_MAP_CATALOG, INITIAL_RADIAL_CONTEXTS, InitialRadialContext};
 pub use inputs::{Input, InputChoice, input_choices};
 pub use parents::{
     MAX_PARENT_DEPTH, MAX_PARENT_ENTITIES, ParentContext, parse_controller_in,

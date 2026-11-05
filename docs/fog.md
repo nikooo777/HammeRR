@@ -27,6 +27,19 @@ To disable fog, clear **Enable fog preview**, then click **Apply preview**.
 Source or content changes invalidate the preview. Reapply to capture a new
 baseline and clear the input sequence; prepare the environment again when used.
 
+## Choose an initial rule
+
+1. Expand **Environment** and choose an **Initial rule**:
+   **Authored values** keeps each controller's `fogradial`, while
+   **CS:S official-map rule** initially makes every controller radial.
+2. Click **Apply preview**.
+3. Use controller inputs normally. A later `SetRadial` overrides the initial rule.
+
+Changing the rule pauses playback and clears preview inputs and time, while
+retaining the prepared environment. **Reset** restores the selected rule's
+baseline. The choice is explicit; source filenames and private build names
+do not select a rule or identify the running game map.
+
 ## Use a fixed parent
 
 1. Create an `info_target` and give it a unique `targetname` in **Inspector**.
@@ -55,8 +68,8 @@ Then send `StartFogTransition`, which takes no value.
 1. Click **Play** to advance preview time, or **Pause** to stop playback.
 2. Release the **Time** slider at a new time, or enter seconds and click **Seek**.
    Seeking keeps the input sequence.
-3. Click **Reset** to clear preview inputs, return to time 0 and restore authored
-   initial values. Settings and the prepared environment remain.
+3. Click **Reset** to clear preview inputs, return to time 0 and restore the
+   selected rule's initial values. Settings and the prepared environment remain.
 4. Use **Clear preview** to disable it and clear the controller, environment,
    input sequence and time.
 
@@ -129,8 +142,9 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
 - LDR only. HDR remains unavailable. `HDRColorScale` and `ZoomFogScale` are
   preserved foreign metadata and do not scale the root controller preview.
 - Manual controller selection snaps immediately. Live player-controller switch
-  blending, official-map fog rules, network delivery and game I/O scheduling
-  are not simulated. `fog_volume` and `trigger_fog` are unavailable.
+  blending, network delivery and game I/O scheduling are not simulated.
+  The initial rule is an explicit preview choice, not live game-map detection.
+  `fog_volume` and `trigger_fog` are unavailable.
 - Sky fog and native pixel parity are unavailable. Preview controls preserve
   map bytes, selection, camera and Undo.
 

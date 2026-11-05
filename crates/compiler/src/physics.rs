@@ -26,6 +26,8 @@ mod topology;
 mod world_keys;
 
 const MAX_REQUEST_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_LIBRARY_BYTES: u64 = 32 * 1024 * 1024;
+const LIBRARY_SHA256: &str = "2676cdc02be4b4188f7121c201d5f5a681f9c1c7c924fe7f9159cefd5a718277";
 const MAX_CONVEXES: usize = 8192;
 const MAX_CORNERS: usize = 256;
 const MAX_PLANES: usize = 256;
@@ -892,6 +894,40 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+fn checked_library(path: &Path, control: &Control) -> Result<crate::FileIdentity, String> {
+    let identity = crate::FileIdentity::capture_bounded(path, MAX_LIBRARY_BYTES, control)
+        .map_err(|error| error.to_string())?;
+    if identity.sha256() != Some(LIBRARY_SHA256) {
+        return Err("Unverified CS:S vphysics library build; inspect its ABI before enabling engine physics".into());
+    }
+    control.checkpoint()?;
+    Ok(identity)
+}
+
+pub fn validate_engine_root(root: &Path, control: &Control) -> Result<(), String> {
+    control.checkpoint()?;
+    if !cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        return Err("Engine physics requires the supported Linux64 CS:S installation".into());
+    }
+    let root = root.canonicalize().map_err(|error| error.to_string())?;
+    if !root.join("cstrike_linux64").is_file() || !root.join("cstrike/gameinfo.txt").is_file() {
+        return Err("Engine physics root must be the selected Linux CS:S installation".into());
+    }
+    let directory = root.join("bin/linux64");
+    if !directory.join("libtier0.so").is_file() {
+        return Err(
+            "Engine physics requires the installed Linux64 CS:S libtier0.so library".into(),
+        );
+    }
+    let library = directory
+        .join("vphysics.so")
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    checked_library(&library, control)?
+        .verify_metadata()
+        .map_err(|error| error.to_string())
+}
+
 fn execute(
     mut command: Command,
     control: &Control,
@@ -927,6 +963,7 @@ fn execute(
 pub(crate) struct Settings<'a> {
     pub vmf: &'a source_formats::vmf::Vmf,
     pub fs: &'a source_formats::gamefs::GameFs,
+    pub engine_root: Option<&'a Path>,
     pub sources: &'a crate::asset_sources::BuildMaterialSources,
 }
 
@@ -940,8 +977,13 @@ pub(crate) fn bake(
     control: &Control,
 ) -> Result<Stats, String> {
     let request = plan(map, models, water, bsp, report, control, &settings)?;
-    let Settings { vmf, fs, .. } = settings;
-    let directory = fs.base_dir.join("bin/linux64");
+    let Settings {
+        vmf,
+        fs,
+        engine_root,
+        ..
+    } = settings;
+    let directory = engine_root.unwrap_or(&fs.base_dir).join("bin/linux64");
     if !directory.join("vphysics.so").is_file() {
         return Err(
             "Engine physics requires the installed Linux64 CS:S vphysics.so library".into(),

@@ -208,6 +208,11 @@ pub struct Options {
     pub refine_ambient_probes: bool,
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct CompileResources<'a> {
+    pub physics_engine_root: Option<&'a Path>,
+}
+
 pub const MAX_BRUSH_SHADOW_SIDES: usize = 65_536;
 pub const MAX_BRUSH_SHADOW_TEXTURE_SIZE: u32 = 4096;
 pub const MAX_BRUSH_SHADOW_ALPHA_BYTES: usize = 64 * 1024 * 1024;
@@ -1115,6 +1120,7 @@ fn build(
     output: &mut Output,
     options: Options,
     context: Option<&CompileContext>,
+    resources: CompileResources<'_>,
     control: &Control,
 ) -> Result<(), String> {
     let vmf = prepared_instances.compilation_vmf()?;
@@ -1948,6 +1954,7 @@ fn build(
                         physics::Settings {
                             vmf,
                             fs,
+                            engine_root: resources.physics_engine_root,
                             sources: material_sources
                                 .as_ref()
                                 .ok_or("Engine physics source owner is missing")?,
@@ -2092,6 +2099,26 @@ pub fn compile_with_source_controlled(
     source: Option<&instances::SourceContext>,
     control: &Control,
 ) -> Output {
+    compile_with_resources_controlled(
+        vmf,
+        fs,
+        options,
+        context,
+        source,
+        CompileResources::default(),
+        control,
+    )
+}
+
+pub fn compile_with_resources_controlled(
+    vmf: &Vmf,
+    fs: &GameFs,
+    options: Options,
+    context: Option<&CompileContext>,
+    source: Option<&instances::SourceContext>,
+    resources: CompileResources<'_>,
+    control: &Control,
+) -> Output {
     let start = Instant::now();
     let mut output = Output {
         visibility_inspection: Err("No successful compiler visibility mapping was retained".into()),
@@ -2145,12 +2172,17 @@ pub fn compile_with_source_controlled(
             output.instance_dependencies = prepared.dependencies.clone();
             output.stats.instances = prepared.stats.clone();
             let diagnostics_before_build = output.report.diagnostics.len();
-            if let Err(message) = build(&prepared, fs, &mut output, options, context, control)
-                && !output.report.diagnostics[diagnostics_before_build..]
-                    .iter()
-                    .any(|diagnostic| {
-                        diagnostic.level == Level::Error && diagnostic.message == message
-                    })
+            if let Err(message) = build(
+                &prepared,
+                fs,
+                &mut output,
+                options,
+                context,
+                resources,
+                control,
+            ) && !output.report.diagnostics[diagnostics_before_build..]
+                .iter()
+                .any(|diagnostic| diagnostic.level == Level::Error && diagnostic.message == message)
             {
                 output
                     .report

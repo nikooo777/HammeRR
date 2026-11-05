@@ -5,14 +5,13 @@ use std::path::Path;
 
 use glam::DVec3;
 use libloading::os::unix::{Library, RTLD_GLOBAL, RTLD_NOW};
-use sha2::{Digest, Sha256};
 use source_formats::bsp::{
     CollisionHeader, MAX_COLLISION_BYTES, MAX_PHYSICS_KEY_BYTES, PhysicsCollision, PhysicsModel,
     PhysicsSolid,
 };
 
 use super::failure::{Failure, Stage};
-use super::{Body, Request, Shape, read_bounded};
+use super::{Body, Request, Shape};
 
 #[path = "native_geometry.rs"]
 mod geometry;
@@ -23,7 +22,6 @@ mod polyhedron;
 #[path = "native_soup.rs"]
 mod soup;
 
-const LIBRARY_SHA256: &str = "2676cdc02be4b4188f7121c201d5f5a681f9c1c7c924fe7f9159cefd5a718277";
 const GUARD_BYTES: usize = 64;
 const GEOMETRY_EPSILON: f64 = 0.02;
 const MAX_TRIANGLES: i32 = 512;
@@ -98,15 +96,18 @@ impl Api {
             .join("vphysics.so")
             .canonicalize()
             .map_err(|error| error.to_string())?;
-        let bytes = read_bounded(&path, 32 * 1024 * 1024)?;
-        if format!("{:x}", Sha256::digest(&bytes)) != LIBRARY_SHA256 {
-            return Err("Unverified CS:S vphysics library build; inspect its ABI before enabling engine physics".into());
-        }
+        let identity = super::checked_library(&path, &crate::Control::default())?;
         let tier0 =
             unsafe { Library::open(Some(directory.join("libtier0.so")), RTLD_NOW | RTLD_GLOBAL) }
                 .map_err(|error| error.to_string())?;
+        identity
+            .verify_metadata()
+            .map_err(|error| error.to_string())?;
         let physics =
             unsafe { Library::open(Some(&path), RTLD_NOW) }.map_err(|error| error.to_string())?;
+        identity
+            .verify_metadata()
+            .map_err(|error| error.to_string())?;
         let factory = unsafe { physics.get::<Factory>(b"CreateInterface\0") }
             .map_err(|error| error.to_string())?;
         let mut status = -1;

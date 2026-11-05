@@ -67,6 +67,7 @@ pub struct CompileRequest {
     content_epoch: u64,
     context: Option<compiler::CompileContext>,
     environment: Option<native_runtime::CaptureEnvironment>,
+    physics_engine_root: Option<PathBuf>,
     source_path: Option<PathBuf>,
     source_stamp: Option<compiler::FileStamp>,
     instance_source: Option<compiler::instances::SourceContext>,
@@ -371,24 +372,17 @@ impl CompileRequest {
             &self.control,
         )
         .map_err(|error| error.to_string())?;
-        let mut output = if instances {
-            compiler::compile_with_source_controlled(
-                &self.vmf,
-                &self.game,
-                self.options,
-                self.context.as_ref(),
-                self.instance_source.as_ref(),
-                &self.control,
-            )
-        } else {
-            compiler::compile_with_context_controlled(
-                &self.vmf,
-                &self.game,
-                self.options,
-                self.context.as_ref(),
-                &self.control,
-            )
-        };
+        let mut output = compiler::compile_with_resources_controlled(
+            &self.vmf,
+            &self.game,
+            self.options,
+            self.context.as_ref(),
+            self.instance_source.as_ref(),
+            compiler::CompileResources {
+                physics_engine_root: self.physics_engine_root.as_deref(),
+            },
+            &self.control,
+        );
 
         if let Err(error) = self.control.checkpoint() {
             return self.cancelled_output(output, path, source, error);
@@ -1316,6 +1310,13 @@ impl Session {
             return Err("Save the parent VMF before compiling instances; the BSP output path is not a source directory".into());
         }
         let generating = self.compilation.options.generate_reflections;
+        let physics_engine_root =
+            (self.compilation.options.physics == compiler::PhysicsMode::Engine).then(|| {
+                self.native_capture
+                    .engine_root()
+                    .unwrap_or(&self.game.base_dir)
+                    .to_owned()
+            });
         let instance_source = if instances {
             let source = self
                 .path
@@ -1402,16 +1403,26 @@ impl Session {
                 .transpose()
         };
         let origin = CompileOrigin::new();
+        let native_runtime = if let Some(environment) = &environment {
+            Some(
+                json!({"engine_root":environment.engine_root,"steam_root":environment.steam_root,
+                "physics_engine_root":physics_engine_root}),
+            )
+        } else {
+            physics_engine_root
+                .as_ref()
+                .map(|root| json!({"physics_engine_root":root}))
+        };
         self.compilation.job = Some(Job {
             queue: None,
             origin: origin.clone(),
             token: self.compilation.serial,
             control: control.clone(),
             path: path.clone(),
-            source_path:self.path.clone(),
+            source_path: self.path.clone(),
             inspection_source,
-            content_epoch:self.content_epoch,
-            native_runtime:environment.as_ref().map(|environment|serde_json::json!({"engine_root":environment.engine_root,"steam_root":environment.steam_root})),
+            content_epoch: self.content_epoch,
+            native_runtime,
             snapshot: Snapshot {
                 generation: self.document_generation,
                 revision: self.document.revision(),
@@ -1441,6 +1452,7 @@ impl Session {
             content_epoch: self.content_epoch,
             context,
             environment,
+            physics_engine_root,
             source_path: self.path.clone(),
             source_stamp,
             instance_source,

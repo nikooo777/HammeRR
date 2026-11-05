@@ -271,7 +271,22 @@ impl Candidate {
                 files.push(capture_file(&root.join(relative), MAX_SOURCE_BYTES)?);
             }
         }
-        if options.generate_reflections || options.physics == compiler::PhysicsMode::Engine {
+        if options.physics == compiler::PhysicsMode::Engine {
+            let engine_root = config.engine_root.as_deref().unwrap_or(&game.base_dir);
+            directories.push(Directory::capture(&engine_root.join("bin/linux64"))?);
+            files.push(capture_file(
+                &engine_root.join("cstrike/gameinfo.txt"),
+                MAX_SOURCE_BYTES,
+            )?);
+            for name in ["vphysics.so", "libtier0.so"] {
+                files.push(capture_file(
+                    &engine_root.join("bin/linux64").join(name),
+                    MAX_NATIVE_LIBRARY_BYTES,
+                )?);
+            }
+            compiler::physics::validate_engine_root(engine_root, control)?;
+        }
+        if options.generate_reflections {
             let engine_root = config
                 .engine_root
                 .clone()

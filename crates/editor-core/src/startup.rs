@@ -18,7 +18,7 @@ const USAGE: &str = "\
 usage: editor | hammerr-headless [map.vmf] [--game <gameinfo.txt>] [--fgd <file.fgd>] [--mcp-port <port> | --no-mcp] [--headless]
 
   --game       gameinfo.txt to load content from (default: Counter-Strike: Source via Steam)
-  --engine-root native CS:S installation for reflection capture (default: configured game root)
+  --engine-root native CS:S installation for engine physics and reflection capture (default: configured game root)
   --steam-root  Steam client configuration root (default: unique validated client)
   --fgd        entity definition file (default: installed CS:S SDK FGD)
   --mcp-port   port for the MCP server at http://127.0.0.1:<port>/mcp (default 7377)

@@ -15,7 +15,7 @@ Apply a profile to one open document. The map and Undo history stay intact.
    | Field | Purpose |
    | --- | --- |
    | **FGD (optional)** | Entity definitions. Empty uses discovery for the selected content. |
-   | **CS:S root** | Installed game folder containing the CS:S client. Set this for a detached mod folder. |
+   | **CS:S root** | Installed game folder for engine physics and native reflections. Set this for a detached mod folder; content still comes from **gameinfo.txt**. |
    | **Steam root** | Steam client folder. Empty uses normal discovery. |
 
 5. To change the captured build settings, open **Build settings…**, then click **Use current Build settings**.
@@ -47,6 +47,9 @@ A refused Apply keeps the previous content and map.
 - Keep up to 32 profiles. Names must be unique.
 - Use absolute paths and a valid installed CS:S client. Steam need not be running to save or apply ordinary editing profiles.
 - Optional native build features require their supported platform and runtime files.
+- Physics-only profiles validate the supported CS:S physics libraries without
+  requiring reflection-capture graphics or Steam paths. Reflections retain
+  their separate runtime requirements.
 - Profiles share one saved list. Applied content belongs to the selected document.
 - Outside file changes block stale actions. Use **Reload** before trying again.
 - Loading a profile does not launch a game or change map entities.

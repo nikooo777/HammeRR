@@ -715,6 +715,10 @@ Use `save_content_profile` with `name` and `revision`; omit `config` to capture
 the current settings. An explicit `config` contains `gameinfo`, optional `fgd`,
 `engine_root` and `steam_root`, and `build`. Set `replace_id` to update an entry.
 
+For detached mods, `engine_root` selects the installed CS:S physics and reflection
+runtime. It does not replace the mod's asset mounts. Physics-only profiles check
+the supported physics libraries without requiring capture graphics or Steam paths.
+
 `apply_content_profile` needs `id`, `revision` and `intent` from the same document.
 It validates mounts, definitions and runtime paths before adopting them together.
 Changed sources, stale guards and active work reject. Map data and history stay
@@ -1744,6 +1748,11 @@ See [Color correction](color-correction.md) for target and resource limits.
 3. Call `start_compile`.
 4. Poll `get_compile_status`.
 5. Inspect diagnostics before calling `launch_game`.
+
+Engine physics uses the current content profile's explicit `engine_root`, or
+the content's engine directory when that optional path is absent. An invalid
+explicit root fails; it does not switch to another installation. Compile status
+reports the captured path in `job.native_runtime.physics_engine_root`.
 
 Set `postprocess_order:"lighting_then_physics"` (the default) or
 `"physics_then_lighting"` through `set_compile_settings` to choose the actual

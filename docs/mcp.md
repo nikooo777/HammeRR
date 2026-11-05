@@ -1285,12 +1285,13 @@ background needs explicit `$nofog 1`. Parented sky cameras refuse. See
 | `settings` | Complete `settings` object | Apply shared preview choices. |
 | `prepare_environment` | Optional `background` | Prepare the selected environment context. |
 | `input` | `controller`, `input`, optional `value` and `background` | Send one registered input to that controller in the preview. |
+| `switch_player_controller` | `controller`, optional `background` | Switch player fog to a settled named controller. |
 | `play`, `pause` | None | Start or stop the shared preview clock. |
-| `seek` | `time_seconds`, optional `background` | Inspect a requested preview time, preserving the input sequence. |
+| `seek` | `time_seconds`, optional `background` | Inspect a requested preview time, preserving the event sequence. |
 | `advance` | `seconds`, optional `background` | Advance preview time explicitly by 0–60 seconds. |
-| `reset` | Optional `background` | Clear the input sequence, return to time 0 and restore the selected rule's initial values. |
+| `reset` | Optional `background` | Clear the event sequence, return to time 0 and restore the selected rule's initial values. |
 | `cancel` | None | Stop pending work and playback, retaining the current published state. |
-| `clear` | None | Disable preview and clear controller, environment, input sequence and time. |
+| `clear` | None | Disable preview and clear controller, environment, events and time. |
 
 The complete `settings` object contains `enabled`, `controller` (an
 `entity:<id>` or `null`), `selection` (`explicit` or `environment`) and `channel`
@@ -1303,7 +1304,7 @@ Optional `settings.initial_radial_context` accepts `authored` or
 `authored` keeps authored radial values. `css_official_map` applies radial
 initialization once to every controller, including disabled and non-Master
 controllers; later `SetRadial` inputs override it. Changing context pauses and
-clears input events and time, retaining the prepared environment. Reset restores
+clears preview events and time, retaining the prepared environment. Reset restores
 the selected context's baseline. This explicit setting does not inspect source
 or private output names and does not detect the running game's map. Render and
 pick overrides use the current context without a temporary context field.
@@ -1320,11 +1321,11 @@ Fields for another action and unknown fields reject. `background` defaults to
 `false`; requests wait outside the Session lock when work is needed. With
 `true`, inspect pending status until the operation completes.
 
-Preview time is 0–3600 seconds, with at most 128 input events. Use `seek` with
+Preview time is 0–3600 seconds, with at most 128 events. Use `seek` with
 `time_seconds:0` to rewind and retain those events. Reset preserves settings
-and a current prepared environment; Clear removes them. Inputs append in time
+and a current prepared environment; Clear removes them. Events append in time
 order; Reset before inserting one earlier than the last event. Source/content
-changes invalidate the baseline, environment and input sequence.
+changes invalidate the baseline, environment and event sequence.
 Play uses one clock in desktop and headless sessions. Pause before matching a
 rendered frame and pixel pick at one exact preview time.
 
@@ -1336,21 +1337,48 @@ ambiguous environment sources report unavailable.
 
 For `input`, pass an exact native input name from the shared catalogue and its
 raw string `value`; omit `value` for parameterless inputs. The shared parser
-validates the parameter. These are preview inputs, with no game I/O execution
-or changes to VMF properties. Preview controls preserve the map and Undo history.
+validates the parameter. Inspect `can_send_controller_input` and
+`controller_input_issue` for admission. These are preview inputs, with no game
+I/O execution or changes to VMF properties. Preview controls preserve the map and Undo history.
 See [Fog preview](fog.md) for the supported environment and rendering limits.
+
+For `switch_player_controller`, choose a ready `switch_targets[].id` and pass
+it as `controller`. The destination must have a unique, nonempty literal
+`targetname`; `switch_targets[].name` and `player_switches[].name` retain the
+actual native input string. Inspect `can_switch_player_controller` and
+`player_switch_issue` before sending a request. This is a player operation,
+separate from the controller input catalogue.
+
+Switches use settled initial profiles and the destination's `foglerptime`.
+Zero duration switches immediately. Only primary RGB/start/end blend; all
+other fields snap. Controller input events and player switches cannot share a
+sequence. Overlapping, same-controller and earlier append requests refuse.
+Wait or seek until the switch settles before adding another; use Reset to change
+sequence type or insert an earlier event. Seek, Advance and Play use the shared
+clock. `player` is null without a switch sequence. Its `phase` is `initial`,
+`blending` or `settled`; `progress` is 0–1 and `transitioning` identifies an
+active blend. `initial_controller` and `initial_profile` retain the baseline;
+`current_controller` identifies the target. `configured_controller` retains
+the settings choice; top-level `controller` reports the effective selection.
+With a switch sequence recorded, changing settings controller, selection mode
+or initial rule clears it, resets time and pauses. Reset, Clear and source
+retirement also clear the switch sequence. Identical settings and enable-only changes retain it;
+disabling pauses playback. Reset retains the prepared environment and initial
+rule. Interrupted/mixed histories and live network timing are unavailable.
 
 `render_view` and `pick_at_pixel` accept temporary `fog_preview`,
 `fog_controller`, `fog_selection`, `fog_channel` and `surface` overrides.
 An explicit `fog_controller` forces explicit selection. Overrides preserve
-shared settings, inputs and time; environment selection needs its prepared
+shared settings, events and time; environment selection needs its prepared
 context. Combining a controller override with `fog_selection:"environment"`
-rejects. Fog color uses Perspective Textured views. Far clipping applies in
+rejects. While a player-switch sequence exists, temporary `fog_controller`
+and `fog_selection` overrides reject; `fog_preview` visibility remains available.
+Fog color uses Perspective Textured views. Far clipping applies in
 all Perspective surface modes and to the matching pixel pick. Overlap choices
 use the current shared camera's far plane; arbitrary `raycast` remains a
 geometric query.
 
-`set_fog_preview` remains available for explicit-controller selection. Pass
+`set_fog_preview` remains available for manual initial-controller selection. Pass
 `enabled`, `controller` and the latest `get_fog_preview.snapshot` as `snapshot`.
 Enabling requires an `env_fog_controller` entity ID. A current snapshot is also
 required when disabling.

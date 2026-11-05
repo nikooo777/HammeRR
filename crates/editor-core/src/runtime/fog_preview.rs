@@ -114,17 +114,13 @@ pub(super) fn execute(
                 Command::Settings(_)
                     | Command::Play
                     | Command::Input { .. }
+                    | Command::SwitchPlayerController { .. }
                     | Command::Seek { .. }
                     | Command::Advance { .. }
                     | Command::Reset
             )
         {
-            Some(session.fog_preview_render_guard(Overrides {
-                enabled: Some(true),
-                selection: Some(settings.selection),
-                channel: Some(settings.channel),
-                controller: None,
-            })?)
+            Some(session.fog_preview_settings_render_guard(settings)?)
         } else {
             None
         }

@@ -18,17 +18,20 @@ struct Form {
     selection_snapshot: Option<String>,
     input_snapshot: Option<String>,
     input_controller: Option<u32>,
+    player_snapshot: Option<String>,
     time_snapshot: Option<String>,
     choices: Vec<Value>,
     channels: Vec<Value>,
     selections: Vec<Value>,
     initial_rules: Vec<Value>,
     inputs: Vec<Value>,
+    player_targets: Vec<Value>,
     controller_labels: Vec<slint::SharedString>,
     channel_labels: Vec<slint::SharedString>,
     selection_labels: Vec<slint::SharedString>,
     initial_rule_labels: Vec<slint::SharedString>,
     input_labels: Vec<slint::SharedString>,
+    player_labels: Vec<slint::SharedString>,
     report: Value,
     action_error: Option<String>,
     seen: Option<(String, u64, u64, u64)>,
@@ -51,6 +54,7 @@ enum Action {
     PrepareEnvironment,
     Cancel,
     Clear,
+    SwitchPlayer,
 }
 
 fn selected(choices: &[Value], index: i32) -> Option<&Value> {
@@ -169,6 +173,57 @@ fn update_choice(window: &FogWindow, form: &Form) {
             .into(),
     );
     update_input(window, form);
+    update_player(window, form);
+}
+
+fn update_player(window: &FogWindow, form: &Form) {
+    let target = selected(&form.player_targets, window.get_player_index() - 1);
+    let stale = form
+        .player_snapshot
+        .as_ref()
+        .is_some_and(|snapshot| snapshot != &form.snapshot);
+    window.set_can_switch_player(
+        window.get_available()
+            && !window.get_selection_dirty()
+            && !stale
+            && form.report["can_switch_player_controller"] == true
+            && target.is_some_and(|target| target["ready"] == true),
+    );
+    let issue = if window.get_selection_dirty() {
+        Some("Apply the current selection before switching the player controller.")
+    } else if stale {
+        Some("Fog preview changed. Reselect the player target before switching.")
+    } else {
+        target
+            .and_then(|target| {
+                target["issue"]
+                    .as_str()
+                    .or_else(|| target["detail"].as_str())
+            })
+            .or_else(|| form.report["player_switch_issue"].as_str())
+    };
+    window.set_player_issue(issue.is_some());
+    window.set_player_detail(issue.unwrap_or("Choose a named target. Its foglerptime sets the duration; zero switches immediately.").into());
+    let player = &form.report["player"];
+    let status = if player["issue"].is_string() {
+        "Player state unavailable".to_owned()
+    } else if let Some(controller) = player["current_controller"].as_str() {
+        let phase = match player["phase"].as_str() {
+            Some("blending") => player["progress"].as_f64().map_or_else(
+                || "Blending".to_owned(),
+                |progress| format!("Blending {:.0}%", progress * 100.0),
+            ),
+            Some("settled") => "Settled".to_owned(),
+            Some("initial") => "Initial".to_owned(),
+            _ => "State unavailable".to_owned(),
+        };
+        format!("Active {controller} · {phase}")
+    } else if let Some(controller) = form.report["controller"].as_str() {
+        format!("Active {controller} · No player switches")
+    } else {
+        "No player switches".to_owned()
+    };
+    window.set_player_status(status.into());
 }
 
 fn update_input(window: &FogWindow, form: &Form) {
@@ -198,7 +253,8 @@ fn update_input(window: &FogWindow, form: &Form) {
             && input.is_some()
             && !window.get_selection_dirty()
             && !changed
-            && !stale,
+            && !stale
+            && form.report["can_send_controller_input"] == true,
     );
     let help = if window.get_selection_dirty() {
         "Apply the controller selection before sending an input."
@@ -206,6 +262,8 @@ fn update_input(window: &FogWindow, form: &Form) {
         "The applied controller changed. Reselect the input before sending it."
     } else if stale {
         "Fog preview changed. Reselect or edit the input before sending it."
+    } else if let Some(issue) = form.report["controller_input_issue"].as_str() {
+        issue
     } else {
         input
             .and_then(|input| input["help"].as_str())
@@ -220,6 +278,10 @@ fn unavailable(window: &FogWindow, error: &str) {
     window.set_can_play(false);
     window.set_can_seek(false);
     window.set_can_send_input(false);
+    window.set_can_switch_player(false);
+    window.set_player_status("Player state unavailable".into());
+    window.set_player_detail(error.into());
+    window.set_player_issue(true);
     window.set_can_prepare_environment(false);
     window.set_environment_busy(false);
     window.set_playing(false);
@@ -413,7 +475,9 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
     window.set_document_label(session.title().into());
     window.set_current(summary.into());
     window.set_effective_controller(
-        if let Some(controller) = report["controller"].as_str() {
+        if let Some(initial) = report["player"]["initial_controller"].as_str() {
+            format!("{initial} · replay baseline")
+        } else if let Some(controller) = report["controller"].as_str() {
             if let Some(reason) = report["current"]["selection_reason"].as_str() {
                 format!("{controller} · {}", reason.replace('_', " "))
             } else {
@@ -531,6 +595,23 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
             0
         });
     }
+    {
+        let previous = selected(&form.player_targets, window.get_player_index() - 1).cloned();
+        let mut targets = array(&report, "switch_targets")?;
+        if window.get_player_dirty() {
+            retain_choice(&mut targets, previous.as_ref());
+        }
+        set_catalog(
+            &targets,
+            Some("Choose a player fog target"),
+            &mut form.player_labels,
+            |model| window.set_player_controllers(model),
+        );
+        form.player_targets = targets;
+        window.set_player_index(previous.as_ref().map_or(0, |target| {
+            index_of(&form.player_targets, &target["id"]) + 1
+        }));
+    }
     window.set_playing(clock.playing);
     window.set_transitioning(report["transitioning"] == true);
     window.set_can_play(report["can_play"] == true);
@@ -545,9 +626,10 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
     window.set_time_label(format!("Current time {:.2} s", clock.time_seconds).into());
     window.set_time_limits(
         format!(
-            "0–{} s · {} / {} inputs",
+            "0–{} s · {} / {} events",
             report["max_time_seconds"],
-            report["events"].as_array().map_or(0, Vec::len),
+            report["events"].as_array().map_or(0, Vec::len)
+                + report["player_switches"].as_array().map_or(0, Vec::len),
             report["limits"]["events"]
         )
         .into(),
@@ -609,6 +691,7 @@ fn command(window: &FogWindow, form: &Form, action: Action) -> Result<(String, C
     let snapshot = match action {
         Action::Apply => form.selection_snapshot.as_ref(),
         Action::Input => form.input_snapshot.as_ref(),
+        Action::SwitchPlayer => form.player_snapshot.as_ref(),
         Action::Seek | Action::Scrub(_) => form.time_snapshot.as_ref(),
         _ => None,
     }
@@ -663,6 +746,11 @@ fn command(window: &FogWindow, form: &Form, action: Action) -> Result<(String, C
         Action::PrepareEnvironment => Command::PrepareEnvironment,
         Action::Cancel => Command::Cancel,
         Action::Clear => Command::Clear,
+        Action::SwitchPlayer => Command::SwitchPlayerController {
+            controller: selected(&form.player_targets, window.get_player_index() - 1)
+                .and_then(|target| entity_id(&target["id"]))
+                .ok_or("Choose a player fog controller target")?,
+        },
     };
     Ok((snapshot, command))
 }
@@ -676,6 +764,7 @@ fn run(window: &FogWindow, form: &RefCell<Form>, target: &DocumentContinuation, 
                 | Command::Seek { .. }
                 | Command::Advance { .. }
                 | Command::Reset
+                | Command::SwitchPlayerController { .. }
         );
         target
             .upgrade()?
@@ -701,6 +790,13 @@ fn run(window: &FogWindow, form: &RefCell<Form>, target: &DocumentContinuation, 
             window.set_input_dirty(false);
             form.input_snapshot = None;
             form.input_controller = None;
+        }
+        if matches!(action, Action::SwitchPlayer | Action::Clear) {
+            window.set_player_dirty(false);
+            form.player_snapshot = None;
+            if matches!(action, Action::Clear) {
+                window.set_player_index(0);
+            }
         }
     }
     if let Err(error) = refresh(window, form, target) {
@@ -769,6 +865,17 @@ impl Controller {
         window.on_prepare_environment(callback(Action::PrepareEnvironment));
         window.on_cancel_work(callback(Action::Cancel));
         window.on_clear_preview(callback(Action::Clear));
+        window.on_switch_player_controller(callback(Action::SwitchPlayer));
+        window.on_player_changed({
+            let (window, form) = (window.as_weak(), form.clone());
+            move || {
+                if let Some(window) = window.upgrade() {
+                    let mut form = form.borrow_mut();
+                    form.player_snapshot = Some(form.snapshot.clone());
+                    update_player(&window, &form);
+                }
+            }
+        });
         window.on_scrub({
             let (window, form, target) = (window.as_weak(), form.clone(), access.downgrade());
             move |seconds| {

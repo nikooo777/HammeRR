@@ -176,6 +176,22 @@ pub fn targets_bounded(
     Ok(targets)
 }
 
+pub fn bounded_event_name_matches(
+    name: &str,
+    query: &str,
+    remaining: &mut usize,
+) -> Result<bool, String> {
+    let work = name
+        .len()
+        .checked_add(query.len())
+        .and_then(|bytes| bytes.checked_add(1))
+        .ok_or("Native entity name-matching work overflow")?;
+    *remaining = remaining
+        .checked_sub(work)
+        .ok_or("Native entity name matching exceeds its work limit")?;
+    Ok(event_name_matches(name, query))
+}
+
 // Installed CSS NameMatchesComplex compares raw bytes, including non-letter ±0x20 pairs.
 pub fn event_name_matches(name: &str, query: &str) -> bool {
     let name = name.as_bytes().split(|&byte| byte == 0).next().unwrap();

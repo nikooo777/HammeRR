@@ -1,4 +1,4 @@
-use super::profile::angles_direction;
+use super::profile::{angles_direction, validate_initial_profile};
 use super::{Input, Profile};
 
 pub const MAX_EVENTS: usize = 128;
@@ -28,7 +28,7 @@ struct State {
     think: Option<f32>,
 }
 
-fn checked_time(time: f64) -> Result<f32, String> {
+pub(super) fn checked_time(time: f64) -> Result<f32, String> {
     if !time.is_finite() || !(0.0..=MAX_TIMELINE_SECONDS).contains(&time) {
         return Err(format!(
             "Fog time must be between 0 and {MAX_TIMELINE_SECONDS} seconds"
@@ -145,15 +145,7 @@ impl State {
 
 impl Timeline {
     pub fn new(initial: Profile) -> Result<Self, String> {
-        initial.validate()?;
-        if initial
-            .color
-            .into_iter()
-            .chain(initial.color2)
-            .any(|value| !(0.0..=255.0).contains(&value) || value.fract() != 0.0)
-        {
-            return Err("Fog timeline needs authored RGB-byte initial colors".into());
-        }
+        validate_initial_profile(initial)?;
         Ok(Self {
             initial,
             events: Vec::new(),

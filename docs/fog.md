@@ -2,7 +2,7 @@
 
 # Fog preview
 
-Inspect world fog and preview controller inputs without changing the map.
+Inspect world fog, controller inputs and settled player switches without changing the map.
 For independent static `sky_camera` fog, use [miniature fog](sky.md#preview-miniature-fog).
 
 ## Choose a controller
@@ -11,7 +11,7 @@ For independent static `sky_camera` fog, use [miniature fog](sky.md#preview-mini
 2. Set `fogcolor`, `fogstart`, `fogend`, `fogmaxdensity` and `fogenable` in **Inspector**.
 3. Choose **Perspective** and **Textured**.
 4. Open **View → Fog preview…**. Expand **Environment** and choose **Explicit controller**.
-5. Choose an **Active controller** and **LDR** under **Channel**.
+5. Choose an **Initial controller** and **LDR** under **Channel**.
 6. Enable **Enable fog preview**, then click **Apply preview**.
 7. Read **Current settings** and any reported issue. The window stays open.
 
@@ -26,7 +26,7 @@ orientation instead. Author `farz` for a far clip.
 Use **Refresh choices** after source edits or changes from another interface.
 To disable fog, clear **Enable fog preview**, then click **Apply preview**.
 Source or content changes invalidate the preview. Reapply to capture a new
-baseline and clear the input sequence; prepare the environment again when used.
+baseline and clear the event sequence; prepare the environment again when used.
 
 ## Choose an initial rule
 
@@ -36,7 +36,7 @@ baseline and clear the input sequence; prepare the environment again when used.
 2. Click **Apply preview**.
 3. Use controller inputs normally. A later `SetRadial` overrides the initial rule.
 
-Changing the rule pauses playback and clears preview inputs and time, while
+Changing the rule pauses playback and clears preview events and time, while
 retaining the prepared environment. **Reset** restores the selected rule's
 baseline. The choice is explicit; source filenames and private build names
 do not select a rule or identify the running game map.
@@ -51,7 +51,7 @@ with **Enable fog preview** cleared; world controller inputs do not change sky f
 
 Named `info_target` chains can contain up to 16 parents. The initial parent
 binding preserves the controller's world angles; do not add parent rotation.
-Missing, ambiguous, hidden or cyclic parents refuse. Model attachments and
+Names must be unique under CS:S matching. Missing, ambiguous, hidden or cyclic parents refuse. Model attachments and
 other parent classes are unavailable.
 
 ## Preview controller inputs
@@ -66,19 +66,41 @@ and apply the preview. Use `SetColorLerpTo`, `SetColorSecondaryLerpTo`,
 `SetStartDistLerpTo` and `SetEndDistLerpTo` to stage the intended targets.
 Then send `StartFogTransition`, which takes no value.
 
+## Switch player fog
+
+1. Give each destination controller a unique literal `targetname` in **Inspector**.
+   Set its `foglerptime` for the switch duration; `0` switches immediately.
+2. Apply an initial controller with **Apply preview**. Prepare the environment
+   if selected, then click **Reset** to start a switch-only sequence.
+3. Expand **Player controller**, choose **Target**, then click **Switch player fog**.
+4. Use **Play**, **Pause** and **Seek** to inspect the result. Wait for **Settled**
+   before choosing another target and switching again.
+
+Only primary RGB, fog start and fog end blend. Direction, secondary color,
+density, enable, radial and far clip snap to the destination. Switches use
+settled authored profiles and cannot overlap or mix with controller inputs.
+Use **Reset** before changing sequence type. Missing, ambiguous or special names
+refuse.
+
+![A hallway midway through a timed switch between cool and warm fog controllers](images/fog-switch-midpoint.png)
+
+**Initial controller** selection remains an immediate manual snap. With a switch
+sequence recorded, changing that selection, the environment selection mode or
+the initial rule clears it, resets time and pauses. Source edits also clear it.
+
 ## Play or inspect a time
 
 1. Click **Play** to advance preview time, or **Pause** to stop playback.
 2. Release the **Time** slider at a new time, or enter seconds and click **Seek**.
-   Seeking keeps the input sequence.
-3. Click **Reset** to clear preview inputs, return to time 0 and restore the
+   Seeking keeps the event sequence.
+3. Click **Reset** to clear preview events, return to time 0 and restore the
    selected rule's initial values. Settings and the prepared environment remain.
 4. Use **Clear preview** to disable it and clear the controller, environment,
-   input sequence and time.
+   event sequence and time.
 
 **Close** and <kbd>Escape</kbd> pause and close the window while preserving the
 applied preview. **Cancel work** stops pending preparation and playback while
-retaining a current valid profile and input sequence. These controls do not
+retaining a current valid profile and event sequence. These controls do not
 execute map connections or edit entity fields. Playback suspends while its
 document tab is inactive.
 
@@ -134,9 +156,9 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
 - Fog directions use native 1/32 coordinate conversion, including integer
   wrapping; for example, 16,385 becomes 1. A received zero vector mixes the
   two colors equally.
-- Time is 0–3600 seconds, with at most 128 preview input events. Inputs append in
-  time order; use **Reset** before adding an input earlier than the last event.
-  Starting a transition with zero `foglerptime` is unavailable.
+- Time is 0–3600 seconds, with at most 128 preview events. Events append in
+  time order; use **Reset** before adding an event earlier than the last one.
+  The controller input `StartFogTransition` requires positive `foglerptime`.
 - Environment preparation supports horizontal-top structural world water and
   opaque slime. Detail/model liquids, sloped or enclosed liquids, incompatible
   overlaps and unsupported material sources report unavailable. Water needs
@@ -148,8 +170,9 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
   preparing. Water refraction and above-water height fog are not previewed.
 - LDR only. HDR remains unavailable. `HDRColorScale` and `ZoomFogScale` are
   preserved foreign metadata and do not scale the root controller preview.
-- Manual controller selection snaps immediately. Live player-controller switch
-  blending, network delivery and game I/O scheduling are not simulated.
+- Manual controller selection snaps immediately. Interrupted player switches,
+  mixed controller-input/switch histories, network delivery and game I/O
+  scheduling are unavailable.
   The initial rule is an explicit preview choice, not live game-map detection.
   `fog_volume` and `trigger_fog` are unavailable.
 - HDR fog, runtime sky-camera history and native pixel parity are unavailable.

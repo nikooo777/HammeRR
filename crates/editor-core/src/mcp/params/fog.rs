@@ -62,6 +62,8 @@ pub enum FogPreviewAction {
     Settings,
     PrepareEnvironment,
     Input,
+    /// Switch the player to a named static controller, separately from controller inputs.
+    SwitchPlayerController,
     Play,
     Pause,
     Seek,
@@ -92,7 +94,7 @@ pub struct FogPreviewControlArgs {
     pub expected_snapshot: String,
     /// Settings only: complete shared settings, including explicit selection and channel.
     pub settings: Option<FogPreviewSettingsArgs>,
-    /// Input only: env_fog_controller entity:<id> receiving the native input.
+    /// Input or Switch player controller: destination env_fog_controller entity:<id>.
     pub controller: Option<String>,
     /// Input only: exact native input name from the shared controller input catalogue.
     pub input: Option<String>,
@@ -102,6 +104,6 @@ pub struct FogPreviewControlArgs {
     pub time_seconds: Option<f64>,
     /// Advance only: elapsed preview time in seconds.
     pub seconds: Option<f64>,
-    /// Prepare environment, Input, Seek, Advance or Reset: return while owned background work runs when needed.
+    /// Prepare environment, Input, Switch player controller, Seek, Advance or Reset: return while owned background work runs when needed.
     pub background: Option<bool>,
 }

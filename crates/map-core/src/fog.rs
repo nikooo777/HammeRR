@@ -3,6 +3,7 @@ use source_formats::vmf::Entity;
 mod context;
 mod inputs;
 mod parents;
+mod player;
 mod profile;
 mod timeline;
 
@@ -11,6 +12,9 @@ pub use inputs::{Input, InputChoice, input_choices};
 pub use parents::{
     MAX_PARENT_DEPTH, MAX_PARENT_ENTITIES, ParentContext, parse_controller_in,
     requires_parent_context,
+};
+pub use player::{
+    PLAYER_TIMELINE_POLICY, PlayerFrame, PlayerSwitch, PlayerSwitchPhase, PlayerTimeline,
 };
 pub use profile::{
     MAX_FIELD_MAGNITUDE, MAX_SKY_SCALE, MIN_FAR_Z, ParsedController, Profile, parse_controller,
@@ -72,11 +76,15 @@ impl Fog {
 }
 
 fn property<'a>(entity: &'a Entity, key: &str) -> Result<Option<&'a str>, String> {
+    Ok(raw_property(entity, key)?.map(str::trim))
+}
+
+fn raw_property<'a>(entity: &'a Entity, key: &str) -> Result<Option<&'a str>, String> {
     let mut values = entity
         .properties
         .iter()
         .filter(|(name, _)| name.eq_ignore_ascii_case(key));
-    let value = values.next().map(|(_, value)| value.trim());
+    let value = values.next().map(|(_, value)| value);
     if values.next().is_some() {
         return Err(format!(
             "{key} has ambiguous case-insensitive duplicate keys"

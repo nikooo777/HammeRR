@@ -130,6 +130,9 @@ pub enum Command {
         controller: u32,
         input: map_core::fog::Input,
     },
+    SwitchPlayerController {
+        controller: u32,
+    },
     Play,
     Pause,
     Seek {
@@ -245,6 +248,7 @@ pub(in crate::session) struct State {
     pub(super) catalog: Option<Catalog>,
     pub(super) settings: Settings,
     pub(super) timelines: BTreeMap<u32, Timeline>,
+    pub(super) player: Option<map_core::fog::PlayerTimeline>,
     pub(super) time: f64,
     pub(super) playing: bool,
     pub(super) presentation_active: bool,
@@ -271,6 +275,7 @@ impl Default for State {
             catalog: None,
             settings: Settings::default(),
             timelines: BTreeMap::new(),
+            player: None,
             time: 0.0,
             playing: false,
             presentation_active: true,

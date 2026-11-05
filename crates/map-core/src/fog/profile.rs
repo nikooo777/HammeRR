@@ -1,6 +1,6 @@
 use source_formats::vmf::Entity;
 
-use super::{Fog, number_property, property};
+use super::{Fog, number_property, property, raw_property};
 
 pub const MIN_FAR_Z: f32 = 4.0;
 pub const MAX_FIELD_MAGNITUDE: f32 = 1_000_000.0;
@@ -201,6 +201,19 @@ pub struct ParsedController {
     pub parent_chain: Vec<u32>,
 }
 
+pub(super) fn validate_initial_profile(profile: Profile) -> Result<(), String> {
+    profile.validate()?;
+    if profile
+        .color
+        .into_iter()
+        .chain(profile.color2)
+        .any(|value| !(0.0..=255.0).contains(&value) || value.fract() != 0.0)
+    {
+        return Err("Fog timeline needs authored RGB-byte initial colors".into());
+    }
+    Ok(())
+}
+
 pub(super) fn bounded(value: f32, key: &str) -> Result<f32, String> {
     if !value.is_finite() || value.abs() > MAX_FIELD_MAGNITUDE {
         return Err(format!(
@@ -311,13 +324,14 @@ pub fn parse_sky_camera(entity: &Entity) -> Result<ParsedController, String> {
 }
 
 pub fn validate_sky_camera_binding(entity: &Entity) -> Result<(), String> {
-    if property(entity, "parentname")?.is_some_and(|value| !value.is_empty()) {
+    if raw_property(entity, "parentname")?.is_some_and(|value| !value.is_empty()) {
         return Err(
             "Parented sky_camera is unavailable: native sky origin uses the parent-local frame"
                 .into(),
         );
     }
-    if property(entity, "parentattachment")?.is_some_and(|value| !value.is_empty() && value != "0")
+    if raw_property(entity, "parentattachment")?
+        .is_some_and(|value| !value.is_empty() && value != "0")
     {
         return Err("Sky camera parent attachments are unavailable".into());
     }

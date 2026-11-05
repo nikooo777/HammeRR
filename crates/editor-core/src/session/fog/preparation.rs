@@ -5,7 +5,7 @@ use map_core::Document;
 use source_formats::gamefs::GameFs;
 
 use super::state::{Key, PreparedEnvironment};
-use super::{Overrides, SelectionMode, environment};
+use super::{Overrides, SelectionMode, Settings, environment};
 use crate::session::Session;
 use crate::session::worker::Ticket;
 
@@ -150,8 +150,15 @@ impl Session {
         &self,
         overrides: Overrides,
     ) -> Result<RenderGuard, String> {
-        self.ensure_not_closing()?;
         let settings = self.fog_settings_for(overrides)?;
+        self.fog_preview_settings_render_guard(settings)
+    }
+
+    pub(crate) fn fog_preview_settings_render_guard(
+        &self,
+        settings: Settings,
+    ) -> Result<RenderGuard, String> {
+        self.ensure_not_closing()?;
         let environment = if settings.enabled {
             settings.channel.validate()?;
             if self

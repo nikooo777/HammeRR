@@ -58,6 +58,14 @@ export component FogWindow inherits Window {
     in-out property <bool> environment-expanded;
     in-out property <bool> input-expanded: true;
     in-out property <bool> limits-expanded;
+    in-out property <bool> player-expanded: true;
+    in-out property <int> player-index;
+    in property <[string]> player-controllers;
+    in-out property <bool> player-dirty;
+    in property <bool> can-switch-player;
+    in property <string> player-status;
+    in property <string> player-detail;
+    in property <bool> player-issue;
     in property <string> scope;
 
     callback choice-changed();
@@ -75,6 +83,8 @@ export component FogWindow inherits Window {
     callback prepare-environment();
     callback cancel-work();
     callback clear-preview();
+    callback player-changed();
+    callback switch-player-controller();
 
     forward-focus: dialog-focus;
     dialog-focus := FocusScope {
@@ -99,9 +109,9 @@ export component FogWindow inherits Window {
                 Button { text: "Apply preview"; enabled: root.can-apply; primary: true; clicked => { root.apply(); } }
             }
             FieldRow {
-                inset: false; label: "Active controller"; label-width: 104px;
+                inset: false; label: "Initial controller"; label-width: 104px;
                 if !root.environment-automatic: ComboBox {
-                    accessible-label: "Active fog controller";
+                    accessible-label: "Initial fog controller";
                     model: root.controllers;
                     current-index <=> root.controller-index;
                     enabled: root.available;
@@ -160,7 +170,7 @@ export component FogWindow inherits Window {
                         Text { text: root.time-label; color: Theme.text-muted; }
                         Text { text: (root.time-dirty || root.scrub-dirty ? "Unsubmitted time · " : "") + root.time-limits; color: Theme.text-faint; horizontal-alignment: right; horizontal-stretch: 1; }
                     }
-                    Text { text: "Reset clears preview inputs and restores initial values under the selected rule. Seek preserves the input sequence."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
+                    Text { text: "Reset clears preview events and restores initial values under the selected rule. Seek preserves the event sequence."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
                     SectionHeader { text: "Environment"; inset: false; expanded <=> root.environment-expanded; }
                     if root.environment-expanded: VerticalLayout {
                         spacing: Theme.space;
@@ -184,12 +194,32 @@ export component FogWindow inherits Window {
                             }
                         }
                         if root.initial-rule-detail != "": Text { text: root.initial-rule-detail; color: Theme.text-faint; wrap: word-wrap; }
-                        Text { text: "Applying a different rule resets preview inputs and time and pauses playback."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
+                        Text { text: "Applying a different rule resets preview events and time and pauses playback."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
                         if root.environment-automatic || root.environment-busy: HorizontalLayout {
                             spacing: Theme.space;
                             Button { text: root.environment-busy ? "Preparing environment…" : "Prepare environment"; enabled: root.can-prepare-environment; clicked => { root.prepare-environment(); } }
                             Rectangle { horizontal-stretch: 1; }
                         }
+                    }
+                    SectionHeader { text: "Player controller"; detail: root.player-dirty ? "Unsubmitted target" : ""; inset: false; expanded <=> root.player-expanded; }
+                    if root.player-expanded: VerticalLayout {
+                        spacing: Theme.space;
+                        FieldRow {
+                            inset: false; label: "Target"; label-width: 104px;
+                            ComboBox {
+                                model: root.player-controllers; current-index <=> root.player-index;
+                                accessible-label: "Player fog controller target";
+                                enabled: root.available;
+                                selected => { root.player-dirty = true; root.player-changed(); }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Switch player fog"; enabled: root.can-switch-player; clicked => { root.switch-player-controller(); } }
+                            Text { text: root.player-status; color: Theme.text-muted; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; }
+                        }
+                        if root.player-detail != "": Text { text: root.player-detail; color: root.player-issue ? Theme.warning : Theme.text-faint; wrap: word-wrap; }
+                        Text { text: "Static switches cannot overlap or mix with controller inputs. Initial controller selection remains a manual snap."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
                     }
                     SectionHeader { text: "Controller input"; detail: (root.input-dirty ? "Unsubmitted input · " : "") + root.input-target; inset: false; expanded <=> root.input-expanded; }
                     if root.input-expanded: VerticalLayout {

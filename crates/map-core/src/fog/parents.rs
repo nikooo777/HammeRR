@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use source_formats::vmf::{Entity, Vmf};
 
 use super::profile::{bounded, parse_fixed_parent_controller};
-use super::{ParsedController, number_property, parse_controller, property};
+use super::{ParsedController, number_property, parse_controller, property, raw_property};
 
 pub const MAX_PARENT_DEPTH: usize = 16;
 pub const MAX_PARENT_ENTITIES: usize = 65_536;
@@ -13,20 +13,23 @@ const MAX_NAME_BYTES: usize = 256;
 const MAX_TOTAL_NAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_FRAME_PROPERTIES: usize = 256;
 const MAX_FRAME_BYTES: usize = 64 * 1024;
+const MAX_NAME_MATCH_BYTES: usize = 128 * 1024 * 1024;
 
+#[derive(Clone, Copy)]
 enum Target<'a> {
     Unique(&'a Entity),
     Ambiguous,
+    World,
 }
 
 pub struct ParentContext<'a> {
-    names: BTreeMap<String, Target<'a>>,
+    names: Vec<(&'a str, Target<'a>)>,
     ids: BTreeMap<u32, Target<'a>>,
 }
 
 fn identifier<'a>(entity: &'a Entity, key: &str) -> Result<Option<&'a str>, String> {
-    let value = property(entity, key)?;
-    if entity.properties.get_all(key).any(|raw| raw != raw.trim())
+    let value = raw_property(entity, key)?;
+    if value.is_some_and(|raw| raw != raw.trim())
         || value.is_some_and(|raw| raw.len() > MAX_NAME_BYTES || raw.chars().any(char::is_control))
     {
         return Err(format!(
@@ -45,11 +48,7 @@ pub fn requires_parent_context(entity: &Entity) -> Result<bool, String> {
     if !use_angles {
         return Ok(false);
     }
-    property(entity, "parentname")?;
-    Ok(entity
-        .properties
-        .get("parentname")
-        .is_some_and(|raw| !raw.is_empty()))
+    Ok(raw_property(entity, "parentname")?.is_some_and(|raw| !raw.is_empty()))
 }
 
 fn pose(entity: &Entity) -> Result<(), String> {
@@ -103,35 +102,38 @@ impl<'a> ParentContext<'a> {
         if vmf.entities.len() > MAX_PARENT_ENTITIES {
             return Err("Fog parent context exceeds 65536 entities".into());
         }
-        let mut names = BTreeMap::new();
+        let mut names = Vec::new();
         let mut ids = BTreeMap::new();
         let mut properties = 0usize;
         let mut count = 0usize;
         let mut bytes = 0usize;
-        for entity in &vmf.entities {
-            ids.entry(entity.id)
+        for (id, fields, target) in
+            std::iter::once((vmf.world.id, &vmf.world.properties, Target::World)).chain(
+                vmf.entities
+                    .iter()
+                    .map(|entity| (entity.id, &entity.properties, Target::Unique(entity))),
+            )
+        {
+            ids.entry(id)
                 .and_modify(|target| *target = Target::Ambiguous)
-                .or_insert(Target::Unique(entity));
+                .or_insert(target);
             properties = properties
-                .checked_add(entity.properties.0.len())
+                .checked_add(fields.0.len())
                 .filter(|count| *count <= MAX_PROPERTIES)
                 .ok_or("Fog parent context exceeds its property scan limit")?;
-            for name in entity.properties.get_all("targetname") {
+            for (_, name) in fields
+                .iter()
+                .filter(|(key, _)| key.eq_ignore_ascii_case("targetname"))
+            {
                 count += 1;
                 if count > MAX_NAMES {
                     return Err("Fog parent context exceeds 65536 targetname entries".into());
-                }
-                if name.is_empty() || name.len() > MAX_NAME_BYTES {
-                    continue;
                 }
                 bytes = bytes
                     .checked_add(name.len())
                     .filter(|bytes| *bytes <= MAX_TOTAL_NAME_BYTES)
                     .ok_or("Fog parent name storage exceeds 16 MiB")?;
-                names
-                    .entry(name.to_ascii_lowercase())
-                    .and_modify(|target| *target = Target::Ambiguous)
-                    .or_insert(Target::Unique(entity));
+                names.push((name, target));
             }
         }
         Ok(Self { names, ids })
@@ -146,6 +148,7 @@ impl<'a> ParentContext<'a> {
         let mut visited = BTreeSet::from([entity.id]);
         let mut chain = Vec::new();
         let mut current = entity;
+        let mut remaining = MAX_NAME_MATCH_BYTES;
         while let Some(binding) = identifier(current, "parentname")?.filter(|name| !name.is_empty())
         {
             if chain.len() == MAX_PARENT_DEPTH {
@@ -167,12 +170,25 @@ impl<'a> ParentContext<'a> {
                         .into(),
                 );
             }
-            let parent = match self.names.get(&name.to_ascii_lowercase()) {
-                Some(Target::Unique(parent)) => *parent,
-                Some(Target::Ambiguous) => {
-                    return Err("Fog parentname matches multiple targetname entries".into());
+            let mut matched = None;
+            for &(stored, candidate) in &self.names {
+                if crate::connections::bounded_event_name_matches(stored, name, &mut remaining)? {
+                    if matched.is_some() {
+                        return Err(
+                            "Fog parentname matches multiple native targetname entries".into()
+                        );
+                    }
+                    matched = Some(candidate);
                 }
-                None => return Err("Fog parentname has no authored target".into()),
+            }
+            let parent = match matched.ok_or("Fog parentname has no authored target")? {
+                Target::Unique(parent) => parent,
+                Target::World => {
+                    return Err("Worldspawn cannot be a fixed info_target fog parent".into());
+                }
+                Target::Ambiguous => {
+                    return Err("Fog parentname matches ambiguous source entries".into());
+                }
             };
             pose(parent)?;
             if !visited.insert(parent.id) {
@@ -182,12 +198,6 @@ impl<'a> ParentContext<'a> {
                 return Err("Fog parent entity ID is duplicated".into());
             }
             identifier(parent, "targetname")?;
-            if !crate::connections::name_matches(
-                parent.properties.get("targetname").unwrap_or_default(),
-                name,
-            ) {
-                return Err("Fog parent targetname differs from its indexed binding".into());
-            }
             if parent.hidden || !parent.solids.is_empty() {
                 return Err("Fog parents must be visible point entities".into());
             }

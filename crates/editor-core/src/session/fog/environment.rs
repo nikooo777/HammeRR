@@ -282,6 +282,10 @@ pub(in crate::session) fn prepare(
 }
 
 impl Snapshot {
+    pub(in crate::session) fn initial_controller(&self) -> Option<u32> {
+        self.master
+    }
+
     pub(in crate::session) fn select(&self, eye: DVec3) -> Result<Selection, String> {
         if !eye.is_finite() || eye.abs().max_element() > map_core::checks::SOURCE_COORDINATE_LIMIT {
             return Err("Fog environment eye position must be finite within ±65536 units".into());

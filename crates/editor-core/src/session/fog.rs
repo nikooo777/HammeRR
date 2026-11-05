@@ -7,6 +7,7 @@ use super::Session;
 mod catalog;
 mod controls;
 pub(super) mod environment;
+mod player;
 mod preparation;
 mod state;
 
@@ -44,6 +45,11 @@ impl Session {
     }
 
     fn fog_settings_for(&self, overrides: Overrides) -> Result<Settings, String> {
+        if self.fog_preview.player.is_some()
+            && (overrides.controller.is_some() || overrides.selection.is_some())
+        {
+            return Err("Temporary controller or selection overrides cannot bypass player fog switches; Reset the preview first".into());
+        }
         if overrides.controller.is_some() && overrides.selection == Some(SelectionMode::Environment)
         {
             return Err(
@@ -150,7 +156,7 @@ impl Session {
         if let Some(error) = &self.fog_preview.error {
             return Err(error.clone());
         }
-        let (id, reason, water) =
+        let (mut id, mut reason, water) =
             match settings.selection {
                 SelectionMode::Explicit => (
                     Some(settings.controller.ok_or(
@@ -167,9 +173,15 @@ impl Session {
                     (selected.controller, selected.reason, selected.underwater)
                 }
             };
-        let profile = id
-            .map(|id| self.fog_profile(id, self.fog_preview.time))
-            .transpose()?;
+        let profile = if let Some(player) = &self.fog_preview.player {
+            let frame = player.evaluate(self.fog_preview.time)?;
+            id = Some(frame.controller);
+            reason = "player_switch";
+            Some(frame.profile)
+        } else {
+            id.map(|id| self.fog_profile(id, self.fog_preview.time))
+                .transpose()?
+        };
         let initial_radial = id
             .map(|id| self.initial_fog_profile(id).map(|profile| profile.radial))
             .transpose()?;
@@ -331,6 +343,26 @@ impl Session {
         }).collect::<Vec<_>>()).unwrap_or_default();
         let inputs=map_core::fog::input_choices().iter().map(|choice|json!({"id":choice.name,"name":choice.name,"label":choice.name,"kind":choice.kind,"help":choice.help,"has_value":choice.has_value})).collect::<Vec<_>>();
         let events=self.fog_preview.timelines.iter().flat_map(|(&id,timeline)|timeline.events().iter().map(move |event|json!({"controller":format!("entity:{id}"),"time_seconds":event.time,"input":event.input.name(),"value":event.input.value()}))).collect::<Vec<_>>();
+        let player_candidate = self.player_timeline_for_switch();
+        let player_switch_issue = player_candidate.as_ref().err().cloned();
+        let input_issue = self.controller_input_admission().err();
+        let switch_targets=catalog.as_ref().map(|catalog|catalog.controllers.iter().map(|(&id,controller)| {
+            let admission=controller.switch_target.as_ref().map_err(Clone::clone)
+                .and_then(|_|controller.parsed.as_ref().map_err(Clone::clone))
+                .and_then(|_|player_candidate.as_ref().map_err(Clone::clone))
+                .and_then(|player|player.can_switch(self.fog_preview.time,id));
+            json!({"id":format!("entity:{id}"),"name":controller.switch_target.as_ref().ok(),
+                "label":controller.switch_target.as_ref().ok().map_or_else(||format!("entity:{id}"),|name|format!("{name} · entity:{id}")),
+                "ready":admission.is_ok(),"issue":admission.err()})
+        }).collect::<Vec<_>>()).unwrap_or_default();
+        let player_switches=self.fog_preview.player.as_ref().map(|player|player.events().iter().map(|event| {
+            let name=self.fog_preview.catalog.as_ref().and_then(|catalog|catalog.controllers.get(&event.controller))
+                .and_then(|controller|controller.switch_target.as_ref().ok());
+            json!({"controller":format!("entity:{}",event.controller),"name":name,"time_seconds":event.time})
+        }).collect::<Vec<_>>()).unwrap_or_default();
+        let player = self
+            .player_fog_report()
+            .unwrap_or_else(|error| json!({"issue":error}));
         let initial_radial_contexts=INITIAL_RADIAL_CONTEXTS.map(|context|json!({"id":context.name(),"label":context.label(),"ready":true,"detail":context.detail()}));
         let detail = if let Some(error) = &issue {
             error.clone()
@@ -354,8 +386,11 @@ impl Session {
             "settings":self.fog_preview.settings,"ready":query.is_ok()&&!clock.busy,"active":current.is_some_and(|current|current["applied"]==true),
             "summary":self.fog_preview_summary(),"detail":detail,"issue":issue,"error":issue,"catalog_issue":catalog.err(),
             "controllers":controllers,"channels":[{"id":"ldr","label":"LDR","ready":true,"detail":"World fog · LDR"},{"id":"hdr","label":"HDR","ready":false,"detail":"HDR fog display is unavailable"}],
-            "selections":[{"id":"explicit","label":"Explicit controller","ready":true,"detail":"Use the selected controller's authored or replayed values"},{"id":"environment","label":"Environment","ready":true,"detail":"Use the map's initial controller and water fog. Runtime controller switches are unavailable."}],
+            "selections":[{"id":"explicit","label":"Explicit controller","ready":true,"detail":"Use the selected controller's authored or replayed values"},{"id":"environment","label":"Environment","ready":true,"detail":"Use the prepared initial controller, optional player switches and current-camera water fog."}],
             "inputs":inputs,"events":events,"current":current,"requested":current,"time_seconds":clock.time_seconds,"current_time_seconds":clock.time_seconds,
+            "player":player,"player_switches":player_switches,"switch_targets":switch_targets,
+            "can_switch_player_controller":player_switch_issue.is_none(),"player_switch_issue":player_switch_issue,
+            "can_send_controller_input":input_issue.is_none(),"controller_input_issue":input_issue,
             "requested_time_seconds":clock.requested_time_seconds,"max_time_seconds":map_core::fog::MAX_TIMELINE_SECONDS,"playing":clock.playing,"busy":clock.busy,
             "presentation_active":clock.presentation_active,"last_actor":self.fog_preview.last_actor.map(actor_name),"worker_actor":self.fog_preview.pending.as_ref().map(|pending|actor_name(pending.actor)),
             "can_play":query.is_ok()&&self.fog_preview.settings.enabled&&!clock.busy&&clock.status!="stale"&&clock.time_seconds<map_core::fog::MAX_TIMELINE_SECONDS,
@@ -365,9 +400,11 @@ impl Session {
             "transitioning":self.fog_preview.timelines.values().any(|timeline|timeline.events().iter().any(|event|matches!(event.input,map_core::fog::Input::StartFogTransition))),
             "limits":{"controllers":catalog::MAX_CONTROLLERS,"entities":catalog::MAX_ENTITIES,"controller_property_bytes":catalog::MAX_CONTROLLER_BYTES,"events":map_core::fog::MAX_EVENTS,"time_seconds":map_core::fog::MAX_TIMELINE_SECONDS,"advance_seconds":state::MAX_ADVANCE_SECONDS,"source_snapshot_bytes":state::MAX_SOURCE_BYTES,"workers":1},
             "timeline_policy":map_core::fog::TIMELINE_POLICY,
-            "initial_radial_context_policy":"The selected rule applies to every controller's initial profile before preview inputs. Changing it clears inputs, resets time and pauses, while retaining a current prepared environment. Later SetRadial inputs override the initial value. No running map name or file path is inferred.",
-            "playback_policy":"One shared runtime clock drives Play in desktop and headless sessions. Hidden or inactive presentation suspends wall time without catch-up. Seek pauses; explicit Advance remains available. Reset clears preview inputs and restores the current-context initial profile at time zero. Cancel stops environment preparation and playback; Clear also disables and clears preview state.",
-            "selection_policy":"Manual controller selection snaps. Automatic mode uses initial first-controller/last-Master selection and current-camera prepared water context. Trigger history, player controller-switch blends, fog volumes, runtime I/O and native scheduler/network timing are not simulated.",
+            "player_switch_policy":map_core::fog::PLAYER_TIMELINE_POLICY,
+            "player_target_limits":{"names":catalog::MAX_TARGET_NAMES,"name_bytes":catalog::MAX_TARGET_NAME_BYTES,"total_name_bytes":catalog::MAX_TOTAL_TARGET_NAME_BYTES,"property_visits":catalog::MAX_NAMESPACE_PROPERTIES,"native_match_bytes":catalog::MAX_NAMESPACE_MATCH_BYTES},
+            "initial_radial_context_policy":"The selected rule applies to every controller's initial profile before preview inputs. Changing it clears controller inputs and player switches, resets time and pauses, while retaining a current prepared environment. Later SetRadial inputs override the initial value. No running map name or file path is inferred.",
+            "playback_policy":"One shared runtime clock drives Play in desktop and headless sessions. Hidden or inactive presentation suspends wall time without catch-up. Seek pauses; explicit Advance remains available. Reset clears controller inputs and player switches and restores the current-context initial profile at time zero. Cancel stops environment preparation and playback; Clear also disables and clears preview state.",
+            "selection_policy":"Manual controller, selection-mode or initial-context changes reset player switches and time after validation. Initial automatic selection uses the prepared first-controller/last-Master; water is applied after the evaluated player profile. Named settled controller switches use a separate nonoverlapping ledger; controller inputs cannot coexist with it. Temporary controller/selection overrides refuse while that ledger exists. Trigger history, interrupted switches, fog volumes, live I/O and packet/update history are not simulated.",
             "persistence":"Session view state only; no VMF edits, Undo steps or saved controller mutation. HDRColorScale and ZoomFogScale remain inert foreign metadata in this installed CSS path."})
     }
 

@@ -113,8 +113,14 @@ Texture opacity affects only lit receivers in the same model when the global Sha
 Supported cutout, scalar and RGB fractional coverage shapes exact finite-area
 emission shadows from world, detail, terrain and eligible stationary brush
 models. Enable **Colored texture shadows** for RGB transmission. In **Build
-details…**, **Emission visibility policy** reads **Exact byte-coverage hulls and
-mesh triangles**.
+details…**, **Emission visibility policy** reads **Exact byte coverage · native
+axial / rational oblique integration**.
+
+Each original source triangle plane selects the kernel automatically. Axial
+planes keep certified native fragments and the analytic kernel; oblique planes
+use exact rational domains and receiver-horizon clipping with bounded edge
+integrals and certified arithmetic and angular enclosures. Original geometry,
+kernel and shadow points stay unchanged.
 
 Independent crossings add byte coverage with saturation per channel. Hull entry
 and exit contribute separately; exactly tied projected events within one hull
@@ -125,7 +131,7 @@ unrelated coincident sheets remain independent. Masks do not create collision ho
 
 Uncertified positive-area nonbinary coplanar mask overlaps and shared native
 terrain-edge events in coplanar shadow charts stop the build without sampled fallback.
-Existing geometry certificates and work, memory and conversion caps remain.
+Existing geometry certificates and work, memory and error caps remain.
 See [material emission](material-emission.md#exact-brush-shadows) for the full scope.
 
 ## Limits

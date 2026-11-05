@@ -119,6 +119,10 @@ fn material_emission_details(stats: &serde_json::Value) -> String {
     if let Some(policy) = emission["visibility_policy"].as_str() {
         let label = match policy {
             "sampled_segments" => "Sampled segments",
+            "exact_byte_coverage_original_plane_native_axial_or_rational_boundary_kernel"
+            | "exact_byte_coverage_original_plane_native_axial_or_rational_bernstein_kernel" => {
+                "Exact byte coverage · native axial / rational oblique integration"
+            }
             "exact_byte_coverage_convex_hull_and_mesh_triangle_topology_bounded_kernel_conversion" => {
                 "Exact byte-coverage hulls and mesh triangles"
             }
@@ -147,8 +151,65 @@ fn material_emission_details(stats: &serde_json::Value) -> String {
             )
         {
             details.push_str(&format!(
-                "\nEmission conversion bounds (dimensionless): max/receiver {maximum:e} · total {total:e}"
+                "\nNative fragment conversion bound (dimensionless): max/receiver {maximum:e} · total {total:e}"
             ));
+        }
+        if policy != "sampled_segments" {
+            for (key, label) in [
+                (
+                    "channel_native_integration_cells",
+                    "Native axial integration cells",
+                ),
+                (
+                    "channel_rational_integration_cells",
+                    "Rational oblique integration cells",
+                ),
+                (
+                    "channel_rational_numeric_work",
+                    "Rational numeric work units",
+                ),
+            ] {
+                if let Some((ldr, hdr)) = emission[key]
+                    .as_array()
+                    .filter(|values| values.len() == 2)
+                    .and_then(|values| Some((values[0].as_u64()?, values[1].as_u64()?)))
+                {
+                    details.push_str(&format!("\n{label}: LDR {ldr} · HDR {hdr}"));
+                }
+            }
+            for (maximum, total, label) in [
+                (
+                    "channel_maximum_rational_integral_error",
+                    "channel_total_rational_integral_error",
+                    "Rational numerical enclosure bound",
+                ),
+                (
+                    "channel_maximum_visibility_integral_error",
+                    "channel_total_visibility_integral_error",
+                    "Conversion + rational enclosure bound",
+                ),
+            ] {
+                if let (Some(maximum), Some(total)) = (
+                    emission[maximum]
+                        .as_array()
+                        .filter(|values| values.len() == 2),
+                    emission[total]
+                        .as_array()
+                        .filter(|values| values.len() == 2),
+                ) && let (Some(ldr_max), Some(ldr_total), Some(hdr_max), Some(hdr_total)) = (
+                    maximum[0].as_f64(),
+                    total[0].as_f64(),
+                    maximum[1].as_f64(),
+                    total[1].as_f64(),
+                ) {
+                    details.push_str(&format!("\n{label}, before radiance: LDR max/receiver {ldr_max:e} · total {ldr_total:e}; HDR max/receiver {hdr_max:e} · total {hdr_total:e}"));
+                }
+            }
+            if emission["visibility_integral_error_scope"].is_string() {
+                details.push_str(
+                    "\nBounds exclude legacy native arithmetic and final lighting scaling.",
+                );
+            }
         }
     }
     if let Some((ldr, hdr)) = emission["native_surface_lights"]

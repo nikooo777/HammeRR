@@ -132,8 +132,8 @@ Resolve opaque, cutout and supported scalar or RGB fractional shadows across the
 2. Enable **Exact emission visibility**, then click **Apply properties**.
 3. Compile with **Direct LDR** or **Direct LDR + HDR**.
 4. Open **Build details…**. **Emission visibility policy** should read
-   **Exact byte-coverage hulls and mesh triangles**. Check
-   **Emission conversion bounds (dimensionless)**.
+   **Exact byte coverage · native axial / rational oblique integration**.
+   Check the conversion and numerical bounds below.
 
 Exact mode supports uniquely owned world/detail and eligible stationary
 **Shadows → Yes** `func_brush` emitting faces, at root or in supported assemblies.
@@ -161,10 +161,20 @@ mip0 RGB and binary64 UV calculations. Exact real-arithmetic UV boundaries and
 native filtering parity are not certified. The zero-residual texture path is
 unchanged.
 
-Converted binary64 kernel vertices must stay exactly on each actual source
-triangle plane. Each fragment retains its constant RGB transmission and stays
-inside its exact coverage region.
-The compiler rejects faces that cannot meet these checks.
+Each original source triangle plane selects its integration method automatically.
+Axial planes keep the existing native analytic kernel: converted binary64
+fragments must stay exactly on the source plane and inside their exact
+constant-transmission regions. Oblique planes integrate those regions directly
+in the exact rational source chart, with exact receiver-horizon clipping for
+normal reception. Original geometry, kernel and shadow points stay unchanged.
+The existing **Exact emission visibility** policy controls both paths; there is
+no new setting. A failure stops the build without switching integration methods.
+
+The oblique path evaluates bounded analytic integrals along the actual rational
+domain edges. Certified arithmetic, square-root and angular enclosures bound
+the numerical result. Both normal reception and the existing angular factor
+for receivers that ignore normals are supported.
+
 Brush casters may have oblique planes when their final hull is certified
 closed, bounded and convex. Every applicable original hull participates,
 including invisible boundaries.
@@ -226,27 +236,37 @@ For larger bakes, open **Build settings…**, increase **Lighting work limit
 (millions)**, then click **Apply work limit**. Numeric and memory limits still apply.
 Exact mode also limits each source triangle to 32 million work units.
 Increasing the build work limit does not raise this fixed limit.
-Existing fragment, texture, memory and conversion limits remain in effect.
+Rational floating operations use raw work units; checked 1024-bit geometry keeps
+its existing eightfold charge in that same budget. Existing fragment, texture
+and memory limits remain in effect, including 262144 receiver integration cells
+and 512 MiB of shared lighting storage.
 
 Clipping uses exact rational arithmetic. Exact mode removes redundant cuts
 between regions with identical coverage when their exact union is convex.
-Shadow boundaries stay fixed. Conversion uses bounded on-plane candidates. Narrow openings and complex
-cuts can still exceed numeric limits.
-Conversion to the floating lighting kernel includes the source surface-area
-scale and, when needed, certified actual source-area Jacobian and source-incidence
-cosine upper bounds.
-Its reported bound is at most `1e-12` per source triangle and `1e-9` per
-receiver, before source colour and brightness. This is not an RGB, BSP
-quantization or native image error bound.
+Shadow boundaries stay fixed. Narrow openings and complex cuts can still exceed
+numeric or work limits.
+
+**Build details…** separates **Native fragment conversion bound (dimensionless)**
+from **Rational numerical enclosure bound, before radiance**. The
+**Conversion + rational enclosure bound, before radiance** combines them per
+LDR/HDR receiver. Individual source-triangle conversion or numerical enclosures
+remain at most `1e-12`. Their combined receiver bound, including new per-source
+sum rounding, stays at most `1e-9`, before source colour, brightness and lightmap
+scaling. Rational enclosures include byte transmission. Bounds exclude legacy
+native angular arithmetic, native sums before the first rational contribution,
+and final lighting scaling; they are not full RGB, BSP quantization or native
+image error bounds.
+**Native axial integration cells**, **Rational oblique integration cells** and
+**Rational numeric work units** report each channel separately.
 **Native direct emission** keeps its separate point approximation.
 Disable **Exact emission visibility** to use the original sampled bake.
 
 Exact mode rejects uncertified native fans or projections, primitive overrides,
-displacement sources, failed required texture coverage, unrepresentable
-on-plane fragment vertices, moving/parented/unrequested brush-model emitting
-sources, sky/unknown materials, unsupported prop models, zero-area mesh triangles,
-uncertified hulls and the ambiguous coplanar cases above. Checked arithmetic,
-fragment and conditioning limits also apply.
+displacement sources, failed required texture coverage, unrepresentable native
+axial on-plane fragments, failed rational enclosures, moving/parented/unrequested
+brush-model emitting sources, sky/unknown materials, unsupported prop models,
+zero-area mesh triangles, uncertified hulls and the ambiguous coplanar cases
+above. Checked arithmetic, fragment and conditioning limits also apply.
 **Fullbright** checks the setting and declarations without exact shadow admission.
 
 ## Limits
@@ -264,8 +284,8 @@ fragment and conditioning limits also apply.
 - With exact visibility disabled, sampling can miss thin blockers or apertures. **Detailed**
   uses smaller cells and more work. Exceeded budgets and unconditioned
   source contacts stop the build; quality does not reduce automatically.
-- At most 262,144 cells per receiver, 48 subdivisions, 65,536 source sides and
-  262,144 source triangles.
+- At most 262,144 cells per receiver, 65,536 source sides and 262,144 source
+  triangles. Sampled integration limits subdivision depth to 48.
 - Native surface descriptors share the 8,192-record limit per channel with
   authored lights. Exceeded limits fail without dropping sources.
 - File: 64 KiB, 4,096 records, 1,024 bytes per line. Path: 1,024 ASCII bytes,

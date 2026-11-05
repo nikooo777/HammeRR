@@ -37,7 +37,9 @@ const MAX_SOURCE_SIDES: usize = 65_536;
 const MAX_TRIANGLES: usize = 262_144;
 const MAX_CELLS: usize = 262_144;
 const MAX_DEPTH: usize = 48;
-const MAX_EXACT_RECEIVER_CONVERSION_ERROR: f64 = 1.0e-9;
+const MAX_EXACT_RECEIVER_ERROR: f64 = 1.0e-9;
+const RATIONAL_ACCUMULATION_WORK: usize = 64;
+const RATIONAL_RECEIVER_ACCOUNTING_WORK: usize = 32;
 const BOUNDARY_REFINEMENT: f64 = 16.0;
 const LIGHTMAP_SCALE: f64 = 255.0;
 const ARITHMETIC_OPERATIONS: f64 = 256.0;
@@ -72,6 +74,17 @@ pub struct MaterialEmissionStats {
     pub visibility_policy: &'static str,
     pub maximum_visibility_conversion_error: f64,
     pub total_visibility_conversion_error: f64,
+    pub visibility_conversion_error_scope: &'static str,
+    pub channel_native_integration_cells: [usize; 2],
+    pub channel_rational_integration_cells: [usize; 2],
+    pub channel_rational_numeric_work: [usize; 2],
+    pub channel_maximum_rational_integral_error: [f64; 2],
+    pub channel_total_rational_integral_error: [f64; 2],
+    pub channel_maximum_visibility_integral_error: [f64; 2],
+    pub channel_total_visibility_integral_error: [f64; 2],
+    pub visibility_integral_error_scope: &'static str,
+    pub rational_integration_policy: &'static str,
+    pub numeric_work_policy: &'static str,
 }
 
 pub fn validate_material_emission_file(value: &str) -> Result<(), String> {
@@ -496,12 +509,23 @@ pub(crate) fn preflight<'a>(
         channel_rays: [0; 2],
         native_surface_lights: [0; 2],
         visibility_policy: if exact_enabled {
-            "exact_byte_coverage_convex_hull_and_mesh_triangle_topology_bounded_kernel_conversion"
+            "exact_byte_coverage_original_plane_native_axial_or_rational_boundary_kernel"
         } else {
             "sampled_segments"
         },
         maximum_visibility_conversion_error: 0.0,
         total_visibility_conversion_error: 0.0,
+        visibility_conversion_error_scope: "native_axial_fragment_conversion_only_dimensionless_before_radiance",
+        channel_native_integration_cells: [0; 2],
+        channel_rational_integration_cells: [0; 2],
+        channel_rational_numeric_work: [0; 2],
+        channel_maximum_rational_integral_error: [0.0; 2],
+        channel_total_rational_integral_error: [0.0; 2],
+        channel_maximum_visibility_integral_error: [0.0; 2],
+        channel_total_visibility_integral_error: [0.0; 2],
+        visibility_integral_error_scope: "per_LDR_HDR_receiver_dimensionless_sum_of_native_fragment_conversion_and_rational_integration_enclosures_before_radiance_excludes_legacy_native_angular_arithmetic_native_prefix_accumulation_and_final_lighting_scaling",
+        rational_integration_policy: "original_oblique_rational_domain_boundary_integral_exact_ray_cross_dot_certified_positive_sqrt_atan2_via_half_angle_reduced_interval_atan_alternating_Horner_through_degree33_with_tail_exact_rational_Machin_pi_bracket_completed_domain_triangle_cells_no_subdivision",
+        numeric_work_policy: "per_LDR_HDR_rational_boundary_kernel_and_RGB_accumulation_raw_work_units_charged_once_to_shared_budget_native_path_zero_exact_geometry_retains_existing_8x_charge",
         native_policy: if native_enabled {
             "native_centroid_direct_indexed_reflected_ambient"
         } else {
@@ -509,7 +533,7 @@ pub(crate) fn preflight<'a>(
         },
     };
     let visibility = if exact_enabled {
-        "Exact emission visibility integrates certified original opaque, binary-cutout and admitted scalar/RGB fractional convex-hull, native terrain-triangle and static-prop mesh-triangle coverage with additive saturated byte transport and bounded kernel conversion; unsupported providers, sources, arithmetic or exhausted resources fail the request"
+        "Exact emission visibility integrates original byte-coverage domains with additive saturated transport: original axial source planes retain the certified native analytic kernel; oblique planes use a rational-domain analytic boundary integral with exact ray cross/dot products and certified positive sqrt, atan2 and pi enclosures. Rational cells count completed domain triangles without subdivision. Source geometry, shadow points and native centroid policy remain unchanged; unsupported providers, sources, arithmetic or exhausted resources fail the request"
     } else {
         "Material emission uses sampled segment shadows"
     };
@@ -717,6 +741,13 @@ pub(super) struct Prepared {
     native_surface_lights: [Cell<usize>; 2],
     maximum_conversion_error: Cell<f64>,
     total_conversion_error: Cell<f64>,
+    native_integration_cells: [Cell<usize>; 2],
+    rational_integration_cells: [Cell<usize>; 2],
+    rational_numeric_work: [Cell<usize>; 2],
+    maximum_rational_error: [Cell<f64>; 2],
+    total_rational_error: [Cell<f64>; 2],
+    maximum_integral_error: [Cell<f64>; 2],
+    total_integral_error: [Cell<f64>; 2],
     _allocation: Allocation,
 }
 
@@ -724,6 +755,59 @@ pub(super) struct Prepared {
 struct Patch {
     points: [DVec3; 3],
     depth: usize,
+}
+
+fn add_cell_count(counter: &Cell<usize>, amount: usize) -> Result<(), String> {
+    counter.set(
+        counter
+            .get()
+            .checked_add(amount)
+            .ok_or("Emission integration counter overflow")?,
+    );
+    Ok(())
+}
+
+fn add_error_bound(accumulated: f64, error: f64) -> Result<f64, String> {
+    if !error.is_finite() || error < 0.0 {
+        return Err("Emission integration error bound must be finite and nonnegative".into());
+    }
+    let sum = if error > 0.0 {
+        (accumulated + error).next_up()
+    } else {
+        accumulated
+    };
+    if !sum.is_finite() {
+        return Err("Emission integration error accounting overflow".into());
+    }
+    Ok(sum)
+}
+
+fn add_rational_integral(
+    integral: &mut DVec3,
+    value: DVec3,
+    numeric_work: &Cell<usize>,
+    budget: &mut Budget<'_>,
+) -> Result<f64, String> {
+    budget.consume(RATIONAL_ACCUMULATION_WORK)?;
+    add_cell_count(numeric_work, RATIONAL_ACCUMULATION_WORK)?;
+    let sum = *integral + value;
+    if !value.is_finite() || value.min_element() < 0.0 || !sum.is_finite() {
+        return Err("Emission rational integral must be finite and nonnegative".into());
+    }
+    let error = (0..3)
+        .map(|axis| {
+            if integral[axis] == 0.0 || value[axis] == 0.0 {
+                0.0
+            } else {
+                sum[axis].next_up() - sum[axis]
+            }
+        })
+        .fold(0.0_f64, f64::max);
+    if !error.is_finite() {
+        return Err("Emission rational summation error bound overflow".into());
+    }
+    *integral = sum;
+    Ok(error)
 }
 
 pub(super) struct Context<'a> {
@@ -1188,6 +1272,13 @@ pub(super) fn prepare(
         native_surface_lights: std::array::from_fn(|_| Cell::new(0)),
         maximum_conversion_error: Cell::new(0.0),
         total_conversion_error: Cell::new(0.0),
+        native_integration_cells: std::array::from_fn(|_| Cell::new(0)),
+        rational_integration_cells: std::array::from_fn(|_| Cell::new(0)),
+        rational_numeric_work: std::array::from_fn(|_| Cell::new(0)),
+        maximum_rational_error: std::array::from_fn(|_| Cell::new(0.0)),
+        total_rational_error: std::array::from_fn(|_| Cell::new(0.0)),
+        maximum_integral_error: std::array::from_fn(|_| Cell::new(0.0)),
+        total_integral_error: std::array::from_fn(|_| Cell::new(0.0)),
         _allocation: allocation,
     })
 }
@@ -1765,6 +1856,19 @@ impl Prepared {
         stats.native_surface_lights = self.native_surface_lights.each_ref().map(Cell::get);
         stats.maximum_visibility_conversion_error = self.maximum_conversion_error.get();
         stats.total_visibility_conversion_error = self.total_conversion_error.get();
+        stats.channel_native_integration_cells =
+            self.native_integration_cells.each_ref().map(Cell::get);
+        stats.channel_rational_integration_cells =
+            self.rational_integration_cells.each_ref().map(Cell::get);
+        stats.channel_rational_numeric_work = self.rational_numeric_work.each_ref().map(Cell::get);
+        stats.channel_maximum_rational_integral_error =
+            self.maximum_rational_error.each_ref().map(Cell::get);
+        stats.channel_total_rational_integral_error =
+            self.total_rational_error.each_ref().map(Cell::get);
+        stats.channel_maximum_visibility_integral_error =
+            self.maximum_integral_error.each_ref().map(Cell::get);
+        stats.channel_total_visibility_integral_error =
+            self.total_integral_error.each_ref().map(Cell::get);
         stats
     }
 
@@ -1784,6 +1888,9 @@ impl Prepared {
         }
         let mut total = DVec3::ZERO;
         let mut conversion_error = 0.0;
+        let mut rational_error = 0.0;
+        let mut integral_error = 0.0;
+        let mut used_rational = false;
         let mut visited = 0usize;
         for source in &self.sources {
             budget.consume(1)?;
@@ -1801,6 +1908,7 @@ impl Prepared {
                     return Ok(DVec3::ZERO);
                 }
                 let mut integral = DVec3::ZERO;
+                let mut source_has_rational = false;
                 for &triangle in &source.triangles {
                     if !certificate.planar()
                         && exact::triangle_front(triangle, sample.point, budget)?
@@ -1892,30 +2000,62 @@ impl Prepared {
                             );
                         }
                     }
-                    let fragments = visibility.finish(sample.point, budget)?;
-                    if fragments.conversion_error_upper > 0.0 {
-                        conversion_error =
-                            (conversion_error + fragments.conversion_error_upper).next_up();
+                    match visibility.finish(sample, MAX_CELLS - visited, budget)? {
+                        exact::Integration::Native(fragments) => {
+                            conversion_error = add_error_bound(
+                                conversion_error,
+                                fragments.conversion_error_upper,
+                            )?;
+                            integral_error =
+                                add_error_bound(integral_error, fragments.conversion_error_upper)?;
+                            for fragment in &fragments.triangles {
+                                budget.consume(64)?;
+                                visited = visited.checked_add(1).filter(|count|*count<=MAX_CELLS)
+                                    .ok_or("Exact emission visibility exceeds 262144 receiver integration cells")?;
+                                add_cell_count(&self.cells[channel], 1)?;
+                                add_cell_count(&self.native_integration_cells[channel], 1)?;
+                                let value = weight(fragment.points, sample)?
+                                    * fragment.coverage.visibility();
+                                if source_has_rational {
+                                    let rounding = add_rational_integral(
+                                        &mut integral,
+                                        value,
+                                        &self.rational_numeric_work[channel],
+                                        budget,
+                                    )?;
+                                    rational_error = add_error_bound(rational_error, rounding)?;
+                                    integral_error = add_error_bound(integral_error, rounding)?;
+                                } else {
+                                    integral += value;
+                                }
+                            }
+                        }
+                        exact::Integration::Rational {
+                            value,
+                            error_upper,
+                            cells,
+                            numeric_work,
+                        } => {
+                            source_has_rational = true;
+                            used_rational = true;
+                            visited = visited.checked_add(cells).filter(|count|*count<=MAX_CELLS)
+                                .ok_or("Exact emission visibility exceeds 262144 receiver integration cells")?;
+                            add_cell_count(&self.cells[channel], cells)?;
+                            add_cell_count(&self.rational_integration_cells[channel], cells)?;
+                            add_cell_count(&self.rational_numeric_work[channel], numeric_work)?;
+                            let rounding = add_rational_integral(
+                                &mut integral,
+                                value,
+                                &self.rational_numeric_work[channel],
+                                budget,
+                            )?;
+                            let error = add_error_bound(error_upper, rounding)?;
+                            rational_error = add_error_bound(rational_error, error)?;
+                            integral_error = add_error_bound(integral_error, error)?;
+                        }
                     }
-                    if !conversion_error.is_finite()
-                        || conversion_error > MAX_EXACT_RECEIVER_CONVERSION_ERROR
-                    {
-                        return Err("Exact emission visibility exceeds its 1e-9 receiver kernel conversion error limit".into());
-                    }
-                    for fragment in &fragments.triangles {
-                        budget.consume(64)?;
-                        visited = visited
-                            .checked_add(1)
-                            .filter(|count| *count <= MAX_CELLS)
-                            .ok_or("Exact emission visibility exceeds 262144 receiver fragments")?;
-                        self.cells[channel].set(
-                            self.cells[channel]
-                                .get()
-                                .checked_add(1)
-                                .ok_or("Emission cell count overflow")?,
-                        );
-                        integral +=
-                            weight(fragment.points, sample)? * fragment.coverage.visibility();
+                    if integral_error > MAX_EXACT_RECEIVER_ERROR {
+                        return Err("Exact emission visibility exceeds its 1e-9 receiver kernel bound from native conversion and rational numerical enclosures".into());
                     }
                 }
                 Ok::<DVec3, String>(integral)
@@ -1940,6 +2080,29 @@ impl Prepared {
         self.maximum_conversion_error
             .set(self.maximum_conversion_error.get().max(conversion_error));
         self.total_conversion_error.set(accumulated);
+        if used_rational {
+            budget.consume(RATIONAL_RECEIVER_ACCOUNTING_WORK)?;
+            add_cell_count(
+                &self.rational_numeric_work[channel],
+                RATIONAL_RECEIVER_ACCOUNTING_WORK,
+            )?;
+        }
+        let rational_accumulated =
+            add_error_bound(self.total_rational_error[channel].get(), rational_error)?;
+        let integral_accumulated =
+            add_error_bound(self.total_integral_error[channel].get(), integral_error)?;
+        self.maximum_rational_error[channel].set(
+            self.maximum_rational_error[channel]
+                .get()
+                .max(rational_error),
+        );
+        self.total_rational_error[channel].set(rational_accumulated);
+        self.maximum_integral_error[channel].set(
+            self.maximum_integral_error[channel]
+                .get()
+                .max(integral_error),
+        );
+        self.total_integral_error[channel].set(integral_accumulated);
         Ok(total)
     }
 

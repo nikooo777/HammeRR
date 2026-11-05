@@ -86,7 +86,7 @@ Q03,Pointfile controls,100
 Q04,Compiler-owned visibility inspection,100
 Q05,External map comparison,100
 C01,Visibility compilation,100
-C02,Lighting compilation,75
+C02,Lighting compilation,81
 C03,Production collision,75
 C04,Static props,65
 C05,Displacements,75

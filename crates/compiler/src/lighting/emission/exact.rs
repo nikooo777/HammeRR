@@ -9,6 +9,8 @@ use crate::exact::{ARITHMETIC_ERROR, Rational, gcd};
 use super::super::bake::{Allocation, Budget};
 use super::super::transport::Coverage;
 
+mod kernel;
+
 pub(super) const MAX_HULL_PLANES: usize = 128;
 const TRIANGLE_PLANES: usize = 5;
 const MAX_CONSTRAINTS: usize = MAX_HULL_PLANES * MAX_HULL_PLANES / 4 + MAX_HULL_PLANES;
@@ -609,18 +611,37 @@ impl Polygons {
 
 struct Work {
     used: usize,
+    numeric_work: usize,
     operation: &'static str,
 }
 
 impl Work {
     fn new(operation: &'static str) -> Self {
-        Self { used: 0, operation }
+        Self {
+            used: 0,
+            numeric_work: 0,
+            operation,
+        }
     }
 
     fn charge(&mut self, amount: usize, budget: &mut Budget<'_>) -> Result<(), String> {
         let amount = amount
             .checked_mul(ARITHMETIC_WORK_SCALE)
             .ok_or("Exact emission work charge overflow")?;
+        self.account(amount, budget)
+    }
+
+    fn charge_raw(&mut self, amount: usize, budget: &mut Budget<'_>) -> Result<(), String> {
+        let numeric_work = self
+            .numeric_work
+            .checked_add(amount)
+            .ok_or("Exact emission numeric work charge overflow")?;
+        self.account(amount, budget)?;
+        self.numeric_work = numeric_work;
+        Ok(())
+    }
+
+    fn account(&mut self, amount: usize, budget: &mut Budget<'_>) -> Result<(), String> {
         budget.consume(amount)?;
         self.used = self
             .used
@@ -1230,48 +1251,6 @@ pub(super) fn admit_triangle(points: [DVec3; 3], budget: &mut Budget<'_>) -> Res
     Ok(())
 }
 
-fn dyadic_precision(
-    source: &[[Rational; 3]; 3],
-    work: &mut Work,
-    budget: &mut Budget<'_>,
-) -> Result<Option<u32>, String> {
-    work.charge(128, budget)?;
-    let power = source
-        .iter()
-        .flatten()
-        .map(|value| value.denominator.trailing_zeros())
-        .max()
-        .unwrap_or(0);
-    let mut bits = 0;
-    for value in source.iter().flatten() {
-        if !value.numerator.is_zero() {
-            bits = bits.max(
-                I1024::BITS - value.numerator.abs().leading_zeros() + power
-                    - value.denominator.trailing_zeros(),
-            );
-        }
-    }
-    Ok(f64::MANTISSA_DIGITS
-        .checked_sub(bits)
-        .filter(|precision| *precision > 0))
-}
-
-fn world_grid_precision(
-    source: &[[Rational; 3]; 3],
-    work: &mut Work,
-    budget: &mut Budget<'_>,
-) -> Result<u32, String> {
-    work.charge(128, budget)?;
-    let mut exponent = 0;
-    for value in source.iter().flatten() {
-        if !value.numerator.is_zero() {
-            let bits = I1024::BITS - value.numerator.abs().leading_zeros();
-            exponent = exponent.max(bits as i32 - value.denominator.trailing_zeros() as i32);
-        }
-    }
-    Ok((f64::MANTISSA_DIGITS as i32 - exponent - 2).clamp(0, f64::MANTISSA_DIGITS as i32) as u32)
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Composition {
     Add,
@@ -1316,6 +1295,16 @@ pub(super) struct Fragments {
     pub(super) triangles: Vec<Fragment>,
     pub(super) conversion_error_upper: f64,
     _allocation: Allocation,
+}
+
+pub(super) enum Integration {
+    Native(Fragments),
+    Rational {
+        value: DVec3,
+        error_upper: f64,
+        cells: usize,
+        numeric_work: usize,
+    },
 }
 
 type Equation = ([Rational; 3], Rational);
@@ -1926,6 +1915,13 @@ impl Visibility {
     ) -> Result<(), String> {
         use super::super::texture_regions::{self, MAX_RECTANGLE_VISITS, MAX_VISITED_TEXELS};
         self.work.charge(128, budget)?;
+        if let [region] = regions.rectangles.as_slice() {
+            return if region.value.clear() {
+                Ok(())
+            } else {
+                self.subtract_patch(plane, boundaries, region.value, budget)
+            };
+        }
         let mut tiles = [[0i64; 2]; 2];
         let mut footprint = 1usize;
         for axis in 0..2 {
@@ -1953,13 +1949,6 @@ impl Visibility {
             .filter(|count| *count <= MAX_RECTANGLE_VISITS)
             .ok_or("Exact cutout exceeds 1048576 candidate rectangle visits")?;
         self.work.charge(candidates, budget)?;
-        if let [region] = regions.rectangles.as_slice() {
-            return if region.value.clear() {
-                Ok(())
-            } else {
-                self.subtract_patch(plane, boundaries, region.value, budget)
-            };
-        }
         let projection = self.patch_projection(plane, budget)?;
         let certify_coplanar = if projection.is_none() {
             self.work.charge(256 + regions.rectangles.len(), budget)?;
@@ -2452,15 +2441,188 @@ impl Visibility {
         let mut result = self.source[0];
         for (coordinate, axis) in self.axes.into_iter().enumerate() {
             result[axis] = point.0[coordinate];
-            if self.normal[axis] != Rational::ZERO {
-                result[self.axis] = result[self.axis]
-                    .sub(self.normal[axis].mul(point.0[coordinate].sub(self.source[0][axis])?)?)?;
-            }
         }
         Ok(result)
     }
 
     pub(super) fn finish(
+        self,
+        sample: &super::Sample,
+        remaining_cells: usize,
+        budget: &mut Budget<'_>,
+    ) -> Result<Integration, String> {
+        if self.normal_squared == Rational::ONE {
+            self.finish_native(sample.point, budget)
+                .map(Integration::Native)
+        } else {
+            self.finish_rational(sample, remaining_cells, budget)
+        }
+    }
+
+    fn clip_receiver_horizon(
+        &mut self,
+        point: [Rational; 3],
+        normal: [Rational; 3],
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
+        self.work.charge(256, budget)?;
+        let mut values = [Rational::ZERO; 3];
+        for (value, source) in values.iter_mut().zip(self.source) {
+            *value = dot(
+                normal,
+                [
+                    source[0].sub(point[0])?,
+                    source[1].sub(point[1])?,
+                    source[2].sub(point[2])?,
+                ],
+            )?;
+        }
+        let horizon = Halfplane::new(
+            [
+                values[0].sub(values[1])?,
+                values[0].sub(values[2])?,
+                values[0].neg(),
+            ],
+            &mut self.work,
+            budget,
+        )?;
+        if horizon.constant() {
+            if values[0].sign() != Ordering::Greater {
+                self.fragments.polygons.values.clear();
+                self.fragments.vertices = 0;
+            }
+            return Ok(());
+        }
+        let previous = std::mem::replace(&mut self.fragments, Polygons::new(budget)?);
+        for region in previous.polygons.values {
+            match split(&region.polygon, horizon, &mut self.work, budget)? {
+                Split::Inside => self.fragments.push_fragment(region)?,
+                Split::Outside => {}
+                Split::Cut { inside, .. } => self.fragments.push(inside, region.coverage)?,
+            }
+        }
+        Ok(())
+    }
+
+    fn finish_rational(
+        mut self,
+        sample: &super::Sample,
+        remaining_cells: usize,
+        budget: &mut Budget<'_>,
+    ) -> Result<Integration, String> {
+        self.work.charge(384, budget)?;
+        let point = vector(sample.point)?;
+        let normal = triangle_normal(self.source)?;
+        let height = dot(
+            normal,
+            [
+                point[0].sub(self.source[0][0])?,
+                point[1].sub(self.source[0][1])?,
+                point[2].sub(self.source[0][2])?,
+            ],
+        )?;
+        if height.sign() != Ordering::Greater {
+            return Err(
+                "Exact rational emission requires a strictly front-facing kernel point".into(),
+            );
+        }
+        if matches!(sample.angular, super::super::ReceiverAngularMode::Normal) {
+            self.work.charge(32, budget)?;
+            self.clip_receiver_horizon(point, vector(sample.normal)?, budget)?;
+        }
+        self.fragments.coalesce(&mut self.work, budget)?;
+        let mut triangle_count = 0usize;
+        for region in &self.fragments.polygons.values {
+            let polygon = &region.polygon.values;
+            for pair in polygon[1..].windows(2) {
+                self.work.charge(128, budget)?;
+                match turn(polygon[0].point, pair[0].point, pair[1].point)?.sign() {
+                    Ordering::Greater => triangle_count += 1,
+                    Ordering::Equal => {}
+                    Ordering::Less => {
+                        return Err("Exact rational emission reversed a source-domain fan".into());
+                    }
+                }
+            }
+        }
+        let mut integral = [Interval::ZERO; 3];
+        let mut cells = 0usize;
+        if triangle_count != 0 {
+            let error_limit = (MAX_CONVERSION_ERROR / triangle_count as f64 * 0.5).next_down();
+            if !error_limit.is_finite() || error_limit <= 0.0 {
+                return Err("Exact rational emission lost its source error allocation".into());
+            }
+            for region in &self.fragments.polygons.values {
+                self.work.charge(192, budget)?;
+                let bytes = region.coverage.channels();
+                let mut weights = [Interval::ZERO; 3];
+                for (weight, byte) in weights.iter_mut().zip(bytes) {
+                    *weight = Interval::enclose(Rational::new(i128::from(u8::MAX - byte), 255)?)?;
+                }
+                let polygon = &region.polygon.values;
+                for pair in polygon[1..].windows(2) {
+                    self.work.charge(128, budget)?;
+                    let domain = [polygon[0].point, pair[0].point, pair[1].point];
+                    if turn(domain[0], domain[1], domain[2])? == Rational::ZERO {
+                        continue;
+                    }
+                    let result = kernel::integrate_triangle(
+                        self.source,
+                        domain,
+                        sample,
+                        error_limit,
+                        remaining_cells.checked_sub(cells).ok_or(
+                            "Exact rational emission exceeded its receiver cell allowance",
+                        )?,
+                        &mut self.work,
+                        budget,
+                    )?;
+                    cells = cells
+                        .checked_add(result.cells)
+                        .filter(|cells| *cells <= remaining_cells)
+                        .ok_or("Exact rational emission exceeded its receiver cell allowance")?;
+                    for axis in 0..3 {
+                        if bytes[axis] == u8::MAX {
+                            continue;
+                        }
+                        self.work.charge_raw(32, budget)?;
+                        integral[axis] = integral[axis].add(result.interval.mul(weights[axis])?)?;
+                    }
+                }
+            }
+        }
+        let mut value = DVec3::ZERO;
+        let mut error_upper = 0.0f64;
+        for axis in 0..3 {
+            self.work.charge_raw(16, budget)?;
+            let lower = integral[axis].lower.max(0.0);
+            let upper = integral[axis].upper;
+            if upper < lower {
+                return Err("Exact rational emission lost its nonnegative enclosure".into());
+            }
+            value[axis] = lower + (upper - lower) * 0.5;
+            if upper != lower {
+                error_upper = error_upper.max(
+                    (value[axis] - lower)
+                        .next_up()
+                        .max((upper - value[axis]).next_up()),
+                );
+            }
+        }
+        if !value.is_finite() || !error_upper.is_finite() || error_upper > MAX_CONVERSION_ERROR {
+            return Err(format!(
+                "Exact rational emission exceeds 1e-12 integral error for one source triangle: bound {error_upper}"
+            ));
+        }
+        Ok(Integration::Rational {
+            value,
+            error_upper,
+            cells,
+            numeric_work: self.work.numeric_work,
+        })
+    }
+
+    fn finish_native(
         mut self,
         sample_point: DVec3,
         budget: &mut Budget<'_>,
@@ -2468,25 +2630,13 @@ impl Visibility {
         self.fragments.coalesce(&mut self.work, budget)?;
         self.work.charge(128, budget)?;
         let sample = vector(sample_point)?;
-        let oblique = self.normal_squared != Rational::ONE;
-        let mut height = sample[self.axis].sub(self.source[0][self.axis])?;
-        if oblique {
-            self.work.charge(128, budget)?;
-            for axis in self.axes {
-                height =
-                    height.add(self.normal[axis].mul(sample[axis].sub(self.source[0][axis])?)?)?;
-            }
-        }
+        let height = sample[self.axis].sub(self.source[0][self.axis])?;
         if height == Rational::ZERO {
             return Err("Exact emission kernel point lies on the source plane".into());
         }
         let height_squared = height.mul(height)?.div(self.normal_squared)?;
-        let mut distance_squared_lower = if oblique {
-            Rational::ZERO
-        } else {
-            height_squared
-        };
-        for axis in self.axes.into_iter().chain(oblique.then_some(self.axis)) {
+        let mut distance_squared_lower = height_squared;
+        for axis in self.axes {
             self.work.charge(128, budget)?;
             let mut coordinates = self.source.map(|point| point[axis]);
             coordinates.sort_unstable_by(|left, right| left.compare(*right));
@@ -2532,7 +2682,6 @@ impl Visibility {
             }
             let orientation = self.orientation;
             let mut center = None;
-            let mut center_index = 0;
             for index in 1..world.values.len() - 1 {
                 self.work.charge(64, budget)?;
                 if turn(
@@ -2552,168 +2701,61 @@ impl Visibility {
                             .add(world.values[index + 1].0[1])?
                             .div(divisor)?,
                     ]));
-                    center_index = index;
                     break;
                 }
             }
             let center = center.ok_or("Exact emission cannot condition a positive fragment")?;
             let mut converted = None;
             let mut rejection = "no conversion candidate";
-            for family in 0..3 {
-                if family != 0 && !oblique {
-                    break;
-                }
-                let world_power = if family == 1 {
-                    Some(world_grid_precision(&self.source, &mut self.work, budget)?)
+            for contraction in 0..18 {
+                self.work.charge(world.values.len() * 96, budget)?;
+                let fraction = if contraction == 0 {
+                    Rational::ZERO
                 } else {
-                    None
+                    Rational::new(1, 1i128 << (49 - contraction))?
                 };
-                let barycentric = if family != 2 {
-                    None
+                let mut candidate = Polygon::new(world.values.len(), budget)?;
+                for &point in &world.values {
+                    let x = point.0[0]
+                        .add(center.0[0].sub(point.0[0])?.mul(fraction)?)?
+                        .approximate();
+                    let y = point.0[1]
+                        .add(center.0[1].sub(point.0[1])?.mul(fraction)?)?
+                        .approximate();
+                    let point = Point([Rational::from_f64(x)?, Rational::from_f64(y)?]);
+                    candidate.push(point)?;
+                }
+                if let Some(reason) = conversion_rejection(
+                    &boundaries.values,
+                    &candidate.values,
+                    orientation,
+                    &mut self.work,
+                    budget,
+                )? {
+                    rejection = reason;
+                    continue;
+                }
+                self.work.charge(candidate.values.len() * 64, budget)?;
+                let converted_area = double_area(candidate.values.iter().copied())?;
+                if converted_area.sign() != orientation {
+                    rejection = "collapsed or reversed area";
+                    continue;
+                }
+                let bound = conversion_error(
+                    &world.values,
+                    &candidate.values,
+                    orientation,
+                    distance_squared_lower,
+                    &mut self.work,
+                    budget,
+                )?;
+                let bound = if self.area_scale_upper == 1.0 {
+                    bound
                 } else {
-                    let Some(precision) = dyadic_precision(&self.source, &mut self.work, budget)?
-                    else {
-                        rejection =
-                            "native source coordinates leave no dyadic barycentric precision";
-                        break;
-                    };
-                    self.work.charge(128, budget)?;
-                    let points = [
-                        polygon.values[0].point,
-                        polygon.values[center_index].point,
-                        polygon.values[center_index + 1].point,
-                    ];
-                    let divisor = Rational::new(3, 1)?;
-                    let center = Point([
-                        points[0].0[0]
-                            .add(points[1].0[0])?
-                            .add(points[2].0[0])?
-                            .div(divisor)?,
-                        points[0].0[1]
-                            .add(points[1].0[1])?
-                            .add(points[2].0[1])?
-                            .div(divisor)?,
-                    ]);
-                    Some((center, precision))
+                    (bound * self.area_scale_upper).next_up()
                 };
-                'conversion: for contraction in 0..18 {
-                    self.work.charge(world.values.len() * 96, budget)?;
-                    let fraction = if contraction == 0 {
-                        Rational::ZERO
-                    } else if barycentric.is_some() {
-                        Rational::new(1, 1i128 << (21 - contraction))?
-                    } else {
-                        Rational::new(1, 1i128 << (49 - contraction))?
-                    };
-                    let mut candidate = Polygon::new(world.values.len(), budget)?;
-                    if let Some((center, precision)) = barycentric {
-                        for vertex in &polygon.values {
-                            self.work.charge(256, budget)?;
-                            let point = vertex.point;
-                            let weight = Point([
-                                point.0[0]
-                                    .add(center.0[0].sub(point.0[0])?.mul(fraction)?)?
-                                    .round_dyadic(precision)?,
-                                point.0[1]
-                                    .add(center.0[1].sub(point.0[1])?.mul(fraction)?)?
-                                    .round_dyadic(precision)?,
-                            ]);
-                            if weight.0[0].sign() == Ordering::Less
-                                || weight.0[1].sign() == Ordering::Less
-                                || weight.0[0].add(weight.0[1])?.compare(Rational::ONE)
-                                    == Ordering::Greater
-                            {
-                                rejection =
-                                    "dyadic barycentric weights leave the actual source triangle";
-                                continue 'conversion;
-                            }
-                            let native = [
-                                self.coordinate(weight, 0)?,
-                                self.coordinate(weight, 1)?,
-                                self.coordinate(weight, 2)?,
-                            ];
-                            for coordinate in native {
-                                if Rational::from_f64(coordinate.approximate())? != coordinate {
-                                    rejection = "dyadic source mapping is not exactly representable in binary64";
-                                    continue 'conversion;
-                                }
-                            }
-                            candidate.push(Point(self.axes.map(|axis| native[axis])))?;
-                        }
-                    } else if let Some(power) = world_power {
-                        for &point in &world.values {
-                            self.work.charge(128, budget)?;
-                            let point = Point([
-                                point.0[0]
-                                    .add(center.0[0].sub(point.0[0])?.mul(fraction)?)?
-                                    .round_signed_dyadic(power)?,
-                                point.0[1]
-                                    .add(center.0[1].sub(point.0[1])?.mul(fraction)?)?
-                                    .round_signed_dyadic(power)?,
-                            ]);
-                            for coordinate in self.lift(point)? {
-                                if Rational::from_f64(coordinate.approximate())? != coordinate {
-                                    rejection = "common world-grid source lift is not exactly representable in binary64";
-                                    continue 'conversion;
-                                }
-                            }
-                            candidate.push(point)?;
-                        }
-                    } else {
-                        for &point in &world.values {
-                            let x = point.0[0]
-                                .add(center.0[0].sub(point.0[0])?.mul(fraction)?)?
-                                .approximate();
-                            let y = point.0[1]
-                                .add(center.0[1].sub(point.0[1])?.mul(fraction)?)?
-                                .approximate();
-                            let point = Point([Rational::from_f64(x)?, Rational::from_f64(y)?]);
-                            if oblique {
-                                self.work.charge(128, budget)?;
-                                let coordinate = self.lift(point)?[self.axis];
-                                if Rational::from_f64(coordinate.approximate())? != coordinate {
-                                    rejection = "source-plane lift is not exactly representable in binary64";
-                                    continue 'conversion;
-                                }
-                            }
-                            candidate.push(point)?;
-                        }
-                    }
-                    if let Some(reason) = conversion_rejection(
-                        &boundaries.values,
-                        &candidate.values,
-                        orientation,
-                        &mut self.work,
-                        budget,
-                    )? {
-                        rejection = reason;
-                        continue;
-                    }
-                    self.work.charge(candidate.values.len() * 64, budget)?;
-                    let converted_area = double_area(candidate.values.iter().copied())?;
-                    if converted_area.sign() != orientation {
-                        rejection = "collapsed or reversed area";
-                        continue;
-                    }
-                    let bound = conversion_error(
-                        &world.values,
-                        &candidate.values,
-                        orientation,
-                        distance_squared_lower,
-                        &mut self.work,
-                        budget,
-                    )?;
-                    let bound = if self.area_scale_upper == 1.0 {
-                        bound
-                    } else {
-                        (bound * self.area_scale_upper).next_up()
-                    };
-                    converted = Some((candidate, bound));
-                    break;
-                }
-                if converted.is_some() {
-                    break;
-                }
+                converted = Some((candidate, bound));
+                break;
             }
             let Some((candidate, bound)) = converted else {
                 let preview: [[f64; 2]; 4] = std::array::from_fn(|index| {
@@ -2789,9 +2831,6 @@ impl Visibility {
                 if triangle_area.sign() != orientation {
                     return Err("Exact emission conversion reversed a visible triangle".into());
                 }
-                if oblique {
-                    self.work.charge(384, budget)?;
-                }
                 let lifted = [
                     self.lift(points[0])?,
                     self.lift(points[1])?,
@@ -2817,18 +2856,6 @@ impl Visibility {
                         != (orientation == Ordering::Greater)
                 {
                     return Err("Exact emission kernel conversion lost triangle orientation".into());
-                }
-                if oblique {
-                    self.work.charge(64, budget)?;
-                    let facing = native_normal.dot(sample_point - triangle[0]);
-                    if !facing.is_finite()
-                        || facing == 0.0
-                        || facing.is_sign_positive() != (height.sign() == orientation)
-                    {
-                        return Err(
-                            "Exact emission kernel conversion cannot certify source facing".into(),
-                        );
-                    }
                 }
                 result.push(Fragment {
                     points: triangle,

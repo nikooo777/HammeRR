@@ -1784,25 +1784,21 @@ owning-hull shadows.
 Colour selection keeps nearest mip0 RGB and binary64 UV semantics. The coverage
 proof does not certify real-arithmetic UV boundaries or native filtering parity.
 `source_support_certificate` reports face requirements and scopes.
-Converted binary64 kernel vertices must lie exactly on each actual source
-triangle plane. Each fragment retains constant scalar/RGB transmission and stays
-inside its exact coverage region. `fragment_conversion` reports this contract.
-`fragment_conversion_candidates` reports the projected search first. If it cannot
-certify an oblique source triangle's conversion, bounded common absolute dyadic
-world-grid candidates are tried before bounded dyadic native-triangle weights.
-The world grid applies only to converted fragments. Native weights map exactly
-through the original source triangle. Every accepted candidate must lie exactly
-on the actual source triangle plane, with all three coordinates exactly
-representable in binary64.
-Existing containment, orientation, area-loss, conditioning and error guards still
-decide acceptance. Source coordinates stay unchanged; complex cuts can still fail.
-Arithmetic and resource errors stop the build.
-`fragment_conversion_bound_policy` permits refinement only when the accumulated
-coarse triangle bound exceeds its limit. Certified actual source-area Jacobian
-and source-incidence cosine upper bounds refine the whole accumulated bound.
-The Jacobian replaces the coarse L1 surface scale. The cosine uses the unbiased
-kernel point and a distance lower bound over the whole original source triangle.
-Accepted coarse bounds and error caps stay unchanged.
+`integral_representation` reports a method selected from the original source
+triangle plane before integration. Axial planes keep the existing native analytic
+kernel. Their converted binary64 fragments must lie exactly on the original
+source plane and inside their exact constant-transmission regions;
+`fragment_conversion`, `fragment_conversion_candidates` and
+`fragment_conversion_bound_policy` now describe that native axial path only.
+
+Oblique planes keep exact rational source-chart domains, with exact receiver
+horizon clipping for normal reception. Bounded analytic edge integrals use
+certified arithmetic and angular enclosures, including verified square roots,
+byte transmission and summation. The existing angular factor for receivers that
+ignore normals is retained. Source geometry, kernel and shadow points stay
+unchanged; failures never select another integration method. No new setting is
+required. Arithmetic, numerical-enclosure or resource failures stop the build.
+
 Every applicable opaque, cutout or admitted fractional brush hull must be
 certified closed, bounded and convex from its final planes, including oblique casters. Original materials and
 existing global/model shadow scopes still apply.
@@ -1847,24 +1843,44 @@ crossing ownership cannot be certified. Ordinary shared boundaries of zero
 source area remain supported.
 
 Uncertified native fans or projections, primitive overrides, displacement
-sources, failed required texture coverage, unrepresentable on-plane fragment vertices,
-moving/parented/unrequested brush-model emitting sources, sky, unknown or
+sources, failed required texture coverage, unrepresentable native axial on-plane
+fragments, failed rational enclosures, moving/parented/unrequested brush-model
+emitting sources, sky, unknown or
 missing materials, unsupported prop models, zero-area mesh triangles,
 uncertified hulls, the coplanar cases above and exhausted numeric/resource bounds
 reject without sampled fallback or replacement of the previous BSP. Fullbright validates the policy,
 file and declarations without admitting exact geometry. Existing source, clipping,
-work, texture, memory and conversion limits remain unchanged.
+work, texture, memory and error limits remain unchanged: 32 million work units
+per source triangle, 262144 integration cells per receiver and 512 MiB shared
+lighting storage. Rational floating work uses raw units in
+the same budget; checked 1024-bit geometry keeps its existing eightfold charge.
 
 Under `stats.material_emission`, `visibility_policy` identifies the selected
-policy. `maximum_visibility_conversion_error` is the maximum bound per receiver;
-`total_visibility_conversion_error` sums bounds across all gathers in both
-channels. These dimensionless bounds cover conversion from exact clipped
-fragments to the floating kernel, including source surface-area scale, limited
-to `1e-12` per source triangle and `1e-9` per receiver before source
-RGB/brightness and BSP quantization. They are not RGB or image error bounds.
-In **Build details…**, **Emission visibility policy** reads **Exact byte-coverage
-hulls and mesh triangles**. **Emission conversion bounds (dimensionless)** shows
-the bounds above.
+policy. The existing `maximum_visibility_conversion_error` and
+`total_visibility_conversion_error` cover native axial fragment conversion only;
+the total sums both channels. New arrays use `[LDR, HDR]` order:
+
+| Fields | Meaning |
+| --- | --- |
+| `channel_native_integration_cells`, `channel_rational_integration_cells` | Native fragments and rational source-domain integration cells. |
+| `channel_rational_numeric_work` | Raw numerical work units charged once to the shared budget, including new per-source RGB sum accounting. |
+| `channel_maximum_rational_integral_error`, `channel_total_rational_integral_error` | Rational numerical enclosure and new per-source sum-rounding bounds, maximum per receiver and total. |
+| `channel_maximum_visibility_integral_error`, `channel_total_visibility_integral_error` | Combined native conversion and rational numerical bounds, maximum per receiver and total. |
+
+`visibility_conversion_error_scope`, `visibility_integral_error_scope`,
+`rational_integration_policy` and `numeric_work_policy` report these scopes.
+Admission remains at most `1e-12` per source triangle and `1e-9` combined per
+receiver, before source RGB, brightness and lightmap scaling. Bounds exclude
+legacy native angular arithmetic, native prefix sums before the first rational
+contribution and final lighting scaling. They are not full RGB, BSP quantization
+or native image error bounds.
+In **Build details…**, **Emission visibility policy** reads **Exact byte coverage ·
+native axial / rational oblique integration**. The separate rows are
+**Native fragment conversion bound (dimensionless)**,
+**Rational numerical enclosure bound, before radiance** and
+**Conversion + rational enclosure bound, before radiance**. **Native axial
+integration cells**, **Rational oblique integration cells** and **Rational
+numeric work units** show the per-channel work.
 
 Use `[ldr:|hdr:] texture: material R G B brightness` for nearest mip0
 base-RGB emission. The same file and property operations apply. Results include

@@ -23,6 +23,10 @@ impl Coverage {
         Self(coverage)
     }
 
+    pub(super) const fn channels(self) -> [u8; 3] {
+        self.0
+    }
+
     pub(super) fn add(&mut self, coverage: Self) {
         self.0 = std::array::from_fn(|axis| self.0[axis].saturating_add(coverage.0[axis]));
     }

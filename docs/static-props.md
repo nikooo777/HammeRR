@@ -27,7 +27,7 @@ Use supported opaque, cutout or translucent prop triangles to attenuate [materia
 3. Enable **Exact emission visibility**, then click **Apply properties**.
 4. Open **Build settings…** and choose **Direct LDR** or **Direct LDR + HDR**. For RGB transmission, enable **Brush texture shadows** and **Colored texture shadows**.
 5. Compile.
-6. Open **Build details…**. **Emission visibility policy** reads **Exact byte-coverage hulls and mesh triangles**. Check **Diagnostics**.
+6. Open **Build details…**. **Emission visibility policy** reads **Exact byte coverage · native axial / rational oblique integration**. Check **Diagnostics** and the separate conversion and numerical bounds.
 
 Shadows use actual triangles from body 0 and LOD 0 with the selected **Skin**
 and compiled pose, including supported referenced props. Materials require plain
@@ -42,8 +42,19 @@ crossings add byte coverage with saturation per channel; gamma 2.2 RGB conversio
 and strict segment endpoints stay unchanged. Exact mode checks the original model
 and material inputs. Missing or unsupported materials, zero-area triangles and
 uncertified positive-area nonbinary coplanar mask overlaps stop the build.
-Existing geometry, work, memory and conversion limits remain, with no sampled
+Existing geometry, work, memory and error limits remain, with no sampled
 fallback. The previous BSP stays intact.
+
+The emitting source triangle's original plane selects its kernel automatically:
+axial planes keep certified native fragments and analytic integration; oblique
+planes use exact rational domains, receiver-horizon clipping and bounded edge
+integrals with certified arithmetic and angular enclosures. Original source
+geometry, kernel and shadow points stay unchanged. **Build details…** reports
+both cell counts, raw rational work and
+separate native conversion, rational numerical and combined bounds. The
+[source and receiver error limits](material-emission.md#exact-brush-shadows)
+apply before source colour and brightness; legacy native arithmetic and final
+lighting scaling remain outside those bounds.
 
 **Disable Shadows** removes that prop's shadow geometry. Disabling receiver self
 shadows omits only that receiving prop's own triangles. Other props, world and

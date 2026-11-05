@@ -31,13 +31,19 @@ saturation per channel. The original model texture-shadow request remains requir
 The shared prepared sampler, gamma 2.2 RGB conversion, nearest mip0 clamp/repeat
 and strict endpoints remain unchanged.
 
+The original emitting triangle plane automatically selects native analytic
+integration for axial planes or bounded rational-domain edge integrals for
+oblique planes. Source geometry and shadow points stay unchanged; no extra
+control is required. **Build details…** shows the native conversion bound, per-channel
+rational numerical bounds, cells and raw work. See the [integration limits](material-emission.md#exact-brush-shadows).
+
 ## Limits
 
 - Static LOD0 geometry only; runtime animation is not baked.
 - Material, texture format and transform support is bounded.
 - **Disable Shadows** excludes the prop from this shadow path.
 - Shadow support does not imply vertex-lighting or asset-packing support.
-- Exact emission refuses uncertified positive-area nonbinary coplanar mask overlaps. Existing source, geometry, work, memory and conversion certificates remain; failures do not switch to sampled tracing.
+- Exact emission refuses uncertified positive-area nonbinary coplanar mask overlaps. Existing source, geometry, work, memory and error limits remain; failures do not switch to sampled tracing.
 - This page describes compiled shadows. The editor's authored-lighting preview is unshadowed.
 
 <!-- page-nav -->

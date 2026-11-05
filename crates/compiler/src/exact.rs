@@ -204,31 +204,6 @@ impl Rational {
         self.numerator.as_::<f64>() / self.denominator.as_::<f64>()
     }
 
-    pub(crate) fn round_dyadic(self, power: u32) -> Result<Self, String> {
-        if self.sign() == Ordering::Less || power > f64::MANTISSA_DIGITS {
-            return Err(
-                "Exact emission dyadic conversion requires bounded nonnegative weights".into(),
-            );
-        }
-        let denominator = n!(1I1024) << power;
-        let scaled = self.mul(Self::ratio(denominator, n!(1))?)?;
-        let mut integer = scaled.numerator / scaled.denominator;
-        let remainder = scaled.numerator % scaled.denominator;
-        if remainder >= scaled.denominator - remainder {
-            integer = integer.checked_add(n!(1)).ok_or(ARITHMETIC_ERROR)?;
-        }
-        Self::ratio(integer, denominator)
-    }
-
-    pub(crate) fn round_signed_dyadic(self, power: u32) -> Result<Self, String> {
-        let rounded = self.abs().round_dyadic(power)?;
-        Ok(if self.sign() == Ordering::Less {
-            rounded.neg()
-        } else {
-            rounded
-        })
-    }
-
     pub(crate) fn upper(self) -> Result<f64, String> {
         let mut value = self.approximate();
         for _ in 0..8 {

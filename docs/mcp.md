@@ -1285,7 +1285,7 @@ background needs explicit `$nofog 1`. Parented sky cameras refuse. See
 | `settings` | Complete `settings` object | Apply shared preview choices. |
 | `prepare_environment` | Optional `background` | Prepare the selected environment context. |
 | `input` | `controller`, `input`, optional `value` and `background` | Send one registered input to that controller in the preview. |
-| `switch_player_controller` | `controller`, optional `background` | Switch player fog to a settled named controller. |
+| `switch_player_controller` | `controller`, optional `background` | Switch player fog to a named controller profile. |
 | `play`, `pause` | None | Start or stop the shared preview clock. |
 | `seek` | `time_seconds`, optional `background` | Inspect a requested preview time, preserving the event sequence. |
 | `advance` | `seconds`, optional `background` | Advance preview time explicitly by 0–60 seconds. |
@@ -1351,20 +1351,34 @@ separate from the controller input catalogue.
 
 Switches use settled initial profiles and the destination's `foglerptime`.
 Zero duration switches immediately. Only primary RGB/start/end blend; all
-other fields snap. Controller input events and player switches cannot share a
-sequence. Overlapping, same-controller and earlier append requests refuse.
-Wait or seek until the switch settles before adding another; use Reset to change
-sequence type or insert an earlier event. Seek, Advance and Play use the shared
-clock. `player` is null without a switch sequence. Its `phase` is `initial`,
-`blending` or `settled`; `progress` is 0–1 and `transitioning` identifies an
-active blend. `initial_controller` and `initial_profile` retain the baseline;
+other fields snap. A switch can interrupt an active blend. It captures the last
+primary RGB/start/end written by the preview, without first advancing the old
+blend to the switch time. Controller input events and player switches cannot
+share a sequence. Same-controller and earlier append requests refuse. Use Reset
+to change sequence type or insert an earlier event.
+
+Player updates run at 50 Hz, at `k/50` seconds from time 0, with a separate
+delivery callback for each switch. Delivery runs before a scheduled update at
+the same time; same-time switches keep event order. Reports expose
+`player_update_hz` and `player_update_interval_seconds` even before a switch.
+`time_seconds` is the requested preview time. `player.sample_time_seconds` is
+the latest scheduled update or switch delivery at or before that time;
+`player.update_hz` is 50. The player profile and progress use that sample time.
+Inspection and Seek reconstruct this schedule without changing future switch
+history. Seek, Advance and Play use the shared clock.
+
+`player` is null without a switch sequence. Its `phase` is `initial`, `blending`
+or `settled`; `progress` is 0–1 and `transitioning` identifies an active blend.
+`initial_controller` and `initial_profile` retain the baseline;
 `current_controller` identifies the target. `configured_controller` retains
 the settings choice; top-level `controller` reports the effective selection.
 With a switch sequence recorded, changing settings controller, selection mode
 or initial rule clears it, resets time and pauses. Reset, Clear and source
 retirement also clear the switch sequence. Identical settings and enable-only changes retain it;
 disabling pauses playback. Reset retains the prepared environment and initial
-rule. Interrupted/mixed histories and live network timing are unavailable.
+rule. Raw controller-target replay, mixed controller-input/switch histories and
+automatic volume/trigger selection are unavailable. This fixed schedule does
+not reproduce native packet delivery, prediction or rendering rates.
 
 `render_view` and `pick_at_pixel` accept temporary `fog_preview`,
 `fog_controller`, `fog_selection`, `fog_channel` and `surface` overrides.

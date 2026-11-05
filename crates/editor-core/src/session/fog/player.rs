@@ -1,4 +1,4 @@
-use map_core::fog::{MAX_EVENTS, PlayerSwitch, PlayerTimeline};
+use map_core::fog::{MAX_EVENTS, PLAYER_UPDATE_HZ, PlayerSwitch, PlayerTimeline};
 use render::fog::ViewFog;
 use serde_json::{Value, json};
 
@@ -123,6 +123,7 @@ impl Session {
             json!({"initial_controller":format!("entity:{}",player.initial_controller()),
             "current_controller":format!("entity:{}",frame.controller),
             "initial_profile":profile_report(player.initial_profile()),"profile":profile_report(frame.profile),
+            "sample_time_seconds":frame.sample_time_seconds,"update_hz":PLAYER_UPDATE_HZ,
             "transitioning":frame.transitioning,"progress":frame.progress,"phase":frame.phase.name()}),
         )
     }

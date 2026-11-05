@@ -1,3 +1,4 @@
+use map_core::fog::PLAYER_UPDATE_INTERVAL_SECONDS;
 use serde_json::Value;
 
 use super::preview_clock::{INTERVAL, wait_for_restart};
@@ -6,8 +7,6 @@ use super::{
 };
 use crate::session::Actor;
 use crate::session::fog::{ClockLease, Command, Overrides, Request, Update};
-
-const CLOCK_STEP_SECONDS: f64 = 0.02;
 
 pub struct FogRenderGuard(crate::session::fog::RenderGuard);
 
@@ -214,7 +213,7 @@ pub(super) fn tick(
 ) -> Result<bool, String> {
     let (changed, guard) = {
         let mut session = lock(session);
-        let changed = session.tick_fog_clock(scope, CLOCK_STEP_SECONDS)?;
+        let changed = session.tick_fog_clock(scope, PLAYER_UPDATE_INTERVAL_SECONDS)?;
         let guard = if session.fog_verification_due() {
             Some(session.fog_preview_render_guard(Overrides::default())?)
         } else {

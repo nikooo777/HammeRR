@@ -205,7 +205,7 @@ fn update_player(window: &FogWindow, form: &Form) {
     window.set_player_issue(issue.is_some());
     window.set_player_detail(issue.unwrap_or("Choose a named target. Its foglerptime sets the duration; zero switches immediately.").into());
     let player = &form.report["player"];
-    let status = if player["issue"].is_string() {
+    let mut status = if player["issue"].is_string() {
         "Player state unavailable".to_owned()
     } else if let Some(controller) = player["current_controller"].as_str() {
         let phase = match player["phase"].as_str() {
@@ -223,6 +223,15 @@ fn update_player(window: &FogWindow, form: &Form) {
     } else {
         "No player switches".to_owned()
     };
+    if player["phase"] == "blending"
+        && let (Some(sample_time), Some(current_time)) = (
+            player["sample_time_seconds"].as_f64(),
+            form.report["time_seconds"].as_f64(),
+        )
+        && format!("{sample_time:.3}") != format!("{current_time:.3}")
+    {
+        status.push_str(&format!(" · sampled at {sample_time:.3} s"));
+    }
     window.set_player_status(status.into());
 }
 

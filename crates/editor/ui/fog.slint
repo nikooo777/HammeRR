@@ -219,7 +219,7 @@ export component FogWindow inherits Window {
                             Text { text: root.player-status; color: Theme.text-muted; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; }
                         }
                         if root.player-detail != "": Text { text: root.player-detail; color: root.player-issue ? Theme.warning : Theme.text-faint; wrap: word-wrap; }
-                        Text { text: "Static switches cannot overlap or mix with controller inputs. Initial controller selection remains a manual snap."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
+                        Text { text: "A new switch interrupts from the last player update. Updates run every 20 ms and immediately at each switch. Player switches cannot mix with controller inputs. Initial controller selection remains a manual snap."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
                     }
                     SectionHeader { text: "Controller input"; detail: (root.input-dirty ? "Unsubmitted input · " : "") + root.input-target; inset: false; expanded <=> root.input-expanded; }
                     if root.input-expanded: VerticalLayout {

@@ -2,7 +2,9 @@ use super::profile::validate_initial_profile;
 use super::timeline::checked_time;
 use super::{MAX_EVENTS, Profile};
 
-pub const PLAYER_TIMELINE_POLICY: &str = "Switch-only preview over immutable settled static controller profiles. The known initial controller is snapped at the settled logical epoch. Before a nonoverlapping switch, the previous player blend is settled at that operation time. Overlapping switches and controller-input histories are unavailable because native interruptions cache the last written player state. Events have stable append order, including equal logical times; blend timing uses float32 elapsed and the destination's copied duration. Only primary RGB and start/end blend; all other fields copy immediately. Seeking is analytic and query-independent. This does not reproduce packet delivery, prediction cadence, native update/render history or arbitrary controller-input interleaving.";
+pub const PLAYER_UPDATE_HZ: u32 = 50;
+pub const PLAYER_UPDATE_INTERVAL_SECONDS: f64 = 1.0 / PLAYER_UPDATE_HZ as f64;
+pub const PLAYER_TIMELINE_POLICY: &str = "Switch-only preview over immutable settled static controller profiles. The settled logical epoch includes initial CREATED delivery and a following ordinary player data update. Scheduled client updates run at logical k/50 seconds. Every explicit switch is a separate player delivery callback at its event time, before a scheduled update at that same time; equal-time callbacks retain append order. Each callback caches the last written player primary RGB/start/end without advancing the old blend to the delivery time, immediately copies all destination fields and updates the new blend once. Blend timing uses float32 elapsed and the copied destination duration; zero duration settles immediately. Only primary RGB and start/end blend; other fields copy immediately. Profile, progress and phase report the latest scheduled update or delivery sample at or before the query. Seeking and querying add no updates; replay is independent of query frequency and clock partitioning. Controller-input histories remain unavailable. This declared nominal schedule does not reproduce packet delivery, prediction cadence or native update/render history.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlayerSwitch {
@@ -32,6 +34,7 @@ impl PlayerSwitchPhase {
 pub struct PlayerFrame {
     pub controller: u32,
     pub profile: Profile,
+    pub sample_time_seconds: f64,
     pub transitioning: bool,
     pub progress: f32,
     pub phase: PlayerSwitchPhase,
@@ -57,6 +60,60 @@ fn blended_profile(old: Profile, new: Profile, alpha: f32) -> Result<Profile, St
     profile.end = alpha * new.end + complement * old.end;
     profile.validate()?;
     Ok(profile)
+}
+
+fn scheduled_update_time(time: f64, inclusive: bool) -> Option<f64> {
+    let update_hz = f64::from(PLAYER_UPDATE_HZ);
+    let mut tick = (time * update_hz).floor() as u32;
+    let mut sample_time = f64::from(tick) / update_hz;
+    if sample_time > time {
+        tick = tick.checked_sub(1)?;
+        sample_time = f64::from(tick) / update_hz;
+    } else {
+        let next_time = f64::from(tick + 1) / update_hz;
+        if next_time <= time {
+            tick += 1;
+            sample_time = next_time;
+        }
+    }
+    if !inclusive && sample_time == time {
+        tick = tick.checked_sub(1)?;
+        sample_time = f64::from(tick) / update_hz;
+    }
+    Some(sample_time)
+}
+
+fn switch_frame(
+    old: Profile,
+    event: &PlayerSwitch,
+    sample_time_seconds: f64,
+) -> Result<PlayerFrame, String> {
+    let elapsed = checked_time(sample_time_seconds)? - checked_time(event.time)?;
+    if elapsed < 0.0 {
+        return Err("Player fog evaluation precedes its selected switch".into());
+    }
+    let duration = event.profile.lerp_time;
+    if duration <= elapsed {
+        event.profile.validate()?;
+        return Ok(PlayerFrame {
+            controller: event.controller,
+            profile: event.profile,
+            sample_time_seconds,
+            transitioning: false,
+            progress: 1.0,
+            phase: PlayerSwitchPhase::Settled,
+        });
+    }
+    let progress = elapsed / duration;
+    let profile = blended_profile(old, event.profile, progress)?;
+    Ok(PlayerFrame {
+        controller: event.controller,
+        profile,
+        sample_time_seconds,
+        transitioning: true,
+        progress,
+        phase: PlayerSwitchPhase::Blending,
+    })
 }
 
 impl PlayerTimeline {
@@ -95,11 +152,7 @@ impl PlayerTimeline {
         {
             return Err("Player fog switches must be appended in time order; Reset before editing an earlier time".into());
         }
-        let current = self.evaluate(time)?;
-        if current.transitioning {
-            return Err("Wait for the active player fog switch to settle before switching again; interrupted switches are unavailable".into());
-        }
-        Ok(current)
+        self.evaluate(time)
     }
 
     pub fn can_switch(&self, time: f64, controller: u32) -> Result<(), String> {
@@ -132,7 +185,7 @@ impl PlayerTimeline {
     }
 
     pub fn evaluate(&self, time: f64) -> Result<PlayerFrame, String> {
-        let now = checked_time(time)?;
+        checked_time(time)?;
         let mut old = self.initial_profile;
         let mut selected: Option<&PlayerSwitch> = None;
         for event in &self.events {
@@ -140,43 +193,26 @@ impl PlayerTimeline {
                 break;
             }
             if let Some(previous) = selected {
-                old = previous.profile;
+                let sample_time = scheduled_update_time(event.time, false)
+                    .unwrap_or(previous.time)
+                    .max(previous.time);
+                old = switch_frame(old, previous, sample_time)?.profile;
             }
             selected = Some(event);
         }
+        let scheduled_sample_time = scheduled_update_time(time, true)
+            .ok_or("Player update schedule has no sample at the requested time")?;
         let Some(event) = selected else {
             self.initial_profile.validate()?;
             return Ok(PlayerFrame {
                 controller: self.initial_controller,
                 profile: self.initial_profile,
+                sample_time_seconds: scheduled_sample_time,
                 transitioning: false,
                 progress: 1.0,
                 phase: PlayerSwitchPhase::Initial,
             });
         };
-        let elapsed = now - checked_time(event.time)?;
-        if elapsed < 0.0 {
-            return Err("Player fog evaluation precedes its selected switch".into());
-        }
-        let duration = event.profile.lerp_time;
-        if duration <= elapsed {
-            event.profile.validate()?;
-            return Ok(PlayerFrame {
-                controller: event.controller,
-                profile: event.profile,
-                transitioning: false,
-                progress: 1.0,
-                phase: PlayerSwitchPhase::Settled,
-            });
-        }
-        let progress = elapsed / duration;
-        let profile = blended_profile(old, event.profile, progress)?;
-        Ok(PlayerFrame {
-            controller: event.controller,
-            profile,
-            transitioning: true,
-            progress,
-            phase: PlayerSwitchPhase::Blending,
-        })
+        switch_frame(old, event, scheduled_sample_time.max(event.time))
     }
 }

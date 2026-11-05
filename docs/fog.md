@@ -2,7 +2,7 @@
 
 # Fog preview
 
-Inspect world fog, controller inputs and settled player switches without changing the map.
+Inspect world fog, controller inputs and timed player switches without changing the map.
 For independent static `sky_camera` fog, use [miniature fog](sky.md#preview-miniature-fog).
 
 ## Choose a controller
@@ -73,14 +73,19 @@ Then send `StartFogTransition`, which takes no value.
 2. Apply an initial controller with **Apply preview**. Prepare the environment
    if selected, then click **Reset** to start a switch-only sequence.
 3. Expand **Player controller**, choose **Target**, then click **Switch player fog**.
-4. Use **Play**, **Pause** and **Seek** to inspect the result. Wait for **Settled**
-   before choosing another target and switching again.
+4. Use **Play**, **Pause** and **Seek** to inspect the result. Choose another
+   **Target** and click **Switch player fog** to interrupt an active blend.
 
 Only primary RGB, fog start and fog end blend. Direction, secondary color,
 density, enable, radial and far clip snap to the destination. Switches use
-settled authored profiles and cannot overlap or mix with controller inputs.
-Use **Reset** before changing sequence type. Missing, ambiguous or special names
-refuse.
+settled initial controller profiles. An interrupted switch starts from the last
+primary RGB, start and end written by the preview.
+
+Player fog updates at 50 Hz and once at each switch. A switch at a scheduled
+update time runs first; switches at the same time keep their order. **Seek** and
+inspection preserve this update history. Controller inputs cannot share a
+switch sequence. Use **Reset** before changing sequence type. Missing, ambiguous
+or special names, the current target and earlier events refuse.
 
 ![A hallway midway through a timed switch between cool and warm fog controllers](images/fog-switch-midpoint.png)
 
@@ -170,9 +175,11 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
   preparing. Water refraction and above-water height fog are not previewed.
 - LDR only. HDR remains unavailable. `HDRColorScale` and `ZoomFogScale` are
   preserved foreign metadata and do not scale the root controller preview.
-- Manual controller selection snaps immediately. Interrupted player switches,
-  mixed controller-input/switch histories, network delivery and game I/O
-  scheduling are unavailable.
+- Manual controller selection snaps immediately. Player switches use fixed
+  initial controller profiles. Mixed controller-input/switch histories,
+  automatic volume/trigger selection and live network timing are unavailable.
+  The fixed player update schedule does not reproduce native packet,
+  prediction or rendering rates.
   The initial rule is an explicit preview choice, not live game-map detection.
   `fog_volume` and `trigger_fog` are unavailable.
 - HDR fog, runtime sky-camera history and native pixel parity are unavailable.

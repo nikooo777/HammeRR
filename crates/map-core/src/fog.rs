@@ -14,7 +14,8 @@ pub use parents::{
     requires_parent_context,
 };
 pub use player::{
-    PLAYER_TIMELINE_POLICY, PlayerFrame, PlayerSwitch, PlayerSwitchPhase, PlayerTimeline,
+    PLAYER_TIMELINE_POLICY, PLAYER_UPDATE_HZ, PLAYER_UPDATE_INTERVAL_SECONDS, PlayerFrame,
+    PlayerSwitch, PlayerSwitchPhase, PlayerTimeline,
 };
 pub use profile::{
     MAX_FIELD_MAGNITUDE, MAX_SKY_SCALE, MIN_FAR_Z, ParsedController, Profile, parse_controller,

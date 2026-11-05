@@ -173,8 +173,13 @@ impl Session {
                     (selected.controller, selected.reason, selected.underwater)
                 }
             };
-        let profile = if let Some(player) = &self.fog_preview.player {
-            let frame = player.evaluate(self.fog_preview.time)?;
+        let player_frame = self
+            .fog_preview
+            .player
+            .as_ref()
+            .map(|player| player.evaluate(self.fog_preview.time))
+            .transpose()?;
+        let profile = if let Some(frame) = player_frame {
             id = Some(frame.controller);
             reason = "player_switch";
             Some(frame.profile)
@@ -206,6 +211,7 @@ impl Session {
             "controller":id.map(|id|format!("entity:{id}")),"selection":settings.selection,"selection_reason":reason,"channel":settings.channel,
             "initial_radial_context":settings.initial_radial_context.name(),"initial_radial":initial_radial,
             "time_seconds":self.fog_preview.time,"profile":profile.map(profile_report),"water":water_report,"far_z":far_z,
+            "player_sample_time_seconds":player_frame.map(|frame|frame.sample_time_seconds),"player_update_hz":map_core::fog::PLAYER_UPDATE_HZ,
             "color_linear":color.map(|fog|fog.color_for_camera(camera)),"preview_only":true}),
         })
     }
@@ -344,7 +350,6 @@ impl Session {
         let inputs=map_core::fog::input_choices().iter().map(|choice|json!({"id":choice.name,"name":choice.name,"label":choice.name,"kind":choice.kind,"help":choice.help,"has_value":choice.has_value})).collect::<Vec<_>>();
         let events=self.fog_preview.timelines.iter().flat_map(|(&id,timeline)|timeline.events().iter().map(move |event|json!({"controller":format!("entity:{id}"),"time_seconds":event.time,"input":event.input.name(),"value":event.input.value()}))).collect::<Vec<_>>();
         let player_candidate = self.player_timeline_for_switch();
-        let player_switch_issue = player_candidate.as_ref().err().cloned();
         let input_issue = self.controller_input_admission().err();
         let switch_targets=catalog.as_ref().map(|catalog|catalog.controllers.iter().map(|(&id,controller)| {
             let admission=controller.switch_target.as_ref().map_err(Clone::clone)
@@ -355,6 +360,16 @@ impl Session {
                 "label":controller.switch_target.as_ref().ok().map_or_else(||format!("entity:{id}"),|name|format!("{name} · entity:{id}")),
                 "ready":admission.is_ok(),"issue":admission.err()})
         }).collect::<Vec<_>>()).unwrap_or_default();
+        let player_switch_issue = player_candidate
+            .as_ref()
+            .err()
+            .cloned()
+            .or_else(|| catalog.as_ref().err().cloned())
+            .or_else(|| {
+                (!switch_targets.iter().any(|target| target["ready"] == true)).then(|| {
+                    "No eligible named destination fog controller; inspect switch_targets for each controller's refusal reason".to_owned()
+                })
+            });
         let player_switches=self.fog_preview.player.as_ref().map(|player|player.events().iter().map(|event| {
             let name=self.fog_preview.catalog.as_ref().and_then(|catalog|catalog.controllers.get(&event.controller))
                 .and_then(|controller|controller.switch_target.as_ref().ok());
@@ -389,6 +404,7 @@ impl Session {
             "selections":[{"id":"explicit","label":"Explicit controller","ready":true,"detail":"Use the selected controller's authored or replayed values"},{"id":"environment","label":"Environment","ready":true,"detail":"Use the prepared initial controller, optional player switches and current-camera water fog."}],
             "inputs":inputs,"events":events,"current":current,"requested":current,"time_seconds":clock.time_seconds,"current_time_seconds":clock.time_seconds,
             "player":player,"player_switches":player_switches,"switch_targets":switch_targets,
+            "player_update_hz":map_core::fog::PLAYER_UPDATE_HZ,"player_update_interval_seconds":map_core::fog::PLAYER_UPDATE_INTERVAL_SECONDS,
             "can_switch_player_controller":player_switch_issue.is_none(),"player_switch_issue":player_switch_issue,
             "can_send_controller_input":input_issue.is_none(),"controller_input_issue":input_issue,
             "requested_time_seconds":clock.requested_time_seconds,"max_time_seconds":map_core::fog::MAX_TIMELINE_SECONDS,"playing":clock.playing,"busy":clock.busy,
@@ -404,7 +420,7 @@ impl Session {
             "player_target_limits":{"names":catalog::MAX_TARGET_NAMES,"name_bytes":catalog::MAX_TARGET_NAME_BYTES,"total_name_bytes":catalog::MAX_TOTAL_TARGET_NAME_BYTES,"property_visits":catalog::MAX_NAMESPACE_PROPERTIES,"native_match_bytes":catalog::MAX_NAMESPACE_MATCH_BYTES},
             "initial_radial_context_policy":"The selected rule applies to every controller's initial profile before preview inputs. Changing it clears controller inputs and player switches, resets time and pauses, while retaining a current prepared environment. Later SetRadial inputs override the initial value. No running map name or file path is inferred.",
             "playback_policy":"One shared runtime clock drives Play in desktop and headless sessions. Hidden or inactive presentation suspends wall time without catch-up. Seek pauses; explicit Advance remains available. Reset clears controller inputs and player switches and restores the current-context initial profile at time zero. Cancel stops environment preparation and playback; Clear also disables and clears preview state.",
-            "selection_policy":"Manual controller, selection-mode or initial-context changes reset player switches and time after validation. Initial automatic selection uses the prepared first-controller/last-Master; water is applied after the evaluated player profile. Named settled controller switches use a separate nonoverlapping ledger; controller inputs cannot coexist with it. Temporary controller/selection overrides refuse while that ledger exists. Trigger history, interrupted switches, fog volumes, live I/O and packet/update history are not simulated.",
+            "selection_policy":"Manual controller, selection-mode or initial-context changes reset player switches and time after validation. Initial automatic selection uses the prepared first-controller/last-Master; water is applied after the sampled player profile. Named static controller switches use a separate ledger and can interrupt an active blend using its last written state under the declared fixed player-update schedule. Controller inputs cannot coexist with that ledger. Temporary controller/selection overrides refuse while it exists. Automatic trigger history, fog volumes, live I/O and native packet/prediction/update cadence are not simulated.",
             "persistence":"Session view state only; no VMF edits, Undo steps or saved controller mutation. HDRColorScale and ZoomFogScale remain inert foreign metadata in this installed CSS path."})
     }
 

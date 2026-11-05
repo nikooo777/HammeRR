@@ -60,7 +60,7 @@ Use **Move plane** or **Rotate plane** to adjust the cut with handles.
 
 ### Cut terrain on its existing grid
 
-1. Select world terrain brushes with power 3 or 4.
+1. Select power-3/4 world terrain brushes or whole `func_detail` entities.
 2. Click **Clip selected brushes**.
 3. Set a plane through a complete middle row or column. Power 4 also permits
    quarter-grid lines: row or column 4 or 12 of its 16 cells.
@@ -83,12 +83,14 @@ Matching neighbor borders are checked before Apply. Neighbor grids stay unchange
 - Carve: 1–8 cutters, 16 targets, 256 pieces, 64 faces per piece.
 - Carving away every child brush of an entity rejects.
 - Terrain cannot be hollowed or carved. Terrain clipping requires a power-3/4
-  world patch and a complete middle grid line, or a power-4 quarter line.
+  world or `func_detail` patch and a complete middle grid line, or a power-4 quarter line.
   Matching full/half borders must retain their sample spacing and LOD state.
 - Arbitrary cuts, power-2 splitting, quarter-edge links, LOD changes, overlapping
   or unmatched borders and unresolved map instances reject.
 - Terrain cuts accept 16 sources and 64 output patches. Unsupported bindings,
   notes, masks and opaque payloads reject before the map changes.
+- Select the whole `func_detail` entity. All crossing children are clipped;
+  other children stay unchanged. Runtime brush-model terrain rejects.
 - A connected cut checks at most 128 neighboring faces.
 - Invalid, collapsed or excessively thin results reject before the map changes.
 

@@ -309,8 +309,13 @@ pub(crate) fn plan(
         return Ok(None);
     }
     let (_, mesh) = native::checked_mesh(face, info).map_err(invalid)?;
-    if document.owner_of_solid(solid.id) != Some(ObjectId::Solid(solid.id)) {
-        return Err(invalid("Terrain clipping requires a world brush"));
+    let (owner, _) = crate::subobject::solid(document, solid.id)?;
+    if let ObjectId::Entity(id) = owner
+        && document.entity(id).and_then(|entity| entity.classname()) != Some("func_detail")
+    {
+        return Err(invalid(
+            "Terrain clipping requires world or func_detail brushes",
+        ));
     }
     validate(info, &mesh)?;
     crate::subobject::fragments::admit_source(solid)?;

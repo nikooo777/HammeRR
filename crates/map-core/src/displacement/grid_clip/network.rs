@@ -114,14 +114,10 @@ fn collect(document: &Document) -> Result<Vec<Raw<'_>>, EditError> {
         .iter()
         .map(|solid| (solid, true))
         .chain(vmf.entities.iter().flat_map(|entity| {
-            entity.solids.iter().map(move |solid| {
-                (
-                    solid,
-                    entity
-                        .classname()
-                        .is_some_and(|name| name.eq_ignore_ascii_case("func_detail")),
-                )
-            })
+            entity
+                .solids
+                .iter()
+                .map(move |solid| (solid, entity.classname() == Some("func_detail")))
         }))
         .filter(|(solid, _)| solid.sides.iter().any(|side| side.displacement.is_some()))
     {

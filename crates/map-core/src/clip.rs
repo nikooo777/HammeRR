@@ -426,9 +426,12 @@ pub fn clip(
             solids: cut.parts.iter().map(|solid| solid.id).collect(),
         });
         if let Some(terrain) = cut.terrain {
-            result
-                .objects
-                .extend(cut.parts.iter().map(|part| ObjectId::Solid(part.id)));
+            match cut.owner {
+                ObjectId::Solid(_) => result
+                    .objects
+                    .extend(cut.parts.iter().map(|part| ObjectId::Solid(part.id))),
+                ObjectId::Entity(_) => result.objects.push(cut.owner),
+            }
             result.terrain.push(terrain);
             terrain_fragments.extend(
                 cut.parts

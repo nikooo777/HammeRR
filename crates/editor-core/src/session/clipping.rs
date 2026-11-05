@@ -231,10 +231,8 @@ impl Session {
         if !terrain_sources.is_empty() {
             self.check_fragment_references(&terrain_sources, &BTreeSet::new(), &BTreeSet::new())?;
             for source in terrain_sources {
-                let solid = self
-                    .document
-                    .solid(source)
-                    .ok_or("Terrain cut source is unavailable")?;
+                let (_, solid) = map_core::subobject::solid(&self.document, source)
+                    .map_err(|error| error.to_string())?;
                 for side in &solid.sides {
                     let targets = result
                         .side_mapping

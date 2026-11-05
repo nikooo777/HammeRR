@@ -779,7 +779,7 @@ original target faces. Results keep geometric source IDs and add
 2. Inspect `get_clip_preview` and `render_view`.
 3. Call `commit_clip_preview` or `cancel_clip_preview`.
 
-World terrain at power 3 or 4 can split along a complete
+World and `func_detail` terrain at power 3 or 4 can split along a complete
 existing middle row or column. `keep:"both"` produces four native patches;
 `"front"` or `"back"` produces two. Grid spacing, alpha samples, UV placement
 and physical triangle tags remain unchanged. Child power is one lower.
@@ -798,6 +798,10 @@ Results include `terrain` source/output faces and powers, `side_mapping` and
 Each terrain result includes `verified_neighbors` and `preserved_links`.
 `output_power` is the common child power, or `null` for mixed output.
 Only mixed output adds `face_powers:[{solid,side,power}]`, in `faces` order.
+For `func_detail`, pass the whole `entity:n` target. All crossing child brushes
+are clipped; other children remain. `objects` reports the owning entity, while
+`cuts.solids` and `terrain.faces` report its actual child IDs. Runtime brush-model
+terrain and individual child-solid targets reject.
 The request checks at most 128 neighboring faces.
 Manual face bindings use the checked replacement faces; removing every manual
 face refuses rather than changing the helper to automatic binding.

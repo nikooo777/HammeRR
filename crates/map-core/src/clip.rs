@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec3;
-use source_formats::vmf::{Side, Solid, UvAxis};
+use source_formats::vmf::{Side, Solid, UvAxis, Vmf};
 
 use crate::edit::{DEFAULT_LIGHTMAP_SCALE, DEFAULT_TEXTURE_SCALE, world_texture_axes};
 use crate::plane::ON_EPSILON;
@@ -290,12 +290,80 @@ struct PlannedCut {
     children: Vec<crate::displacement::grid_clip::Child>,
 }
 
+pub fn requires_terrain_context(
+    document: &Document,
+    ids: &[ObjectId],
+    plane: Plane,
+) -> Result<bool, EditError> {
+    if !document.vmf().entities.iter().any(|entity| {
+        !entity.hidden
+            && entity
+                .classname()
+                .is_some_and(|name| name.eq_ignore_ascii_case("func_instance"))
+    }) {
+        return Ok(false);
+    }
+    let plane = normalized_plane(plane)?;
+    for source in sources(document, ids)? {
+        if !source
+            .solid
+            .sides
+            .iter()
+            .any(|side| side.displacement.is_some())
+        {
+            continue;
+        }
+        let geometry = geometry(source.solid)?;
+        for (index, side) in source.solid.sides.iter().enumerate() {
+            let Some(info) = &side.displacement else {
+                continue;
+            };
+            let face = geometry
+                .faces
+                .iter()
+                .find(|face| face.side == index)
+                .ok_or_else(|| invalid("Terrain has no effective base face"))?;
+            let mesh = crate::DisplacementMesh::build(face, info)
+                .map_err(|error| invalid(error.to_string()))?;
+            if crate::displacement::grid_clip::crosses(&mesh, plane) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
 pub fn clip(
     tx: &mut Transaction,
     ids: &[ObjectId],
     plane: Plane,
     keep: Keep,
     material: Option<&str>,
+) -> std::result::Result<ClipResult, EditError> {
+    clip_in_context(tx, ids, plane, keep, material, None)
+}
+
+pub fn clip_with_terrain_context(
+    tx: &mut Transaction,
+    ids: &[ObjectId],
+    plane: Plane,
+    keep: Keep,
+    material: Option<&str>,
+    context: &Vmf,
+) -> std::result::Result<ClipResult, EditError> {
+    context
+        .validate_ids()
+        .map_err(|error| invalid(error.to_string()))?;
+    clip_in_context(tx, ids, plane, keep, material, Some(context))
+}
+
+fn clip_in_context(
+    tx: &mut Transaction,
+    ids: &[ObjectId],
+    plane: Plane,
+    keep: Keep,
+    material: Option<&str>,
+    context: Option<&Vmf>,
 ) -> std::result::Result<ClipResult, EditError> {
     let plane = normalized_plane(plane)?;
     if ids.is_empty() {
@@ -326,6 +394,7 @@ pub fn clip(
                 plane,
                 keep,
                 material,
+                context,
             )?;
             let Some(plan) = plan else {
                 unchanged.push(solid.id);
@@ -406,7 +475,7 @@ pub fn clip(
         ));
     }
     if terrain_sources != 0 {
-        let vmf = tx.vmf();
+        let vmf = context.unwrap_or(tx.vmf());
         let existing = vmf
             .world
             .solids
@@ -437,7 +506,8 @@ pub fn clip(
                     })
             })
             .collect::<Vec<_>>();
-        let verified = crate::displacement::grid_clip::certify(tx.document(), &replacements)?;
+        let verified =
+            crate::displacement::grid_clip::certify(tx.document(), context, &replacements)?;
         for (cut, verified) in planned
             .iter_mut()
             .filter(|cut| cut.terrain.is_some())

@@ -205,7 +205,8 @@ Unknown displacement payloads stop odd mirrors when their indices cannot be rema
 Use [plane clipping](brush-tools.md#cut-terrain-on-its-existing-grid) to split a
 power-3/4 world or `func_detail` patch at a complete middle grid line without resampling.
 Power 4 also permits quarter-grid lines, with mixed power-2/3 output patches.
-Matching neighbor borders are checked; their grids remain unchanged.
+Matching neighbor borders are checked, including supported visible map instances.
+Their grids and child files remain unchanged. Save a new parent before cutting.
 For `func_detail`, select individual children in **Solids** mode or their whole
 entity. The cut retains the owner and unselected siblings.
 

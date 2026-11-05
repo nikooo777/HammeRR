@@ -72,6 +72,9 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
         if let Some(error) = session.clip_drag().and_then(|drag| drag.error.as_ref()) {
             app.set_clip_summary(error.clone().into());
         }
+        if let Some(error) = session.clip_preview_error() {
+            app.set_clip_summary(error.into());
+        }
     } else {
         app.set_clip_summary(
             "Draw a cut or preview a plane · the map stays unchanged until Apply cut".into(),

@@ -790,8 +790,8 @@ and the long side has six power-2/3 patches.
 Connected borders must retain complete native full/half links, sample spacing
 and active LOD. The combined candidate preserves unchanged neighbor grids and
 each retained original triangle. Quarter links, LOD coarsening, overlapping or
-unmatched contacts, arbitrary cuts, unresolved instances and unsupported bindings
-or metadata refuse before changing the map. Carrier-face material does not create
+unmatched contacts, arbitrary cuts and unsupported bindings or metadata refuse
+before changing the map. Carrier-face material does not create
 a physical wall beneath the cut.
 
 Results include `terrain` source/output faces and powers, `side_mapping` and
@@ -804,7 +804,18 @@ A whole owner takes precedence over redundant child targets; duplicates clip onc
 The entity and unselected siblings remain. `objects` reports resulting child IDs
 for child targets, or the owning entity for whole-owner targets. `cuts.solids` and
 `terrain.faces` retain actual child IDs. Runtime brush-model terrain rejects.
-The request checks at most 128 neighboring faces.
+Visible instances use a fresh complete compiler assembly. A new parent needs a
+saved path; unsaved edits can remain. Referenced child bytes are verified after
+preparation and inside Apply. Missing or unsupported child content fails; saved
+hidden references are omitted. Display filters do not remove native neighbors.
+A referenced preview adds `terrain_context` with reference/terrain counts,
+dependency hashes, source-qualified child rows and `guard_error`. Source rows
+are diagnostic identities, not editable parent faces. Open the child file to edit
+its source. Rows stop at 128 and `sources_truncated` reports the remainder.
+Changed child sources require a fresh preview. Saving the parent retires its
+preview. The shared currentness error also appears in the editor's cut summary.
+The request checks at most 128 neighboring faces and shares a 64 MiB snapshot
+budget with resolved context.
 Manual face bindings use the checked replacement faces; removing every manual
 face refuses rather than changing the helper to automatic binding.
 

@@ -560,16 +560,24 @@ pub(in crate::mcp) fn clip_result(result: &map_core::clip::ClipResult) -> Value 
 }
 
 pub(in crate::mcp) fn clip_state(session: &Session) -> Value {
-    json!({"enabled": session.clip_tool(), "snapshot":session.clip_point_stamp(), "point_draft":session.clip_points_report(), "handle_options":session.clip_handles_report(), "drag":session.clip_drag_report(), "preview": session.clip_preview().map(|preview| json!({
-        "plane": {"normal": preview.plane.normal.to_array(), "distance": preview.plane.dist},
-        "keep": match preview.keep { map_core::clip::Keep::Front => "front", map_core::clip::Keep::Back => "back", map_core::clip::Keep::Both => "both" },
-        "material": preview.material, "ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(),
-        "result": clip_result(&preview.result),
-        "cubemap_bindings":preview.cubemap_bindings_report(),
-        "pieces": preview.result.cuts.iter().flat_map(|cut| &cut.solids)
-            .filter_map(|id| map_core::surface::solid(&preview.document, *id))
-            .map(solid_detail).collect::<Vec<_>>()
-    }))})
+    let preview = session.clip_preview().map(|preview| {
+        let mut value = json!({
+            "plane": {"normal": preview.plane.normal.to_array(), "distance": preview.plane.dist},
+            "keep": match preview.keep { map_core::clip::Keep::Front => "front", map_core::clip::Keep::Back => "back", map_core::clip::Keep::Both => "both" },
+            "material": preview.material, "ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(),
+            "result": clip_result(&preview.result),
+            "cubemap_bindings":preview.cubemap_bindings_report(),
+            "pieces": preview.result.cuts.iter().flat_map(|cut| &cut.solids)
+                .filter_map(|id| map_core::surface::solid(&preview.document, *id))
+                .map(solid_detail).collect::<Vec<_>>()
+        });
+        if let Some(mut context) = preview.terrain_context_report() {
+            context["guard_error"] = json!(session.clip_preview_error());
+            value["terrain_context"] = context;
+        }
+        value
+    });
+    json!({"enabled": session.clip_tool(), "snapshot":session.clip_point_stamp(), "point_draft":session.clip_points_report(), "handle_options":session.clip_handles_report(), "drag":session.clip_drag_report(), "preview":preview})
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

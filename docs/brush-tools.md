@@ -77,6 +77,9 @@ Grid spacing, paint samples and triangle flags stay the same.
 The cut follows the displaced surface, not its backing brush.
 It does not create a wall beneath the cut.
 Matching neighbor borders are checked before Apply. Neighbor grids stay unchanged.
+Visible map instances use freshly resolved child terrain for these checks. Save
+a new parent first. Child maps stay unchanged; prepare another preview after
+child edits or a parent save.
 
 ![A painted terrain cut preserves its joined neighboring patches](images/terrain-grid-cut.png)
 
@@ -89,13 +92,16 @@ Matching neighbor borders are checked before Apply. Neighbor grids stay unchange
   world or `func_detail` patch and a complete middle grid line, or a power-4
   quarter line.
   Matching full/half borders must retain their sample spacing and LOD state.
-- Arbitrary cuts, power-2 splitting, quarter-edge links, LOD changes, overlapping
-  or unmatched borders and unresolved map instances reject.
+- Arbitrary cuts, power-2 splitting, quarter-edge links, LOD changes and
+  overlapping or unmatched borders reject. Missing or unsupported child sources
+  stop the preview. Saved-hidden references are omitted; display filters do not
+  remove compiler neighbors.
 - Terrain cuts accept 16 sources and 64 output patches. Unsupported bindings,
   notes, masks and opaque payloads reject before the map changes.
 - Select one child in **Solids** mode, or the whole `func_detail` entity.
   Only targeted crossing brushes change. Runtime brush-model terrain rejects.
-- A connected cut checks at most 128 neighboring faces.
+- A connected cut checks at most 128 neighboring faces. Terrain and resolved
+  instance context share a 64 MiB snapshot budget.
 - Invalid, collapsed or excessively thin results reject before the map changes.
 
 <!-- page-nav -->

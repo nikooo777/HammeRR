@@ -1,5 +1,5 @@
 use glam::DVec3;
-use source_formats::vmf::{DispInfo, Solid};
+use source_formats::vmf::{DispInfo, Solid, Vmf};
 
 use super::{ALLOWED_VERTEX_MASK_WORDS, DisplacementMesh, native, neighbors, smoothing, triangles};
 use crate::clip::Keep;
@@ -143,18 +143,28 @@ fn contains(corners: &[DVec3], point: DVec3) -> bool {
         })
 }
 
-fn resolved_instances(document: &Document) -> Result<(), EditError> {
-    let vmf = document.vmf();
+fn resolved_instances(vmf: &Vmf) -> Result<(), EditError> {
     if vmf.entities.iter().any(|entity| {
-        entity
-            .classname()
-            .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+        !entity.hidden
+            && entity
+                .classname()
+                .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
     }) {
         return Err(invalid(
-            "Terrain clipping requires resolved instance contents; collapse map instances before checking terrain isolation",
+            "Terrain clipping requires a complete resolved context for visible map instances",
         ));
     }
     Ok(())
+}
+
+pub(crate) fn crosses(mesh: &DisplacementMesh, plane: Plane) -> bool {
+    mesh.positions
+        .iter()
+        .any(|point| plane.distance_to(*point) > CUT_EPSILON)
+        && mesh
+            .positions
+            .iter()
+            .any(|point| plane.distance_to(*point) < -CUT_EPSILON)
 }
 
 fn grid_line(mesh: &DisplacementMesh, plane: Plane, rows: bool, cut: usize) -> Option<bool> {
@@ -278,6 +288,7 @@ pub(crate) fn plan(
     plane: Plane,
     keep: Keep,
     material: &str,
+    context: Option<&Vmf>,
 ) -> Result<Option<Plan>, EditError> {
     let displaced = solid
         .sides
@@ -297,15 +308,7 @@ pub(crate) fn plan(
         .ok_or_else(|| invalid("Terrain has no effective base face"))?;
     let info = side.displacement.as_ref().unwrap();
     let mesh = DisplacementMesh::build(face, info).map_err(|error| invalid(error.to_string()))?;
-    let front = mesh
-        .positions
-        .iter()
-        .any(|point| plane.distance_to(*point) > CUT_EPSILON);
-    let back = mesh
-        .positions
-        .iter()
-        .any(|point| plane.distance_to(*point) < -CUT_EPSILON);
-    if !front || !back {
+    if !crosses(&mesh, plane) {
         return Ok(None);
     }
     let (_, mesh) = native::checked_mesh(face, info).map_err(invalid)?;
@@ -319,7 +322,7 @@ pub(crate) fn plan(
     }
     validate(info, &mesh)?;
     crate::subobject::fragments::admit_source(solid)?;
-    resolved_instances(document)?;
+    resolved_instances(context.unwrap_or(document.vmf()))?;
     let middle = mesh.size / 2;
     let cuts = if info.power == 4 {
         vec![middle, middle / 2, middle + middle / 2]

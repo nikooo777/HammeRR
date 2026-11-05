@@ -9,6 +9,8 @@ use serde_json::Value;
 
 use super::{Actor, SelectMode, Session};
 
+mod context;
+
 #[derive(Clone)]
 pub struct ClipPreview {
     pub document: Document,
@@ -23,11 +25,18 @@ pub struct ClipPreview {
     definitions: u64,
     terrain_mapping: BTreeMap<u32, Vec<u32>>,
     cubemap_bindings: ridge_bindings::Plan,
+    terrain_context: Option<std::sync::Arc<context::Context>>,
 }
 
 impl ClipPreview {
     pub fn cubemap_bindings_report(&self) -> Value {
         self.cubemap_bindings.report()
+    }
+
+    pub fn terrain_context_report(&self) -> Option<Value> {
+        self.terrain_context
+            .as_ref()
+            .map(|context| context.report())
     }
 
     fn stale_error(&self, session: &Session) -> Option<String> {
@@ -38,6 +47,11 @@ impl ClipPreview {
         }
         if !self.result.terrain.is_empty() && self.definitions != session.definitions_serial {
             return Some("Definitions changed; preview the terrain cut again".into());
+        }
+        if let Some(context) = &self.terrain_context
+            && let Err(error) = context.current(session)
+        {
+            return Some(error);
         }
         self.cubemap_bindings.stale_error(session)
     }
@@ -90,6 +104,13 @@ impl Session {
 
     pub fn clip_preview(&self) -> Option<&ClipPreview> {
         self.geometry.clip_preview.as_ref()
+    }
+
+    pub fn clip_preview_error(&self) -> Option<String> {
+        self.geometry
+            .clip_preview
+            .as_ref()
+            .and_then(|preview| preview.stale_error(self))
     }
 
     pub fn cancel_clip_preview(&mut self) {
@@ -207,10 +228,16 @@ impl Session {
         if has_terrain {
             components::admit_fragment_snapshot(self.document.vmf())?;
         }
+        let terrain_context = if has_terrain {
+            context::Context::prepare(self, ids, plane)?
+        } else {
+            None
+        };
         let mut document = self.document.preview_snapshot();
         let result = document
-            .edit("preview clip", |tx| {
-                clip::clip(tx, ids, plane, keep, material.as_deref())
+            .edit("preview clip", |tx| match &terrain_context {
+                Some(context) => context.clip(tx, ids, plane, keep, material.as_deref()),
+                None => clip::clip(tx, ids, plane, keep, material.as_deref()),
             })
             .map_err(|error| error.to_string())?;
         let terrain_sources = result
@@ -237,6 +264,9 @@ impl Session {
             self.prepare_fragment_cubemap_bindings(&mut document, &terrain_mapping)?;
         let (mins, maxs) = map_core::query::bounds_of(&self.document, ids)
             .ok_or("Selected brushes have no bounds")?;
+        if let Some(context) = &terrain_context {
+            context.verify()?;
+        }
         Ok(ClipPreview {
             document,
             ids: ids.to_vec(),
@@ -250,6 +280,7 @@ impl Session {
             definitions: self.definitions_serial,
             terrain_mapping,
             cubemap_bindings,
+            terrain_context,
         })
     }
 
@@ -288,13 +319,22 @@ impl Session {
                     "Cubemap bindings changed; preview the terrain cut again".into(),
                 ));
             }
-            let result = clip::clip(
-                tx,
-                &preview.ids,
-                preview.plane,
-                preview.keep,
-                preview.material.as_deref(),
-            )?;
+            let result = match &preview.terrain_context {
+                Some(context) => context.clip(
+                    tx,
+                    &preview.ids,
+                    preview.plane,
+                    preview.keep,
+                    preview.material.as_deref(),
+                ),
+                None => clip::clip(
+                    tx,
+                    &preview.ids,
+                    preview.plane,
+                    preview.keep,
+                    preview.material.as_deref(),
+                ),
+            }?;
             if result != preview.result {
                 return Err(EditError::Invalid(
                     "Cut geometry or allocation changed; preview the cut again".into(),
@@ -305,6 +345,9 @@ impl Session {
                 sources
                     .verify(&game, &compiler::Control::default())
                     .map_err(EditError::Invalid)?;
+            }
+            if let Some(context) = &preview.terrain_context {
+                context.verify().map_err(EditError::Invalid)?;
             }
             Ok(result)
         })?;

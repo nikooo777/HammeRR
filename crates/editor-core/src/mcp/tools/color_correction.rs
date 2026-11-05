@@ -21,7 +21,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Share Enable color correction, Weight and Apply preview. Requires finite weight 0..1. Enabling rechecks the original loaded LUT; source errors invalidate data and require explicit Load LUT. Display-domain trilinear lookup applies once after all viewport rendering, including helpers and background, and is shared by render_view. Requested grading with unavailable source/GPU/target fails render_view; the desktop displays an ungraded frame with an explicit warning. Disable is available after failure. No source/history/camera change or native HDR parity."
+        description = "Share Enable color correction, Weight and Apply preview. Requires finite weight 0..1. Enabling rechecks the original loaded LUT; source errors invalidate data and require explicit Load LUT. Display-domain trilinear lookup applies once after all viewport rendering, including helpers and background, and is shared by render_view. Requested grading with unavailable source/GPU/target fails render_view. The desktop refuses the affected active HDR frame; Legacy display retains an ungraded frame with an explicit warning. Disable is available after failure. No source/history/camera change or native HDR parity."
     )]
     pub(in crate::mcp) fn set_color_correction_preview(
         &self,

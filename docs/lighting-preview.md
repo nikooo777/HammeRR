@@ -11,7 +11,9 @@ Compare LDR and HDR point, spot and sun lighting before a build.
 5. Set **Channel** to **LDR** or **HDR**. The default is **LDR**.
 6. Enable **Include sky ambient** to add constant, unoccluded ambient light from the eligible sun.
 7. Set **Quality** to **Detail · per-fragment** for small light pools and normal maps.
-8. Set **Exposure EV** from −8 to 8.
+8. In Legacy display, set **Exposure EV** from −8 to 8. For HDR scene display,
+   use **Fog preview… → Scene display → Scene exposure EV**, then click
+   **Apply scene display**.
 9. Check which lights and surfaces are included or excluded.
 
 | LDR | HDR |
@@ -23,8 +25,13 @@ HDR uses the compiler's `_lightHDR`, `_ambientHDR`, `_lightscaleHDR` and `_Ambie
 Absent HDR colors and supported negative-RGB sentinels inherit the compiler's corresponding values; HDR gains still apply.
 The selected channel remains visible when the preview is off.
 
-**Exposure EV** scales linear lighting before the editor's Reinhard tone map.
-**Sky channel** and **Sky EV** control the sky image separately.
+In Legacy display, **Exposure EV** scales linear lighting before the editor's
+Reinhard tone map; **Sky EV** controls the sky separately.
+In an active HDR pane, **Scene exposure EV** controls all enabled scene
+contributors after linear fog and translucency. The component exposure controls
+retain their values for Legacy panes. Orthographic and diagnostic panes keep
+their component exposures, even when another pane uses HDR.
+**Channel** and **Sky channel** still select their content independently.
 These preview settings are temporary and do not edit the map or saved preview defaults.
 Use **Reload material assets** after changing materials.
 

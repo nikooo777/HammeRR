@@ -427,7 +427,7 @@ impl Session {
         group: u32,
     ) -> Result<(), String> {
         let view = self.surface_view_options(Some(mode), Some(group))?;
-        self.set_view(view);
+        self.set_view(view)?;
         Ok(())
     }
 

@@ -160,7 +160,6 @@ impl Session {
     ) -> Result<RenderGuard, String> {
         self.ensure_not_closing()?;
         let environment = if settings.enabled {
-            settings.channel.validate()?;
             if self
                 .fog_preview
                 .key

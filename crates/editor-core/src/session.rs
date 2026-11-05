@@ -107,6 +107,8 @@ pub mod presentation;
 pub mod preview_preferences;
 pub mod primitives;
 pub mod recent;
+mod scene_display;
+pub use scene_display::SceneDisplayRenderGuard;
 pub mod selection_filters;
 pub mod selection_preferences;
 pub mod shortcuts;
@@ -2042,15 +2044,27 @@ impl Session {
         }
     }
 
-    pub fn set_view(&mut self, view: ViewOptions) {
+    pub fn set_view(&mut self, view: ViewOptions) -> Result<(), String> {
+        self.ensure_not_closing()?;
+        self.validate_view_update(view, &self.camera())?;
+        let fog = self.fog_preview_settings();
+        if fog.enabled {
+            fog.channel.validate(view.scene_display)?;
+        }
         let previous = self.view();
+        if previous == view {
+            return Ok(());
+        }
+        if previous.scene_display != view.scene_display {
+            self.resolve_scene_display_for_render(view, &self.camera())?;
+        }
         let mut without_instance_contents = view;
         without_instance_contents.instance_contents = previous.instance_contents;
         if view.instance_contents != previous.instance_contents
             && without_instance_contents == previous
         {
             self.view = view;
-            return;
+            return Ok(());
         }
         let mut without_resource_changes = view;
         without_resource_changes.instance_contents = previous.instance_contents;
@@ -2068,10 +2082,11 @@ impl Session {
         without_resource_changes.lighting_sky_ambient = previous.lighting_sky_ambient;
         without_resource_changes.lighting_quality = previous.lighting_quality;
         without_resource_changes.lighting_exposure_ev = previous.lighting_exposure_ev;
+        without_resource_changes.scene_display = previous.scene_display;
         if without_resource_changes == previous {
             self.view = view;
             self.view_serial += 1;
-            return;
+            return Ok(());
         }
         self.restore_clip_drag();
         self.clear_component_drag();
@@ -2096,6 +2111,7 @@ impl Session {
         }
         self.refresh_component_origin();
         self.view_serial += 1;
+        Ok(())
     }
 
     pub fn view_serial(&self) -> u64 {
@@ -2775,7 +2791,8 @@ impl Session {
         overrides: fog::Overrides,
         selection_only: bool,
     ) -> Result<Option<Hit>, String> {
-        let fog = self.fog_render_state_for_view(camera, view.surface, overrides)?;
+        let display = self.resolve_scene_display_for_render(view, camera)?;
+        let fog = self.fog_render_state_for_render(view, camera, overrides, display)?;
         let far_z = render::fog::far_z(fog.fog, camera);
         Ok(self
             .pick_filtered_with_previews(

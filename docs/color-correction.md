@@ -23,7 +23,10 @@ the window; it does not undo a completed load or applied settings.
 - Use exactly 98,304 bytes: 32 × 32 × 32 RGB8 entries, red index fastest, then green, then blue. Headered images, `.cube` files and other sizes are unsupported. A raw file cannot identify incorrect channel order.
 - Correction applies to display colors across the complete viewport, including the background, grid and selection. Native HDR, tone mapping, LUT entities, volumes, transitions and multiple LUTs are unavailable.
 - Missing or changed input invalidates the LUT. Load it again. A failed load clears earlier data.
-- Corrected views are limited to 4096 pixels per axis and 64 MiB of additional target storage. A GPU or size error shows an ungraded desktop frame with an error; `render_view` fails.
+- Corrected views are limited to 4096 pixels per axis and 64 MiB of additional
+  target storage. A GPU or size error in Legacy display shows an ungraded
+  desktop frame with an error. An active HDR pane refuses the affected frame;
+  `render_view` fails in either mode.
 
 <!-- page-nav -->
 

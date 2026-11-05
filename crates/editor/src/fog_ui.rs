@@ -46,7 +46,7 @@ struct Form {
     player_labels: Vec<slint::SharedString>,
     report: Value,
     action_error: Option<String>,
-    seen: Option<(String, u64, u64, u64)>,
+    seen: Option<(String, u64, u64, u64, u64)>,
     refreshed: Option<Instant>,
 }
 
@@ -683,7 +683,93 @@ fn playback_status(report: &Value) -> String {
     status
 }
 
+fn present_scene_display(window: &FogWindow, session: &Session) {
+    let report = session.scene_display_state();
+    let requested_hdr = report["requested_mode"] == "hdr";
+    if !window.get_scene_display_dirty() {
+        window.set_scene_display_mode_index(i32::from(requested_hdr));
+        window.set_scene_exposure_ev(
+            report["requested_exposure_ev"]
+                .as_f64()
+                .map(|value| value as f32)
+                .unwrap_or_default()
+                .to_string()
+                .into(),
+        );
+    }
+    window.set_scene_display_available(true);
+    window.set_scene_display_requested(
+        if requested_hdr {
+            format!(
+                "HDR · Scene exposure EV {}",
+                scalar_text(&report["requested_exposure_ev"])
+            )
+        } else {
+            "Legacy · component exposures".to_owned()
+        }
+        .into(),
+    );
+    let effective = report["effective_mode"].as_str().unwrap_or("unavailable");
+    let camera = report["camera"]["projection"]
+        .as_str()
+        .unwrap_or("camera unavailable");
+    let surface = report["surface"].as_str().unwrap_or("surface unavailable");
+    let pane = report["active_pane"].as_u64().unwrap_or_default() + 1;
+    window.set_scene_display_effective(
+        format!(
+            "{} · pane {pane} · {camera} · {surface}",
+            effective.to_ascii_uppercase()
+        )
+        .into(),
+    );
+    let owner = report["exposure_owner"]
+        .as_str()
+        .unwrap_or("unavailable")
+        .replace('_', " ");
+    window.set_scene_display_owner(
+        report["effective_exposure_ev"]
+            .as_f64()
+            .map_or_else(|| owner.clone(), |ev| format!("{owner} · {} EV", ev as f32))
+            .into(),
+    );
+    let issue = report["error"].as_str();
+    window.set_scene_display_issue(report["ready"] != true);
+    window.set_scene_display_availability(
+        issue
+            .unwrap_or(if report["ready"] == true {
+                "Ready"
+            } else {
+                "Unavailable"
+            })
+            .into(),
+    );
+}
+
+fn apply_scene_display(window: &FogWindow, target: &DocumentContinuation) {
+    let result = target.upgrade().and_then(|access| {
+        access.with_session(|session| {
+            match window.get_scene_display_mode_index() {
+                0 => session.set_scene_display(Some("legacy"), None)?,
+                1 => {
+                    let ev = window
+                        .get_scene_exposure_ev()
+                        .trim()
+                        .parse::<f64>()
+                        .map_err(|_| "Scene exposure must be finite and between -8 and 8 EV")?;
+                    session.set_scene_display(Some("hdr"), Some(ev))?
+                }
+                _ => return Err("Choose Legacy or HDR scene display".into()),
+            };
+            window.set_scene_display_dirty(false);
+            present_scene_display(window, session);
+            Ok(())
+        })
+    });
+    window.set_scene_display_message(result.err().unwrap_or_default().into());
+}
+
 fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Result<(), String> {
+    present_scene_display(window, session);
     let report = session.fog_preview_state();
     let clock = session.fog_preview_clock();
     let snapshot = report["snapshot"]
@@ -957,6 +1043,7 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
         clock.serial,
         session.camera_serial(),
         session.view_serial(),
+        session.scene_serial(),
     ));
     form.refreshed = Some(Instant::now());
     form.report = report;
@@ -1183,6 +1270,22 @@ impl Controller {
             }
         };
         window.on_apply(callback(Action::Apply));
+        window.on_apply_scene_display({
+            let (window, target) = (window.as_weak(), access.downgrade());
+            move || {
+                if let Some(window) = window.upgrade() {
+                    apply_scene_display(&window, &target);
+                }
+            }
+        });
+        window.on_scene_display_changed({
+            let window = window.as_weak();
+            move || {
+                if let Some(window) = window.upgrade() {
+                    window.set_scene_display_message("".into());
+                }
+            }
+        });
         window.on_play_pause(callback(Action::Playback));
         window.on_reset(callback(Action::Reset));
         window.on_seek(callback(Action::Seek));
@@ -1327,6 +1430,7 @@ impl Controller {
                     clock.serial,
                     session.camera_serial(),
                     session.view_serial(),
+                    session.scene_serial(),
                 ))
                 || (!matches!(clock.status, "failed" | "stale")
                     && form

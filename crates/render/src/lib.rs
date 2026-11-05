@@ -19,6 +19,7 @@ pub mod reference_images;
 pub mod references;
 pub mod ropes;
 pub mod scene;
+pub mod scene_display;
 pub mod sky;
 pub mod sky3d;
 
@@ -30,4 +31,5 @@ pub use gpu::{
 };
 pub use materials::{MaterialId, MaterialLibrary};
 pub use scene::SceneMesh;
+pub use scene_display::{ResolvedSceneDisplay, SceneDisplay};
 pub use wgpu;

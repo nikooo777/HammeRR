@@ -550,21 +550,75 @@ exclusions. Malformed/unsupported metadata reports unavailable and stays
 preserved. Unknown/incompatible fields, stale snapshots and invalid values
 reject atomically.
 
+## HDR scene display
+
+1. Call `get_scene_display` to inspect the active pane and per-pane display state.
+2. Call `set_scene_display` with `{"mode":"hdr","exposure_ev":0}`.
+3. Select and prepare each required lighting, sky or fog source separately.
+4. Call `render_view` and inspect `scene_display` and any error.
+
+`mode` accepts `"legacy"` or `"hdr"`. Entering HDR from Legacy requires an
+explicit finite `exposure_ev` from −8 to +8. Omitted fields preserve the current
+setting; an EV-only update in Legacy rejects. `{"mode":"legacy"}` restores
+component exposure. Enabled HDR fog requires HDR scene display; change fog to
+`"ldr"` or disable it before returning to Legacy. Disabled fog may retain its
+HDR channel. Scene display changes no content channel, preview enable state,
+fog events, map bytes or Undo history.
+
+HDR is active only for Perspective Textured panes. It uses one scene exposure
+for all enabled contributors, after linear fog and translucency, then the
+editor's `reinhard_per_channel` display curve. Helpers and selection outlines
+follow this display pass; color correction stays last. Orthographic and diagnostic
+panes retain their component exposures. Native adaptation and pixel parity
+are outside this preview.
+Surface and model `selection_tint` remains scene color and receives fog and
+exposure.
+
+Reports include `requested_mode`, `effective_mode`, `requested_active`, `active`,
+`requested_exposure_ev`, `effective_exposure_ev`, `exposure_owner`,
+`display_curve`, `ready`, `error`, `camera`, `surface` and `preview_only`.
+Shared inspection also includes the zero-based `active_pane` and `panes`;
+each pane has `index` and an `active_pane` flag. `requested_active` means the
+requested HDR mode fits that camera and surface; `active` also requires current
+readiness. `exposure_owner` is `"scene"` for active HDR or `"legacy_component"`
+for an available Legacy pane. If the request is unavailable, `ready` and
+`active` are false, `error` gives the reason, and effective mode, EV, owner and
+curve are null. A ready report still requires a successful render: missing
+requested HDR sources, excessive radiance and resource or GPU failures return
+explicit errors. Frame metadata is returned only after the checked render
+succeeds. LDR content does not replace a missing HDR source.
+
+`set_view` accepts `scene_display` and `scene_exposure_ev` through the same
+validation. `render_view` accepts these fields as temporary overrides and
+reports the resolved render camera's state without changing shared settings.
+For a matching `pick_at_pixel`, repeat the scene overrides with the same pane,
+camera, surface and image dimensions.
+Component exposure updates reject actual EV changes when their edit context
+is HDR-active; use `set_scene_display` instead. Unchanged EVs remain valid in
+complete baked-surface or detail lighting updates. Switching details from
+`baked_radiance` to `baked_ldr` or `editor_shading` may reset their stored EV to
+the required 0 without changing scene exposure.
+
+See [HDR scene display](fog.md#use-hdr-scene-display) for UI steps and limits.
+
 ## Preview authored lighting
 
 1. Call `get_view` to inspect shared viewport settings.
 2. Call `set_view` with `lighting_preview:true` and `lighting_channel:"ldr"` or `"hdr"`.
-3. Set `lighting_quality:"detail"`, `lighting_exposure_ev` from −8 to 8 and optional `lighting_sky_ambient:true`.
+3. Set `lighting_quality:"detail"` and optional `lighting_sky_ambient:true`.
+   In Legacy display, set `lighting_exposure_ev` from −8 to 8. In an active HDR
+   pane, use `set_scene_display` to set the shared `exposure_ev`.
 4. Read `get_lighting_preview` for admitted lights, receivers and located exclusions.
 5. Call `render_view` to inspect the result.
 
 The default lighting channel is `"ldr"`. Inspection reports the selected channel even when the preview is off.
 The channel, lighting exposure and other authored-light preview settings are temporary; they do not edit the map or saved preview defaults.
 `render_view` accepts the same settings as temporary overrides without changing shared state.
-`sky_channel` and `sky_exposure_ev` control sky images independently.
+`sky_channel` selects sky content independently. In Legacy display,
+`sky_exposure_ev` controls sky exposure; active HDR panes use scene exposure.
 HDR fields, gains and absent or supported sentinel inheritance follow the compiler.
 Malformed requested HDR inputs exclude the source with its entity ID and reason; they do not select LDR.
-The preview uses the existing editor exposure and Reinhard display policy, with no native brightness match.
+The preview uses the editor's manual exposure and Reinhard display policy, with no native brightness match.
 See [authored lighting preview](lighting-preview.md) for supported sources, receivers and limits.
 
 ## Documents
@@ -1250,12 +1304,16 @@ See [Linked paths](path-authoring.md) for supported paths and trains.
    preparation. Source, material or visibility changes require preparation again.
 
 In Perspective Textured views, an enabled ready miniature automatically uses
-its camera's static LDR fog when `fogenable` is true. World fog enable,
+its camera's static fog when `fogenable` is true. World fog enable,
 controller selection, channel, input events, time and `farz` remain independent.
 The shared `initial_radial_context` applies even when world fog is disabled;
 change it with `control_fog_preview` settings. No new sky-fog control or temporary
 context override is required. `render_view.sky3d_preview` retains its temporary
 display override without changing shared settings.
+
+An active HDR pane uses scene exposure for the miniature and its independent
+fog, including when world fog is disabled. Standard `Sky` backgrounds remain
+fog-free. Scene display does not enable or prepare the miniature.
 
 Inspect `fog.authored`, `fog.initial` and `fog.effective` for source, initialized
 and scaled profiles. `fog.initial_radial_context`, `fog.defaults`,
@@ -1298,7 +1356,8 @@ background needs explicit `$nofog 1`. Parented sky cameras refuse. See
 
 The complete `settings` object contains `enabled`, `controller` (an
 `entity:<id>` or `null`), `selection` (`explicit` or `environment`) and `channel`
-(`ldr` or `hdr`). HDR is unavailable and refuses explicitly. The stored
+(`ldr` or `hdr`). Enabled `hdr` fog requires explicit HDR scene display and
+does not enable it automatically. The stored
 `configured_controller` and effective `controller` are reported separately.
 Optional `settings.initial_radial_context` accepts `authored` or
 `css_official_map`; omission or `null` preserves the current choice. The legacy
@@ -1437,7 +1496,8 @@ game I/O are unavailable. This fixed schedule does not reproduce native packet
 delivery, prediction, physics or rendering rates.
 
 `render_view` and `pick_at_pixel` accept temporary `fog_preview`,
-`fog_controller`, `fog_selection`, `fog_channel` and `surface` overrides.
+`fog_controller`, `fog_selection`, `fog_channel`, `scene_display`,
+`scene_exposure_ev` and `surface` overrides.
 An explicit `fog_controller` forces explicit selection. Overrides preserve
 shared settings, events and time; environment selection needs its prepared
 context. Combining a controller override with `fog_selection:"environment"`
@@ -1882,12 +1942,17 @@ Send channel, exposure and stored-ID gains as one atomic update:
 Gains affect faces and are finite 0–2 for distinct available stored IDs 0–63. Omitted style 0
 means 1; other omitted IDs mean 0. EV is −8 to +8. An absent channel or style
 refuses without changing the previous options. Prepare and Clear reset options;
-Hide retains them. Static props keep baked weight 1; channel and EV apply to both.
+Hide retains them. Static props keep baked weight 1; channel and EV apply to both
+in Legacy display. In an active HDR pane, scene EV controls faces and props.
+The required `exposure_ev` in a complete lighting update may retain its stored
+value, but an actual component EV change refuses. Use `set_scene_display`
+for scene EV.
 `render_view.baked_surfaces` reports the actual layer state,
 sampling and material policy. The layer uses current owned output and separately
 guarded display assets; editing contexts can suppress it. Authored picking,
 hiding and history remain separate from native face ordinals.
-Baked surfaces and compiled details can be shown together. Keep their preparation tokens and lighting settings separate.
+Baked surfaces and compiled details can be shown together. Keep their preparation
+tokens, channels and style gains separate; active HDR panes share scene exposure.
 
 For [generated detail lighting tint](material-detail-scattering.md#generated-lighting-tint),
 use the shared World property draft:
@@ -1922,7 +1987,10 @@ for distinct available styles 1–63. EV is −8 to +8. Legacy modes reject thes
 extra fields. Static style 0 stays at unity and does not accept a gain.
 New dual builds retain separate static LDR/HDR colours when they differ.
 Inspection reports options, available channels, raw extras, effective linear
-colour and exposed colour. Each row's `lighting.static_contribution` identifies
+colour and exposed colour. Exposed values use the resolved pane's scene EV in
+HDR, or the stored layer EV in Legacy. A complete radiance update can retain
+its stored EV in an HDR pane; an actual EV change refuses. Use
+`set_scene_display` for scene EV. Each row's `lighting.static_contribution` identifies
 its shared base and selected-channel style 0. Such builds report
 `base_policy:"per_record_static_contributions"`; older shared-base builds keep
 `base_policy:"shared_native_base"`. Missing selected tables reject styled
@@ -1943,6 +2011,9 @@ Inspection pages accept `limit:1` through `64`, with at most 64 stored style
 records per prop (4,096 per page).
 `render_view.compiled_details` binds the actual layer state and lighting policy
 to its image. Prepare and Clear reset options; Hide preserves them.
+HDR scene display does not make `baked_ldr` or `editor_shading` HDR sources.
+Unavailable raw radiance or excessive values refuse the affected HDR frame
+without substituting LDR content or invalidating an otherwise valid Legacy pane.
 
 `get_compile_status` marks a completed job stale when consumed material, detail or physics-definition inputs change. `job.material_source_issue` gives the cause; unused runtime assets remain outside this check.
 
@@ -2471,6 +2542,7 @@ These groups locate the available operations.
 | [Keyboard shortcuts](keyboard-shortcuts.md) | `execute_editor_command`, `find_editor_commands`, `get_keyboard_shortcuts`, `resolve_keyboard_shortcut`, `set_keyboard_shortcuts`, `step_camera_navigation` |
 | [3D sky preview](sky.md) | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |
+| [HDR scene display](fog.md#use-hdr-scene-display) | `get_scene_display`, `set_scene_display` |
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `preview_terrain_vertex_set`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_attachment`, `transform_pivot_pick`, `transform_pivot_grid` |
 | [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `control_fog_preview`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_view_layout`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `get_view`, `inspect_baked_lightmaps`, `inspect_baked_surfaces`, `inspect_baked_prop_vertices`, `inspect_baked_prop_samples`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_baked_surfaces`, `set_camera`, `set_view_layout`, `set_fog_preview`, `set_rope_preview`, `set_view` |

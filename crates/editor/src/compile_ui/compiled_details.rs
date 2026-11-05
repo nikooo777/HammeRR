@@ -71,6 +71,12 @@ fn show_lighting(window: &CompiledDetailsWindow, settings: &LightingSettings) {
     window.set_exposure_ev(settings.exposure_ev as f32);
 }
 
+fn show_exposure_context(window: &CompiledDetailsWindow, session: &Session) {
+    let (enabled, context) = crate::ui::scene_exposure_context(session);
+    window.set_legacy_exposure_enabled(enabled);
+    window.set_exposure_context(context.into());
+}
+
 fn show_style(window: &CompiledDetailsWindow, state: &State) {
     window.set_style_index(
         state
@@ -132,7 +138,11 @@ fn chosen_lighting(
     Ok(LightingSettings {
         mode,
         channel,
-        exposure_ev: f64::from(window.get_exposure_ev()),
+        exposure_ev: if window.get_exposure_ev() == state.lighting.exposure_ev as f32 {
+            state.lighting.exposure_ev
+        } else {
+            f64::from(window.get_exposure_ev())
+        },
         style_gains: state.lighting.style_gains.clone(),
     })
 }
@@ -365,6 +375,7 @@ fn perform(
         }
     }
     let mut session = lock(shared);
+    show_exposure_context(window, &session);
     let token = state.borrow().token;
     match action {
         Action::Cancel => {
@@ -514,6 +525,7 @@ impl Form {
         if !self.is_visible() {
             return;
         }
+        show_exposure_context(&self.window, session);
         let observation = session.compiled_details_observation();
         if self.state.borrow().observation.as_ref() == Some(&observation) {
             return;

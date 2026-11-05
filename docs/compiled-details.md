@@ -4,7 +4,8 @@
 
 Show the final models, cards and cross/tri shapes from a successful build.
 The layer includes material-scattered details and uses their native BSP placements.
-Show [Baked surfaces](baked-surfaces.md) at the same time to include compiled brushes, terrain and static props. Lighting controls remain separate.
+Show [Baked surfaces](baked-surfaces.md) at the same time to include compiled
+brushes, terrain and static props. Channel and style controls remain separate.
 
 1. Click **Compile**.
 2. Open **Build details… → Compiled details…**. You can also use **Build settings… → Compiled details…**.
@@ -25,14 +26,20 @@ Full and vertical cards face the current camera. **Prepare details** and **Clear
 1. Open **Build settings…** and choose **Direct LDR** or **Direct LDR + HDR**.
 2. Compile, prepare and show the details.
 3. Set **Preview lighting → Baked radiance**.
-4. Choose **Lighting channel** and set **Exposure (EV)**.
+4. Choose **Lighting channel**. In Legacy display, set **Exposure (EV)**.
 5. Select a **Style** and set **Style gain**. Repeat for other styles.
 6. Click **Apply lighting**. A failed update keeps the previous settings.
 
 Runtime styles without a gain are off. Gains range from 0 to 2; exposure ranges from
 −8 to +8 EV. The preview multiplies the linear material colour by stored light,
-then applies exposure and Reinhard tone mapping. It keeps values above 1 until
-that step. Authored-light and sky exposure controls remain separate.
+then applies exposure and Reinhard tone mapping in Legacy display. It keeps
+values above 1 until that step.
+
+For HDR scene display, use **Fog preview… → Scene display → Scene exposure EV**,
+then click **Apply scene display**. This exposure controls details with the other
+enabled scene contributors after linear fog and translucency. The stored
+**Exposure (EV)** remains in use in Legacy, orthographic and diagnostic panes.
+Channel and style updates do not change scene exposure.
 
 A new dual build retains separate static colours when LDR and HDR differ.
 Choose **Lighting channel** to see each result. Static light stays at full
@@ -53,6 +60,10 @@ one shared base retain that base for both channels.
 - Models use skin 0 and body 0. Materials require supported static `UnlitGeneric` textures.
 - **Baked LDR** uses the LDR static colour, including stored style 0 at full weight. A record with runtime light styles stops the complete mode; the previous mode stays active.
 - **Baked LDR** clamps colours to an 8-bit display range. **Baked radiance** needs a lit build; HDR needs a dual-channel build. Missing selected style tables and invalid records reject.
+- HDR scene display does not turn **Baked LDR** or **Editor shading** into an
+  HDR lighting source. **Baked radiance** uses the explicitly selected channel.
+  Unavailable or excessive HDR radiance reports an error; it does not replace
+  the requested content with LDR. A Legacy pane can retain its valid display.
 - Static gains do not animate runtime light patterns. Dynamic lights, native exposure adaptation and exact native appearance are not simulated.
 - Sway, avoidance, runtime mirroring and fading are not displayed.
 - A changed model still in use requires **Reload models**, another build and preparation.

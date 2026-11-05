@@ -20,10 +20,15 @@ Use a `light_environment` for [sun and sky lighting](compile-and-play.md#lightin
 
 1. Select **Sky channel → HDR · editor preview**.
 2. Check that all six HDR faces are ready.
-3. Adjust **Sky EV**.
+3. In Legacy display, adjust **Sky EV**. For HDR scene display, use
+   **Fog preview… → Scene display → Scene exposure EV**, then click
+   **Apply scene display**.
 
-This exposure affects the editor sky only, not game tone mapping or baked lighting.
-It does not enable HDR fog on the miniature.
+**Sky channel** selects content independently of scene display. A requested HDR
+family needs all six HDR faces; LDR faces do not replace missing HDR faces.
+In an active HDR pane, scene exposure controls the sky with the other enabled
+scene contributors. **Sky EV** retains its value for Legacy panes.
+These controls do not change game tone mapping.
 
 ## Preview a 3D sky region
 
@@ -63,10 +68,13 @@ For density and radial overrides, add raw `fogmaxdensity` or `fogradial` with
 Set `fogradial` to `1` for radial distance or `0` for view depth.
 To disable miniature fog, choose **Fog Enable → No** and prepare again.
 
-The miniature uses its own camera fog. World fog enable, controller selection,
+The miniature uses its own camera fog in both Legacy and HDR scene display.
+World fog enable, controller selection,
 inputs, transitions and `farz` do not supply its profile. Start and end distances
 are divided by the positive miniature scale once. Author the original distances;
-do not divide them yourself. Standard `Sky` backgrounds keep their colors.
+do not divide them yourself. Standard `Sky` backgrounds do not receive fog.
+In an active HDR pane, the miniature and its fog use **Scene exposure EV**,
+even when world fog is off.
 
 | Miniature fog off | Miniature fog on |
 | --- | --- |
@@ -96,9 +104,9 @@ The game must enable full HDR to display its HDR channel.
 - 3D sky preparation is explicit; enabling the switch does not silently load or repair sources.
 - 3D sky uses opaque materials with one base texture. Cutouts, transparency, normal maps and detail layers are unsupported.
 - Miniature scale is an integer from 1 to 128. Camera angles do not rotate the miniature preview.
-- Miniature fog is static LDR. Authored lighting, models, terrain and water are
-  not previewed. HDR fog, runtime sky-camera changes and native clipping or
-  pixel parity are unavailable.
+- Miniature fog is static. Authored lighting, models, terrain and water are
+  not previewed. Runtime sky-camera changes, native exposure adaptation and
+  native clipping or pixel parity are unavailable.
 - A selected sky camera must be unparented, with no attachment binding.
 - Camera origin and fog direction use native 1/32 coordinate conversion,
   including integer wrapping; for example, 16,385 becomes 1. Reports retain

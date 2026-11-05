@@ -600,8 +600,7 @@ impl Controller {
                         }
                         let mut view = session.view();
                         view.rope_preview = enabled;
-                        session.set_view(view);
-                        Ok(())
+                        session.set_view(view)
                     })
                 });
                 if result.is_ok() {

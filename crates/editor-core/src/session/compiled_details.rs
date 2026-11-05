@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use compiler::{Control, FileIdentity, asset_sources::AssetSourceGuard};
 use render::{
-    LightingChannel, SceneMesh,
+    Camera, LightingChannel, ResolvedSceneDisplay, SceneMesh, ViewOptions,
     compiled_details::{BakedLighting, Lighting, LightingSettings},
 };
 use serde_json::{Value, json};
@@ -192,6 +192,7 @@ fn lighting_row(
     ready: &Ready,
     prop: &DetailProp,
     settings: &LightingSettings,
+    display: &Result<ResolvedSceneDisplay, String>,
 ) -> Result<Value, String> {
     let channel = settings.channel;
     let static_color = ready.baked.static_lighting(prop, channel);
@@ -206,6 +207,29 @@ fn lighting_row(
         Lighting::BakedLdr => Some(static_color.as_ref().map_err(Clone::clone)?.linear),
         Lighting::BakedRadiance => Some(ready.baked.linear(prop, settings)?),
     };
+    let exposure_ev = display.as_ref().ok().map(|display| {
+        if display.active {
+            f64::from(display.effective_exposure_ev(settings.exposure_ev as f32))
+        } else {
+            settings.exposure_ev
+        }
+    });
+    let vertex_color = if settings.mode == Lighting::BakedLdr {
+        effective.map(|color| color.map(|value| (value.clamp(0.0, 1.0) * 255.0).round() as u8))
+    } else {
+        None
+    };
+    let exposed = if settings.mode == Lighting::BakedRadiance {
+        effective
+            .zip(exposure_ev)
+            .map(|(color, ev)| color.map(|value| value * 2.0f64.powf(ev)))
+    } else if display.as_ref().is_ok_and(|display| display.active) {
+        vertex_color
+            .zip(exposure_ev)
+            .map(|(color, ev)| color.map(|value| f64::from(value) / 255.0 * 2.0f64.powf(ev)))
+    } else {
+        None
+    };
     let extras = ready.baked.extras(prop, channel).ok().map(|entries| entries.iter().map(|entry| json!({
         "style":entry.style,"rgb":entry.lighting.rgb,"exponent":entry.lighting.exponent,
         "linear":render::compiled_details::baked_ldr_linear(entry.lighting),"gain":settings.gain(entry.style),
@@ -215,8 +239,9 @@ fn lighting_row(
     Ok(json!({
         "rgb":prop.lighting.rgb,"exponent":prop.lighting.exponent,"linear":render::compiled_details::baked_ldr_linear(prop.lighting),
         "static_contribution":static_contribution,"selected_table_unavailable_reason":static_color.err(),
-        "effective_linear":effective,"exposed_linear":if settings.mode == Lighting::BakedRadiance {effective.map(|color|color.map(|value|value*2.0f64.powf(settings.exposure_ev)))}else{None},
-        "vertex_color":if settings.mode == Lighting::BakedLdr {effective.map(|color|color.map(|value|(value.clamp(0.0,1.0)*255.0).round() as u8))}else{None},
+        "effective_linear":effective,"exposed_linear":exposed,"requested_exposure_ev":settings.exposure_ev,"effective_exposure_ev":exposure_ev,"exposure_error":display.as_ref().err(),
+        "hdr_active":display.as_ref().is_ok_and(|display|display.active),"exposure_owner":display.as_ref().ok().map(|display|if display.active {display.exposure_owner()}else if settings.mode == Lighting::BakedRadiance {"compiled_details"}else{"none"}),
+        "vertex_color":vertex_color,
         "style_extras":extras
     }))
 }
@@ -477,6 +502,34 @@ impl Session {
     }
 
     pub fn compiled_details_lighting_report(&self) -> Value {
+        let view = self.view();
+        let camera = self.camera();
+        let display = self.resolve_scene_display_for_render(view, &camera);
+        let mut report = self.compiled_details_lighting_report_for_display(view, camera, display);
+        report["active_pane"] = json!(self.active_view_pane());
+        report["panes"] = json!(self.visible_view_panes().iter().map(|pane| {
+            let display = self.resolve_scene_display_for_render(view, &pane.camera);
+            let settings = &self.compiled_details.lighting;
+            json!({"index":pane.index,"active":pane.index==self.active_view_pane(),"projection":pane.camera.projection.name(),"effective_exposure_ev":display.as_ref().ok().map(|display|if display.active {f64::from(display.effective_exposure_ev(settings.exposure_ev as f32))}else{settings.exposure_ev}),"exposure_owner":display.as_ref().ok().map(|display|if display.active {display.exposure_owner()}else if settings.mode==Lighting::BakedRadiance {"compiled_details"}else{"none"}),"display_curve":display.as_ref().ok().map(|display|if display.active || settings.mode==Lighting::BakedRadiance {"reinhard_per_channel"}else{"none"}),"hdr_active":display.as_ref().is_ok_and(|display|display.active),"error":display.as_ref().err()})
+        }).collect::<Vec<_>>());
+        report
+    }
+
+    pub fn compiled_details_lighting_report_for_render(
+        &self,
+        view: ViewOptions,
+        camera: Camera,
+        display: ResolvedSceneDisplay,
+    ) -> Value {
+        self.compiled_details_lighting_report_for_display(view, camera, Ok(display))
+    }
+
+    fn compiled_details_lighting_report_for_display(
+        &self,
+        view: ViewOptions,
+        camera: Camera,
+        display: Result<ResolvedSceneDisplay, String>,
+    ) -> Value {
         let ready = self.compiled_details.ready.as_ref();
         let settings = &self.compiled_details.lighting;
         let channels = ready.map(|ready| [LightingChannel::Ldr, LightingChannel::Hdr].map(|channel| {
@@ -489,6 +542,10 @@ impl Session {
             ready.is_some_and(|ready| ready.baked.has_channel_static(&ready.records));
         json!({
             "mode":settings.mode.name(),"channel":settings.channel,"exposure_ev":settings.exposure_ev,"style_gains":settings.style_gains,
+            "requested_channel":settings.channel,"effective_channel":match settings.mode {Lighting::BakedRadiance if ready.is_some() && radiance_issue.is_none()=>Some(settings.channel), Lighting::BakedLdr if ready.is_some_and(|ready|ready.baked.baked_ldr_issue(&ready.records).is_none())=>Some(LightingChannel::Ldr), _=>None},
+            "requested_exposure_ev":settings.exposure_ev,"effective_exposure_ev":display.as_ref().ok().map(|display|if display.active {f64::from(display.effective_exposure_ev(settings.exposure_ev as f32))}else{settings.exposure_ev}),
+            "hdr_active":display.as_ref().is_ok_and(|display|display.active),"exposure_owner":display.as_ref().ok().map(|display|if display.active {display.exposure_owner()}else if settings.mode == Lighting::BakedRadiance {"compiled_details"}else{"none"}),
+            "display_curve":display.as_ref().ok().map(|display|if display.active || settings.mode == Lighting::BakedRadiance {"reinhard_per_channel"}else{"none"}),"exposure_error":display.as_ref().err(),"projection":camera.projection.name(),"surface_view":view.surface.name(),
             "baked_ldr_available":ready.map(|ready|ready.baked.baked_ldr_issue(&ready.records).is_none()),
             "unavailable_reason":ready.and_then(|ready|ready.baked.baked_ldr_issue(&ready.records)),
             "radiance_available":ready.map(|_|radiance_issue.is_none()),"radiance_unavailable_reason":radiance_issue,
@@ -498,11 +555,11 @@ impl Session {
             "style_zero_policy":"editor_unity",
             "channels":channels,"ldr_style_records":ready.and_then(|ready|ready.baked.ldr.as_ref().map(Vec::len)),
             "hdr_style_records":ready.and_then(|ready|ready.baked.hdr.as_ref().map(Vec::len)),
-            "display_policy":match settings.mode {
+            "display_policy":if display.as_ref().is_ok_and(|display|display.active) {"The selected detail representation remains linear through scene composition, then receives shared scene exposure and one Reinhard display pass. Baked LDR retains its bounded rounded vertex representation; Baked radiance retains selected-channel unexposed source radiance. No native appearance or adaptation parity"}else{match settings.mode {
                 Lighting::EditorShading => "ordinary editor material and directional shading; stored baked colors and style extras are not applied",
                 Lighting::BakedLdr => "shared native base plus stored LDR style 0 at editor unity, linear RGB / 255; clamp 0–1; round to 8-bit; editor sRGB output; no editor lighting; native gamma parity unqualified",
                 Lighting::BakedRadiance => "shared native base plus selected-channel stored style 0 at editor unity, then ordinary stored style extras times explicit gain; RGB / 255; omitted ordinary gains zero; linear base texture times lighting times 2^EV, per-channel Reinhard, one editor sRGB output; no native gamma or runtime-style parity",
-            }
+            }}
         })
     }
 
@@ -562,6 +619,7 @@ impl Session {
             return Err("Retained detail pages require the returned preparation token".into());
         }
         self.preflight_compiled_details_ownership();
+        let display = self.resolve_scene_display_for_render(self.view(), &self.camera());
         let state = self.detail_current(&Control::default())?;
         let ready = self.compiled_details.ready.as_ref();
         let lighting_rows = ready
@@ -572,7 +630,9 @@ impl Session {
                     .iter()
                     .skip(offset)
                     .take(limit)
-                    .map(|prop| lighting_row(ready, prop, &self.compiled_details.lighting))
+                    .map(|prop| {
+                        lighting_row(ready, prop, &self.compiled_details.lighting, &display)
+                    })
                     .collect::<Result<Vec<_>, _>>()
             })
             .transpose()?;
@@ -791,6 +851,12 @@ impl Session {
         self.ensure_not_closing()?;
         self.check_detail_token(token)?;
         lighting.validate()?;
+        self.validate_legacy_exposure_change(
+            self.compiled_details.lighting.exposure_ev,
+            lighting.exposure_ev,
+            self.compiled_details.lighting.mode == Lighting::BakedRadiance
+                && lighting.mode != Lighting::BakedRadiance,
+        )?;
         lighting.style_gains.sort_by_key(|entry| entry.style);
         if self.compiled_details.worker.busy() {
             return Err(
@@ -837,6 +903,45 @@ impl Session {
             format!("Compiled detail preview lighting {}", mode.name()),
         );
         self.inspect_compiled_details(None, 0, MAX_ROWS)
+    }
+
+    pub(super) fn validate_compiled_details_hdr(&self) -> Result<(), String> {
+        if !self.compiled_details.requested
+            || !self.detail_context_ready()
+            || self.compiled_details.lighting.mode != Lighting::BakedRadiance
+        {
+            return Ok(());
+        }
+        if !self.detail_current(&Control::default())?.current {
+            return Err(
+                "Compiled detail HDR requires the current owned build and unchanged preview assets"
+                    .into(),
+            );
+        }
+        let mesh = self
+            .compiled_details
+            .ready
+            .as_ref()
+            .and_then(|ready| ready.geometry.as_ref())
+            .ok_or("Compiled detail HDR requires prepared geometry for the requested layer")?;
+        for part in &mesh.detail_parts {
+            if part.vertices.is_empty() || !self.working_region_bounds_visible(Some(part.bounds)) {
+                continue;
+            }
+            if let Some(issue) = mesh.compiled_detail_hdr_draw_issue {
+                return Err(format!(
+                    "Compiled detail HDR unavailable: {}",
+                    issue.message()
+                ));
+            }
+            let ordinal = u32::try_from(part.ordinal)
+                .map_err(|_| "Compiled detail HDR ordinal exceeds renderer bounds")?;
+            mesh.compiled_detail_hdr
+                .as_ref()
+                .ok_or("Compiled detail HDR table is absent for required drawn records")?
+                .validate_drawn(std::slice::from_ref(&ordinal))?;
+        }
+        Ok(())
     }
 
     pub(super) fn append_compiled_details(&mut self, mesh: &mut SceneMesh) {

@@ -352,7 +352,35 @@ fn session_of(ui: &SharedUi) -> SharedSession {
     ui.borrow().session.clone()
 }
 
+pub(crate) fn scene_exposure_context(session: &Session) -> (bool, String) {
+    let display = session.scene_display_report_for_render(session.view(), &session.camera());
+    let hdr = display["active"] == true;
+    let context = if display["ready"] != true {
+        format!(
+            "Stored legacy exposure · {}",
+            display["error"]
+                .as_str()
+                .unwrap_or("Scene display unavailable")
+        )
+    } else if hdr {
+        display["effective_exposure_ev"].as_f64().map_or_else(
+            || "Scene exposure unavailable · Fog → Scene display".to_owned(),
+            |ev| format!("Scene exposure EV {} · Fog → Scene display", ev as f32),
+        )
+    } else {
+        "Legacy exposure · active pane".to_owned()
+    };
+    (!hdr, context)
+}
+
+fn refresh_exposure_controls(app: &AppWindow, session: &Session) {
+    let (legacy_exposure, exposure_context) = scene_exposure_context(session);
+    app.set_legacy_exposure_enabled(legacy_exposure);
+    app.set_scene_exposure_context(exposure_context.into());
+}
+
 fn refresh_view_controls(app: &AppWindow, session: &Session) {
+    refresh_exposure_controls(app, session);
     app.set_reference_images_status(session.reference_images_summary().into());
     app.set_color_correction_status(
         session.color_correction_report()["summary"]
@@ -539,7 +567,10 @@ fn apply_view_controls(app: AppWindow, shared: &SharedSession) {
     };
     app.set_sky_preview_error("".into());
     app.set_lighting_error("".into());
-    session.set_view(view);
+    if let Err(error) = session.set_view(view) {
+        app.set_message(error.clone().into());
+        app.set_sky_preview_error(error.into());
+    }
     refresh_view_controls(&app, &session);
     refresh_sky_preview_status(&app, &mut session);
 }
@@ -3337,6 +3368,7 @@ fn create_document_window(
                         ui.viewport.camera = session.camera();
                         ui.viewport.redraw();
                         refresh_spatial(&app, &session);
+                        refresh_exposure_controls(&app, &session);
                     } else {
                         session.publish_camera(ui.viewport.camera);
                     }
@@ -3367,6 +3399,7 @@ fn create_document_window(
                             ui.brush_drag = None;
                         }
                         ui.seen_scene = scene_key;
+                        refresh_exposure_controls(&app, &session);
                         app.set_instance_contents(session.view().instance_contents);
                         let mesh = session.build_scene();
                         app.set_normal_map_status(mesh.normal_maps.summary().into());

@@ -152,7 +152,6 @@ impl Session {
         camera: &render::Camera,
         settings: Settings,
     ) -> Result<SelectedFog, String> {
-        settings.channel.validate()?;
         if self
             .fog_preview
             .key
@@ -213,12 +212,47 @@ impl Session {
         surface: render::SurfaceView,
         overrides: Overrides,
     ) -> Result<FogView, String> {
+        let view = render::ViewOptions {
+            surface,
+            ..self.view()
+        };
+        let display = self.resolve_scene_display_for_render(view, camera)?;
+        self.fog_render_state_for_render(view, camera, overrides, display)
+    }
+
+    pub fn fog_render_state_for_render(
+        &self,
+        view: render::ViewOptions,
+        camera: &render::Camera,
+        overrides: Overrides,
+        display: render::ResolvedSceneDisplay,
+    ) -> Result<FogView, String> {
+        if view.scene_display.resolve(camera, view.surface)? != display {
+            return Err("Fog Scene display context does not match the rendered view".into());
+        }
+        let surface = view.surface;
         let settings = self.fog_settings_for(overrides)?;
+        if settings.enabled
+            || overrides
+                .channel
+                .is_some_and(|channel| channel != self.fog_preview.settings.channel)
+        {
+            settings.channel.validate(display.requested)?;
+        }
         if !settings.enabled {
             return Ok(FogView {
                 fog: None,
-                report: json!({"enabled":false,"applied":false,"channel":settings.channel,"selection":settings.selection,"initial_radial_context":settings.initial_radial_context.name(),"water_radial_context":settings.water_radial_context}),
+                report: json!({"enabled":false,"applied":false,"channel":settings.channel,"selection":settings.selection,"initial_radial_context":settings.initial_radial_context.name(),"water_radial_context":settings.water_radial_context,"hdr_active":display.active,"exposure_owner":display.exposure_owner(),"effective_exposure_ev":display.exposure_ev,"display_curve":display.active.then_some("reinhard_per_channel")}),
             });
+        }
+        if settings.channel == Channel::Hdr
+            && camera.projection == render::Projection::Perspective
+            && surface == render::SurfaceView::Textured
+            && !display.active
+        {
+            return Err(
+                "HDR fog color requires active HDR Scene display in this rendered view".into(),
+            );
         }
         let selected = self.selected_fog_state(camera, settings)?;
         let SelectedFog {
@@ -260,7 +294,8 @@ impl Session {
             "initial_radial_context":settings.initial_radial_context.name(),"initial_radial":initial_radial,"water_radial_context":settings.water_radial_context,"radial":fog.map(ViewFog::radial),
             "time_seconds":self.fog_preview.time,"render_time_seconds":self.fog_preview.time,"profile":profile.map(profile_report),"water":water_report,"far_z":far_z,
             "player_sample_time_seconds":player_frame.map(|frame|frame.sample_time_seconds),"player_update_hz":map_core::fog::PLAYER_UPDATE_HZ,
-            "color_linear":color.map(|fog|fog.color_for_camera(camera)),"preview_only":true}),
+            "color_linear":color.map(|fog|fog.color_for_camera(camera)),"preview_only":true,
+            "hdr_active":display.active,"exposure_owner":display.exposure_owner(),"effective_exposure_ev":display.exposure_ev,"display_curve":display.active.then_some("reinhard_per_channel")}),
         })
     }
 
@@ -467,7 +502,8 @@ impl Session {
             "initial_radial_context_source":"explicit_preview_setting","css_official_map_catalog":CSS_OFFICIAL_MAP_CATALOG,
             "settings":self.fog_preview.settings,"ready":query.is_ok()&&!clock.busy,"active":current.is_some_and(|current|current["applied"]==true),
             "summary":self.fog_preview_summary(),"detail":detail,"issue":issue,"error":issue,"catalog_issue":catalog.err(),
-            "controllers":controllers,"channels":[{"id":"ldr","label":"LDR","ready":true,"detail":"World fog · LDR"},{"id":"hdr","label":"HDR","ready":false,"detail":"HDR fog display is unavailable"}],
+            "scene_display":self.scene_display_state(),
+            "controllers":controllers,"channels":[{"id":"ldr","label":"LDR","ready":true,"detail":"World fog · LDR content; uses the resolved Scene display"},{"id":"hdr","label":"HDR","ready":matches!(self.view.scene_display,render::SceneDisplay::Hdr{..}),"detail":"Requires HDR Scene display; fog composes before shared Scene exposure and display mapping"}],
             "selections":[{"id":"explicit","label":"Explicit controller","ready":true,"detail":"Use the selected controller's authored or replayed values"},{"id":"environment","label":"Environment","ready":true,"detail":"Use the prepared initial controller, optional player switches and current-camera water fog."}],
             "inputs":inputs,"input_targets":input_targets,"events":events,"event_count":event_count,"current":current,"requested":current,"time_seconds":clock.time_seconds,"current_time_seconds":clock.time_seconds,
             "replay_mode":if !self.fog_player_active(self.fog_preview.time){"controller_inputs"}else if self.fog_preview.trigger_expansion.is_some(){"trigger_player"}else if self.fog_preview.player.is_some(){"mixed_player"}else{"controller_inputs"},"controller_states":self.controller_states_report(),"first_player_operation":self.first_fog_player_operation(),

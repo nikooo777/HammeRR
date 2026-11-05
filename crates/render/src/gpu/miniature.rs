@@ -69,6 +69,7 @@ struct Target {
     main_size: (u32, u32),
     binding: wgpu::BindGroup,
     params: wgpu::Buffer,
+    hdr: bool,
 }
 
 pub(super) struct State {
@@ -172,17 +173,28 @@ impl State {
         self.ensure_upload_capacity(ctx, FRAME_UPLOAD_BYTES, false)
     }
 
-    fn target(&mut self, ctx: &GpuContext, main_size: (u32, u32)) -> Result<&Target, String> {
-        let size = sky3d::target_size(main_size, self.allocated.load(Ordering::Relaxed))?;
-        let capacity = sky3d::target_size(
+    fn target(
+        &mut self,
+        ctx: &GpuContext,
+        main_size: (u32, u32),
+        hdr: bool,
+    ) -> Result<&Target, String> {
+        let size =
+            sky3d::target_size_for_display(main_size, self.allocated.load(Ordering::Relaxed), hdr)?;
+        let capacity = sky3d::target_size_for_display(
             (sky3d::MAX_TARGET_DIMENSION, sky3d::MAX_TARGET_DIMENSION),
             self.allocated.load(Ordering::Relaxed),
+            hdr,
         )?;
         let maximum = ctx.device.limits().max_texture_dimension_2d;
         if capacity.0 > maximum || capacity.1 > maximum {
             return Err(format!(
                 "3D sky target exceeds GPU dimension limit {maximum}"
             ));
+        }
+        if self.target.as_ref().is_some_and(|target| target.hdr != hdr) {
+            super::scene_display::drain(ctx)?;
+            self.target = None;
         }
         let params = [
             main_size.0 as f32,
@@ -199,6 +211,9 @@ impl State {
             }
             return Ok(self.target.as_ref().unwrap());
         }
+        let allocation = ctx.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let internal = ctx.device.push_error_scope(wgpu::ErrorFilter::Internal);
+        let validation = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let texture = |label, format, usage| {
             ctx.device
                 .create_texture(&wgpu::TextureDescriptor {
@@ -219,7 +234,11 @@ impl State {
         };
         let color = texture(
             "3D sky color",
-            COLOR_FORMAT,
+            if hdr {
+                super::scene_display::HDR_FORMAT
+            } else {
+                COLOR_FORMAT
+            },
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
         let depth = texture(
@@ -252,6 +271,14 @@ impl State {
                 },
             ],
         });
+        let completion = super::scene_display::drain(ctx);
+        let validation = pollster::block_on(validation.pop());
+        let internal = pollster::block_on(internal.pop());
+        let allocation = pollster::block_on(allocation.pop());
+        if let Some(error) = validation.or(internal).or(allocation) {
+            return Err(format!("3D sky target allocation failed: {error}"));
+        }
+        completion?;
         self.target = Some(Target {
             color,
             depth,
@@ -259,6 +286,7 @@ impl State {
             main_size,
             binding,
             params,
+            hdr,
         });
         Ok(self.target.as_ref().unwrap())
     }
@@ -301,9 +329,10 @@ impl GpuScene {
                     }
                 })
                 .or_else(|| {
-                    sky3d::target_size(
+                    sky3d::target_size_for_display(
                         (sky3d::MAX_TARGET_DIMENSION, sky3d::MAX_TARGET_DIMENSION),
                         scene.reservation.allocated.load(Ordering::Relaxed),
+                        options.scene_display.active(camera, options.surface),
                     )
                     .err()
                 }),
@@ -381,10 +410,16 @@ impl Renderer {
         let binding = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("3D sky globals"),
             layout: &self.sky3d.globals_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: globals.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: globals.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.inert_detail_radiance.as_entire_binding(),
+                },
+            ],
         });
         let miniature = Arc::new(Miniature {
             id: scene.id,
@@ -420,7 +455,8 @@ impl Renderer {
             .ok_or_else(|| "3D sky scene is unavailable".to_owned())?;
         self.sky3d.prepare_render(ctx)?;
         self.sky3d.uploaded += FRAME_UPLOAD_BYTES;
-        let target = self.sky3d.target(ctx, size)?;
+        let hdr = globals.scene_display[0] > 0.5;
+        let target = self.sky3d.target(ctx, size, hdr)?;
         let mut globals = *globals;
         globals.view_proj = scene
             .camera
@@ -457,7 +493,15 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.sky3d_surface_pipeline);
+        pass.set_pipeline(if hdr {
+            &self
+                .hdr_pipelines
+                .as_ref()
+                .map_err(Clone::clone)?
+                .sky3d_surface_pipeline
+        } else {
+            &self.legacy_pipelines.sky3d_surface_pipeline
+        });
         pass.set_viewport(
             0.0,
             0.0,

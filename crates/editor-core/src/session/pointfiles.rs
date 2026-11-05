@@ -151,7 +151,7 @@ impl Session {
         self.set_view(ViewOptions {
             leak_path: true,
             ..self.view
-        });
+        })?;
         self.scene_serial += 1;
         self.log(actor, format!("loaded pointfile with {count} points"));
         Ok(())

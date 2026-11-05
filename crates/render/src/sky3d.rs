@@ -19,7 +19,7 @@ pub const MAX_SCALE: f64 = 128.0;
 pub const MAX_CPU_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_GPU_ASSET_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_GPU_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
-pub const MAX_TARGET_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_TARGET_BYTES: usize = 48 * 1024 * 1024;
 pub const MAX_GPU_BYTES: usize = MAX_GPU_ASSET_BYTES + MAX_GPU_UPLOAD_BYTES + MAX_TARGET_BYTES;
 pub const MAX_TARGET_DIMENSION: u32 = 2048;
 pub const MAX_TEXTURE_DIMENSION: u32 = 2048;
@@ -30,10 +30,11 @@ const MATERIAL_RESERVE: usize = 64 * 1024;
 const PARSER_RESERVE: usize = 8 * 1024 * 1024;
 const GPU_BINDING_RESERVE: usize = 4096;
 const VMT_ALLOCATION_FACTOR: usize = 8;
-const TARGET_PIXEL_BYTES: usize = 8;
+const LEGACY_TARGET_PIXEL_BYTES: usize = 8;
+const HDR_TARGET_PIXEL_BYTES: usize = 12;
 static NEXT_SCENE: AtomicU64 = AtomicU64::new(1);
 
-pub const POLICY: &str = "Editor 3D sky preview: explicitly selected sealed flat-world/func_detail miniature; perspective Textured views only. Camera origin + main eye / integer scale 1..128; unchanged direction/FOV, no entity-angle rotation. Editor near plane 4/scale miniature units preserves main-equivalent clipping; native Source uses a different near policy. Static opaque single-base LightmappedGeneric/UnlitGeneric LDR materials with checked axis-aligned static base-texture transforms; finite center/scale/translation values within ±1024, last duplicate operation wins, nonzero rotation rejected; no alpha test, translucency, proxies, normal/detail/blend layers, authored lighting or runtime effects. The selected sky_camera supplies independent static LDR fog, evaluated in miniature coordinates after one reciprocal range scaling and the current initial radial context; no world controller/water/timeline/far-Z inheritance. Direction uses the checked received 1/32 coordinate grid before biased normalization. Standard Sky 2D backgrounds remain unchanged; combined fog with UnlitGeneric 2D backgrounds requires explicit $nofog 1. No HDR fog, native clipping, repeated client draw-history normalization or pixel parity. Missing/unsupported requested assets fail eligibility. SKY receives the miniature; SKY2D retains only the existing 2D sky path. Empty miniature pixels retain the chosen 2D sky when its independent preview is enabled and ready, otherwise the regular authored sky tool surface. Mixed SKY/SKY2D is an editor policy, not native mixed-sky parity. No helpers, selection, guides, projected picking or editing. Limits: 65536 vertices,196608 indices,16384 surfaces,64 materials,64 MiB conservative CPU builder allocation,32 MiB retained GPU geometry/material payload shared across scenes,64 MiB separately charged transient uploads and one 32 MiB color/depth target. The 128 MiB explicit payload/upload/target budget excludes driver allocation overhead and is not a total VRAM ceiling. Retired identities flush pending uploads and wait at most one second for GPU completion before replacement admission. Uploads conservatively charge RGBA rows padded to256 bytes for every mip plus geometry/uniform bytes; live matching identities reuse bindings. Targets/textures are at most2048 pixels per axis. Targets downsample larger viewports preserving aspect; texture assets never downsample or substitute.";
+pub const POLICY: &str = "Editor 3D sky preview: explicitly selected sealed flat-world/func_detail miniature; perspective Textured views only. Camera origin + main eye / integer scale 1..128; unchanged direction/FOV, no entity-angle rotation. Editor near plane 4/scale miniature units preserves main-equivalent clipping; native Source uses a different near policy. Static opaque single-base LightmappedGeneric/UnlitGeneric LDR materials with checked axis-aligned static base-texture transforms; finite center/scale/translation values within ±1024, last duplicate operation wins, nonzero rotation rejected; no alpha test, translucency, proxies, normal/detail/blend layers, authored lighting or runtime effects. The selected sky_camera supplies independent static LDR fog, evaluated in miniature coordinates after one reciprocal range scaling and the current initial radial context; no world controller/water/timeline/far-Z inheritance. Direction uses the checked received 1/32 coordinate grid before biased normalization. Standard Sky 2D backgrounds remain unchanged; combined fog with UnlitGeneric 2D backgrounds requires explicit $nofog 1. HDR scenes compose miniature fog before the shared manual exposure; no native clipping, repeated client draw-history normalization or pixel parity. Missing/unsupported requested assets fail eligibility. SKY receives the miniature; SKY2D retains only the existing 2D sky path. Empty miniature pixels retain the chosen 2D sky when its independent preview is enabled and ready, otherwise the regular authored sky tool surface. Mixed SKY/SKY2D is an editor policy, not native mixed-sky parity. No helpers, selection, guides, projected picking or editing. Limits: 65536 vertices,196608 indices,16384 surfaces,64 materials,64 MiB conservative CPU builder allocation,32 MiB retained GPU geometry/material payload shared across scenes,64 MiB separately charged transient uploads and one 32 MiB legacy or48 MiB HDR color/depth target. The 144 MiB explicit payload/upload/target budget excludes driver allocation overhead and is not a total VRAM ceiling. Retired identities flush pending uploads and wait at most one second for GPU completion before replacement admission. Uploads conservatively charge RGBA rows padded to256 bytes for every mip plus geometry/uniform bytes; live matching identities reuse bindings. Targets/textures are at most2048 pixels per axis. Targets downsample larger viewports preserving aspect; texture assets never downsample or substitute.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
@@ -512,6 +513,14 @@ impl Scene {
 }
 
 pub fn target_size(size: (u32, u32), gpu_asset_bytes: usize) -> Result<(u32, u32), String> {
+    target_size_for_display(size, gpu_asset_bytes, false)
+}
+
+pub fn target_size_for_display(
+    size: (u32, u32),
+    gpu_asset_bytes: usize,
+    hdr: bool,
+) -> Result<(u32, u32), String> {
     if size.0 == 0 || size.1 == 0 || gpu_asset_bytes > MAX_GPU_ASSET_BYTES {
         return Err("3D sky target requires nonzero dimensions and admitted GPU assets".into());
     }
@@ -520,7 +529,15 @@ pub fn target_size(size: (u32, u32), gpu_asset_bytes: usize) -> Result<(u32, u32
         .min(1.0);
     let width = (f64::from(size.0) * ratio).floor().max(1.0) as u32;
     let height = (f64::from(size.1) * ratio).floor().max(1.0) as u32;
-    let bytes = width as usize * height as usize * TARGET_PIXEL_BYTES;
+    let pixel_bytes = if hdr {
+        HDR_TARGET_PIXEL_BYTES
+    } else {
+        LEGACY_TARGET_PIXEL_BYTES
+    };
+    let bytes = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(pixel_bytes))
+        .ok_or("3D sky target allocation overflowed")?;
     checked_sum(0, bytes, MAX_TARGET_BYTES, "color/depth target allocation")?;
     checked_sum(
         gpu_asset_bytes,

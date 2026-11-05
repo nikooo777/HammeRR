@@ -154,7 +154,9 @@ impl Session {
                 self.fog_preview.invalidated = false;
             }
             Command::Settings(settings) => {
-                settings.channel.validate()?;
+                if settings.enabled || settings.channel != self.fog_preview.settings.channel {
+                    settings.channel.validate(self.view.scene_display)?;
+                }
                 let context_changed = settings.initial_radial_context
                     != self.fog_preview.settings.initial_radial_context;
                 let sequence_changed = settings.water_radial_context

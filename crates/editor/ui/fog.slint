@@ -19,6 +19,16 @@ export component FogWindow inherits Window {
     in property <bool> can-apply;
     in property <string> document-label;
     in property <bool> available;
+    in property <bool> scene-display-available;
+    in-out property <int> scene-display-mode-index;
+    in-out property <string> scene-exposure-ev: "0";
+    in-out property <bool> scene-display-dirty;
+    in property <string> scene-display-requested;
+    in property <string> scene-display-effective;
+    in property <string> scene-display-owner;
+    in property <string> scene-display-availability;
+    in property <string> scene-display-message;
+    in property <bool> scene-display-issue;
     in property <bool> has-issue;
     in-out property <bool> selection-dirty;
     in property <string> selection-status;
@@ -94,6 +104,8 @@ export component FogWindow inherits Window {
     in property <string> scope;
 
     callback choice-changed();
+    callback scene-display-changed();
+    callback apply-scene-display();
     callback refresh();
     callback apply();
     callback cancel();
@@ -139,7 +151,7 @@ export component FogWindow inherits Window {
                 Button { text: "Apply preview"; enabled: root.can-apply; primary: true; clicked => { root.apply(); } }
             }
             FieldRow {
-                inset: false; label: "Initial controller"; label-width: 104px;
+                inset: false; label: "Initial controller"; label-width: 128px;
                 if !root.environment-automatic: ComboBox {
                     accessible-label: "Initial fog controller";
                     model: root.controllers;
@@ -150,7 +162,7 @@ export component FogWindow inherits Window {
                 if root.environment-automatic: Text { text: root.effective-controller; color: Theme.text-muted; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
             }
             FieldRow {
-                inset: false; label: "Channel"; label-width: 104px;
+                inset: false; label: "Channel"; label-width: 128px;
                 ComboBox {
                     width: 140px;
                     accessible-label: "Fog preview channel";
@@ -169,6 +181,43 @@ export component FogWindow inherits Window {
                     alignment: start;
                     padding-right: Theme.space-lg;
                     spacing: Theme.space-lg;
+                    VerticalLayout {
+                        spacing: Theme.space;
+                        SectionHeader { text: "Scene display"; inset: false; collapsible: false; detail: root.scene-display-dirty ? "Unapplied display" : ""; }
+                        FieldRow {
+                            inset: false; label: "Display mode"; label-width: 128px;
+                            ComboBox {
+                                model: ["Legacy", "HDR"];
+                                current-index <=> root.scene-display-mode-index;
+                                enabled: root.scene-display-available;
+                                accessible-label: "Scene display mode";
+                                selected => { root.scene-display-dirty = true; root.scene-display-changed(); }
+                            }
+                        }
+                        FieldRow {
+                            inset: false; label: "Scene exposure EV"; label-width: 128px;
+                            LineEdit {
+                                text <=> root.scene-exposure-ev;
+                                input-type: decimal;
+                                placeholder-text: "−8 to 8";
+                                enabled: root.scene-display-available && root.scene-display-mode-index == 1;
+                                accessible-label: "Scene exposure EV";
+                                edited => { root.scene-display-dirty = true; root.scene-display-changed(); }
+                                accepted => { root.apply-scene-display(); }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Apply scene display"; enabled: root.scene-display-available && root.scene-display-dirty; clicked => { root.apply-scene-display(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                        FieldRow { inset: false; label: "Requested"; label-width: 128px; Text { text: root.scene-display-requested; wrap: word-wrap; color: Theme.text-muted; } }
+                        FieldRow { inset: false; label: "Active pane"; label-width: 128px; Text { text: root.scene-display-effective; wrap: word-wrap; color: Theme.text-muted; } }
+                        FieldRow { inset: false; label: "Exposure owner"; label-width: 128px; Text { text: root.scene-display-owner; wrap: word-wrap; color: Theme.text-muted; } }
+                        FieldRow { inset: false; label: "Availability"; label-width: 128px; Text { text: root.scene-display-availability; wrap: word-wrap; color: root.scene-display-issue ? Theme.warning : Theme.text-muted; } }
+                        if root.scene-display-message != "": Text { text: root.scene-display-message; wrap: word-wrap; color: Theme.warning; }
+                        Text { text: "HDR applies to Perspective, Textured panes. Scene exposure affects the complete scene, including sky and fog. Legacy panes retain their component exposures."; wrap: word-wrap; color: Theme.text-faint; font-size: Theme.font-small; }
+                    }
                     SectionHeader { text: "Playback"; inset: false; collapsible: false; detail: root.transitioning ? "Transition inputs" : ""; }
                     HorizontalLayout {
                         spacing: Theme.space;
@@ -177,7 +226,7 @@ export component FogWindow inherits Window {
                         Text { text: root.document-active ? root.playback-status : "Inactive document · playback suspended"; color: Theme.text-muted; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
                     }
                     FieldRow {
-                        inset: false; label: "Time"; label-width: 104px;
+                        inset: false; label: "Time"; label-width: 128px;
                         Slider {
                             minimum: 0; maximum: max(0.001, root.max-time-seconds); step: 0.01;
                             value <=> root.time-value;
@@ -205,7 +254,7 @@ export component FogWindow inherits Window {
                     if root.environment-expanded: VerticalLayout {
                         spacing: Theme.space;
                         FieldRow {
-                            inset: false; label: "Environment"; label-width: 104px;
+                            inset: false; label: "Environment"; label-width: 128px;
                             ComboBox {
                                 model: root.environments; current-index <=> root.environment-index;
                                 accessible-label: "Fog preview environment";
@@ -215,7 +264,7 @@ export component FogWindow inherits Window {
                         }
                         if root.environment-detail != "": Text { text: root.environment-detail; color: Theme.text-faint; wrap: word-wrap; }
                         FieldRow {
-                            inset: false; label: "Initial rule"; label-width: 104px;
+                            inset: false; label: "Initial rule"; label-width: 128px;
                             ComboBox {
                                 model: root.initial-rules; current-index <=> root.initial-rule-index;
                                 accessible-label: "Initial fog rule";
@@ -225,7 +274,7 @@ export component FogWindow inherits Window {
                         }
                         if root.initial-rule-detail != "": Text { text: root.initial-rule-detail; color: Theme.text-faint; wrap: word-wrap; }
                         FieldRow {
-                            inset: false; label: "Water radial"; label-width: 104px;
+                            inset: false; label: "Water radial"; label-width: 128px;
                             ComboBox {
                                 model: root.water-radial-contexts; current-index <=> root.water-radial-index;
                                 accessible-label: "Water radial context";
@@ -243,7 +292,7 @@ export component FogWindow inherits Window {
                         if root.water-radial-recorded: VerticalLayout {
                             spacing: Theme.space;
                             FieldRow {
-                                inset: false; label: "Setup"; label-width: 104px;
+                                inset: false; label: "Setup"; label-width: 128px;
                                 ComboBox {
                                     model: root.passes; current-index <=> root.pass-index;
                                     accessible-label: "Fog setup to record";
@@ -265,7 +314,7 @@ export component FogWindow inherits Window {
                     if root.player-expanded: VerticalLayout {
                         spacing: Theme.space;
                         FieldRow {
-                            inset: false; label: "Target"; label-width: 104px;
+                            inset: false; label: "Target"; label-width: 128px;
                             ComboBox {
                                 model: root.player-controllers; current-index <=> root.player-index;
                                 accessible-label: "Player fog controller target";
@@ -286,7 +335,7 @@ export component FogWindow inherits Window {
                     if root.input-expanded: VerticalLayout {
                         spacing: Theme.space;
                         FieldRow {
-                            inset: false; label: "Target"; label-width: 104px;
+                            inset: false; label: "Target"; label-width: 128px;
                             ComboBox {
                                 model: root.input-controllers; current-index <=> root.input-controller-index;
                                 accessible-label: "Controller input target";
@@ -295,7 +344,7 @@ export component FogWindow inherits Window {
                             }
                         }
                         FieldRow {
-                            inset: false; label: "Input"; label-width: 104px;
+                            inset: false; label: "Input"; label-width: 128px;
                             ComboBox {
                                 model: root.inputs; current-index <=> root.input-index;
                                 accessible-label: "Fog controller input";
@@ -304,7 +353,7 @@ export component FogWindow inherits Window {
                             }
                         }
                         if root.input-has-value: FieldRow {
-                            inset: false; label: "Value"; label-width: 104px;
+                            inset: false; label: "Value"; label-width: 128px;
                             LineEdit {
                                 text <=> root.input-value; enabled: root.available;
                                 accessible-label: "Fog controller input value";
@@ -325,7 +374,7 @@ export component FogWindow inherits Window {
                     if root.trigger-expanded: VerticalLayout {
                         spacing: Theme.space;
                         FieldRow {
-                            inset: false; label: "Source"; label-width: 104px;
+                            inset: false; label: "Source"; label-width: 128px;
                             ComboBox {
                                 model: root.triggers; current-index <=> root.trigger-index;
                                 accessible-label: "Fog trigger touch source";

@@ -3,6 +3,7 @@
 # HDR exposure
 
 Use `env_tonemap_controller` to control the game's HDR exposure.
+For the editor's manual scene exposure, use [HDR scene display](fog.md#use-hdr-scene-display).
 
 1. Place one `env_tonemap_controller`.
 2. Set its name to `map_exposure`.

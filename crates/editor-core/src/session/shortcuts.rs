@@ -363,14 +363,14 @@ impl Session {
                 self.set_view(render::ViewOptions {
                     tool_textures: !self.view().tool_textures,
                     ..self.view()
-                });
+                })?;
                 result["tool_textures"] = json!(self.view().tool_textures);
             }
             Command::SelectionOutlines => {
                 self.set_view(render::ViewOptions {
                     selection_outlines: !self.view().selection_outlines,
                     ..self.view()
-                });
+                })?;
                 result["selection_outlines"] = json!(self.view().selection_outlines);
             }
             Command::FrameSelection => {

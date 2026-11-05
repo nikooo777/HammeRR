@@ -51,7 +51,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     } else {
         texel = textureSampleLevel(sky_dn, sky_sampler, sky_uv(vec2<f32>(-d.y, -d.x) / a.z * 0.5 + 0.5, 5u), 0.0);
     }
-    if globals.sky_params.x > 0.5 {
+    if globals.sky_params.x > 0.5 && globals.scene_display.x < 0.5 {
         let exposed = texel.rgb * globals.sky_params.y;
         return vec4<f32>(exposed / (vec3<f32>(1.0) + exposed), 1.0);
     }

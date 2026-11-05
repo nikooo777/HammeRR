@@ -2,7 +2,8 @@
 
 # Fog preview
 
-Inspect world fog and mix controller inputs with timed player switches without changing the map.
+Inspect world fog, mix controller inputs with timed player switches and set
+one manual HDR scene exposure without changing the map.
 For independent static `sky_camera` fog, use [miniature fog](sky.md#preview-miniature-fog).
 
 ## Choose a controller
@@ -27,6 +28,45 @@ Use **Refresh choices** after source edits or changes from another interface.
 To disable fog, clear **Enable fog preview**, then click **Apply preview**.
 Source or content changes invalidate the preview. Reapply to capture a new
 baseline and clear the event sequence; prepare the environment again when used.
+
+## Use HDR scene display
+
+1. Choose **Perspective** and **Textured** in the intended pane.
+2. Open **View → Fog preview…** and find **Scene display**.
+3. Set **Display mode → HDR**.
+4. Set **Scene exposure EV** from −8 to +8.
+5. Click **Apply scene display**.
+6. Read **Requested**, **Active pane**, **Exposure owner** and **Availability**.
+7. To use HDR world fog, choose **Channel → HDR**, enable
+   **Enable fog preview**, then click **Apply preview**.
+
+**Scene display** works with **Enable fog preview** off. It does not enable
+fog, lighting, sky or compiled layers, change their channels or clear fog events.
+Select and prepare each required source through its own preview controls.
+
+In an active HDR pane, **Scene exposure EV** controls the complete scene:
+authored lighting, baked surfaces and props, compiled details, sky and fog.
+Fog and translucent surfaces mix in linear color before one exposure and the
+editor's per-channel Reinhard display curve. Editor helpers, icons, grid and
+selection outlines are drawn afterward. Color correction is applied last.
+Selection tint on surfaces and models remains scene color and receives fog
+and exposure.
+
+HDR scene display applies only to **Perspective** **Textured** panes.
+Orthographic and diagnostic panes retain their component exposure settings.
+In an HDR pane, those controls refer to **Scene exposure EV**; their stored
+values remain available in panes that use Legacy display. Changing scene
+exposure does not rewrite them.
+
+Choose **Display mode → Legacy** and click **Apply scene display** to restore
+component exposure. Enabled HDR fog requires HDR scene display. First choose
+**Channel → LDR** or clear **Enable fog preview**, then click **Apply preview**
+before returning to Legacy. Disabled fog can retain its HDR channel.
+Clearing or disabling fog does not reset scene display.
+
+| Scene exposure −1 EV | Scene exposure +1 EV |
+| --- | --- |
+| ![HDR sky and fogged miniature at lower scene exposure](images/scene-hdr-low.png) | ![The same sky and fogged miniature at higher scene exposure](images/scene-hdr-high.png) |
 
 ## Choose an initial rule
 
@@ -269,7 +309,7 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
 
 - World fog color and density apply to Perspective Textured surfaces and model
   meshes. The 3D miniature uses its own static camera fog. Standard `Sky`
-  backgrounds, icons, helpers, selection outlines and the grid keep their colors.
+  backgrounds, icons, helpers, selection outlines and the grid do not receive fog.
 - A positive `farz` clips all Perspective geometry, including helpers, in every
   surface mode. It remains active when `fogenable` is 0. Positive values must
   exceed 4 and be at most 1,000,000; nonpositive values disable this override.
@@ -295,8 +335,12 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
   **Recorded pass history** requires an established radial value for a wet view.
   Water refraction, above-water height fog and automatic native pass history
   are not previewed.
-- LDR only. HDR remains unavailable. `HDRColorScale` and `ZoomFogScale` are
-  preserved foreign metadata and do not scale the root controller preview.
+- Enabled **Channel → HDR** fog requires explicit HDR scene display. Selecting
+  this channel does not enable it or change another preview's channel.
+  `HDRColorScale` and `ZoomFogScale` remain preserved foreign metadata; they do
+  not scale the root controller preview.
+- Missing HDR content, excessive radiance and GPU capacity or display failures
+  report an error. Requested HDR content is not replaced with LDR content.
 - Manual controller selection snaps immediately. Mixed controller inputs and
   player switches use the declared preview delivery and update schedule.
   Automatic volume selection, camera/physics trigger contacts and general game
@@ -304,7 +348,8 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
   prediction, physics or rendering rates.
   The initial rule is an explicit preview choice, not live game-map detection.
   `fog_volume` and `trigger_fog` are unavailable.
-- HDR fog, runtime sky-camera history and native pixel parity are unavailable.
+- Native exposure adaptation, runtime sky-camera history and native pixel parity
+  are unavailable. HDR uses the declared manual editor display curve.
   Preview controls preserve map bytes, selection, camera and Undo.
 
 <!-- page-nav -->

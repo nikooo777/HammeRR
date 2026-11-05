@@ -46,6 +46,8 @@ pub(in crate::mcp) struct RenderedView {
 }
 
 struct FrameMetadata {
+    scene_display: Value,
+    lighting_preview: Value,
     selection_presentation: Value,
     helper_presentation: Value,
     color_correction: Value,
@@ -58,17 +60,26 @@ struct FrameMetadata {
 }
 
 impl FrameMetadata {
-    fn capture(session: &mut Session, view: ViewOptions, camera: Camera) -> Self {
+    fn capture(
+        session: &mut Session,
+        view: ViewOptions,
+        camera: Camera,
+        display: render::ResolvedSceneDisplay,
+        lighting: &render::lighting::Report,
+    ) -> Self {
         Self {
+            scene_display: session.scene_display_report_for_resolved(view, &camera, display),
+            lighting_preview: session
+                .lighting_preview_state_for_render(view, camera, display, lighting),
             selection_presentation: json!(session.selection_presentation(view)),
             helper_presentation: session.helper_presentation(view),
             color_correction: session.color_correction_report(),
-            skybox: session.sky_preview_state(view, camera),
+            skybox: session.sky_preview_state_for_render(view, camera, display),
             working_region: session.working_region_summary(),
             rope_preview: session.rope_preview_report(view.rope_preview),
             material_reload: json!(session.material_reload_report()),
-            compiled_details: json!({"state":session.compiled_details_observation(),"lighting":session.compiled_details_lighting_report()}),
-            baked_surfaces: session.baked_surfaces_render_report(view),
+            compiled_details: json!({"state":session.compiled_details_observation(),"lighting":session.compiled_details_lighting_report_for_render(view,camera,display)}),
+            baked_surfaces: session.baked_surfaces_render_report_for_render(view, camera, display),
         }
     }
 }
@@ -84,6 +95,8 @@ impl RenderedView {
     ) -> ToolResult {
         let data = base64::engine::general_purpose::STANDARD.encode(self.png);
         let FrameMetadata {
+            scene_display,
+            mut lighting_preview,
             selection_presentation,
             helper_presentation,
             mut color_correction,
@@ -115,7 +128,8 @@ impl RenderedView {
             .as_object_mut()
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
-        let mut info = json!({ "selection_presentation":selection_presentation,"helper_presentation":helper_presentation,"baked_surfaces":baked_surfaces,"compiled_details":compiled_details, "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "preview_issues_omitted": self.issues.omitted, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":{"report":self.lighting,"limits":render::lighting::limits()}, "material_reload":material_reload, "view": rendered_view });
+        lighting_preview["report"] = json!(self.lighting);
+        let mut info = json!({ "scene_display":scene_display,"selection_presentation":selection_presentation,"helper_presentation":helper_presentation,"baked_surfaces":baked_surfaces,"compiled_details":compiled_details, "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "preview_issues_omitted": self.issues.omitted, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":lighting_preview, "material_reload":material_reload, "view": rendered_view });
         if !include_details {
             omit_render_catalogues(&mut info);
         }
@@ -151,9 +165,11 @@ impl EditorServer {
         camera: &Camera,
         size: (u32, u32),
         view: ViewOptions,
+        display: render::ResolvedSceneDisplay,
+        display_guard: &crate::session::SceneDisplayRenderGuard,
     ) -> Result<RenderedView, String> {
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.try_render_png(camera, size, view)
+            self.try_render_png(camera, size, view, display, display_guard)
         })) {
             Ok(result) => result,
             Err(payload) => {
@@ -191,8 +207,11 @@ impl EditorServer {
         camera: &Camera,
         size: (u32, u32),
         view: ViewOptions,
+        display: render::ResolvedSceneDisplay,
+        display_guard: &crate::session::SceneDisplayRenderGuard,
     ) -> Result<RenderedView, String> {
         self.session().color_correction_for_render()?;
+        self.session().verify_scene_display_render(display_guard)?;
         self.session()
             .verify_reference_images_for_render(camera.projection)?;
         let mut offscreen = self
@@ -236,6 +255,7 @@ impl EditorServer {
             session.preflight_compiled_details();
             session.preflight_baked_surfaces();
             session.preflight_compiled_prop_leaf_bounds();
+            session.verify_scene_display_render(display_guard)?;
             *sky3d_preview = session.sky3d_preview_state_for(view, *camera);
             let key = session.render_scene_key(view);
             if scene.as_ref().is_none_or(|(previous, _)| *previous != key) {
@@ -258,15 +278,17 @@ impl EditorServer {
                 *scene = Some((session.render_scene_key(view), uploaded));
             }
             (
-                FrameMetadata::capture(&mut session, view, *camera),
+                FrameMetadata::capture(&mut session, view, *camera, display, lighting),
                 color_correction,
                 session.baked_surfaces_render_guard(view)?,
                 session.reference_images_render_guard(camera.projection)?,
             )
         };
         let gpu_scene = &scene.as_ref().expect("scene was just built").1;
-        let pixels =
-            renderer.render_to_rgba_checked(ctx, gpu_scene, camera, &view, size.0, size.1)?;
+        let pixels = renderer.render_to_rgba_checked_resolved(
+            ctx, gpu_scene, camera, &view, size.0, size.1, display,
+        )?;
+        self.session().verify_scene_display_render(display_guard)?;
         self.session()
             .verify_color_correction_render(color_correction.as_ref())?;
         self.session()

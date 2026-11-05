@@ -1,6 +1,5 @@
 //! wgpu device setup, pipelines, and drawing.
 
-use std::collections::VecDeque;
 use std::mem::size_of;
 use std::time::Duration;
 
@@ -14,13 +13,14 @@ use crate::scene::{Batch, LineVertex, SceneMesh, Vertex};
 
 mod baked_faces;
 mod color_correction;
+mod detail_radiance;
 mod miniature;
+mod scene_display;
 
 /// The view format the pipelines render into; see [`RenderTarget`].
 pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const MAX_SCRATCH_TARGETS: usize = 4;
-const MAX_DEPTH_BYTES: u64 = crate::color_correction::MAX_TARGET_BYTES;
 const READBACK_TIMEOUT: Duration = Duration::from_secs(5);
 /// Linear-space clear color; a dark slate like most modern editors.
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
@@ -121,6 +121,24 @@ impl RenderTarget {
         Self { texture, view }
     }
 
+    pub fn try_new(ctx: &GpuContext, width: u32, height: u32) -> Result<Self, String> {
+        scene_display::target_bytes(ctx, (width, height), 4)?;
+        scene_display::drain(ctx)?;
+        let allocation = ctx.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let internal = ctx.device.push_error_scope(wgpu::ErrorFilter::Internal);
+        let validation = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let target = Self::new(ctx, width, height);
+        let completion = scene_display::drain(ctx);
+        let validation = pollster::block_on(validation.pop());
+        let internal = pollster::block_on(internal.pop());
+        let allocation = pollster::block_on(allocation.pop());
+        if let Some(error) = validation.or(internal).or(allocation) {
+            return Err(format!("Presentation target allocation failed: {error}"));
+        }
+        completion?;
+        Ok(target)
+    }
+
     pub fn size(&self) -> (u32, u32) {
         (self.texture.width(), self.texture.height())
     }
@@ -140,6 +158,7 @@ struct Globals {
     up: [f32; 4],
     sky_params: [f32; 4],
     lighting_settings: [f32; 4],
+    scene_display: [f32; 4],
     lighting_lights: [crate::lighting::Light; crate::lighting::MAX_LIGHTS],
 }
 
@@ -240,6 +259,7 @@ pub struct ViewOptions {
     pub normal_maps: bool,
     pub surface_shading: bool,
     pub surface: SurfaceView,
+    pub scene_display: crate::SceneDisplay,
     pub smoothing_group: u32,
     pub tool_textures: bool,
     pub sky_preview: bool,
@@ -276,6 +296,7 @@ impl Default for ViewOptions {
         Self {
             instance_contents: false,
             surface: SurfaceView::Textured,
+            scene_display: crate::SceneDisplay::Legacy,
             normal_maps: false,
             surface_shading: false,
             lighting_preview: false,
@@ -439,6 +460,13 @@ struct IconDraw {
 
 /// Geometry uploaded by a [`Renderer`]; draw it with the same renderer.
 pub struct GpuScene {
+    globals_binding: wgpu::BindGroup,
+    compiled_detail_hdr: Option<std::sync::Arc<crate::compiled_details::HdrRadiance>>,
+    compiled_detail_hdr_ordinals: Vec<u32>,
+    _detail_radiance_reservation: Option<detail_radiance::Reservation>,
+    detail_hdr_gpu_error: Option<String>,
+    detail_hdr_required: bool,
+    radiance_bounds: crate::scene_display::SourceRadianceBounds,
     baked_faces: Option<std::sync::Arc<baked_faces::Resources>>,
     baked_face_materials: Vec<Option<std::sync::Arc<baked_faces::MaterialResources>>>,
     _baked_geometry_reservation: Option<std::sync::Arc<baked_faces::Reservation>>,
@@ -467,6 +495,19 @@ pub struct GpuScene {
     rope_lines: Option<(wgpu::Buffer, u32)>,
 }
 
+struct ScenePipelines {
+    sky3d_pipeline: wgpu::RenderPipeline,
+    sky3d_surface_pipeline: wgpu::RenderPipeline,
+    sky3d_error_pipeline: wgpu::RenderPipeline,
+    opaque_pipeline: wgpu::RenderPipeline,
+    translucent_pipeline: wgpu::RenderPipeline,
+    baked_surface_pipeline: wgpu::RenderPipeline,
+    baked_translucent_surface_pipeline: wgpu::RenderPipeline,
+    unlit_surface_pipeline: wgpu::RenderPipeline,
+    vertex_surface_pipeline: wgpu::RenderPipeline,
+    sky_pipeline: wgpu::RenderPipeline,
+}
+
 pub struct Renderer {
     baked_faces: baked_faces::State,
     color_correction: color_correction::State,
@@ -474,11 +515,12 @@ pub struct Renderer {
     last_color_correction_error: Option<String>,
     last_sky3d_error: Option<String>,
     sky3d: miniature::State,
-    sky3d_pipeline: wgpu::RenderPipeline,
-    sky3d_surface_pipeline: wgpu::RenderPipeline,
-    sky3d_error_pipeline: wgpu::RenderPipeline,
     globals: wgpu::Buffer,
-    globals_bind_group: wgpu::BindGroup,
+    globals_layout: wgpu::BindGroupLayout,
+    inert_detail_radiance: wgpu::Buffer,
+    detail_radiance_allocated: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    legacy_pipelines: ScenePipelines,
+    hdr_pipelines: Result<ScenePipelines, String>,
     material_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     icon_sampler: wgpu::Sampler,
@@ -486,14 +528,7 @@ pub struct Renderer {
     additive_icon_pipeline: wgpu::RenderPipeline,
     icon_bindings: std::collections::HashMap<u64, wgpu::BindGroup>,
     reference_image_bindings: std::collections::HashMap<String, wgpu::BindGroup>,
-    opaque_pipeline: wgpu::RenderPipeline,
-    translucent_pipeline: wgpu::RenderPipeline,
-    baked_surface_pipeline: wgpu::RenderPipeline,
-    baked_translucent_surface_pipeline: wgpu::RenderPipeline,
-    unlit_surface_pipeline: wgpu::RenderPipeline,
-    vertex_surface_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
-    sky_pipeline: wgpu::RenderPipeline,
     sky_layout: wgpu::BindGroupLayout,
     sky_sampler: wgpu::Sampler,
     skyboxes:
@@ -503,7 +538,7 @@ pub struct Renderer {
     material_generation: Option<u64>,
     white: wgpu::Texture,
     missing: wgpu::Texture,
-    depth: VecDeque<(wgpu::TextureView, (u32, u32))>,
+    targets: scene_display::Targets,
     overlay: wgpu::Buffer,
 }
 
@@ -552,15 +587,15 @@ impl Renderer {
         });
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("globals"),
-            entries: &[uniform_entry(0, wgpu::ShaderStages::VERTEX_FRAGMENT)],
+            entries: &[
+                uniform_entry(0, wgpu::ShaderStages::VERTEX_FRAGMENT),
+                detail_radiance_entry(),
+            ],
         });
-        let globals_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("globals"),
-            layout: &globals_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: globals.as_entire_binding(),
-            }],
+        let inert_detail_radiance = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("unused detail radiance"),
+            contents: &[0; 16],
+            usage: wgpu::BufferUsages::STORAGE,
         });
         let baked_faces = baked_faces::State::new(device);
 
@@ -674,7 +709,8 @@ impl Renderer {
                         blend,
                         depth_write,
                         layout: &wgpu::PipelineLayout,
-                        shader: &wgpu::ShaderModule| {
+                        shader: &wgpu::ShaderModule,
+                        format| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(layout),
@@ -720,7 +756,7 @@ impl Renderer {
                     entry_point: Some("fs_main"),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: COLOR_FORMAT,
+                        format,
                         blend,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -729,51 +765,64 @@ impl Renderer {
                 cache: None,
             })
         };
-        let opaque_pipeline = pipeline("opaque", None, true, &layout, &shader);
-        let sky3d_surface_pipeline = pipeline(
-            "3D sky surfaces",
-            None,
-            true,
-            &layout,
-            &sky3d_surface_shader,
-        );
-        let sky_pipeline = pipeline("2D sky", None, true, &sky_pipeline_layout, &sky_shader);
-        let sky3d_pipeline = pipeline(
-            "3D sky composite",
-            Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-            true,
-            &sky3d_layout,
-            &sky3d_shader,
-        );
-        let sky3d_error_pipeline = pipeline(
-            "3D sky unavailable",
-            None,
-            true,
-            &sky3d_error_layout,
-            &sky3d_error_shader,
-        );
-        let translucent_pipeline = pipeline(
-            "translucent",
-            Some(wgpu::BlendState::ALPHA_BLENDING),
-            false,
-            &layout,
-            &shader,
-        );
-        let baked_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("baked surfaces"),
-            bind_group_layouts: &[
-                Some(&globals_layout),
-                Some(&baked_faces.material_layout),
-                Some(&baked_faces.layout),
-            ],
-            immediate_size: 0,
-        });
-        let baked_pipeline = |label,
-                              entry_point,
-                              layout: &wgpu::PipelineLayout,
-                              cull_mode,
-                              translucent: bool| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let scene_pipelines = |format| {
+            let opaque_pipeline = pipeline("opaque", None, true, &layout, &shader, format);
+            let sky3d_surface_pipeline = pipeline(
+                "3D sky surfaces",
+                None,
+                true,
+                &layout,
+                &sky3d_surface_shader,
+                format,
+            );
+            let sky_pipeline = pipeline(
+                "2D sky",
+                None,
+                true,
+                &sky_pipeline_layout,
+                &sky_shader,
+                format,
+            );
+            let sky3d_pipeline = pipeline(
+                "3D sky composite",
+                Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                true,
+                &sky3d_layout,
+                &sky3d_shader,
+                format,
+            );
+            let sky3d_error_pipeline = pipeline(
+                "3D sky unavailable",
+                None,
+                true,
+                &sky3d_error_layout,
+                &sky3d_error_shader,
+                format,
+            );
+            let translucent_pipeline = pipeline(
+                "translucent",
+                Some(wgpu::BlendState::ALPHA_BLENDING),
+                false,
+                &layout,
+                &shader,
+                format,
+            );
+            let baked_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("baked surfaces"),
+                bind_group_layouts: &[
+                    Some(&globals_layout),
+                    Some(&baked_faces.material_layout),
+                    Some(&baked_faces.layout),
+                ],
+                immediate_size: 0,
+            });
+            let baked_pipeline = |label,
+                                  entry_point,
+                                  layout: &wgpu::PipelineLayout,
+                                  cull_mode,
+                                  translucent: bool,
+                                  format| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(layout),
             vertex: wgpu::VertexState {
@@ -804,49 +853,79 @@ impl Renderer {
                 module: &shader,
                 entry_point: Some(entry_point),
                 compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState { format: COLOR_FORMAT, blend: translucent.then_some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
+                targets: &[Some(wgpu::ColorTargetState { format, blend: translucent.then_some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
             }),
             multiview_mask: None,
             cache: None,
         })
+            };
+            let baked_surface_pipeline = baked_pipeline(
+                "baked surfaces",
+                "fs_baked",
+                &baked_layout,
+                Some(wgpu::Face::Back),
+                false,
+                format,
+            );
+            let baked_translucent_surface_pipeline = baked_pipeline(
+                "translucent baked surfaces",
+                "fs_baked",
+                &baked_layout,
+                Some(wgpu::Face::Back),
+                true,
+                format,
+            );
+            let unlit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("compiled unlit surfaces"),
+                bind_group_layouts: &[
+                    Some(&globals_layout),
+                    Some(&baked_faces.material_layout),
+                    Some(&baked_faces.settings_layout),
+                ],
+                immediate_size: 0,
+            });
+            let unlit_surface_pipeline = baked_pipeline(
+                "compiled unlit surfaces",
+                "fs_baked_unlit",
+                &unlit_layout,
+                Some(wgpu::Face::Back),
+                false,
+                format,
+            );
+            let vertex_surface_pipeline = baked_pipeline(
+                "compiled prop vertex surfaces",
+                "fs_baked_vertex",
+                &unlit_layout,
+                None,
+                false,
+                format,
+            );
+
+            ScenePipelines {
+                sky3d_pipeline,
+                sky3d_surface_pipeline,
+                sky3d_error_pipeline,
+                opaque_pipeline,
+                translucent_pipeline,
+                baked_surface_pipeline,
+                baked_translucent_surface_pipeline,
+                unlit_surface_pipeline,
+                vertex_surface_pipeline,
+                sky_pipeline,
+            }
         };
-        let baked_surface_pipeline = baked_pipeline(
-            "baked surfaces",
-            "fs_baked",
-            &baked_layout,
-            Some(wgpu::Face::Back),
-            false,
-        );
-        let baked_translucent_surface_pipeline = baked_pipeline(
-            "translucent baked surfaces",
-            "fs_baked",
-            &baked_layout,
-            Some(wgpu::Face::Back),
-            true,
-        );
-        let unlit_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("compiled unlit surfaces"),
-            bind_group_layouts: &[
-                Some(&globals_layout),
-                Some(&baked_faces.material_layout),
-                Some(&baked_faces.settings_layout),
-            ],
-            immediate_size: 0,
-        });
-        let unlit_surface_pipeline = baked_pipeline(
-            "compiled unlit surfaces",
-            "fs_baked_unlit",
-            &unlit_layout,
-            Some(wgpu::Face::Back),
-            false,
-        );
-        let vertex_surface_pipeline = baked_pipeline(
-            "compiled prop vertex surfaces",
-            "fs_baked_vertex",
-            &unlit_layout,
-            None,
-            false,
-        );
+        let legacy_pipelines = scene_pipelines(COLOR_FORMAT);
+        let allocation = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
+        let validation = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let hdr_pipelines = scene_pipelines(scene_display::HDR_FORMAT);
+        let validation = pollster::block_on(validation.pop());
+        let internal = pollster::block_on(internal.pop());
+        let allocation = pollster::block_on(allocation.pop());
+        let hdr_pipelines = match validation.or(internal).or(allocation) {
+            Some(error) => Err(format!("HDR scene pipeline preparation failed: {error}")),
+            None => Ok(hdr_pipelines),
+        };
 
         let icon_shader = scene_shader(device, "icon shader", include_str!("icons.wgsl"));
         let icon_pipeline = |label, blend| {
@@ -955,11 +1034,12 @@ impl Renderer {
             last_color_correction_error: None,
             last_sky3d_error: None,
             sky3d,
-            sky3d_pipeline,
-            sky3d_surface_pipeline,
-            sky3d_error_pipeline,
             globals,
-            globals_bind_group,
+            globals_layout,
+            inert_detail_radiance,
+            detail_radiance_allocated: std::sync::Arc::default(),
+            legacy_pipelines,
+            hdr_pipelines,
             material_layout,
             sampler,
             icon_sampler,
@@ -967,14 +1047,7 @@ impl Renderer {
             additive_icon_pipeline,
             icon_bindings: std::collections::HashMap::new(),
             reference_image_bindings: std::collections::HashMap::new(),
-            opaque_pipeline,
-            translucent_pipeline,
-            baked_surface_pipeline,
-            baked_translucent_surface_pipeline,
-            unlit_surface_pipeline,
-            vertex_surface_pipeline,
             line_pipeline,
-            sky_pipeline,
             sky_layout,
             sky_sampler,
             skyboxes: std::collections::HashMap::new(),
@@ -982,7 +1055,7 @@ impl Renderer {
             material_generation: None,
             white: solid_texture(ctx, [255, 255, 255, 255]),
             missing: checkerboard_texture(ctx),
-            depth: VecDeque::new(),
+            targets: scene_display::Targets::default(),
             overlay: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("spatial overlays"),
                 size: 65_536,
@@ -1034,9 +1107,46 @@ impl Renderer {
                     .transpose()
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let detail_preparation = self.prepare_detail_hdr(ctx, mesh);
+        let (detail_radiance, detail_radiance_reservation, mut detail_hdr_gpu_error) =
+            match detail_preparation {
+                Ok((buffer, reservation)) => (buffer, Some(reservation), None),
+                Err(error) => (None, None, Some(error)),
+            };
+        let mut compiled_detail_hdr_ordinals = Vec::new();
+        match compiled_detail_hdr_ordinals
+            .try_reserve_exact(mesh.compiled_detail_hdr_ordinals.len())
+        {
+            Ok(()) => {
+                compiled_detail_hdr_ordinals.extend_from_slice(&mesh.compiled_detail_hdr_ordinals)
+            }
+            Err(error) => {
+                detail_hdr_gpu_error = Some(format!(
+                    "Detail HDR draw metadata allocation failed: {error}"
+                ))
+            }
+        }
+        let radiance_bounds = crate::scene_display::SourceRadianceBounds::from_scene(mesh, library);
         let allocation = ctx.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let internal = ctx.device.push_error_scope(wgpu::ErrorFilter::Internal);
         let validation = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let globals_binding = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scene globals and raw detail HDR radiance"),
+            layout: &self.globals_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.globals.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: detail_radiance
+                        .as_ref()
+                        .unwrap_or(&self.inert_detail_radiance)
+                        .as_entire_binding(),
+                },
+            ],
+        });
         if self.material_generation != Some(library.generation()) {
             self.clear_materials();
             self.material_generation = Some(library.generation());
@@ -1273,6 +1383,13 @@ impl Renderer {
             })
         });
         let scene = GpuScene {
+            globals_binding,
+            compiled_detail_hdr: mesh.compiled_detail_hdr.clone(),
+            compiled_detail_hdr_ordinals,
+            _detail_radiance_reservation: detail_radiance_reservation,
+            detail_hdr_gpu_error,
+            detail_hdr_required: !mesh.compiled_detail_hdr_ordinals.is_empty(),
+            radiance_bounds,
             baked_faces,
             baked_face_materials,
             _baked_geometry_reservation: baked_geometry_reservation,
@@ -1313,6 +1430,57 @@ impl Renderer {
             return Err(format!("Scene GPU preparation failed: {error}"));
         }
         Ok(scene)
+    }
+
+    fn prepare_detail_hdr(
+        &self,
+        ctx: &GpuContext,
+        mesh: &SceneMesh,
+    ) -> Result<(Option<wgpu::Buffer>, detail_radiance::Reservation), String> {
+        let table_bytes = mesh
+            .compiled_detail_hdr
+            .as_ref()
+            .map(|table| table.gpu_bytes())
+            .transpose()?
+            .unwrap_or(0);
+        let limits = ctx.device.limits();
+        if table_bytes as u64 > limits.max_buffer_size
+            || table_bytes as u64 > limits.max_storage_buffer_binding_size
+            || limits.max_storage_buffers_per_shader_stage < 3
+            || limits.max_bindings_per_bind_group < 3
+        {
+            return Err("Detail HDR table or shared bindings exceed GPU device limits".into());
+        }
+        scene_display::drain(ctx)?;
+        let reservation = detail_radiance::Reservation::new(
+            &self.detail_radiance_allocated,
+            table_bytes,
+            mesh.compiled_detail_hdr_ordinals.len(),
+        )?;
+        let allocation = ctx.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let internal = ctx.device.push_error_scope(wgpu::ErrorFilter::Internal);
+        let validation = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let buffer = mesh
+            .compiled_detail_hdr
+            .as_ref()
+            .filter(|table| !table.entries().is_empty())
+            .map(|table| {
+                ctx.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("raw detail HDR radiance"),
+                        contents: bytemuck::cast_slice(table.entries()),
+                        usage: wgpu::BufferUsages::STORAGE,
+                    })
+            });
+        let completion = scene_display::drain(ctx);
+        let validation = pollster::block_on(validation.pop());
+        let internal = pollster::block_on(internal.pop());
+        let allocation = pollster::block_on(allocation.pop());
+        if let Some(error) = validation.or(internal).or(allocation) {
+            return Err(format!("Detail HDR GPU preparation failed: {error}"));
+        }
+        completion?;
+        Ok((buffer, reservation))
     }
 
     fn sky_bind_group(
@@ -1484,49 +1652,6 @@ impl Renderer {
         })
     }
 
-    fn depth_view(&mut self, ctx: &GpuContext, size: (u32, u32)) -> wgpu::TextureView {
-        if let Some(index) = self.depth.iter().position(|(_, current)| *current == size) {
-            let entry = self.depth.remove(index).unwrap();
-            let view = entry.0.clone();
-            self.depth.push_back(entry);
-            return view;
-        }
-        let bytes = |size: (u32, u32)| {
-            u64::from(size.0)
-                .checked_mul(u64::from(size.1))
-                .and_then(|pixels| pixels.checked_mul(4))
-        };
-        let requested = bytes(size);
-        while !self.depth.is_empty()
-            && (self.depth.len() >= MAX_SCRATCH_TARGETS
-                || self
-                    .depth
-                    .iter()
-                    .try_fold(0_u64, |total, (_, size)| total.checked_add(bytes(*size)?))
-                    .and_then(|total| total.checked_add(requested?))
-                    .is_none_or(|total| total > MAX_DEPTH_BYTES))
-        {
-            self.depth.pop_front();
-        }
-        let texture = ctx.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("depth"),
-            size: wgpu::Extent3d {
-                width: size.0,
-                height: size.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&Default::default());
-        self.depth.push_back((view.clone(), size));
-        view
-    }
-
     /// Draws the scene into `target`, which must be `COLOR_FORMAT`.
     pub fn render(
         &mut self,
@@ -1536,32 +1661,67 @@ impl Renderer {
         options: &ViewOptions,
         target: &wgpu::TextureView,
         size: (u32, u32),
-    ) {
+    ) -> Result<(), String> {
+        let display = options.scene_display.resolve(camera, options.surface)?;
+        self.render_resolved(ctx, scene, camera, options, target, size, display)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_resolved(
+        &mut self,
+        ctx: &GpuContext,
+        scene: &GpuScene,
+        camera: &Camera,
+        options: &ViewOptions,
+        target: &wgpu::TextureView,
+        size: (u32, u32),
+        display: crate::ResolvedSceneDisplay,
+    ) -> Result<(), String> {
+        if options.scene_display.resolve(camera, options.surface)? != display {
+            return Err("Scene display context does not match the prepared view".into());
+        }
         let mut correction = std::mem::take(&mut self.color_correction);
         self.last_color_correction_error = None;
-        if let Some(preview) = &self.color_correction_preview {
+        let result = if let Some(preview) = &self.color_correction_preview {
             match correction.prepare(ctx, preview, size) {
-                Ok(()) => {
-                    self.render_scene(ctx, scene, camera, options, correction.target(), size);
-                    if let Err(error) = correction.draw(ctx, target) {
-                        self.render_scene(ctx, scene, camera, options, target, size);
-                        self.last_color_correction_error = Some(error);
-                    }
-                }
+                Ok(()) => self
+                    .render_scene(
+                        ctx,
+                        scene,
+                        camera,
+                        options,
+                        correction.target(),
+                        size,
+                        display,
+                    )
+                    .and_then(|()| match correction.draw(ctx, target) {
+                        Ok(()) => Ok(()),
+                        Err(error) if display.active => Err(error),
+                        Err(error) => {
+                            self.last_color_correction_error = Some(error);
+                            self.render_scene(ctx, scene, camera, options, target, size, display)
+                        }
+                    }),
+                Err(error) if display.active => Err(error),
                 Err(error) => {
-                    self.render_scene(ctx, scene, camera, options, target, size);
                     self.last_color_correction_error = Some(error);
+                    self.render_scene(ctx, scene, camera, options, target, size, display)
                 }
             }
         } else {
-            if let Err(error) = correction.disable(ctx) {
-                self.last_color_correction_error = Some(error);
+            match correction.disable(ctx) {
+                Err(error) if display.active => Err(error),
+                result => {
+                    self.last_color_correction_error = result.err();
+                    self.render_scene(ctx, scene, camera, options, target, size, display)
+                }
             }
-            self.render_scene(ctx, scene, camera, options, target, size);
-        }
+        };
         self.color_correction = correction;
+        result
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_scene(
         &mut self,
         ctx: &GpuContext,
@@ -1570,8 +1730,39 @@ impl Renderer {
         options: &ViewOptions,
         target: &wgpu::TextureView,
         size: (u32, u32),
-    ) {
-        let depth = self.depth_view(ctx, size);
+        display: crate::ResolvedSceneDisplay,
+    ) -> Result<(), String> {
+        let hdr = display.active;
+        if hdr {
+            self.hdr_pipelines.as_ref().map_err(Clone::clone)?;
+            self.targets.admit_frame(ctx, size)?;
+            scene.radiance_bounds.validate_frame(options, camera)?;
+            if scene.detail_hdr_required
+                && let Some(error) = &scene.detail_hdr_gpu_error
+            {
+                return Err(error.clone());
+            }
+            if !scene.compiled_detail_hdr_ordinals.is_empty() {
+                scene
+                    .compiled_detail_hdr
+                    .as_ref()
+                    .ok_or("HDR frame requires the retained raw compiled-detail radiance table")?
+                    .validate_drawn(&scene.compiled_detail_hdr_ordinals)?;
+            }
+            if options.sky_preview
+                && (scene.skybox.is_none() || scene.sky_channel != options.sky_channel)
+            {
+                return Err(
+                    "HDR scene sky preview requires the requested ready sky content channel".into(),
+                );
+            }
+        }
+        let depth = self.targets.depth(ctx, size)?;
+        let hdr_target = hdr.then(|| self.targets.hdr(ctx, size)).transpose()?;
+        let scene_target = hdr_target.as_ref().unwrap_or(target);
+        let allocation = ctx.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let internal = ctx.device.push_error_scope(wgpu::ErrorFilter::Internal);
+        let validation = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let aspect = size.0 as f32 / size.1.max(1) as f32;
         let light = glam::Vec3::new(0.35, 0.55, 0.75).normalize();
         let fog = crate::fog::for_color(options.fog, camera, options.surface);
@@ -1595,9 +1786,14 @@ impl Renderer {
                     1.0
                 },
                 if lighting_active { 1.0 } else { 0.0 },
-                2f32.powf(options.lighting_exposure_ev) / 255.0,
+                if hdr {
+                    1.0 / 255.0
+                } else {
+                    2f32.powf(options.lighting_exposure_ev) / 255.0
+                },
             ],
             lighting_lights,
+            scene_display: [if hdr { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             view_proj: camera
                 .view_projection_with_far(aspect, crate::fog::far_z(options.fog, camera))
                 .to_cols_array_2d(),
@@ -1666,11 +1862,16 @@ impl Renderer {
         } else {
             None
         };
+        let pipelines = if hdr {
+            self.hdr_pipelines.as_ref().unwrap()
+        } else {
+            &self.legacy_pipelines
+        };
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("map"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
+                    view: scene_target,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
@@ -1682,7 +1883,11 @@ impl Renderer {
                     view: &depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(0.0),
-                        store: wgpu::StoreOp::Discard,
+                        store: if hdr {
+                            wgpu::StoreOp::Store
+                        } else {
+                            wgpu::StoreOp::Discard
+                        },
                     }),
                     stencil_ops: None,
                 }),
@@ -1690,122 +1895,208 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_bind_group(0, &self.globals_bind_group, &[]);
+            pass.set_bind_group(0, &scene.globals_binding, &[]);
+            if grid_count > 0 && !hdr {
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_vertex_buffer(0, self.overlay.slice(..));
+                pass.draw(0..grid_count as u32, 0..1);
+            }
+            self.draw_surfaces(
+                &mut pass,
+                scene,
+                camera,
+                options,
+                pipelines,
+                sky3d_target.as_ref(),
+                sky3d_error.is_some(),
+                hdr.then_some(false),
+            );
+            if !hdr {
+                self.draw_overlays(&mut pass, scene, camera, options, overlay.len(), grid_count);
+            }
+        }
+        if hdr && sky3d_error.is_none() {
+            self.targets.present(
+                ctx,
+                &mut encoder,
+                target,
+                2_f32.powf(display.exposure_ev.unwrap_or(0.0)),
+            );
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("HDR display-space editor overlays"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            pass.set_bind_group(0, &scene.globals_binding, &[]);
             if grid_count > 0 {
                 pass.set_pipeline(&self.line_pipeline);
                 pass.set_vertex_buffer(0, self.overlay.slice(..));
                 pass.draw(0..grid_count as u32, 0..1);
             }
-            pass.set_vertex_buffer(0, scene.vertices.slice(..));
-            pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
-            let translucent = translucent_order(&scene.translucent, camera);
-            for (pipeline, batches) in [
-                (&self.opaque_pipeline, scene.opaque.as_slice()),
-                (&self.translucent_pipeline, translucent.as_ref()),
-            ] {
-                for draw in batches {
-                    if draw.reference && !options.instance_contents {
-                        continue;
-                    }
-                    if draw.batch.rope && !options.rope_preview {
-                        continue;
-                    }
-                    if options.surface == SurfaceView::Wireframe && !draw.helper {
-                        continue;
-                    }
-                    if !options.tool_textures
-                        && draw.tool
-                        && !(draw.sky && options.sky_preview)
-                        && !(draw.sky3d_eligible && options.sky3d_preview)
-                    {
-                        continue;
-                    }
-                    if draw.baked_surface {
-                        let lighting = scene
-                            .baked_faces
+            self.draw_surfaces(
+                &mut pass,
+                scene,
+                camera,
+                options,
+                &self.legacy_pipelines,
+                None,
+                false,
+                Some(true),
+            );
+            self.draw_overlays(&mut pass, scene, camera, options, overlay.len(), grid_count);
+        }
+        let submission = ctx.queue.submit([encoder.finish()]);
+        let completion = if hdr {
+            ctx.device
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(submission),
+                    timeout: Some(READBACK_TIMEOUT),
+                })
+                .map(|_| ())
+                .map_err(|error| format!("HDR scene submission failed: {error}"))
+        } else {
+            Ok(())
+        };
+        let validation = pollster::block_on(validation.pop());
+        let internal = pollster::block_on(internal.pop());
+        let allocation = pollster::block_on(allocation.pop());
+        self.last_sky3d_error = sky3d_error;
+        if let Some(error) = validation.or(internal).or(allocation) {
+            return Err(format!("Scene GPU frame failed: {error}"));
+        }
+        completion?;
+        if hdr && let Some(error) = &self.last_sky3d_error {
+            return Err(error.clone());
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_surfaces<'pass>(
+        &'pass self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        scene: &'pass GpuScene,
+        camera: &Camera,
+        options: &ViewOptions,
+        pipelines: &'pass ScenePipelines,
+        sky3d_target: Option<&'pass wgpu::BindGroup>,
+        sky3d_error: bool,
+        helper_only: Option<bool>,
+    ) {
+        pass.set_vertex_buffer(0, scene.vertices.slice(..));
+        pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
+        let translucent = translucent_order(&scene.translucent, camera);
+        for (pipeline, batches) in [
+            (&pipelines.opaque_pipeline, scene.opaque.as_slice()),
+            (&pipelines.translucent_pipeline, translucent.as_ref()),
+        ] {
+            for draw in batches {
+                if helper_only.is_some_and(|helper| draw.helper != helper) {
+                    continue;
+                }
+                if draw.reference && !options.instance_contents {
+                    continue;
+                }
+                if draw.batch.rope && !options.rope_preview {
+                    continue;
+                }
+                if options.surface == SurfaceView::Wireframe && !draw.helper {
+                    continue;
+                }
+                if !options.tool_textures
+                    && draw.tool
+                    && !(draw.sky && options.sky_preview)
+                    && !(draw.sky3d_eligible && options.sky3d_preview)
+                {
+                    continue;
+                }
+                if draw.baked_surface {
+                    let lighting = scene
+                        .baked_faces
+                        .as_ref()
+                        .expect("validated baked surface lighting");
+                    let material = scene.baked_face_materials[draw.batch.material]
+                        .as_ref()
+                        .expect("validated baked surface material");
+                    pass.set_pipeline(match material.lighting {
+                        MaterialLighting::Unlit => &pipelines.unlit_surface_pipeline,
+                        MaterialLighting::Lightmap { .. } if draw.batch.model_translucent => {
+                            &pipelines.baked_translucent_surface_pipeline
+                        }
+                        MaterialLighting::Lightmap { .. } => &pipelines.baked_surface_pipeline,
+                        MaterialLighting::Vertex => &pipelines.vertex_surface_pipeline,
+                    });
+                    pass.set_bind_group(1, &material.binding, &[]);
+                    let lighting = match material.lighting {
+                        MaterialLighting::Unlit | MaterialLighting::Vertex => {
+                            &lighting.settings_binding
+                        }
+                        MaterialLighting::Lightmap { .. } => lighting
+                            .lighting_binding
                             .as_ref()
-                            .expect("validated baked surface lighting");
-                        let material = scene.baked_face_materials[draw.batch.material]
-                            .as_ref()
-                            .expect("validated baked surface material");
-                        pass.set_pipeline(match material.lighting {
-                            MaterialLighting::Unlit => &self.unlit_surface_pipeline,
-                            MaterialLighting::Lightmap { .. } if draw.batch.model_translucent => {
-                                &self.baked_translucent_surface_pipeline
-                            }
-                            MaterialLighting::Lightmap { .. } => &self.baked_surface_pipeline,
-                            MaterialLighting::Vertex => &self.vertex_surface_pipeline,
-                        });
-                        pass.set_bind_group(1, &material.binding, &[]);
-                        let lighting = match material.lighting {
-                            MaterialLighting::Unlit | MaterialLighting::Vertex => {
-                                &lighting.settings_binding
-                            }
-                            MaterialLighting::Lightmap { .. } => lighting
-                                .lighting_binding
-                                .as_ref()
-                                .expect("validated baked surface samples"),
-                        };
-                        pass.set_bind_group(2, lighting, &[]);
-                        let batch = draw.batch;
-                        pass.draw_indexed(
-                            batch.first_index..batch.first_index + batch.index_count,
-                            0,
-                            0..1,
-                        );
-                        continue;
-                    }
-                    let Some(Some(material)) = self.materials.get(draw.batch.material) else {
-                        continue;
+                            .expect("validated baked surface samples"),
                     };
-                    let sky3d_draw = draw.sky3d_eligible && options.sky3d_active(camera);
-                    if sky3d_draw && sky3d_error.is_some() {
-                        pass.set_pipeline(&self.sky3d_error_pipeline);
-                        let batch = draw.batch;
-                        pass.draw_indexed(
-                            batch.first_index..batch.first_index + batch.index_count,
-                            0,
-                            0..1,
-                        );
-                        continue;
-                    }
-                    if draw.sky
-                        && options.sky_preview
-                        && scene.sky_channel == options.sky_channel
-                        && options.surface == SurfaceView::Textured
-                        && camera.projection == crate::Projection::Perspective
-                        && let Some(skybox) = &scene.skybox
-                    {
-                        pass.set_pipeline(&self.sky_pipeline);
-                        pass.set_bind_group(1, skybox, &[]);
-                        let batch = draw.batch;
-                        pass.draw_indexed(
-                            batch.first_index..batch.first_index + batch.index_count,
-                            0,
-                            0..1,
-                        );
+                    pass.set_bind_group(2, lighting, &[]);
+                    let batch = draw.batch;
+                    pass.draw_indexed(
+                        batch.first_index..batch.first_index + batch.index_count,
+                        0,
+                        0..1,
+                    );
+                    continue;
+                }
+                let Some(Some(material)) = self.materials.get(draw.batch.material) else {
+                    continue;
+                };
+                let sky3d_draw = draw.sky3d_eligible && options.sky3d_active(camera);
+                if sky3d_draw && sky3d_error {
+                    pass.set_pipeline(&pipelines.sky3d_error_pipeline);
+                    let batch = draw.batch;
+                    pass.draw_indexed(
+                        batch.first_index..batch.first_index + batch.index_count,
+                        0,
+                        0..1,
+                    );
+                    continue;
+                }
+                if draw.sky
+                    && options.sky_preview
+                    && scene.sky_channel == options.sky_channel
+                    && options.surface == SurfaceView::Textured
+                    && camera.projection == crate::Projection::Perspective
+                    && let Some(skybox) = &scene.skybox
+                {
+                    pass.set_pipeline(&pipelines.sky_pipeline);
+                    pass.set_bind_group(1, skybox, &[]);
+                    let batch = draw.batch;
+                    pass.draw_indexed(
+                        batch.first_index..batch.first_index + batch.index_count,
+                        0,
+                        0..1,
+                    );
+                } else {
+                    pass.set_pipeline(if options.surface == SurfaceView::Textured || draw.helper {
+                        pipeline
                     } else {
-                        pass.set_pipeline(
-                            if options.surface == SurfaceView::Textured || draw.helper {
-                                pipeline
-                            } else {
-                                &self.opaque_pipeline
-                            },
-                        );
-                        pass.set_bind_group(1, material, &[]);
-                        let batch = draw.batch;
-                        pass.draw_indexed(
-                            batch.first_index..batch.first_index + batch.index_count,
-                            0,
-                            0..1,
-                        );
-                    }
-                    if sky3d_draw && let Some(binding) = &sky3d_target {
-                        pass.set_pipeline(&self.sky3d_pipeline);
-                        pass.set_bind_group(1, binding, &[]);
-                    } else {
-                        continue;
-                    }
+                        &pipelines.opaque_pipeline
+                    });
+                    pass.set_bind_group(1, material, &[]);
                     let batch = draw.batch;
                     pass.draw_indexed(
                         batch.first_index..batch.first_index + batch.index_count,
@@ -1813,106 +2104,126 @@ impl Renderer {
                         0..1,
                     );
                 }
+                if sky3d_draw && let Some(binding) = sky3d_target {
+                    pass.set_pipeline(&pipelines.sky3d_pipeline);
+                    pass.set_bind_group(1, binding, &[]);
+                } else {
+                    continue;
+                }
+                let batch = draw.batch;
+                pass.draw_indexed(
+                    batch.first_index..batch.first_index + batch.index_count,
+                    0,
+                    0..1,
+                );
             }
-            if let Some(icons) = &scene.icons {
-                pass.set_pipeline(&self.icon_pipeline);
-                pass.set_vertex_buffer(0, icons.slice(..));
-                let mut draws = scene.icon_draws.iter().collect::<Vec<_>>();
-                let depth =
-                    |draw: &&IconDraw| (draw.center - camera.position).dot(camera.forward());
-                draws.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
-                let mut blend = crate::icons::Blend::Alpha;
-                let view = match camera.projection {
-                    crate::Projection::Top => 0,
-                    crate::Projection::Front => 1,
-                    crate::Projection::Side => 2,
-                    crate::Projection::Perspective => 3,
-                };
-                for draw in draws {
-                    if !draw.views[view] {
-                        continue;
-                    }
-                    if draw.blend != blend {
-                        pass.set_pipeline(match draw.blend {
-                            crate::icons::Blend::Alpha => &self.icon_pipeline,
-                            crate::icons::Blend::Additive => &self.additive_icon_pipeline,
-                        });
-                        blend = draw.blend;
-                    }
-                    pass.set_bind_group(1, &draw.binding, &[]);
-                    pass.draw(draw.first_vertex..draw.first_vertex + 6, 0..1);
+        }
+    }
+
+    fn draw_overlays<'pass>(
+        &'pass self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        scene: &'pass GpuScene,
+        camera: &Camera,
+        options: &ViewOptions,
+        overlay_count: usize,
+        grid_count: usize,
+    ) {
+        if let Some(icons) = &scene.icons {
+            pass.set_pipeline(&self.icon_pipeline);
+            pass.set_vertex_buffer(0, icons.slice(..));
+            let mut draws = scene.icon_draws.iter().collect::<Vec<_>>();
+            let depth = |draw: &&IconDraw| (draw.center - camera.position).dot(camera.forward());
+            draws.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+            let mut blend = crate::icons::Blend::Alpha;
+            let view = match camera.projection {
+                crate::Projection::Top => 0,
+                crate::Projection::Front => 1,
+                crate::Projection::Side => 2,
+                crate::Projection::Perspective => 3,
+            };
+            for draw in draws {
+                if !draw.views[view] {
+                    continue;
                 }
+                if draw.blend != blend {
+                    pass.set_pipeline(match draw.blend {
+                        crate::icons::Blend::Alpha => &self.icon_pipeline,
+                        crate::icons::Blend::Additive => &self.additive_icon_pipeline,
+                    });
+                    blend = draw.blend;
+                }
+                pass.set_bind_group(1, &draw.binding, &[]);
+                pass.draw(draw.first_vertex..draw.first_vertex + 6, 0..1);
             }
-            if options.surface == SurfaceView::Wireframe {
-                if let Some(lines) = &scene.detail_billboard_lines {
-                    pass.set_pipeline(&self.line_pipeline);
-                    pass.set_vertex_buffer(0, lines.slice(..));
-                    pass.draw(0..(scene.detail_billboards.len() * 8) as u32, 0..1);
-                }
-                for lines in [&scene.wire_lines, &scene.tool_wire_lines]
-                    .into_iter()
-                    .take(if options.tool_textures { 2 } else { 1 })
-                    .flatten()
-                {
-                    pass.set_pipeline(&self.line_pipeline);
-                    pass.set_vertex_buffer(0, lines.0.slice(..));
-                    pass.draw(0..lines.1, 0..1);
-                }
-                if options.rope_preview
-                    && let Some((lines, count)) = &scene.rope_wire_lines
-                {
-                    pass.set_pipeline(&self.line_pipeline);
-                    pass.set_vertex_buffer(0, lines.slice(..));
-                    pass.draw(0..*count, 0..1);
-                }
+        }
+        if options.surface == SurfaceView::Wireframe {
+            if let Some(lines) = &scene.detail_billboard_lines {
+                pass.set_pipeline(&self.line_pipeline);
+                pass.set_vertex_buffer(0, lines.slice(..));
+                pass.draw(0..(scene.detail_billboards.len() * 8) as u32, 0..1);
             }
-            if options.instance_contents
-                && let Some((lines, count)) = &scene.reference_lines
+            for lines in [&scene.wire_lines, &scene.tool_wire_lines]
+                .into_iter()
+                .take(if options.tool_textures { 2 } else { 1 })
+                .flatten()
             {
                 pass.set_pipeline(&self.line_pipeline);
-                pass.set_vertex_buffer(0, lines.slice(..));
-                if options.surface == SurfaceView::Wireframe {
-                    pass.draw(0..*count, 0..1);
-                } else if options.selection_outlines {
-                    for range in &scene.reference_selection_ranges {
-                        pass.draw(range.clone(), 0..1);
-                    }
-                }
-            }
-            if let Some((lines, count)) = &scene.lines {
-                pass.set_pipeline(&self.line_pipeline);
-                pass.set_vertex_buffer(0, lines.slice(..));
-                if options.selection_outlines {
-                    pass.draw(0..*count, 0..1);
-                } else {
-                    for range in &scene.guide_line_ranges {
-                        pass.draw(range.clone(), 0..1);
-                    }
-                }
+                pass.set_vertex_buffer(0, lines.0.slice(..));
+                pass.draw(0..lines.1, 0..1);
             }
             if options.rope_preview
-                && options.selection_outlines
-                && let Some((lines, count)) = &scene.rope_lines
-            {
-                pass.set_pipeline(&self.line_pipeline);
-                pass.set_vertex_buffer(0, lines.slice(..));
-                pass.draw(0..*count, 0..1);
-            }
-            if overlay.len() > grid_count {
-                pass.set_pipeline(&self.line_pipeline);
-                pass.set_vertex_buffer(0, self.overlay.slice(..));
-                pass.draw(grid_count as u32..overlay.len() as u32, 0..1);
-            }
-            if options.leak_path
-                && let Some((lines, count)) = &scene.leak_lines
+                && let Some((lines, count)) = &scene.rope_wire_lines
             {
                 pass.set_pipeline(&self.line_pipeline);
                 pass.set_vertex_buffer(0, lines.slice(..));
                 pass.draw(0..*count, 0..1);
             }
         }
-        ctx.queue.submit([encoder.finish()]);
-        self.last_sky3d_error = sky3d_error;
+        if options.instance_contents
+            && let Some((lines, count)) = &scene.reference_lines
+        {
+            pass.set_pipeline(&self.line_pipeline);
+            pass.set_vertex_buffer(0, lines.slice(..));
+            if options.surface == SurfaceView::Wireframe {
+                pass.draw(0..*count, 0..1);
+            } else if options.selection_outlines {
+                for range in &scene.reference_selection_ranges {
+                    pass.draw(range.clone(), 0..1);
+                }
+            }
+        }
+        if let Some((lines, count)) = &scene.lines {
+            pass.set_pipeline(&self.line_pipeline);
+            pass.set_vertex_buffer(0, lines.slice(..));
+            if options.selection_outlines {
+                pass.draw(0..*count, 0..1);
+            } else {
+                for range in &scene.guide_line_ranges {
+                    pass.draw(range.clone(), 0..1);
+                }
+            }
+        }
+        if options.rope_preview
+            && options.selection_outlines
+            && let Some((lines, count)) = &scene.rope_lines
+        {
+            pass.set_pipeline(&self.line_pipeline);
+            pass.set_vertex_buffer(0, lines.slice(..));
+            pass.draw(0..*count, 0..1);
+        }
+        if overlay_count > grid_count {
+            pass.set_pipeline(&self.line_pipeline);
+            pass.set_vertex_buffer(0, self.overlay.slice(..));
+            pass.draw(grid_count as u32..overlay_count as u32, 0..1);
+        }
+        if options.leak_path
+            && let Some((lines, count)) = &scene.leak_lines
+        {
+            pass.set_pipeline(&self.line_pipeline);
+            pass.set_vertex_buffer(0, lines.slice(..));
+            pass.draw(0..*count, 0..1);
+        }
     }
 
     pub fn render_to_rgba_checked(
@@ -1924,6 +2235,21 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, String> {
+        let display = options.scene_display.resolve(camera, options.surface)?;
+        self.render_to_rgba_checked_resolved(ctx, scene, camera, options, width, height, display)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_to_rgba_checked_resolved(
+        &mut self,
+        ctx: &GpuContext,
+        scene: &GpuScene,
+        camera: &Camera,
+        options: &ViewOptions,
+        width: u32,
+        height: u32,
+        display: crate::ResolvedSceneDisplay,
+    ) -> Result<Vec<u8>, String> {
         if self.color_correction_preview.is_some() {
             crate::color_correction::target_bytes((width, height))?;
         }
@@ -1933,22 +2259,26 @@ impl Renderer {
             return Err(error);
         }
         if options.sky3d_active(camera) {
-            let preparation =
-                crate::sky3d::target_size((width, height), self.sky3d.allocated_bytes())
-                    .and_then(|_| {
-                        scene.sky3d.as_ref().map_or(Ok(()), |scene| {
-                            scene
-                                .camera_projection(camera, width as f32 / height.max(1) as f32)
-                                .map(|_| ())
-                        })
-                    })
-                    .and_then(|_| self.sky3d.prepare_render(ctx));
+            let preparation = crate::sky3d::target_size_for_display(
+                (width, height),
+                self.sky3d.allocated_bytes(),
+                display.active,
+            )
+            .and_then(|_| {
+                scene.sky3d.as_ref().map_or(Ok(()), |scene| {
+                    scene
+                        .camera_projection(camera, width as f32 / height.max(1) as f32)
+                        .map(|_| ())
+                })
+            })
+            .and_then(|_| self.sky3d.prepare_render(ctx));
             if let Err(error) = preparation {
                 self.last_sky3d_error = Some(error.clone());
                 return Err(error);
             }
         }
-        let pixels = self.render_to_rgba(ctx, scene, camera, options, width, height)?;
+        let pixels =
+            self.render_to_rgba_resolved(ctx, scene, camera, options, width, height, display)?;
         if let Some(error) = &self.last_color_correction_error {
             return Err(error.clone());
         }
@@ -1967,6 +2297,21 @@ impl Renderer {
         options: &ViewOptions,
         width: u32,
         height: u32,
+    ) -> Result<Vec<u8>, String> {
+        let display = options.scene_display.resolve(camera, options.surface)?;
+        self.render_to_rgba_resolved(ctx, scene, camera, options, width, height, display)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_to_rgba_resolved(
+        &mut self,
+        ctx: &GpuContext,
+        scene: &GpuScene,
+        camera: &Camera,
+        options: &ViewOptions,
+        width: u32,
+        height: u32,
+        display: crate::ResolvedSceneDisplay,
     ) -> Result<Vec<u8>, String> {
         let limits = ctx.device.limits();
         if width == 0
@@ -1987,14 +2332,27 @@ impl Renderer {
             .ok_or("GPU capture padded row size overflowed")?;
         let buffer_size = u64::from(padded_row)
             .checked_mul(u64::from(height))
-            .filter(|bytes| *bytes <= limits.max_buffer_size)
-            .ok_or("GPU capture readback exceeds the device buffer limit")?;
+            .filter(|bytes| {
+                *bytes <= limits.max_buffer_size && *bytes <= scene_display::MAX_READBACK_BYTES
+            })
+            .ok_or("GPU capture readback exceeds the device or 80 MiB byte limit")?;
         let output_size = usize::try_from(u64::from(row) * u64::from(height))
             .map_err(|_| "GPU capture output size exceeds addressable memory")?;
-        let target = RenderTarget::new(ctx, width, height);
-        self.render(ctx, scene, camera, options, &target.view, (width, height));
+        let target = RenderTarget::try_new(ctx, width, height)?;
+        self.render_resolved(
+            ctx,
+            scene,
+            camera,
+            options,
+            &target.view,
+            (width, height),
+            display,
+        )?;
         let texture = target.texture;
 
+        let allocation = ctx.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let internal = ctx.device.push_error_scope(wgpu::ErrorFilter::Internal);
+        let validation = ctx.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
             size: buffer_size,
@@ -2015,6 +2373,12 @@ impl Renderer {
             texture.size(),
         );
         let submission = ctx.queue.submit([encoder.finish()]);
+        let validation = pollster::block_on(validation.pop());
+        let internal = pollster::block_on(internal.pop());
+        let allocation = pollster::block_on(allocation.pop());
+        if let Some(error) = validation.or(internal).or(allocation) {
+            return Err(format!("GPU capture allocation/copy failed: {error}"));
+        }
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         buffer.map_async(wgpu::MapMode::Read, .., move |result| {
             let _ = sender.send(result);
@@ -2044,6 +2408,19 @@ impl Renderer {
         })();
         buffer.unmap();
         result
+    }
+}
+
+fn detail_radiance_entry() -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: 1,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only: true },
+            has_dynamic_offset: false,
+            min_binding_size: wgpu::BufferSize::new(16),
+        },
+        count: None,
     }
 }
 

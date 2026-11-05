@@ -71,6 +71,12 @@ fn show_lighting(window: &BakedSurfacesWindow, settings: &LightingSettings) {
     window.set_exposure_ev(settings.exposure_ev as f32);
 }
 
+fn show_exposure_context(window: &BakedSurfacesWindow, session: &Session) {
+    let (enabled, context) = crate::ui::scene_exposure_context(session);
+    window.set_legacy_exposure_enabled(enabled);
+    window.set_exposure_context(context.into());
+}
+
 fn show_preparation(window: &BakedSurfacesWindow, report: &Value) -> Result<(), String> {
     let options: PreparationOptions = serde_json::from_value(report["preparation_options"].clone())
         .map_err(|error| format!("Invalid baked surface preparation options: {error}"))?;
@@ -133,7 +139,11 @@ fn chosen_lighting(
     keep_style_gain(window, state);
     Ok(LightingSettings {
         channel,
-        exposure_ev: f64::from(window.get_exposure_ev()),
+        exposure_ev: if window.get_exposure_ev() == state.lighting.exposure_ev as f32 {
+            state.lighting.exposure_ev
+        } else {
+            f64::from(window.get_exposure_ev())
+        },
         style_gains: state.lighting.style_gains.clone(),
     })
 }
@@ -406,6 +416,7 @@ fn perform(
         _ => {}
     }
     let mut session = lock(shared);
+    show_exposure_context(window, &session);
     let token = state.borrow().token;
     let mut offset = state.borrow().offset;
     match action {
@@ -617,6 +628,7 @@ impl Form {
         if !self.window.window().is_visible() {
             return;
         }
+        show_exposure_context(&self.window, session);
         let observation = session.baked_surfaces_observation();
         if self.state.borrow().observation.as_ref() == Some(&observation) {
             return;

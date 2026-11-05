@@ -9,6 +9,8 @@ pub struct ViewUpdate<'a> {
     pub lighting_sky_ambient: Option<bool>,
     pub lighting_quality: Option<&'a str>,
     pub lighting_exposure_ev: Option<f64>,
+    pub scene_display: Option<&'a str>,
+    pub scene_exposure_ev: Option<f64>,
     pub normal_maps: Option<bool>,
     pub surface_shading: Option<bool>,
     pub surface: Option<&'a str>,
@@ -46,9 +48,22 @@ impl Session {
     }
 
     pub fn resolve_view_update(&self, update: ViewUpdate<'_>) -> Result<ViewOptions, String> {
+        self.resolve_view_update_for_render(update, &self.camera())
+    }
+
+    pub fn resolve_view_update_for_render(
+        &self,
+        update: ViewUpdate<'_>,
+        camera: &render::Camera,
+    ) -> Result<ViewOptions, String> {
         let mut view = self.surface_view_options(
             update.surface.map(render::SurfaceView::parse).transpose()?,
             update.smoothing_group,
+        )?;
+        view.scene_display = self.scene_display_options(
+            view.scene_display,
+            update.scene_display,
+            update.scene_exposure_ev,
         )?;
         if let Some(value) = update.instance_contents {
             view.instance_contents = value;
@@ -128,6 +143,13 @@ impl Session {
         {
             return Err("Fast authored lighting does not support normal maps; choose Detail or disable Normal map preview".into());
         }
-        self.sky_preview_options(view, update.sky_channel, update.sky_exposure_ev)
+        let view = self.sky_preview_options_for_render(
+            view,
+            update.sky_channel,
+            update.sky_exposure_ev,
+            camera,
+        )?;
+        self.validate_view_update(view, camera)?;
+        Ok(view)
     }
 }

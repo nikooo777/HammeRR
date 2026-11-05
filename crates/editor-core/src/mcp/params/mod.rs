@@ -50,6 +50,8 @@ mod terrain;
 pub(super) use terrain::*;
 mod view;
 pub(super) use view::*;
+mod scene_display;
+pub(super) use scene_display::*;
 mod view_layout;
 pub(super) use view_layout::*;
 

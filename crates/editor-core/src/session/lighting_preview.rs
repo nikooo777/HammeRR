@@ -4,7 +4,7 @@ use compiler::lighting::PointLight;
 use compiler::lighting::preview::{MAX_CONTRIBUTION, Parameters, Sun, SunParameters};
 use map_core::ObjectId;
 use render::lighting::{Light, MAX_LIGHTS, MAX_SUNS, Preview, Report};
-use render::{SurfaceView, ViewOptions};
+use render::{Camera, ResolvedSceneDisplay, SurfaceView, ViewOptions};
 use source_formats::bsp::LightingKind;
 use source_formats::vmf::{Entity, Vmf};
 
@@ -270,12 +270,44 @@ pub(super) fn prepare(vmf: &Vmf, visible: &HashSet<ObjectId>, view: ViewOptions)
 impl Session {
     pub fn lighting_preview_state(&mut self) -> serde_json::Value {
         let view = self.view();
+        let camera = self.camera();
         let report = self.build_scene_for_view(view).lighting.report;
-        let source = report.source.clone();
+        let display = self.resolve_scene_display_for_render(view, &camera);
+        let mut state = self.lighting_preview_report(view, camera, display, &report);
+        state["active_pane"] = serde_json::json!(self.active_view_pane());
+        state["panes"] = serde_json::json!(self.visible_view_panes().iter().map(|pane| {
+            let display = self.resolve_scene_display_for_render(view, &pane.camera);
+            serde_json::json!({"index":pane.index,"active":pane.index==self.active_view_pane(),"projection":pane.camera.projection.name(),"effective_exposure_ev":display.as_ref().ok().map(|display|display.effective_exposure_ev(view.lighting_exposure_ev)),"exposure_owner":display.as_ref().ok().map(|display|if display.active {display.exposure_owner()}else{"authored_lighting"}),"display_curve":display.as_ref().ok().map(|_|"reinhard_per_channel"),"hdr_active":display.as_ref().is_ok_and(|display|display.active),"error":display.as_ref().err()})
+        }).collect::<Vec<_>>());
+        state
+    }
+
+    pub fn lighting_preview_state_for_render(
+        &self,
+        view: ViewOptions,
+        camera: Camera,
+        display: ResolvedSceneDisplay,
+        report: &Report,
+    ) -> serde_json::Value {
+        self.lighting_preview_report(view, camera, Ok(display), report)
+    }
+
+    fn lighting_preview_report(
+        &self,
+        view: ViewOptions,
+        camera: Camera,
+        display: Result<ResolvedSceneDisplay, String>,
+        report: &Report,
+    ) -> serde_json::Value {
         serde_json::json!({
             "enabled":view.lighting_preview, "channel":view.lighting_channel.name(), "sky_ambient":view.lighting_sky_ambient, "quality":view.lighting_quality.name(), "exposure_ev":view.lighting_exposure_ev,
+            "requested_channel":view.lighting_channel.name(),"effective_channel":report.active.then_some(view.lighting_channel.name()),
+            "requested_exposure_ev":view.lighting_exposure_ev,"effective_exposure_ev":display.as_ref().ok().map(|display|display.effective_exposure_ev(view.lighting_exposure_ev)),
+            "hdr_active":display.as_ref().is_ok_and(|display|display.active),"exposure_owner":display.as_ref().ok().map(|display|if display.active {display.exposure_owner()}else{"authored_lighting"}),
+            "display_curve":display.as_ref().ok().map(|_|"reinhard_per_channel"),"exposure_error":display.as_ref().err(),"projection":camera.projection.name(),"surface_view":view.surface.name(),
+            "display_policy":if display.as_ref().is_ok_and(|display|display.active) {"Authored compiler contributions retain source /255 normalization and compose in linear scene space before shared scene exposure and one Reinhard display pass"}else{"Authored compiler contributions use component exposure and per-channel Reinhard before the legacy scene composition"},
             "summary":report.summary(), "report":report,
-            "source":source,"source_scope":"current render document and visible working region; includes pending geometry previews",
+            "source":report.source,"source_scope":"current render document and visible working region; includes pending geometry previews",
             "limits":{"lights":MAX_LIGHTS,"suns":MAX_SUNS,"diagnostics":render::lighting::MAX_DIAGNOSTICS,"summed_linear_headroom":MAX_CONTRIBUTION,"exposure_ev":[-8,8],"receiver_counts":render::lighting::RECEIVER_COUNTS,"policy":render::lighting::POLICY}
         })
     }

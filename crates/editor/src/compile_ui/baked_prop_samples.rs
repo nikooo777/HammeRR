@@ -86,13 +86,15 @@ fn show_selection(window: &BakedPropSamplesWindow, state: &State) {
         );
         window.set_technical_details(
             format!(
-                "Prop {} · section {} · local vertex {} · hardware {} · LOD {}\nExposure: {} EV\nStored BGRA: {}\nDecoded linear RGB: {}\nBefore exposure: {}\nExposed RGB: {}",
+                "Prop {} · section {} · local vertex {} · hardware {} · LOD {}\nRequested exposure: {} EV\nEffective exposure: {} EV · {}\nStored BGRA: {}\nDecoded linear RGB: {}\nBefore exposure: {}\nExposed RGB: {}",
                 sample.prop,
                 sample.section,
                 sample.vertex,
                 sample.hardware_index,
                 sample.lod,
                 sample.exposure_ev,
+                sample.effective_exposure_ev,
+                sample.exposure_owner.replace('_', " "),
                 vector(sample.bgra),
                 vector(sample.decoded_linear),
                 vector(sample.pre_ev),

@@ -799,6 +799,7 @@ impl EditorServer {
             + Self::compiled_face_framing_tools()
             + Self::entity_graph_tools()
             + Self::view_tools()
+            + Self::scene_display_tools()
             + Self::view_layout_tools()
             + Self::prop_leaf_bounds_tools()
             + Self::working_region_tools()

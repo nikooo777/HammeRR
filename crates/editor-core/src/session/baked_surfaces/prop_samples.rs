@@ -39,7 +39,7 @@ impl Session {
         let sample =
             props
                 .scene
-                .vertex_sample(prop, section, vertex, &self.baked_surfaces.options)?;
+                .vertex_sample(prop, section, vertex, &self.baked_surfaces.options, None)?;
         if sample.lod != ready.preparation.draw_lod {
             return Err("Hardware sample belongs to a different Draw LOD; prepare and inspect the exact requested LOD".into());
         }
@@ -83,13 +83,30 @@ impl Session {
     }
 
     pub(super) fn prop_sample_guide_report(&self, authored_models: bool) -> Value {
+        let display = self.resolve_scene_display_for_render(self.view(), &self.camera());
+        self.prop_sample_guide_report_for_display(authored_models, &display)
+    }
+
+    pub(super) fn prop_sample_guide_report_for_display(
+        &self,
+        authored_models: bool,
+        display: &Result<ResolvedSceneDisplay, String>,
+    ) -> Value {
         let Some(guide) = self.baked_surfaces.sample_guide else {
             return json!({"requested":false,"displayed":false,"status":"not_requested","summary":"No prepared prop sample guide is requested","policy":POLICY,"guide_cap":MAX_GUIDES,"segments":GUIDE_SEGMENTS});
         };
-        let sample = self.prepared_prop_sample(guide.prop, guide.section, guide.vertex);
+        let sample = self
+            .prepared_prop_sample(guide.prop, guide.section, guide.vertex)
+            .map(|sample| sample.with_scene_display(display.as_ref().ok().copied()));
         let reason = self.prop_sample_suppression(guide.prop, guide.lod, authored_models);
         let error = sample.as_ref().err();
-        let displayed = reason.is_none() && error.is_none();
+        let displayed = reason.is_none() && error.is_none() && display.is_ok();
+        let mut sample_report = json!(sample.as_ref().ok());
+        if display.is_err() && sample_report.is_object() {
+            sample_report["exposed"] = Value::Null;
+            sample_report["effective_exposure_ev"] = Value::Null;
+            sample_report["exposure_owner"] = Value::Null;
+        }
         let summary = if displayed {
             format!(
                 "Guide shown for prop {}, section {}, vertex {}",
@@ -102,6 +119,7 @@ impl Session {
                 error
                     .map(String::as_str)
                     .or(reason)
+                    .or_else(|| display.as_ref().err().map(String::as_str))
                     .unwrap_or("sample unavailable")
             )
         };
@@ -109,7 +127,9 @@ impl Session {
             "requested":true,"displayed":displayed,"status":if displayed {"displayed"} else {"suppressed"},"summary":summary,
             "token":self.baked_surfaces.serial.to_string(),"prop":guide.prop,"section":guide.section,"vertex":guide.vertex,"draw_lod":guide.lod,
             "channel":self.baked_surfaces.options.channel,"exposure_ev":self.baked_surfaces.options.exposure_ev,
-            "sample":sample.as_ref().ok(),"error":error,"suppression_reason":reason,
+            "requested_exposure_ev":self.baked_surfaces.options.exposure_ev,"effective_exposure_ev":display.as_ref().ok().map(|display|if display.active {f64::from(display.effective_exposure_ev(self.baked_surfaces.options.exposure_ev as f32))}else{self.baked_surfaces.options.exposure_ev}),
+            "hdr_active":display.as_ref().is_ok_and(|display|display.active),"exposure_owner":display.as_ref().ok().map(|display|if display.active {display.exposure_owner()}else{"baked_surfaces"}),"exposure_error":display.as_ref().err(),
+            "sample":sample_report,"error":error,"suppression_reason":reason,
             "point_marker_half_extent":MARKER_HALF_EXTENT,"normal_length":NORMAL_LENGTH,"segments":GUIDE_SEGMENTS,"guide_cap":MAX_GUIDES,"policy":POLICY,
         })
     }
@@ -126,6 +146,7 @@ impl Session {
         }
         self.check_baked_surface_token(token)?;
         self.preflight_baked_surfaces();
+        let display = self.resolve_scene_display_for_render(self.view(), &self.camera())?;
         let control = Control::default();
         let (_, _, current) = self.baked_surface_current(&control)?;
         if !current {
@@ -154,6 +175,7 @@ impl Session {
             offset,
             limit,
             &self.baked_surfaces.options,
+            Some(display),
         )?;
         let frame_blocker = if self.closing {
             Some("The editor is closing".into())
@@ -200,6 +222,7 @@ impl Session {
         Ok(json!({
             "token":token.to_string(),"prop":prop,"prop_info":prop_info,"status":"ready","summary":summary,
             "draw_lod":page.draw_lod,"channel":page.channel,"exposure_ev":page.exposure_ev,"sections":sections,
+            "requested_exposure_ev":page.exposure_ev,"effective_exposure_ev":page.effective_exposure_ev,"exposure_owner":page.exposure_owner,"hdr_active":page.hdr_active,"display_curve":"reinhard_per_channel",
             "page":{"offset":offset,"limit":limit,"total":page.total,"returned":rows.len(),"next_offset":page.next_offset,"rows":rows},
             "frame_available":frame_available,"frame_unavailable_reason":frame_blocker,"guide_available":guide_available,"guide_unavailable_reason":guide_reason,
             "in_working_region":in_region,"guide":self.prop_sample_guide_report(self.view.authored_models),

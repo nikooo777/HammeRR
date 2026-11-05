@@ -242,7 +242,7 @@ impl Session {
         json!({"enabled":state.enabled,"weight":state.weight,"ready":state.loaded.is_some(),
             "source":state.path,"identity":state.loaded.as_ref().map(|loaded|loaded.lut.identity()),
             "sha256":state.loaded.as_ref().map(|loaded|&loaded.sha256),"error":state.error,"summary":summary,
-            "gpu_status":"Not determined by source inspection; render_view reports applied only after a successful frame. Desktop GPU failures show an ungraded frame and a visible error.",
+            "gpu_status":"Not determined by source inspection; render_view reports applied only after a successful frame. Legacy desktop GPU failures show an ungraded frame and a visible error; active HDR failures refuse the affected frame.",
             "limits":{"raw_bytes":color_correction::RAW_BYTES,"edge":color_correction::EDGE,"path_bytes":MAX_PATH_BYTES,
                 "gpu_lut_bytes":color_correction::RGBA_BYTES,"lut_upload_bytes":color_correction::UPLOAD_BYTES,"target_bytes":color_correction::MAX_TARGET_BYTES,
                 "target_dimension":color_correction::MAX_TARGET_DIMENSION},"policy":color_correction::POLICY})

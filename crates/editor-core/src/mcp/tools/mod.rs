@@ -48,6 +48,7 @@ mod prop_leaf_bounds;
 mod recovery;
 mod reference_images;
 mod ropes;
+mod scene_display;
 mod selection;
 mod shortcuts;
 mod sky3d_preview;

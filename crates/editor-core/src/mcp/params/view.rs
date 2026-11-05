@@ -323,7 +323,11 @@ pub struct FacePreviewArgs {
 }
 
 pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
-    json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_channel":view.lighting_channel.name(),"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"surface_shading":view.surface_shading,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_fog_initial_radial_context":view.sky_fog_initial_radial_context.name(),"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"selection_tint":view.selection_tint,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"authored_models":view.authored_models,"sprite_resources":view.sprite_resources,"entity_helpers":view.entity_helpers,"selection_bounds":view.selection_bounds,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
+    let (scene_display, scene_exposure_ev) = match view.scene_display {
+        render::SceneDisplay::Legacy => ("legacy", None),
+        render::SceneDisplay::Hdr { exposure_ev } => ("hdr", Some(exposure_ev)),
+    };
+    json!({"scene_display":scene_display,"scene_exposure_ev":scene_exposure_ev,"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_channel":view.lighting_channel.name(),"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"surface_shading":view.surface_shading,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_fog_initial_radial_context":view.sky_fog_initial_radial_context.name(),"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"selection_tint":view.selection_tint,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"authored_models":view.authored_models,"sprite_resources":view.sprite_resources,"entity_helpers":view.entity_helpers,"selection_bounds":view.selection_bounds,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -469,6 +473,10 @@ pub struct BeginSurfacePlacementPickArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SetViewArgs {
+    /// Shared display policy: legacy or hdr. Entering HDR requires scene_exposure_ev.
+    pub scene_display: Option<String>,
+    /// Shared finite -8..8 Scene exposure EV; applies only to active HDR panes.
+    pub scene_exposure_ev: Option<f64>,
     pub instance_contents: Option<bool>,
     /// Unshadowed authored constant point/spot/direct sun preview; defaults off. One visible sun; optional sky ambient, no bounce/shadows/sky visibility.
     pub lighting_preview: Option<bool>,
@@ -525,6 +533,10 @@ pub struct SetViewArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RenderArgs {
+    /// Temporary Scene display policy: legacy or hdr. Entering HDR requires scene_exposure_ev.
+    pub scene_display: Option<String>,
+    /// Temporary finite -8..8 Scene exposure EV; never changes shared settings.
+    pub scene_exposure_ev: Option<f64>,
     /// Optional configured pane index 0–3; uses that camera without activating the pane.
     pub pane: Option<usize>,
     pub instance_contents: Option<bool>,
@@ -586,7 +598,7 @@ pub struct RenderArgs {
     pub fog_controller: Option<String>,
     /// Temporary explicit or prepared environment selection, evaluated at the resolved camera.
     pub fog_selection: Option<crate::session::fog::SelectionMode>,
-    /// Temporary channel; LDR is qualified and HDR requests refuse explicitly.
+    /// Temporary fog channel; HDR requires active HDR Scene display where fog color applies.
     pub fog_channel: Option<crate::session::fog::Channel>,
     pub leak_path: Option<bool>,
     /// Optional viewport mode override; does not change the user's view.
@@ -597,6 +609,10 @@ pub struct RenderArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PickArgs {
+    /// Match render_view's temporary Scene display policy.
+    pub scene_display: Option<String>,
+    /// Match render_view's temporary Scene exposure EV.
+    pub scene_exposure_ev: Option<f64>,
     /// Match render_view.pane; does not activate the pane or publish its camera.
     pub pane: Option<usize>,
     pub instance_contents: Option<bool>,
@@ -675,6 +691,8 @@ macro_rules! view_update {
         impl $args {
             pub(in crate::mcp) fn view_update(&self) -> crate::session::ViewUpdate<'_> {
                 crate::session::ViewUpdate {
+                    scene_display: self.scene_display.as_deref(),
+                    scene_exposure_ev: self.scene_exposure_ev,
                     instance_contents: self.instance_contents,
                     lighting_preview: self.lighting_preview,
                     lighting_channel: self.lighting_channel.as_deref(),

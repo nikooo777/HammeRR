@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use render::{
-    Camera, Projection, SurfaceView, ViewOptions,
+    Camera, Projection, ResolvedSceneDisplay, SurfaceView, ViewOptions,
     sky::{Channel, Face, Skybox},
 };
 use serde_json::{Value, json};
@@ -28,9 +28,19 @@ fn source(source: compiler::sky_assets::SkyAssetSource) -> render::icons::Source
 impl Session {
     pub fn sky_preview_options(
         &self,
+        view: ViewOptions,
+        channel: Option<&str>,
+        exposure_ev: Option<f64>,
+    ) -> Result<ViewOptions, String> {
+        self.sky_preview_options_for_render(view, channel, exposure_ev, &self.camera())
+    }
+
+    pub fn sky_preview_options_for_render(
+        &self,
         mut view: ViewOptions,
         channel: Option<&str>,
         exposure_ev: Option<f64>,
+        camera: &Camera,
     ) -> Result<ViewOptions, String> {
         if let Some(channel) = channel {
             view.sky_channel = Channel::parse(channel)?;
@@ -39,6 +49,13 @@ impl Session {
             if !exposure.is_finite() || !(-8.0..=8.0).contains(&exposure) {
                 return Err("HDR sky exposure must be finite and between -8 and 8 EV".into());
             }
+            self.validate_legacy_exposure_change_for_render(
+                view,
+                camera,
+                f64::from(self.view().sky_exposure_ev),
+                f64::from(exposure as f32),
+                false,
+            )?;
             view.sky_exposure_ev = exposure as f32;
         }
         Ok(view)
@@ -112,6 +129,31 @@ impl Session {
     }
 
     pub fn sky_preview_state(&mut self, view: ViewOptions, camera: Camera) -> Value {
+        let display = self.resolve_scene_display_for_render(view, &camera);
+        let mut report = self.sky_preview_report(view, camera, display);
+        report["active_pane"] = json!(self.active_view_pane());
+        report["panes"] = json!(self.visible_view_panes().iter().map(|pane| {
+            let display = self.resolve_scene_display_for_render(view, &pane.camera);
+            json!({"index":pane.index,"active":pane.index==self.active_view_pane(),"projection":pane.camera.projection.name(),"effective_exposure_ev":display.as_ref().ok().and_then(|display|(display.active || view.sky_channel==Channel::Hdr).then_some(display.effective_exposure_ev(view.sky_exposure_ev))),"exposure_owner":display.as_ref().ok().map(|display|if display.active {display.exposure_owner()}else if view.sky_channel==Channel::Hdr {"sky"}else{"none"}),"display_curve":display.as_ref().ok().map(|display|if display.active || view.sky_channel==Channel::Hdr {"reinhard_per_channel"}else{"none"}),"hdr_active":display.as_ref().is_ok_and(|display|display.active),"error":display.as_ref().err()})
+        }).collect::<Vec<_>>());
+        report
+    }
+
+    pub fn sky_preview_state_for_render(
+        &mut self,
+        view: ViewOptions,
+        camera: Camera,
+        display: ResolvedSceneDisplay,
+    ) -> Value {
+        self.sky_preview_report(view, camera, Ok(display))
+    }
+
+    fn sky_preview_report(
+        &mut self,
+        view: ViewOptions,
+        camera: Camera,
+        display: Result<ResolvedSceneDisplay, String>,
+    ) -> Value {
         let sky = self.skybox_preview_for(view);
         let reason = if !view.sky_preview {
             Some("disabled")
@@ -143,13 +185,44 @@ impl Session {
                     .is_some_and(|name| name.len() > 256)
         );
         report["requested_channel"] = json!(view.sky_channel.name());
+        report["effective_channel"] = json!(reason.is_none().then_some(view.sky_channel.name()));
         report["exposure_ev"] = json!(view.sky_exposure_ev);
-        report["tonemap"] = json!(if view.sky_channel == Channel::Hdr {
+        report["requested_exposure_ev"] = json!(view.sky_exposure_ev);
+        report["effective_exposure_ev"] = json!(display.as_ref().ok().and_then(|display| {
+            if display.active || view.sky_channel == Channel::Hdr {
+                Some(display.effective_exposure_ev(view.sky_exposure_ev))
+            } else {
+                None
+            }
+        }));
+        report["hdr_active"] = json!(display.as_ref().is_ok_and(|display| display.active));
+        report["exposure_owner"] = json!(display.as_ref().ok().map(|display| if display.active {
+            display.exposure_owner()
+        } else if view.sky_channel == Channel::Hdr {
+            "sky"
+        } else {
+            "none"
+        }));
+        report["display_curve"] = json!(display.as_ref().ok().map(|display| {
+            if display.active || view.sky_channel == Channel::Hdr {
+                "reinhard_per_channel"
+            } else {
+                "none"
+            }
+        }));
+        report["exposure_error"] = json!(display.as_ref().err());
+        report["projection"] = json!(camera.projection.name());
+        report["surface_view"] = json!(view.surface.name());
+        report["tonemap"] = json!(if display.as_ref().is_ok_and(|display| display.active)
+            || view.sky_channel == Channel::Hdr
+        {
             "reinhard_per_channel"
         } else {
             "none"
         });
-        report["color_policy"] = json!(if view.sky_channel == Channel::Hdr {
+        report["color_policy"] = json!(if display.as_ref().is_ok_and(|display| display.active) {
+            "Selected sky content remains linear and receives the shared scene exposure and display curve after scene composition; no native adaptation parity"
+        } else if view.sky_channel == Channel::Hdr {
             render::sky::HDR_POLICY
         } else {
             "Existing LDR sRGB texture sampling and sRGB target; HDR exposure is inactive"

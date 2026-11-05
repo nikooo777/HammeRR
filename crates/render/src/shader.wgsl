@@ -139,7 +139,7 @@ fn vs_main(v: VertexIn) -> VertexOut {
 
 fn surface_diagnostic(in: VertexOut, grid_width: vec2<f32>) -> vec4<f32> {
     if globals.surface_view.x == 3u && in.lightmap.z != 0.0 {
-        let shade = select(0.55 + 0.45 * clamp(dot(normalize(in.normal), globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0), 1.0, in.lighting_receiver == BAKED_DETAIL_RECEIVER || in.lighting_receiver == BAKED_RADIANCE_RECEIVER || (in.lighting_receiver & 15u) == 4u);
+        let shade = select(0.55 + 0.45 * clamp(dot(normalize(in.normal), globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0), 1.0, in.lighting_receiver == BAKED_DETAIL_RECEIVER || (in.lighting_receiver & 15u) == BAKED_RADIANCE_RECEIVER || (in.lighting_receiver & 15u) == 4u);
         return vec4<f32>(vec3<f32>(0.65) * in.color.rgb * shade, 1.0);
     }
     if (globals.surface_view.x == 1u || globals.surface_view.x == 2u) && in.lightmap.z != 0.0 {
@@ -205,11 +205,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         var irradiance = in.authored_irradiance;
         if globals.lighting_settings.y > 0.5 { irradiance = authored_irradiance(in.world_position, shading_normal); }
         let radiance = texel.rgb * in.color.rgb * irradiance * globals.lighting_settings.w;
-        color = radiance / (vec3<f32>(1.0) + radiance);
+        color = radiance;
+        if globals.scene_display.x < 0.5 { color = radiance / (vec3<f32>(1.0) + radiance); }
     }
-    if in.lighting_receiver == BAKED_RADIANCE_RECEIVER {
-        let radiance = texel.rgb * in.color.rgb * in.baked_irradiance;
-        color = radiance / (vec3<f32>(1.0) + radiance);
+    if (in.lighting_receiver & 15u) == BAKED_RADIANCE_RECEIVER {
+        if globals.scene_display.x > 0.5 {
+            color = texel.rgb * in.color.rgb * detail_hdr_radiance[in.lighting_receiver >> 4u].rgb;
+        } else {
+            let radiance = texel.rgb * in.color.rgb * in.baked_irradiance;
+            color = radiance / (vec3<f32>(1.0) + radiance);
+        }
     }
     if material.helper.y < 0.5 {
         color = apply_fog(in.world_position, color);
@@ -318,6 +323,7 @@ fn baked_weights(in: VertexOut) -> vec3<f32> {
 }
 
 fn baked_tonemap(diffuse: vec3<f32>, tint: vec3<f32>, light: vec3<f32>, scale: vec3<f32>, weight_scale: f32) -> vec3<f32> {
+    if globals.scene_display.x > 0.5 { return diffuse * tint * light * scale * weight_scale; }
     let logarithm = log2(select(vec3<f32>(1.0), diffuse, diffuse > vec3<f32>(0.0)))
         + log2(select(vec3<f32>(1.0), tint, tint > vec3<f32>(0.0)))
         + log2(select(vec3<f32>(1.0), light, light > vec3<f32>(0.0)))

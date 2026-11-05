@@ -18,7 +18,10 @@ struct Globals {
     up: vec4<f32>,
     sky_params: vec4<f32>,
     lighting_settings: vec4<f32>,
+    scene_display: vec4<f32>,
     lighting_lights: array<AuthoredLight, 32>,
 }
 
 @group(0) @binding(0) var<uniform> globals: Globals;
+
+@group(0) @binding(1) var<storage, read> detail_hdr_radiance: array<vec4<f32>>;

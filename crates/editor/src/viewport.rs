@@ -7,8 +7,8 @@ use editor_core::session::view_layout::{MAX_CANVAS_PIXELS, MAX_PANES};
 use editor_core::shortcuts::Command;
 use glam::Vec3;
 use render::{
-    Camera, GpuContext, GpuScene, MaterialLibrary, Projection, RenderTarget, Renderer, SceneMesh,
-    ViewOptions,
+    Camera, GpuContext, GpuScene, MaterialLibrary, Projection, RenderTarget, Renderer,
+    ResolvedSceneDisplay, SceneMesh, ViewOptions,
 };
 use slint::SharedString;
 use slint::platform::Key;
@@ -416,6 +416,7 @@ impl Viewport {
         ctx: &GpuContext,
         request: &PaneRender,
         options: ViewOptions,
+        display: ResolvedSceneDisplay,
         correction_error: Option<&str>,
     ) -> Result<(), String> {
         let pane = &mut self.panes[request.index];
@@ -424,6 +425,13 @@ impl Viewport {
         pane.baked_surfaces_error = None;
         pane.color_correction_error = None;
         pane.sky3d_error = None;
+        if display.active
+            && let Some(error) = correction_error
+        {
+            return Err(format!(
+                "HDR scene color correction is unavailable: {error}"
+            ));
+        }
         let maximum = ctx.device.limits().max_texture_dimension_2d;
         if request.size.0 == 0
             || request.size.1 == 0
@@ -440,21 +448,22 @@ impl Viewport {
         let scene = self.scene.as_ref().ok_or("Viewport scene is unavailable")?;
         if pane.targets[0].is_none() {
             pane.targets = [
-                Some(RenderTarget::new(ctx, request.size.0, request.size.1)),
-                Some(RenderTarget::new(ctx, request.size.0, request.size.1)),
+                Some(RenderTarget::try_new(ctx, request.size.0, request.size.1)?),
+                Some(RenderTarget::try_new(ctx, request.size.0, request.size.1)?),
             ];
         }
         let target = pane.targets[pane.next_target]
             .as_ref()
             .ok_or("Viewport target is unavailable")?;
-        self.renderer.render(
+        self.renderer.render_resolved(
             ctx,
             scene,
             &request.camera,
             &options,
             &target.view,
             request.size,
-        );
+            display,
+        )?;
         pane.sky3d_error = self.renderer.last_sky3d_error().map(str::to_owned);
         let renderer_error = self.renderer.last_color_correction_error();
         pane.color_correction_error = match (correction_error, renderer_error) {
@@ -471,13 +480,17 @@ impl Viewport {
         panes: &[PaneRender],
         drawing: &[bool; MAX_PANES],
         options: &[Option<ViewOptions>; MAX_PANES],
+        displays: &[Option<ResolvedSceneDisplay>; MAX_PANES],
         correction_error: Option<&str>,
     ) {
         for request in panes.iter().filter(|request| drawing[request.index]) {
             let Some(options) = options[request.index] else {
                 continue;
             };
-            if let Err(error) = self.draw_pane(ctx, request, options, correction_error) {
+            let Some(display) = displays[request.index] else {
+                continue;
+            };
+            if let Err(error) = self.draw_pane(ctx, request, options, display, correction_error) {
                 self.panes[request.index].error = Some(error);
             }
         }
@@ -541,12 +554,23 @@ impl Viewport {
         }
         let mut drawing = [false; MAX_PANES];
         let mut options = [None; MAX_PANES];
+        let mut displays = [None; MAX_PANES];
+        let mut display_guards = Vec::new();
         for request in panes {
             let mut pane_view = pane_options(self.options, request.index == active, pixel_ratio);
-            match session.fog_render_state_for_view(
+            let display = match session.resolve_scene_display_for_render(pane_view, &request.camera)
+            {
+                Ok(display) => display,
+                Err(error) => {
+                    frames.push(self.unavailable(request.index, error, false));
+                    continue;
+                }
+            };
+            match session.fog_render_state_for_render(
+                pane_view,
                 &request.camera,
-                pane_view.surface,
                 Default::default(),
+                display,
             ) {
                 Ok(fog) => pane_view.fog = fog.fog,
                 Err(error) => {
@@ -554,7 +578,14 @@ impl Viewport {
                     continue;
                 }
             }
+            if display.active {
+                display_guards.push((
+                    request.index,
+                    session.scene_display_render_guard(pane_view, request.camera, display),
+                ));
+            }
             options[request.index] = Some(pane_view);
+            displays[request.index] = Some(display);
             drawing[request.index] =
                 self.panes[request.index].needs_render(request, pane_view, pixel_ratio);
         }
@@ -582,13 +613,20 @@ impl Viewport {
             }
         };
         self.renderer.set_color_correction(preview.clone());
-        self.draw_panes(ctx, panes, &drawing, &options, correction_error.as_deref());
+        self.draw_panes(
+            ctx,
+            panes,
+            &drawing,
+            &options,
+            &displays,
+            correction_error.as_deref(),
+        );
         if let Err(error) = session.verify_color_correction_render(preview.as_ref()) {
             self.renderer.set_color_correction(None);
             for request in panes {
                 drawing[request.index] = options[request.index].is_some();
             }
-            self.draw_panes(ctx, panes, &drawing, &options, Some(&error));
+            self.draw_panes(ctx, panes, &drawing, &options, &displays, Some(&error));
         }
         if let Err(error) = session.verify_baked_surfaces_render(guard.as_ref(), self.options) {
             frames.extend(
@@ -597,6 +635,13 @@ impl Viewport {
                     .map(|pane| self.unavailable(pane.index, error.clone(), true)),
             );
             return frames;
+        }
+        for (index, guard) in &display_guards {
+            if drawing[*index]
+                && let Err(error) = session.verify_scene_display_render(guard)
+            {
+                self.panes[*index].error = Some(error);
+            }
         }
         for request in panes.iter().filter(|request| drawing[request.index]) {
             let pane = &mut self.panes[request.index];

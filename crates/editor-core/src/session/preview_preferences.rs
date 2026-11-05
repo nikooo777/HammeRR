@@ -49,7 +49,7 @@ impl Session {
             return Err("Finish or cancel the active preview, viewport tool, build or launch before applying preview defaults".into());
         }
         let view = self.resolve_view_update(preview.update())?;
-        self.set_view(view);
+        self.set_view(view)?;
         Ok(())
     }
 

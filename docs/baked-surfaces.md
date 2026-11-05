@@ -9,7 +9,8 @@ The layer includes world/detail brushes, terrain, initial-pose brush models and 
 2. Click **Compile**. Wait for a successful build.
 3. Open **Build settings… → Baked surfaces…**. **Build details…** also has this button after a build.
 4. To include baked props, select **Compiled static props** and choose **Draw LOD**. Click **Prepare**, then **Show**. Use **Cancel preparation** to stop a pending read.
-5. Choose **Channel** and **Exposure (EV)**. Select a **Style**, set **Gain**, then click **Apply lighting**.
+5. Choose **Channel**. In Legacy display, set **Exposure (EV)**. Select a
+   **Style**, set **Gain**, then click **Apply lighting**.
 6. Choose **Record kind**. Select a row, then click **Frame face** or **Frame static prop** to move the camera to its final bounds.
 7. Use **Hide** to retain the preparation and settings. Use **Clear** to release them.
 
@@ -24,7 +25,11 @@ density and smoothing groups.
 ![Baked lighting on arches, terrain, brush-model stairs and static props](images/baked-surfaces.png)
 
 You can also prepare and show [final compiled details](compiled-details.md).
-The two layers keep separate lighting controls.
+The two layers keep separate channel and style controls. In an active HDR pane,
+use **Fog preview… → Scene display → Scene exposure EV**, then click
+**Apply scene display**. One scene exposure controls both layers and the other
+enabled scene contributors. Stored **Exposure (EV)** values remain in use in
+Legacy, orthographic and diagnostic panes.
 
 ## Locate a baked prop sample
 
@@ -40,7 +45,8 @@ Expand **Technical details** for stored color bytes and hardware identities.
 
 Repeated and unused hardware vertices remain separate samples. Section and
 vertex identify the occurrence; matching positions do not merge rows. Samples
-use the preparation's exact LOD, **Channel** and **Exposure (EV)**. Missing or
+use the preparation's exact LOD and **Channel**. Exposed colors use the active
+pane's scene exposure in HDR, or the layer's **Exposure (EV)** in Legacy. Missing or
 stale data reports an error and keeps the camera unchanged. Reprepare after
 source or asset changes; inspection and guides do not edit the map or selection.
 The guide follows **Authored models**, layer visibility and whole-prop working
@@ -61,7 +67,9 @@ Lightmapped surfaces use face-local bilinear samples. Tangent normals use normal
 vector basis. SSBump inputs supply direct coefficients. Native shader weighting
 can differ, including `WorldTwoTextureBlend`.
 Unlit materials keep their actual diffuse geometry without invented lightmaps.
-Exposure precedes Reinhard tone mapping and one sRGB output conversion.
+In Legacy display, layer exposure precedes Reinhard tone mapping and one sRGB
+output conversion. HDR scene display mixes surfaces, fog and translucency in
+linear color before the shared exposure and display curve.
 
 Static props use the final model pose, selected skin and exact hardware vertex
 colours for each LOD. Colours decode before triangle interpolation.

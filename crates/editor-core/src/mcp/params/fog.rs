@@ -84,7 +84,7 @@ pub struct FogPreviewSettingsArgs {
     /// Explicit env_fog_controller entity:<id>, or null to clear the explicit choice.
     pub controller: Option<String>,
     pub selection: crate::session::fog::SelectionMode,
-    /// LDR is qualified; HDR requests remain explicitly unavailable in the current native profile.
+    /// HDR requires explicit HDR Scene display; fog never changes the display mode or exposure.
     pub channel: crate::session::fog::Channel,
     /// Initial controller radial context: authored or css_official_map; omitted preserves the current setting.
     pub initial_radial_context: Option<String>,

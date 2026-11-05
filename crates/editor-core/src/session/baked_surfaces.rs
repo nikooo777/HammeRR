@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use compiler::Control;
 use render::{
-    LightingChannel, SceneMesh, ViewOptions,
+    Camera, LightingChannel, ResolvedSceneDisplay, SceneMesh, ViewOptions,
     compiled_faces::{LightingData, LightingSettings, Scene},
 };
 use serde::{Deserialize, Serialize};
@@ -611,36 +611,94 @@ impl Session {
     }
 
     pub fn baked_surfaces_observation(&self) -> Value {
+        let view = self.view();
+        let camera = self.camera();
+        let display = self.resolve_scene_display_for_render(view, &camera);
+        let mut report = self.baked_surfaces_observation_for_display(view, camera, &display);
+        report["active_pane"] = json!(self.active_view_pane());
+        report
+    }
+
+    fn baked_surfaces_observation_for_display(
+        &self,
+        view: ViewOptions,
+        camera: Camera,
+        display: &Result<ResolvedSceneDisplay, String>,
+    ) -> Value {
         json!({"token":self.baked_surface_token(),"status":if self.baked_surfaces.requested && !self.baked_surface_context_ready(){"context_suppressed"}else if self.baked_surfaces.status.is_empty(){"not_loaded"}else{self.baked_surfaces.status},
             "worker_active":self.baked_surfaces.worker.busy(),"requested":self.baked_surfaces.requested,"displayed":self.baked_surfaces_visible(),
-            "complete":self.baked_surfaces.ready.is_some(),"error":self.baked_surfaces.error,"lighting_options":self.baked_surfaces.options,"preparation_options":self.baked_surfaces.preparation,"prop_sample_guide":self.prop_sample_guide_report(self.view.authored_models),
+            "complete":self.baked_surfaces.ready.is_some(),"error":self.baked_surfaces.error,"lighting_options":self.baked_surfaces.options,"preparation_options":self.baked_surfaces.preparation,"prop_sample_guide":self.prop_sample_guide_report_for_display(view.authored_models,display),
+            "scene_display":view.scene_display,"camera":super::view_layout::camera_report(&camera),"surface_view":view.surface.name(),
+            "effective_exposure_ev":display.as_ref().ok().map(|display|if display.active {f64::from(display.effective_exposure_ev(self.baked_surfaces.options.exposure_ev as f32))}else{self.baked_surfaces.options.exposure_ev}),
+            "hdr_active":display.as_ref().is_ok_and(|display|display.active),"exposure_error":display.as_ref().err(),
             "context_ready":self.baked_surface_context_ready(),"suppression_reason":self.baked_surface_suppression_reason(),"working_region":self.working_region_configuration(),"build":self.compiled_world_light_observation()})
     }
 
     pub fn baked_surfaces_options_report(&self) -> Value {
+        let display = self.resolve_scene_display_for_render(self.view(), &self.camera());
+        let mut report = self.baked_surfaces_options_report_for_display(&display);
+        report["active_pane"] = json!(self.active_view_pane());
+        report["panes"] = json!(self.visible_view_panes().iter().map(|pane| {
+            let display = self.resolve_scene_display_for_render(self.view(), &pane.camera);
+            let exposure = self.baked_surfaces_options_report_for_display(&display);
+            json!({"index":pane.index,"active":pane.index==self.active_view_pane(),"projection":pane.camera.projection.name(),"effective_exposure_ev":exposure["effective_exposure_ev"],"exposure_owner":exposure["exposure_owner"],"display_curve":exposure["display_curve"],"hdr_active":exposure["hdr_active"],"error":display.as_ref().err()})
+        }).collect::<Vec<_>>());
+        report
+    }
+
+    fn baked_surfaces_options_report_for_display(
+        &self,
+        display: &Result<ResolvedSceneDisplay, String>,
+    ) -> Value {
         let ready = self.baked_surfaces.ready.as_ref();
         let options = &self.baked_surfaces.options;
         json!({"settings":options,"channel":options.channel,"exposure_ev":options.exposure_ev,"style_gains":options.style_gains,
+            "requested_channel":options.channel,"effective_channel":ready.and_then(|ready|ready.lighting.as_ref()).map(|lighting|lighting.channel),
+            "requested_exposure_ev":options.exposure_ev,"effective_exposure_ev":display.as_ref().ok().map(|display|if display.active {f64::from(display.effective_exposure_ev(options.exposure_ev as f32))}else{options.exposure_ev}),
+            "hdr_active":display.as_ref().is_ok_and(|display|display.active),"exposure_owner":display.as_ref().ok().map(|display|if display.active {display.exposure_owner()}else{"baked_surfaces"}),
+            "display_curve":display.as_ref().ok().map(|_|"reinhard_per_channel"),"exposure_error":display.as_ref().err(),
             "available_styles":ready.and_then(|ready|ready.scene.available_styles(options.channel).ok()),
             "effective_style_gains":ready.and_then(|ready|ready.lighting.as_ref()).map(|lighting|&lighting.effective_style_gains),
             "channels":([LightingChannel::Ldr,LightingChannel::Hdr].map(|channel|json!({"channel":channel,"available":ready.is_some_and(|ready|ready.scene.available_styles(channel).is_ok() && ready.props.as_ref().is_none_or(|props|props.scene.available_channels().contains(&channel)))}))),
             "available":ready.is_some_and(|ready|ready.lighting.is_some()),"unavailable_reason":ready.and_then(|ready|ready.validate_settings(options).err()),
             "reconstruction":"auto_material_directional","sampling":"face_isolated_bilinear_native_luxel_centers",
             "material":render::compiled_faces::materials::POLICY,
-            "style_zero_policy":"implicit_unity_unless_explicit_gain","styles_apply_to":"faces","display_policy":DISPLAY_POLICY,
+            "style_zero_policy":"implicit_unity_unless_explicit_gain","styles_apply_to":"faces","display_policy":if display.as_ref().is_ok_and(|display|display.active) {"Selected FACE/prop content and style composition remain linear through material multiplication, fog and translucency, then receive shared scene exposure and one Reinhard display pass; no native appearance/adaptation parity"}else{DISPLAY_POLICY},
             "static_props":{"enabled":self.baked_surfaces.preparation.compiled_static_props,"draw_lod":self.baked_surfaces.preparation.draw_lod,"static_weight":1,"style_decomposition":false,"runtime_direct_lighting":"not_simulated","policy":PROP_POLICY}})
     }
 
     pub fn baked_surfaces_render_report(&self, view: ViewOptions) -> Value {
+        let camera = self.camera();
+        let display = self.resolve_scene_display_for_render(view, &camera);
+        self.baked_surfaces_render_report_for_display(view, camera, display)
+    }
+
+    pub fn baked_surfaces_render_report_for_render(
+        &self,
+        view: ViewOptions,
+        camera: Camera,
+        display: ResolvedSceneDisplay,
+    ) -> Value {
+        self.baked_surfaces_render_report_for_display(view, camera, Ok(display))
+    }
+
+    fn baked_surfaces_render_report_for_display(
+        &self,
+        view: ViewOptions,
+        camera: Camera,
+        display: Result<ResolvedSceneDisplay, String>,
+    ) -> Value {
         let surfaces = self.baked_surfaces.ready.as_ref().and_then(|ready| {
             ready
                 .scene
                 .surfaces(self.baked_surfaces.options.channel)
                 .ok()
         });
-        json!({"state":self.baked_surfaces_observation(),"lighting":self.baked_surfaces_options_report(),"applied":self.baked_surfaces_visible(),"surface_view":view.surface.name(),
+        let guide = self.prop_sample_guide_report_for_display(view.authored_models, &display);
+        let state = self.baked_surfaces_observation_for_display(view, camera, &display);
+        json!({"state":state,"lighting":self.baked_surfaces_options_report_for_display(&display),"applied":self.baked_surfaces_visible() && display.is_ok(),"surface_view":view.surface.name(),"projection":camera.projection.name(),
             "surface_count":surfaces.map(<[_]>::len),"visible_surface_count":surfaces.map(|surfaces|surfaces.iter().filter(|surface|self.baked_surface_in_region(surface)).count()),
-            "view_policy":VIEW_POLICY,"prop_sample_guide":self.prop_sample_guide_report(view.authored_models)})
+            "view_policy":VIEW_POLICY,"prop_sample_guide":guide})
     }
 
     pub fn inspect_baked_surfaces(
@@ -714,9 +772,10 @@ impl Session {
                 "authored_identity":null,"source_contributors":{"root":origins[0],"instance":origins[1],"generated_region":origins[2],"unresolved":origins[3]},"source_policy":"many_to_many_contributors_without_authored_footprint_or_vertex_correspondence"})
         }).collect::<Vec<_>>()
         } else {
+            let display = self.resolve_scene_display_for_render(self.view(), &self.camera())?;
             prop_scene.map(|scene| scene.props().iter().skip(offset).take(limit).map(|prop| {
                 let bounds = scene.bounds(self.baked_surfaces.preparation.draw_lod, Some(prop.ordinal), |_|true)?;
-                let sample = scene.draw_lod_sample(prop.ordinal, self.baked_surfaces.preparation.draw_lod, &self.baked_surfaces.options)?;
+                let sample = scene.draw_lod_sample(prop.ordinal, self.baked_surfaces.preparation.draw_lod, &self.baked_surfaces.options, Some(display))?;
                 Ok(json!({"record_kind":"static_props","prop":prop.ordinal,"model":prop.model_name,"receiver":"static_prop",
                     "bounds":bounds,"draw_lod":self.baked_surfaces.preparation.draw_lod,"available_lods":prop.lods,"frame_available":current && bounds.is_some(),
                     "skin":prop.skin,"origin":prop.origin,"angles":prop.angles,"all_lod_vertices":prop.vertices,"all_lod_triangles":prop.triangles,
@@ -788,6 +847,11 @@ impl Session {
         self.ensure_not_closing()?;
         self.check_baked_surface_token(token)?;
         options.validate()?;
+        self.validate_legacy_exposure_change(
+            self.baked_surfaces.options.exposure_ev,
+            options.exposure_ev,
+            false,
+        )?;
         options.style_gains.sort_by_key(|gain| gain.style);
         if self.baked_surfaces.worker.busy() {
             return Err("Wait for the baked surface worker before changing lighting".into());

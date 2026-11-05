@@ -152,9 +152,9 @@ impl Channel {
         }
     }
 
-    pub(super) fn validate(self) -> Result<(), String> {
-        if self == Self::Hdr {
-            return Err("HDR fog is unavailable: the installed framebuffer color consumer has not been qualified".into());
+    pub(in crate::session) fn validate(self, display: render::SceneDisplay) -> Result<(), String> {
+        if self == Self::Hdr && !matches!(display, render::SceneDisplay::Hdr { .. }) {
+            return Err("HDR fog requires HDR Scene display; set Scene display to HDR with a finite Scene exposure EV, or select LDR fog before using Legacy display".into());
         }
         Ok(())
     }

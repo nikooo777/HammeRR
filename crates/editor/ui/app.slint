@@ -2325,6 +2325,8 @@ export component AppWindow inherits Window {
     in-out property <bool> lighting-sky-ambient: false;
     in-out property <int> lighting-quality: 1;
     in-out property <string> lighting-exposure-ev: "0";
+    in property <bool> legacy-exposure-enabled: true;
+    in property <string> scene-exposure-context;
     in property <string> lighting-status: "Authored lighting preview is off";
     in property <string> lighting-error;
     in-out property <bool> normal-maps: false;
@@ -3654,8 +3656,9 @@ export component AppWindow inherits Window {
                                         }
                                         if root.lighting-preview: FieldRow {
                                             label: "Exposure EV";
-                                            LineEdit { text <=> root.lighting-exposure-ev; input-type: decimal; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
+                                            LineEdit { text <=> root.lighting-exposure-ev; enabled: root.legacy-exposure-enabled; input-type: decimal; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
                                         }
+                                        if root.lighting-preview && root.scene-exposure-context != "": OverlayNote { text: root.scene-exposure-context; }
                                         if root.lighting-preview: OverlayNote { text: root.lighting-status + " · no shadows or bounce"; }
                                         if root.lighting-error != "": OverlayNote { text: root.lighting-error; text-color: Theme.warning; }
                                         SectionHeader { text: "ENVIRONMENT"; collapsible: false; }
@@ -3666,8 +3669,9 @@ export component AppWindow inherits Window {
                                         }
                                         if root.sky-preview && root.sky-channel == 1: FieldRow {
                                             label: "Sky EV";
-                                            LineEdit { text <=> root.sky-exposure-ev; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
+                                            LineEdit { text <=> root.sky-exposure-ev; enabled: root.legacy-exposure-enabled; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
                                         }
+                                        if root.sky-preview && root.sky-channel == 1 && root.scene-exposure-context != "": OverlayNote { text: root.scene-exposure-context; }
                                         if root.sky-preview: OverlayNote { text: root.sky-preview-status + " · Perspective, Textured"; }
                                         if root.sky-preview-error != "": OverlayNote { text: root.sky-preview-error; text-color: Theme.warning; }
                                         OverlaySwitch { text: "Rope preview"; checked <=> root.rope-preview; toggled => { root.options-changed(); } }

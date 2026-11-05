@@ -13,7 +13,7 @@ use super::{
     sum_bytes,
 };
 use crate::{
-    LightingChannel, SceneMesh,
+    LightingChannel, ResolvedSceneDisplay, SceneMesh,
     scene::{Batch, LineVertex, Vertex},
 };
 
@@ -60,11 +60,35 @@ pub struct VertexSample {
     pub normal: [f32; 3],
     pub channel: LightingChannel,
     pub exposure_ev: f64,
+    pub effective_exposure_ev: f64,
+    pub exposure_owner: String,
+    pub hdr_active: bool,
     pub used_by_triangles: bool,
     pub bgra: [u8; 4],
     pub decoded_linear: [f64; 3],
     pub pre_ev: [f64; 3],
     pub exposed: [f64; 3],
+}
+
+impl VertexSample {
+    pub fn with_scene_display(mut self, display: Option<ResolvedSceneDisplay>) -> Self {
+        self.hdr_active = display.is_some_and(|display| display.active);
+        self.effective_exposure_ev = display
+            .filter(|display| display.active)
+            .map_or(self.exposure_ev, |display| {
+                f64::from(display.effective_exposure_ev(self.exposure_ev as f32))
+            });
+        self.exposure_owner = if self.hdr_active {
+            "scene"
+        } else {
+            "baked_surfaces"
+        }
+        .into();
+        self.exposed = self
+            .pre_ev
+            .map(|value| value * self.effective_exposure_ev.exp2());
+        self
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -86,6 +110,9 @@ pub struct SamplePage {
     pub draw_lod: u8,
     pub channel: LightingChannel,
     pub exposure_ev: f64,
+    pub effective_exposure_ev: f64,
+    pub exposure_owner: &'static str,
+    pub hdr_active: bool,
     /// Offset within the requested prop LOD, in native section order.
     pub offset: usize,
     pub limit: usize,
@@ -438,6 +465,7 @@ impl Scene {
         section: usize,
         vertex: usize,
         settings: &LightingSettings,
+        display: Option<ResolvedSceneDisplay>,
     ) -> Result<VertexSample, String> {
         settings.validate()?;
         let prop = self
@@ -455,7 +483,7 @@ impl Scene {
             return Err("Compiled prop local hardware vertex is unavailable".into());
         }
         let colors = self.channel(settings.channel)?;
-        Ok(self.sample_at(section, vertex, colors, settings))
+        Ok(self.sample_at(section, vertex, colors, settings, display))
     }
 
     pub fn sections(&self, ordinal: u32) -> Result<Vec<SectionInfo>, String> {
@@ -494,6 +522,7 @@ impl Scene {
         offset: usize,
         limit: usize,
         settings: &LightingSettings,
+        display: Option<ResolvedSceneDisplay>,
     ) -> Result<SamplePage, String> {
         if !(1..=MAX_PAGE_SAMPLES).contains(&limit) || offset.checked_add(limit).is_none() {
             return Err(format!(
@@ -535,7 +564,7 @@ impl Scene {
             let remaining = (count - rows.len()).min(section.vertices.len() - skip);
             let end = skip + remaining;
             for vertex in skip..end {
-                rows.push(self.sample_at(section, vertex, colors, settings));
+                rows.push(self.sample_at(section, vertex, colors, settings, display));
             }
             skip = 0;
         }
@@ -545,6 +574,17 @@ impl Scene {
             draw_lod,
             channel: settings.channel,
             exposure_ev: settings.exposure_ev,
+            effective_exposure_ev: display
+                .filter(|display| display.active)
+                .map_or(settings.exposure_ev, |display| {
+                    f64::from(display.effective_exposure_ev(settings.exposure_ev as f32))
+                }),
+            exposure_owner: if display.is_some_and(|display| display.active) {
+                "scene"
+            } else {
+                "baked_surfaces"
+            },
+            hdr_active: display.is_some_and(|display| display.active),
             offset,
             limit,
             total,
@@ -559,6 +599,7 @@ impl Scene {
         vertex: usize,
         colors: &[Bgra8],
         settings: &LightingSettings,
+        display: Option<ResolvedSceneDisplay>,
     ) -> VertexSample {
         let source = section.vertices.start + vertex;
         let color = colors[source];
@@ -573,12 +614,16 @@ impl Scene {
             normal: self.vertices[source].normal,
             channel: settings.channel,
             exposure_ev: settings.exposure_ev,
+            effective_exposure_ev: settings.exposure_ev,
+            exposure_owner: String::new(),
+            hdr_active: false,
             used_by_triangles: self.used_by_triangles[source] != 0,
             bgra: [color.blue, color.green, color.red, color.alpha],
             decoded_linear: decoded,
             pre_ev: decoded,
-            exposed: decoded.map(|value| value * settings.exposure_ev.exp2()),
+            exposed: [0.0; 3],
         }
+        .with_scene_display(display)
     }
 
     pub fn draw_lod_sample(
@@ -586,6 +631,7 @@ impl Scene {
         ordinal: u32,
         draw_lod: u8,
         settings: &LightingSettings,
+        display: Option<ResolvedSceneDisplay>,
     ) -> Result<VertexSample, String> {
         self.validate_settings(settings, draw_lod)?;
         let prop = self
@@ -599,7 +645,7 @@ impl Scene {
             .filter(|section| section.prop == prop)
             .position(|section| section.lod == draw_lod && !section.vertices.is_empty())
             .ok_or("Compiled prop requested draw LOD has no hardware vertices")?;
-        self.vertex_sample(ordinal, section, 0, settings)
+        self.vertex_sample(ordinal, section, 0, settings, display)
     }
 
     pub fn mesh_bytes(&self, channel: LightingChannel, draw_lod: u8) -> Result<usize, String> {

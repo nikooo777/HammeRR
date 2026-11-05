@@ -29,15 +29,15 @@ pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
         let water = fog.water_settings();
         json!({
             "kind":if water.is_some(){"water"}else{"controller"},
-            "enabled":fog.enabled(),"max_density":fog.max_density(),"far_z":fog.far_z(),
-            "controller":{
+            "enabled":fog.enabled(),"max_density":fog.max_density(),"far_z":fog.far_z(),"radial":fog.radial(),
+            "controller":controller.map(|controller|json!({
                 "color_domain":"float_byte_rgb", "color":controller.color(),
                 "color2":controller.color2(),"direction":controller.direction(),
                 "received_direction":controller.received_direction(),
                 "start":controller.start(),"end":controller.end(),
                 "max_density":controller.max_density(),"enabled":controller.enabled(),
                 "radial":controller.radial(),"blend":controller.blend(),
-            },
+            })),
             "water":water.map(|water|json!({
                 "color_domain":"normalized_material_rgb","color":water.normalized_rgb(),
                 "start":water.start(),"end":water.end(),"enabled":water.enabled(),
@@ -64,6 +64,8 @@ pub enum FogPreviewAction {
     Input,
     /// Switch the player to a named controller within the ordered raw controller/player history.
     SwitchPlayerController,
+    /// Capture a declared shader reset, world fog or selected sky fog setup at the current preview time.
+    RecordRenderPass,
     Play,
     Pause,
     Seek,
@@ -84,6 +86,8 @@ pub struct FogPreviewSettingsArgs {
     pub channel: crate::session::fog::Channel,
     /// Initial controller radial context: authored or css_official_map; omitted preserves the current setting.
     pub initial_radial_context: Option<String>,
+    /// Water radial context: controller_preview or recorded_passes; omission preserves the current setting. Changing it resets all preview history and time.
+    pub water_radial_context: Option<crate::session::fog::WaterRadialContext>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -100,6 +104,8 @@ pub struct FogPreviewControlArgs {
     pub input: Option<String>,
     /// Input only: raw native parameter; omitted for parameterless inputs.
     pub value: Option<String>,
+    /// Record render pass only: reset, world or sky. Captures the selected setup at the current logical time.
+    pub pass: Option<crate::session::fog::RenderPassKind>,
     /// Seek only: requested preview time in seconds.
     pub time_seconds: Option<f64>,
     /// Advance only: elapsed preview time in seconds.

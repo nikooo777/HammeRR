@@ -1286,6 +1286,7 @@ background needs explicit `$nofog 1`. Parented sky cameras refuse. See
 | `prepare_environment` | Optional `background` | Prepare the selected environment context. |
 | `input` | `controller`, `input`, optional `value` and `background` | Send one registered input to that controller in the preview. |
 | `switch_player_controller` | `controller`, optional `background` | Switch player fog to a named controller profile. |
+| `record_render_pass` | `pass` | Capture a declared `reset`, `world` or `sky` fog setup at the current preview time. |
 | `play`, `pause` | None | Start or stop the shared preview clock. |
 | `seek` | `time_seconds`, optional `background` | Pause and inspect a requested preview time, preserving the event sequence. |
 | `advance` | `seconds`, optional `background` | Advance preview time explicitly by 0–60 seconds. |
@@ -1300,6 +1301,11 @@ The complete `settings` object contains `enabled`, `controller` (an
 Optional `settings.initial_radial_context` accepts `authored` or
 `css_official_map`; omission or `null` preserves the current choice. The legacy
 `set_fog_preview` operation also preserves it.
+Optional `settings.water_radial_context` accepts `controller_preview` or
+`recorded_passes`; omission preserves the current choice. Changing it clears all
+preview events and time, pauses playback and retains the prepared environment.
+`water_radial_context` reports the current mode; `water_radial_contexts` lists
+the choices.
 
 `authored` keeps authored radial values. `css_official_map` applies radial
 initialization once to every controller, including disabled and non-Master
@@ -1321,8 +1327,8 @@ Fields for another action and unknown fields reject. `background` defaults to
 `false`; requests wait outside the Session lock when work is needed. With
 `true`, inspect pending status until the operation completes.
 
-Preview time is 0–3600 seconds, with at most 128 combined input and switch
-events and 128 participating controllers. Use `seek` with
+Preview time is 0–3600 seconds, with at most 128 combined input, switch and
+render-pass events and 128 participating controllers. Use `seek` with
 `time_seconds:0` to rewind and retain those events. Reset preserves settings
 and a current prepared environment; Clear removes them. Events append in time
 order; Reset before inserting one earlier than the last event. Source/content
@@ -1332,9 +1338,11 @@ rendered frame and pixel pick at one exact preview time.
 
 Environment selection uses the initial first-controller/last-Master policy and
 prepared camera-water context. Call `prepare_environment` after source or
-content changes. Underwater fog requires a world controller for its radial
-context; place/configure one rather than relying on a default. Unsupported or
-ambiguous environment sources report unavailable.
+content changes. With `water_radial_context:"controller_preview"`, underwater
+fog requires a world controller for its radial context, even if disabled.
+With `recorded_passes`, it requires a known captured radial value and can use
+it without a world controller. Unsupported or ambiguous environment sources
+report unavailable.
 
 For `input`, pass an exact native input name from the shared catalogue and its
 raw string `value`; omit `value` for parameterless inputs. The shared parser
@@ -1354,9 +1362,10 @@ actual native input string. Inspect `can_switch_player_controller` and
 `player_switch_issue` before sending a request. This is a player operation,
 separate from the controller input catalogue.
 
-Controller inputs and player switches share one ordered `events` sequence.
-Each event reports `kind` (`input` or `switch_player_controller`), `controller`
-and `time_seconds`; input events also report `input` and `value`.
+Controller inputs, player switches and render-pass captures share one ordered
+`events` sequence. Input and switch events report `kind` (`input` or
+`switch_player_controller`), `controller` and `time_seconds`; input events also
+report `input` and `value`.
 `player_switches` retains the filtered switch list. `replay_mode` is
 `controller_inputs` until the first switch, then `mixed_player`. Input-only
 preview uses continuous controller interpolation. Adding the first switch
@@ -1437,6 +1446,65 @@ geometric query.
 `enabled`, `controller` and the latest `get_fog_preview.snapshot` as `snapshot`.
 Enabling requires an `env_fog_controller` entity ID. A current snapshot is also
 required when disabling.
+
+### Recorded water radial context
+
+1. Apply `settings.enabled:true`, `settings.selection:"environment"` and
+   `settings.water_radial_context:"recorded_passes"` through
+   `control_fog_preview`, preserving the other settings.
+2. Prepare the environment if needed.
+3. Call `control_fog_preview` with `action:"record_render_pass"`,
+   `pass:"reset"` and the current `expected_snapshot` to establish axial water.
+4. Inspect `pass_history`, then record `pass:"world"` or `pass:"sky"` to
+   capture another setup. Use the latest snapshot for each request.
+
+`record_render_pass` accepts no `background`, time, controller, input, value or
+settings fields. It requires `recorded_passes` mode and captures at the current
+preview time. Choose a ready `pass_choices[].id`; each choice reports `ready`,
+`issue` and source `detail`. `can_record_render_pass` remains independent of
+wet-view readiness so a known writer can be recorded while water reports
+unknown radial context.
+
+`reset` writes radial `false`. Enabled `world` writes the current world/player
+fog's radial bit; disabled or absent world fog preserves the prior value.
+Enabled `sky` writes the qualified selected sky camera's radial bit; disabled
+sky fog preserves the prior value. An unavailable sky source refuses recording.
+The selected camera must match the current source; display preparation is
+optional. `world` requires `settings.enabled:true`.
+`fogenable` controls writing, so enabled setups still write when maximum density
+is zero. Water consumes the result without changing it. The current world
+controller's far clip remains independent; sky records never supply world far
+clipping.
+
+`pass_events` retains immutable captures with global `order`, `time_seconds`,
+`pass`, source `controller` or `camera` when present, `radial_write` and sampled
+`source` metadata. Their entries in `events` use `kind:"record_render_pass"`
+and `pass:"reset"`, `"world"` or `"sky"`.
+World source metadata retains `kind:"selected_world_fog"`, `selection`,
+`selection_reason`, the actual `profile` or `null`, `player_sample_time_seconds`
+and `source_snapshot`. Sky metadata retains `kind:"selected_sky_camera"`, its
+`identity`, `selection_serial`, `initial_radial_context` and `profile`.
+Reset metadata is `kind:"shader_default_state"` with `radial:false`.
+
+`pass_history` reports `radial` (`true`, `false` or `null`),
+`known`, `last_writer`, `active_event_count`, `total_event_count` and
+`origin:"explicit_preview_history"`. The last writer retains its event time,
+global order, setup kind and captured source metadata when present.
+`radial_write:null` records a setup that preserves the prior value. The active
+count covers setup records through the requested time; the total count covers
+all setup records. Top-level `event_count` counts all inputs, switches and
+setup records together. `null` radial means Unknown and refuses the wet
+consuming draw. A recorded reset or enabled
+World/Sky setup can establish a value without a world controller.
+
+Captures keep append order alongside inputs and switches, including at equal
+times. Earlier append requests refuse. Later controller changes do not
+resample previous captures. Query, Seek, rendering and camera movement do not
+append records. Reset, Clear, source retirement and controller/selection/initial
+rule changes clear the history back to Unknown. Cancel preserves it.
+Preparation alone does not establish a radial value. The captures supply a
+declared setup schedule. Native render-pass execution and arbitrary automatic
+pass-order discovery are unavailable.
 
 ## Rope preview
 

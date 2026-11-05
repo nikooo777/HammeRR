@@ -7,7 +7,10 @@ use slint::{ComponentHandle, VecModel};
 
 use crate::FogWindow;
 use crate::runtime::{DocumentAccess, DocumentContinuation, DocumentLifecycle};
-use crate::session::fog::{Channel, Command, InitialRadialContext, SelectionMode, Settings};
+use crate::session::fog::{
+    Channel, Command, InitialRadialContext, RenderPassKind, SelectionMode, Settings,
+    WaterRadialContext,
+};
 use crate::session::{Actor, Session};
 
 const REPORT_INTERVAL: Duration = Duration::from_millis(125);
@@ -18,11 +21,14 @@ struct Form {
     selection_snapshot: Option<String>,
     input_snapshot: Option<String>,
     player_snapshot: Option<String>,
+    pass_snapshot: Option<String>,
     time_snapshot: Option<String>,
     choices: Vec<Value>,
     channels: Vec<Value>,
     selections: Vec<Value>,
     initial_rules: Vec<Value>,
+    water_radial_contexts: Vec<Value>,
+    passes: Vec<Value>,
     inputs: Vec<Value>,
     input_targets: Vec<Value>,
     player_targets: Vec<Value>,
@@ -30,6 +36,8 @@ struct Form {
     channel_labels: Vec<slint::SharedString>,
     selection_labels: Vec<slint::SharedString>,
     initial_rule_labels: Vec<slint::SharedString>,
+    water_radial_labels: Vec<slint::SharedString>,
+    pass_labels: Vec<slint::SharedString>,
     input_labels: Vec<slint::SharedString>,
     input_target_labels: Vec<slint::SharedString>,
     player_labels: Vec<slint::SharedString>,
@@ -56,6 +64,7 @@ enum Action {
     Cancel,
     Clear,
     SwitchPlayer,
+    RecordPass,
 }
 
 fn selected(choices: &[Value], index: i32) -> Option<&Value> {
@@ -114,6 +123,7 @@ fn update_choice(window: &FogWindow, form: &Form) {
     let channel = selected(&form.channels, window.get_channel_index());
     let selection = selected(&form.selections, window.get_environment_index());
     let initial_rule = selected(&form.initial_rules, window.get_initial_rule_index());
+    let water_radial = selected(&form.water_radial_contexts, window.get_water_radial_index());
     let explicit = selection.is_some_and(|selection| selection["id"] == "explicit");
     window.set_environment_automatic(
         selection.is_some_and(|selection| selection["id"] == "environment"),
@@ -141,6 +151,7 @@ fn update_choice(window: &FogWindow, form: &Form) {
             && channel.is_some_and(|channel| channel["ready"] == true)
             && selection.is_some_and(|selection| selection["ready"] == true)
             && initial_rule.is_some_and(|initial_rule| initial_rule["ready"] == true)
+            && water_radial.is_some_and(|context| context["ready"] == true)
             && (!window.get_preview_enabled()
                 || !explicit
                 || controller.is_some_and(|controller| controller["ready"] == true)),
@@ -173,8 +184,83 @@ fn update_choice(window: &FogWindow, form: &Form) {
             .unwrap_or_default()
             .into(),
     );
+    window.set_water_radial_recorded(
+        water_radial.is_some_and(|context| context["id"] == "recorded_passes"),
+    );
+    window.set_water_radial_detail(
+        water_radial
+            .and_then(|context| context["detail"].as_str())
+            .unwrap_or_default()
+            .into(),
+    );
     update_input(window, form);
     update_player(window, form);
+    update_pass(window, form);
+}
+
+fn update_pass(window: &FogWindow, form: &Form) {
+    let pass = selected(&form.passes, window.get_pass_index());
+    let history = &form.report["pass_history"];
+    let stale = form
+        .pass_snapshot
+        .as_ref()
+        .is_some_and(|snapshot| snapshot != &form.snapshot);
+    window.set_can_record_pass(
+        window.get_available()
+            && !window.get_selection_dirty()
+            && !stale
+            && form.report["can_record_render_pass"] == true
+            && pass.is_some_and(|pass| pass["ready"] == true),
+    );
+    let issue = if window.get_selection_dirty() {
+        Some("Apply preview before recording a setup.")
+    } else if stale {
+        Some("Fog preview changed. Reselect the setup before recording it.")
+    } else {
+        pass.and_then(|pass| pass["issue"].as_str())
+            .or_else(|| history["issue"].as_str())
+            .or_else(|| form.report["render_pass_issue"].as_str())
+    };
+    window.set_pass_issue(issue.is_some());
+    window.set_pass_detail(
+        issue
+            .or_else(|| pass.and_then(|pass| pass["detail"].as_str()))
+            .unwrap_or_default()
+            .into(),
+    );
+    let mut status = vec![format!(
+        "Recorded radial: {}",
+        match history["radial"].as_bool() {
+            Some(true) => "Radial",
+            Some(false) => "Axial",
+            None if history["issue"].is_string() => "Unavailable",
+            None => "Unknown",
+        }
+    )];
+    let writer = &history["last_writer"];
+    if let Some(time) = writer["time_seconds"].as_f64() {
+        let label = form
+            .passes
+            .iter()
+            .find(|pass| pass["id"] == writer["pass"])
+            .and_then(|pass| pass["label"].as_str())
+            .unwrap_or("Unavailable setup");
+        let mut last = format!("Last write: {label} at {time:.3} s");
+        if let Some(source) = writer["controller"]
+            .as_str()
+            .or_else(|| writer["camera"].as_str())
+        {
+            last.push_str(&format!(" · {source}"));
+        }
+        status.push(last);
+    }
+    if let (Some(active), Some(total)) = (
+        history["active_event_count"].as_u64(),
+        history["total_event_count"].as_u64(),
+    ) {
+        status.push(format!("Setups at this time: {active} / {total} recorded"));
+    }
+    window.set_pass_status(status.join("\n").into());
 }
 
 fn update_player(window: &FogWindow, form: &Form) {
@@ -313,6 +399,10 @@ fn unavailable(window: &FogWindow, error: &str) {
     window.set_can_seek(false);
     window.set_can_send_input(false);
     window.set_can_switch_player(false);
+    window.set_can_record_pass(false);
+    window.set_pass_status("Recorded radial: unavailable".into());
+    window.set_pass_issue(true);
+    window.set_pass_detail(error.into());
     window.set_player_status("Player state unavailable".into());
     window.set_player_state("".into());
     window.set_player_detail(error.into());
@@ -558,14 +648,20 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
             .then(|| selected(&form.initial_rules, window.get_initial_rule_index()))
             .flatten()
             .cloned();
+        let water_radial = dirty
+            .then(|| selected(&form.water_radial_contexts, window.get_water_radial_index()))
+            .flatten()
+            .cloned();
         let mut choices = array(&report, "controllers")?;
         let mut channels = array(&report, "channels")?;
         let mut selections = array(&report, "selections")?;
         let mut initial_rules = array(&report, "initial_radial_contexts")?;
+        let mut water_radial_contexts = array(&report, "water_radial_contexts")?;
         retain_choice(&mut choices, controller.as_ref());
         retain_choice(&mut channels, channel.as_ref());
         retain_choice(&mut selections, selection.as_ref());
         retain_choice(&mut initial_rules, initial_rule.as_ref());
+        retain_choice(&mut water_radial_contexts, water_radial.as_ref());
         set_catalog(
             &choices,
             Some("Choose a controller"),
@@ -584,10 +680,17 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
             &mut form.initial_rule_labels,
             |model| window.set_initial_rules(model),
         );
+        set_catalog(
+            &water_radial_contexts,
+            None,
+            &mut form.water_radial_labels,
+            |model| window.set_water_radial_contexts(model),
+        );
         form.choices = choices;
         form.channels = channels;
         form.selections = selections;
         form.initial_rules = initial_rules;
+        form.water_radial_contexts = water_radial_contexts;
         window.set_controller_index(
             index_of(
                 &form.choices,
@@ -617,6 +720,12 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
             initial_rule
                 .as_ref()
                 .map_or(&report["initial_radial_context"], |choice| &choice["id"]),
+        ));
+        window.set_water_radial_index(index_of(
+            &form.water_radial_contexts,
+            water_radial
+                .as_ref()
+                .map_or(&report["water_radial_context"], |context| &context["id"]),
         ));
         if !dirty {
             window.set_preview_enabled(report["enabled"] == true);
@@ -662,6 +771,22 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
         );
     }
     {
+        let previous = selected(&form.passes, window.get_pass_index()).cloned();
+        let mut passes = array(&report, "pass_choices")?;
+        if window.get_pass_dirty() {
+            retain_choice(&mut passes, previous.as_ref());
+        }
+        set_catalog(&passes, None, &mut form.pass_labels, |model| {
+            window.set_passes(model)
+        });
+        form.passes = passes;
+        window.set_pass_index(
+            previous
+                .as_ref()
+                .map_or(0, |pass| index_of(&form.passes, &pass["id"])),
+        );
+    }
+    {
         let previous = selected(&form.player_targets, window.get_player_index() - 1).cloned();
         let mut targets = array(&report, "switch_targets")?;
         if window.get_player_dirty() {
@@ -693,9 +818,7 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
     window.set_time_limits(
         format!(
             "0–{} s · {} / {} events",
-            report["max_time_seconds"],
-            report["events"].as_array().map_or(0, Vec::len),
-            report["limits"]["events"]
+            report["max_time_seconds"], report["event_count"], report["limits"]["events"]
         )
         .into(),
     );
@@ -757,6 +880,7 @@ fn command(window: &FogWindow, form: &Form, action: Action) -> Result<(String, C
         Action::Apply => form.selection_snapshot.as_ref(),
         Action::Input => form.input_snapshot.as_ref(),
         Action::SwitchPlayer => form.player_snapshot.as_ref(),
+        Action::RecordPass => form.pass_snapshot.as_ref(),
         Action::Seek | Action::Scrub(_) => form.time_snapshot.as_ref(),
         _ => None,
     }
@@ -780,6 +904,11 @@ fn command(window: &FogWindow, form: &Form, action: Action) -> Result<(String, C
                 &form.initial_rules,
                 window.get_initial_rule_index(),
                 "initial fog rule",
+            )?)?,
+            water_radial_context: WaterRadialContext::parse(catalog_id(
+                &form.water_radial_contexts,
+                window.get_water_radial_index(),
+                "water radial rule",
             )?)?,
         }),
         Action::Playback if window.get_playing() => Command::Pause,
@@ -814,6 +943,13 @@ fn command(window: &FogWindow, form: &Form, action: Action) -> Result<(String, C
             controller: selected(&form.player_targets, window.get_player_index() - 1)
                 .and_then(|target| entity_id(&target["id"]))
                 .ok_or("Choose a player fog controller target")?,
+        },
+        Action::RecordPass => Command::RecordRenderPass {
+            pass: RenderPassKind::parse(catalog_id(
+                &form.passes,
+                window.get_pass_index(),
+                "fog setup",
+            )?)?,
         },
     };
     Ok((snapshot, command))
@@ -863,6 +999,10 @@ fn run(window: &FogWindow, form: &RefCell<Form>, target: &DocumentContinuation, 
             if matches!(action, Action::Clear) {
                 window.set_player_index(0);
             }
+        }
+        if matches!(action, Action::RecordPass | Action::Clear) {
+            window.set_pass_dirty(false);
+            form.pass_snapshot = None;
         }
     }
     if let Err(error) = refresh(window, form, target) {
@@ -932,6 +1072,17 @@ impl Controller {
         window.on_cancel_work(callback(Action::Cancel));
         window.on_clear_preview(callback(Action::Clear));
         window.on_switch_player_controller(callback(Action::SwitchPlayer));
+        window.on_record_render_pass(callback(Action::RecordPass));
+        window.on_pass_changed({
+            let (window, form) = (window.as_weak(), form.clone());
+            move || {
+                if let Some(window) = window.upgrade() {
+                    let mut form = form.borrow_mut();
+                    form.pass_snapshot = Some(form.snapshot.clone());
+                    update_pass(&window, &form);
+                }
+            }
+        });
         window.on_player_changed({
             let (window, form) = (window.as_weak(), form.clone());
             move || {

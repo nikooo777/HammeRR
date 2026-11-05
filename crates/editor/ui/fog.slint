@@ -30,6 +30,17 @@ export component FogWindow inherits Window {
     in-out property <int> initial-rule-index;
     in property <[string]> initial-rules;
     in property <string> initial-rule-detail;
+    in-out property <int> water-radial-index;
+    in property <[string]> water-radial-contexts;
+    in property <string> water-radial-detail;
+    in property <bool> water-radial-recorded;
+    in-out property <int> pass-index;
+    in property <[string]> passes;
+    in-out property <bool> pass-dirty;
+    in property <bool> can-record-pass;
+    in property <string> pass-status;
+    in property <string> pass-detail;
+    in property <bool> pass-issue;
     in property <bool> environment-busy;
     in property <bool> environment-automatic;
     in property <bool> can-prepare-environment;
@@ -89,6 +100,8 @@ export component FogWindow inherits Window {
     callback clear-preview();
     callback player-changed();
     callback switch-player-controller();
+    callback pass-changed();
+    callback record-render-pass();
 
     forward-focus: dialog-focus;
     dialog-focus := FocusScope {
@@ -198,11 +211,41 @@ export component FogWindow inherits Window {
                             }
                         }
                         if root.initial-rule-detail != "": Text { text: root.initial-rule-detail; color: Theme.text-faint; wrap: word-wrap; }
-                        Text { text: "Applying a different rule resets preview events and time and pauses playback."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
+                        FieldRow {
+                            inset: false; label: "Water radial"; label-width: 104px;
+                            ComboBox {
+                                model: root.water-radial-contexts; current-index <=> root.water-radial-index;
+                                accessible-label: "Water radial context";
+                                enabled: root.available;
+                                selected => { root.selection-dirty = true; root.choice-changed(); }
+                            }
+                        }
+                        if root.water-radial-detail != "": Text { text: root.water-radial-detail; color: Theme.text-faint; wrap: word-wrap; }
+                        Text { text: "Applying a different initial or water radial rule resets all preview events and time and pauses playback."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
                         if root.environment-automatic || root.environment-busy: HorizontalLayout {
                             spacing: Theme.space;
                             Button { text: root.environment-busy ? "Preparing environment…" : "Prepare environment"; enabled: root.can-prepare-environment; clicked => { root.prepare-environment(); } }
                             Rectangle { horizontal-stretch: 1; }
+                        }
+                        if root.water-radial-recorded: VerticalLayout {
+                            spacing: Theme.space;
+                            FieldRow {
+                                inset: false; label: "Setup"; label-width: 104px;
+                                ComboBox {
+                                    model: root.passes; current-index <=> root.pass-index;
+                                    accessible-label: "Fog setup to record";
+                                    enabled: root.available;
+                                    selected => { root.pass-dirty = true; root.pass-changed(); }
+                                }
+                            }
+                            if root.pass-detail != "": Text { text: root.pass-detail; color: root.pass-issue ? Theme.warning : Theme.text-faint; wrap: word-wrap; }
+                            HorizontalLayout {
+                                spacing: Theme.space;
+                                Button { text: "Record setup"; enabled: root.can-record-pass; clicked => { root.record-render-pass(); } }
+                                Text { text: root.pass-dirty ? "Unsubmitted setup" : ""; color: Theme.text-faint; vertical-alignment: center; horizontal-stretch: 1; }
+                            }
+                            if root.pass-status != "": Text { text: root.pass-status; color: Theme.text-muted; wrap: word-wrap; }
+                            Text { text: "Record a setup at the current preview time. Disabled fog preserves the last write. Sky fog requires a selected sky camera. Seek and rendering do not record setups."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
                         }
                     }
                     SectionHeader { text: "Player controller"; detail: root.player-dirty ? "Unsubmitted target" : ""; inset: false; expanded <=> root.player-expanded; }

@@ -283,6 +283,56 @@ impl Request {
 }
 
 impl Session {
+    pub(super) fn sky3d_fog_pass_snapshot(&self) -> String {
+        format!(
+            "{}:{:?}:{}:{}",
+            self.sky3d_preview.serial,
+            self.sky3d_preview.camera,
+            self.fog_preview_settings().initial_radial_context.name(),
+            self.sky3d_preview
+                .camera
+                .map(|id| Key::capture(self, id).json())
+                .unwrap_or(Value::Null)
+        )
+    }
+
+    pub(super) fn sky3d_fog_pass_source(
+        &self,
+    ) -> Result<(u32, map_core::fog::Profile, Value), String> {
+        if !std::ptr::eq(self.render_document(), &self.document) {
+            return Err("Sky fog setup requires the committed document; leave the temporary document preview first".into());
+        }
+        let id = self
+            .sky3d_preview
+            .camera
+            .ok_or("Choose an existing sky_camera before recording Sky fog")?;
+        if self
+            .sky3d_preview
+            .ready
+            .as_ref()
+            .is_some_and(|ready| !ready.key.current(self))
+        {
+            return Err(
+                "The selected 3D sky source changed; prepare it again before recording Sky fog"
+                    .into(),
+            );
+        }
+        let entity = self
+            .document
+            .entity(id)
+            .ok_or("Selected sky_camera is missing")?;
+        let (_, parsed) = parse_camera(entity)?;
+        let context = self.fog_preview_settings().initial_radial_context;
+        let profile = context.initial_profile(parsed.profile);
+        profile.validate()?;
+        Ok((
+            id,
+            profile,
+            json!({"kind":"selected_sky_camera","identity":Key::capture(self,id).json(),
+            "selection_serial":self.sky3d_preview.serial,"initial_radial_context":context.name(),"initial_radial_context_label":context.label(),
+            "profile":super::fog::profile_report(profile)}),
+        ))
+    }
     pub fn set_sky3d_preview(
         &mut self,
         enabled: bool,
@@ -535,7 +585,7 @@ impl Session {
             json!({"ready":prepared && issue.is_none(),"enabled":raw.enabled,"requested":requested,
             "applied":prepared && colors_active && issue.is_none(),"issue":issue,
             "initial_radial_context":context.name(),"authored":super::fog::profile_report(raw),
-            "initial":super::fog::profile_report(initial),"effective":super::fog::profile_report(fog.controller_profile()),
+            "initial":super::fog::profile_report(initial),"effective":super::fog::profile_report(fog.controller_profile().ok_or("Sky fog invariant failed: controller profile is absent")?),
             "scale":sky_camera.scale,"received_origin":sky_camera.origin.to_array(),
             "coordinate_policy":"Native SPROP_COORD float32 conversion with a 1/32 grid, 14-bit integer wrapping and canonical positive zero; raw source origin and direction remain inspectable.",
             "color_linear":miniature.map(|camera|fog.color_for_camera(&camera)),

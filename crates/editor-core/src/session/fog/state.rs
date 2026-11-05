@@ -26,6 +26,60 @@ pub enum SelectionMode {
     Environment,
 }
 
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum WaterRadialContext {
+    #[default]
+    ControllerPreview,
+    RecordedPasses,
+}
+
+impl WaterRadialContext {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "controller_preview" => Ok(Self::ControllerPreview),
+            "recorded_passes" => Ok(Self::RecordedPasses),
+            _ => Err("Water radial context must be controller_preview or recorded_passes".into()),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::ControllerPreview => "controller_preview",
+            Self::RecordedPasses => "recorded_passes",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RenderPassKind {
+    Reset,
+    World,
+    Sky,
+}
+
+impl RenderPassKind {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "reset" => Ok(Self::Reset),
+            "world" => Ok(Self::World),
+            "sky" => Ok(Self::Sky),
+            _ => Err("Fog render pass must be reset, world or sky".into()),
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Reset => "reset",
+            Self::World => "world",
+            Self::Sky => "sky",
+        }
+    }
+}
+
 impl SelectionMode {
     pub fn parse(value: &str) -> Result<Self, String> {
         match value {
@@ -86,6 +140,8 @@ pub struct Settings {
     pub controller: Option<u32>,
     pub selection: SelectionMode,
     pub channel: Channel,
+    #[serde(default)]
+    pub water_radial_context: WaterRadialContext,
     #[serde(default, with = "initial_radial_context_serde")]
     #[schemars(schema_with = "initial_radial_context_schema")]
     pub initial_radial_context: InitialRadialContext,
@@ -132,6 +188,9 @@ pub enum Command {
     },
     SwitchPlayerController {
         controller: u32,
+    },
+    RecordRenderPass {
+        pass: RenderPassKind,
     },
     Play,
     Pause,
@@ -191,9 +250,10 @@ impl Key {
         !session.closing && *self == Self::capture(session)
     }
 
-    pub(super) fn snapshot(&self, scope: &str, control: u64) -> String {
+    pub(super) fn snapshot(&self, scope: &str, control: u64, sky: &str) -> String {
         let mut hash = Sha256::new();
         hash.update(scope.as_bytes());
+        hash.update(sky.as_bytes());
         for value in [
             control,
             self.generation,
@@ -222,10 +282,22 @@ pub(super) struct Pending {
     pub control: compiler::Control,
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct ControllerInput {
-    pub controller: u32,
-    pub event: map_core::fog::Event,
+#[derive(Clone)]
+pub(super) enum HistoryEvent {
+    Controller(map_core::fog::PlayerEvent),
+    Pass {
+        event: map_core::fog::RenderPassEvent,
+        source: serde_json::Value,
+    },
+}
+
+impl HistoryEvent {
+    pub(super) fn time(&self) -> f64 {
+        match self {
+            Self::Controller(event) => event.time,
+            Self::Pass { event, .. } => event.time_seconds,
+        }
+    }
 }
 
 pub(crate) struct ClockLease {
@@ -254,7 +326,8 @@ pub(in crate::session) struct State {
     pub(super) catalog: Option<Catalog>,
     pub(super) settings: Settings,
     pub(super) timelines: BTreeMap<u32, Timeline>,
-    pub(super) input_events: Vec<ControllerInput>,
+    pub(super) events: Vec<HistoryEvent>,
+    pub(super) passes: map_core::fog::PassHistory,
     pub(super) player: Option<map_core::fog::PlayerTimeline>,
     pub(super) time: f64,
     pub(super) playing: bool,
@@ -282,7 +355,8 @@ impl Default for State {
             catalog: None,
             settings: Settings::default(),
             timelines: BTreeMap::new(),
-            input_events: Vec::new(),
+            events: Vec::new(),
+            passes: map_core::fog::PassHistory::default(),
             player: None,
             time: 0.0,
             playing: false,

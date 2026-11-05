@@ -7,6 +7,7 @@ use super::Session;
 mod catalog;
 mod controls;
 pub(super) mod environment;
+mod passes;
 mod player;
 mod preparation;
 mod state;
@@ -17,7 +18,10 @@ pub(crate) use preparation::RenderGuard;
 pub use preparation::{Completed, Request};
 pub(crate) use state::ClockLease;
 pub(super) use state::State;
-pub use state::{Channel, Clock, Command, FogView, Overrides, SelectionMode, Settings};
+pub use state::{
+    Channel, Clock, Command, FogView, Overrides, RenderPassKind, SelectionMode, Settings,
+    WaterRadialContext,
+};
 
 pub(super) fn profile_report(profile: Profile) -> Value {
     json!({"color":profile.color,"color2":profile.color2,"direction":profile.direction,
@@ -35,9 +39,21 @@ fn actor_name(actor: super::Actor) -> &'static str {
     }
 }
 
+struct SelectedFog {
+    controller: Option<u32>,
+    reason: &'static str,
+    water: Option<environment::UnderwaterFog>,
+    profile: Option<Profile>,
+    player_frame: Option<map_core::fog::PlayerFrame>,
+}
+
 impl Session {
     pub fn fog_preview_snapshot(&self) -> String {
-        state::Key::capture(self).snapshot(&self.fog_preview.scope, self.fog_preview.control_serial)
+        state::Key::capture(self).snapshot(
+            &self.fog_preview.scope,
+            self.fog_preview.control_serial,
+            &self.sky3d_fog_pass_snapshot(),
+        )
     }
 
     pub fn fog_preview_settings(&self) -> Settings {
@@ -74,6 +90,7 @@ impl Session {
                 .channel
                 .unwrap_or(self.fog_preview.settings.channel),
             initial_radial_context: self.fog_preview.settings.initial_radial_context,
+            water_radial_context: self.fog_preview.settings.water_radial_context,
         })
     }
 
@@ -129,19 +146,11 @@ impl Session {
         self.initial_fog_profile(id)
     }
 
-    pub fn fog_render_state_for_view(
+    fn selected_fog_state(
         &self,
         camera: &render::Camera,
-        surface: render::SurfaceView,
-        overrides: Overrides,
-    ) -> Result<FogView, String> {
-        let settings = self.fog_settings_for(overrides)?;
-        if !settings.enabled {
-            return Ok(FogView {
-                fog: None,
-                report: json!({"enabled":false,"applied":false,"channel":settings.channel,"selection":settings.selection,"initial_radial_context":settings.initial_radial_context.name()}),
-            });
-        }
+        settings: Settings,
+    ) -> Result<SelectedFog, String> {
         settings.channel.validate()?;
         if self
             .fog_preview
@@ -187,6 +196,36 @@ impl Session {
             id.map(|id| self.fog_profile(id, self.fog_preview.time))
                 .transpose()?
         };
+        Ok(SelectedFog {
+            controller: id,
+            reason,
+            water,
+            profile,
+            player_frame,
+        })
+    }
+
+    pub fn fog_render_state_for_view(
+        &self,
+        camera: &render::Camera,
+        surface: render::SurfaceView,
+        overrides: Overrides,
+    ) -> Result<FogView, String> {
+        let settings = self.fog_settings_for(overrides)?;
+        if !settings.enabled {
+            return Ok(FogView {
+                fog: None,
+                report: json!({"enabled":false,"applied":false,"channel":settings.channel,"selection":settings.selection,"initial_radial_context":settings.initial_radial_context.name(),"water_radial_context":settings.water_radial_context}),
+            });
+        }
+        let selected = self.selected_fog_state(camera, settings)?;
+        let SelectedFog {
+            controller: id,
+            reason,
+            water,
+            profile,
+            player_frame,
+        } = selected;
         let initial_radial = id
             .map(|id| self.initial_fog_profile(id).map(|profile| profile.radial))
             .transpose()?;
@@ -199,7 +238,14 @@ impl Session {
                 water.end,
                 water.enabled,
             )?;
-            Some(ViewFog::water(profile, water)?)
+            Some(match settings.water_radial_context {
+                WaterRadialContext::ControllerPreview => ViewFog::water(profile, water)?,
+                WaterRadialContext::RecordedPasses => {
+                    let radial = self.fog_preview.passes.evaluate(self.fog_preview.time)?.radial
+                        .ok_or("Underwater radial state is unknown; Record a Reset shader state or an enabled World fog or Sky fog setup first")?;
+                    ViewFog::water_with_context(profile, water, radial)?
+                }
+            })
         } else {
             profile.map(ViewFog::controller).transpose()?
         };
@@ -209,7 +255,7 @@ impl Session {
             fog,
             report: json!({"enabled":true,"ready":true,"applied":color.is_some_and(|fog|fog.enabled() && fog.max_density()>0.0),
             "controller":id.map(|id|format!("entity:{id}")),"selection":settings.selection,"selection_reason":reason,"channel":settings.channel,
-            "initial_radial_context":settings.initial_radial_context.name(),"initial_radial":initial_radial,
+            "initial_radial_context":settings.initial_radial_context.name(),"initial_radial":initial_radial,"water_radial_context":settings.water_radial_context,"radial":fog.map(ViewFog::radial),
             "time_seconds":self.fog_preview.time,"render_time_seconds":self.fog_preview.time,"profile":profile.map(profile_report),"water":water_report,"far_z":far_z,
             "player_sample_time_seconds":player_frame.map(|frame|frame.sample_time_seconds),"player_update_hz":map_core::fog::PLAYER_UPDATE_HZ,
             "color_linear":color.map(|fog|fog.color_for_camera(camera)),"preview_only":true}),
@@ -348,6 +394,8 @@ impl Session {
         let inputs=map_core::fog::input_choices().iter().map(|choice|json!({"id":choice.name,"name":choice.name,"label":choice.name,"kind":choice.kind,"help":choice.help,"has_value":choice.has_value})).collect::<Vec<_>>();
         let events = self.fog_events_report();
         let event_count = events.len();
+        let pass_choices = self.fog_pass_choices();
+        let can_record_render_pass = pass_choices.iter().any(|choice| choice["ready"] == true);
         let player_candidate = self.player_timeline_for_switch();
         let input_targets=catalog.as_ref().map(|catalog|catalog.controllers.iter().map(|(&id,controller)| {
             let admission=controller.parsed.as_ref().map_err(Clone::clone)
@@ -410,6 +458,8 @@ impl Session {
             "enabled":self.fog_preview.settings.enabled,"configured_controller":self.fog_preview.settings.controller.map(|id|format!("entity:{id}")),
             "controller":current.and_then(|current|current.get("controller")),"selection":self.fog_preview.settings.selection,"channel":self.fog_preview.settings.channel,
             "initial_radial_context":self.fog_preview.settings.initial_radial_context.name(),"initial_radial_contexts":initial_radial_contexts,
+            "water_radial_context":self.fog_preview.settings.water_radial_context,
+            "water_radial_contexts":[{"id":"controller_preview","label":"Controller radial value","ready":true,"detail":"Use the selected controller radial bit for water; a controller is required."},{"id":"recorded_passes","label":"Recorded pass history","ready":true,"detail":"Water consumes the last radial bit written by an explicit captured setup. The initial state is Unknown."}],
             "initial_radial_context_source":"explicit_preview_setting","css_official_map_catalog":CSS_OFFICIAL_MAP_CATALOG,
             "settings":self.fog_preview.settings,"ready":query.is_ok()&&!clock.busy,"active":current.is_some_and(|current|current["applied"]==true),
             "summary":self.fog_preview_summary(),"detail":detail,"issue":issue,"error":issue,"catalog_issue":catalog.err(),
@@ -417,6 +467,8 @@ impl Session {
             "selections":[{"id":"explicit","label":"Explicit controller","ready":true,"detail":"Use the selected controller's authored or replayed values"},{"id":"environment","label":"Environment","ready":true,"detail":"Use the prepared initial controller, optional player switches and current-camera water fog."}],
             "inputs":inputs,"input_targets":input_targets,"events":events,"event_count":event_count,"current":current,"requested":current,"time_seconds":clock.time_seconds,"current_time_seconds":clock.time_seconds,
             "replay_mode":if self.fog_preview.player.is_some(){"mixed_player"}else{"controller_inputs"},"controller_states":self.controller_states_report(),
+            "pass_choices":pass_choices,"pass_events":self.fog_pass_events_report(),"pass_history":self.fog_pass_history_report(),
+            "can_record_render_pass":can_record_render_pass,"render_pass_issue":if can_record_render_pass {None}else{self.fog_event_admission().err().or_else(||Some("No fog setup can be recorded; inspect pass_choices for the refusal reason".to_owned()))},
             "player":player,"player_switches":player_switches,"switch_targets":switch_targets,
             "player_update_hz":map_core::fog::PLAYER_UPDATE_HZ,"player_update_interval_seconds":map_core::fog::PLAYER_UPDATE_INTERVAL_SECONDS,
             "can_switch_player_controller":player_switch_issue.is_none(),"player_switch_issue":player_switch_issue,
@@ -431,10 +483,11 @@ impl Session {
             "limits":{"controllers":catalog::MAX_CONTROLLERS,"entities":catalog::MAX_ENTITIES,"controller_property_bytes":catalog::MAX_CONTROLLER_BYTES,"events":map_core::fog::MAX_EVENTS,"time_seconds":map_core::fog::MAX_TIMELINE_SECONDS,"advance_seconds":state::MAX_ADVANCE_SECONDS,"source_snapshot_bytes":state::MAX_SOURCE_BYTES,"workers":1},
             "timeline_policy":map_core::fog::TIMELINE_POLICY,
             "player_switch_policy":map_core::fog::PLAYER_TIMELINE_POLICY,
+            "pass_history_policy":map_core::fog::PASS_HISTORY_POLICY,
             "player_target_limits":{"names":catalog::MAX_TARGET_NAMES,"name_bytes":catalog::MAX_TARGET_NAME_BYTES,"total_name_bytes":catalog::MAX_TOTAL_TARGET_NAME_BYTES,"property_visits":catalog::MAX_NAMESPACE_PROPERTIES,"native_match_bytes":catalog::MAX_NAMESPACE_MATCH_BYTES},
             "initial_radial_context_policy":"The selected rule applies to every controller's initial profile before preview inputs. Changing it clears controller inputs and player switches, resets time and pauses, while retaining a current prepared environment. Later SetRadial inputs override the initial value. No running map name or file path is inferred.",
-            "playback_policy":"One shared runtime clock drives Play in desktop and headless sessions. Hidden or inactive presentation suspends wall time without catch-up. Seek pauses; explicit Advance remains available. Reset clears controller inputs and player switches and restores the current-context initial profile at time zero. Cancel stops environment preparation and playback; Clear also disables and clears preview state.",
-            "selection_policy":"Manual controller, selection-mode or initial-context changes clear all preview events and reset time after validation. Initial automatic selection uses the prepared first-controller/last-Master; water is applied after the sampled player state. Inputs address their explicit controller without changing the initial choice or current player handle. Input-only preview retains continuous controller evaluation. The first named player switch replays the original ordered input history from the settled initial epoch under the declared mixed raw delivery schedule; later inputs and switches share that ledger. Temporary controller/selection overrides refuse while mixed player replay exists. Automatic trigger history, fog volumes, live I/O and native packet/prediction/update cadence are not simulated.",
+            "playback_policy":"One shared runtime clock drives Play in desktop and headless sessions. Hidden or inactive presentation suspends wall time without catch-up. Seek pauses; explicit Advance remains available. Reset clears controller inputs, player switches and captured passes and restores the current-context initial profile at time zero; recorded radial becomes Unknown. Cancel stops environment preparation and playback; Clear also disables and clears preview state.",
+            "selection_policy":"Manual controller, selection-mode, initial-context or water-context changes clear all preview events and reset time after validation. Initial automatic selection uses the prepared first-controller/last-Master; water is applied after the sampled player state. Inputs address their explicit controller without changing the initial choice or current player handle. Input-only preview retains continuous controller evaluation. The first named player switch replays the original ordered input history from the settled initial epoch under the declared mixed raw delivery schedule; later inputs and switches share that ledger. Temporary controller/selection overrides refuse while mixed player replay exists. Automatic trigger history, fog volumes, live I/O and native packet/prediction/update cadence are not simulated.",
             "persistence":"Session view state only; no VMF edits, Undo steps or saved controller mutation. HDRColorScale and ZoomFogScale remain inert foreign metadata in this installed CSS path."})
     }
 

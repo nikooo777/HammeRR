@@ -1,13 +1,13 @@
 use std::collections::BTreeSet;
 
 use map_core::fog::{
-    ControllerFrame, Event, Input, MAX_EVENTS, PLAYER_UPDATE_HZ, PlayerEventKind, PlayerFrame,
-    PlayerSwitch, PlayerTimeline, RawParams, Timeline,
+    ControllerFrame, Event, Input, PLAYER_UPDATE_HZ, PlayerEventKind, PlayerFrame, PlayerSwitch,
+    PlayerTimeline, RawParams, Timeline,
 };
 use render::fog::ViewFog;
 use serde_json::{Value, json};
 
-use super::state::ControllerInput;
+use super::state::HistoryEvent;
 use super::{SelectionMode, profile_report};
 use crate::session::Session;
 
@@ -25,43 +25,7 @@ fn controller_report(controller: u32, frame: ControllerFrame) -> Value {
 
 impl Session {
     pub(super) fn controller_input_admission(&self) -> Result<(), String> {
-        if !self
-            .fog_preview
-            .key
-            .as_ref()
-            .is_some_and(|key| key.current(self))
-        {
-            return Err("Apply Fog settings or Reset before sending controller inputs".into());
-        }
-        if self.fog_preview.worker.busy() {
-            return Err(
-                "Wait for fog environment preparation before sending controller inputs".into(),
-            );
-        }
-        let (count, last_time) = if let Some(player) = &self.fog_preview.player {
-            (
-                player.history().len(),
-                player.history().last().map(|event| event.time),
-            )
-        } else {
-            (
-                self.fog_preview.input_events.len(),
-                self.fog_preview
-                    .input_events
-                    .last()
-                    .map(|input| input.event.time),
-            )
-        };
-        if count >= MAX_EVENTS {
-            return Err("Fog preview reached 128 events; Reset before adding more".into());
-        }
-        if last_time.is_some_and(|time| self.fog_preview.time < time) {
-            return Err(
-                "Fog events must be appended in time order; Reset before editing an earlier time"
-                    .into(),
-            );
-        }
-        Ok(())
+        self.fog_event_admission()
     }
 
     pub(super) fn controller_input_target_admission(&self, controller: u32) -> Result<(), String> {
@@ -89,6 +53,11 @@ impl Session {
             candidate.register_controller(controller, profile)?;
             candidate.push_input(self.fog_preview.time, controller, input)?;
             ViewFog::controller(candidate.evaluate(self.fog_preview.time)?.profile)?;
+            self.push_fog_history(HistoryEvent::Controller(map_core::fog::PlayerEvent {
+                time: self.fog_preview.time,
+                controller,
+                kind: PlayerEventKind::Input(input),
+            }))?;
             self.fog_preview.player = Some(candidate);
         } else {
             let mut timelines = self.fog_preview.timelines.clone();
@@ -101,13 +70,11 @@ impl Session {
             };
             timelines.get_mut(&controller).unwrap().push(event)?;
             Self::validate_fog_timelines(&timelines, self.fog_preview.time)?;
-            self.fog_preview
-                .input_events
-                .try_reserve(1)
-                .map_err(|_| "Fog input history allocation failed")?;
-            self.fog_preview
-                .input_events
-                .push(ControllerInput { controller, event });
+            self.push_fog_history(HistoryEvent::Controller(map_core::fog::PlayerEvent {
+                time: event.time,
+                controller,
+                kind: PlayerEventKind::Input(input),
+            }))?;
             self.fog_preview.timelines = timelines;
         }
         Ok(())
@@ -117,6 +84,7 @@ impl Session {
         &self,
     ) -> Result<(PlayerTimeline, PlayerFrame), String> {
         self.ensure_not_closing()?;
+        self.fog_event_admission()?;
         if !self
             .fog_preview
             .key
@@ -158,12 +126,16 @@ impl Session {
         let profile = self.initial_fog_profile(initial)?;
         ViewFog::controller(profile)?;
         let mut player = PlayerTimeline::new(initial, profile)?;
-        for input in &self.fog_preview.input_events {
-            player.register_controller(
-                input.controller,
-                self.initial_fog_profile(input.controller)?,
-            )?;
-            player.push_input(input.event.time, input.controller, input.event.input)?;
+        for event in &self.fog_preview.events {
+            if let HistoryEvent::Controller(map_core::fog::PlayerEvent {
+                time,
+                controller,
+                kind: PlayerEventKind::Input(input),
+            }) = event
+            {
+                player.register_controller(*controller, self.initial_fog_profile(*controller)?)?;
+                player.push_input(*time, *controller, *input)?;
+            }
         }
         let frame = player.prepare_switch(self.fog_preview.time)?;
         Ok((player, frame))
@@ -188,9 +160,13 @@ impl Session {
             profile,
         })?;
         ViewFog::controller(player.evaluate(self.fog_preview.time)?.profile)?;
+        self.push_fog_history(HistoryEvent::Controller(map_core::fog::PlayerEvent {
+            time: self.fog_preview.time,
+            controller,
+            kind: PlayerEventKind::Switch,
+        }))?;
         self.fog_preview.player = Some(player);
         self.fog_preview.timelines.clear();
-        self.fog_preview.input_events.clear();
         Ok(())
     }
 
@@ -199,31 +175,6 @@ impl Session {
             ViewFog::controller(player.evaluate(time)?.profile)?;
         }
         Ok(())
-    }
-
-    pub(super) fn fog_events_report(&self) -> Vec<Value> {
-        if let Some(player) = &self.fog_preview.player {
-            return player
-                .history()
-                .iter()
-                .map(|event| match event.kind {
-                    PlayerEventKind::Input(input) => json!({"kind":"input",
-                        "controller":format!("entity:{}",event.controller),"time_seconds":event.time,
-                        "input":input.name(),"value":input.value()}),
-                    PlayerEventKind::Switch => json!({"kind":"switch_player_controller",
-                        "controller":format!("entity:{}",event.controller),"time_seconds":event.time}),
-                })
-                .collect();
-        }
-        self.fog_preview
-            .input_events
-            .iter()
-            .map(|input| {
-                json!({"kind":"input",
-            "controller":format!("entity:{}",input.controller),"time_seconds":input.event.time,
-            "input":input.event.input.name(),"value":input.event.input.value()})
-            })
-            .collect()
     }
 
     pub(super) fn controller_states_report(&self) -> Vec<Value> {

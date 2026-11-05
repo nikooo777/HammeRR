@@ -150,8 +150,56 @@ with **Master** enabled, in map order. Preparation uses the authored world
 rather than temporary editor hiding or working regions. Create liquid brushes
 with the existing [Water and slime](water.md) workflow.
 
-Underwater fog uses the bottom material's values. The controller supplies the
-preview's radial setting and far clip; live render-pass history is not reproduced.
+Underwater fog uses the bottom material's values. **Water radial → Controller
+radial value** uses the current controller's radial setting, even when that
+controller is disabled. The current controller also supplies its far clip.
+
+## Record water radial history
+
+1. Expand **Environment**. Choose **Environment** and
+   **Water radial → Recorded pass history**. Enable **Enable fog preview**,
+   then click **Apply preview**.
+2. Use **Prepare environment** if the water context is not ready.
+3. Choose **Setup → Reset shader state**, then click **Record setup**.
+   Check that **Recorded radial** is **Axial**.
+4. To capture another setup, choose **World fog** or **Sky fog**. Check the
+   source shown below **Setup**, then click **Record setup**.
+   Read **Recorded radial**, **Last write** and
+   **Setups at this time**.
+5. Use **Seek** to inspect the recorded history at another preview time.
+   Move the camera into prepared water to inspect its fog with that radial state.
+
+The history starts **Unknown**. A wet view requires a recorded shader reset or
+an enabled World/Sky setup to establish the radial value. Water can use an
+established value without a world controller; no world far clip is added then.
+
+| Recorded axial setup | Recorded radial setup |
+| --- | --- |
+| ![Underwater floor after a recorded axial shader reset](images/fog-water-axial.png) | ![The same underwater floor after a recorded radial world setup](images/fog-water-radial.png) |
+
+| **Setup** | Effect when recorded |
+| --- | --- |
+| **Reset shader state** | Establish axial distance. |
+| **World fog** | Capture the current world/player fog's radial value when enabled. Disabled or absent world fog preserves the previous value. |
+| **Sky fog** | Capture the selected sky camera fog's radial value when enabled. Disabled sky fog preserves the previous value. |
+
+For **Sky fog**, choose **Sky camera** in **3D sky preview…**. The capture uses
+that current, qualified camera; preparing its miniature display is optional.
+An unavailable or stale source refuses recording. **World fog** requires
+**Enable fog preview**. `fogenable` controls whether the sampled fog writes its
+radial value; an enabled setup still writes when maximum density is zero.
+Sky fog does not supply the world's far clip.
+
+**Record setup** stores the source, enabled/radial values and current preview
+time. Later controller inputs do not change earlier records. Equal-time records
+keep their order. **Seek**, inspection, rendering and camera movement do not add
+records. The history models declared fog-setup writes for the preview. Native
+render-pass execution and automatic pass-order discovery remain outside it.
+
+Changing **Water radial** and clicking **Apply preview** pauses playback and
+clears all preview events and time. The prepared environment remains.
+**Reset** clears the history back to **Unknown**; **Reset shader state** with
+**Record setup** instead adds an axial writer. **Cancel work** preserves records.
 
 ## Fog controllers in a child map
 
@@ -189,7 +237,7 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
 - Fog directions use native 1/32 coordinate conversion, including integer
   wrapping; for example, 16,385 becomes 1. A received zero vector mixes the
   two colors equally.
-- Time is 0–3600 seconds, with at most 128 combined input and switch events.
+- Time is 0–3600 seconds, with at most 128 combined input, switch and setup events.
   A sequence can use at most 128 controllers. Events append in
   time order; use **Reset** before adding an event earlier than the last one.
   The controller input `StartFogTransition` requires positive `foglerptime`.
@@ -199,9 +247,10 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
   an explicit `$bottommaterial`. Unqualified shader fallbacks and fog-writing
   material proxies are unavailable. Limits are 128 controllers and 256 liquid
   brushes.
-- Underwater preview requires a world fog controller to establish radial
-  context, even if that controller is disabled. Place and configure one before
-  preparing. Water refraction and above-water height fog are not previewed.
+- **Controller radial value** requires a world fog controller, even if disabled.
+  **Recorded pass history** requires an established radial value for a wet view.
+  Water refraction, above-water height fog and automatic native pass history
+  are not previewed.
 - LDR only. HDR remains unavailable. `HDRColorScale` and `ZoomFogScale` are
   preserved foreign metadata and do not scale the root controller preview.
 - Manual controller selection snaps immediately. Mixed controller inputs and

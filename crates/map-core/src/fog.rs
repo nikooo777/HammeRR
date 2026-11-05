@@ -3,6 +3,7 @@ use source_formats::vmf::Entity;
 mod context;
 mod inputs;
 mod parents;
+mod passes;
 mod player;
 mod profile;
 mod timeline;
@@ -12,6 +13,10 @@ pub use inputs::{Input, InputChoice, input_choices};
 pub use parents::{
     MAX_PARENT_DEPTH, MAX_PARENT_ENTITIES, ParentContext, parse_controller_in,
     requires_parent_context,
+};
+pub use passes::{
+    MAX_PASS_EVENTS, PASS_HISTORY_POLICY, PassFrame, PassHistory, PassWriter, RenderPass,
+    RenderPassEvent,
 };
 pub use player::{
     MAX_PLAYER_CONTROLLERS, PLAYER_TIMELINE_POLICY, PLAYER_UPDATE_HZ,

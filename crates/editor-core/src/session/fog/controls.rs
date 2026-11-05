@@ -56,7 +56,8 @@ impl Session {
             }
             self.fog_preview.environment = None;
             self.fog_preview.timelines.clear();
-            self.fog_preview.input_events.clear();
+            self.fog_preview.events.clear();
+            self.fog_preview.passes = map_core::fog::PassHistory::default();
             self.fog_preview.player = None;
             self.fog_preview.time = 0.0;
             self.fog_preview.playing = false;
@@ -73,7 +74,8 @@ impl Session {
         self.fog_preview.key = Some(Key::capture(self));
         self.fog_preview.catalog = catalog;
         self.fog_preview.timelines.clear();
-        self.fog_preview.input_events.clear();
+        self.fog_preview.events.clear();
+        self.fog_preview.passes = map_core::fog::PassHistory::default();
         self.fog_preview.player = None;
         self.fog_preview.environment = None;
         self.fog_preview.verified = None;
@@ -138,7 +140,8 @@ impl Session {
                 self.fog_preview.catalog = None;
                 self.fog_preview.key = None;
                 self.fog_preview.timelines.clear();
-                self.fog_preview.input_events.clear();
+                self.fog_preview.events.clear();
+                self.fog_preview.passes = map_core::fog::PassHistory::default();
                 self.fog_preview.player = None;
                 self.fog_preview.environment = None;
                 self.fog_preview.verified = None;
@@ -151,7 +154,9 @@ impl Session {
                 settings.channel.validate()?;
                 let context_changed = settings.initial_radial_context
                     != self.fog_preview.settings.initial_radial_context;
-                let sequence_changed = context_changed
+                let sequence_changed = settings.water_radial_context
+                    != self.fog_preview.settings.water_radial_context
+                    || context_changed
                     || settings.controller != self.fog_preview.settings.controller
                     || settings.selection != self.fog_preview.settings.selection;
                 if sequence_changed {
@@ -197,7 +202,8 @@ impl Session {
                 }
                 if sequence_changed {
                     self.fog_preview.timelines.clear();
-                    self.fog_preview.input_events.clear();
+                    self.fog_preview.events.clear();
+                    self.fog_preview.passes = map_core::fog::PassHistory::default();
                     self.fog_preview.player = None;
                     self.fog_preview.time = 0.0;
                     self.fog_preview.playing = false;
@@ -274,6 +280,10 @@ impl Session {
                 self.append_player_switch(controller)?;
                 self.fog_preview.error = None;
             }
+            Command::RecordRenderPass { pass } => {
+                self.append_fog_render_pass(pass)?;
+                self.fog_preview.error = None;
+            }
             Command::Play => {
                 self.ensure_fog_baseline()?;
                 if !self.fog_preview.settings.enabled {
@@ -330,7 +340,8 @@ impl Session {
                     self.fog_baseline(Some(catalog));
                 }
                 self.fog_preview.timelines = BTreeMap::new();
-                self.fog_preview.input_events.clear();
+                self.fog_preview.events.clear();
+                self.fog_preview.passes = map_core::fog::PassHistory::default();
                 self.fog_preview.player = None;
                 self.fog_preview.time = 0.0;
                 self.fog_preview.playing = false;
@@ -348,6 +359,7 @@ impl Session {
                 | Command::Reset
                 | Command::Clear
                 | Command::SwitchPlayerController { .. }
+                | Command::RecordRenderPass { .. }
         ) {
             self.retire_fog_bounds_reviews();
         }
@@ -368,6 +380,7 @@ impl Session {
             selection: SelectionMode::Explicit,
             channel: self.fog_preview.settings.channel,
             initial_radial_context: self.fog_preview.settings.initial_radial_context,
+            water_radial_context: self.fog_preview.settings.water_radial_context,
         };
         match self.fog_preview_command(Actor::User, snapshot, Command::Settings(settings))? {
             Update::State(report) => Ok(report),

@@ -50,19 +50,28 @@ impl WaterFog {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+enum FogSource {
+    Controller(Profile),
+    Water {
+        controller: Option<Profile>,
+        water: WaterFog,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewFog {
-    controller: Profile,
+    source: FogSource,
     range: [f32; 2],
-    water: Option<WaterFog>,
+    radial: bool,
 }
 
 impl ViewFog {
     pub fn controller(profile: Profile) -> Result<Self, String> {
         profile.validate()?;
         Ok(Self {
-            controller: profile,
+            source: FogSource::Controller(profile),
             range: profile.range_parameters()?,
-            water: None,
+            radial: profile.radial(),
         })
     }
 
@@ -70,59 +79,86 @@ impl ViewFog {
         let controller = controller.ok_or(
             "Underwater fog needs an established controller radial context; native pass-history initialization is unavailable",
         )?;
-        let mut fog = Self::controller(controller)?;
-        fog.water = Some(water);
-        Ok(fog)
+        Self::water_with_context(Some(controller), water, controller.radial())
+    }
+
+    pub fn water_with_context(
+        controller: Option<Profile>,
+        water: WaterFog,
+        radial: bool,
+    ) -> Result<Self, String> {
+        if let Some(controller) = controller {
+            controller.validate()?;
+        }
+        Ok(Self {
+            source: FogSource::Water { controller, water },
+            range: water.range,
+            radial,
+        })
     }
 
     pub fn enabled(self) -> bool {
-        self.water
-            .map_or(self.controller.enabled(), |water| water.enabled)
+        match self.source {
+            FogSource::Controller(controller) => controller.enabled(),
+            FogSource::Water { water, .. } => water.enabled,
+        }
     }
 
     pub fn max_density(self) -> f32 {
-        if self.water.is_some() {
-            1.0
-        } else {
-            self.controller.max_density().clamp(0.0, 1.0)
+        match self.source {
+            FogSource::Controller(controller) => controller.max_density().clamp(0.0, 1.0),
+            FogSource::Water { .. } => 1.0,
         }
     }
 
     pub fn far_z(self) -> Option<f32> {
-        let far = self.controller.far_z();
-        (far > 0.0).then_some(far)
+        self.controller_profile()
+            .map(|controller| controller.far_z())
+            .filter(|far| *far > 0.0)
     }
 
-    pub fn controller_profile(self) -> Profile {
-        self.controller
+    pub fn controller_profile(self) -> Option<Profile> {
+        match self.source {
+            FogSource::Controller(controller) => Some(controller),
+            FogSource::Water { controller, .. } => controller,
+        }
     }
+
     pub fn water_settings(self) -> Option<WaterFog> {
-        self.water
+        match self.source {
+            FogSource::Controller(_) => None,
+            FogSource::Water { water, .. } => Some(water),
+        }
+    }
+
+    pub fn radial(self) -> bool {
+        self.radial
     }
 
     pub fn color_for_camera(self, camera: &Camera) -> [f32; 3] {
-        let normalized = self.water.map_or_else(
-            || {
-                let primary = self.controller.color();
-                let secondary = self.controller.color2();
-                let weight = if self.controller.blend() {
-                    let direction = glam::Vec3::from_array(self.controller.received_direction());
-                    let squared = (direction.x * direction.x + direction.y * direction.y)
-                        + (direction.z * direction.z + DIRECTION_NORMALIZATION_BIAS);
-                    let direction = direction * squared.sqrt().recip();
-                    0.5 * camera.forward().dot(direction) + 0.5
-                } else {
-                    1.0
-                };
-                std::array::from_fn(|index| {
-                    (primary[index] * weight + secondary[index] * (1.0 - weight))
-                        * BYTE_NORMALIZATION
-                })
-            },
-            |water| water.normalized_rgb,
-        );
+        let normalized = match self.source {
+            FogSource::Controller(controller) => controller_color(controller, camera),
+            FogSource::Water { water, .. } => water.normalized_rgb,
+        };
         normalized.map(linear_fog_channel)
     }
+}
+
+fn controller_color(controller: Profile, camera: &Camera) -> [f32; 3] {
+    let primary = controller.color();
+    let secondary = controller.color2();
+    let weight = if controller.blend() {
+        let direction = glam::Vec3::from_array(controller.received_direction());
+        let squared = (direction.x * direction.x + direction.y * direction.y)
+            + (direction.z * direction.z + DIRECTION_NORMALIZATION_BIAS);
+        let direction = direction * squared.sqrt().recip();
+        0.5 * camera.forward().dot(direction) + 0.5
+    } else {
+        1.0
+    };
+    std::array::from_fn(|index| {
+        (primary[index] * weight + secondary[index] * (1.0 - weight)) * BYTE_NORMALIZATION
+    })
 }
 
 fn linear_fog_channel(normalized: f32) -> f32 {
@@ -157,7 +193,6 @@ pub fn sky_view(
 
 pub(crate) fn uniforms(fog: ViewFog, camera: &Camera) -> ([f32; 4], [f32; 4]) {
     let color = fog.color_for_camera(camera);
-    let range = fog.water.map_or(fog.range, |water| water.range);
     (
         [
             color[0],
@@ -170,9 +205,9 @@ pub(crate) fn uniforms(fog: ViewFog, camera: &Camera) -> ([f32; 4], [f32; 4]) {
             },
         ],
         [
-            range[0],
-            range[1],
-            if fog.controller.radial() { 1.0 } else { 0.0 },
+            fog.range[0],
+            fog.range[1],
+            if fog.radial() { 1.0 } else { 0.0 },
             0.0,
         ],
     )

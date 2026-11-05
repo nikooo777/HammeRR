@@ -157,7 +157,7 @@ impl Binding {
     }
 }
 
-fn entry_destination(entry: &Entry) -> Result<BoundDestination, String> {
+pub(super) fn entry_destination(entry: &Entry) -> Result<BoundDestination, String> {
     let destination = BoundDestination::capture(entry.reopen_path(), Policy::FollowSource)
         .map_err(|error| format!("{}: {error}", entry.reopen_path().display()))?;
     if destination.physical_path() != entry.path {

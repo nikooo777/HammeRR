@@ -12,25 +12,11 @@ pub(super) struct Work {
     response: Option<oneshot::Sender<CallToolResult>>,
 }
 
-fn available(queue: &Queue) -> Result<(), String> {
-    if queue.stopping || queue.quitting {
-        Err("The workspace is closing".into())
-    } else if queue.executing || !queue.commands.is_empty() || !queue.completed.is_empty() {
-        Err("A workspace operation is in progress; wait and review Quit all again".into())
-    } else {
-        Ok(())
-    }
-}
-
 impl Workspace {
     pub fn quit_review(&self) -> Result<WorkspaceQuitReview, String> {
         let queue = self.0.queue.lock().unwrap_or_else(PoisonError::into_inner);
-        available(&queue)?;
+        queue.ensure_idle()?;
         self.0.factory.quit_review()
-    }
-
-    pub fn close_requires_quit_all(&self, selector: &str) -> Result<bool, String> {
-        self.0.factory.close_requires_quit_all(selector)
     }
 
     pub fn quit_all_native(
@@ -39,7 +25,7 @@ impl Workspace {
         discard_changes: bool,
     ) -> Result<(), String> {
         let mut queue = self.0.queue.lock().unwrap_or_else(PoisonError::into_inner);
-        available(&queue)?;
+        queue.ensure_idle()?;
         let attempt = TerminalAttempt::new()?;
         let (reservation, ()) = self
             .0
@@ -66,7 +52,7 @@ impl Workspace {
             return Err("The Quit all review token exceeds its limit".into());
         }
         let mut queue = self.0.queue.lock().unwrap_or_else(PoisonError::into_inner);
-        available(&queue)?;
+        queue.ensure_idle()?;
         let review = self.0.factory.quit_review()?;
         if review.token() != token {
             return Err("Documents, maps, drafts or activity changed since Quit all was reviewed; review the workspace and try again".into());

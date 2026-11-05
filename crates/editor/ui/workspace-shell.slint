@@ -1,0 +1,76 @@
+import { Theme, SelectableRow, IconButton, Icon } from "kit.slint";
+import { Button } from "widgets.slint";
+
+export struct WorkspaceDocumentTab {
+    selector: string,
+    title: string,
+    selected: bool,
+    enabled: bool,
+    hidden: bool,
+}
+
+export component DocumentTabs inherits Rectangle {
+    in property <[WorkspaceDocumentTab]> documents;
+    in property <bool> has-active-document;
+    callback select-document(string);
+    callback close-active-document();
+    callback open-documents();
+    height: 42px;
+    background: Theme.base;
+    HorizontalLayout {
+        padding: Theme.space-sm; spacing: Theme.space-sm;
+        for document in root.documents: HorizontalLayout {
+            spacing: 2px;
+            min-width: 90px;
+            max-width: 268px;
+            preferred-width: 228px;
+            horizontal-stretch: 1;
+            SelectableRow {
+                label: document.title + (document.hidden ? " · hidden" : "");
+                selected: document.selected;
+                enabled: document.enabled;
+                horizontal-stretch: 1;
+                clicked => { root.select-document(document.selector); }
+                HorizontalLayout {
+                    padding-left: Theme.space;
+                    padding-right: Theme.space;
+                    spacing: Theme.space-sm;
+                    Text { text: document.title; overflow: elide; vertical-alignment: center; horizontal-stretch: 1; color: document.selected ? Theme.text : Theme.text-muted; }
+                    if document.hidden: Text { text: "Hidden"; font-size: Theme.font-small; vertical-alignment: center; color: Theme.text-faint; }
+                }
+            }
+            if document.selected && root.has-active-document: IconButton { icon: Icon.close; tooltip: "Close active document"; clicked => { root.close-active-document(); } }
+        }
+        Button { horizontal-stretch: 0; text: "Open documents…"; clicked => { root.open-documents(); } }
+        Rectangle { horizontal-stretch: 1; }
+    }
+}
+
+export component WorkspaceWindow inherits Window {
+    title: "Workspace - HammeRR";
+    icon: @image-url("../../../assets/branding/hammerr-icon-impact.png");
+    preferred-width: 1600px;
+    preferred-height: 960px;
+    background: Theme.panel;
+    default-font-size: Theme.font;
+    in property <[WorkspaceDocumentTab]> workspace-documents;
+    in property <string> message;
+    callback select-document(string);
+    callback open-documents();
+    VerticalLayout {
+        spacing: 0px;
+        DocumentTabs {
+            documents: root.workspace-documents;
+            select-document(selector) => { root.select-document(selector); }
+            open-documents => { root.open-documents(); }
+        }
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space;
+            Text { text: "No document selected"; font-size: Theme.font-display; font-weight: 600; color: Theme.text; }
+            Text { text: "Choose a document tab to edit, or open the document list to create or restore a workspace."; wrap: word-wrap; color: Theme.text-muted; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
+            Rectangle { vertical-stretch: 1; }
+        }
+    }
+}

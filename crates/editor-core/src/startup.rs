@@ -9,8 +9,9 @@ mod workspace;
 use workspace::Services;
 pub use workspace::{
     CloseDisposition, CloseReservation, DOCUMENT_LIMIT, DocumentVisibility, PreparedDocument,
-    QuitReservation, SaveAllRequest, Workspace, WorkspaceDocument, WorkspaceDocumentState,
-    WorkspaceQuitReview,
+    PreparedWorkspace, PublishedWorkspace, QuitReservation, RestoreCandidate, SaveAllRequest,
+    Workspace, WorkspaceDocument, WorkspaceDocumentState, WorkspaceQuitReview,
+    WorkspaceRestoreReview, WorkspaceSnapshotCapture,
 };
 
 const USAGE: &str = "\
@@ -204,6 +205,9 @@ impl Application {
             DocumentVisibility::Hidden
         };
         let document = prepared.publish(visibility)?.document();
+        if args.map.is_none() {
+            workspace.mark_startup_placeholder(document.id());
+        }
         Ok(Self {
             compile_queue: Some(compile_queue),
             _path_claims: path_claims,

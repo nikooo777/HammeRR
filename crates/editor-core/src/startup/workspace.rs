@@ -9,6 +9,11 @@ mod save_all;
 pub use save_all::SaveAllRequest;
 mod quit;
 pub use quit::{QuitReservation, WorkspaceQuitReview};
+mod restore;
+pub use restore::{
+    PreparedWorkspace, PublishedWorkspace, RestoreCandidate, WorkspaceRestoreReview,
+    WorkspaceSnapshotCapture,
+};
 
 pub const DOCUMENT_LIMIT: usize = 2;
 
@@ -111,7 +116,7 @@ pub(super) struct Services {
 }
 
 impl Services {
-    fn document(&self) -> Result<DocumentHandle, String> {
+    fn session(&self) -> Result<Session, String> {
         let mut session = Session::with_shared_content(self.content.clone());
         session.use_application_path_claims(self.path_claims.clone());
         session.use_application_saved_defaults(self.saved_defaults.clone());
@@ -136,11 +141,19 @@ impl Services {
         }
         session.initialize_content_profile_config(self.content_profile_config.clone());
         session.use_application_content_profiles(self.content_profiles.clone());
+        Ok(session)
+    }
+
+    fn start_document(&self, session: Session) -> Result<DocumentHandle, String> {
         DocumentHandle::start_with_services(
             Arc::new(Mutex::new(session)),
             self.queue.clone(),
             self.native.as_ref(),
         )
+    }
+
+    fn document(&self) -> Result<DocumentHandle, String> {
+        self.start_document(self.session()?)
     }
 }
 
@@ -149,6 +162,7 @@ struct State {
     serial: u64,
     membership: Option<u64>,
     documents: Vec<WorkspaceDocument>,
+    startup_placeholder: Option<DocumentId>,
 }
 
 struct Core {
@@ -173,11 +187,20 @@ impl Workspace {
                     serial: 0,
                     membership: None,
                     documents: Vec::new(),
+                    startup_placeholder: None,
                 }),
                 changed: Condvar::new(),
             }),
             services: Arc::downgrade(services),
         }
+    }
+
+    pub(super) fn mark_startup_placeholder(&self, document: DocumentId) {
+        self.core
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .startup_placeholder = Some(document);
     }
 
     pub fn documents(&self) -> Vec<WorkspaceDocument> {
@@ -340,27 +363,13 @@ impl Workspace {
                 .clone()
                 .unwrap_or_else(|| "The document is already closing".into()));
         }
-        let peers: Vec<_> = state
-            .documents
-            .iter()
-            .filter(|peer| {
-                peer.document.id() != entry.document.id()
-                    && peer.state == WorkspaceDocumentState::Live
-            })
-            .collect();
-        let disposition = if peers.is_empty() {
-            CloseDisposition::Terminal
-        } else {
-            if entry.visibility == DocumentVisibility::Visible
-                && peers
-                    .iter()
-                    .all(|peer| peer.visibility == DocumentVisibility::Hidden)
-            {
-                return Err(
-                    "The last visible document has hidden peers. Use Quit all… in Open documents (MCP: get_quit_review, quit_all) to review and close every map, or Show the hidden peer first".into(),
-                );
-            }
+        let has_live_peer = state.documents.iter().any(|peer| {
+            peer.document.id() != entry.document.id() && peer.state == WorkspaceDocumentState::Live
+        });
+        let disposition = if has_live_peer {
             CloseDisposition::DocumentOnly
+        } else {
+            CloseDisposition::Terminal
         };
         let membership = Membership::reserve(self.core.clone(), &mut state)?;
         Ok(CloseReservation {
@@ -370,30 +379,6 @@ impl Workspace {
             committed: false,
             finished: None,
         })
-    }
-
-    pub fn close_requires_quit_all(&self, selector: &str) -> Result<bool, String> {
-        let state = self
-            .core
-            .state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        ensure_available(&state)?;
-        let entry = state
-            .documents
-            .iter()
-            .find(|entry| entry.selector == selector)
-            .ok_or("Unknown or closed document")?;
-        let peers = state
-            .documents
-            .iter()
-            .filter(|peer| peer.selector != selector && peer.state == WorkspaceDocumentState::Live)
-            .collect::<Vec<_>>();
-        Ok(entry.visibility == DocumentVisibility::Visible
-            && !peers.is_empty()
-            && peers
-                .iter()
-                .all(|peer| peer.visibility == DocumentVisibility::Hidden))
     }
 
     pub fn close_admission(&self) {

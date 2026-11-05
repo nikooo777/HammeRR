@@ -1,11 +1,13 @@
 import { Theme } from "theme.slint";
 import { Button, ListView, ScrollView } from "widgets.slint";
+import { SelectableRow } from "kit.slint";
 
 export struct OpenDocumentRow {
     selector: string,
     title: string,
     detail: string,
     live: bool,
+    active: bool,
 }
 
 export component OpenDocumentsWindow inherits Window {
@@ -19,6 +21,8 @@ export component OpenDocumentsWindow inherits Window {
     in property <bool> can-save-all;
     in property <bool> can-quit-all;
     in property <bool> quit-review;
+    in property <bool> restore-review;
+    in property <string> restore-description;
     in property <bool> quit-discard-required;
     in property <string> quit-description;
     in-out property <bool> busy;
@@ -28,6 +32,10 @@ export component OpenDocumentsWindow inherits Window {
     callback quit-all();
     callback confirm-quit-all();
     callback cancel-quit-all();
+    callback save-workspace();
+    callback review-restore-workspace();
+    callback confirm-restore-workspace();
+    callback cancel-restore-workspace();
     callback open-document();
     callback show-document(string);
     callback show-silent(string);
@@ -38,41 +46,75 @@ export component OpenDocumentsWindow inherits Window {
         padding: Theme.space-xl; spacing: 12px;
         Text { text: "Open documents"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
         Text { text: root.summary; color: Theme.text-muted; wrap: word-wrap; }
-        if !root.quit-review: Text { text: "Two independent maps in this editor. New / Open… in a map window still replace that window's map."; color: Theme.text-muted; wrap: word-wrap; }
-        HorizontalLayout {
+        if !root.quit-review && !root.restore-review: Text { text: "Each tab keeps its own selection, Undo, drafts and views. New map / Open… replace only that tab's map."; color: Theme.text-muted; wrap: word-wrap; }
+        if !root.quit-review && !root.restore-review: HorizontalLayout {
             spacing: 10px;
             Button { text: "New document"; enabled: root.can-create && !root.busy; clicked => { root.new-document(); } }
             Button { text: "Open document…"; enabled: root.can-create && !root.busy; clicked => { root.open-document(); } }
             Button { text: "Save all named maps"; enabled: root.can-save-all && !root.busy; clicked => { root.save-all-named-maps(); } }
-            Button { text: "Quit all…"; enabled: root.can-quit-all && !root.busy && !root.quit-review; clicked => { root.quit-all(); } }
+            Button { text: "Quit all…"; enabled: root.can-quit-all && !root.busy && !root.quit-review && !root.restore-review; clicked => { root.quit-all(); } }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        if !root.quit-review && !root.restore-review: HorizontalLayout {
+            spacing: 10px;
+            Button { text: "Save workspace"; enabled: !root.busy; clicked => { root.save-workspace(); } }
+            Button { text: "Restore workspace…"; enabled: !root.busy; clicked => { root.review-restore-workspace(); } }
             Button { text: "Refresh"; enabled: !root.busy; clicked => { root.refresh(); } }
+            Rectangle { horizontal-stretch: 1; }
         }
         if root.quit-review: VerticalLayout {
             spacing: 10px;
             Text { text: "Quit every open map and exit the editor?"; color: Theme.text; font-size: Theme.font-heading; font-weight: 600; }
-            ScrollView { vertical-stretch: 1; min-height: 90px; Text { text: root.quit-description; color: Theme.warning; wrap: word-wrap; } }
+            ScrollView {
+                vertical-stretch: 1; min-height: 90px; content-width: self.width;
+                VerticalLayout { alignment: start; padding-right: Theme.space-lg; spacing: Theme.space; Text { text: root.quit-description; color: Theme.warning; wrap: word-wrap; } }
+            }
             Text { text: "This includes hidden maps. Owned game and sound playback will stop, and owned work will be cancelled and drained. Changes after this review require a fresh review."; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: root.quit-discard-required ? "Discard reviewed changes and quit all" : "Quit all reviewed documents"; enabled: !root.busy; clicked => { root.confirm-quit-all(); } }
                 Button { text: "Cancel quit"; enabled: !root.busy; clicked => { root.cancel-quit-all(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
         }
-        if !root.quit-review: ListView {
+        if root.restore-review: VerticalLayout {
+            spacing: 10px;
+            Text { text: "Restore the saved workspace?"; color: Theme.text; font-size: Theme.font-heading; font-weight: 600; }
+            ScrollView {
+                vertical-stretch: 1; min-height: 90px; content-width: self.width;
+                VerticalLayout { alignment: start; padding-right: Theme.space-lg; spacing: Theme.space; Text { text: root.restore-description; color: Theme.text-muted; wrap: word-wrap; } }
+            }
+            HorizontalLayout {
+                spacing: 10px;
+                Button { text: "Restore reviewed workspace"; enabled: !root.busy; clicked => { root.confirm-restore-workspace(); } }
+                Button { text: "Cancel restore"; enabled: !root.busy; clicked => { root.cancel-restore-workspace(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+        if !root.quit-review && !root.restore-review: ListView {
             for row in root.rows: VerticalLayout {
                 padding: 10px; spacing: 7px;
-                Text { text: row.title; color: Theme.text; font-weight: 600; wrap: word-wrap; }
-                Text { text: row.detail; color: Theme.text-muted; wrap: word-wrap; }
+                SelectableRow {
+                    label: row.title;
+                    selected: row.active;
+                    enabled: row.live && !root.busy;
+                    clicked => { root.show-document(row.selector); }
+                    VerticalLayout {
+                        padding: Theme.space; spacing: Theme.space-sm;
+                        Text { text: row.title; color: Theme.text; font-weight: 600; wrap: word-wrap; }
+                        Text { text: row.detail; color: Theme.text-muted; wrap: word-wrap; }
+                    }
+                }
                 HorizontalLayout {
                     spacing: 10px;
-                    Button { text: "Show silently"; enabled: row.live && !root.busy; clicked => { root.show-silent(row.selector); } }
-                    Button { text: "Show document"; enabled: row.live && !root.busy; clicked => { root.show-document(row.selector); } }
+                    Button { text: "Select silently"; enabled: row.live && !root.busy; clicked => { root.show-silent(row.selector); } }
                     Button { text: "Close document"; enabled: row.live && !root.busy; clicked => { root.close-document(row.selector); } }
+                    Rectangle { horizontal-stretch: 1; }
                 }
             }
         }
-        Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
-        if !root.quit-review: Text { text: "MCP-created documents start hidden. Quit all… reviews every map before exiting. Closing the last visible map with hidden peers opens that review; cancelling keeps every map open."; color: Theme.text-muted; wrap: word-wrap; font-size: Theme.font; }
-        Button { text: "Close list"; clicked => { root.close-list(); } }
+        if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
+        if !root.quit-review && !root.restore-review: Text { text: "Click a row to select its tab. MCP-created and restored documents stay hidden until selected. Quit all… reviews every map, including hidden documents."; color: Theme.text-muted; wrap: word-wrap; font-size: Theme.font; }
+        HorizontalLayout { spacing: Theme.space; Button { text: "Close list"; clicked => { root.close-list(); } } Rectangle { horizontal-stretch: 1; } }
     }
 }

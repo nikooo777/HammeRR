@@ -32,13 +32,12 @@ See [Status and limits](status.md) for what is supported today, and the
 <tr>
 <td width="33%" valign="top"><a href="map-comparison.md"><img src="images/thumbs/external-map-comparison.jpg" width="260" alt=""></a><br><a href="map-comparison.md"><b>Compare external maps</b></a><br>Compare authored world brushes and whole entities with another VMF.</td>
 <td width="33%" valign="top"><a href="workspace-layout.md"><img src="images/thumbs/workspace-layout.jpg" width="260" alt=""></a><br><a href="workspace-layout.md"><b>Workspace layout</b></a><br>Choose how much space the dock, Agent feed and tool rail use.</td>
-<td width="33%"></td>
+<td width="33%" valign="top"><a href="open-documents.md"><img src="images/thumbs/document-tabs.jpg" width="260" alt=""></a><br><a href="open-documents.md"><b>Document tabs and workspaces</b></a><br>Keep two independent maps open and restore their saved editing contexts.</td>
 </tr>
 </table>
 
 More in this section:
 
-- [Open documents](open-documents.md) — Keep two maps open, with separate windows, selections, cameras and Undo histories.
 - [History](history.md) — Inspect user, agent and system edits.
 - [Keyboard shortcuts](keyboard-shortcuts.md) — Assign two binding slots to each of 36 editor commands.
 - [Navigation defaults](navigation-defaults.md) — Set camera flight speed without changing the map.

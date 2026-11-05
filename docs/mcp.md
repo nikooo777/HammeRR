@@ -521,7 +521,7 @@ See [authored lighting preview](lighting-preview.md) for supported sources, rece
 - Omitting it is valid only with one live document. Desktop focus does not route requests.
 - `new_document` and `open_document` add a map. The limit is two maps.
 - `new_map` and `open_map` replace the target document's buffer.
-- Desktop-created maps can remain hidden. `show_document` presents them explicitly. Set `focus:false` for **Show silently** on Hyprland with Lua window rules; unsupported display admission fails before opening the window.
+- MCP-created and restored maps stay hidden. `show_document` selects a persistent tab explicitly. Set `focus:false` for **Select silently** in an already visible workspace window; it does not request desktop focus. Finish pointer gestures, text composition and menus before switching.
 - Result metadata identifies the routed document.
 
 For replacement, use the current `replacement_review` from `get_map_info`.
@@ -540,6 +540,21 @@ Pending previews must be applied or cancelled first.
 Class filters in `get_object_report` and `select_object_report` match substrings
 by default. Use `filter:{"classname":"light","exact_class":true}` to select
 point lights without matching `light_environment` or `light_spot`.
+
+### Save and restore a workspace
+
+1. Save every map with `save_map` and resolve pending drafts or work.
+2. Call `save_workspace {}`. It saves paths and per-document content, build, camera and layout context, without writing map files.
+3. Call `get_saved_workspace {}` to inspect that record.
+4. Call `get_workspace_restore_review {}`. Review the saved paths and current document disposition.
+5. Pass its exact `review_token` to `restore_workspace`.
+6. Use `show_document` explicitly to select a restored tab.
+
+These calls take no document selector. Restore opens current files at the recorded paths; the review does not pin their future contents.
+Only the still-pristine startup map can retire. Other maps remain open and need free capacity.
+Preparation failures publish no saved subset. After publication, a cleanup failure returns `restored:true`, `complete:false` and `isError:true`, retaining the complete restored set and the failed old entry.
+Save can return `saved:true`, `complete:false` if the file was written but its new identity could not be verified. Inspect before retrying.
+Missing saved data is `saved:false`; malformed data remains an explicit error.
 
 ### Close a document
 
@@ -1936,7 +1951,7 @@ These groups locate the available operations.
 
 | Area | Tools |
 | --- | --- |
-| Documents and workspace | `list_documents`, `new_document`, `open_document`, `save_all_named_maps`, `show_document`, `get_quit_review`, `quit_all` |
+| Documents and workspace | `list_documents`, `new_document`, `open_document`, `save_all_named_maps`, `show_document`, `get_saved_workspace`, `save_workspace`, `get_workspace_restore_review`, `restore_workspace`, `get_quit_review`, `quit_all` |
 | [Models, sounds and assets](models.md) | `apply_model_choice`, `apply_sound_choice`, `begin_model_choice`, `begin_sound_choice`, `browse_models`, `browse_sounds`, `cancel_model_choice`, `cancel_sound_choice`, `choose_model`, `choose_model_bodygroup`, `choose_sound`, `clear_model_attachment`, `frame_model_attachment`, `get_model_attachment_guide`, `get_model_choice`, `get_sound_choice`, `get_sound_preview`, `inspect_entity_model`, `inspect_model`, `inspect_sound`, `play_sound_preview`, `reload_model_assets`, `reload_sound_assets`, `render_model_preview`, `render_sound_preview`, `set_sound_preview_volume`, `show_model_attachment`, `stop_sound_preview` |
 | [Atlas texturing](atlas-texturing.md) | `inspect_material_atlas`, `preview_atlas_fit`, `list_atlas_regions`, `save_atlas_region`, `choose_atlas_region`, `rename_atlas_region`, `delete_atlas_region` |
 | [Build and play](compile-and-play.md) | `apply_build_recipe`, `apply_compile_region`, `cancel_compile`, `cancel_compile_region`, `compile_map`, `delete_build_recipe`, `frame_build_diagnostic`, `frame_compile_region`, `game_log`, `get_build_recipes`, `get_compile_region`, `get_compile_settings`, `get_compile_status`, `get_native_capture_runtime`, `launch_game`, `preview_compile_region`, `reload_build_recipes`, `rename_build_recipe`, `run_map`, `run_map_checks`, `save_build_recipe`, `set_compile_settings`, `set_native_capture_runtime`, `start_compile`, `stop_game` |

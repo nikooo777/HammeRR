@@ -521,7 +521,6 @@ impl DocumentHandle {
         Ok(())
     }
 
-    #[cfg(feature = "mcp")]
     pub(crate) fn commit_reviewed_close_with<R>(
         &self,
         review: &DocumentCloseReview,

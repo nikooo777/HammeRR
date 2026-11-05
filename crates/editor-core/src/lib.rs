@@ -35,6 +35,7 @@ pub mod sprite_resource;
 pub mod startup;
 pub mod steam;
 pub mod workspace_preferences;
+pub mod workspace_snapshot;
 
 #[cfg(feature = "mcp")]
 pub mod mcp;

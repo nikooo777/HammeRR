@@ -1,4 +1,7 @@
 import { Theme } from "theme.slint";
+import { DocumentTabs, WorkspaceDocumentTab } from "workspace-shell.slint";
+export { WorkspaceWindow } from "workspace-shell.slint";
+export { WorkspaceDocumentTab }
 import { ViewportPaneView, ViewportPane, ViewportPaneSize } from "viewport-pane.slint";
 export { ViewportPane, ViewportPaneSize }
 import { IconButton, Separator, SectionHeader, FieldRow, Badge, MutedText, SelectableRow, OverlaySwitch, OverlayNote, OverlayLink, DockTab, ToolTile, Icon } from "kit.slint";
@@ -2147,6 +2150,10 @@ export component AppWindow inherits Window {
     title: (root.background-display ? "HammeRR background: " : "") + root.map-title + " - HammeRR";
     icon: @image-url("../../../assets/branding/hammerr-icon-impact.png");
     in property <bool> background-display;
+    in property <bool> workspace-active;
+    in property <[WorkspaceDocumentTab]> workspace-documents;
+    callback select-workspace-document(string);
+    callback close-workspace-document();
     preferred-width: 1600px;
     preferred-height: 960px;
     background: Theme.panel;
@@ -3087,6 +3094,13 @@ export component AppWindow inherits Window {
         }
 
         VerticalLayout {
+            DocumentTabs {
+                documents: root.workspace-documents;
+                has-active-document: root.workspace-active;
+                select-document(selector) => { root.select-workspace-document(selector); }
+                close-active-document => { root.close-workspace-document(); }
+                open-documents => { root.open-documents(); }
+            }
             Rectangle {
                 height: 40px;
                 background: Theme.bar;

@@ -20,6 +20,7 @@ use rmcp::ServiceExt;
 
 mod quit;
 mod routing;
+mod saved;
 pub use routing::WorkspaceServer;
 
 const COMMAND_LIMIT: usize = 4;
@@ -91,6 +92,10 @@ enum Command {
     Open(Actor, PathBuf, bool, CommandReply),
     Show(String, bool, CommandReply),
     SaveAll(startup::SaveAllRequest, CommandReply),
+    InspectWorkspace(CommandReply),
+    SaveWorkspace(Actor, CommandReply),
+    ReviewRestore(CommandReply),
+    RestoreWorkspace(Actor, String, compiler::Control, CommandReply),
 }
 
 struct CompletedClose {
@@ -108,6 +113,18 @@ struct Queue {
     executing: bool,
     quitting: bool,
     quit: Option<quit::Work>,
+}
+
+impl Queue {
+    fn ensure_idle(&self) -> Result<(), String> {
+        if self.stopping || self.quitting {
+            Err("The workspace is closing".into())
+        } else if self.executing || !self.commands.is_empty() || !self.completed.is_empty() {
+            Err("A workspace operation is in progress; wait and retry".into())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[derive(Default)]
@@ -826,6 +843,37 @@ fn run_commands(workspace: &Workspace, runtime: &tokio::runtime::Runtime) {
                 }
             }
             Command::SaveAll(request, response) => Some((response, Ok(request.run()))),
+            Command::InspectWorkspace(response) => {
+                if response.is_closed() {
+                    None
+                } else {
+                    Some((response, saved::inspect(workspace)))
+                }
+            }
+            Command::SaveWorkspace(actor, response) => {
+                if response.is_closed() {
+                    None
+                } else {
+                    Some((response, saved::save(workspace, actor)))
+                }
+            }
+            Command::ReviewRestore(response) => {
+                if response.is_closed() {
+                    None
+                } else {
+                    Some((response, saved::review(workspace)))
+                }
+            }
+            Command::RestoreWorkspace(actor, token, control, response) => {
+                if response.is_closed() {
+                    None
+                } else {
+                    Some((
+                        response,
+                        saved::restore(workspace, runtime, actor, &token, &control),
+                    ))
+                }
+            }
             Command::Show(selector, focus, response) => {
                 if response.is_closed() {
                     None

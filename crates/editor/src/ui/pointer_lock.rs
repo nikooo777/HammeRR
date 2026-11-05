@@ -5,7 +5,9 @@ use std::{
 
 use editor_core::shortcuts::{canonical_key, canonical_physical_key};
 use slint::ComponentHandle;
-use slint::winit_030::winit::event::{DeviceEvent, DeviceId, ElementState, Ime, WindowEvent};
+use slint::winit_030::winit::event::{
+    DeviceEvent, DeviceId, ElementState, Ime, MouseButton, TouchPhase, WindowEvent,
+};
 use slint::winit_030::winit::event_loop::ActiveEventLoop;
 use slint::winit_030::winit::keyboard::{Key, PhysicalKey};
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -37,6 +39,8 @@ struct Keyboard {
     composing: bool,
     reset: bool,
     cancel_prefix: bool,
+    mouse_buttons: HashSet<MouseButton>,
+    touches: HashSet<u64>,
 }
 
 impl Keyboard {
@@ -132,11 +136,27 @@ impl CustomApplicationHandler for Handler {
                 WindowEvent::ModifiersChanged(modifiers) => {
                     keyboard.shift = modifiers.state().shift_key();
                 }
-                WindowEvent::MouseInput {
-                    state: ElementState::Pressed,
-                    ..
+                WindowEvent::MouseInput { state, button, .. } => {
+                    if *state == ElementState::Pressed {
+                        keyboard.mouse_buttons.insert(*button);
+                        keyboard.cancel_prefix = true;
+                    } else {
+                        keyboard.mouse_buttons.remove(button);
+                    }
                 }
-                | WindowEvent::MouseWheel { .. } => keyboard.cancel_prefix = true,
+                WindowEvent::Touch(touch) => {
+                    match touch.phase {
+                        TouchPhase::Started => {
+                            keyboard.touches.insert(touch.id);
+                        }
+                        TouchPhase::Ended | TouchPhase::Cancelled => {
+                            keyboard.touches.remove(&touch.id);
+                        }
+                        TouchPhase::Moved => {}
+                    }
+                    keyboard.cancel_prefix = true;
+                }
+                WindowEvent::MouseWheel { .. } => keyboard.cancel_prefix = true,
                 WindowEvent::Focused(focused) => {
                     keyboard.focused = *focused;
                     if !*focused {
@@ -145,11 +165,15 @@ impl CustomApplicationHandler for Handler {
                         keyboard.shift = false;
                         keyboard.composing = false;
                         keyboard.reset = true;
+                        keyboard.mouse_buttons.clear();
+                        keyboard.touches.clear();
                     }
                 }
                 WindowEvent::CloseRequested => {
                     keyboard.pressed.clear();
                     keyboard.reset = true;
+                    keyboard.mouse_buttons.clear();
+                    keyboard.touches.clear();
                 }
                 WindowEvent::Ime(event) => {
                     keyboard.composing = matches!(event, Ime::Preedit(text, _) if !text.is_empty());
@@ -226,6 +250,28 @@ pub(super) fn reset_keyboard(app: &AppWindow) {
             }
         });
     });
+}
+
+pub(super) fn admit_component_change(window: &slint::Window) -> Result<(), String> {
+    let busy = window
+        .with_winit_window(|window| {
+            let keyboard_busy = KEYBOARDS.with_borrow(|keyboards| {
+                keyboards.get(&window.id()).is_some_and(|keyboard| {
+                    keyboard.composing
+                        || !keyboard.mouse_buttons.is_empty()
+                        || !keyboard.touches.is_empty()
+                })
+            });
+            keyboard_busy || STATE.with_borrow(|state| state.owner == Some(window.id()))
+        })
+        .ok_or("The workspace native input state is unavailable")?;
+    if busy {
+        return Err(
+            "Finish pointer input, camera capture or text composition before changing documents"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 fn grab(window: &slint::winit_030::winit::window::Window) -> bool {

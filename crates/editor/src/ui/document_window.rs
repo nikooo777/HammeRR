@@ -8,6 +8,7 @@ pub(super) struct DocumentWindow {
     pub(super) app: Option<AppWindow>,
     ui: Option<SharedUi>,
     frame_timer: Option<Rc<slint::Timer>>,
+    focus: RefCell<editor_ui::DocumentFocus>,
     contents: Option<Rc<instance_contents::Controller>>,
     reference: Option<Rc<instance_reference::Controller>>,
     extraction: Option<Rc<instance_extraction::Controller>>,
@@ -47,7 +48,7 @@ impl RetirementView<'_> {
         if let Some(ui) = &self.ui {
             match ui.try_borrow_mut() {
                 Ok(mut ui) => {
-                    if let Some(app) = self.app {
+                    if let Some(app) = self.app.filter(|app| app.get_workspace_active()) {
                         release_pane_input(app, &mut ui);
                         clear_view_frames(app, &mut ui, "");
                     } else {
@@ -88,6 +89,49 @@ impl RetirementView<'_> {
 }
 
 impl DocumentWindow {
+    pub(super) fn can_deactivate(&self) -> Result<(), String> {
+        let ui = self
+            .ui
+            .as_ref()
+            .ok_or("The document view has retired")?
+            .try_borrow()
+            .map_err(|_| "The document view is busy; retry switching tabs")?;
+        if ui.pane_capture.is_some() || ui.viewport.looking() {
+            return Err("Finish or cancel the viewport gesture before switching tabs".into());
+        }
+        Ok(())
+    }
+
+    pub(super) fn set_active(&self, active: bool) -> Result<(), String> {
+        let app = self.app.as_ref().ok_or("The document view has retired")?;
+        if app.get_workspace_active() == active {
+            return Ok(());
+        }
+        if !active {
+            self.can_deactivate()?;
+            let focus = editor_ui::capture_document_focus(app)?;
+            *self.focus.borrow_mut() = focus;
+            let mut ui = self
+                .ui
+                .as_ref()
+                .ok_or("The document view has retired")?
+                .try_borrow_mut()
+                .map_err(|_| "The document view is busy; retry switching tabs")?;
+            release_pane_input(app, &mut ui);
+            if let Some(timer) = &self.frame_timer {
+                timer.stop();
+            }
+        } else {
+            let focus = self.focus.borrow().clone();
+            editor_ui::restore_document_focus(app, &focus)?;
+            if let Some(timer) = &self.frame_timer {
+                timer.restart();
+            }
+        }
+        app.set_workspace_active(active);
+        Ok(())
+    }
+
     pub(super) fn new(
         document: runtime::DocumentId,
         app: AppWindow,
@@ -98,11 +142,13 @@ impl DocumentWindow {
         extraction: Option<Rc<instance_extraction::Controller>>,
     ) -> Self {
         let frame_timer = Rc::new(frame_timer);
+        frame_timer.stop();
         Self {
             document,
             app: Some(app),
             ui: Some(ui),
             frame_timer: Some(frame_timer),
+            focus: RefCell::default(),
             contents,
             reference,
             extraction,
@@ -136,7 +182,10 @@ impl DocumentWindow {
         if let Some(result) = &self.retired {
             return result.clone();
         }
-        let mut errors = RetirementView {
+        if let Some(app) = &self.app {
+            editor_ui::prepare_document_retirement(app);
+        }
+        let errors = RetirementView {
             app: self.app.as_ref(),
             ui: self.ui.as_ref(),
             frame_timer: self.frame_timer.as_deref(),
@@ -150,9 +199,6 @@ impl DocumentWindow {
         self.reference.take();
         self.extraction.take();
         self.ui.take();
-        if let Some(app) = &self.app {
-            hide_window("Editor", app.window(), &mut errors);
-        }
         self.app.take();
         let result = if errors.is_empty() {
             Ok(UiRetired)

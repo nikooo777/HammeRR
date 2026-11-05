@@ -7,6 +7,7 @@ pub(super) struct Controller {
     pub(super) origin: runtime::DocumentId,
     save_results: RefCell<Option<Value>>,
     quit_review: RefCell<Option<editor_core::startup::WorkspaceQuitReview>>,
+    restore_token: RefCell<Option<String>>,
 }
 
 pub(super) enum Operation {
@@ -15,6 +16,9 @@ pub(super) enum Operation {
     Show(String),
     ShowSilent(String),
     SaveAll,
+    SaveWorkspace,
+    ReviewRestore,
+    RestoreWorkspace(String),
 }
 
 fn current(owner: &SharedOwner, controller: &Rc<Controller>) -> bool {
@@ -26,12 +30,17 @@ fn current(owner: &SharedOwner, controller: &Rc<Controller>) -> bool {
 }
 
 pub(super) fn refresh(owner: &SharedOwner) {
-    let (workspace, controller) = {
+    let (workspace, controller, active) = {
         let state = owner.borrow();
         let (Some(workspace), Some(controller)) = (&state.workspace, &state.dialog) else {
             return;
         };
-        (workspace.clone(), controller.clone())
+        let active = state.active.and_then(|active| {
+            state.hosts.iter().find_map(|(selector, host)| {
+                (host.borrow().document_id() == active).then(|| selector.clone())
+            })
+        });
+        (workspace.clone(), controller.clone(), active)
     };
     match workspace.list_documents() {
         Ok(report) => {
@@ -68,7 +77,7 @@ pub(super) fn refresh(owner: &SharedOwner) {
             controller.window.set_rows(ModelRc::new(VecModel::from(
                 documents
                     .iter()
-                    .map(|value| row(value, results.as_ref()))
+                    .map(|value| row(value, results.as_ref(), active.as_deref()))
                     .collect::<Vec<_>>(),
             )));
         }
@@ -92,7 +101,7 @@ fn save_status(status: &str) -> &str {
     }
 }
 
-fn row(value: &Value, results: Option<&Value>) -> OpenDocumentRow {
+fn row(value: &Value, results: Option<&Value>, active: Option<&str>) -> OpenDocumentRow {
     let save = results
         .and_then(|results| results["documents"].as_array())
         .and_then(|documents| {
@@ -147,6 +156,7 @@ fn row(value: &Value, results: Option<&Value>) -> OpenDocumentRow {
         )
         .into(),
         live: value["lifecycle"] == "live",
+        active: active == value["document_id"].as_str(),
     }
 }
 
@@ -169,6 +179,8 @@ pub(super) fn submit(
     retained_controller.window.set_message("Working…".into());
     let (owner, controller) = (owner.clone(), controller.clone());
     slint::spawn_local(async move {
+        let save_all = matches!(operation, Operation::SaveAll);
+        let restore_review = matches!(operation, Operation::ReviewRestore);
         let result = match operation {
             Operation::New => workspace.new_document(Actor::User, true).await,
             Operation::Open(path) => workspace.open_document(Actor::User, &path, true).await,
@@ -177,29 +189,74 @@ pub(super) fn submit(
                 workspace.show_document_with_focus(&selector, false).await
             }
             Operation::SaveAll => workspace.save_all_named_maps(Actor::User).await,
+            Operation::SaveWorkspace => workspace.save_workspace(Actor::User).await,
+            Operation::ReviewRestore => workspace.restore_workspace_review().await,
+            Operation::RestoreWorkspace(token) => {
+                workspace.restore_workspace(Actor::User, &token).await
+            }
         };
-        let (Some(owner), Some(controller)) = (owner.upgrade(), controller.upgrade()) else {
+        let Some(owner) = owner.upgrade() else {
             return;
         };
-        if !current(&owner, &controller) {
+        let message = operation_message(&result, restore_review);
+        let Some(controller) = controller
+            .upgrade()
+            .filter(|controller| current(&owner, controller))
+        else {
+            tabs::report(&owner, &message);
             return;
-        }
+        };
         controller.window.set_busy(false);
         if let Ok(value) = &result
-            && value.get("complete").is_some()
+            && save_all
         {
             *controller.save_results.borrow_mut() = Some(value.clone());
         }
-        controller.window.set_message(match result {
-            Ok(value) => value["message"]
-                .as_str()
-                .unwrap_or("Document operation completed")
-                .into(),
-            Err(error) => error.into(),
-        });
+        if let Ok(value) = &result
+            && restore_review
+            && let Some(token) = value["review_token"].as_str()
+        {
+            *controller.restore_token.borrow_mut() = Some(token.to_owned());
+            controller
+                .window
+                .set_restore_description(value["description"].as_str().unwrap_or_default().into());
+            controller.window.set_restore_review(true);
+        }
+        controller.window.set_message(message.into());
         refresh(&owner);
     })
     .expect("The UI event loop is running");
+}
+
+fn operation_message(result: &Result<Value, String>, restore_review: bool) -> String {
+    match result {
+        Ok(value) => {
+            if value["restored"] == true && value["complete"] == false {
+                format!(
+                    "Workspace restored; cleanup incomplete: {}",
+                    value["error"]
+                        .as_str()
+                        .or_else(|| value["warning"].as_str())
+                        .or_else(|| value["message"].as_str())
+                        .unwrap_or("Unknown cleanup failure")
+                )
+            } else {
+                if value["complete"] == false {
+                    value["error"]
+                        .as_str()
+                        .or_else(|| value["warning"].as_str())
+                        .or_else(|| value["message"].as_str())
+                } else if restore_review {
+                    Some("Review the saved workspace before restoring")
+                } else {
+                    value["message"].as_str()
+                }
+                .unwrap_or("Document operation completed")
+                .to_owned()
+            }
+        }
+        Err(error) => error.clone(),
+    }
 }
 
 pub(super) fn open(owner: &SharedOwner, origin: runtime::DocumentId) {
@@ -215,12 +272,46 @@ pub(super) fn open(owner: &SharedOwner, origin: runtime::DocumentId) {
         origin,
         save_results: RefCell::new(None),
         quit_review: RefCell::new(None),
+        restore_token: RefCell::new(None),
     });
     let weak = Rc::downgrade(&controller);
     let target = Rc::downgrade(owner);
     controller.window.on_save_all_named_maps({
         let (owner, controller) = (target.clone(), weak.clone());
         move || submit(&owner, &controller, Operation::SaveAll)
+    });
+    controller.window.on_save_workspace({
+        let (owner, controller) = (target.clone(), weak.clone());
+        move || submit(&owner, &controller, Operation::SaveWorkspace)
+    });
+    controller.window.on_review_restore_workspace({
+        let (owner, controller) = (target.clone(), weak.clone());
+        move || submit(&owner, &controller, Operation::ReviewRestore)
+    });
+    controller.window.on_confirm_restore_workspace({
+        let (owner, controller) = (target.clone(), weak.clone());
+        move || {
+            let Some(retained) = controller.upgrade() else {
+                return;
+            };
+            let Some(token) = retained.restore_token.borrow_mut().take() else {
+                return;
+            };
+            retained.window.set_restore_review(false);
+            submit(&owner, &controller, Operation::RestoreWorkspace(token));
+        }
+    });
+    controller.window.on_cancel_restore_workspace({
+        let controller = weak.clone();
+        move || {
+            if let Some(controller) = controller.upgrade() {
+                controller.restore_token.borrow_mut().take();
+                controller.window.set_restore_review(false);
+                controller
+                    .window
+                    .set_message("Workspace restore cancelled".into());
+            }
+        }
     });
     controller.window.on_quit_all({
         let (owner, controller) = (target.clone(), weak.clone());
@@ -371,7 +462,7 @@ pub(super) fn open(owner: &SharedOwner, origin: runtime::DocumentId) {
     }
 }
 
-fn review_quit(owner: &SharedOwner, controller: &Rc<Controller>) {
+pub(super) fn review_quit(owner: &SharedOwner, controller: &Rc<Controller>) {
     let Some(workspace) = owner.borrow().workspace.clone() else {
         return;
     };
@@ -394,53 +485,25 @@ fn review_quit(owner: &SharedOwner, controller: &Rc<Controller>) {
 }
 
 pub(super) fn request_close(owner: &SharedOwner, selector: &str) {
-    let (workspace, host) = {
-        let state = owner.borrow();
-        (
-            state.workspace.clone(),
-            state
-                .hosts
-                .iter()
-                .find(|(id, _)| id == selector)
-                .map(|(_, host)| host.clone()),
-        )
-    };
-    let (Some(workspace), Some(host)) = (workspace, host) else {
+    let host = owner
+        .borrow()
+        .hosts
+        .iter()
+        .find(|(id, _)| id == selector)
+        .map(|(_, host)| host.clone());
+    let Some(host) = host else {
+        tabs::report(owner, "The document UI is unavailable");
         return;
     };
-    match workspace.close_requires_quit_all(selector) {
-        Ok(true) => {
-            let origin = host.borrow().document_id();
-            if owner
-                .borrow()
-                .dialog
-                .as_ref()
-                .is_none_or(|dialog| dialog.origin != origin)
-            {
-                open(owner, origin);
-            }
-            let controller = owner.borrow().dialog.clone();
-            if let Some(controller) = controller {
-                review_quit(owner, &controller);
-            }
-        }
-        Ok(false) => {
-            let request = {
-                let host = host.borrow();
-                host.window
-                    .app
-                    .as_ref()
-                    .map(|app| (app.clone_strong(), host.window.weak_ui()))
-            };
-            if let Some((app, ui)) = request {
-                request_terminal_close(&app, &ui, &Rc::downgrade(&host));
-            }
-        }
-        Err(error) => {
-            if let Some(app) = &host.borrow().window.app {
-                app.set_message(error.into());
-            }
-        }
+    let request = {
+        let host = host.borrow();
+        host.window
+            .app
+            .as_ref()
+            .map(|app| (app.clone_strong(), host.window.weak_ui()))
+    };
+    if let Some((app, ui)) = request {
+        request_terminal_close(&app, &ui, &Rc::downgrade(&host));
     }
 }
 
@@ -467,5 +530,7 @@ fn report_origin(owner: &SharedOwner, origin: runtime::DocumentId, error: &str) 
         && let Some(app) = &host.borrow().window.app
     {
         app.set_message(error.into());
+        return;
     }
+    tabs::report(owner, error);
 }

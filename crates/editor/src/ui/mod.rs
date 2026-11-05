@@ -766,9 +766,10 @@ fn create_document_window(
     ctx: GpuContext,
     mcp_status: String,
     open_message: Option<Result<String, String>>,
+    window: &slint::Window,
 ) -> Result<DocumentWindow, Box<dyn std::error::Error>> {
     let document_id = document.id();
-    let app = AppWindow::new()?;
+    let app = editor_ui::new_document_view(window)?;
     app.set_mcp_status(mcp_status.into());
     app.set_stats(ctx.adapter.get_info().name.into());
     {
@@ -3157,7 +3158,12 @@ fn create_document_window(
     let mut last_tick = Instant::now();
     frame_timer.start(slint::TimerMode::Repeated, Duration::from_millis(8), {
         let scope = admission::Callback::new(&app, &ui, &file_access(&ui));
+        let weak = app.as_weak();
         move || {
+            if weak.upgrade().is_none_or(|app| !app.get_workspace_active()) {
+                last_tick = Instant::now();
+                return;
+            }
             scope.frame(|app, ui| {
                 let now = Instant::now();
                 let dt = (now - last_tick).as_secs_f32().min(0.1);

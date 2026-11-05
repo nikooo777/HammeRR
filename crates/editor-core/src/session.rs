@@ -38,8 +38,10 @@ mod document_close;
 mod inspection_framing;
 
 mod save_all;
+mod workspace_snapshot;
 pub use buffer_replacement::BufferReplacementReview;
 pub use document_close::DocumentCloseReview;
+pub(crate) use workspace_snapshot::WorkspaceSourceGuard;
 pub mod carving;
 pub mod checks;
 pub mod clip_drag;

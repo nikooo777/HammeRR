@@ -39,7 +39,7 @@ impl Entry {
         self.reopen_path.as_deref().unwrap_or(&self.path)
     }
 
-    fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         validate_path(&self.path)?;
         validate_path(self.reopen_path())?;
         if let Some(path) = &self.game_directory {

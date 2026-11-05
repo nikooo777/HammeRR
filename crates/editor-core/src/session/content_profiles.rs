@@ -92,6 +92,7 @@ struct Intent {
     document: u64,
 }
 
+#[derive(Clone)]
 struct Directory {
     requested: PathBuf,
     canonical: PathBuf,
@@ -150,6 +151,39 @@ pub(super) struct Candidate {
     directories: Vec<Directory>,
 }
 
+pub(super) struct SourceGuard {
+    game: Arc<GameFs>,
+    install: game::Install,
+    files: Vec<Source>,
+    directories: Vec<Directory>,
+}
+
+impl SourceGuard {
+    pub(super) fn verify(&self) -> Result<(), String> {
+        verify_sources(&self.game, &self.files, &self.directories, &self.install)
+    }
+}
+
+fn verify_sources(
+    game: &GameFs,
+    files: &[Source],
+    directories: &[Directory],
+    install: &game::Install,
+) -> Result<(), String> {
+    for mount in &game.mounts {
+        if let Mount::Pak(vpk) = &mount.mount {
+            vpk.verify_index().map_err(|error| error.to_string())?;
+        }
+    }
+    for file in files {
+        file.verify().map_err(|error| error.to_string())?;
+    }
+    for directory in directories {
+        directory.verify()?;
+    }
+    install.verify()
+}
+
 fn capture_file(path: &Path, limit: u64) -> Result<Source, String> {
     Source::capture(path, limit).map_err(|error| format!("{}: {error}", path.display()))
 }
@@ -162,6 +196,19 @@ fn mount_layout(game: &GameFs) -> Vec<(Vec<String>, PathBuf)> {
 }
 
 impl Candidate {
+    pub(super) fn source_guard(&self) -> SourceGuard {
+        SourceGuard {
+            game: self.game.clone(),
+            install: self.install.clone(),
+            files: self.files.clone(),
+            directories: self.directories.clone(),
+        }
+    }
+
+    pub(super) fn game_directory(&self) -> &Path {
+        &self.game.game_dir
+    }
+
     pub(super) fn watch_scope(
         &self,
         config: &Config,
@@ -268,18 +315,7 @@ impl Candidate {
     }
 
     pub(super) fn verify(&self) -> Result<(), String> {
-        for mount in &self.game.mounts {
-            if let Mount::Pak(vpk) = &mount.mount {
-                vpk.verify_index().map_err(|error| error.to_string())?;
-            }
-        }
-        for file in &self.files {
-            file.verify().map_err(|error| error.to_string())?;
-        }
-        for directory in &self.directories {
-            directory.verify()?;
-        }
-        self.install.verify()
+        verify_sources(&self.game, &self.files, &self.directories, &self.install)
     }
 }
 

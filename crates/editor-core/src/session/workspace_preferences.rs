@@ -90,7 +90,7 @@ impl Session {
         state
     }
 
-    fn apply_workspace_layout(&mut self, layout: Layout) -> Result<bool, String> {
+    pub(super) fn apply_workspace_layout(&mut self, layout: Layout) -> Result<bool, String> {
         layout.validate()?;
         if self.workspace_preferences.layout == layout {
             return Ok(false);

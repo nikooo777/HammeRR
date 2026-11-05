@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use slint::winit_030::WinitWindowAccessor;
 use tokio::sync::oneshot;
 
 use super::document_host::SharedHost;
@@ -11,11 +12,12 @@ use super::*;
 use editor_core::startup::{DocumentVisibility, Workspace as Factory};
 
 mod controls;
-mod presentation;
+mod tabs;
 
 const MAX_UI_COMMANDS: usize = 8;
 const DISPATCH_INTERVAL: Duration = Duration::from_millis(16);
 const REFRESH_INTERVAL: Duration = Duration::from_millis(250);
+const MAX_PREPARED_HOSTS: usize = editor_core::startup::DOCUMENT_LIMIT + 1;
 
 type UiFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
 type SharedOwner = Rc<RefCell<Owner>>;
@@ -152,15 +154,7 @@ impl Proxy {
             move |document, selector, terminal, present| {
                 create.request(Action::Create(document, selector, terminal, present))
             },
-            move |document, focus| {
-                let show = show.clone();
-                Box::pin(async move {
-                    if !focus {
-                        presentation::prepare_silent_show().await?;
-                    }
-                    show.request(Action::Show(document, focus)).await
-                })
-            },
+            move |document, focus| show.request(Action::Show(document, focus)),
             move |document| retire.request(Action::Retire(document)),
             move |document| release.request(Action::Release(document)),
             move || quit.request(Action::Quit),
@@ -170,6 +164,8 @@ impl Proxy {
 
 pub(super) struct Owner {
     ctx: GpuContext,
+    window: WorkspaceWindow,
+    active: Option<runtime::DocumentId>,
     hosts: Vec<(String, SharedHost)>,
     workspace: Option<mcp::Workspace>,
     status: String,
@@ -178,14 +174,18 @@ pub(super) struct Owner {
     weak: WeakOwner,
     dialog: Option<Rc<controls::Controller>>,
     refreshed: Instant,
+    presentation_dirty: bool,
     finished: bool,
 }
 
 impl Owner {
-    fn new(ctx: GpuContext) -> SharedOwner {
+    fn new(ctx: GpuContext) -> Result<SharedOwner, slint::PlatformError> {
+        let window = WorkspaceWindow::new()?;
         let owner = Rc::new_cyclic(|weak| {
             RefCell::new(Self {
                 ctx,
+                window,
+                active: None,
                 hosts: Vec::new(),
                 workspace: None,
                 status: "MCP starting".into(),
@@ -194,6 +194,7 @@ impl Owner {
                 weak: weak.clone(),
                 dialog: None,
                 refreshed: Instant::now(),
+                presentation_dirty: true,
                 finished: false,
             })
         });
@@ -206,7 +207,8 @@ impl Owner {
                     dispatch(&owner);
                 }
             });
-        owner
+        tabs::bind(&owner);
+        Ok(owner)
     }
 
     fn bind_host(
@@ -234,14 +236,7 @@ impl Owner {
                 controls::open(&owner, origin);
             }
         });
-        let weak = self.weak.clone();
-        let selector = host.workspace_close.as_ref().unwrap().1.clone();
-        host.window.app().window().on_close_requested(move || {
-            if let Some(owner) = weak.upgrade() {
-                controls::request_close(&owner, &selector);
-            }
-            slint::CloseRequestResponse::KeepWindowShown
-        });
+        tabs::bind_document(&self.weak, host.window.app());
         Ok(())
     }
 
@@ -262,27 +257,49 @@ impl Owner {
         {
             return Err("A UI host already owns this document".into());
         }
-        if self.hosts.len() == editor_core::startup::DOCUMENT_LIMIT {
-            return Err("The two-document UI capacity is full".into());
+        if self.hosts.len() >= MAX_PREPARED_HOSTS {
+            return Err("The document UI preparation capacity is full".into());
+        }
+        if self.active.is_some() || self.window.window().is_visible() {
+            pointer_lock::admit_component_change(self.window.window())?;
+        }
+        if let Some(active) = self.active
+            && let Some((_, host)) = self
+                .hosts
+                .iter()
+                .find(|(_, host)| host.borrow().document_id() == active)
+        {
+            host.borrow().window.can_deactivate()?;
         }
         let window = create_document_window(
             document.clone(),
             self.ctx.clone(),
             self.status.clone(),
             None,
-        )
-        .map_err(|error| error.to_string())?;
+            self.window.window(),
+        );
+        let restored = self.restore_presentation();
+        let window = window.map_err(|error| error.to_string());
+        let window = match (window, restored) {
+            (Ok(window), Ok(())) => window,
+            (Err(error), Ok(())) => return Err(error),
+            (Ok(mut window), Err(error)) => {
+                let retired = window.retire().map(|_| ());
+                return combine(Err(error), retired);
+            }
+            (Err(error), Err(restored)) => return Err(format!("{error}; {restored}")),
+        };
         let host = DocumentHost::new(window, document);
         if let Err(error) = self.bind_host(&selector, &host, terminal) {
             return self.failed_candidate(selector, host, error);
         }
-        if present {
-            let shown = host.borrow().window.app().show();
-            if let Err(error) = shown {
-                return self.failed_candidate(selector, host, error.to_string());
-            }
-        }
+        let document = host.borrow().document_id();
         self.hosts.push((selector, host));
+        self.presentation_dirty = true;
+        if present && let Err(error) = self.show(document, true) {
+            let (selector, host) = self.hosts.pop().unwrap();
+            return self.failed_candidate(selector, host, error);
+        }
         Ok(())
     }
 
@@ -310,35 +327,71 @@ impl Owner {
     }
 
     fn show(&mut self, document: runtime::DocumentId, focus: bool) -> Result<(), String> {
+        if !focus && !self.window.window().is_visible() {
+            return Err("The workspace window is hidden; show it with focus first".into());
+        }
+        let previous = self.active;
         let host = self
             .hosts
             .iter()
             .find(|(_, host)| host.borrow().document_id() == document)
             .ok_or("The requested document has no UI host")?;
-        let host = host.1.borrow();
-        let app = host
+        let target = host.1.clone();
+        let target = target.borrow();
+        let app = target
             .window
             .app
             .as_ref()
             .ok_or("The document UI has retired")?;
-        app.set_background_display(!focus);
-        app.show().map_err(|error| error.to_string())
-    }
-
-    fn close_dialog_for(&mut self, document: runtime::DocumentId) -> Result<(), String> {
-        if self
-            .dialog
-            .as_ref()
-            .is_some_and(|dialog| dialog.origin == document)
-        {
-            let dialog = self.dialog.take().unwrap();
-            return dialog.window.hide().map_err(|error| error.to_string());
+        if self.active != Some(document) {
+            if self.active.is_some() || self.window.window().is_visible() {
+                pointer_lock::admit_component_change(self.window.window())?;
+            }
+            if let Some(active) = self.active
+                && let Some((_, host)) = self
+                    .hosts
+                    .iter()
+                    .find(|(_, host)| host.borrow().document_id() == active)
+            {
+                host.borrow().window.set_active(false)?;
+            }
+            if let Err(error) = editor_ui::activate_document_view(app) {
+                let restored = self.restore_presentation();
+                return combine(Err(error), restored);
+            }
+            if let Err(error) = target.window.set_active(true) {
+                let restored = self.restore_presentation();
+                return combine(Err(error), restored);
+            }
+            self.active = Some(document);
+        }
+        self.presentation_dirty = true;
+        if let Err(error) = present_document(app, focus) {
+            let suspended = target.window.set_active(false);
+            self.active = previous;
+            let restored = self.restore_presentation();
+            return combine(Err(error), combine(suspended, restored));
         }
         Ok(())
     }
 
+    fn restore_presentation(&self) -> Result<(), String> {
+        if let Some(active) = self.active
+            && let Some((_, host)) = self
+                .hosts
+                .iter()
+                .find(|(_, host)| host.borrow().document_id() == active)
+        {
+            let host = host.borrow();
+            if let Some(app) = &host.window.app {
+                editor_ui::activate_document_view(app)?;
+                return host.window.set_active(true);
+            }
+        }
+        editor_ui::activate_workspace_view(&self.window)
+    }
+
     fn retire(&mut self, document: runtime::DocumentId) -> Result<(), String> {
-        let dialog = self.close_dialog_for(document);
         let retired = self
             .hosts
             .iter()
@@ -346,7 +399,14 @@ impl Owner {
             .map_or(Ok(()), |(_, host)| {
                 host.borrow_mut().window.retire().map(|_| ())
             });
-        combine(dialog, retired)
+        let presentation = if self.active == Some(document) {
+            self.active = None;
+            editor_ui::activate_workspace_after_retirement(&self.window)
+        } else {
+            Ok(())
+        };
+        self.presentation_dirty = true;
+        combine(retired, presentation)
     }
 
     fn release(&mut self, document: runtime::DocumentId) -> Result<(), String> {
@@ -360,6 +420,11 @@ impl Owner {
         let result = self.hosts[index].1.borrow_mut().finish(Ok(()));
         result.map_err(|error| error.to_string())?;
         self.hosts.remove(index);
+        if self.active == Some(document) {
+            self.active = None;
+            editor_ui::activate_workspace_after_retirement(&self.window)?;
+        }
+        self.presentation_dirty = true;
         Ok(())
     }
 
@@ -372,7 +437,12 @@ impl Owner {
             Action::Retire(document) => self.retire(document),
             Action::Release(document) => self.release(document),
             Action::Quit => {
-                let result = slint::quit_event_loop().map_err(|error| error.to_string());
+                let dialog = self.dialog.take().map_or(Ok(()), |dialog| {
+                    dialog.window.hide().map_err(|error| error.to_string())
+                });
+                let window = self.window.hide().map_err(|error| error.to_string());
+                let quit = slint::quit_event_loop().map_err(|error| error.to_string());
+                let result = combine(dialog, combine(window, quit));
                 self.proxy
                     .0
                     .lock()
@@ -408,25 +478,22 @@ impl Owner {
             .map(|error| error.to_string())
             .into_iter()
             .collect::<Vec<_>>();
-        let dialog_result = self.dialog.take().map(|dialog| {
-            (
-                dialog.origin,
-                dialog.window.hide().map_err(|error| error.to_string()),
-            )
-        });
+        if let Some(dialog) = self.dialog.take()
+            && let Err(error) = dialog.window.hide()
+        {
+            errors.push(error.to_string());
+        }
         let mut results = Vec::new();
         for (_, host) in self.hosts.drain(..) {
             let mut host = host.borrow_mut();
             let result = host.finish(Ok(())).map_err(|error| error.to_string());
-            let dialog = dialog_result
-                .as_ref()
-                .filter(|(id, _)| *id == host.document_id())
-                .map_or(Ok(()), |(_, result)| result.clone());
-            let result = combine(dialog, result);
             if let Err(error) = &result {
                 errors.push(error.clone());
             }
             results.push((host.document_id(), result));
+        }
+        if let Err(error) = self.window.hide() {
+            errors.push(error.to_string());
         }
         {
             let mut queue = self.proxy.0.lock().expect("Workspace UI queue poisoned");
@@ -466,6 +533,19 @@ fn combine(left: Result<(), String>, right: Result<(), String>) -> Result<(), St
     }
 }
 
+fn present_document(app: &AppWindow, focus: bool) -> Result<(), String> {
+    let visible = app.window().is_visible();
+    if !visible || focus {
+        app.show().map_err(|error| error.to_string())?;
+    }
+    if visible && focus {
+        app.window()
+            .with_winit_window(|window| window.focus_window())
+            .ok_or("The workspace native window is unavailable for focus")?;
+    }
+    Ok(())
+}
+
 fn dispatch(owner: &SharedOwner) {
     let quit = owner
         .borrow()
@@ -496,8 +576,9 @@ fn dispatch(owner: &SharedOwner) {
         };
         let _ = command.reply.send(result);
     }
-    if owner.borrow().refreshed.elapsed() >= REFRESH_INTERVAL {
+    if owner.borrow().presentation_dirty || owner.borrow().refreshed.elapsed() >= REFRESH_INTERVAL {
         owner.borrow_mut().refreshed = Instant::now();
+        tabs::refresh(owner);
         controls::refresh(owner);
     }
 }
@@ -522,21 +603,27 @@ pub(super) fn run(
         })
         .with_winit_custom_application_handler(super::pointer_lock::Handler)
         .select()?;
-    let owner = Owner::new(ctx.clone());
+    let owner = Owner::new(ctx.clone())?;
     let result = (|| {
         let initial = factory
             .documents()
             .into_iter()
             .find(|entry| entry.document().id() == document.id())
             .ok_or("The startup document is missing from its workspace")?;
-        let window =
-            create_document_window(document.clone(), ctx, "MCP starting".into(), open_message)?;
+        let shell = owner.borrow().window.clone_strong();
+        let window = create_document_window(
+            document.clone(),
+            ctx,
+            "MCP starting".into(),
+            open_message,
+            shell.window(),
+        )?;
         let host = DocumentHost::new(window, document.clone());
         owner
             .borrow_mut()
             .hosts
             .push((initial.selector().to_owned(), host.clone()));
-        host.borrow().window.app().show()?;
+        owner.borrow_mut().show(document.id(), true)?;
         factory.set_visibility(document.id(), DocumentVisibility::Visible)?;
         let callbacks = owner.borrow().proxy.callbacks();
         let (workspace, status) = configure(callbacks)?;

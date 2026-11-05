@@ -117,23 +117,6 @@ impl DocumentHost {
                 }
             }
         });
-        app.window().on_close_requested({
-            let host = Rc::downgrade(&host);
-            move || {
-                let Some(owner) = host.upgrade() else {
-                    return slint::CloseRequestResponse::HideWindow;
-                };
-                let (app, ui) = {
-                    let owner = owner.borrow();
-                    let Some(app) = owner.window.app.as_ref() else {
-                        return slint::CloseRequestResponse::HideWindow;
-                    };
-                    (app.clone_strong(), owner.window.weak_ui())
-                };
-                request_terminal_close(&app, &ui, &host);
-                slint::CloseRequestResponse::KeepWindowShown
-            }
-        });
         host
     }
 

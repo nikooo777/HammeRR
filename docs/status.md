@@ -3,14 +3,14 @@
 # Status
 
 HammeRR supports brush-map authoring through the editor and MCP.
-The integrated compiler is experimental. Editing, file operations, rendering, BSP publication and game launching support Linux and Windows. Engine physics, native reflection capture and headless stdio MCP require Linux. Silent document display requires Hyprland.
+The integrated compiler is experimental. Editing, file operations, rendering, BSP publication and game launching support Linux and Windows. Engine physics, native reflection capture and headless stdio MCP require Linux.
 
 Release tags use `vYYYY.M.PATCH`, such as `v2026.11.0`. The patch counter starts at zero each month.
 Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksums and a complete commit changelog. Windows executables use timestamped, self-signed signatures; Windows trust warnings can remain. See [download instructions](getting-started.md#download-a-build).
 
 ## Group completion
 
-![Estimated implementation: 87.7% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 88.1% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -21,7 +21,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | Area | Works | Not yet / limits |
 | --- | --- | --- |
 | [MCP](mcp.md) | Live desktop and private headless sessions; shared editing, rendering and builds. Explicit empty edit targets and unknown compile/run argument names reject. | Select a document explicitly when two maps are open. |
-| [Documents](open-documents.md) | Two map windows, silent display, reviewed Quit all including hidden maps, named Close blockers and per-map Save results. | Tabs and workspace restoration. |
+| [Documents](open-documents.md) | Two persistent tabs, silent selection, explicit saved workspace restoration, reviewed Quit all, named Close blockers and per-map Save results. | Two live maps; workspace saving needs clean named sources and valid content. Restoration opens current files at saved paths. |
 | [Content profiles](content-profiles.md) | Up to 32 named game/mod profiles; checked mounts, FGD, build and game paths; background validation and atomic per-document Apply. | Installed CS:S client required. Profiles do not relocate external assets. |
 | [Changed content](textures.md#reload-mounted-content-and-definitions) | Explicit current-mount and FGD refresh with dependent cache invalidation, atomic failure retention and optional native change watching. | Changes require explicit Reload content. Watch coverage/errors remain visible; running games require stop/restart. |
 | [Workspace layout](workspace-layout.md) | Save dock, Agent feed and tool-rail visibility and preferred sizes; save 13 [preview defaults](preview-defaults.md), including surface view. Shared live changes and explicit Save/Apply/Reload/Reset. | Preferred sizes fit the window; window placement stays with the operating system. |

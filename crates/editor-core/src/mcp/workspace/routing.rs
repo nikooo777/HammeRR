@@ -43,6 +43,12 @@ struct QuitArgs {
     discard_changes: bool,
 }
 
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RestoreWorkspaceArgs {
+    review_token: String,
+}
+
 fn command<T: schemars::JsonSchema>(name: &'static str, description: &'static str) -> Tool {
     let schema =
         serde_json::to_value(schemars::schema_for!(T)).expect("Tool schema serialization failed");
@@ -68,17 +74,21 @@ pub(super) fn tools() -> Result<Vec<Tool>, String> {
                 .clone(),
         );
         if tool.name == close::TOOL_NAME {
-            tool.description = Some("Close the pinned document using its fresh get_map_info.document_close review_token and explicit discard_changes consent. With a live peer, drains and retires only this document and returns an ordinary result while the shared MCP service stays open. Closing the last live document verifies exact terminal output before stopping the shared service and quitting. Accepted cleanup survives caller cancellation. For the last visible window with hidden peers, use get_quit_review and quit_all to review and close the complete workspace, or show a hidden peer first.".into());
+            tool.description = Some("Close the pinned document using its fresh get_map_info.document_close review_token and explicit discard_changes consent. With a live peer, drains and retires only this document and returns an ordinary result while the shared MCP service stays open. Closing the last live document verifies exact terminal output before stopping the shared service and quitting. Accepted cleanup survives caller cancellation. Hidden peers remain accessible as tabs in the workspace shell. To close every map, use get_quit_review and quit_all.".into());
         }
     }
     tools.extend([
-        command::<EmptyArgs>("list_documents", "List up to two fixed documents, opaque routing selectors, cached map/work state, visibility and capacity. Read-only; does not poll game or UI state."),
+        command::<EmptyArgs>("list_documents", "List fixed documents, opaque routing selectors, cached map/work state, visibility and capacity. At most two live documents are admitted; a retained failed startup-document retirement may appear alongside the complete restored set. Read-only; does not poll game or UI state."),
         command::<EmptyArgs>("get_quit_review", "Inspect the exact complete workspace for Quit all, including hidden documents, identities, unsaved changes, drafts, owned work and active admissions. Returns one combined review_token. Does not close documents. Busy or unavailable workspace documents refuse explicitly."),
         command::<QuitArgs>("quit_all", "Quit every document using the exact fresh get_quit_review review_token and explicit discard_changes consent. Takes no document selector. Preflight validates every document before freezing workspace membership and all Session/admission gates together. Any changed review, busy admitted request, concurrent operation, missing consent or response reservation failure leaves all maps live. Accepted cleanup survives caller cancellation, cancels/drains owned work and retires all UI hosts. Per-document cleanup failures retain failed entries and source claims. Exact terminal response delivery precedes shared MCP service shutdown and native application quit."),
         command::<EmptyArgs>("save_all_named_maps", "Save all named maps through the same Open documents… action. Takes no arguments or document selector. Freezes up to two admitted document identities before scheduling, then attempts each once using its own Session.save and original source claim. Clean named maps verify their original source identity without writing. Unnamed dirty maps require Save as, pending reviews are preserved and block saving, and stale/busy/closing/source/write errors remain per-document results. Partial results return isError with complete:false/status:not_complete. No path invention, file chooser, focus, window show, rollback across documents or automatic retry."),
+        command::<EmptyArgs>("get_saved_workspace", "Inspect the explicitly saved workspace file and its complete bounded set of named maps, content/build settings and per-document view/layout context. Takes no document selector. Read-only; a missing file is reported as saved:false, and malformed or unreadable data returns an explicit error without replacing it. Does not open maps, activate tabs or change focus."),
+        command::<EmptyArgs>("save_workspace", "Save the complete current set of one or two clean named maps and their document contexts through the shared Save workspace action. Takes no document selector. Every source must remain named, clean, free of pending drafts and owned work, and retain its original source identity. Rechecks the admitted document set and sources before coordinated workspace-file publication; never saves map files or silently omits a document. Refusals preserve the previous saved workspace. A publication verification failure returns saved:true, complete:false and isError because the file may already be written; inspect before retrying."),
+        command::<EmptyArgs>("get_workspace_restore_review", "Review the exact saved-workspace file, its recorded paths/context values and current open document identities. Returns a process-bound review_token and description. Takes no document selector. Existing named maps and unsaved work are preserved; only an exactly reviewed pristine startup document may be replaced, and insufficient capacity refuses. This reviews the restoration disposition, not map/content file contents: Restore opens their current disk bytes at the recorded paths. Does not create hosts, replace buffers, show tabs or focus a window."),
+        command::<RestoreWorkspaceArgs>("restore_workspace", "Restore the complete saved workspace using the exact fresh get_workspace_restore_review review_token. Takes no document selector. Opens current VMF/content bytes at the recorded paths, prepares independent fixed Sessions, original source claims, restored contexts and real hidden UI hosts, then publishes every saved document together. Changed saved-workspace files or document identities, unsupported or missing current sources, source changes during preparation, capacity, cancellation and preparation failures publish no saved subset and retain current work; cleanup failures remain explicit failed entries with claims. After atomic publication, retiring a reviewed pristine startup document may fail: then returns restored:true, complete:false and isError with the full restored set retained. No map-file writes, implicit tab activation, window show or focus. Use show_document explicitly afterward. Cancellation before publication rolls back candidates; accepted cleanup remains owned even if the caller disconnects."),
         command::<EmptyArgs>("new_document", "Create a second independent untitled document without replacing an existing buffer. Desktop creation is hidden until show_document; headless creation stays headless. Rejects full or busy workspace."),
         command::<OpenArgs>("open_document", "Open an absolute VMF path in a new independent document, without replacing existing buffers. Requires a free workspace slot and path claims. Desktop creation is hidden until show_document."),
-        command::<ShowArgs>("show_document", "Show the exact desktop document identified by document_id. focus defaults true. focus=false requests silent display through the same Open documents → Show silently operation; requires supported Hyprland Lua rules and refuses before showing if admission fails. Headless workspaces reject; unknown or closing selectors never fall back."),
+        command::<ShowArgs>("show_document", "Select the exact desktop document tab identified by document_id without changing its fixed Session. focus defaults true and may show or focus the shared workspace window. focus=false uses the same Select silently action as Open documents: it requires the workspace window to be visible and switches its document view without requesting window focus. Busy pointer capture, viewport gestures, text composition or open menus refuse before switching. Headless workspaces reject; unknown or closing selectors never fall back."),
     ]);
     Ok(tools)
 }
@@ -197,7 +207,7 @@ impl ServerHandler for WorkspaceServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(rmcp::model::ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new("hammerr", env!("CARGO_PKG_VERSION")))
-            .with_instructions(format!("{}\nWorkspace: use list_documents to obtain opaque document_id selectors. Every document tool accepts this optional top-level string. Omission is allowed only with exactly one live document. Each call stays pinned to that document; focus never changes routing. new_document/open_document add a second independent buffer; show_document explicitly presents it. save_all_named_maps takes no selector and saves the fixed admitted named-map set with explicit per-document failures; unnamed dirty maps require Save as and pending reviews remain unchanged. get_quit_review inspects every map, including hidden peers; quit_all takes that combined review_token and explicit discard_changes consent, then closes every reviewed map and exits after terminal output delivery. Both workspace quit tools take no document selector. Existing new_map/open_map still replace their pinned buffer. Results carry io.hammerr/document metadata without changing content payloads.", crate::mcp::INSTRUCTIONS))
+            .with_instructions(format!("{}\nWorkspace: use list_documents to obtain opaque document_id selectors. Every document tool accepts this optional top-level string. Omission is allowed only with exactly one live document. Each call stays pinned to that document; focus never changes routing. new_document/open_document add a second independent buffer; show_document explicitly presents it. save_all_named_maps takes no selector and saves the fixed admitted named-map set with explicit per-document failures; unnamed dirty maps require Save as and pending reviews remain unchanged. save_workspace persists the complete clean named document set and current contexts without writing maps; get_saved_workspace inspects it. get_workspace_restore_review supplies the exact review_token for restore_workspace, which prepares and publishes the full saved set as hidden independent documents without replacing current work. All saved-workspace tools take no document selector. get_quit_review inspects every map, including hidden peers; quit_all takes that combined review_token and explicit discard_changes consent, then closes every reviewed map and exits after terminal output delivery. Both workspace quit tools take no document selector. Existing new_map/open_map still replace their pinned buffer. Results carry io.hammerr/document metadata without changing content payloads.", crate::mcp::INSTRUCTIONS))
     }
 
     async fn call_tool(
@@ -209,6 +219,10 @@ impl ServerHandler for WorkspaceServer {
             request.name.as_ref(),
             "list_documents"
                 | "save_all_named_maps"
+                | "get_saved_workspace"
+                | "save_workspace"
+                | "get_workspace_restore_review"
+                | "restore_workspace"
                 | "new_document"
                 | "open_document"
                 | "show_document"
@@ -265,6 +279,35 @@ impl ServerHandler for WorkspaceServer {
                     let _: EmptyArgs = parse(request.arguments)?;
                     self.0.save_all_named_maps(Actor::Agent).await
                 }
+                "get_saved_workspace" => {
+                    let _: EmptyArgs = parse(request.arguments)?;
+                    self.0.saved_workspace().await
+                }
+                "save_workspace" => {
+                    let _: EmptyArgs = parse(request.arguments)?;
+                    self.0.save_workspace(Actor::Agent).await
+                }
+                "get_workspace_restore_review" => {
+                    let _: EmptyArgs = parse(request.arguments)?;
+                    self.0.restore_workspace_review().await
+                }
+                "restore_workspace" => {
+                    let args: RestoreWorkspaceArgs = parse(request.arguments)?;
+                    let control = compiler::Control::default();
+                    let restore = self.0.restore_workspace_with_control(
+                        Actor::Agent,
+                        &args.review_token,
+                        control.clone(),
+                    );
+                    tokio::pin!(restore);
+                    tokio::select! {
+                        result = &mut restore => result,
+                        _ = context.ct.cancelled() => {
+                            let _ = control.cancel();
+                            restore.await
+                        }
+                    }
+                }
                 "new_document" => {
                     let _: EmptyArgs = parse(request.arguments)?;
                     self.0.new_document(Actor::Agent, false).await
@@ -290,8 +333,10 @@ impl ServerHandler for WorkspaceServer {
             return match value {
                 Ok(value) => {
                     let target = value.get("document_id").zip(value.get("runtime_document_id")).map(|(selector, id)| json!({"document_id":selector,"runtime_document_id":id}));
-                    let incomplete =
-                        request.name == "save_all_named_maps" && value["complete"] != true;
+                    let incomplete = matches!(
+                        request.name.as_ref(),
+                        "save_all_named_maps" | "save_workspace" | "restore_workspace"
+                    ) && value["complete"] != true;
                     let mut result = crate::mcp::ok(value)?;
                     if incomplete {
                         result.is_error = Some(true);

@@ -48,7 +48,7 @@ impl Session {
         if self.fog_preview.player.is_some()
             && (overrides.controller.is_some() || overrides.selection.is_some())
         {
-            return Err("Temporary controller or selection overrides cannot bypass player fog switches; Reset the preview first".into());
+            return Err("Temporary controller or selection overrides cannot bypass mixed player fog replay; Reset the preview first".into());
         }
         if overrides.controller.is_some() && overrides.selection == Some(SelectionMode::Environment)
         {
@@ -210,7 +210,7 @@ impl Session {
             report: json!({"enabled":true,"ready":true,"applied":color.is_some_and(|fog|fog.enabled() && fog.max_density()>0.0),
             "controller":id.map(|id|format!("entity:{id}")),"selection":settings.selection,"selection_reason":reason,"channel":settings.channel,
             "initial_radial_context":settings.initial_radial_context.name(),"initial_radial":initial_radial,
-            "time_seconds":self.fog_preview.time,"profile":profile.map(profile_report),"water":water_report,"far_z":far_z,
+            "time_seconds":self.fog_preview.time,"render_time_seconds":self.fog_preview.time,"profile":profile.map(profile_report),"water":water_report,"far_z":far_z,
             "player_sample_time_seconds":player_frame.map(|frame|frame.sample_time_seconds),"player_update_hz":map_core::fog::PLAYER_UPDATE_HZ,
             "color_linear":color.map(|fog|fog.color_for_camera(camera)),"preview_only":true}),
         })
@@ -330,11 +330,9 @@ impl Session {
             .key
             .as_ref()
             .is_some_and(|key| key.current(self))
+            && let Some(catalog) = &self.fog_preview.catalog
         {
-            self.fog_preview
-                .catalog
-                .as_ref()
-                .ok_or_else(|| "Fog catalog has not been captured".to_owned())
+            Ok(catalog)
         } else {
             captured = catalog::Catalog::capture(self.render_document().vmf());
             captured.as_ref().map_err(Clone::clone)
@@ -348,14 +346,25 @@ impl Session {
                 "parent_chain":controller.parsed.as_ref().ok().map(|parsed|parsed.parent_chain.iter().map(|id|format!("entity:{id}")).collect::<Vec<_>>())})
         }).collect::<Vec<_>>()).unwrap_or_default();
         let inputs=map_core::fog::input_choices().iter().map(|choice|json!({"id":choice.name,"name":choice.name,"label":choice.name,"kind":choice.kind,"help":choice.help,"has_value":choice.has_value})).collect::<Vec<_>>();
-        let events=self.fog_preview.timelines.iter().flat_map(|(&id,timeline)|timeline.events().iter().map(move |event|json!({"controller":format!("entity:{id}"),"time_seconds":event.time,"input":event.input.name(),"value":event.input.value()}))).collect::<Vec<_>>();
+        let events = self.fog_events_report();
+        let event_count = events.len();
         let player_candidate = self.player_timeline_for_switch();
-        let input_issue = self.controller_input_admission().err();
+        let input_targets=catalog.as_ref().map(|catalog|catalog.controllers.iter().map(|(&id,controller)| {
+            let admission=controller.parsed.as_ref().map_err(Clone::clone)
+                .and_then(|_|self.controller_input_target_admission(id));
+            json!({"id":format!("entity:{id}"),
+                "label":controller.targetname.as_deref().filter(|name|!name.is_empty()).map_or_else(||format!("entity:{id}"),|name|format!("{name} · entity:{id}")),
+                "ready":admission.is_ok(),"issue":admission.err()})
+        }).collect::<Vec<_>>()).unwrap_or_default();
+        let input_issue = self.controller_input_admission().err()
+            .or_else(||catalog.as_ref().err().cloned())
+            .or_else(||(!input_targets.iter().any(|target|target["ready"]==true))
+                .then(||"No eligible controller input destination; inspect input_targets for each controller's refusal reason".to_owned()));
         let switch_targets=catalog.as_ref().map(|catalog|catalog.controllers.iter().map(|(&id,controller)| {
             let admission=controller.switch_target.as_ref().map_err(Clone::clone)
                 .and_then(|_|controller.parsed.as_ref().map_err(Clone::clone))
                 .and_then(|_|player_candidate.as_ref().map_err(Clone::clone))
-                .and_then(|player|player.can_switch(self.fog_preview.time,id));
+                .and_then(|(_,frame)|frame.can_switch(id));
             json!({"id":format!("entity:{id}"),"name":controller.switch_target.as_ref().ok(),
                 "label":controller.switch_target.as_ref().ok().map_or_else(||format!("entity:{id}"),|name|format!("{name} · entity:{id}")),
                 "ready":admission.is_ok(),"issue":admission.err()})
@@ -378,6 +387,10 @@ impl Session {
         let player = self
             .player_fog_report()
             .unwrap_or_else(|error| json!({"issue":error}));
+        let transitioning = player["transitioning"] == true
+            || events
+                .iter()
+                .any(|event| event["input"] == map_core::fog::Input::StartFogTransition.name());
         let initial_radial_contexts=INITIAL_RADIAL_CONTEXTS.map(|context|json!({"id":context.name(),"label":context.label(),"ready":true,"detail":context.detail()}));
         let detail = if let Some(error) = &issue {
             error.clone()
@@ -402,7 +415,8 @@ impl Session {
             "summary":self.fog_preview_summary(),"detail":detail,"issue":issue,"error":issue,"catalog_issue":catalog.err(),
             "controllers":controllers,"channels":[{"id":"ldr","label":"LDR","ready":true,"detail":"World fog · LDR"},{"id":"hdr","label":"HDR","ready":false,"detail":"HDR fog display is unavailable"}],
             "selections":[{"id":"explicit","label":"Explicit controller","ready":true,"detail":"Use the selected controller's authored or replayed values"},{"id":"environment","label":"Environment","ready":true,"detail":"Use the prepared initial controller, optional player switches and current-camera water fog."}],
-            "inputs":inputs,"events":events,"current":current,"requested":current,"time_seconds":clock.time_seconds,"current_time_seconds":clock.time_seconds,
+            "inputs":inputs,"input_targets":input_targets,"events":events,"event_count":event_count,"current":current,"requested":current,"time_seconds":clock.time_seconds,"current_time_seconds":clock.time_seconds,
+            "replay_mode":if self.fog_preview.player.is_some(){"mixed_player"}else{"controller_inputs"},"controller_states":self.controller_states_report(),
             "player":player,"player_switches":player_switches,"switch_targets":switch_targets,
             "player_update_hz":map_core::fog::PLAYER_UPDATE_HZ,"player_update_interval_seconds":map_core::fog::PLAYER_UPDATE_INTERVAL_SECONDS,
             "can_switch_player_controller":player_switch_issue.is_none(),"player_switch_issue":player_switch_issue,
@@ -413,14 +427,14 @@ impl Session {
             "can_seek":self.fog_preview.key.as_ref().is_some_and(|key|key.current(self))&&!clock.busy,"can_prepare_environment":!clock.busy,
             "environment_ready":self.fog_preview.environment.is_some()&&clock.status!="stale","last_source_check_age_seconds":self.fog_preview.verified.map(|time|time.elapsed().as_secs_f64()),
             "environment":self.fog_preview.environment.as_ref().filter(|_|clock.status!="stale").map(|environment|json!({"controllers":environment.snapshot.controllers(),"liquids":environment.snapshot.liquid_count(),"solids":environment.snapshot.solid_count(),"tree_nodes":environment.snapshot.tree_nodes()})),
-            "transitioning":self.fog_preview.timelines.values().any(|timeline|timeline.events().iter().any(|event|matches!(event.input,map_core::fog::Input::StartFogTransition))),
+            "transitioning":transitioning,
             "limits":{"controllers":catalog::MAX_CONTROLLERS,"entities":catalog::MAX_ENTITIES,"controller_property_bytes":catalog::MAX_CONTROLLER_BYTES,"events":map_core::fog::MAX_EVENTS,"time_seconds":map_core::fog::MAX_TIMELINE_SECONDS,"advance_seconds":state::MAX_ADVANCE_SECONDS,"source_snapshot_bytes":state::MAX_SOURCE_BYTES,"workers":1},
             "timeline_policy":map_core::fog::TIMELINE_POLICY,
             "player_switch_policy":map_core::fog::PLAYER_TIMELINE_POLICY,
             "player_target_limits":{"names":catalog::MAX_TARGET_NAMES,"name_bytes":catalog::MAX_TARGET_NAME_BYTES,"total_name_bytes":catalog::MAX_TOTAL_TARGET_NAME_BYTES,"property_visits":catalog::MAX_NAMESPACE_PROPERTIES,"native_match_bytes":catalog::MAX_NAMESPACE_MATCH_BYTES},
             "initial_radial_context_policy":"The selected rule applies to every controller's initial profile before preview inputs. Changing it clears controller inputs and player switches, resets time and pauses, while retaining a current prepared environment. Later SetRadial inputs override the initial value. No running map name or file path is inferred.",
             "playback_policy":"One shared runtime clock drives Play in desktop and headless sessions. Hidden or inactive presentation suspends wall time without catch-up. Seek pauses; explicit Advance remains available. Reset clears controller inputs and player switches and restores the current-context initial profile at time zero. Cancel stops environment preparation and playback; Clear also disables and clears preview state.",
-            "selection_policy":"Manual controller, selection-mode or initial-context changes reset player switches and time after validation. Initial automatic selection uses the prepared first-controller/last-Master; water is applied after the sampled player profile. Named static controller switches use a separate ledger and can interrupt an active blend using its last written state under the declared fixed player-update schedule. Controller inputs cannot coexist with that ledger. Temporary controller/selection overrides refuse while it exists. Automatic trigger history, fog volumes, live I/O and native packet/prediction/update cadence are not simulated.",
+            "selection_policy":"Manual controller, selection-mode or initial-context changes clear all preview events and reset time after validation. Initial automatic selection uses the prepared first-controller/last-Master; water is applied after the sampled player state. Inputs address their explicit controller without changing the initial choice or current player handle. Input-only preview retains continuous controller evaluation. The first named player switch replays the original ordered input history from the settled initial epoch under the declared mixed raw delivery schedule; later inputs and switches share that ledger. Temporary controller/selection overrides refuse while mixed player replay exists. Automatic trigger history, fog volumes, live I/O and native packet/prediction/update cadence are not simulated.",
             "persistence":"Session view state only; no VMF edits, Undo steps or saved controller mutation. HDRColorScale and ZoomFogScale remain inert foreign metadata in this installed CSS path."})
     }
 

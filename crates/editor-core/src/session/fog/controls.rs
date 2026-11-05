@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use map_core::fog::{Event, MAX_TIMELINE_SECONDS, Timeline};
+use map_core::fog::MAX_TIMELINE_SECONDS;
 use serde_json::Value;
 
 use super::catalog::Catalog;
@@ -56,6 +56,7 @@ impl Session {
             }
             self.fog_preview.environment = None;
             self.fog_preview.timelines.clear();
+            self.fog_preview.input_events.clear();
             self.fog_preview.player = None;
             self.fog_preview.time = 0.0;
             self.fog_preview.playing = false;
@@ -72,6 +73,7 @@ impl Session {
         self.fog_preview.key = Some(Key::capture(self));
         self.fog_preview.catalog = catalog;
         self.fog_preview.timelines.clear();
+        self.fog_preview.input_events.clear();
         self.fog_preview.player = None;
         self.fog_preview.environment = None;
         self.fog_preview.verified = None;
@@ -136,6 +138,7 @@ impl Session {
                 self.fog_preview.catalog = None;
                 self.fog_preview.key = None;
                 self.fog_preview.timelines.clear();
+                self.fog_preview.input_events.clear();
                 self.fog_preview.player = None;
                 self.fog_preview.environment = None;
                 self.fog_preview.verified = None;
@@ -148,11 +151,10 @@ impl Session {
                 settings.channel.validate()?;
                 let context_changed = settings.initial_radial_context
                     != self.fog_preview.settings.initial_radial_context;
-                let player_changed = self.fog_preview.player.is_some()
-                    && (context_changed
-                        || settings.controller != self.fog_preview.settings.controller
-                        || settings.selection != self.fog_preview.settings.selection);
-                if player_changed {
+                let sequence_changed = context_changed
+                    || settings.controller != self.fog_preview.settings.controller
+                    || settings.selection != self.fog_preview.settings.selection;
+                if sequence_changed {
                     self.validate_player_fog(self.fog_preview.time)?;
                 }
                 let fresh = !self
@@ -163,7 +165,7 @@ impl Session {
                 let captured = (settings.enabled && (fresh || self.fog_preview.catalog.is_none()))
                     .then(|| Catalog::capture(self.render_document().vmf()))
                     .transpose()?;
-                if player_changed
+                if sequence_changed
                     && !settings.enabled
                     && settings.selection == SelectionMode::Explicit
                     && let Some(id) = settings.controller
@@ -193,8 +195,9 @@ impl Session {
                 } else if let Some(catalog) = captured {
                     self.fog_preview.catalog = Some(catalog);
                 }
-                if context_changed || player_changed {
+                if sequence_changed {
                     self.fog_preview.timelines.clear();
+                    self.fog_preview.input_events.clear();
                     self.fog_preview.player = None;
                     self.fog_preview.time = 0.0;
                     self.fog_preview.playing = false;
@@ -263,19 +266,7 @@ impl Session {
                 return Ok(Update::Work(Box::new(request)));
             }
             Command::Input { controller, input } => {
-                self.controller_input_admission()?;
-                let mut timelines = self.fog_preview.timelines.clone();
-                if let std::collections::btree_map::Entry::Vacant(entry) =
-                    timelines.entry(controller)
-                {
-                    entry.insert(Timeline::new(self.initial_fog_profile(controller)?)?);
-                }
-                timelines.get_mut(&controller).unwrap().push(Event {
-                    time: self.fog_preview.time,
-                    input,
-                })?;
-                Self::validate_fog_timelines(&timelines, self.fog_preview.time)?;
-                self.fog_preview.timelines = timelines;
+                self.append_controller_input(controller, input)?;
                 self.fog_preview.error = None;
             }
             Command::SwitchPlayerController { controller } => {
@@ -339,6 +330,7 @@ impl Session {
                     self.fog_baseline(Some(catalog));
                 }
                 self.fog_preview.timelines = BTreeMap::new();
+                self.fog_preview.input_events.clear();
                 self.fog_preview.player = None;
                 self.fog_preview.time = 0.0;
                 self.fog_preview.playing = false;

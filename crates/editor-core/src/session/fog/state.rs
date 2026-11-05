@@ -222,6 +222,12 @@ pub(super) struct Pending {
     pub control: compiler::Control,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct ControllerInput {
+    pub controller: u32,
+    pub event: map_core::fog::Event,
+}
+
 pub(crate) struct ClockLease {
     pub scope: String,
     control: compiler::Control,
@@ -248,6 +254,7 @@ pub(in crate::session) struct State {
     pub(super) catalog: Option<Catalog>,
     pub(super) settings: Settings,
     pub(super) timelines: BTreeMap<u32, Timeline>,
+    pub(super) input_events: Vec<ControllerInput>,
     pub(super) player: Option<map_core::fog::PlayerTimeline>,
     pub(super) time: f64,
     pub(super) playing: bool,
@@ -275,6 +282,7 @@ impl Default for State {
             catalog: None,
             settings: Settings::default(),
             timelines: BTreeMap::new(),
+            input_events: Vec::new(),
             player: None,
             time: 0.0,
             playing: false,

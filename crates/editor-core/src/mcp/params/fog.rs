@@ -62,7 +62,7 @@ pub enum FogPreviewAction {
     Settings,
     PrepareEnvironment,
     Input,
-    /// Switch the player to a named static controller, separately from controller inputs.
+    /// Switch the player to a named controller within the ordered raw controller/player history.
     SwitchPlayerController,
     Play,
     Pause,
@@ -94,7 +94,7 @@ pub struct FogPreviewControlArgs {
     pub expected_snapshot: String,
     /// Settings only: complete shared settings, including explicit selection and channel.
     pub settings: Option<FogPreviewSettingsArgs>,
-    /// Input or Switch player controller: destination env_fog_controller entity:<id>.
+    /// Input: explicit destination from input_targets; Switch player controller: named destination from switch_targets. Does not change the configured initial controller.
     pub controller: Option<String>,
     /// Input only: exact native input name from the shared controller input catalogue.
     pub input: Option<String>,

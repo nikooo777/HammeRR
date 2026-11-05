@@ -17,7 +17,6 @@ struct Form {
     snapshot: String,
     selection_snapshot: Option<String>,
     input_snapshot: Option<String>,
-    input_controller: Option<u32>,
     player_snapshot: Option<String>,
     time_snapshot: Option<String>,
     choices: Vec<Value>,
@@ -25,12 +24,14 @@ struct Form {
     selections: Vec<Value>,
     initial_rules: Vec<Value>,
     inputs: Vec<Value>,
+    input_targets: Vec<Value>,
     player_targets: Vec<Value>,
     controller_labels: Vec<slint::SharedString>,
     channel_labels: Vec<slint::SharedString>,
     selection_labels: Vec<slint::SharedString>,
     initial_rule_labels: Vec<slint::SharedString>,
     input_labels: Vec<slint::SharedString>,
+    input_target_labels: Vec<slint::SharedString>,
     player_labels: Vec<slint::SharedString>,
     report: Value,
     action_error: Option<String>,
@@ -205,7 +206,7 @@ fn update_player(window: &FogWindow, form: &Form) {
     window.set_player_issue(issue.is_some());
     window.set_player_detail(issue.unwrap_or("Choose a named target. Its foglerptime sets the duration; zero switches immediately.").into());
     let player = &form.report["player"];
-    let mut status = if player["issue"].is_string() {
+    let status = if player["issue"].is_string() {
         "Player state unavailable".to_owned()
     } else if let Some(controller) = player["current_controller"].as_str() {
         let phase = match player["phase"].as_str() {
@@ -223,34 +224,34 @@ fn update_player(window: &FogWindow, form: &Form) {
     } else {
         "No player switches".to_owned()
     };
-    if player["phase"] == "blending"
-        && let (Some(sample_time), Some(current_time)) = (
-            player["sample_time_seconds"].as_f64(),
-            form.report["time_seconds"].as_f64(),
-        )
-        && format!("{sample_time:.3}") != format!("{current_time:.3}")
-    {
-        status.push_str(&format!(" · sampled at {sample_time:.3} s"));
-    }
     window.set_player_status(status.into());
+    let mut state = Vec::new();
+    if let Some(raw) = raw_summary(&player["current_raw"]) {
+        state.push(format!("Copied raw: {raw}"));
+    }
+    if let Some(sample_time) = player["sample_time_seconds"].as_f64() {
+        let mut sample = format!("Player sample {sample_time:.3} s");
+        if let Some(render_time) = player["render_time_seconds"].as_f64() {
+            sample.push_str(&format!(" · render evaluation {render_time:.3} s"));
+        }
+        state.push(sample);
+    }
+    window.set_player_state(state.join("\n").into());
 }
 
 fn update_input(window: &FogWindow, form: &Form) {
     let input = selected(&form.inputs, window.get_input_index());
+    let target = selected(&form.input_targets, window.get_input_controller_index() - 1);
     window.set_input_has_value(input.is_some_and(|input| input["has_value"] == true));
-    let applied = entity_id(&form.report["controller"]);
     window.set_input_target(
-        form.input_controller
-            .or(applied)
+        target
+            .and_then(|target| target["id"].as_str())
             .map_or_else(
-                || "No applied controller".to_owned(),
-                |controller| format!("entity:{controller} · Preview only"),
+                || "Choose an input target".to_owned(),
+                |controller| format!("{controller} · Preview only"),
             )
             .into(),
     );
-    let changed = form
-        .input_controller
-        .is_some_and(|controller| Some(controller) != applied);
     let stale = form
         .input_snapshot
         .as_ref()
@@ -258,19 +259,24 @@ fn update_input(window: &FogWindow, form: &Form) {
     window.set_can_send_input(
         window.get_available()
             && !window.get_environment_busy()
-            && applied.is_some()
             && input.is_some()
+            && target.is_some_and(|target| target["ready"] == true)
             && !window.get_selection_dirty()
-            && !changed
             && !stale
             && form.report["can_send_controller_input"] == true,
     );
     let help = if window.get_selection_dirty() {
         "Apply the controller selection before sending an input."
-    } else if changed {
-        "The applied controller changed. Reselect the input before sending it."
     } else if stale {
-        "Fog preview changed. Reselect or edit the input before sending it."
+        "Fog preview changed. Reselect the target or edit the input before sending it."
+    } else if target.is_none() {
+        "Choose a controller input target. This does not switch the player controller."
+    } else if let Some(issue) = target.and_then(|target| {
+        target["issue"]
+            .as_str()
+            .or_else(|| target["detail"].as_str())
+    }) {
+        issue
     } else if let Some(issue) = form.report["controller_input_issue"].as_str() {
         issue
     } else {
@@ -279,6 +285,25 @@ fn update_input(window: &FogWindow, form: &Form) {
             .unwrap_or("Choose a registered controller input.")
     };
     window.set_input_help(help.into());
+    let state = target.and_then(|target| {
+        form.report["controller_states"]
+            .as_array()?
+            .iter()
+            .find(|state| state["controller"] == target["id"])
+    });
+    let mut details = Vec::new();
+    if let Some(state) = state {
+        if let Some(raw) = raw_summary(&state["server"]) {
+            details.push(format!("Server raw: {raw}"));
+        }
+        if let Some(raw) = raw_summary(&state["received"]) {
+            details.push(format!("Delivered raw: {raw}"));
+        }
+        if let Some(time) = state["pending_think_time_seconds"].as_f64() {
+            details.push(format!("Controller think due at {time:.3} s"));
+        }
+    }
+    window.set_input_state(details.join("\n").into());
 }
 
 fn unavailable(window: &FogWindow, error: &str) {
@@ -289,6 +314,7 @@ fn unavailable(window: &FogWindow, error: &str) {
     window.set_can_send_input(false);
     window.set_can_switch_player(false);
     window.set_player_status("Player state unavailable".into());
+    window.set_player_state("".into());
     window.set_player_detail(error.into());
     window.set_player_issue(true);
     window.set_can_prepare_environment(false);
@@ -301,6 +327,7 @@ fn unavailable(window: &FogWindow, error: &str) {
     window.set_playback_status("Unavailable".into());
     window.set_time_label("Time unavailable".into());
     window.set_input_target("No current controller".into());
+    window.set_input_state("".into());
     window.set_effective_controller("Unavailable".into());
     window.set_message(error.into());
 }
@@ -338,6 +365,16 @@ fn scalar_text(value: &Value) -> String {
         || "Not reported".to_owned(),
         |value| (value as f32).to_string(),
     )
+}
+
+fn raw_summary(raw: &Value) -> Option<String> {
+    let profile = &raw["profile"];
+    let color = vector_text(&profile["color"])?;
+    Some(format!(
+        "RGB {color} · start {} · end {}",
+        scalar_text(&profile["start"]),
+        scalar_text(&profile["end"])
+    ))
 }
 
 fn settings_detail(report: &Value) -> String {
@@ -605,6 +642,26 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
         });
     }
     {
+        let previous =
+            selected(&form.input_targets, window.get_input_controller_index() - 1).cloned();
+        let mut targets = array(&report, "input_targets")?;
+        if window.get_input_dirty() {
+            retain_choice(&mut targets, previous.as_ref());
+        }
+        set_catalog(
+            &targets,
+            Some("Choose an input target"),
+            &mut form.input_target_labels,
+            |model| window.set_input_controllers(model),
+        );
+        form.input_targets = targets;
+        window.set_input_controller_index(
+            previous
+                .as_ref()
+                .map_or(0, |target| index_of(&form.input_targets, &target["id"]) + 1),
+        );
+    }
+    {
         let previous = selected(&form.player_targets, window.get_player_index() - 1).cloned();
         let mut targets = array(&report, "switch_targets")?;
         if window.get_player_dirty() {
@@ -637,8 +694,7 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
         format!(
             "0–{} s · {} / {} events",
             report["max_time_seconds"],
-            report["events"].as_array().map_or(0, Vec::len)
-                + report["player_switches"].as_array().map_or(0, Vec::len),
+            report["events"].as_array().map_or(0, Vec::len),
             report["limits"]["events"]
         )
         .into(),
@@ -739,10 +795,9 @@ fn command(window: &FogWindow, form: &Form, action: Action) -> Result<(String, C
                 window.get_input_index(),
                 "registered controller input",
             )?;
-            let controller = form
-                .input_controller
-                .or_else(|| entity_id(&form.report["controller"]))
-                .ok_or("Apply a controller before sending an input")?;
+            let controller = selected(&form.input_targets, window.get_input_controller_index() - 1)
+                .and_then(|target| entity_id(&target["id"]))
+                .ok_or("Choose a controller input target")?;
             let value = window.get_input_value();
             Command::Input {
                 controller,
@@ -798,7 +853,9 @@ fn run(window: &FogWindow, form: &RefCell<Form>, target: &DocumentContinuation, 
         if matches!(action, Action::Input | Action::Clear) {
             window.set_input_dirty(false);
             form.input_snapshot = None;
-            form.input_controller = None;
+            if matches!(action, Action::Clear) {
+                window.set_input_controller_index(0);
+            }
         }
         if matches!(action, Action::SwitchPlayer | Action::Clear) {
             window.set_player_dirty(false);
@@ -909,7 +966,6 @@ impl Controller {
                 if let Some(window) = window.upgrade() {
                     let mut form = form.borrow_mut();
                     form.input_snapshot = Some(form.snapshot.clone());
-                    form.input_controller = entity_id(&form.report["controller"]);
                     update_input(&window, &form);
                 }
             }
@@ -920,7 +976,6 @@ impl Controller {
                 if let Some(window) = window.upgrade() {
                     let mut form = form.borrow_mut();
                     form.input_snapshot = Some(form.snapshot.clone());
-                    form.input_controller = entity_id(&form.report["controller"]);
                     update_input(&window, &form);
                 }
             }

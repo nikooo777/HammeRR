@@ -1287,10 +1287,10 @@ background needs explicit `$nofog 1`. Parented sky cameras refuse. See
 | `input` | `controller`, `input`, optional `value` and `background` | Send one registered input to that controller in the preview. |
 | `switch_player_controller` | `controller`, optional `background` | Switch player fog to a named controller profile. |
 | `play`, `pause` | None | Start or stop the shared preview clock. |
-| `seek` | `time_seconds`, optional `background` | Inspect a requested preview time, preserving the event sequence. |
+| `seek` | `time_seconds`, optional `background` | Pause and inspect a requested preview time, preserving the event sequence. |
 | `advance` | `seconds`, optional `background` | Advance preview time explicitly by 0–60 seconds. |
 | `reset` | Optional `background` | Clear the event sequence, return to time 0 and restore the selected rule's initial values. |
-| `cancel` | None | Stop pending work and playback, retaining the current published state. |
+| `cancel` | None | Stop pending work and playback, retaining the published state and event sequence. |
 | `clear` | None | Disable preview and clear controller, environment, events and time. |
 
 The complete `settings` object contains `enabled`, `controller` (an
@@ -1321,7 +1321,8 @@ Fields for another action and unknown fields reject. `background` defaults to
 `false`; requests wait outside the Session lock when work is needed. With
 `true`, inspect pending status until the operation completes.
 
-Preview time is 0–3600 seconds, with at most 128 events. Use `seek` with
+Preview time is 0–3600 seconds, with at most 128 combined input and switch
+events and 128 participating controllers. Use `seek` with
 `time_seconds:0` to rewind and retain those events. Reset preserves settings
 and a current prepared environment; Clear removes them. Events append in time
 order; Reset before inserting one earlier than the last event. Source/content
@@ -1337,9 +1338,13 @@ ambiguous environment sources report unavailable.
 
 For `input`, pass an exact native input name from the shared catalogue and its
 raw string `value`; omit `value` for parameterless inputs. The shared parser
-validates the parameter. Inspect `can_send_controller_input` and
-`controller_input_issue` for admission. These are preview inputs, with no game
-I/O execution or changes to VMF properties. Preview controls preserve the map and Undo history.
+validates the parameter. Choose a ready `input_targets[].id` as `controller`;
+each choice reports `label`, `ready` and `issue`. The target can be a controller
+other than the initial or current player controller and does not need a name.
+Sending an input preserves those selections. Inspect
+`can_send_controller_input` and `controller_input_issue` for admission. These
+are preview inputs, with no game I/O execution or changes to VMF properties.
+Preview controls preserve the map and Undo history.
 See [Fog preview](fog.md) for the supported environment and rendering limits.
 
 For `switch_player_controller`, choose a ready `switch_targets[].id` and pass
@@ -1349,36 +1354,72 @@ actual native input string. Inspect `can_switch_player_controller` and
 `player_switch_issue` before sending a request. This is a player operation,
 separate from the controller input catalogue.
 
-Switches use settled initial profiles and the destination's `foglerptime`.
-Zero duration switches immediately. Only primary RGB/start/end blend; all
-other fields snap. A switch can interrupt an active blend. It captures the last
-primary RGB/start/end written by the preview, without first advancing the old
-blend to the switch time. Controller input events and player switches cannot
-share a sequence. Same-controller and earlier append requests refuse. Use Reset
-to change sequence type or insert an earlier event.
+Controller inputs and player switches share one ordered `events` sequence.
+Each event reports `kind` (`input` or `switch_player_controller`), `controller`
+and `time_seconds`; input events also report `input` and `value`.
+`player_switches` retains the filtered switch list. `replay_mode` is
+`controller_inputs` until the first switch, then `mixed_player`. Input-only
+preview uses continuous controller interpolation. Adding the first switch
+replays the whole combined sequence under the declared player schedule.
+Same-player-controller and earlier append requests refuse. Use Reset to
+insert an earlier event.
+
+An input immediately delivers only its target controller's raw fields. Due
+controller transition commits deliver before equal-time inputs and switches.
+A switch copies the destination's latest delivered raw state and uses its
+`foglerptime`; zero duration switches immediately. Only primary RGB/start/end
+blend. Other fields copy immediately. An interruption captures the last
+primary RGB/start/end written by the player, without first advancing the old
+blend to the switch time. Later controller changes do not update the player's
+copy during the blend; copied transition targets remain in use. Later inputs
+still change the controller.
+Completion does not recopy it in the same update; the next scheduled update can
+copy the newly delivered state.
 
 Player updates run at 50 Hz, at `k/50` seconds from time 0, with a separate
-delivery callback for each switch. Delivery runs before a scheduled update at
-the same time; same-time switches keep event order. Reports expose
+delivery callback for each switch. Equal-time events run in recorded order
+before the scheduled update. Each scheduled tick delivers ordinary player data,
+then runs one player update. Controller-only delivery does not refresh the
+player's previous handle or add a player update. No prediction updates are
+inserted. Reports expose
 `player_update_hz` and `player_update_interval_seconds` even before a switch.
+Inspection and Seek reconstruct this schedule without adding updates or
+changing future events. Seek, Advance and Play use the shared clock.
+
+`controller_states` reports each participating initial or input/switch
+controller. Ready entries include `controller`, `server`, `received`, `changed`
+and `pending_think_time_seconds`; unavailable entries report `issue`.
+`server` is the controller state after its
+input and transition-commit rules; `received` is its latest delivered state.
+Each raw state contains `profile`, `color_to`, `color2_to`, `start_to`, `end_to`
+and `lerp_end_time_seconds`.
+
+`player.current_raw` is the player's copied state after player blending.
+`player.old_cache` and `player.new_cache` contain `color`, `start` and `end`;
+they retain the last-written source and delivered destination values for the
+switch. `player.old_controller` is the handle saved by the latest player data
+delivery; the next scheduled tick makes it current.
+`player.switch_start_time_seconds` identifies an active blend. Inactive
+`switch_start_time_seconds`, `lerp_end_time_seconds` and
+`pending_think_time_seconds` values are `null`.
 `time_seconds` is the requested preview time. `player.sample_time_seconds` is
-the latest scheduled update or switch delivery at or before that time;
-`player.update_hz` is 50. The player profile and progress use that sample time.
-Inspection and Seek reconstruct this schedule without changing future switch
-history. Seek, Advance and Play use the shared clock.
+the latest nominal player update or switch callback, even if fields were
+unchanged. `player.render_time_seconds` is the time used to evaluate the copied
+controller's own transition. `player.update_hz` is 50. Controller transitions
+are evaluated after the player's sampled base blend.
 
 `player` is null without a switch sequence. Its `phase` is `initial`, `blending`
 or `settled`; `progress` is 0–1 and `transitioning` identifies an active blend.
 `initial_controller` and `initial_profile` retain the baseline;
 `current_controller` identifies the target. `configured_controller` retains
 the settings choice; top-level `controller` reports the effective selection.
-With a switch sequence recorded, changing settings controller, selection mode
-or initial rule clears it, resets time and pauses. Reset, Clear and source
-retirement also clear the switch sequence. Identical settings and enable-only changes retain it;
+Changing settings controller, selection mode or initial rule clears all events,
+resets time and pauses. Reset, Clear and source retirement also clear the
+sequence. Identical settings and enable-only changes retain it;
 disabling pauses playback. Reset retains the prepared environment and initial
-rule. Raw controller-target replay, mixed controller-input/switch histories and
-automatic volume/trigger selection are unavailable. This fixed schedule does
-not reproduce native packet delivery, prediction or rendering rates.
+rule. Automatic volume/trigger selection and authored trigger/I/O histories
+are unavailable. This fixed schedule does not reproduce native packet delivery,
+prediction, physics or rendering rates.
 
 `render_view` and `pick_at_pixel` accept temporary `fog_preview`,
 `fog_controller`, `fog_selection`, `fog_channel` and `surface` overrides.

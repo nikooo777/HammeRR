@@ -14,14 +14,17 @@ pub use parents::{
     requires_parent_context,
 };
 pub use player::{
-    PLAYER_TIMELINE_POLICY, PLAYER_UPDATE_HZ, PLAYER_UPDATE_INTERVAL_SECONDS, PlayerFrame,
-    PlayerSwitch, PlayerSwitchPhase, PlayerTimeline,
+    MAX_PLAYER_CONTROLLERS, PLAYER_TIMELINE_POLICY, PLAYER_UPDATE_HZ,
+    PLAYER_UPDATE_INTERVAL_SECONDS, PlayerEvent, PlayerEventKind, PlayerFrame, PlayerSwitch,
+    PlayerSwitchCache, PlayerSwitchPhase, PlayerTimeline,
 };
 pub use profile::{
     MAX_FIELD_MAGNITUDE, MAX_SKY_SCALE, MIN_FAR_Z, ParsedController, Profile, parse_controller,
     parse_sky_camera, range_parameters, received_coordinate, validate_sky_camera_binding,
 };
-pub use timeline::{Event, MAX_EVENTS, MAX_TIMELINE_SECONDS, TIMELINE_POLICY, Timeline};
+pub use timeline::{
+    ControllerFrame, Event, MAX_EVENTS, MAX_TIMELINE_SECONDS, RawParams, TIMELINE_POLICY, Timeline,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fog {

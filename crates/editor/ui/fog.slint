@@ -49,9 +49,12 @@ export component FogWindow inherits Window {
     in-out property <bool> scrub-dirty;
     in-out property <int> input-index;
     in property <[string]> inputs;
+    in-out property <int> input-controller-index;
+    in property <[string]> input-controllers;
     in-out property <string> input-value;
     in property <string> input-help;
     in property <string> input-target;
+    in property <string> input-state;
     in property <bool> input-has-value;
     in property <bool> can-send-input;
     in-out property <bool> input-dirty;
@@ -64,6 +67,7 @@ export component FogWindow inherits Window {
     in-out property <bool> player-dirty;
     in property <bool> can-switch-player;
     in property <string> player-status;
+    in property <string> player-state;
     in property <string> player-detail;
     in property <bool> player-issue;
     in property <string> scope;
@@ -218,12 +222,22 @@ export component FogWindow inherits Window {
                             Button { text: "Switch player fog"; enabled: root.can-switch-player; clicked => { root.switch-player-controller(); } }
                             Text { text: root.player-status; color: Theme.text-muted; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; }
                         }
+                        if root.player-state != "": Text { text: root.player-state; color: Theme.text-muted; wrap: word-wrap; }
                         if root.player-detail != "": Text { text: root.player-detail; color: root.player-issue ? Theme.warning : Theme.text-faint; wrap: word-wrap; }
-                        Text { text: "A new switch interrupts from the last player update. Updates run every 20 ms and immediately at each switch. Player switches cannot mix with controller inputs. Initial controller selection remains a manual snap."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
+                        Text { text: "Inputs and player switches share one ordered history. A switch copies the target's current delivered fog and interrupts from the last player write. Initial controller selection remains a manual snap."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
                     }
                     SectionHeader { text: "Controller input"; detail: (root.input-dirty ? "Unsubmitted input · " : "") + root.input-target; inset: false; expanded <=> root.input-expanded; }
                     if root.input-expanded: VerticalLayout {
                         spacing: Theme.space;
+                        FieldRow {
+                            inset: false; label: "Target"; label-width: 104px;
+                            ComboBox {
+                                model: root.input-controllers; current-index <=> root.input-controller-index;
+                                accessible-label: "Controller input target";
+                                enabled: root.available;
+                                selected => { root.input-dirty = true; root.input-changed(); }
+                            }
+                        }
                         FieldRow {
                             inset: false; label: "Input"; label-width: 104px;
                             ComboBox {
@@ -248,6 +262,8 @@ export component FogWindow inherits Window {
                             Button { text: "Send input"; enabled: root.can-send-input; clicked => { root.send-input(); } }
                             Rectangle { horizontal-stretch: 1; }
                         }
+                        if root.input-state != "": Text { text: root.input-state; color: Theme.text-muted; wrap: word-wrap; }
+                        Text { text: "Inputs change the chosen controller in preview without changing the initial or player controller selection."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
                     }
                     SectionHeader { text: "Current settings"; inset: false; collapsible: false; }
                     Text { text: root.detail; color: Theme.text-muted; wrap: word-wrap; }

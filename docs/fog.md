@@ -2,7 +2,7 @@
 
 # Fog preview
 
-Inspect world fog, controller inputs and timed player switches without changing the map.
+Inspect world fog and mix controller inputs with timed player switches without changing the map.
 For independent static `sky_camera` fog, use [miniature fog](sky.md#preview-miniature-fog).
 
 ## Choose a controller
@@ -57,9 +57,15 @@ other parent classes are unavailable.
 ## Preview controller inputs
 
 1. Apply the controller selection.
-2. Expand **Controller input** and choose an **Input**.
+2. Expand **Controller input**. Choose a **Target**, then choose an **Input**.
 3. Enter **Value** when the input needs one, then click **Send input**.
-4. Read **Current settings** to inspect the result.
+4. Read **Server raw** and **Delivered raw** for the target's result.
+   Read **Current settings** for the visible fog.
+
+The input **Target** is independent of **Initial controller** and the player
+controller's **Target**. Send inputs to another controller without changing
+the initial selection or the current player controller. An input target does
+not need a `targetname`.
 
 For a transition, first set a positive `foglerptime` in **Inspector**, refresh
 and apply the preview. Use `SetColorLerpTo`, `SetColorSecondaryLerpTo`,
@@ -71,33 +77,55 @@ Then send `StartFogTransition`, which takes no value.
 1. Give each destination controller a unique literal `targetname` in **Inspector**.
    Set its `foglerptime` for the switch duration; `0` switches immediately.
 2. Apply an initial controller with **Apply preview**. Prepare the environment
-   if selected, then click **Reset** to start a switch-only sequence.
+   if selected. Use **Reset** if you want to clear earlier preview events.
 3. Expand **Player controller**, choose **Target**, then click **Switch player fog**.
 4. Use **Play**, **Pause** and **Seek** to inspect the result. Choose another
    **Target** and click **Switch player fog** to interrupt an active blend.
+5. Use **Controller input** to send inputs before, during or after a switch.
+   The preview keeps controller inputs and player switches in one ordered sequence.
+6. Under **Controller input**, compare **Server raw** and **Delivered raw** for
+   its **Target**. **Controller think due at** shows a pending transition commit.
+7. Under **Player controller**, read **Copied raw**, **Player sample** and
+   **render evaluation**. Read **Current settings** for the final fog profile.
 
 Only primary RGB, fog start and fog end blend. Direction, secondary color,
-density, enable, radial and far clip snap to the destination. Switches use
-settled initial controller profiles. An interrupted switch starts from the last
-primary RGB, start and end written by the preview.
+density, enable, radial and far clip copy from the destination's latest
+delivered state. An interrupted switch starts from the last primary RGB,
+start and end written by the preview. It does not first advance the old blend
+to the new switch time.
 
-Player fog updates at 50 Hz and once at each switch. A switch at a scheduled
-update time runs first; switches at the same time keep their order. **Seek** and
-inspection preserve this update history. Controller inputs cannot share a
-switch sequence. Use **Reset** before changing sequence type. Missing, ambiguous
-or special names, the current target and earlier events refuse.
+An input changes its target controller's state and delivers that state
+immediately. During a player blend, later controller changes do not update the
+player's copy. The player keeps the copied controller transition targets while
+its own blend continues. When the blend completes, the next player update can
+copy those changes. A switch to another controller copies its delivered state
+immediately.
 
-![A hallway midway through a timed switch between cool and warm fog controllers](images/fog-switch-midpoint.png)
+Player fog updates at 50 Hz and once at each switch. Events at a scheduled
+update time run first and keep their recorded order. Due controller transition
+commits run before events at that time. Controller-only inputs do not add a
+player update. **Seek** and inspection preserve this schedule. Input-only
+preview uses continuous controller interpolation; after the first player
+switch, the combined sequence uses the player update schedule.
 
-**Initial controller** selection remains an immediate manual snap. With a switch
-sequence recorded, changing that selection, the environment selection mode or
-the initial rule clears it, resets time and pauses. Source edits also clear it.
+The player sample time can differ from the requested preview time. The final
+fog uses the copied controller's own transition at the requested time. Missing,
+ambiguous or special switch names, the current player target and earlier events
+refuse.
+
+| During the blend: later controller input stays frozen | Following update: changed controller color is copied |
+| --- | --- |
+| ![Hallway with the player blend frozen after a destination color input](images/fog-frozen-input.png) | ![The hallway after the completed blend copies the changed red fog](images/fog-after-recopy.png) |
+
+**Initial controller** selection remains an immediate manual snap. Changing that
+selection, the environment selection mode or the initial rule clears all events,
+resets time and pauses. Source edits also clear the sequence.
 
 ## Play or inspect a time
 
 1. Click **Play** to advance preview time, or **Pause** to stop playback.
 2. Release the **Time** slider at a new time, or enter seconds and click **Seek**.
-   Seeking keeps the event sequence.
+   Seeking pauses playback and keeps the event sequence.
 3. Click **Reset** to clear preview events, return to time 0 and restore the
    selected rule's initial values. Settings and the prepared environment remain.
 4. Use **Clear preview** to disable it and clear the controller, environment,
@@ -161,7 +189,8 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
 - Fog directions use native 1/32 coordinate conversion, including integer
   wrapping; for example, 16,385 becomes 1. A received zero vector mixes the
   two colors equally.
-- Time is 0–3600 seconds, with at most 128 preview events. Events append in
+- Time is 0–3600 seconds, with at most 128 combined input and switch events.
+  A sequence can use at most 128 controllers. Events append in
   time order; use **Reset** before adding an event earlier than the last one.
   The controller input `StartFogTransition` requires positive `foglerptime`.
 - Environment preparation supports horizontal-top structural world water and
@@ -175,11 +204,11 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
   preparing. Water refraction and above-water height fog are not previewed.
 - LDR only. HDR remains unavailable. `HDRColorScale` and `ZoomFogScale` are
   preserved foreign metadata and do not scale the root controller preview.
-- Manual controller selection snaps immediately. Player switches use fixed
-  initial controller profiles. Mixed controller-input/switch histories,
-  automatic volume/trigger selection and live network timing are unavailable.
-  The fixed player update schedule does not reproduce native packet,
-  prediction or rendering rates.
+- Manual controller selection snaps immediately. Mixed controller inputs and
+  player switches use the declared preview delivery and update schedule.
+  Automatic volume/trigger selection and authored trigger/I/O histories are
+  unavailable. The schedule does not reproduce native packet delivery,
+  prediction, physics or rendering rates.
   The initial rule is an explicit preview choice, not live game-map detection.
   `fog_volume` and `trigger_fog` are unavailable.
 - HDR fog, runtime sky-camera history and native pixel parity are unavailable.

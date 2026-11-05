@@ -783,6 +783,9 @@ World terrain at power 3 or 4 can split along a complete
 existing middle row or column. `keep:"both"` produces four native patches;
 `"front"` or `"back"` produces two. Grid spacing, alpha samples, UV placement
 and physical triangle tags remain unchanged. Child power is one lower.
+Power 4 also permits complete quarter-grid lines: row or column 4 or 12.
+Both sides produces ten patches; the short side has four power-2 patches,
+and the long side has six power-2/3 patches.
 Connected borders must retain complete native full/half links, sample spacing
 and active LOD. The combined candidate preserves unchanged neighbor grids and
 each retained original triangle. Quarter links, LOD coarsening, overlapping or
@@ -793,6 +796,8 @@ a physical wall beneath the cut.
 Results include `terrain` source/output faces and powers, `side_mapping` and
 `terrain_work` counts and limits. The preview also reports `cubemap_bindings`.
 Each terrain result includes `verified_neighbors` and `preserved_links`.
+`output_power` is the common child power, or `null` for mixed output.
+Only mixed output adds `face_powers:[{solid,side,power}]`, in `faces` order.
 The request checks at most 128 neighboring faces.
 Manual face bindings use the checked replacement faces; removing every manual
 face refuses rather than changing the helper to automatic binding.

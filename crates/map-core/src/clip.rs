@@ -62,7 +62,8 @@ pub struct TerrainCut {
     pub source: FaceId,
     pub faces: Vec<FaceId>,
     pub source_power: u32,
-    pub output_power: u32,
+    pub output_power: Option<u32>,
+    pub face_powers: Vec<u32>,
     pub vertices: usize,
     pub triangles: usize,
     pub verified_neighbors: usize,
@@ -236,6 +237,8 @@ pub fn clip(
     let mut unchanged = Vec::new();
     let mut terrain_sources = 0;
     let mut terrain_patches = 0;
+    let mut terrain_vertices = 0;
+    let mut terrain_triangles = 0;
     for owner in ids.iter().copied().collect::<BTreeSet<_>>() {
         let solids: Vec<_> = match owner {
             ObjectId::Solid(id) => vec![tx.document().solid(id).ok_or(EditError::NotFound(owner))?],
@@ -267,9 +270,15 @@ pub fn clip(
                 };
                 terrain_sources += 1;
                 terrain_patches += plan.parts.len();
-                if terrain_sources > MAX_TERRAIN_SOURCES || terrain_patches > MAX_TERRAIN_PATCHES {
+                terrain_vertices += plan.vertices;
+                terrain_triangles += plan.triangles;
+                if terrain_sources > MAX_TERRAIN_SOURCES
+                    || terrain_patches > MAX_TERRAIN_PATCHES
+                    || terrain_vertices > MAX_TERRAIN_VERTICES
+                    || terrain_triangles > MAX_TERRAIN_TRIANGLES
+                {
                     return Err(invalid(
-                        "Terrain clipping exceeds its source or patch limit",
+                        "Terrain clipping exceeds its source, patch, vertex or triangle limit",
                     ));
                 }
                 planned.push(PlannedCut {
@@ -283,6 +292,7 @@ pub fn clip(
                         faces: Vec::new(),
                         source_power: plan.source_power,
                         output_power: plan.output_power,
+                        face_powers: Vec::new(),
                         vertices: plan.vertices,
                         triangles: plan.triangles,
                         verified_neighbors: 0,
@@ -357,6 +367,7 @@ pub fn clip(
                     .as_ref()
                     .map(|terrain| crate::displacement::grid_clip::Replacement {
                         source: terrain.source,
+                        source_power: terrain.source_power,
                         parts: &cut.parts,
                         children: &cut.children,
                     })
@@ -404,6 +415,9 @@ pub fn clip(
                         solid: part.id,
                         side: side.id,
                     });
+                    terrain
+                        .face_powers
+                        .push(side.displacement.as_ref().unwrap().power);
                 }
             }
         }

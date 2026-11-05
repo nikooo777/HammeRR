@@ -534,12 +534,20 @@ pub(in crate::mcp) fn clip_result(result: &map_core::clip::ClipResult) -> Value 
     json!({"cuts": result.cuts.iter().map(|cut| json!({"source": cut.source, "solids": cut.solids})).collect::<Vec<_>>(),
     "objects": result.objects.iter().copied().map(id_string).collect::<Vec<_>>(), "unchanged": result.unchanged,
     "side_mapping":result.side_mapping,
-    "terrain":result.terrain.iter().map(|cut|json!({
-        "source":{"solid":cut.source.solid,"side":cut.source.side},
-        "faces":cut.faces.iter().map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>(),
-        "source_power":cut.source_power,"output_power":cut.output_power,"vertices":cut.vertices,"triangles":cut.triangles,
-        "verified_neighbors":cut.verified_neighbors,"preserved_links":cut.preserved_links,
-    })).collect::<Vec<_>>(),
+    "terrain":result.terrain.iter().map(|cut| {
+        let mut value = json!({
+            "source":{"solid":cut.source.solid,"side":cut.source.side},
+            "faces":cut.faces.iter().map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>(),
+            "source_power":cut.source_power,"output_power":cut.output_power,"vertices":cut.vertices,"triangles":cut.triangles,
+            "verified_neighbors":cut.verified_neighbors,"preserved_links":cut.preserved_links,
+        });
+        if cut.output_power.is_none() {
+            value["face_powers"] = json!(cut.faces.iter().zip(&cut.face_powers)
+                .map(|(face, power)|json!({"solid":face.solid,"side":face.side,"power":power}))
+                .collect::<Vec<_>>());
+        }
+        value
+    }).collect::<Vec<_>>(),
     "terrain_work":{
         "sources":result.terrain.len(),"patches":result.terrain.iter().map(|cut|cut.faces.len()).sum::<usize>(),
         "vertices":result.terrain.iter().map(|cut|cut.vertices).sum::<usize>(),

@@ -20,6 +20,7 @@ pub const MAX_NEIGHBORS: usize = 128;
 
 pub(crate) struct Replacement<'a> {
     pub source: FaceId,
+    pub source_power: u32,
     pub parts: &'a [Solid],
     pub children: &'a [Child],
 }
@@ -372,6 +373,16 @@ pub(crate) fn certify(
         .iter()
         .map(|replacement| replacement.source)
         .collect::<BTreeSet<_>>();
+    let internal = replacements
+        .iter()
+        .filter(|replacement| {
+            replacement
+                .children
+                .iter()
+                .any(|child| child.power + 1 < replacement.source_power)
+        })
+        .map(|replacement| replacement.source)
+        .collect::<BTreeSet<_>>();
     let mut work = Work(0);
     let mut affected = raw
         .iter()
@@ -401,6 +412,9 @@ pub(crate) fn certify(
     }
     let mut engaged = BTreeSet::new();
     for (offset, first) in queue.iter().enumerate() {
+        if internal.contains(&raw[*first].id) {
+            engaged.insert(*first);
+        }
         for second in &queue[offset + 1..] {
             if related(&raw[*first].face.vertices, &raw[*second].face.vertices) {
                 engaged.insert(*first);
@@ -429,7 +443,15 @@ pub(crate) fn certify(
                 ));
             }
             let size = (1 << power) + 1;
-            prepare(raw, Child { row: 0, column: 0 }, size)
+            prepare(
+                raw,
+                Child {
+                    row: 0,
+                    column: 0,
+                    power,
+                },
+                size,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let previous = graph(&before, &mut work)?;
@@ -470,7 +492,11 @@ pub(crate) fn certify(
                     face: surface.raw.face.clone(),
                     supported_owner: true,
                 },
-                Child { row: 0, column: 0 },
+                Child {
+                    row: 0,
+                    column: 0,
+                    power: surface.raw.side.displacement.as_ref().unwrap().power,
+                },
                 surface.mesh.size,
             )?);
         }

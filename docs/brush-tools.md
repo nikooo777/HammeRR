@@ -62,13 +62,16 @@ Use **Move plane** or **Rotate plane** to adjust the cut with handles.
 
 1. Select world terrain brushes with power 3 or 4.
 2. Click **Clip selected brushes**.
-3. Set a plane through the grid's complete middle row or column.
+3. Set a plane through a complete middle row or column. Power 4 also permits
+   quarter-grid lines: row or column 4 or 12 of its 16 cells.
 4. Choose **Arrow side**, **Opposite side** or **Both sides**.
 5. Inspect the native terrain patches, then click **Apply cut**.
 
-Each retained half has two patches. **Both sides** produces four patches.
-Their power decreases by one; grid spacing, paint samples and triangle flags
-stay the same. The cut follows the displaced surface, not its backing brush.
+A middle cut produces two patches per retained half, at one lower power.
+A quarter cut produces four power-2 patches on the short side and six power-2/3
+patches on the long side. **Both sides** produces ten patches.
+Grid spacing, paint samples and triangle flags stay the same.
+The cut follows the displaced surface, not its backing brush.
 It does not create a wall beneath the cut.
 Matching neighbor borders are checked before Apply. Neighbor grids stay unchanged.
 
@@ -80,8 +83,8 @@ Matching neighbor borders are checked before Apply. Neighbor grids stay unchange
 - Carve: 1–8 cutters, 16 targets, 256 pieces, 64 faces per piece.
 - Carving away every child brush of an entity rejects.
 - Terrain cannot be hollowed or carved. Terrain clipping requires a power-3/4
-  world patch and an existing complete middle grid line. Matching full/half
-  borders must retain their sample spacing and LOD state.
+  world patch and a complete middle grid line, or a power-4 quarter line.
+  Matching full/half borders must retain their sample spacing and LOD state.
 - Arbitrary cuts, power-2 splitting, quarter-edge links, LOD changes, overlapping
   or unmatched borders and unresolved map instances reject.
 - Terrain cuts accept 16 sources and 64 output patches. Unsupported bindings,

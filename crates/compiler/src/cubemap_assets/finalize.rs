@@ -104,20 +104,20 @@ pub fn finalize_reflections_with_capture(
     let (request_bsp, private_manifest) =
         rebase(&original.to_bytes(), &manifest, &private, control)?;
     let channels = if manifest.hdr_samples.is_empty() {
-        vec![CaptureChannel::Ldr]
+        &CaptureChannel::ALL[..1]
     } else {
         super::material::ensure_hdr_default_unmounted(game, context.namespace())
             .map_err(invalid)?;
         super::material::ensure_hdr_default_unmounted(game, private.namespace())
             .map_err(invalid)?;
-        vec![CaptureChannel::Ldr, CaptureChannel::Hdr]
+        &CaptureChannel::ALL[..]
     };
     control
         .advance(Stage::CaptureReflections)
         .map_err(io::Error::other)?;
     let mut captures = Vec::with_capacity(channels.len());
     let total = manifest.samples.len() * channels.len();
-    for (index, channel) in channels.into_iter().enumerate() {
+    for (index, &channel) in channels.iter().enumerate() {
         let expected_staging =
             native_runtime::capture_staging_bsp_for_channel(&request_bsp, channel)?;
         let samples = if channel == CaptureChannel::Hdr {

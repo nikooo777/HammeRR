@@ -19,6 +19,9 @@ Capture scene cubemaps and pack them into the published BSP.
 8. Close settings, then click **Compile** or **Run map**.
 9. Read capture and verification progress in **Build details…**.
 
+Progress counts each sample once per channel: up to 32 visits for LDR,
+or 64 visits for paired LDR/HDR capture.
+
 LDR builds capture LDR. Dual-channel builds capture LDR, then HDR.
 The BSP is published only after all required captures and verification succeed.
 **Cubemap Size** supports **Default** (128×128) and authored sizes through **256x256**.

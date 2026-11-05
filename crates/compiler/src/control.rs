@@ -115,7 +115,9 @@ impl Default for Control {
 
 impl Control {
     pub fn reflection_sample_progress(&self, current: usize, total: usize) {
-        if total > crate::cubemap_assets::MAX_SAMPLES || current > total {
+        if total > crate::cubemap_assets::MAX_SAMPLES * native_runtime::CaptureChannel::ALL.len()
+            || current > total
+        {
             return;
         }
         let mut progress = self

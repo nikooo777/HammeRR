@@ -38,6 +38,8 @@ pub enum CaptureChannel {
 }
 
 impl CaptureChannel {
+    pub const ALL: [Self; 2] = [Self::Ldr, Self::Hdr];
+
     pub const fn hdr_level(self) -> u8 {
         match self {
             Self::Ldr => 0,

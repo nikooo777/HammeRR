@@ -282,14 +282,15 @@ For an exact brush selection, call `select_solids` with numeric `solids` and
 optional `mode:"replace"`, `"add"`, `"remove"` or `"toggle"`. Entity reports from
 `get_objects` list child solid IDs; selected brush reports include `owner` and
 bounds. `get_objects` can also inspect a child directly as `solid:<n>`.
-`frame_selection`, move, transform, material editing, duplicate and delete use
+`frame_selection`, move, transform, material editing, clipping, duplicate and delete use
 the shared selected brush IDs when `ids` is omitted and preserve owning entities through Undo.
 Child duplicates stay in their original entity. Root-only operations such as
 Copy/Cut, repeat, surface placement, instance extraction and editor hiding reject
 child IDs before replacing drafts or writing. Existing `select` still accepts
 world-brush/entity root IDs and expands groups only in **Groups** mode.
-Explicit object-edit `ids` retain their root-only contract; use `select_solids`
-then omit `ids` to edit selected children.
+Explicit object-edit `ids` normally require root objects; use `select_solids`
+then omit `ids` to edit selected children. `clip_brushes` also accepts child IDs
+directly.
 For a spatial child-brush query, choose Solids and call `select_volume` with
 `preview:true`; `get_volume_selection` pages the exact brush IDs without changing
 the selection. Resolve those IDs through `get_objects` for owners and bounds.
@@ -798,10 +799,11 @@ Results include `terrain` source/output faces and powers, `side_mapping` and
 Each terrain result includes `verified_neighbors` and `preserved_links`.
 `output_power` is the common child power, or `null` for mixed output.
 Only mixed output adds `face_powers:[{solid,side,power}]`, in `faces` order.
-For `func_detail`, pass the whole `entity:n` target. All crossing child brushes
-are clipped; other children remain. `objects` reports the owning entity, while
-`cuts.solids` and `terrain.faces` report its actual child IDs. Runtime brush-model
-terrain and individual child-solid targets reject.
+Pass `solid:n` to clip an individual child, or `entity:n` for all children.
+A whole owner takes precedence over redundant child targets; duplicates clip once.
+The entity and unselected siblings remain. `objects` reports resulting child IDs
+for child targets, or the owning entity for whole-owner targets. `cuts.solids` and
+`terrain.faces` retain actual child IDs. Runtime brush-model terrain rejects.
 The request checks at most 128 neighboring faces.
 Manual face bindings use the checked replacement faces; removing every manual
 face refuses rather than changing the helper to automatic binding.

@@ -209,23 +209,29 @@ fn parse_ids(ids: &[String]) -> Result<Vec<ObjectId>, String> {
     ids.iter().map(|s| parse_id(s)).collect()
 }
 
-/// Explicit ids, or the selection when none are given.
-fn ids_or_selection(session: &Session, ids: Option<&[String]>) -> Result<Vec<ObjectId>, String> {
+fn object_ids_or_selection(
+    session: &Session,
+    ids: Option<&[String]>,
+) -> Result<Vec<ObjectId>, String> {
     let ids = match ids {
         Some([]) => {
             return Err("explicit ids must not be empty; omit ids to use the selection".into());
         }
-        Some(ids) => {
-            let ids = parse_ids(ids)?;
-            session.require_root_objects(&ids)?;
-            ids
-        }
+        Some(ids) => parse_ids(ids)?,
         None => session.selected_ids(),
     };
     if ids.is_empty() {
         return Err("no ids given and nothing is selected".into());
     }
     Ok(ids)
+}
+
+fn ids_or_selection(session: &Session, ids: Option<&[String]>) -> Result<Vec<ObjectId>, String> {
+    let selected = object_ids_or_selection(session, ids)?;
+    if ids.is_some() {
+        session.require_root_objects(&selected)?;
+    }
+    Ok(selected)
 }
 
 fn entity_choice_targets(

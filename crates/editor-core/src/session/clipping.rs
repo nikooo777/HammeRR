@@ -45,14 +45,7 @@ impl ClipPreview {
 
 impl Session {
     pub fn can_clip_selection(&self) -> bool {
-        !self.selection.is_empty()
-            && self.selection.iter().all(|id| match id {
-                ObjectId::Solid(id) => self.document.solid(*id).is_some(),
-                ObjectId::Entity(id) => self
-                    .document
-                    .entity(*id)
-                    .is_some_and(|entity| !entity.solids.is_empty()),
-            })
+        clip::sources(&self.document, &self.selected_ids()).is_ok()
     }
 
     pub fn clip_tool(&self) -> bool {
@@ -201,18 +194,16 @@ impl Session {
         keep: Keep,
         material: Option<String>,
     ) -> Result<ClipPreview, String> {
-        let has_terrain = ids.iter().any(|id| match id {
-            ObjectId::Solid(id) => self
-                .document
-                .solid(*id)
-                .is_some_and(|solid| solid.sides.iter().any(|side| side.displacement.is_some())),
-            ObjectId::Entity(id) => self.document.entity(*id).is_some_and(|entity| {
-                entity
-                    .solids
+        let has_terrain = clip::sources(&self.document, ids)
+            .map_err(|error| error.to_string())?
+            .iter()
+            .any(|source| {
+                source
+                    .solid
+                    .sides
                     .iter()
-                    .any(|solid| solid.sides.iter().any(|side| side.displacement.is_some()))
-            }),
-        });
+                    .any(|side| side.displacement.is_some())
+            });
         if has_terrain {
             components::admit_fragment_snapshot(self.document.vmf())?;
         }

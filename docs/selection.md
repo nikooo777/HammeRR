@@ -29,7 +29,7 @@ entities, models, helpers, ropes and instance references remain individual entit
 ![One child brush selected inside a brush entity](images/solid-selection.png)
 
 Selected child brushes show their owning entity in the Inspector. Move, transform,
-material editing and component tools act on those brushes; duplicating a child
+material editing, clipping and component tools act on those brushes; duplicating a child
 keeps its copy in the same entity. Undo restores the entity and its brushes together.
 Deleting the last brush keeps the empty entity; ordinary map checks and compilation
 still determine whether that entity class is valid without geometry.

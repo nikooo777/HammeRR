@@ -6,7 +6,7 @@ use source_formats::vmf::{Side, Solid, UvAxis};
 use crate::edit::{DEFAULT_LIGHTMAP_SCALE, DEFAULT_TEXTURE_SCALE, world_texture_axes};
 use crate::plane::ON_EPSILON;
 use crate::surface::FaceId;
-use crate::{BrushGeometry, EditError, ObjectId, Plane, Transaction};
+use crate::{BrushGeometry, Document, EditError, ObjectId, Plane, Transaction};
 
 const PLANE_POINT_SPAN: f64 = 64.0;
 const MAX_COORDINATE: f64 = 65_536.0;
@@ -70,8 +70,78 @@ pub struct TerrainCut {
     pub preserved_links: usize,
 }
 
+pub struct Source<'a> {
+    pub solid: &'a Solid,
+    pub owner: ObjectId,
+    pub target: ObjectId,
+}
+
 fn invalid(message: impl Into<String>) -> EditError {
     EditError::Invalid(message.into())
+}
+
+pub fn sources<'a>(
+    document: &'a Document,
+    ids: &[ObjectId],
+) -> std::result::Result<Vec<Source<'a>>, EditError> {
+    if ids.is_empty() {
+        return Err(invalid("Select at least one brush or brush entity to clip"));
+    }
+    let targets = ids.iter().copied().collect::<BTreeSet<_>>();
+    let mut sources = Vec::new();
+    let mut entity_solids = BTreeSet::new();
+    for &target in &targets {
+        match target {
+            ObjectId::Solid(id) => {
+                let (owner, solid) = crate::subobject::solid(document, id)?;
+                if matches!(owner, ObjectId::Entity(_)) && targets.contains(&owner) {
+                    continue;
+                }
+                sources.push(Source {
+                    solid,
+                    owner,
+                    target,
+                });
+            }
+            ObjectId::Entity(id) => {
+                let entity = document.entity(id).ok_or(EditError::NotFound(target))?;
+                if entity.solids.is_empty() {
+                    return Err(invalid(format!(
+                        "{target} is a point entity; select brushes to clip"
+                    )));
+                }
+                for solid in &entity.solids {
+                    entity_solids.insert(solid.id);
+                    sources.push(Source {
+                        solid,
+                        owner: target,
+                        target,
+                    });
+                }
+            }
+        }
+    }
+    if !entity_solids.is_empty() {
+        let mut seen = BTreeSet::new();
+        for entity in &document.vmf().entities {
+            if targets.contains(&ObjectId::Entity(entity.id)) && !seen.insert(entity.id) {
+                return Err(invalid(format!(
+                    "Entity {} has an ambiguous duplicate ID",
+                    entity.id
+                )));
+            }
+        }
+        seen.clear();
+        for solid in document.vmf().solids() {
+            if entity_solids.contains(&solid.id) && !seen.insert(solid.id) {
+                return Err(invalid(format!(
+                    "Brush {} has an ambiguous duplicate ID",
+                    solid.id
+                )));
+            }
+        }
+    }
+    Ok(sources)
 }
 
 pub fn normalized_plane(plane: Plane) -> std::result::Result<Plane, EditError> {
@@ -212,6 +282,7 @@ pub(crate) fn checked_half(
 
 struct PlannedCut {
     owner: ObjectId,
+    target: ObjectId,
     source: u32,
     parts: Vec<Solid>,
     source_sides: Vec<u32>,
@@ -239,102 +310,95 @@ pub fn clip(
     let mut terrain_patches = 0;
     let mut terrain_vertices = 0;
     let mut terrain_triangles = 0;
-    for owner in ids.iter().copied().collect::<BTreeSet<_>>() {
-        let solids: Vec<_> = match owner {
-            ObjectId::Solid(id) => vec![tx.document().solid(id).ok_or(EditError::NotFound(owner))?],
-            ObjectId::Entity(id) => {
-                let entity = tx.document().entity(id).ok_or(EditError::NotFound(owner))?;
-                if entity.solids.is_empty() {
-                    return Err(invalid(format!(
-                        "{owner} is a point entity; select brushes to clip"
-                    )));
-                }
-                entity.solids.iter().collect()
-            }
-        };
-        for solid in solids {
-            let shape = geometry(solid)?;
-            let material = material.map(str::trim).unwrap_or(&solid.sides[0].material);
-            if solid.sides.iter().any(|side| side.displacement.is_some()) {
-                let plan = crate::displacement::grid_clip::plan(
-                    tx.document(),
-                    solid,
-                    &shape,
-                    plane,
-                    keep,
-                    material,
-                )?;
-                let Some(plan) = plan else {
-                    unchanged.push(solid.id);
-                    continue;
-                };
-                terrain_sources += 1;
-                terrain_patches += plan.parts.len();
-                terrain_vertices += plan.vertices;
-                terrain_triangles += plan.triangles;
-                if terrain_sources > MAX_TERRAIN_SOURCES
-                    || terrain_patches > MAX_TERRAIN_PATCHES
-                    || terrain_vertices > MAX_TERRAIN_VERTICES
-                    || terrain_triangles > MAX_TERRAIN_TRIANGLES
-                {
-                    return Err(invalid(
-                        "Terrain clipping exceeds its source, patch, vertex or triangle limit",
-                    ));
-                }
-                planned.push(PlannedCut {
-                    owner,
-                    source: solid.id,
-                    parts: plan.parts,
-                    source_sides: solid.sides.iter().map(|side| side.id).collect(),
-                    children: plan.children,
-                    terrain: Some(TerrainCut {
-                        source: plan.source,
-                        faces: Vec::new(),
-                        source_power: plan.source_power,
-                        output_power: plan.output_power,
-                        face_powers: Vec::new(),
-                        vertices: plan.vertices,
-                        triangles: plan.triangles,
-                        verified_neighbors: 0,
-                        preserved_links: 0,
-                    }),
-                });
-                continue;
-            }
-            let mut front = false;
-            let mut back = false;
-            for point in shape.faces.iter().flat_map(|face| &face.vertices) {
-                let distance = plane.distance_to(*point);
-                front |= distance > ON_EPSILON;
-                back |= distance < -ON_EPSILON;
-            }
-            if !front || !back {
+    for Source {
+        solid,
+        owner,
+        target,
+    } in sources(tx.document(), ids)?
+    {
+        let shape = geometry(solid)?;
+        let material = material.map(str::trim).unwrap_or(&solid.sides[0].material);
+        if solid.sides.iter().any(|side| side.displacement.is_some()) {
+            let plan = crate::displacement::grid_clip::plan(
+                tx.document(),
+                solid,
+                &shape,
+                plane,
+                keep,
+                material,
+            )?;
+            let Some(plan) = plan else {
                 unchanged.push(solid.id);
                 continue;
-            }
-            let mut parts = Vec::new();
-            if matches!(keep, Keep::Back | Keep::Both) {
-                parts.push(half(solid, plane, material)?);
-            }
-            if matches!(keep, Keep::Front | Keep::Both) {
-                parts.push(half(
-                    solid,
-                    Plane {
-                        normal: -plane.normal,
-                        dist: -plane.dist,
-                    },
-                    material,
-                )?);
+            };
+            terrain_sources += 1;
+            terrain_patches += plan.parts.len();
+            terrain_vertices += plan.vertices;
+            terrain_triangles += plan.triangles;
+            if terrain_sources > MAX_TERRAIN_SOURCES
+                || terrain_patches > MAX_TERRAIN_PATCHES
+                || terrain_vertices > MAX_TERRAIN_VERTICES
+                || terrain_triangles > MAX_TERRAIN_TRIANGLES
+            {
+                return Err(invalid(
+                    "Terrain clipping exceeds its source, patch, vertex or triangle limit",
+                ));
             }
             planned.push(PlannedCut {
                 owner,
+                target,
                 source: solid.id,
-                parts,
+                parts: plan.parts,
                 source_sides: solid.sides.iter().map(|side| side.id).collect(),
-                terrain: None,
-                children: Vec::new(),
+                children: plan.children,
+                terrain: Some(TerrainCut {
+                    source: plan.source,
+                    faces: Vec::new(),
+                    source_power: plan.source_power,
+                    output_power: plan.output_power,
+                    face_powers: Vec::new(),
+                    vertices: plan.vertices,
+                    triangles: plan.triangles,
+                    verified_neighbors: 0,
+                    preserved_links: 0,
+                }),
             });
+            continue;
         }
+        let mut front = false;
+        let mut back = false;
+        for point in shape.faces.iter().flat_map(|face| &face.vertices) {
+            let distance = plane.distance_to(*point);
+            front |= distance > ON_EPSILON;
+            back |= distance < -ON_EPSILON;
+        }
+        if !front || !back {
+            unchanged.push(solid.id);
+            continue;
+        }
+        let mut parts = Vec::new();
+        if matches!(keep, Keep::Back | Keep::Both) {
+            parts.push(half(solid, plane, material)?);
+        }
+        if matches!(keep, Keep::Front | Keep::Both) {
+            parts.push(half(
+                solid,
+                Plane {
+                    normal: -plane.normal,
+                    dist: -plane.dist,
+                },
+                material,
+            )?);
+        }
+        planned.push(PlannedCut {
+            owner,
+            target,
+            source: solid.id,
+            parts,
+            source_sides: solid.sides.iter().map(|side| side.id).collect(),
+            terrain: None,
+            children: Vec::new(),
+        });
     }
     if planned.is_empty() {
         return Err(invalid(
@@ -425,13 +489,13 @@ pub fn clip(
             source: cut.source,
             solids: cut.parts.iter().map(|solid| solid.id).collect(),
         });
+        match cut.target {
+            ObjectId::Solid(_) => result
+                .objects
+                .extend(cut.parts.iter().map(|part| ObjectId::Solid(part.id))),
+            ObjectId::Entity(_) => result.objects.push(cut.target),
+        }
         if let Some(terrain) = cut.terrain {
-            match cut.owner {
-                ObjectId::Solid(_) => result
-                    .objects
-                    .extend(cut.parts.iter().map(|part| ObjectId::Solid(part.id))),
-                ObjectId::Entity(_) => result.objects.push(cut.owner),
-            }
             result.terrain.push(terrain);
             terrain_fragments.extend(
                 cut.parts
@@ -443,10 +507,17 @@ pub fn clip(
         match cut.owner {
             ObjectId::Solid(id) => {
                 *tx.solid_mut(id)? = cut.parts.remove(0);
-                result.objects.push(cut.owner);
                 for part in cut.parts {
-                    result.objects.push(tx.add_solid(part)?);
+                    tx.add_solid(part)?;
                 }
+            }
+            ObjectId::Entity(_) if matches!(cut.target, ObjectId::Solid(_)) => {
+                crate::subobject::fragments::install(
+                    tx,
+                    cut.parts
+                        .into_iter()
+                        .map(|part| (cut.source, cut.owner, part)),
+                )?;
             }
             ObjectId::Entity(id) => {
                 let entity = tx.entity_mut(id)?;
@@ -456,7 +527,6 @@ pub fn clip(
                     .position(|solid| solid.id == cut.source)
                     .unwrap();
                 entity.solids.splice(index..=index, cut.parts);
-                result.objects.push(cut.owner);
             }
         }
     }

@@ -639,20 +639,18 @@ impl Session {
             return true;
         }
         let evaluation = self.working_evaluation(self.render_document());
-        if let Some(preview) = &self.geometry.clip_preview {
-            return preview
-                .result
-                .objects
-                .iter()
-                .all(|id| evaluation.objects.contains(id));
-        }
-        self.selection.iter().all(|id| match id {
+        let object_visible = |id: &ObjectId| match id {
             ObjectId::Solid(solid) => evaluation.solids.contains(solid),
             ObjectId::Entity(_) => evaluation.objects.contains(id),
-        }) && self
-            .face_selection
-            .iter()
-            .all(|face| evaluation.solids.contains(&face.solid))
+        };
+        if let Some(preview) = &self.geometry.clip_preview {
+            return preview.result.objects.iter().all(object_visible);
+        }
+        self.selection.iter().all(object_visible)
+            && self
+                .face_selection
+                .iter()
+                .all(|face| evaluation.solids.contains(&face.solid))
     }
 
     pub fn working_region_selection_bounds(&self) -> Result<[DVec3; 2], String> {

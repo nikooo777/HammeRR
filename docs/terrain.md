@@ -206,7 +206,8 @@ Use [plane clipping](brush-tools.md#cut-terrain-on-its-existing-grid) to split a
 power-3/4 world or `func_detail` patch at a complete middle grid line without resampling.
 Power 4 also permits quarter-grid lines, with mixed power-2/3 output patches.
 Matching neighbor borders are checked; their grids remain unchanged.
-For `func_detail`, select its whole entity; the cut retains that owner.
+For `func_detail`, select individual children in **Solids** mode or their whole
+entity. The cut retains the owner and unselected siblings.
 
 ## Remove terrain
 

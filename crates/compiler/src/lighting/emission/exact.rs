@@ -613,6 +613,7 @@ struct Work {
     used: usize,
     numeric_work: usize,
     operation: &'static str,
+    kernel_constants: Option<kernel::Constants>,
 }
 
 impl Work {
@@ -621,6 +622,7 @@ impl Work {
             used: 0,
             numeric_work: 0,
             operation,
+            kernel_constants: None,
         }
     }
 

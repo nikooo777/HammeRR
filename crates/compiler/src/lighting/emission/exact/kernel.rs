@@ -1,5 +1,5 @@
 use super::super::{MAX_CELLS, ReceiverAngularMode, Sample};
-use super::{Budget, Interval, Point, Rational, Work, dot, hull_cross, turn, vector};
+use super::{Allocation, Budget, Interval, Point, Rational, Work, dot, hull_cross, turn, vector};
 
 const ATAN_ORDER: usize = 16;
 const MAX_REDUCED_ATAN: f64 = 0.2;
@@ -7,6 +7,11 @@ const MAX_REDUCED_ATAN: f64 = 0.2;
 pub(super) struct Integral {
     pub(super) interval: Interval,
     pub(super) cells: usize,
+}
+
+pub(super) struct Constants {
+    half_pi: Interval,
+    _allocation: Allocation,
 }
 
 struct Arithmetic<'a, 'b> {
@@ -228,6 +233,22 @@ fn pi(arithmetic: &mut Arithmetic<'_, '_>) -> Result<Interval, String> {
     Interval::new(lower, upper)
 }
 
+fn half_pi(arithmetic: &mut Arithmetic<'_, '_>) -> Result<Interval, String> {
+    arithmetic.work.charge_raw(2, arithmetic.budget)?;
+    if let Some(constants) = &arithmetic.work.kernel_constants {
+        return Ok(constants.half_pi);
+    }
+    let allocation = arithmetic.budget.reserve::<Constants>(1)?;
+    let pi = pi(arithmetic)?;
+    let half_pi = arithmetic.scale(pi, 0.5)?;
+    arithmetic.work.charge_raw(2, arithmetic.budget)?;
+    arithmetic.work.kernel_constants = Some(Constants {
+        half_pi,
+        _allocation: allocation,
+    });
+    Ok(half_pi)
+}
+
 fn reduced_atan(
     mut value: Interval,
     arithmetic: &mut Arithmetic<'_, '_>,
@@ -446,8 +467,7 @@ pub(super) fn integrate_triangle(
             budget: &mut *budget,
         };
         let frame = Frame::new(source, domain, sample, &mut arithmetic)?;
-        let pi = pi(&mut arithmetic)?;
-        let half_pi = arithmetic.scale(pi, 0.5)?;
+        let half_pi = half_pi(&mut arithmetic)?;
         let integral = match frame.angular {
             ReceiverAngularMode::Normal => {
                 frame.normal_integral(half_pi, &mut arithmetic, &mut edges)?

@@ -1262,6 +1262,10 @@ The complete `settings` object contains `enabled`, `controller` (an
 `entity:<id>` or `null`), `selection` (`explicit` or `environment`) and `channel`
 (`ldr` or `hdr`). HDR is unavailable and refuses explicitly. The stored
 `configured_controller` and effective `controller` are reported separately.
+Each controller's `parent_chain` lists its accepted fixed parent entity IDs.
+With `use_angles`, exact named `info_target` chains support up to 16 parents;
+the controller retains its authored world angles. Missing, ambiguous, hidden,
+cyclic, attachment or other parent bindings refuse.
 Fields for another action and unknown fields reject. `background` defaults to
 `false`; requests wait outside the Session lock when work is needed. With
 `true`, inspect pending status until the operation completes.

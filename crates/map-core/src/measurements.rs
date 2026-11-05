@@ -9,8 +9,8 @@ use source_formats::vmf::{Vmf, parse_vec3};
 use crate::{EditError, Transaction};
 
 mod origins;
-pub(crate) use origins::reserved_origin_ids;
 pub use origins::{Endpoint, entity_local_pose, entity_origin};
+pub(crate) use origins::{origin_from_entity, reserved_origin_ids};
 mod surfaces;
 pub(crate) use surfaces::reserved_side_ids;
 pub use surfaces::{Resolver, SurfaceReference, SurfaceTarget};

@@ -159,6 +159,7 @@ pub struct ParsedController {
     pub profile: Profile,
     pub defaults: Vec<&'static str>,
     pub inert_keys: Vec<String>,
+    pub parent_chain: Vec<u32>,
 }
 
 pub(super) fn bounded(value: f32, key: &str) -> Result<f32, String> {
@@ -248,6 +249,14 @@ fn number(
 }
 
 pub fn parse_controller(entity: &Entity) -> Result<ParsedController, String> {
+    parse(entity, false)
+}
+
+pub(super) fn parse_fixed_parent_controller(entity: &Entity) -> Result<ParsedController, String> {
+    parse(entity, true)
+}
+
+fn parse(entity: &Entity, fixed_parents: bool) -> Result<ParsedController, String> {
     if entity.hidden {
         return Err(
             "Authored-hidden fog controller is unavailable; show it before previewing".into(),
@@ -281,7 +290,9 @@ pub fn parse_controller(entity: &Entity) -> Result<ParsedController, String> {
         profile.direction = vector(raw, "fogdir")?;
     }
     if flag(entity, "use_angles", &mut defaults)? {
-        if property(entity, "parentname")?.is_some_and(|parent| !parent.is_empty()) {
+        if !fixed_parents
+            && property(entity, "parentname")?.is_some_and(|parent| !parent.is_empty())
+        {
             return Err(
                 "use_angles on a parented fog controller needs a resolved world orientation".into(),
             );
@@ -319,5 +330,6 @@ pub fn parse_controller(entity: &Entity) -> Result<ParsedController, String> {
         profile,
         defaults,
         inert_keys,
+        parent_chain: Vec::new(),
     })
 }

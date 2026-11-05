@@ -27,6 +27,17 @@ To disable fog, clear **Enable fog preview**, then click **Apply preview**.
 Source or content changes invalidate the preview. Reapply to capture a new
 baseline and clear the input sequence; prepare the environment again when used.
 
+## Use a fixed parent
+
+1. Create an `info_target` and give it a unique `targetname` in **Inspector**.
+2. Set the controller's `parentname` to that exact name and enable `use_angles`.
+3. Set the controller's `angles` in world space. Refresh and apply the preview.
+
+Named `info_target` chains can contain up to 16 parents. The initial parent
+binding preserves the controller's world angles; do not add parent rotation.
+Missing, ambiguous, hidden or cyclic parents refuse. Model attachments and
+other parent classes are unavailable.
+
 ## Preview controller inputs
 
 1. Apply the controller selection.
@@ -101,8 +112,8 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
   exceed 4 and be at most 1,000,000; nonpositive values disable this override.
 - Root start/end ranges may be negative, equal or reversed. Numeric fields must
   produce finite results within the reported limits; displayed density clamps
-  to 0–1. Colors use RGB bytes from 0–255. Parented controllers using
-  `use_angles` report unavailable without a resolved world orientation.
+  to 0–1. Colors use RGB bytes from 0–255. With `use_angles`, parents must be
+  ordinary point `info_target` chains with spawnflags 0 or 1.
 - Time is 0–3600 seconds, with at most 128 preview input events. Inputs append in
   time order; use **Reset** before adding an input earlier than the last event.
   Starting a transition with zero `foglerptime` is unavailable.

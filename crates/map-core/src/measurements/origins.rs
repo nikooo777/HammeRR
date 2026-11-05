@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use glam::{DMat3, DQuat, DVec3, EulerRot};
 use source_formats::keyvalues::Node;
-use source_formats::vmf::{Vmf, parse_vec3};
+use source_formats::vmf::{Entity, Vmf, parse_vec3};
 
 use super::{KEY, Measurement, validate_point};
 use crate::ObjectId;
@@ -76,6 +76,11 @@ pub fn entity_origin(vmf: &Vmf, object: ObjectId) -> Result<DVec3, String> {
             "Attached entity:{id} is ambiguous because its ID is duplicated"
         ));
     }
+    origin_from_entity(entity)
+}
+
+pub(crate) fn origin_from_entity(entity: &Entity) -> Result<DVec3, String> {
+    let id = entity.id;
     if !entity.solids.is_empty() {
         return Err(format!(
             "Attached entity:{id} is a brush entity; origin attachment supports point entities only"

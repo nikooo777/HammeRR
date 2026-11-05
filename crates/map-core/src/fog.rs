@@ -1,10 +1,15 @@
 use source_formats::vmf::Entity;
 
 mod inputs;
+mod parents;
 mod profile;
 mod timeline;
 
 pub use inputs::{Input, InputChoice, input_choices};
+pub use parents::{
+    MAX_PARENT_DEPTH, MAX_PARENT_ENTITIES, ParentContext, parse_controller_in,
+    requires_parent_context,
+};
 pub use profile::{
     MAX_FIELD_MAGNITUDE, MIN_FAR_Z, ParsedController, Profile, parse_controller, range_parameters,
 };

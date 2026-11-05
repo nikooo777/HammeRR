@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
-use map_core::fog::{ParsedController, parse_controller};
+pub use map_core::fog::MAX_PARENT_ENTITIES as MAX_ENTITIES;
+use map_core::fog::{ParentContext, ParsedController, parse_controller, requires_parent_context};
 use source_formats::vmf::{Entity, Vmf};
 
 pub const MAX_CONTROLLERS: usize = 128;
-pub const MAX_ENTITIES: usize = 65_536;
 pub const MAX_CONTROLLER_BYTES: usize = 64 * 1024;
 pub const MAX_CONTROLLER_PROPERTIES: usize = 256;
 
@@ -17,7 +17,15 @@ pub(super) struct Catalog {
     pub controllers: BTreeMap<u32, Controller>,
 }
 
-pub(super) fn parse(entity: &Entity) -> Result<ParsedController, String> {
+pub(super) fn parse(vmf: &Vmf, entity: &Entity) -> Result<ParsedController, String> {
+    parse_with_context(vmf, entity, &mut None)
+}
+
+fn parse_with_context<'a>(
+    vmf: &'a Vmf,
+    entity: &'a Entity,
+    parents: &mut Option<Result<ParentContext<'a>, String>>,
+) -> Result<ParsedController, String> {
     if !entity
         .classname()
         .is_some_and(|name| name.eq_ignore_ascii_case("env_fog_controller"))
@@ -37,7 +45,15 @@ pub(super) fn parse(entity: &Entity) -> Result<ParsedController, String> {
     if bytes > MAX_CONTROLLER_BYTES {
         return Err("Fog controller exceeds its property byte limit".into());
     }
-    parse_controller(entity).map_err(|error| format!("entity:{}: {error}", entity.id))
+    let result = if requires_parent_context(entity)? {
+        match parents.get_or_insert_with(|| ParentContext::new(vmf)) {
+            Ok(context) => context.parse_controller(entity),
+            Err(error) => Err(error.clone()),
+        }
+    } else {
+        parse_controller(entity)
+    };
+    result.map_err(|error| format!("entity:{}: {error}", entity.id))
 }
 
 impl Catalog {
@@ -46,6 +62,7 @@ impl Catalog {
             return Err("Fog catalog exceeds its entity scan limit".into());
         }
         let mut controllers = BTreeMap::new();
+        let mut parents = None;
         for entity in &vmf.entities {
             if !entity
                 .classname()
@@ -65,7 +82,7 @@ impl Catalog {
                     entity.id,
                     Controller {
                         targetname,
-                        parsed: parse(entity),
+                        parsed: parse_with_context(vmf, entity, &mut parents),
                     },
                 )
                 .is_some()

@@ -95,7 +95,7 @@ impl Session {
             .render_document()
             .entity(id)
             .ok_or_else(|| format!("entity:{id} no longer exists; choose a fog controller"))?;
-        catalog::parse(entity).map(|parsed| parsed.profile)
+        catalog::parse(self.render_document().vmf(), entity).map(|parsed| parsed.profile)
     }
 
     pub fn fog_render_state_for_view(
@@ -296,7 +296,8 @@ impl Session {
             json!({"id":format!("entity:{id}"),"label":controller.targetname.as_deref().filter(|name|!name.is_empty()).map_or_else(||format!("entity:{id}"),|name|format!("{name} · entity:{id}")),
                 "targetname":controller.targetname,"ready":controller.parsed.is_ok(),"settings":controller.parsed.as_ref().ok().map(|parsed|profile_report(parsed.profile)),
                 "issue":controller.parsed.as_ref().err(),"detail":controller.parsed.as_ref().err(),
-                "defaults":controller.parsed.as_ref().ok().map(|parsed|&parsed.defaults),"inert_keys":controller.parsed.as_ref().ok().map(|parsed|&parsed.inert_keys)})
+                "defaults":controller.parsed.as_ref().ok().map(|parsed|&parsed.defaults),"inert_keys":controller.parsed.as_ref().ok().map(|parsed|&parsed.inert_keys),
+                "parent_chain":controller.parsed.as_ref().ok().map(|parsed|parsed.parent_chain.iter().map(|id|format!("entity:{id}")).collect::<Vec<_>>())})
         }).collect::<Vec<_>>()).unwrap_or_default();
         let inputs=map_core::fog::input_choices().iter().map(|choice|json!({"id":choice.name,"name":choice.name,"label":choice.name,"kind":choice.kind,"help":choice.help,"has_value":choice.has_value})).collect::<Vec<_>>();
         let events=self.fog_preview.timelines.iter().flat_map(|(&id,timeline)|timeline.events().iter().map(move |event|json!({"controller":format!("entity:{id}"),"time_seconds":event.time,"input":event.input.name(),"value":event.input.value()}))).collect::<Vec<_>>();

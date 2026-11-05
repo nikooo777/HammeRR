@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use std::mem::size_of;
+use std::time::Duration;
 
 use source_formats::vtf::{ImageFormat, Vtf};
 use wgpu::util::DeviceExt;
@@ -20,6 +21,7 @@ pub const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrg
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const MAX_SCRATCH_TARGETS: usize = 4;
 const MAX_DEPTH_BYTES: u64 = crate::color_correction::MAX_TARGET_BYTES;
+const READBACK_TIMEOUT: Duration = Duration::from_secs(5);
 /// Linear-space clear color; a dark slate like most modern editors.
 const CLEAR_COLOR: wgpu::Color = wgpu::Color {
     r: 0.012,
@@ -1946,7 +1948,7 @@ impl Renderer {
                 return Err(error);
             }
         }
-        let pixels = self.render_to_rgba(ctx, scene, camera, options, width, height);
+        let pixels = self.render_to_rgba(ctx, scene, camera, options, width, height)?;
         if let Some(error) = &self.last_color_correction_error {
             return Err(error.clone());
         }
@@ -1965,17 +1967,37 @@ impl Renderer {
         options: &ViewOptions,
         width: u32,
         height: u32,
-    ) -> Vec<u8> {
+    ) -> Result<Vec<u8>, String> {
+        let limits = ctx.device.limits();
+        if width == 0
+            || height == 0
+            || width > limits.max_texture_dimension_2d
+            || height > limits.max_texture_dimension_2d
+        {
+            return Err(format!(
+                "GPU capture dimensions require 1..{} pixels per axis",
+                limits.max_texture_dimension_2d
+            ));
+        }
+        let row = width
+            .checked_mul(4)
+            .ok_or("GPU capture row size overflowed")?;
+        let padded_row = row
+            .checked_next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            .ok_or("GPU capture padded row size overflowed")?;
+        let buffer_size = u64::from(padded_row)
+            .checked_mul(u64::from(height))
+            .filter(|bytes| *bytes <= limits.max_buffer_size)
+            .ok_or("GPU capture readback exceeds the device buffer limit")?;
+        let output_size = usize::try_from(u64::from(row) * u64::from(height))
+            .map_err(|_| "GPU capture output size exceeds addressable memory")?;
         let target = RenderTarget::new(ctx, width, height);
         self.render(ctx, scene, camera, options, &target.view, (width, height));
         let texture = target.texture;
 
-        let row = width * 4;
-        let padded_row =
-            row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
-            size: u64::from(padded_row * height),
+            size: buffer_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -1992,24 +2014,36 @@ impl Renderer {
             },
             texture.size(),
         );
-        ctx.queue.submit([encoder.finish()]);
-        buffer.map_async(wgpu::MapMode::Read, .., |result| {
-            result.expect("map readback buffer");
+        let submission = ctx.queue.submit([encoder.finish()]);
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        buffer.map_async(wgpu::MapMode::Read, .., move |result| {
+            let _ = sender.send(result);
         });
-        ctx.device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: None,
-            })
-            .expect("wait for GPU");
-        let mapped = buffer
-            .get_mapped_range(..)
-            .expect("readback buffer is mapped");
-        mapped
-            .chunks(padded_row as usize)
-            .flat_map(|r| &r[..row as usize])
-            .copied()
-            .collect()
+        let result = (|| {
+            ctx.device
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(submission),
+                    timeout: Some(READBACK_TIMEOUT),
+                })
+                .map_err(|error| format!("GPU capture wait failed: {error}"))?;
+            receiver
+                .try_recv()
+                .map_err(|error| format!("GPU capture mapping did not complete: {error}"))?
+                .map_err(|error| format!("GPU capture mapping failed: {error}"))?;
+            let mapped = buffer
+                .get_mapped_range(..)
+                .map_err(|error| format!("GPU capture mapped bytes are unavailable: {error}"))?;
+            let mut pixels = Vec::new();
+            pixels
+                .try_reserve_exact(output_size)
+                .map_err(|error| format!("GPU capture output allocation failed: {error}"))?;
+            for row_bytes in mapped.chunks_exact(padded_row as usize) {
+                pixels.extend_from_slice(&row_bytes[..row as usize]);
+            }
+            Ok(pixels)
+        })();
+        buffer.unmap();
+        result
     }
 }
 

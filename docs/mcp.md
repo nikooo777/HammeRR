@@ -417,6 +417,7 @@ A failed operation returns an explicit error. Inspect it before retrying.
 ```
 
 `render_view` returns an image, effective view state and diagnostics.
+GPU copy or mapping failures return an error without an image.
 Set `include_details:true` to include the policy and resource-limit catalogues.
 Use `selection_tint:false` to remove highlights without clearing selection;
 `selection_outlines` controls edges separately. Sky previews remain visible

@@ -74,6 +74,7 @@ their bytes and winning source origins before accepting a model choice.
 
 ## Limits
 
+- Preview images require a GPU. Capture failures report an error without an image.
 - MDL 44/48, VVD 4, DX90 VTX 7 and LOD 0 only.
 - Missing or unsupported geometry retains a selectable helper with a diagnostic.
 - No animation, flexes, procedural/IK poses or runtime physics preview.

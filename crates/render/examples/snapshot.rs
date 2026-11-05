@@ -93,7 +93,9 @@ fn main() {
         .upload(&ctx, &mesh, &library)
         .expect("scene upload");
     let uploaded = start.elapsed();
-    let pixels = renderer.render_to_rgba(&ctx, &scene, &camera, &options, WIDTH, HEIGHT);
+    let pixels = renderer
+        .render_to_rgba_checked(&ctx, &scene, &camera, &options, WIDTH, HEIGHT)
+        .expect("scene capture");
     eprintln!(
         "uploaded in {:.1?}, rendered in {:.1?}",
         uploaded - built,

@@ -81,6 +81,37 @@ impl TerrainTriangle {
         self.slot as usize
     }
 
+    pub(super) fn exact_edge_has_earlier_neighbor(
+        &self,
+        edge: [usize; 2],
+        consume: &mut impl FnMut(usize) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        consume(OWNERSHIP_WORK)?;
+        if edge.iter().any(|&vertex| vertex >= 3) || edge[0] == edge[1] {
+            return Err("Exact terrain edge requires two distinct local triangle vertices".into());
+        }
+        let vertices = self.topology.indices[self.slot as usize];
+        let feature = edge.map(|vertex| self.topology.groups[vertices[vertex] as usize]);
+        if feature[0] == feature[1] {
+            return Err("Exact terrain edge has a degenerate native topology feature".into());
+        }
+        let first = feature[0] as usize;
+        let range =
+            self.topology.offsets[first] as usize..self.topology.offsets[first + 1] as usize;
+        for &candidate in &self.topology.incidence[range] {
+            consume(OWNERSHIP_WORK)?;
+            if candidate >= self.slot {
+                break;
+            }
+            let groups = self.topology.indices[candidate as usize]
+                .map(|vertex| self.topology.groups[vertex as usize]);
+            if feature.iter().all(|group| groups.contains(group)) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(super) fn source(&self) -> (usize, usize) {
         let patch = usize::from(self.patch);
         (

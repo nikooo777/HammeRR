@@ -614,13 +614,13 @@ impl<'fs, 'tracking> Assets<'fs, 'tracking> {
             if let Some(material) = material {
                 if exact
                     && (!terminal
-                        || (!material.alpha_test()
+                        || (!(material.alpha_test() || material.translucent())
                             && (opaque_contract.is_some()
                                 || material.shader != "vertexlitgeneric"
                                 || needs_material_warning(&material))))
                 {
                     return Err(format!(
-                        "Exact emission prop material {path} requires checked original plain opaque VertexLitGeneric/Patch or supported static binary-cutout material: {}",
+                        "Exact emission prop material {path} requires checked original plain opaque VertexLitGeneric/Patch or supported static texture-alpha material: {}",
                         opaque_contract
                             .as_deref()
                             .unwrap_or("unsupported effective material")
@@ -941,12 +941,12 @@ pub(super) fn build(
                                 )?
                             } else {
                                 if exact
-                                    && loaded
-                                        .as_ref()
-                                        .is_some_and(|(_, material)| material.alpha_test())
+                                    && loaded.as_ref().is_some_and(|(_, material)| {
+                                        material.alpha_test() || material.translucent()
+                                    })
                                 {
                                     return Err(format!(
-                                        "{path}: exact binary-cutout shadows require the original MDL CAST_TEXTURE_SHADOWS request"
+                                        "{path}: exact texture-alpha shadows require the original MDL CAST_TEXTURE_SHADOWS request"
                                     ));
                                 }
                                 match loaded {

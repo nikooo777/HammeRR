@@ -70,6 +70,7 @@ Tint baked light through the supported translucent material's base RGB.
 The option defaults off. It uses the same texture coordinates and adds coverage
 separately for red, green and blue. White preserves scalar coverage; clear texels
 stay clear, fully opaque texels stay opaque, and binary cutouts remain binary.
+RGB uses the existing gamma 2.2 conversion and prepared nearest mip0 coverage.
 The existing model requests and direct/indirect receiver scopes still apply.
 
 ## Cast from a stationary root brush model
@@ -109,12 +110,23 @@ Texture opacity affects only lit receivers in the same model when the global Sha
 2. Enable **Exact emission visibility**, then click **Apply properties**.
 3. Keep **Brush texture shadows** enabled in **Build settings…** and compile in **Direct LDR** or **Direct LDR + HDR**.
 
-Supported binary masks cast exact finite-area emission shadows from world,
-detail, terrain and eligible stationary brush models. Brush hull entry/exit,
-coincident boundary maximum and current model scopes remain in effect. Terrain
-uses its actual triangles; cutouts do not create collision holes. Fractional and
-colored transmission remain unsupported in exact mode. See [material emission](material-emission.md#exact-brush-shadows)
-for exact geometry and resource limits.
+Supported cutout, scalar and RGB fractional coverage shapes exact finite-area
+emission shadows from world, detail, terrain and eligible stationary brush
+models. Enable **Colored texture shadows** for RGB transmission. In **Build
+details…**, **Emission visibility policy** reads **Exact byte-coverage hulls and
+mesh triangles**.
+
+Independent crossings add byte coverage with saturation per channel. Hull entry
+and exit contribute separately; exactly tied projected events within one hull
+use componentwise maximum. The shared prepared sampler, material transforms,
+nearest mip0 clamp/repeat and strict segment endpoints remain unchanged.
+Terrain uses its actual two-sided triangles and native shared-feature ownership;
+unrelated coincident sheets remain independent. Masks do not create collision holes.
+
+Uncertified positive-area nonbinary coplanar mask overlaps and shared native
+terrain-edge events in coplanar shadow charts stop the build without sampled fallback.
+Existing geometry certificates and work, memory and conversion caps remain.
+See [material emission](material-emission.md#exact-brush-shadows) for the full scope.
 
 ## Limits
 

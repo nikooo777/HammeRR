@@ -8,7 +8,7 @@ use super::props::PropTriangle;
 use super::shadows::{ShadowIndex, TRIANGLE_EPSILON, Visit};
 use super::terrain_shadows::TerrainTriangle;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct Coverage([u8; 3]);
 
 impl Coverage {

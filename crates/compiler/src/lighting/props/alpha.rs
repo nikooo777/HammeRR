@@ -109,17 +109,38 @@ pub(in crate::lighting) struct Material {
     fractional: bool,
 }
 
-pub(in crate::lighting) struct BinaryMask<'a> {
+enum PreparedCoverage<'a> {
+    Binary(&'a Material),
+    Scalar(&'a [u8]),
+    Colored(&'a [[u8; 3]]),
+}
+
+impl PreparedCoverage<'_> {
+    fn at(&self, index: usize) -> Coverage {
+        match self {
+            Self::Binary(material) => {
+                if material.opaque(material.texture.alpha[index]) {
+                    Coverage::OPAQUE
+                } else {
+                    Coverage::CLEAR
+                }
+            }
+            Self::Scalar(alpha) => Coverage::scalar(alpha[index]),
+            Self::Colored(coverage) => Coverage::from_channels(coverage[index]),
+        }
+    }
+}
+
+pub(in crate::lighting) struct ExactMask<'a> {
     pub dimensions: [usize; 2],
     pub clamp: [bool; 2],
     pub transform: [[f64; 3]; 2],
-    material: &'a Material,
+    coverage: PreparedCoverage<'a>,
 }
 
-impl BinaryMask<'_> {
-    pub(in crate::lighting) fn opaque(&self, x: usize, y: usize) -> bool {
-        self.material
-            .opaque(self.material.texture.alpha[y * self.dimensions[0] + x])
+impl ExactMask<'_> {
+    pub(in crate::lighting) fn coverage(&self, x: usize, y: usize) -> Coverage {
+        self.coverage.at(y * self.dimensions[0] + x)
     }
 }
 
@@ -128,18 +149,24 @@ impl Material {
         f64::from(alpha) / 255.0 >= self.reference
     }
 
-    pub(in crate::lighting) fn binary_mask(&self) -> Result<BinaryMask<'_>, String> {
+    fn prepared_coverage(&self) -> Result<PreparedCoverage<'_>, String> {
         if self.fractional {
-            return Err(
-                "Exact emission visibility does not support fractional or colored transmission"
-                    .into(),
-            );
+            match &self.texture.colored {
+                Colored::Prepared(coverage) => Ok(PreparedCoverage::Colored(coverage)),
+                Colored::Disabled => Ok(PreparedCoverage::Scalar(&self.texture.alpha)),
+                Colored::Unavailable(problem) => Err(problem.message()),
+            }
+        } else {
+            Ok(PreparedCoverage::Binary(self))
         }
-        Ok(BinaryMask {
+    }
+
+    pub(in crate::lighting) fn exact_mask(&self) -> Result<ExactMask<'_>, String> {
+        Ok(ExactMask {
             dimensions: self.texture.dimensions,
             clamp: self.texture.clamp,
             transform: self.transform,
-            material: self,
+            coverage: self.prepared_coverage()?,
         })
     }
     pub(in crate::lighting) fn dimensions(&self) -> [usize; 2] {
@@ -173,18 +200,7 @@ impl Material {
                 .min(self.texture.dimensions[axis] - 1)
         });
         let index = texel[1] * self.texture.dimensions[0] + texel[0];
-        let alpha = self.texture.alpha[index];
-        Ok(if self.fractional {
-            match &self.texture.colored {
-                Colored::Prepared(coverage) => Coverage::from_channels(coverage[index]),
-                Colored::Disabled => Coverage::scalar(alpha),
-                Colored::Unavailable(problem) => return Err(problem.message()),
-            }
-        } else if self.opaque(alpha) {
-            Coverage::OPAQUE
-        } else {
-            Coverage::CLEAR
-        })
+        Ok(self.prepared_coverage()?.at(index))
     }
 }
 

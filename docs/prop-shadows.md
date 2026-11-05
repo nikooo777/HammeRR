@@ -25,9 +25,11 @@ the BSP or start through **Play built map**. This check also applies when vertex
 lighting and asset packing are off. It covers the sources used by the build.
 
 For finite-area material emission, enable [**Exact emission visibility**](material-emission.md#exact-brush-shadows)
-to resolve supported binary masks on the actual mesh triangles. The original
-model texture-shadow request remains required; fractional and colored transport
-remain limited to the ordinary sampled path.
+to resolve supported cutout, scalar and RGB fractional coverage on the actual
+two-sided mesh triangles. Each independent primitive crossing adds coverage with
+saturation per channel. The original model texture-shadow request remains required.
+The shared prepared sampler, gamma 2.2 RGB conversion, nearest mip0 clamp/repeat
+and strict endpoints remain unchanged.
 
 ## Limits
 
@@ -35,6 +37,7 @@ remain limited to the ordinary sampled path.
 - Material, texture format and transform support is bounded.
 - **Disable Shadows** excludes the prop from this shadow path.
 - Shadow support does not imply vertex-lighting or asset-packing support.
+- Exact emission refuses uncertified positive-area nonbinary coplanar mask overlaps. Existing source, geometry, work, memory and conversion certificates remain; failures do not switch to sampled tracing.
 - This page describes compiled shadows. The editor's authored-lighting preview is unshadowed.
 
 <!-- page-nav -->

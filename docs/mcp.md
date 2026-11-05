@@ -1785,8 +1785,8 @@ Colour selection keeps nearest mip0 RGB and binary64 UV semantics. The coverage
 proof does not certify real-arithmetic UV boundaries or native filtering parity.
 `source_support_certificate` reports face requirements and scopes.
 Converted binary64 kernel vertices must lie exactly on each actual source
-triangle plane. All converted coverage must stay inside the exact visible region;
-`fragment_conversion` reports this contract.
+triangle plane. Each fragment retains constant scalar/RGB transmission and stays
+inside its exact coverage region. `fragment_conversion` reports this contract.
 `fragment_conversion_candidates` reports the projected search first. If it cannot
 certify an oblique source triangle's conversion, bounded common absolute dyadic
 world-grid candidates are tried before bounded dyadic native-triangle weights.
@@ -1803,26 +1803,36 @@ and source-incidence cosine upper bounds refine the whole accumulated bound.
 The Jacobian replaces the coarse L1 surface scale. The cosine uses the unbiased
 kernel point and a distance lower bound over the whole original source triangle.
 Accepted coarse bounds and error caps stay unchanged.
-Every applicable opaque or binary-cutout brush hull must be certified closed, bounded and convex
-from its final planes, including oblique casters. Original materials and
+Every applicable opaque, cutout or admitted fractional brush hull must be
+certified closed, bounded and convex from its final planes, including oblique casters. Original materials and
 existing global/model shadow scopes still apply.
 
 Terrain and eligible static props cast from their actual two-sided triangles,
 including edges. Props use body 0, LOD 0, selected skin and the compiled
 pose, including supported assembled placements. Opaque prop materials require
-plain `VertexLitGeneric` or supported `Patch` chains. Binary masks also admit
+plain `VertexLitGeneric` or supported `Patch` chains. Texture-alpha masks also admit
 the current static `VertexLitGeneric`/`UnlitGeneric` alpha sampler and supported
-Patch chains, with checked transform, cutoff and nearest-mip0 clamp/repeat.
-The original MDL `CAST_TEXTURE_SHADOWS` flag is required. Brush and terrain
-cutouts require `brush_texture_shadows:true` through `set_compile_settings`;
-no prerequisite is enabled automatically. Exact mode checks original model and
+Patch chains, with checked transform, cutout cutoff and nearest mip0 clamp/repeat.
+The original MDL `CAST_TEXTURE_SHADOWS` flag is required for prop texture alpha.
+Brush and terrain texture alpha requires `brush_texture_shadows:true` through
+`set_compile_settings`; no prerequisite is enabled automatically. Exact mode checks original model and
 material inputs before gathering light.
 
-`cutout_shadow_contract` reports the binary-mask scope. Masks are exact affine
-UV regions on original provider planes, including half-open constant/rank-deficient
-texel ownership. Brush masks retain actual hull entry/exit events, maximum at
-exactly coincident boundary faces and strict endpoints. Sampled near-tie bands
-remain separate. Terrain masks do not change collision.
+`cutout_shadow_contract` retains its field name for compatibility and reports
+the extended cutout and scalar/RGB fractional coverage scope. Exact masks reuse
+the prepared sampler, gamma 2.2 RGB conversion, checked transform and nearest
+mip0 clamp/repeat. Their affine UV regions retain half-open texel ownership,
+including constant and rank-deficient UVs. Enable `colored_texture_shadows:true`
+with its existing lit-mode and `brush_texture_shadows:true` prerequisites for
+RGB transmission; otherwise fractional coverage stays scalar.
+
+Coverage bytes add with saturation per channel across independent crossings.
+Actual hull entry and exit contribute separately. Exactly tied projected
+segment events within one hull use componentwise maximum. Remaining visibility
+is `(255 - coverage) / 255` per channel. Sampled near-tie bands remain separate.
+Native terrain shared-feature ownership counts a crossing once; unrelated
+coincident surfaces and separate prop primitives stay independent. Terrain masks
+do not change collision.
 
 Only contacts between the shadow segment endpoints block light. Collision
 settings do not disable terrain shadows. A prop's `disableshadows:1` removes
@@ -1830,13 +1840,20 @@ its shadow geometry. Receiver `disableselfshadowing:1` omits only that prop's
 own triangles; other providers still block light. Terrain and MDL emission
 sources remain unavailable.
 
+Exact mode refuses uncertified positive-area nonbinary masked overlaps when the
+patch, shadow origin and source triangle are fully coplanar. It also refuses
+positive-area shared native terrain-edge events in coplanar shadow charts whose
+crossing ownership cannot be certified. Ordinary shared boundaries of zero
+source area remain supported.
+
 Uncertified native fans or projections, primitive overrides, displacement
 sources, failed required texture coverage, unrepresentable on-plane fragment vertices,
-moving/parented/unrequested brush-model emitting sources, sky, fractional/colored transmission, unknown or
+moving/parented/unrequested brush-model emitting sources, sky, unknown or
 missing materials, unsupported prop models, zero-area mesh triangles,
-uncertified hulls and exhausted numeric/resource bounds reject without sampled
-fallback or replacement of the previous BSP. Fullbright validates the policy,
-file and declarations without admitting exact geometry.
+uncertified hulls, the coplanar cases above and exhausted numeric/resource bounds
+reject without sampled fallback or replacement of the previous BSP. Fullbright validates the policy,
+file and declarations without admitting exact geometry. Existing source, clipping,
+work, texture, memory and conversion limits remain unchanged.
 
 Under `stats.material_emission`, `visibility_policy` identifies the selected
 policy. `maximum_visibility_conversion_error` is the maximum bound per receiver;
@@ -1845,8 +1862,9 @@ channels. These dimensionless bounds cover conversion from exact clipped
 fragments to the floating kernel, including source surface-area scale, limited
 to `1e-12` per source triangle and `1e-9` per receiver before source
 RGB/brightness and BSP quantization. They are not RGB or image error bounds.
-**Build details…** shows **Emission visibility policy** and
-**Emission conversion bounds (dimensionless)**.
+In **Build details…**, **Emission visibility policy** reads **Exact byte-coverage
+hulls and mesh triangles**. **Emission conversion bounds (dimensionless)** shows
+the bounds above.
 
 Use `[ldr:|hdr:] texture: material R G B brightness` for nearest mip0
 base-RGB emission. The same file and property operations apply. Results include

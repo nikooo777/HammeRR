@@ -496,7 +496,7 @@ pub(crate) fn preflight<'a>(
         channel_rays: [0; 2],
         native_surface_lights: [0; 2],
         visibility_policy: if exact_enabled {
-            "exact_binary_cutout_convex_hull_and_mesh_triangle_topology_bounded_kernel_conversion"
+            "exact_byte_coverage_convex_hull_and_mesh_triangle_topology_bounded_kernel_conversion"
         } else {
             "sampled_segments"
         },
@@ -509,7 +509,7 @@ pub(crate) fn preflight<'a>(
         },
     };
     let visibility = if exact_enabled {
-        "Exact emission visibility requests complete certified original opaque or binary-cutout convex-hull, native terrain-triangle and static-prop mesh-triangle shadow topology with bounded kernel conversion; unsupported providers, sources, arithmetic or exhausted resources fail the request"
+        "Exact emission visibility integrates certified original opaque, binary-cutout and admitted scalar/RGB fractional convex-hull, native terrain-triangle and static-prop mesh-triangle coverage with additive saturated byte transport and bounded kernel conversion; unsupported providers, sources, arithmetic or exhausted resources fail the request"
     } else {
         "Material emission uses sampled segment shadows"
     };
@@ -1309,15 +1309,15 @@ fn admit_exact_providers(
                     .is_some_and(|optical| optical.faces.iter().any(Option::is_some));
                 let contents = brush.contents & !bsp::contents::DETAIL;
                 let ordinary = contents == bsp::contents::SOLID;
-                let cutout = alpha
+                let textured = alpha
                     && contents
                         & !(bsp::contents::SOLID
                             | bsp::contents::WINDOW
                             | bsp::contents::TRANSLUCENT)
                         == 0
                     && contents & (bsp::contents::SOLID | bsp::contents::WINDOW) != 0;
-                if (!ordinary && !cutout) || hull.sky.iter().any(|sky| *sky) {
-                    return Err("Exact emission visibility requires ordinary opaque or admitted binary-cutout original hulls; sky and fractional transmission are unsupported".into());
+                if (!ordinary && !textured) || hull.sky.iter().any(|sky| *sky) {
+                    return Err("Exact emission visibility requires ordinary opaque or admitted texture-shadow original hulls; sky and other contents are unsupported".into());
                 }
                 if !(4..=exact::MAX_HULL_PLANES).contains(&hull.planes.len())
                     || source.sides.len() != hull.planes.len()
@@ -1798,9 +1798,9 @@ impl Prepared {
                 if certificate.planar()
                     && certificate.front(sample.point, budget)? != Ordering::Greater
                 {
-                    return Ok(0.0);
+                    return Ok(DVec3::ZERO);
                 }
-                let mut integral = 0.0;
+                let mut integral = DVec3::ZERO;
                 for &triangle in &source.triangles {
                     if !certificate.planar()
                         && exact::triangle_front(triangle, sample.point, budget)?
@@ -1902,7 +1902,7 @@ impl Prepared {
                     {
                         return Err("Exact emission visibility exceeds its 1e-9 receiver kernel conversion error limit".into());
                     }
-                    for &fragment in &fragments.triangles {
+                    for fragment in &fragments.triangles {
                         budget.consume(64)?;
                         visited = visited
                             .checked_add(1)
@@ -1914,10 +1914,11 @@ impl Prepared {
                                 .checked_add(1)
                                 .ok_or("Emission cell count overflow")?,
                         );
-                        integral += weight(fragment, sample)?;
+                        integral +=
+                            weight(fragment.points, sample)? * fragment.coverage.visibility();
                     }
                 }
-                Ok::<f64, String>(integral)
+                Ok::<DVec3, String>(integral)
             })();
             let integral = result.map_err(|error| {
                 format!(

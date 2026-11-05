@@ -7,6 +7,7 @@ use map_core::Plane;
 use crate::exact::{ARITHMETIC_ERROR, Rational, gcd};
 
 use super::super::bake::{Allocation, Budget};
+use super::super::transport::Coverage;
 
 pub(super) const MAX_HULL_PLANES: usize = 128;
 const TRIANGLE_PLANES: usize = 5;
@@ -472,12 +473,13 @@ impl TopoPolygon {
     }
 }
 
-struct Fragment {
+struct Region {
     polygon: TopoPolygon,
+    coverage: Coverage,
     bounds: Option<Storage<SourceBounds>>,
 }
 
-impl Fragment {
+impl Region {
     fn bounds(
         &mut self,
         work: &mut Work,
@@ -496,7 +498,7 @@ impl Fragment {
 }
 
 struct Polygons {
-    polygons: Storage<Fragment>,
+    polygons: Storage<Region>,
     vertices: usize,
 }
 
@@ -508,14 +510,15 @@ impl Polygons {
         })
     }
 
-    fn push(&mut self, polygon: TopoPolygon) -> Result<(), String> {
-        self.push_fragment(Fragment {
+    fn push(&mut self, polygon: TopoPolygon, coverage: Coverage) -> Result<(), String> {
+        self.push_fragment(Region {
             polygon,
+            coverage,
             bounds: None,
         })
     }
 
-    fn push_fragment(&mut self, fragment: Fragment) -> Result<(), String> {
+    fn push_fragment(&mut self, fragment: Region) -> Result<(), String> {
         if self.polygons.values.len() >= MAX_FRAGMENTS {
             return Err("Exact emission exceeds 4096 visible fragments".into());
         }
@@ -559,6 +562,10 @@ impl Polygons {
                     if unchanged.values[pair] & bit != 0 {
                         continue;
                     }
+                    if self.polygons.values[left].coverage != self.polygons.values[right].coverage {
+                        unchanged.values[pair] |= bit;
+                        continue;
+                    }
                     if let Some(merged) = self.polygons.values[left].polygon.merged(
                         &self.polygons.values[right].polygon,
                         work,
@@ -567,7 +574,8 @@ impl Polygons {
                         self.vertices -= self.polygons.values[left].polygon.values.len()
                             + self.polygons.values[right].polygon.values.len()
                             - merged.values.len();
-                        self.polygons.values[left] = Fragment {
+                        self.polygons.values[left] = Region {
+                            coverage: self.polygons.values[left].coverage,
                             polygon: merged,
                             bounds: None,
                         };
@@ -580,7 +588,7 @@ impl Polygons {
                         }
                         work.charge(
                             (self.polygons.values.len() - right)
-                                * (size_of::<Fragment>() + size_of::<usize>())
+                                * (size_of::<Region>() + size_of::<usize>())
                                     .div_ceil(size_of::<usize>()),
                             budget,
                         )?;
@@ -1264,6 +1272,31 @@ fn world_grid_precision(
     Ok((f64::MANTISSA_DIGITS as i32 - exponent - 2).clamp(0, f64::MANTISSA_DIGITS as i32) as u32)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Composition {
+    Add,
+    Maximum,
+}
+
+impl Composition {
+    fn apply(self, previous: Coverage, coverage: Coverage) -> Coverage {
+        match self {
+            Self::Add => {
+                let mut result = previous;
+                result.add(coverage);
+                result
+            }
+            Self::Maximum => previous.maximum(coverage),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct Fragment {
+    pub(super) points: [DVec3; 3],
+    pub(super) coverage: Coverage,
+}
+
 pub(super) struct Visibility {
     source: [[Rational; 3]; 3],
     origin: [Rational; 3],
@@ -1274,16 +1307,24 @@ pub(super) struct Visibility {
     normal_squared: Rational,
     area_scale_upper: f64,
     fragments: Polygons,
+    composition: Composition,
+    origin_coplanar: Option<bool>,
     work: Work,
 }
 
 pub(super) struct Fragments {
-    pub(super) triangles: Vec<[DVec3; 3]>,
+    pub(super) triangles: Vec<Fragment>,
     pub(super) conversion_error_upper: f64,
     _allocation: Allocation,
 }
 
 type Equation = ([Rational; 3], Rational);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct HullEvent {
+    inverse_fraction: [Rational; 3],
+    entering: bool,
+}
 
 struct PatchProjection {
     a: [Rational; 3],
@@ -1295,7 +1336,7 @@ struct MaskMapping([[Rational; 4]; 2]);
 impl MaskMapping {
     fn transform(
         rows: [[Rational; 4]; 2],
-        mask: &super::super::props::alpha::BinaryMask<'_>,
+        mask: &super::super::props::alpha::ExactMask<'_>,
     ) -> Result<Self, String> {
         let mut result = [[Rational::ZERO; 4]; 2];
         for (axis, row) in result.iter_mut().enumerate() {
@@ -1317,7 +1358,7 @@ impl MaskMapping {
     fn triangle(
         points: [DVec3; 3],
         coordinates: [DVec2; 3],
-        mask: &super::super::props::alpha::BinaryMask<'_>,
+        mask: &super::super::props::alpha::ExactMask<'_>,
     ) -> Result<Self, String> {
         let coordinates = [
             [
@@ -1340,7 +1381,7 @@ impl MaskMapping {
         points: [DVec3; 3],
         texture_points: [DVec3; 3],
         projection: [[f32; 4]; 2],
-        mask: &super::super::props::alpha::BinaryMask<'_>,
+        mask: &super::super::props::alpha::ExactMask<'_>,
     ) -> Result<Self, String> {
         let mut coordinates = [[Rational::ZERO; 2]; 3];
         for (coordinate, point) in coordinates.iter_mut().zip(texture_points) {
@@ -1364,7 +1405,7 @@ impl MaskMapping {
     fn triangle_coordinates(
         points: [DVec3; 3],
         coordinates: [[Rational; 2]; 3],
-        mask: &super::super::props::alpha::BinaryMask<'_>,
+        mask: &super::super::props::alpha::ExactMask<'_>,
     ) -> Result<Self, String> {
         let points = [vector(points[0])?, vector(points[1])?, vector(points[2])?];
         let mut first = [Rational::ZERO; 3];
@@ -1396,7 +1437,7 @@ impl MaskMapping {
     fn brush(
         projection: [[f32; 4]; 2],
         pose: Option<crate::brush_model_pose::Pose>,
-        mask: &super::super::props::alpha::BinaryMask<'_>,
+        mask: &super::super::props::alpha::ExactMask<'_>,
     ) -> Result<Self, String> {
         let mut rows = [[Rational::ZERO; 4]; 2];
         for (axis, row) in rows.iter_mut().enumerate() {
@@ -1513,7 +1554,7 @@ impl Visibility {
             return Err("Exact emission requires a positive-area source triangle".into());
         }
         let mut fragments = Polygons::new(budget)?;
-        fragments.push(source_polygon(budget)?)?;
+        fragments.push(source_polygon(budget)?, Coverage::CLEAR)?;
         Ok(Self {
             source,
             origin: vector(origin)?,
@@ -1524,6 +1565,8 @@ impl Visibility {
             normal_squared,
             area_scale_upper,
             fragments,
+            composition: Composition::Add,
+            origin_coplanar: None,
             work: Work::new("source triangle"),
         })
     }
@@ -1544,6 +1587,8 @@ impl Visibility {
                     false,
                 ))
             }),
+            Coverage::OPAQUE,
+            false,
             budget,
         )
     }
@@ -1559,7 +1604,7 @@ impl Visibility {
         }
         let planes = triangle_planes(points, &mut self.work, budget)?;
         let boundaries = [(planes[2], false), (planes[3], false), (planes[4], false)];
-        self.subtract_patch(planes[0], &boundaries, budget)
+        self.subtract_patch(planes[0], &boundaries, Coverage::OPAQUE, budget)
     }
 
     pub(super) fn subtract_masked_triangle(
@@ -1571,11 +1616,11 @@ impl Visibility {
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
         self.work.charge(1024, budget)?;
-        if self.fragments.polygons.values.is_empty() {
+        if self.fragments.polygons.values.is_empty() && !material.fractional() {
             return Ok(());
         }
         let planes = triangle_planes(points, &mut self.work, budget)?;
-        let mask = material.binary_mask()?;
+        let mask = material.exact_mask()?;
         let mapping = MaskMapping::triangle(points, coordinates, &mask)?;
         let bounds = mapping.bounds(points.into_iter().map(vector))?;
         let boundaries = [(planes[2], false), (planes[3], false), (planes[4], false)];
@@ -1596,17 +1641,18 @@ impl Visibility {
         masks: &super::cutout::Cache,
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
+        self.certify_terrain_features(provider, budget)?;
         let Some(face) = provider.exact_alpha() else {
             return self.subtract_triangle(provider.positions(), budget);
         };
+        let (material, projection) = face.exact_mapping();
         self.work.charge(2048, budget)?;
-        if self.fragments.polygons.values.is_empty() {
+        if self.fragments.polygons.values.is_empty() && !material.fractional() {
             return Ok(());
         }
-        let (material, projection) = face.exact_mapping();
         let points = provider.positions();
         let planes = triangle_planes(points, &mut self.work, budget)?;
-        let mask = material.binary_mask()?;
+        let mask = material.exact_mask()?;
         let mapping =
             MaskMapping::terrain(points, provider.texture_positions(), projection, &mask)?;
         let bounds = mapping.bounds(points.into_iter().map(vector))?;
@@ -1620,6 +1666,81 @@ impl Visibility {
             masks.get(material)?,
             budget,
         )
+    }
+
+    fn source_origin_coplanar(&mut self, budget: &mut Budget<'_>) -> Result<bool, String> {
+        if let Some(coplanar) = self.origin_coplanar {
+            return Ok(coplanar);
+        }
+        self.work.charge(128, budget)?;
+        let coplanar = dot(self.normal, self.origin)? == dot(self.normal, self.source[0])?;
+        self.origin_coplanar = Some(coplanar);
+        Ok(coplanar)
+    }
+
+    fn certify_terrain_features(
+        &mut self,
+        provider: &super::super::terrain_shadows::TerrainTriangle,
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
+        self.work.charge(1, budget)?;
+        if !self.source_origin_coplanar(budget)? {
+            return Ok(());
+        }
+        let planes = triangle_planes(provider.positions(), &mut self.work, budget)?;
+        let boundaries = [(planes[2], false), (planes[3], false), (planes[4], false)];
+        if let Some(projection) = self.patch_projection(planes[0], budget)? {
+            let constraints = self.project_constraints(&projection, &boundaries, budget)?;
+            let mut shared = [false; 3];
+            for (index, &(edge, _)) in constraints.values[1..].iter().enumerate() {
+                self.work.charge(1, budget)?;
+                shared[index] = edge.constant() && edge.0[2].is_zero();
+            }
+            if !shared.into_iter().any(|shared| shared)
+                || self
+                    .constraint_bounds(&constraints.values, budget)?
+                    .is_none()
+            {
+                return Ok(());
+            }
+            for (index, shared) in shared.into_iter().enumerate() {
+                if shared
+                    && provider.exact_edge_has_earlier_neighbor(
+                        [index, (index + 1) % 3],
+                        &mut |amount| self.work.charge(amount, budget),
+                    )?
+                {
+                    return Err("Exact emission refuses positive-area native terrain edge ownership in a coplanar shadow chart".into());
+                }
+            }
+        } else {
+            self.work.charge(256, budget)?;
+            let (values, _) = self.segment_values(planes[0].0, planes[0].1)?;
+            if values.into_iter().any(|value| value != Rational::ZERO) {
+                return Ok(());
+            }
+            let boundaries = planes.map(|plane| (plane, false));
+            for index in 0..3 {
+                if !provider
+                    .exact_edge_has_earlier_neighbor([index, (index + 1) % 3], &mut |amount| {
+                        self.work.charge(amount, budget)
+                    })?
+                {
+                    continue;
+                }
+                let Some(projection) = self.patch_projection(planes[index + 2], budget)? else {
+                    continue;
+                };
+                let constraints = self.project_constraints(&projection, &boundaries, budget)?;
+                if self
+                    .constraint_bounds(&constraints.values, budget)?
+                    .is_some()
+                {
+                    return Err("Exact emission refuses positive-area native terrain edge ownership in a coplanar shadow chart".into());
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn subtract_hull(
@@ -1638,44 +1759,156 @@ impl Visibility {
         if optical.faces.len() != hull.planes.len() {
             return Err("Exact cutout hull lost its original boundary correspondence".into());
         }
-        for (index, face) in optical.faces.iter().enumerate() {
+        if optical.faces.iter().all(|face| {
+            face.as_ref()
+                .is_none_or(|face| !face.exact_mapping().0.fractional())
+        }) {
+            for index in 0..hull.planes.len() {
+                self.subtract_hull_face(hull, index, masks, budget)?;
+                if self.fragments.polygons.values.is_empty() {
+                    break;
+                }
+            }
+            return Ok(());
+        }
+        let mut events = Storage::new(hull.planes.len(), budget)?;
+        let mut groups = Storage::new(hull.planes.len(), budget)?;
+        for (index, plane) in hull.planes.iter().enumerate() {
             self.work.charge(256, budget)?;
+            let plane = (vector(plane.normal)?, Rational::from_f64(plane.dist)?);
+            let event = if let Some(projection) = self.patch_projection(plane, budget)? {
+                self.work.charge(192, budget)?;
+                Some(HullEvent {
+                    inverse_fraction: [
+                        projection.a[0].div(projection.b)?,
+                        projection.a[1].div(projection.b)?,
+                        projection.a[2].div(projection.b)?,
+                    ],
+                    entering: projection.b.sign() == Ordering::Less,
+                })
+            } else {
+                None
+            };
+            let mut group = index;
+            if event.is_some() {
+                for (candidate, previous) in events.values.iter().enumerate() {
+                    self.work.charge(48, budget)?;
+                    if *previous == event {
+                        group = candidate;
+                        break;
+                    }
+                }
+            }
+            events.push(event)?;
+            groups.push(group)?;
+        }
+        for index in 0..groups.values.len() {
+            self.work.charge(1, budget)?;
             if self.fragments.polygons.values.is_empty() {
                 break;
             }
-            let plane = hull.planes[index];
-            let plane = (vector(plane.normal)?, Rational::from_f64(plane.dist)?);
-            let (_, b) = self.segment_values(plane.0, plane.1)?;
-            if b == Rational::ZERO {
+            if groups.values[index] != index || events.values[index].is_none() {
                 continue;
             }
-            let mut boundaries = Storage::new(hull.planes.len(), budget)?;
-            for boundary in &hull.planes {
-                self.work.charge(256, budget)?;
-                let boundary = (vector(boundary.normal)?, Rational::from_f64(boundary.dist)?);
-                let (_, other) = self.segment_values(boundary.0, boundary.1)?;
-                let strict = other != Rational::ZERO && other.sign() != b.sign();
-                boundaries.push((boundary, strict))?;
+            self.work.charge(groups.values.len(), budget)?;
+            if groups
+                .values
+                .iter()
+                .filter(|&&group| group == index)
+                .count()
+                == 1
+            {
+                self.subtract_hull_face(hull, index, masks, budget)?;
+                continue;
             }
-            if let Some(face) = face {
-                self.work.charge(2048, budget)?;
-                let (material, projection) = face.exact_mapping();
-                let mask = material.binary_mask()?;
-                let mapping = MaskMapping::brush(projection, optical.pose, &mask)?;
-                let corners = masks.hull_bounds(hull)?.corners();
-                let bounds = mapping.bounds(corners.into_iter().map(Ok))?;
-                self.subtract_masked_patch(
-                    plane,
-                    &boundaries.values,
-                    &mapping,
-                    bounds,
-                    &mask,
-                    masks.get(material)?,
+            let mut event = Polygons::new(budget)?;
+            event.push(source_polygon(budget)?, Coverage::CLEAR)?;
+            let original = std::mem::replace(&mut self.fragments, event);
+            let composition = std::mem::replace(&mut self.composition, Composition::Maximum);
+            let result = (|| {
+                for (face, &group) in groups.values.iter().enumerate() {
+                    self.work.charge(1, budget)?;
+                    if group == index {
+                        self.subtract_hull_face(hull, face, masks, budget)?;
+                    }
+                }
+                self.fragments.coalesce(&mut self.work, budget)
+            })();
+            let event = std::mem::replace(&mut self.fragments, original);
+            self.composition = composition;
+            result?;
+            for mut region in event.polygons.values {
+                self.work.charge(1, budget)?;
+                if self.fragments.polygons.values.is_empty() {
+                    break;
+                }
+                if region.coverage.clear() {
+                    continue;
+                }
+                let bounds = *region.bounds(&mut self.work, budget)?;
+                let mut constraints = Storage::new(region.polygon.values.len(), budget)?;
+                for vertex in &region.polygon.values {
+                    self.work.charge(1, budget)?;
+                    constraints.push((vertex.incoming, false))?;
+                }
+                self.subtract_bounded_constraints(
+                    &constraints.values,
+                    Some(bounds),
+                    region.coverage,
                     budget,
                 )?;
-            } else {
-                self.subtract_patch(plane, &boundaries.values, budget)?;
             }
+        }
+        Ok(())
+    }
+
+    fn subtract_hull_face(
+        &mut self,
+        hull: &super::super::Occluder,
+        index: usize,
+        masks: &super::cutout::Cache,
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
+        let optical = hull
+            .optical
+            .as_ref()
+            .ok_or("Exact cutout hull lost its optical boundaries")?;
+        self.work.charge(256, budget)?;
+        if self.fragments.polygons.values.is_empty() {
+            return Ok(());
+        }
+        let plane = hull.planes[index];
+        let plane = (vector(plane.normal)?, Rational::from_f64(plane.dist)?);
+        let (_, b) = self.segment_values(plane.0, plane.1)?;
+        if b == Rational::ZERO {
+            return Ok(());
+        }
+        let mut boundaries = Storage::new(hull.planes.len(), budget)?;
+        for boundary in &hull.planes {
+            self.work.charge(256, budget)?;
+            let boundary = (vector(boundary.normal)?, Rational::from_f64(boundary.dist)?);
+            let (_, other) = self.segment_values(boundary.0, boundary.1)?;
+            let strict = other != Rational::ZERO && other.sign() != b.sign();
+            boundaries.push((boundary, strict))?;
+        }
+        if let Some(face) = &optical.faces[index] {
+            self.work.charge(2048, budget)?;
+            let (material, projection) = face.exact_mapping();
+            let mask = material.exact_mask()?;
+            let mapping = MaskMapping::brush(projection, optical.pose, &mask)?;
+            let corners = masks.hull_bounds(hull)?.corners();
+            let bounds = mapping.bounds(corners.into_iter().map(Ok))?;
+            self.subtract_masked_patch(
+                plane,
+                &boundaries.values,
+                &mapping,
+                bounds,
+                &mask,
+                masks.get(material)?,
+                budget,
+            )?;
+        } else {
+            self.subtract_patch(plane, &boundaries.values, Coverage::OPAQUE, budget)?;
         }
         Ok(())
     }
@@ -1687,7 +1920,7 @@ impl Visibility {
         boundaries: &[(Equation, bool)],
         mapping: &MaskMapping,
         bounds: [[Rational; 2]; 2],
-        mask: &super::super::props::alpha::BinaryMask<'_>,
+        mask: &super::super::props::alpha::ExactMask<'_>,
         regions: &super::cutout::Regions,
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
@@ -1721,101 +1954,135 @@ impl Visibility {
             .ok_or("Exact cutout exceeds 1048576 candidate rectangle visits")?;
         self.work.charge(candidates, budget)?;
         if let [region] = regions.rectangles.as_slice() {
-            return if region.value {
-                self.subtract_patch(plane, boundaries, budget)
-            } else {
+            return if region.value.clear() {
                 Ok(())
+            } else {
+                self.subtract_patch(plane, boundaries, region.value, budget)
             };
         }
         let projection = self.patch_projection(plane, budget)?;
+        let certify_coplanar = if projection.is_none() {
+            self.work.charge(256 + regions.rectangles.len(), budget)?;
+            let (values, offset) = self.segment_values(plane.0, plane.1)?;
+            offset == Rational::ZERO
+                && values.into_iter().all(|value| value == Rational::ZERO)
+                && regions
+                    .rectangles
+                    .iter()
+                    .any(|region| !region.value.clear() && !region.value.opaque())
+        } else {
+            false
+        };
+        if certify_coplanar {
+            candidates
+                .checked_mul(2)
+                .filter(|count| *count <= MAX_RECTANGLE_VISITS)
+                .ok_or("Exact cutout exceeds 1048576 candidate rectangle visits")?;
+            self.work.charge(candidates, budget)?;
+        }
         let base = if let Some(projection) = &projection {
             self.project_constraints(projection, boundaries, budget)?
         } else {
             Storage::new(0, budget)?
         };
-        for y in tiles[1][0]..=tiles[1][1] {
-            for x in tiles[0][0]..=tiles[0][1] {
-                for rectangle in &regions.rectangles {
-                    self.work.charge(16, budget)?;
-                    if self.fragments.polygons.values.is_empty() {
-                        return Ok(());
-                    }
-                    if !rectangle.value {
-                        continue;
-                    }
-                    let mut region = [[None; 2]; 2];
-                    let mut overlap = true;
-                    for axis in 0..2 {
-                        let extent = if axis == 0 { rectangle.x } else { rectangle.y };
-                        let offset = [x, y][axis] * mask.dimensions[axis] as i64;
-                        region[axis] = [
-                            (!(mask.clamp[axis] && extent[0] == 0))
-                                .then_some(extent[0] as i64 + offset),
-                            (!(mask.clamp[axis] && extent[1] == mask.dimensions[axis]))
-                                .then_some(extent[1] as i64 + offset),
-                        ];
-                        let low = match region[axis][0] {
-                            Some(value) => Rational::new(i128::from(value), 1)?,
-                            None => bounds[axis][0].sub(Rational::ONE)?,
-                        };
-                        let high = match region[axis][1] {
-                            Some(value) => Rational::new(i128::from(value), 1)?,
-                            None => bounds[axis][1].add(Rational::ONE)?,
-                        };
-                        overlap &= texture_regions::axis_overlap(
-                            bounds[axis],
-                            [low, high],
-                            true,
-                            Rational::compare,
-                        );
-                    }
-                    if !overlap {
-                        continue;
-                    }
-                    let mut clipped = Storage::new(4, budget)?;
-                    for (axis, region) in region.into_iter().enumerate() {
-                        for (edge, boundary) in region.into_iter().enumerate() {
-                            if let Some(boundary) = boundary {
-                                self.work.charge(16, budget)?;
-                                let value = Rational::new(i128::from(boundary), 1)?;
-                                let redundant = if edge == 0 {
-                                    value.compare(bounds[axis][0]) != Ordering::Greater
-                                } else {
-                                    value.compare(bounds[axis][1]) == Ordering::Greater
-                                };
-                                if redundant {
-                                    continue;
+        for phase in 0..if certify_coplanar { 2 } else { 1 } {
+            let certification = certify_coplanar && phase == 0;
+            for y in tiles[1][0]..=tiles[1][1] {
+                for x in tiles[0][0]..=tiles[0][1] {
+                    for rectangle in &regions.rectangles {
+                        self.work.charge(16, budget)?;
+                        if self.fragments.polygons.values.is_empty() && !certification {
+                            return Ok(());
+                        }
+                        if rectangle.value.clear()
+                            || (certify_coplanar && rectangle.value.opaque() == certification)
+                        {
+                            continue;
+                        }
+                        let mut region = [[None; 2]; 2];
+                        let mut overlap = true;
+                        for axis in 0..2 {
+                            let extent = if axis == 0 { rectangle.x } else { rectangle.y };
+                            let offset = [x, y][axis] * mask.dimensions[axis] as i64;
+                            region[axis] = [
+                                (!(mask.clamp[axis] && extent[0] == 0))
+                                    .then_some(extent[0] as i64 + offset),
+                                (!(mask.clamp[axis] && extent[1] == mask.dimensions[axis]))
+                                    .then_some(extent[1] as i64 + offset),
+                            ];
+                            let low = match region[axis][0] {
+                                Some(value) => Rational::new(i128::from(value), 1)?,
+                                None => bounds[axis][0].sub(Rational::ONE)?,
+                            };
+                            let high = match region[axis][1] {
+                                Some(value) => Rational::new(i128::from(value), 1)?,
+                                None => bounds[axis][1].add(Rational::ONE)?,
+                            };
+                            overlap &= texture_regions::axis_overlap(
+                                bounds[axis],
+                                [low, high],
+                                true,
+                                Rational::compare,
+                            );
+                        }
+                        if !overlap {
+                            continue;
+                        }
+                        let mut clipped = Storage::new(4, budget)?;
+                        for (axis, region) in region.into_iter().enumerate() {
+                            for (edge, boundary) in region.into_iter().enumerate() {
+                                if let Some(boundary) = boundary {
+                                    self.work.charge(16, budget)?;
+                                    let value = Rational::new(i128::from(boundary), 1)?;
+                                    let redundant = if edge == 0 {
+                                        value.compare(bounds[axis][0]) != Ordering::Greater
+                                    } else {
+                                        value.compare(bounds[axis][1]) == Ordering::Greater
+                                    };
+                                    if redundant {
+                                        continue;
+                                    }
+                                    self.work.charge(64, budget)?;
+                                    clipped.push((
+                                        mapping.boundary(axis, boundary, edge == 0)?,
+                                        edge == 1,
+                                    ))?;
                                 }
-                                self.work.charge(64, budget)?;
-                                clipped.push((
-                                    mapping.boundary(axis, boundary, edge == 0)?,
-                                    edge == 1,
-                                ))?;
                             }
                         }
-                    }
-                    if let Some(projection) = &projection {
-                        let mut constraints =
-                            Storage::new(base.values.len() + clipped.values.len(), budget)?;
-                        for &constraint in &base.values {
-                            self.work.charge(1, budget)?;
-                            constraints.push(constraint)?;
+                        if let Some(projection) = &projection {
+                            let mut constraints =
+                                Storage::new(base.values.len() + clipped.values.len(), budget)?;
+                            for &constraint in &base.values {
+                                self.work.charge(1, budget)?;
+                                constraints.push(constraint)?;
+                            }
+                            for &(boundary, strict) in &clipped.values {
+                                let constraint =
+                                    self.project_boundary(projection, boundary, budget)?;
+                                constraints.push((constraint, strict))?;
+                            }
+                            self.subtract_mask_constraints(
+                                &constraints.values,
+                                rectangle.value,
+                                budget,
+                            )?;
+                        } else {
+                            let mut equations =
+                                Storage::new(boundaries.len() + clipped.values.len(), budget)?;
+                            for &boundary in boundaries {
+                                equations.push(boundary)?;
+                            }
+                            for &boundary in &clipped.values {
+                                equations.push(boundary)?;
+                            }
+                            self.subtract_coplanar_patch(
+                                plane,
+                                &equations.values,
+                                rectangle.value,
+                                budget,
+                            )?;
                         }
-                        for &(boundary, strict) in &clipped.values {
-                            let constraint = self.project_boundary(projection, boundary, budget)?;
-                            constraints.push((constraint, strict))?;
-                        }
-                        self.subtract_mask_constraints(&constraints.values, budget)?;
-                    } else {
-                        let mut equations =
-                            Storage::new(boundaries.len() + clipped.values.len(), budget)?;
-                        for &boundary in boundaries {
-                            equations.push(boundary)?;
-                        }
-                        for &boundary in &clipped.values {
-                            equations.push(boundary)?;
-                        }
-                        self.subtract_coplanar_patch(plane, &equations.values, budget)?;
                     }
                 }
             }
@@ -1827,19 +2094,21 @@ impl Visibility {
         &mut self,
         plane: Equation,
         boundaries: &[(Equation, bool)],
+        coverage: Coverage,
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
         let Some(projection) = self.patch_projection(plane, budget)? else {
-            return self.subtract_coplanar_patch(plane, boundaries, budget);
+            return self.subtract_coplanar_patch(plane, boundaries, coverage, budget);
         };
         let constraints = self.project_constraints(&projection, boundaries, budget)?;
-        self.subtract_constraints(&constraints.values, budget)
+        self.subtract_constraints(&constraints.values, coverage, budget)
     }
 
     fn subtract_coplanar_patch(
         &mut self,
         plane: Equation,
         boundaries: &[(Equation, bool)],
+        coverage: Coverage,
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
         let mut equations = Storage::new(boundaries.len() + 2, budget)?;
@@ -1848,7 +2117,19 @@ impl Visibility {
         for &boundary in boundaries {
             equations.push(boundary)?;
         }
-        self.subtract_equations(equations.values.into_iter().map(Ok), budget)
+        let ambiguous = if !coverage.clear() && !coverage.opaque() {
+            self.work.charge(256, budget)?;
+            let (values, offset) = self.segment_values(plane.0, plane.1)?;
+            offset == Rational::ZERO && values.into_iter().all(|value| value == Rational::ZERO)
+        } else {
+            false
+        };
+        self.subtract_equations(
+            equations.values.into_iter().map(Ok),
+            coverage,
+            ambiguous,
+            budget,
+        )
     }
 
     fn patch_projection(
@@ -1934,6 +2215,8 @@ impl Visibility {
     fn subtract_equations(
         &mut self,
         planes: impl ExactSizeIterator<Item = Result<(Equation, bool), String>>,
+        coverage: Coverage,
+        ambiguous_coplanar: bool,
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
         let count = planes.len();
@@ -1997,46 +2280,69 @@ impl Visibility {
                 ))?;
             }
         }
-        self.subtract_constraints(&constraints.values, budget)
+        if ambiguous_coplanar {
+            return if self
+                .constraint_bounds(&constraints.values, budget)?
+                .is_some()
+            {
+                Err("Exact emission refuses nonbinary coplanar masked overlaps without one certified crossing".into())
+            } else {
+                Ok(())
+            };
+        }
+        self.subtract_constraints(&constraints.values, coverage, budget)
     }
 
-    fn subtract_mask_constraints(
+    fn constraint_bounds(
         &mut self,
         constraints: &[(Halfplane, bool)],
         budget: &mut Budget<'_>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<SourceBounds>, String> {
         self.work.charge(16, budget)?;
         let mut shadow = source_polygon(budget)?;
         for &(halfplane, strict) in constraints {
             self.work.charge(1, budget)?;
             if halfplane.rejects_all(strict) {
-                return Ok(());
+                return Ok(None);
             }
             if halfplane.constant() {
                 continue;
             }
             match split(&shadow, halfplane, &mut self.work, budget)? {
                 Split::Inside => (),
-                Split::Outside => return Ok(()),
+                Split::Outside => return Ok(None),
                 Split::Cut { inside, .. } => shadow = inside,
             }
         }
-        let bounds = shadow.bounds(&mut self.work, budget)?;
-        self.subtract_bounded_constraints(constraints, Some(bounds), budget)
+        Ok(Some(shadow.bounds(&mut self.work, budget)?))
+    }
+
+    fn subtract_mask_constraints(
+        &mut self,
+        constraints: &[(Halfplane, bool)],
+        coverage: Coverage,
+        budget: &mut Budget<'_>,
+    ) -> Result<(), String> {
+        let Some(bounds) = self.constraint_bounds(constraints, budget)? else {
+            return Ok(());
+        };
+        self.subtract_bounded_constraints(constraints, Some(bounds), coverage, budget)
     }
 
     fn subtract_constraints(
         &mut self,
         constraints: &[(Halfplane, bool)],
+        coverage: Coverage,
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
-        self.subtract_bounded_constraints(constraints, None, budget)
+        self.subtract_bounded_constraints(constraints, None, coverage, budget)
     }
 
     fn subtract_bounded_constraints(
         &mut self,
         constraints: &[(Halfplane, bool)],
         bounds: Option<SourceBounds>,
+        coverage: Coverage,
         budget: &mut Budget<'_>,
     ) -> Result<(), String> {
         for &(halfplane, strict) in constraints {
@@ -2046,7 +2352,14 @@ impl Visibility {
             }
         }
         let mut next = Polygons::new(budget)?;
-        for mut fragment in self.fragments.polygons.values.drain(..) {
+        'fragments: for mut fragment in self.fragments.polygons.values.drain(..) {
+            self.work.charge(1, budget)?;
+            let coverage = self.composition.apply(fragment.coverage, coverage);
+            if coverage == fragment.coverage {
+                next.push_fragment(fragment)?;
+                continue;
+            }
+            let previous = fragment.coverage;
             if let Some(bounds) = &bounds
                 && bounds.disjoint(
                     fragment.bounds(&mut self.work, budget)?,
@@ -2089,16 +2402,25 @@ impl Visibility {
                         next.polygons.values.truncate(start);
                         next.vertices = vertices;
                         next.push_fragment(fragment)?;
-                        break;
+                        continue 'fragments;
                     }
                     Split::Cut {
                         inside: cut,
                         outside,
                     } => {
-                        next.push(outside)?;
+                        next.push(outside, previous)?;
                         inside = Some(cut);
                     }
                 }
+            }
+            if self.composition == Composition::Add && coverage.opaque() {
+                continue;
+            }
+            if let Some(polygon) = inside {
+                next.push(polygon, coverage)?;
+            } else {
+                fragment.coverage = coverage;
+                next.push_fragment(fragment)?;
             }
         }
         self.fragments = next;
@@ -2188,7 +2510,9 @@ impl Visibility {
         let mut coarse_error = 0.0;
         let mut error = 0.0;
         for index in 0..self.fragments.polygons.values.len() {
-            let polygon = &self.fragments.polygons.values[index].polygon;
+            let region = &self.fragments.polygons.values[index];
+            let coverage = region.coverage;
+            let polygon = &region.polygon;
             self.work.charge(polygon.values.len() * 64, budget)?;
             let mut world = Polygon::new(polygon.values.len(), budget)?;
             for vertex in &polygon.values {
@@ -2506,7 +2830,10 @@ impl Visibility {
                         );
                     }
                 }
-                result.push(triangle)?;
+                result.push(Fragment {
+                    points: triangle,
+                    coverage,
+                })?;
             }
         }
         Ok(Fragments {

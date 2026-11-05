@@ -119,6 +119,9 @@ fn material_emission_details(stats: &serde_json::Value) -> String {
     if let Some(policy) = emission["visibility_policy"].as_str() {
         let label = match policy {
             "sampled_segments" => "Sampled segments",
+            "exact_byte_coverage_convex_hull_and_mesh_triangle_topology_bounded_kernel_conversion" => {
+                "Exact byte-coverage hulls and mesh triangles"
+            }
             "exact_binary_cutout_convex_hull_and_mesh_triangle_topology_bounded_kernel_conversion" => {
                 "Exact opaque and cutout hulls and mesh triangles"
             }

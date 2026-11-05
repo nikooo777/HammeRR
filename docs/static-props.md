@@ -20,24 +20,30 @@ The **Physics bodies** setting controls compiled brush and terrain bodies separa
 
 ## Cast exact emission shadows
 
-Use supported opaque or binary-cutout prop triangles to block [material emission](material-emission.md#exact-brush-shadows).
+Use supported opaque, cutout or translucent prop triangles to attenuate [material emission](material-emission.md#exact-brush-shadows).
 
 1. Leave **Disable Shadows** disabled on the prop.
 2. Open **World settings…** and set **Emission file**.
 3. Enable **Exact emission visibility**, then click **Apply properties**.
-4. Compile with **Direct LDR** or **Direct LDR + HDR**.
-5. Open **Build details…**. Check **Emission visibility policy** and **Diagnostics**.
+4. Open **Build settings…** and choose **Direct LDR** or **Direct LDR + HDR**. For RGB transmission, enable **Brush texture shadows** and **Colored texture shadows**.
+5. Compile.
+6. Open **Build details…**. **Emission visibility policy** reads **Exact byte-coverage hulls and mesh triangles**. Check **Diagnostics**.
 
 Shadows use actual triangles from body 0 and LOD 0 with the selected **Skin**
 and compiled pose, including supported referenced props. Materials require plain
 opaque **VertexLitGeneric** or supported **Patch** chains. Supported static
-binary-cutout **VertexLitGeneric** and **UnlitGeneric** materials also qualify,
-including their checked transforms and alpha reference. Their original model
+cutout or translucent **VertexLitGeneric** and **UnlitGeneric** materials also qualify,
+using their prepared scalar/RGB coverage, checked transforms, nearest mip0
+clamp/repeat and cutout alpha reference. Their original model
 must request texture shadows with `$casttextureshadows`; exact mode reports an
 error if that prerequisite is absent. It never turns settings or model flags on.
-The actual masked mesh silhouette casts the shadow. Exact mode checks the
-original model and material inputs. Missing or unsupported materials,
-fractional/colored transmission and zero-area triangles stop the build. The previous BSP stays intact.
+The actual two-sided mesh triangles cast the shadow. Independent primitive
+crossings add byte coverage with saturation per channel; gamma 2.2 RGB conversion
+and strict segment endpoints stay unchanged. Exact mode checks the original model
+and material inputs. Missing or unsupported materials, zero-area triangles and
+uncertified positive-area nonbinary coplanar mask overlaps stop the build.
+Existing geometry, work, memory and conversion limits remain, with no sampled
+fallback. The previous BSP stays intact.
 
 **Disable Shadows** removes that prop's shadow geometry. Disabling receiver self
 shadows omits only that receiving prop's own triangles. Other props, world and

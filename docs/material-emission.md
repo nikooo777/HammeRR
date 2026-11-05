@@ -126,13 +126,13 @@ the policy.
 
 ## Exact brush, terrain and prop shadows
 
-Resolve opaque and binary-cutout brush, terrain and static prop shadows across the source area.
+Resolve opaque, cutout and supported scalar or RGB fractional shadows across the source area.
 
 1. Open **World settings…** and set **Emission file**.
 2. Enable **Exact emission visibility**, then click **Apply properties**.
 3. Compile with **Direct LDR** or **Direct LDR + HDR**.
 4. Open **Build details…**. **Emission visibility policy** should read
-   **Exact opaque and cutout hulls and mesh triangles**. Check
+   **Exact byte-coverage hulls and mesh triangles**. Check
    **Emission conversion bounds (dimensionless)**.
 
 Exact mode supports uniquely owned world/detail and eligible stationary
@@ -162,51 +162,61 @@ native filtering parity are not certified. The zero-residual texture path is
 unchanged.
 
 Converted binary64 kernel vertices must stay exactly on each actual source
-triangle plane. All converted coverage must stay inside the exact visible region.
+triangle plane. Each fragment retains its constant RGB transmission and stays
+inside its exact coverage region.
 The compiler rejects faces that cannot meet these checks.
-Opaque brush casters may have oblique planes when their final hull is certified
+Brush casters may have oblique planes when their final hull is certified
 closed, bounded and convex. Every applicable original hull participates,
 including invisible boundaries.
 Eligible stationary brush models retain their existing global or same-model
 shadow scope.
 
-Terrain with a supported opaque or binary-cutout material casts from its actual
+Terrain with a supported opaque, cutout or translucent material casts from its actual
 native triangles. Opaque materials require **LightmappedGeneric**,
-**UnlitGeneric**, or a supported **Patch** chain. Cutouts require the supported
-static **LightmappedGeneric** form and **Brush texture shadows**.
+**UnlitGeneric**, or a supported **Patch** chain. Texture alpha requires the supported
+static **LightmappedGeneric** forms and **Brush texture shadows**.
 Terrain blend shaders are unsupported. Masked regions affect light transport;
 they do not create physical holes. Collision settings do not disable shadows.
 
 Eligible static props cast from actual triangles in body 0 and LOD 0, with
 the selected skin at the compiled pose. Opaque materials require plain
-**VertexLitGeneric** or supported **Patch** chains. Binary cutouts use supported
+**VertexLitGeneric** or supported **Patch** chains. Texture alpha uses supported
 static **VertexLitGeneric** or **UnlitGeneric** materials and Patch chains;
 the original model must request texture shadows with `$casttextureshadows`.
 Supported referenced props use their assembled pose. See [prop shadow controls](static-props.md#cast-exact-emission-shadows).
 
-To use cutout brush or terrain casters:
+To use textured brush or terrain casters:
 
-1. Apply a supported static alpha-test material described in [Brush texture shadows](brush-texture-shadows.md).
-2. Open **Build settings…** and enable **Brush texture shadows**.
+1. Apply a supported static cutout or translucent material described in [Brush texture shadows](brush-texture-shadows.md).
+2. Open **Build settings…**, choose **Direct LDR** or **Direct LDR + HDR**, and enable **Brush texture shadows**. For RGB transmission, also enable **Colored texture shadows**.
 3. Keep **Exact emission visibility** enabled in **World settings…**, then compile.
 
-The compiler borrows the original loaded alpha texture and cutoff. Masks use
-nearest mip0 texels, the checked material transform and VTF clamp/repeat flags.
+The compiler reuses the prepared scalar or RGB coverage from the original texture.
+RGB keeps the existing gamma 2.2 conversion. Masks use nearest mip0 texels,
+the checked material transform and VTF clamp/repeat flags.
 It resolves texel regions on the actual provider plane with half-open texel
 ownership, including constant and rank-deficient UVs. No clipped caster geometry
 is rounded to a substitute mesh. Settings are never enabled automatically.
-Brush cutouts keep their full original hull: entry and exit events contribute,
-exactly coincident boundary faces use maximum coverage, and only strict segment
-interior events block. Mask enumeration uses certified bounds derived from the
-final hull halfspaces. Ordinary sampled tracing keeps its separate near-tie
-bands. Eligible brush models keep their global or same-model scope.
-Fractional and colored transmission, animation and general shader effects remain
-unsupported in exact mode; disable **Exact emission visibility** to use supported
-sampled fractional or colored shadows.
+Coverage bytes add with saturation per channel across independent crossings;
+visibility is the remaining fraction out of 255. Brush hull entry and exit
+contribute separately. Faces of one hull at exactly the same projected segment
+event use componentwise maximum instead of addition. Two boundaries with alpha 64
+therefore leave 127/255 visibility. Mask enumeration keeps its certified bounds
+from the final hull halfspaces. Ordinary sampled tracing keeps its separate
+near-tie bands. Eligible brush models keep their global or same-model scope.
 
-Terrain and prop triangles block from both sides, including their edges.
-Only contacts between the shadow segment endpoints block light. Exact mode
-checks the original model and material inputs before gathering light.
+Terrain and prop triangles attenuate from both sides. True shared native terrain
+topology owns a crossing once; unrelated coincident surfaces and separate prop
+primitives remain independent. Only events strictly between the shadow segment
+endpoints contribute. Exact mode checks the original model and material inputs
+before gathering light.
+
+If the shadow origin and source triangle lie in one plane, exact mode refuses
+uncertified positive-area overlaps with a nonbinary masked patch in that plane.
+It also refuses shared native terrain-edge events with positive source area in
+such a coplanar shadow chart when crossing ownership cannot be certified.
+Shared boundaries of zero source area remain supported. Animation and general
+shader effects remain unsupported.
 
 Unsupported casters, source support or numeric bounds stop the build.
 The previous BSP stays intact. The compiler does not switch to sampled shadows.
@@ -216,10 +226,11 @@ For larger bakes, open **Build settings…**, increase **Lighting work limit
 (millions)**, then click **Apply work limit**. Numeric and memory limits still apply.
 Exact mode also limits each source triangle to 32 million work units.
 Increasing the build work limit does not raise this fixed limit.
+Existing fragment, texture, memory and conversion limits remain in effect.
 
 Clipping uses exact rational arithmetic. Exact mode removes redundant cuts
-between visible regions when their exact union is convex. Shadow boundaries stay
-fixed. Conversion uses bounded on-plane candidates. Narrow openings and complex
+between regions with identical coverage when their exact union is convex.
+Shadow boundaries stay fixed. Conversion uses bounded on-plane candidates. Narrow openings and complex
 cuts can still exceed numeric limits.
 Conversion to the floating lighting kernel includes the source surface-area
 scale and, when needed, certified actual source-area Jacobian and source-incidence
@@ -233,9 +244,9 @@ Disable **Exact emission visibility** to use the original sampled bake.
 Exact mode rejects uncertified native fans or projections, primitive overrides,
 displacement sources, failed required texture coverage, unrepresentable
 on-plane fragment vertices, moving/parented/unrequested brush-model emitting
-sources, sky/unknown materials, fractional or colored transmission, unsupported prop models, zero-area mesh
-triangles and uncertified hulls. Checked arithmetic, fragment and conditioning
-limits also apply.
+sources, sky/unknown materials, unsupported prop models, zero-area mesh triangles,
+uncertified hulls and the ambiguous coplanar cases above. Checked arithmetic,
+fragment and conditioning limits also apply.
 **Fullbright** checks the setting and declarations without exact shadow admission.
 
 ## Limits

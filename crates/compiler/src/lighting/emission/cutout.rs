@@ -2,11 +2,12 @@ use std::collections::BTreeMap;
 
 use super::super::props::alpha::Material;
 use super::super::texture_regions::{self, Rectangle};
+use super::super::transport::Coverage;
 use super::exact::HullBounds;
 use super::{Allocation, Budget};
 
 pub(super) struct Regions {
-    pub rectangles: Vec<Rectangle<bool>>,
+    pub rectangles: Vec<Rectangle<Coverage>>,
     _allocation: Allocation,
 }
 
@@ -31,11 +32,11 @@ impl Cache {
         if self.masks.contains_key(&key) {
             return Ok(());
         }
-        let mask = material.binary_mask()?;
+        let mask = material.exact_mask()?;
         let mut allocation = budget.reserve_bytes(size_of::<Regions>())?;
         let rectangles = texture_regions::rectangles(
             mask.dimensions,
-            |x, y| mask.opaque(x, y),
+            |x, y| mask.coverage(x, y),
             budget,
             &mut allocation,
         )?;

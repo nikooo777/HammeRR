@@ -959,6 +959,38 @@ custody and unknown metadata reject that conversion before Apply.
 Terrain edits keep native base-grid UVs; arbitrary
 nonlinear projection onto displaced world positions is not a native UV mode.
 
+## Free face cuts and piece textures
+
+1. Select one ordinary face per brush with `select_brush_components`.
+2. Call `preview_component_face_cuts` with the current component `snapshot` and
+   `cuts:[{solid,side,vertices:[[x,y,z],...],edges:[[index,index],...]}]`.
+3. Inspect `preview.partition`: requested/resolved endpoints, authored/boundary
+   edges, generated diagonals, triangle `loops` and actual fragment costs.
+4. Use the existing piece selection, material, texture, Fit and framing tools.
+5. Call `commit_component_edit` to materialize, `store_component_partition` to
+   keep editor intent, or `cancel_component_edit` to discard it.
+
+`append_component_face_cut` adds `segment:[[x,y,z],[x,y,z]]` to a current draft's
+`solid`/`side`. Clear that source's material and texture overrides first.
+Invalid changes retain the previous token and plan. Open segments are not
+extended. Keep/resume/remove use the existing saved-partition tools.
+
+`update_component_partition_texture.texture.axes` optionally supplies
+`[[ux,uy,uz],[vx,vy,vz]]`. Vectors are world-space native directions; `rotation`
+is metadata and does not rotate explicit vectors again. Omission uses the source
+directions and scalar rotation. Effective reports include resolved axes.
+Fit, justification, transforms, Duplicate, arrays and clipboard transfer retain
+valid projection plans. Pass `texture:null` to restore source placement.
+
+Free cuts permit 16 source faces, 32 authored segments and 64 final vertices per
+source, 120 triangle pieces per source and 256 output fragments in total.
+Boundary and free plans share 64 saved faces, 64 KiB and 4096 metadata nodes.
+Distinct nearby endpoints reject; `max_endpoint_correction` and
+`numeric_tolerance` disclose permitted floating-point corrections.
+Materialization shares ridge material/reference guards, cubemap rebinding and
+instance-order preservation. Unsupported geometry, metadata and bindings refuse.
+See [Flat partitions](partitions.md).
+
 ## Precise VMF brush geometry
 
 `open_map` accepts complete `vertices_plus` face rings on supported convex
@@ -1802,8 +1834,9 @@ deleting sources.
 pivot is the copied bounds center. Scale and rotation use world XYZ axes around
 that pivot, with scale first, then the final world `offset: [x, y, z]`. Defaults
 are zero rotation and offset, and unit scale. MDL models require uniform scale;
-static/detail resizing is unsupported. Stale partitions, opaque partition extensions and
-unrepresentable transformed texture plans reject and retain the previous preview.
+static/detail resizing is unsupported. Stale or opaque partition plans and invalid
+transformed projections reject and retain the previous preview. Valid skewed
+projections use explicit native axes.
 
 Review names and links before `apply_paste`; use `cancel_paste` to discard the
 owned preview. Both take its `token`. External links require
@@ -1935,7 +1968,7 @@ These groups locate the available operations.
 | [Navigation defaults](navigation-defaults.md) | `get_navigation_settings`, `set_navigation_defaults`, `set_navigation_settings` |
 | [Overlays](overlays.md) | `apply_overlay`, `browse_overlay_targets`, `cancel_overlay`, `get_overlay_state`, `overlay_corner_handles`, `preview_overlay`, `preview_overlay_corners`, `preview_overlay_rebind`, `preview_overlay_refit`, `review_overlay` |
 | [Particles](particles.md) | `apply_particle_choice`, `begin_particle_choice`, `browse_particles`, `cancel_particle_choice`, `choose_particle`, `get_particle_choice`, `inspect_particle`, `reload_particle_assets` |
-| [Face partitions](partitions.md) | `frame_component_partitions`, `get_saved_component_partitions`, `pick_component_partitions`, `place_component_partition_texture`, `preview_component_partition`, `preview_partition_extrusion`, `raise_component_partition`, `remove_saved_component_partitions`, `resume_component_partitions`, `select_component_partitions`, `store_component_partition`, `update_component_partition_cut`, `update_component_partition_material`, `update_component_partition_texture` |
+| [Face partitions](partitions.md) | `append_component_face_cut`, `frame_component_partitions`, `get_saved_component_partitions`, `pick_component_partitions`, `place_component_partition_texture`, `preview_component_face_cuts`, `preview_component_partition`, `preview_partition_extrusion`, `raise_component_partition`, `remove_saved_component_partitions`, `resume_component_partitions`, `select_component_partitions`, `store_component_partition`, `update_component_partition_cut`, `update_component_partition_material`, `update_component_partition_texture` |
 | [Repeated placement](repeated-placement.md) | `apply_repeat_array`, `cancel_repeat_array`, `get_repeat_array`, `preview_last_repeat_array`, `preview_repeat_array`, `preview_surface_scatter` |
 | [Preview defaults](preview-defaults.md) | `get_preview_defaults`, `set_preview_defaults` |
 | [Workspace layout](workspace-layout.md) | `get_workspace_preferences`, `set_workspace_layout`, `set_workspace_preferences` |

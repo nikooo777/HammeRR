@@ -80,12 +80,19 @@ pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result
     measurements.validate()?;
     let partitions = partition_metadata::Metadata::parse(vmf)?;
     partitions.validate()?;
+    let free_partitions = map_core::free_partition_metadata::Metadata::parse(vmf)?;
+    free_partitions.validate()?;
     super::super::components::require_known_face_topology_metadata(vmf)?;
     map_core::compile_region::active(vmf).map_err(|error| error.to_string())?;
     if !context.extra.is_empty()
         || context.notes.values().any(|note| !note.extra.is_empty())
         || !partitions.extra.is_empty()
         || partitions
+            .entries
+            .values()
+            .any(|intent| !intent.extra.is_empty())
+        || !free_partitions.extra.is_empty()
+        || free_partitions
             .entries
             .values()
             .any(|intent| !intent.extra.is_empty())
@@ -216,6 +223,15 @@ pub(super) fn plan(session: &Session, file: &str, pivot_choice: Pivot) -> Result
         .any(|(solid, _)| removed.contains(solid))
     {
         return Err("Selected brushes have partition intent; extraction cannot preserve it".into());
+    }
+    if free_partitions
+        .entries
+        .keys()
+        .any(|(solid, _)| removed.contains(solid))
+    {
+        return Err(
+            "Selected brushes have free-cut intent; materialize it before extraction".into(),
+        );
     }
     super::super::components::require_unbound_side_references(session, &side_ids)?;
     let added = 1usize + world_brushes + 2 * detail_brushes;

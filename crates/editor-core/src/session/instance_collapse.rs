@@ -670,6 +670,7 @@ impl Session {
                 map_core::context::METADATA_KEY,
                 map_core::measurements::KEY,
                 map_core::partition_metadata::KEY,
+                map_core::free_partition_metadata::KEY,
                 map_core::saved_views::KEY,
                 map_core::texture_atlas::regions::KEY,
                 "cordons",

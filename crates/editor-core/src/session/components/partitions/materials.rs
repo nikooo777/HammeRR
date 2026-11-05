@@ -54,24 +54,41 @@ impl Draft {
         part: &Partition,
         piece: u32,
     ) -> Option<&'a str> {
+        self.effective_piece_material(document, part.source.solid, part.source.side, piece)
+    }
+
+    pub(super) fn effective_piece_material<'a>(
+        &'a self,
+        document: &'a map_core::Document,
+        solid: u32,
+        side: u32,
+        piece: u32,
+    ) -> Option<&'a str> {
         self.materials
             .get(&PartitionRef {
-                solid: part.source.solid,
+                solid,
                 partition: piece,
             })
             .map(String::as_str)
             .or_else(|| {
-                subobject::solid(document, part.source.solid)
+                subobject::solid(document, solid)
                     .ok()?
                     .1
                     .sides
                     .iter()
-                    .find(|side| side.id == part.source.side)
+                    .find(|source| source.id == side)
                     .map(|side| side.material.as_str())
             })
     }
 
     pub(super) fn store(&self, tx: &mut map_core::Transaction) -> Result<(), EditError> {
+        if self.is_free() {
+            return map_core::free_partition_metadata::store(
+                tx,
+                &self.free_partitions,
+                &self.free_surfaces(),
+            );
+        }
         for part in &self.partitions {
             let materials = std::array::from_fn(|partition| {
                 self.materials
@@ -129,14 +146,28 @@ impl Session {
             .filter(|entry| ids.contains(&entry.source.solid))
             .filter_map(|entry| entry.result.ok())
             .collect::<Vec<_>>();
+        let free_metadata =
+            map_core::free_partition_metadata::Metadata::parse(self.render_document().vmf())
+                .ok()?;
+        let free_partitions = free_metadata
+            .resolve(self.render_document())
+            .into_iter()
+            .filter(|entry| ids.contains(&entry.solid))
+            .filter_map(|entry| entry.result.ok())
+            .collect::<Vec<_>>();
+        let (mut materials, mut textures) =
+            super::free::saved_surfaces(&free_metadata, &free_partitions);
+        materials.extend(saved_materials(&metadata, &partitions));
+        textures.extend(super::textures::saved_textures(
+            self.render_document(),
+            &metadata,
+            &partitions,
+        ));
         Some(Draft {
-            materials: saved_materials(&metadata, &partitions),
-            textures: super::textures::saved_textures(
-                self.render_document(),
-                &metadata,
-                &partitions,
-            ),
+            materials,
+            textures,
             partitions,
+            free_partitions,
             rise: 0.0,
             roof_texture_lock: false,
             neighbor_texture_lock: false,
@@ -166,50 +197,46 @@ impl Session {
             return Vec::new();
         };
         draft
-            .partitions
-            .iter()
-            .filter(|part| {
-                draft
+            .pieces()
+            .into_iter()
+            .filter_map(|piece| {
+                let target = PartitionRef {
+                    solid: piece.solid,
+                    partition: piece.id,
+                };
+                if !draft
                     .materials
                     .keys()
-                    .any(|piece| piece.solid == part.source.solid)
-                    || draft
+                    .chain(draft.textures.keys())
+                    .any(|target| target.solid == piece.solid)
+                {
+                    return None;
+                }
+                let source = map_core::surface::side(
+                    &self.document,
+                    map_core::surface::FaceId {
+                        solid: piece.solid,
+                        side: piece.side,
+                    },
+                )?;
+                Some(render::scene::FaceOverlay {
+                    source: map_core::surface::FaceId {
+                        solid: piece.solid,
+                        side: piece.side,
+                    },
+                    points: piece.points,
+                    material: draft
+                        .effective_piece_material(
+                            &self.document,
+                            piece.solid,
+                            piece.side,
+                            piece.id,
+                        )?
+                        .to_string(),
+                    projection: draft
                         .textures
-                        .keys()
-                        .any(|piece| piece.solid == part.source.solid)
-            })
-            .flat_map(|part| {
-                part.loops.iter().filter_map(|piece| {
-                    Some(render::scene::FaceOverlay {
-                        source: map_core::surface::FaceId {
-                            solid: part.source.solid,
-                            side: part.source.side,
-                        },
-                        points: piece
-                            .vertices
-                            .iter()
-                            .map(|index| part.vertices[*index as usize].position)
-                            .collect(),
-                        material: draft
-                            .effective_material(&self.document, part, piece.id)?
-                            .to_string(),
-                        projection: draft
-                            .textures
-                            .get(&PartitionRef {
-                                solid: part.source.solid,
-                                partition: piece.id,
-                            })
-                            .and_then(|texture| {
-                                map_core::surface::side(
-                                    &self.document,
-                                    map_core::surface::FaceId {
-                                        solid: part.source.solid,
-                                        side: part.source.side,
-                                    },
-                                )
-                                .and_then(|source| texture.project(source).ok())
-                            }),
-                    })
+                        .get(&target)
+                        .and_then(|texture| texture.project(source).ok()),
                 })
             })
             .collect()
@@ -244,78 +271,81 @@ impl Session {
             .and_then(|preview| preview.extrusion.as_ref())
             .is_some_and(|extrusion| extrusion.spec.height < 0.0);
         let mut visible = BTreeMap::new();
-        for part in &draft.partitions {
-            for piece in &part.loops {
-                let reference = PartitionRef {
-                    solid: part.source.solid,
-                    partition: piece.id,
-                };
-                let outputs = include_outputs
-                    .then_some(())
-                    .and_then(|()| {
-                        self.geometry
-                            .components
-                            .preview
-                            .as_ref()
-                            .and_then(|preview| preview.extrusion.as_ref())
-                    })
-                    .map(|extrusion| {
-                        if inward {
-                            extrusion
-                                .plan
-                                .fragments
-                                .iter()
-                                .filter(|output| {
-                                    output.source == reference.solid
-                                        && output
-                                            .faces
-                                            .iter()
-                                            .any(|face| face.partition == Some(reference.partition))
-                                })
-                                .map(|output| output.solid.id)
-                                .collect::<Vec<_>>()
-                        } else {
-                            extrusion
-                                .plan
-                                .pieces
-                                .iter()
-                                .filter(|output| {
-                                    output.source.solid == reference.solid
-                                        && output.partition == reference.partition
-                                })
-                                .map(|output| output.solid.id)
-                                .collect()
-                        }
-                    })
-                    .unwrap_or_default();
-                let shown = if !outputs.is_empty() {
-                    outputs
-                        .iter()
-                        .any(|solid| !self.component_hidden(*solid, &hidden))
-                } else if self.component_hidden(part.source.solid, &no_tools) {
-                    false
-                } else if self.view.tool_textures {
-                    true
-                } else {
-                    let material = if inward {
-                        map_core::surface::side(
-                            &self.document,
-                            map_core::surface::FaceId {
-                                solid: part.source.solid,
-                                side: part.source.side,
-                            },
-                        )
-                        .map(|side| side.material.as_str())
+        for piece in draft.pieces() {
+            let reference = PartitionRef {
+                solid: piece.solid,
+                partition: piece.id,
+            };
+            let outputs = include_outputs
+                .then_some(())
+                .and_then(|()| {
+                    self.geometry
+                        .components
+                        .preview
+                        .as_ref()
+                        .and_then(|preview| preview.extrusion.as_ref())
+                })
+                .map(|extrusion| {
+                    if inward {
+                        extrusion
+                            .plan
+                            .fragments
+                            .iter()
+                            .filter(|output| {
+                                output.source == reference.solid
+                                    && output
+                                        .faces
+                                        .iter()
+                                        .any(|face| face.partition == Some(reference.partition))
+                            })
+                            .map(|output| output.solid.id)
+                            .collect::<Vec<_>>()
                     } else {
-                        draft.effective_material(&self.document, part, piece.id)
-                    };
-                    material.is_some_and(|material| {
-                        let id = self.materials.load(&self.game, material);
-                        !self.materials.get(id).tool
-                    })
+                        extrusion
+                            .plan
+                            .pieces
+                            .iter()
+                            .filter(|output| {
+                                output.source.solid == reference.solid
+                                    && output.partition == reference.partition
+                            })
+                            .map(|output| output.solid.id)
+                            .collect()
+                    }
+                })
+                .unwrap_or_default();
+            let shown = if !outputs.is_empty() {
+                outputs
+                    .iter()
+                    .any(|solid| !self.component_hidden(*solid, &hidden))
+            } else if self.component_hidden(piece.solid, &no_tools) {
+                false
+            } else if self.view.tool_textures {
+                true
+            } else {
+                let material = if inward {
+                    map_core::surface::side(
+                        &self.document,
+                        map_core::surface::FaceId {
+                            solid: piece.solid,
+                            side: piece.side,
+                        },
+                    )
+                    .map(|side| side.material.as_str())
+                } else {
+                    draft.effective_piece_material(
+                        &self.document,
+                        piece.solid,
+                        piece.side,
+                        piece.id,
+                    )
                 };
-                visible.insert(reference, shown);
-            }
+                material.is_some_and(|material| {
+                    let id = self.materials.load(&self.game, material);
+                    !self.materials.get(id).tool
+                })
+            };
+            visible.insert(reference, shown);
         }
         visible
     }
@@ -330,19 +360,7 @@ impl Session {
         if draft.rise != 0.0 || self.checked_component_preview(token)?.extrusion.is_some() {
             return Err("Return to flat before changing planned top materials".into());
         }
-        let targets = pieces.iter().cloned().collect::<BTreeSet<_>>();
-        if pieces.is_empty()
-            || pieces.len() > subobject::MAX_SOLIDS * 2
-            || targets.len() != pieces.len()
-            || targets.iter().any(|piece| {
-                !draft.partitions.iter().any(|part| {
-                    part.source.solid == piece.solid
-                        && part.loops.iter().any(|item| item.id == piece.partition)
-                })
-            })
-        {
-            return Err("Choose 1–32 distinct pieces from the current draft".into());
-        }
+        let targets = draft.texture_targets(pieces)?;
         let material = material
             .map(map_core::partition_metadata::normalize_top_material)
             .transpose()?;

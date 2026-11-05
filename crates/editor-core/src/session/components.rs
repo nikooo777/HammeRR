@@ -15,7 +15,7 @@ mod extrusion;
 mod partitions;
 mod ridge;
 mod ridge_bindings;
-pub use partitions::PartitionRef;
+pub use partitions::{FaceCut, PartitionRef};
 pub(in crate::session) use ridge::{
     require_known_face_topology_metadata, require_unbound_side_references,
 };
@@ -44,6 +44,7 @@ pub struct Preview {
     split: Option<SplitDraft>,
     crease: Option<CreaseDraft>,
     partition: Option<partitions::Draft>,
+    free_partition: Option<partitions::FreePreview>,
     extrusion: Option<extrusion::Draft>,
     pub(super) transform: Option<TransformDraft>,
     selection: BTreeSet<Component>,
@@ -65,6 +66,7 @@ impl Preview {
             split: None,
             crease: None,
             partition: None,
+            free_partition: None,
             extrusion: None,
             transform: None,
         }
@@ -319,7 +321,15 @@ impl Session {
             .preview
             .as_ref()
             .and_then(|preview| preview.crease.as_ref())
-            .and_then(|crease| self.ridge_stale_error(crease));
+            .and_then(|crease| self.ridge_stale_error(crease))
+            .or_else(|| {
+                self.geometry
+                    .components
+                    .preview
+                    .as_ref()
+                    .and_then(|preview| preview.free_partition.as_ref())
+                    .and_then(|preview| self.free_partition_stale_error(preview))
+            });
         let brushes = topology.iter().map(|shape| {
             let selected = |sides: &[u32]| self.displayed_component_selection().contains(&Component { solid: shape.solid, sides: sides.to_vec() });
             json!({
@@ -341,13 +351,13 @@ impl Session {
             "crease_choices":self.component_crease_choices()?.iter().map(|(component,pairs)|json!({"component":component_json(component),"pairs":pairs.iter().map(|pair|json!({"edges":pair.edges,"midpoints":pair.midpoints.map(|point|point.to_array())})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
             "partition_choices":self.component_partition_choices()?.iter().map(|(component,pairs)|json!({"component":component_json(component),"pairs":pairs.iter().map(|pair|json!({"edges":pair.edges,"midpoints":pair.midpoints.map(|point|point.to_array())})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
             "weld_targets":self.component_weld_targets()?.iter().map(|(component,position)|json!({"component":component_json(component),"position":position.to_array()})).collect::<Vec<_>>(),
-            "preview":self.geometry.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.extrusion.is_some() {"extrusion"} else if preview.partition.is_some() {"partition"} else if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else if preview.crease.is_some() {"crease"} else if let Some(transform) = &preview.transform { match transform.spec { ComponentTransform::Scale(_) => "scale", ComponentTransform::Rotate(_) => "rotate" } } else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.partition.as_ref().map_or(preview.replacements.len(), |draft| draft.partitions.len()),"error":ridge_error.as_deref(),"can_apply":ridge_error.is_none() && preview.extrusion.as_ref().map_or_else(||preview.partition.as_ref().is_none_or(|draft| draft.rise != 0.0),|extrusion|preview.partition.as_ref().is_some_and(|draft|draft.selection==extrusion.selection)),"extrusion":preview.extrusion.as_ref().map(extrusion::Draft::report),"partition":preview.partition.as_ref().map(|draft|draft.report(&self.document, preview.crease.as_ref())),
+            "preview":self.geometry.components.preview.as_ref().map(|preview|json!({"token":preview.token.to_string(),"operation":if preview.extrusion.is_some() {"extrusion"} else if preview.partition.is_some() {"partition"} else if preview.weld.is_some() {"weld"} else if preview.split.is_some() {"split"} else if preview.crease.is_some() {"crease"} else if let Some(transform) = &preview.transform { match transform.spec { ComponentTransform::Scale(_) => "scale", ComponentTransform::Rotate(_) => "rotate" } } else {"move"},"delta":preview.delta.to_array(),"texture_lock":preview.texture_lock,"brushes":preview.partition.as_ref().map_or(preview.replacements.len(), |draft| draft.source_count()),"error":ridge_error.as_deref(),"can_apply":ridge_error.is_none() && preview.extrusion.as_ref().map_or_else(||preview.partition.as_ref().is_none_or(|draft| draft.rise != 0.0 || draft.is_free()),|extrusion|preview.partition.as_ref().is_some_and(|draft|draft.selection==extrusion.selection)),"extrusion":preview.extrusion.as_ref().map(extrusion::Draft::report),"partition":preview.partition.as_ref().map(|draft|draft.report(&self.document, preview.crease.as_ref(), preview.free_partition.as_ref())),
                 "weld_target":preview.weld_target.as_ref().map(weld_target_json),
                 "transform":preview.transform.as_ref().map(|transform|transform_json(&transform.spec,transform.pivot,transform.resolved_pivot)),
                 "weld":preview.weld.as_ref().map(|changes|changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"merged_vertices":change.merged_vertices,"removed_sides":change.removed_sides,"selection":component_json(&change.selection)})).collect::<Vec<_>>()),
                 "crease":preview.crease.as_ref().map(CreaseDraft::report),
                 "split":preview.split.as_ref().map(|split|json!({"rise":split.rise,"changes":split.changes.iter().map(|change|json!({"solid":change.solid,"position":change.position.to_array(),"source_sides":change.source_sides,"new_sides":change.new_sides,"faces":change.faces.iter().map(|face|json!({"side":face.side,"source":face.source})).collect::<Vec<_>>(),"selection":component_json(&change.selection)})).collect::<Vec<_>>()}))})),
-            "texture_mode":if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.crease.as_ref().is_some_and(|crease|crease.neighbor_texture_lock)) {"neighbors_attached"} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.extrusion.as_ref().is_some_and(|draft|draft.spec.texture_lock)) {if self.geometry.components.preview.as_ref().unwrap().extrusion.as_ref().unwrap().spec.height < 0.0 {"floor_attached"} else {"top_attached"}} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.crease.as_ref().is_some_and(|crease|crease.roof_texture_lock)) {"roof_attached"} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.texture_lock && preview.weld.is_some()) {"weld_attached"} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"crease_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"partition_source_corners":subobject::MAX_BOUNDARY_SOURCE_CORNERS,"partition_vertices":subobject::MAX_PARTITION_VERTICES,"partition_loop_vertices":subobject::MAX_PARTITION_LOOP_VERTICES,"extrusion_source_vertices":subobject::MAX_EXTRUSION_SOURCE_VERTICES,"extrusion_pieces":subobject::MAX_EXTRUSION_PIECES,"extrusion_planes":subobject::MAX_EXTRUSION_PLANES,"extrusion_fragments":subobject::MAX_EXTRUSION_FRAGMENTS,"ridge_fragments":subobject::MAX_RIDGE_FRAGMENTS},
+            "texture_mode":if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.crease.as_ref().is_some_and(|crease|crease.neighbor_texture_lock)) {"neighbors_attached"} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.extrusion.as_ref().is_some_and(|draft|draft.spec.texture_lock)) {if self.geometry.components.preview.as_ref().unwrap().extrusion.as_ref().unwrap().spec.height < 0.0 {"floor_attached"} else {"top_attached"}} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.crease.as_ref().is_some_and(|crease|crease.roof_texture_lock)) {"roof_attached"} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.texture_lock && preview.weld.is_some()) {"weld_attached"} else if self.geometry.components.preview.as_ref().is_some_and(|preview|preview.texture_lock) {"attached"} else {"world"}, "limits":{"brushes":subobject::MAX_SOLIDS,"sides_per_brush":subobject::MAX_SIDES,"selected_components":subobject::MAX_COMPONENTS,"split_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"crease_rise":[subobject::MIN_SPLIT_RISE,subobject::MAX_SPLIT_RISE],"partition_source_corners":subobject::MAX_BOUNDARY_SOURCE_CORNERS,"partition_vertices":subobject::MAX_PARTITION_VERTICES,"partition_loop_vertices":subobject::MAX_PARTITION_LOOP_VERTICES,"free_partition_vertices":subobject::MAX_FREE_PARTITION_VERTICES,"free_partition_edges":subobject::MAX_FREE_PARTITION_EDGES,"free_partition_pieces":subobject::MAX_FREE_PARTITION_PIECES,"free_partition_fragments":subobject::MAX_FREE_PARTITION_FRAGMENTS,"extrusion_source_vertices":subobject::MAX_EXTRUSION_SOURCE_VERTICES,"extrusion_pieces":subobject::MAX_EXTRUSION_PIECES,"extrusion_planes":subobject::MAX_EXTRUSION_PLANES,"extrusion_fragments":subobject::MAX_EXTRUSION_FRAGMENTS,"ridge_fragments":subobject::MAX_RIDGE_FRAGMENTS},
         }))
     }
 
@@ -881,6 +891,13 @@ impl Session {
         let preview = self.checked_component_preview(token)?;
         if preview.extrusion.is_some() {
             return self.commit_partition_extrusion(actor, token);
+        }
+        if preview
+            .partition
+            .as_ref()
+            .is_some_and(partitions::Draft::is_free)
+        {
+            return self.commit_component_face_cuts(actor, token);
         }
         if preview
             .partition

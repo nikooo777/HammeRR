@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 87.5% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 87.7% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -36,7 +36,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [Keyboard shortcuts](keyboard-shortcuts.md) | 36 commands, including file/clipboard and held camera directions; logical/physical keys, Ctrl/Shift/Alt/Meta, two-stroke sequences and shared MCP resolution/navigation. | Two slots per command; camera directions use one stroke. Focused controls and the operating system may consume combinations. |
 | [Brushes](brushes.md) | Shapes, checked block creation/import, handles, exact transforms, grid snapping, fixed/attached pivots, terrain mirror/shear and supported point-placement transforms. | Unknown point semantics and unrepresentable model/instance deformation; general surface interpolation. |
 | [Brush tools](brush-tools.md) | Hollow, carve with explicit cut-material policies, clip, convex merge and polygon extrusion. | Concave merge and holes. |
-| [Components](components.md) | Move, rotate, scale, weld, split, ridges and partitions; independent roof/neighbor UV attachment with reviewed fragment counts, retained instance order and supported manual cubemap rebinding. | General topology editing, arbitrary dividing lines and other face-binding remaps. |
+| [Components](components.md) | Move, rotate, scale, weld, split and ridges; free face cuts with interior endpoints and crossings, saved triangle plans, explicit piece UV axes, convex materialization and supported cubemap/order remapping. | Terrain cuts, holes, nonmanifold topology and other face-binding remaps. |
 | [Materials](textures.md) | Grouped browsing, prefix/regex and resolved-shader filters, actual second blend-image inspection, winning-source filters, maps-path exclusion, favorites, mapping, painting, wrapping, replacement, saved named atlas regions, automatic face-island packing, padded image fitting with coplanar continuity, face lighting and checked native texture mip chains. | Full native shader preview. |
 | [Normal maps](normal-maps.md) | Supported flat-brush normal textures. | Terrain/model normal maps and special encodings. |
 | [Lighting preview](lighting-preview.md) | Unshadowed LDR/HDR point, spot, sun and optional constant sky ambient on checked opaque brush, terrain and model receivers. | Baked emission, shadows, sky visibility, bounce, styles, native exposure adaptation and brightness match. |

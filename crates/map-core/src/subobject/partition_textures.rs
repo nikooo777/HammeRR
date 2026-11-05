@@ -1,6 +1,6 @@
 use super::*;
 use crate::surface::{Projection, SurfaceEdit};
-use source_formats::vmf::Side;
+use source_formats::vmf::{Side, UvAxis};
 
 const PROJECTION_EPSILON: f64 = 1e-10;
 const TEXEL_EPSILON: f64 = 0.0001;
@@ -43,6 +43,7 @@ pub struct PartitionTexture {
     pub shift: [f64; 2],
     pub scale: [f64; 2],
     pub rotation: f64,
+    pub axes: Option<[[f64; 3]; 2]>,
 }
 
 impl PartitionTexture {
@@ -51,6 +52,16 @@ impl PartitionTexture {
             shift: [side.u_axis.offset, side.v_axis.offset],
             scale: [side.u_axis.scale, side.v_axis.scale],
             rotation: side.rotation,
+            axes: None,
+        }
+    }
+
+    pub fn from_projection(projection: &Projection) -> Self {
+        Self {
+            shift: [projection.u.offset, projection.v.offset],
+            scale: [projection.u.scale, projection.v.scale],
+            rotation: projection.rotation,
+            axes: Some([projection.u.axis.to_array(), projection.v.axis.to_array()]),
         }
     }
 
@@ -67,24 +78,49 @@ impl PartitionTexture {
                 "Planned texture values must be finite, within ±65536 and have nonzero scales",
             ));
         }
+        if self
+            .axes
+            .iter()
+            .flatten()
+            .flatten()
+            .any(|value| !value.is_finite())
+        {
+            return Err(invalid("Planned texture axes must be finite"));
+        }
         Ok(())
     }
 
     pub fn project(&self, source: &Side) -> Result<Projection, EditError> {
         self.validate()?;
         let mut side = source.clone();
-        crate::surface::update(
-            &mut side,
-            &SurfaceEdit {
+        let edit = if let Some([u, v]) = self.axes {
+            SurfaceEdit {
+                projection: Some(Projection {
+                    u: UvAxis {
+                        axis: DVec3::from_array(u),
+                        offset: self.shift[0],
+                        scale: self.scale[0],
+                    },
+                    v: UvAxis {
+                        axis: DVec3::from_array(v),
+                        offset: self.shift[1],
+                        scale: self.scale[1],
+                    },
+                    rotation: self.rotation,
+                }),
+                ..Default::default()
+            }
+        } else {
+            SurfaceEdit {
                 shift_u: Some(self.shift[0]),
                 shift_v: Some(self.shift[1]),
                 scale_u: Some(self.scale[0]),
                 scale_v: Some(self.scale[1]),
                 rotation: Some(self.rotation),
                 ..Default::default()
-            },
-            &[],
-        )?;
+            }
+        };
+        crate::surface::update(&mut side, &edit, &[])?;
         Ok(Projection {
             u: side.u_axis,
             v: side.v_axis,
@@ -98,24 +134,38 @@ impl PartitionTexture {
         projection: &Projection,
         points: &[DVec3],
     ) -> Result<Self, EditError> {
-        if let Ok(current) = self.project(source)
+        if self.axes.is_none()
+            && let Ok(current) = self.project(source)
             && same_projection(&current, projection, points)
         {
             return Ok(*self);
         }
-        let failure = || {
-            invalid(
-                "Transformed saved partition texture cannot be represented by bounded shift, scale and rotation",
-            )
-        };
+        let explicit = Self::from_projection(projection);
+        explicit.validate()?;
+        let mut projected = source.clone();
+        crate::surface::update(
+            &mut projected,
+            &SurfaceEdit {
+                projection: Some(projection.clone()),
+                ..Default::default()
+            },
+            points,
+        )?;
+        if self.axes.is_some() {
+            return Ok(explicit);
+        }
         let normal = Plane::from_points(source.plane.0)
-            .ok_or_else(failure)?
+            .ok_or_else(|| invalid("Saved partition target face has an invalid plane"))?
             .normal;
         let desired_u = projection.u.axis / projection.u.scale;
         let source_tangent = source.u_axis.axis - normal * source.u_axis.axis.dot(normal);
         let desired_tangent = desired_u - normal * desired_u.dot(normal);
-        let source_tangent = source_tangent.try_normalize().ok_or_else(failure)?;
-        let desired_tangent = desired_tangent.try_normalize().ok_or_else(failure)?;
+        let Some(source_tangent) = source_tangent.try_normalize() else {
+            return Ok(explicit);
+        };
+        let Some(desired_tangent) = desired_tangent.try_normalize() else {
+            return Ok(explicit);
+        };
         let angle = normal
             .dot(source_tangent.cross(desired_tangent))
             .atan2(source_tangent.dot(desired_tangent));
@@ -127,6 +177,7 @@ impl PartitionTexture {
                 shift: [projection.u.offset, projection.v.offset],
                 scale: [0.0; 2],
                 rotation,
+                axes: None,
             };
             for (index, (base, desired)) in [
                 (source.u_axis.axis, projection.u),
@@ -136,7 +187,9 @@ impl PartitionTexture {
             .enumerate()
             {
                 let gradient = desired.axis / desired.scale;
-                let direction = gradient.try_normalize().ok_or_else(failure)?;
+                let Some(direction) = gradient.try_normalize() else {
+                    return Ok(explicit);
+                };
                 texture.scale[index] = (turn * base).dot(direction) / gradient.length();
             }
             if let Ok(actual) = texture.project(source)
@@ -145,7 +198,7 @@ impl PartitionTexture {
                 return Ok(texture);
             }
         }
-        Err(failure())
+        Ok(explicit)
     }
 
     pub fn place(
@@ -169,6 +222,9 @@ impl PartitionTexture {
             shift: [projection.u.offset, projection.v.offset],
             scale: [projection.u.scale, projection.v.scale],
             rotation: projection.rotation,
+            axes: self
+                .axes
+                .map(|_| [projection.u.axis.to_array(), projection.v.axis.to_array()]),
         };
         texture.validate()?;
         Ok(texture)

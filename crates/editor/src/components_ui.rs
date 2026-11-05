@@ -396,6 +396,21 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     refresh_crease_choices(window, &report, session);
     let partition = &report["preview"]["partition"];
     window.set_has_partition_preview(!partition.is_null());
+    let free_cut = partition["kind"] == "free_edges";
+    window.set_free_cut_preview(free_cut);
+    window.set_can_apply_face_cuts(free_cut && report["preview"]["can_apply"] == true);
+    let source_labels = partition["partitions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|source| format!("Brush {} · face {}", source["solid"], source["source_side"]).into())
+        .collect::<Vec<slint::SharedString>>();
+    window.set_face_cut_source_index(
+        window
+            .get_face_cut_source_index()
+            .clamp(0, source_labels.len().saturating_sub(1) as i32),
+    );
+    window.set_face_cut_source_labels(Rc::new(VecModel::from(source_labels)).into());
     window.set_can_raise_partition(partition["ridge_supported"].as_bool().unwrap_or(true));
     window.set_has_extrusion_preview(!report["preview"]["extrusion"].is_null());
     window.set_partition_flat(partition["rise"].as_f64() == Some(0.0));
@@ -418,6 +433,9 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                     .as_str()
                     .map(str::to_string)
                     .unwrap_or_else(|| {
+                        if entry["kind"] == "free_edges" {
+                            return "Free face cuts · resume to inspect, edit or apply".into();
+                        }
                         let parameters = &entry["edge_parameters"];
                         if parameters == &serde_json::json!([0.5, 0.5]) {
                             "Two flat pieces · resume to inspect, raise or extrude".into()
@@ -533,6 +551,27 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         window.set_texture_rotation_value(
             values[4].parse::<f32>().unwrap_or(0.0).clamp(-180.0, 180.0),
         );
+        let axes: [String; 6] = std::array::from_fn(|index| {
+            let read = |piece: &&serde_json::Value| {
+                piece["effective_texture"]["axes"][index / 3][index % 3].as_f64()
+            };
+            highlighted
+                .first()
+                .and_then(read)
+                .filter(|first| highlighted.iter().all(|piece| read(piece) == Some(*first)))
+                .map(|value| value.to_string())
+                .unwrap_or_default()
+        });
+        let explicit_axes = highlighted
+            .iter()
+            .any(|piece| !piece["texture_plan"]["axes"].is_null());
+        window.set_texture_explicit_axes(explicit_axes);
+        window.set_texture_u_x(axes[0].as_str().into());
+        window.set_texture_u_y(axes[1].as_str().into());
+        window.set_texture_u_z(axes[2].as_str().into());
+        window.set_texture_v_x(axes[3].as_str().into());
+        window.set_texture_v_y(axes[4].as_str().into());
+        window.set_texture_v_z(axes[5].as_str().into());
         window.set_top_texture_baseline(texture_input_key(window).into());
         window.set_top_texture_summary(if highlighted.is_empty() {
             "Highlight pieces to change their texture placement".into()
@@ -540,7 +579,9 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
             format!(
                 "{} highlighted · {}",
                 highlighted.len(),
-                if values.iter().any(String::is_empty) {
+                if values.iter().any(String::is_empty)
+                    || (explicit_axes && axes.iter().any(String::is_empty))
+                {
                     "mixed placement"
                 } else if highlighted
                     .iter()
@@ -764,7 +805,9 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                     values[1].as_f64().unwrap(),
                     values[2].as_f64().unwrap(),
                 );
-                let label = if vertex["source"]["kind"] == "corner" {
+                let label = if free_cut {
+                    format!("Face point {}", id + 1)
+                } else if vertex["source"]["kind"] == "corner" {
                     format!("Source corner {}", id + 1)
                 } else {
                     format!(
@@ -787,9 +830,14 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         }
         window.set_summary(
             format!(
-                "{} staged pieces · {} source corners and edge points · coordinates in X, Y, Z",
-                partitions.len() * 2,
-                rows.len()
+                "{} staged pieces · {} {} · coordinates in X, Y, Z",
+                window.get_partition_rows().row_count(),
+                rows.len(),
+                if free_cut {
+                    "face points"
+                } else {
+                    "source corners and edge points"
+                }
             )
             .into(),
         );
@@ -828,6 +876,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
         window.set_operation(operation);
         if partition {
             window.set_partition_mode(i32::from(extrusion));
+            window.set_partition_cut_kind(i32::from(free_cut));
             let parameters = &preview["partition"]["edge_parameters"];
             window.set_cut_first(
                 parameters[0]
@@ -943,6 +992,7 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
             && (!partition || window.get_top_material()==window.get_top_material_baseline())
             && (!partition || texture_inputs_match(window))
             && (!partition || cut_inputs_match(window,&preview["partition"]["edge_parameters"]))
+            && (!free_cut || !window.get_face_cut_pending())
             && (if transform {
                 window.get_texture_lock() == preview["texture_lock"].as_bool().unwrap_or(false)
                     && transform_inputs(window).is_ok_and(|(spec, pivot)| {
@@ -955,6 +1005,8 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
                     && extrusion_inputs(window).is_ok_and(|spec|spec.height == preview["extrusion"]["height"].as_f64().unwrap()
                         && spec.wall_material.as_ref().map(|value|serde_json::json!(value)).unwrap_or(serde_json::Value::Null)==preview["extrusion"]["wall_material"]
                         && spec.texture_lock==preview["extrusion"]["texture_lock"].as_bool().unwrap())
+            } else if free_cut {
+                window.get_partition_cut_kind() == 1
             } else if partition {
                 window.get_partition_mode() == 0 && window.get_split_rise().parse::<f64>().ok() == preview["partition"]["rise"].as_f64()
                     && window.get_roof_texture_lock() == preview["partition"]["roof_texture_lock"].as_bool().unwrap_or(false)
@@ -1006,7 +1058,9 @@ pub fn refresh(window: &ComponentsWindow, session: &Session) {
     } else if partition {
         let count = preview["partition"]["partitions"].as_array().unwrap().len();
         let rise = preview["partition"]["rise"].as_f64().unwrap();
-        if rise==0.0 && !window.get_cut_is_midpoint() {
+        if free_cut {
+            format!("{} triangle pieces staged. Generated diagonals complete the face triangulation.\n{}Apply replaces the source brushes with convex fragments. Keep saves the flat plan.",window.get_partition_rows().row_count(),ridge_brush_cost(&preview["partition"])).into()
+        } else if rise==0.0 && !window.get_cut_is_midpoint() {
             format!("{} adjusted flat pieces staged. The source face is unchanged.\nKeep, extrude highlighted pieces, or Cancel.",count*2).into()
         } else if rise == 0.0 && preview["partition"]["ridge_supported"] != true {
             format!("{} flat pieces staged. The source face is unchanged.\nKeep, extrude highlighted pieces, or Cancel.",count*2).into()
@@ -1066,6 +1120,9 @@ fn cut_inputs(window: &ComponentsWindow) -> Result<[f64; 2], String> {
 }
 
 fn cut_inputs_match(window: &ComponentsWindow, parameters: &serde_json::Value) -> bool {
+    if window.get_free_cut_preview() {
+        return true;
+    }
     [window.get_cut_first(), window.get_cut_second()]
         .iter()
         .enumerate()
@@ -1079,6 +1136,69 @@ fn cut_inputs_match(window: &ComponentsWindow, parameters: &serde_json::Value) -
                 },
             )
         })
+}
+
+fn face_cut_inputs(window: &ComponentsWindow) -> Result<[[f64; 3]; 2], String> {
+    Ok([
+        vector([
+            window.get_face_cut_start_x(),
+            window.get_face_cut_start_y(),
+            window.get_face_cut_start_z(),
+        ])?
+        .to_array(),
+        vector([
+            window.get_face_cut_end_x(),
+            window.get_face_cut_end_y(),
+            window.get_face_cut_end_z(),
+        ])?
+        .to_array(),
+    ])
+}
+
+fn preview_face_cut(window: &ComponentsWindow, session: &mut Session) -> Result<u64, String> {
+    let endpoints = face_cut_inputs(window)?;
+    let token = if window.get_has_partition_preview() {
+        let report = session.component_report(&[])?;
+        let source = report["preview"]["partition"]["partitions"]
+            .as_array()
+            .and_then(|sources| sources.get(window.get_face_cut_source_index() as usize))
+            .ok_or("Choose a source face for this cut")?;
+        session.append_component_face_cut(
+            window
+                .get_token()
+                .parse()
+                .map_err(|_| "Stage a face cut first".to_string())?,
+            source["solid"].as_u64().unwrap() as u32,
+            source["source_side"].as_u64().unwrap() as u32,
+            endpoints,
+        )?
+    } else {
+        let selected = session.component_selection();
+        if selected.len() != 1 {
+            return Err("Select one face to stage free cuts".into());
+        }
+        let component = selected.first().unwrap();
+        let [side] = component.sides.as_slice() else {
+            return Err("Choose Faces and select one face to stage free cuts".into());
+        };
+        session.preview_component_face_cuts(
+            &[crate::session::components::FaceCut {
+                solid: component.solid,
+                side: *side,
+                vertices: endpoints.to_vec(),
+                edges: vec![[0, 1]],
+            }],
+            window.get_stamp().as_str(),
+        )?
+    };
+    window.set_face_cut_start_x("".into());
+    window.set_face_cut_start_y("".into());
+    window.set_face_cut_start_z("".into());
+    window.set_face_cut_end_x("".into());
+    window.set_face_cut_end_y("".into());
+    window.set_face_cut_end_z("".into());
+    window.set_face_cut_pending(false);
+    Ok(token)
 }
 
 fn extrusion_inputs(
@@ -1110,13 +1230,16 @@ fn extrusion_inputs(
 }
 
 fn texture_input_key(window: &ComponentsWindow) -> String {
-    serde_json::json!([
+    serde_json::json!({"placement":[
         window.get_texture_shift_u().as_str(),
         window.get_texture_shift_v().as_str(),
         window.get_texture_scale_u().as_str(),
         window.get_texture_scale_v().as_str(),
         window.get_texture_rotation().as_str()
-    ])
+    ],"axes":window.get_texture_explicit_axes().then(||[
+        [window.get_texture_u_x(), window.get_texture_u_y(), window.get_texture_u_z()],
+        [window.get_texture_v_x(), window.get_texture_v_y(), window.get_texture_v_z()]
+    ].map(|axis| axis.map(|value| value.to_string())))})
     .to_string()
 }
 
@@ -1147,6 +1270,24 @@ fn texture_inputs(
         shift: [values[0], values[1]],
         scale: [values[2], values[3]],
         rotation: values[4],
+        axes: if window.get_texture_explicit_axes() {
+            Some([
+                vector([
+                    window.get_texture_u_x(),
+                    window.get_texture_u_y(),
+                    window.get_texture_u_z(),
+                ])?
+                .to_array(),
+                vector([
+                    window.get_texture_v_x(),
+                    window.get_texture_v_y(),
+                    window.get_texture_v_z(),
+                ])?
+                .to_array(),
+            ])
+        } else {
+            None
+        },
     })
 }
 
@@ -1443,9 +1584,9 @@ fn preview_edit(window: &ComponentsWindow, shared: &SharedSession) {
         if window.get_has_partition_preview()
             && window.get_top_material() != window.get_top_material_baseline()
         {
-            Err("Preview the planned top material before raising or extruding".into())
+            Err("Preview the planned top material before changing the partition".into())
         } else if window.get_has_partition_preview() && !texture_inputs_match(window) {
-            Err("Preview the texture placement before raising or extruding".into())
+            Err("Preview the texture placement before changing the partition".into())
         } else if window.get_has_partition_preview()
             && !cut_inputs_match(
                 window,
@@ -1453,6 +1594,8 @@ fn preview_edit(window: &ComponentsWindow, shared: &SharedSession) {
             )
         {
             Err("Preview the cut positions before raising or extruding".into())
+        } else if window.get_partition_cut_kind() == 1 {
+            preview_face_cut(window, &mut session)
         } else if window.get_has_partition_preview() && window.get_partition_mode() == 1 {
             extrusion_inputs(window).and_then(|spec| {
                 session.preview_partition_extrusion(
@@ -1555,14 +1698,20 @@ fn preview_edit(window: &ComponentsWindow, shared: &SharedSession) {
     }
 }
 
-fn apply(window: &ComponentsWindow, shared: &SharedSession) {
-    if !window.get_ready() {
+fn apply(window: &ComponentsWindow, shared: &SharedSession, materialize_face_cuts: bool) {
+    if !window.get_ready()
+        || (materialize_face_cuts
+            && (!window.get_free_cut_preview() || !window.get_can_apply_face_cuts()))
+    {
         return;
     }
     let mut session = lock(shared);
     let extrusion = window.get_has_extrusion_preview();
     let inward = extrusion && window.get_extrusion_direction() == 1;
-    let flat = window.get_has_partition_preview() && window.get_partition_flat() && !extrusion;
+    let flat = window.get_has_partition_preview()
+        && window.get_partition_flat()
+        && !extrusion
+        && !materialize_face_cuts;
     let result = window
         .get_token()
         .parse()
@@ -1578,7 +1727,7 @@ fn apply(window: &ComponentsWindow, shared: &SharedSession) {
     window.set_message(
         result
             .map(|count| {
-                if inward { format!("Cut sources into {count} convex fragments. Their faces are selected; Undo restores the sources and saved pieces.") } else if extrusion { format!("Added {count} volumes. Their faces are selected; Undo removes the volumes.") } else if flat { format!("Kept {count} flat partitions. Save the map to retain them after reopening.") } else { format!("Changed {count} brushes. Undo restores the previous shape.") }
+                if materialize_face_cuts { format!("Applied face cuts as {count} convex brush fragments. Undo restores the sources and saved pieces.") } else if inward { format!("Cut sources into {count} convex fragments. Their faces are selected; Undo restores the sources and saved pieces.") } else if extrusion { format!("Added {count} volumes. Their faces are selected; Undo removes the volumes.") } else if flat { format!("Kept {count} flat partitions. Save the map to retain them after reopening.") } else { format!("Changed {count} brushes. Undo restores the previous shape.") }
             })
             .unwrap_or_else(|error| error)
             .into(),
@@ -2079,7 +2228,16 @@ pub fn bind_with_access(window: &ComponentsWindow, access: &DocumentAccess) {
         let window = window.as_weak();
         move || {
             with_window(&window, &target, |window, shared| {
-                apply(window, shared);
+                apply(window, shared, false);
+            });
+        }
+    });
+    window.on_apply_face_cuts({
+        let target = access.downgrade();
+        let window = window.as_weak();
+        move || {
+            with_window(&window, &target, |window, shared| {
+                apply(window, shared, true);
             });
         }
     });

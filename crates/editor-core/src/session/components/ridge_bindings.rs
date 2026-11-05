@@ -51,6 +51,13 @@ pub(super) fn writes(vmf: &Vmf, plan: &subobject::CreasePlan) -> Result<Vec<Writ
             }
         }
     }
+    writes_for_mapping(vmf, &mapping)
+}
+
+pub(super) fn writes_for_mapping(
+    vmf: &Vmf,
+    mapping: &BTreeMap<u32, Vec<u32>>,
+) -> Result<Vec<Write>, String> {
     if mapping.is_empty() {
         return Ok(Vec::new());
     }
@@ -82,7 +89,7 @@ pub(super) fn writes(vmf: &Vmf, plan: &subobject::CreasePlan) -> Result<Vec<Writ
         work = work
             .checked_add(ids.len())
             .filter(|work| *work <= compiler::cubemap_assets::MAX_ASSIGNMENT_WORK)
-            .ok_or("Ridge cubemap binding comparison budget exceeded")?;
+            .ok_or("Cubemap binding comparison budget exceeded")?;
         for id in &ids {
             if let Some(previous) = owners.insert(*id, entity.id) {
                 return Err(format!(
@@ -95,7 +102,7 @@ pub(super) fn writes(vmf: &Vmf, plan: &subobject::CreasePlan) -> Result<Vec<Writ
             continue;
         }
         if result.len() >= compiler::cubemap_assets::MAX_SAMPLES {
-            return Err("Ridge cubemap binding plan exceeds the sample limit".into());
+            return Err("Cubemap binding plan exceeds the sample limit".into());
         }
         let mut seen = BTreeSet::new();
         let mut output = Vec::new();
@@ -116,7 +123,7 @@ pub(super) fn writes(vmf: &Vmf, plan: &subobject::CreasePlan) -> Result<Vec<Writ
         }
         if output.len() > super::super::cubemap_bindings::MAX_FACES {
             return Err(format!(
-                "entity:{}: ridge cubemap binding exceeds the manual face limit",
+                "entity:{}: cubemap binding exceeds the manual face limit",
                 entity.id
             ));
         }
@@ -126,7 +133,7 @@ pub(super) fn writes(vmf: &Vmf, plan: &subobject::CreasePlan) -> Result<Vec<Writ
             .collect::<Vec<_>>()
             .join(" ");
         if after.len() > 16 * 1024 {
-            return Err("Ridge cubemap binding exceeds the side-list text limit".into());
+            return Err("Cubemap binding exceeds the side-list text limit".into());
         }
         result.push(Write {
             helper: entity.id,
@@ -152,7 +159,7 @@ pub(super) fn apply(tx: &mut map_core::Transaction, writes: &[Write]) -> Result<
                 .is_none_or(|(key, value)| key != write.key || value != write.before)
         {
             return Err(EditError::Invalid(
-                "Cubemap binding differs from the reviewed ridge source".into(),
+                "Cubemap binding differs from the reviewed topology source".into(),
             ));
         }
         entity.properties.set(&write.key, &write.after);
@@ -167,7 +174,9 @@ impl Plan {
             .as_ref()
             .is_some_and(|context| *context != session.cubemap_binding_source())
         {
-            return Some("Cubemap binding context changed; preview ridge attachment again".into());
+            return Some(
+                "Cubemap binding context changed; preview the topology change again".into(),
+            );
         }
         self.sources
             .iter()
@@ -192,6 +201,23 @@ impl Session {
             self.check_ordinary_ridge_references(plan)?;
         }
         let writes = writes(self.document.vmf(), plan)?;
+        self.prepare_topology_cubemap_writes(document, writes)
+    }
+
+    pub(super) fn prepare_fragment_cubemap_bindings(
+        &self,
+        document: &mut Document,
+        mapping: &BTreeMap<u32, Vec<u32>>,
+    ) -> Result<Plan, String> {
+        let writes = writes_for_mapping(self.document.vmf(), mapping)?;
+        self.prepare_topology_cubemap_writes(document, writes)
+    }
+
+    fn prepare_topology_cubemap_writes(
+        &self,
+        document: &mut Document,
+        writes: Vec<Write>,
+    ) -> Result<Plan, String> {
         if writes.is_empty() {
             return Ok(Plan::default());
         }
@@ -227,7 +253,7 @@ impl Session {
             }
         }
         document
-            .edit("preview ridge cubemap bindings", |tx| apply(tx, &writes))
+            .edit("preview topology cubemap bindings", |tx| apply(tx, &writes))
             .map_err(|error| error.to_string())?;
         query.face_ids = exterior_sides.into_iter().collect();
         let candidate = self.inspect_cubemap_binding_map(document.vmf(), &query)?;
@@ -239,7 +265,7 @@ impl Session {
                         && assignment.manual
                 }) {
                     return Err(format!(
-                        "side:{side}: ridge exterior cubemap binding was not preserved"
+                        "side:{side}: exterior cubemap binding was not preserved"
                     ));
                 }
             }

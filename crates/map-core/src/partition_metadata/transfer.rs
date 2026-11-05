@@ -2,7 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{Intent, Metadata, piece_corners};
 use crate::subobject::{self, Crease, Partition, PartitionCut, VertexSource};
-use crate::{Document, EditError, Transaction, edit, surface};
+use crate::{Document, EditError, ObjectId, Transaction, edit, surface};
+
+pub(crate) struct SavedAxes {
+    metadata: Metadata,
+    projections: BTreeMap<(u32, u32), [Option<surface::Projection>; 2]>,
+}
 
 fn invalid(message: impl Into<String>) -> EditError {
     EditError::Invalid(message.into())
@@ -16,6 +21,87 @@ fn checked_intent(source: &Document, intent: &Intent) -> Result<Partition, EditE
         )));
     }
     intent.resolve(source).map_err(invalid)
+}
+
+pub(crate) fn capture_axes(
+    source: &Document,
+    object: ObjectId,
+) -> Result<Option<SavedAxes>, EditError> {
+    let metadata = Metadata::parse(source.vmf()).map_err(invalid)?;
+    let mut projections = BTreeMap::new();
+    for (key, intent) in &metadata.entries {
+        let selected = match object {
+            ObjectId::Solid(id) => key.0 == id,
+            ObjectId::Entity(id) => source
+                .entity(id)
+                .is_some_and(|entity| entity.solids.iter().any(|solid| solid.id == key.0)),
+        };
+        if !selected || intent.top_textures.iter().all(Option::is_none) {
+            continue;
+        }
+        checked_intent(source, intent)?;
+        let side = surface::side(
+            source,
+            surface::FaceId {
+                solid: key.0,
+                side: key.1,
+            },
+        )
+        .ok_or_else(|| invalid("Saved partition source face does not exist"))?;
+        let mut captured = [None, None];
+        for (texture, projection) in intent.top_textures.iter().zip(&mut captured) {
+            if let Some(texture) = texture {
+                *projection = Some(texture.project(side)?);
+            }
+        }
+        projections.insert(*key, captured);
+    }
+    if projections.is_empty() {
+        return Ok(None);
+    }
+    if !metadata.extra.is_empty() {
+        return Err(invalid(
+            "Saved partition root has opaque extension fields that cannot follow texture transforms",
+        ));
+    }
+    Ok(Some(SavedAxes {
+        metadata,
+        projections,
+    }))
+}
+
+pub(crate) fn transform_saved(
+    tx: &mut Transaction,
+    saved: Option<SavedAxes>,
+    pose: edit::Transform,
+) -> Result<(), EditError> {
+    let Some(mut saved) = saved else {
+        return Ok(());
+    };
+    let mut changed = false;
+    for (key, projections) in saved.projections {
+        let face = surface::FaceId {
+            solid: key.0,
+            side: key.1,
+        };
+        let target = surface::side(tx.document(), face)
+            .ok_or_else(|| invalid("Saved partition target face does not exist"))?;
+        let points = surface::face_vertices(tx.document(), face)?;
+        let intent = saved.metadata.entries.get_mut(&key).unwrap();
+        for (texture, projection) in intent.top_textures.iter_mut().zip(projections) {
+            if let (Some(texture), Some(projection)) = (texture, projection) {
+                let projection = crate::transform::transform_projection(&projection, pose)?;
+                let transformed = texture.reproject(target, &projection, &points)?;
+                changed |= *texture != transformed;
+                *texture = transformed;
+            }
+        }
+        intent.resolve(tx.document()).map_err(invalid)?;
+    }
+    if changed {
+        saved.metadata.write(tx)?;
+    }
+    Ok(())
 }
 
 pub fn capture(source: &Document, solids: &BTreeSet<u32>) -> Result<Metadata, EditError> {

@@ -54,7 +54,7 @@ More in this section:
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="components.md"><img src="images/thumbs/roof-ridge.jpg" width="260" alt=""></a><br><a href="components.md"><b>Vertices, edges and faces</b></a><br>Reshape a brush through its corners, edges or faces.</td>
-<td width="33%" valign="top"><a href="partitions.md"><img src="images/thumbs/partition-extruded.jpg" width="260" alt=""></a><br><a href="partitions.md"><b>Flat partitions</b></a><br>Divide a brush face before raising, extruding or texturing its pieces.</td>
+<td width="33%" valign="top"><a href="partitions.md"><img src="images/thumbs/free-face-cuts.jpg" width="260" alt=""></a><br><a href="partitions.md"><b>Flat partitions</b></a><br>Divide a brush face before raising, extruding or texturing its pieces.</td>
 <td width="33%" valign="top"><a href="placement.md"><img src="images/thumbs/slope-placement.jpg" width="260" alt=""></a><br><a href="placement.md"><b>Surface placement</b></a><br>Align a selection with a floor, ceiling or picked surface.</td>
 </tr>
 <tr>

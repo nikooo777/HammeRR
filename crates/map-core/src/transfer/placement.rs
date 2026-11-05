@@ -237,6 +237,14 @@ impl Payload {
                 transform,
             )?;
             partitions.write(tx)?;
+            let free_partitions = free_partition_transfer::remap(
+                &self.document,
+                tx.document(),
+                &solids,
+                &sides,
+                transform,
+            )?;
+            free_partitions.write(tx)?;
             Ok(())
         })?;
         Self::capture(&document, &self.ids, catalog).map(Some)

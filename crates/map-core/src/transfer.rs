@@ -10,7 +10,9 @@ use source_formats::{
 use crate::{
     Document, EditError, ObjectId, Transaction,
     context::{Metadata, Scope},
-    edit, groups,
+    edit,
+    free_partition_metadata::transfer as free_partition_transfer,
+    groups,
     metadata::InputBudget,
     partition_metadata::transfer as partition_transfer,
     references, repeat,
@@ -195,6 +197,7 @@ impl Payload {
             })
             .collect();
         let partitions = partition_transfer::capture(source, &solids)?;
+        let free_partitions = free_partition_transfer::capture(source, &solids)?;
         let names = repeat::source_names(source, ids)?;
         let entities = ids
             .iter()
@@ -288,7 +291,10 @@ impl Payload {
         vmf.extra
             .push(Node::block(KEY, vec![Node::string("version", "1")]));
         let mut document = Document::try_new(vmf)?;
-        document.edit("capture partition intents", |tx| partitions.write(tx))?;
+        document.edit("capture partition intents", |tx| {
+            partitions.write(tx)?;
+            free_partitions.write(tx)
+        })?;
         let text = document
             .vmf()
             .try_write(&keyvalues::WriteOptions::default())
@@ -726,6 +732,14 @@ pub fn paste(
         edit::Transform::default(),
     )?;
     partition_transfer::merge(tx, &partitions)?;
+    let free_partitions = free_partition_transfer::remap(
+        source,
+        tx.document(),
+        &solids,
+        &sides,
+        edit::Transform::default(),
+    )?;
+    free_partition_transfer::merge(tx, &free_partitions)?;
     let mut metadata = tx.document().context()?.clone();
     for (old, new) in &result.mapping {
         if let Some(note) = source.context()?.notes.get(&Scope::Object(*old))

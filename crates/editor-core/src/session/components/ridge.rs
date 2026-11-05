@@ -72,25 +72,39 @@ impl Session {
         if !neighbor_texture_lock {
             return Ok(None);
         }
+        self.capture_fragment_materials(
+            &requests
+                .iter()
+                .map(|request| request.solid)
+                .collect::<Vec<_>>(),
+            plan.fragments.iter().flat_map(|fragment| {
+                fragment
+                    .solid
+                    .sides
+                    .iter()
+                    .map(|side| side.material.as_str())
+            }),
+        )
+        .map(Some)
+    }
+
+    pub(super) fn capture_fragment_materials<'a>(
+        &'a self,
+        sources: &[u32],
+        fragment_materials: impl IntoIterator<Item = &'a str>,
+    ) -> Result<compiler::asset_sources::AssetSourceGuard, String> {
         let mut names = BTreeSet::new();
-        for request in requests {
-            let (_, solid) = subobject::solid(&self.document, request.solid)
-                .map_err(|error| error.to_string())?;
+        for &id in sources {
+            let (_, solid) =
+                subobject::solid(&self.document, id).map_err(|error| error.to_string())?;
             names.extend(solid.sides.iter().map(|side| side.material.as_str()));
         }
-        names.extend(plan.fragments.iter().flat_map(|fragment| {
-            fragment
-                .solid
-                .sides
-                .iter()
-                .map(|side| side.material.as_str())
-        }));
+        names.extend(fragment_materials);
         compiler::materials::capture_solid_fragment_materials(
             &self.game,
             names,
             &compiler::Control::default(),
         )
-        .map(Some)
     }
 
     pub(super) fn ridge_stale_error(&self, crease: &CreaseDraft) -> Option<String> {
@@ -120,6 +134,21 @@ impl Session {
         requests: &[Crease],
         consume_source_partition: bool,
     ) -> Result<(), String> {
+        let objects = requests.iter().map(|request| request.solid).collect();
+        let consumed = requests
+            .iter()
+            .filter(|_| consume_source_partition)
+            .map(|request| (request.solid, request.side))
+            .collect();
+        self.check_fragment_references(&objects, &consumed, &BTreeSet::new())
+    }
+
+    pub(super) fn check_fragment_references(
+        &self,
+        objects: &BTreeSet<u32>,
+        consumed_partitions: &BTreeSet<(u32, u32)>,
+        consumed_free_partitions: &BTreeSet<(u32, u32)>,
+    ) -> Result<(), String> {
         self.document
             .vmf()
             .validate_ids()
@@ -132,14 +161,10 @@ impl Session {
         map_core::groups::Graph::read(&self.document).map_err(|error| error.to_string())?;
         map_core::layers::Graph::read(&self.document).map_err(|error| error.to_string())?;
         require_known_face_topology_metadata(self.document.vmf())?;
-        let objects = requests
-            .iter()
-            .map(|request| request.solid)
-            .collect::<BTreeSet<_>>();
         let mut sides = BTreeSet::new();
-        for request in requests {
-            let (owner, solid) = subobject::solid(&self.document, request.solid)
-                .map_err(|error| error.to_string())?;
+        for &id in objects {
+            let (owner, solid) =
+                subobject::solid(&self.document, id).map_err(|error| error.to_string())?;
             let mut editor_keys = BTreeSet::new();
             for (key, value) in solid.editor.iter().flat_map(|editor| editor.iter()) {
                 if ![
@@ -157,7 +182,7 @@ impl Session {
                     || value.len() > compiler::instances::MAX_FIELD_BYTES
                 {
                     return Err(format!(
-                        "Brush {}: editor metadata {key} cannot be copied to ridge fragments",
+                        "Brush {}: editor metadata {key} cannot be copied to convex fragments",
                         solid.id
                     ));
                 }
@@ -173,7 +198,7 @@ impl Session {
                     .any(|allowed| class.eq_ignore_ascii_case(allowed))
                 {
                     return Err(format!(
-                        "entity:{id}: neighbor attachment supports world, func_detail, func_brush and func_wall brushes"
+                        "entity:{id}: convex fragmentation supports world, func_detail, func_brush and func_wall brushes"
                     ));
                 }
             }
@@ -185,16 +210,16 @@ impl Session {
                 .iter()
                 .any(|custody| custody.volumes.iter().any(|id| objects.contains(id)))
         {
-            return Err("A source brush is retained origin-volume custody; it cannot become ridge fragments".into());
+            return Err("A source brush is retained origin-volume custody; it cannot become convex fragments".into());
         }
         check_side_references(self, &sides, true)?;
         map_core::measurements::Measurements::parse(self.document.vmf())?
-            .validate_retained_references(&objects, &sides)?;
+            .validate_retained_references(objects, &sides)?;
         let context = map_core::context::Metadata::parse(self.document.vmf())?;
         context.validate()?;
         if !context.extra.is_empty() || context.notes.values().any(|note| !note.extra.is_empty()) {
             return Err(
-                "Unknown context metadata cannot be proven independent of ridge fragments".into(),
+                "Unknown context metadata cannot be proven independent of convex fragments".into(),
             );
         }
         if objects.iter().any(|id| {
@@ -202,21 +227,28 @@ impl Session {
                 .notes
                 .contains_key(&map_core::context::Scope::Object(ObjectId::Solid(*id)))
         }) {
-            return Err("A source brush has an attached note; detach it before replacing that brush with ridge fragments".into());
+            return Err("A source brush has an attached note; detach it before replacing that brush with convex fragments".into());
         }
         let metadata = map_core::partition_metadata::Metadata::parse(self.document.vmf())?;
         metadata.validate()?;
         if !metadata.extra.is_empty()
             || metadata.entries.iter().any(|(&(solid, side), intent)| {
                 !intent.extra.is_empty()
-                    || (objects.contains(&solid)
-                        && (!consume_source_partition
-                            || !requests
-                                .iter()
-                                .any(|request| request.solid == solid && request.side == side)))
+                    || (objects.contains(&solid) && !consumed_partitions.contains(&(solid, side)))
             })
         {
-            return Err("Saved partition intent cannot be rebound to ridge fragments; remove other pieces on the source brushes first".into());
+            return Err("Saved partition intent cannot be rebound to convex fragments; remove other pieces on the source brushes first".into());
+        }
+        let free = map_core::free_partition_metadata::Metadata::parse(self.document.vmf())?;
+        free.validate()?;
+        if !free.extra.is_empty()
+            || free.entries.iter().any(|(&(solid, side), intent)| {
+                !intent.extra.is_empty()
+                    || (objects.contains(&solid)
+                        && !consumed_free_partitions.contains(&(solid, side)))
+            })
+        {
+            return Err("Saved free cuts cannot be rebound to convex fragments; remove other cuts on the source brushes first".into());
         }
         Ok(())
     }
@@ -379,6 +411,7 @@ pub(in crate::session) fn require_known_face_topology_metadata(vmf: &Vmf) -> Res
             context::METADATA_KEY,
             measurements::KEY,
             partition_metadata::KEY,
+            map_core::free_partition_metadata::KEY,
             map_core::saved_views::KEY,
         ]
         .contains(&node.key.as_str())

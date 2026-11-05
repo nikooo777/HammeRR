@@ -37,23 +37,21 @@ pub(super) fn saved_textures(
 }
 
 pub(super) fn texture_json(texture: PartitionTexture) -> Value {
-    json!({"shift":texture.shift,"scale":texture.scale,"rotation":texture.rotation})
+    json!({"shift":texture.shift,"scale":texture.scale,"rotation":texture.rotation,"axes":texture.axes})
 }
 
 impl Draft {
-    fn texture_targets(&self, pieces: &[PartitionRef]) -> Result<BTreeSet<PartitionRef>, String> {
+    pub(super) fn texture_targets(
+        &self,
+        pieces: &[PartitionRef],
+    ) -> Result<BTreeSet<PartitionRef>, String> {
         let targets = pieces.iter().cloned().collect::<BTreeSet<_>>();
         if pieces.is_empty()
-            || pieces.len() > subobject::MAX_SOLIDS * 2
+            || pieces.len() > subobject::MAX_COMPONENTS
             || targets.len() != pieces.len()
-            || targets.iter().any(|piece| {
-                !self.partitions.iter().any(|part| {
-                    part.source.solid == piece.solid
-                        && part.loops.iter().any(|item| item.id == piece.partition)
-                })
-            })
+            || targets.iter().any(|piece| !self.contains_piece(piece))
         {
-            return Err("Choose 1–32 distinct pieces from the current draft".into());
+            return Err("Choose distinct existing pieces from the current draft".into());
         }
         Ok(targets)
     }
@@ -69,28 +67,45 @@ impl Draft {
             .collect()
     }
 
-    pub(super) fn effective_texture(
+    pub(super) fn effective_piece_texture(
         &self,
         document: &map_core::Document,
-        part: &Partition,
+        solid: u32,
+        side: u32,
         piece: u32,
     ) -> Option<PartitionTexture> {
         self.textures
             .get(&PartitionRef {
-                solid: part.source.solid,
+                solid,
                 partition: piece,
             })
             .copied()
             .or_else(|| {
-                map_core::surface::side(
-                    document,
-                    map_core::surface::FaceId {
-                        solid: part.source.solid,
-                        side: part.source.side,
-                    },
-                )
-                .map(PartitionTexture::from_side)
+                map_core::surface::side(document, map_core::surface::FaceId { solid, side })
+                    .map(PartitionTexture::from_side)
             })
+    }
+
+    pub(super) fn effective_texture_json(
+        &self,
+        document: &map_core::Document,
+        part: &Partition,
+        piece: u32,
+    ) -> Option<Value> {
+        self.effective_piece_texture_json(document, part.source.solid, part.source.side, piece)
+    }
+
+    pub(super) fn effective_piece_texture_json(
+        &self,
+        document: &map_core::Document,
+        solid: u32,
+        side: u32,
+        piece: u32,
+    ) -> Option<Value> {
+        let texture = self.effective_piece_texture(document, solid, side, piece)?;
+        let source = map_core::surface::side(document, map_core::surface::FaceId { solid, side })?;
+        let projection = texture.project(source).ok()?;
+        Some(texture_json(PartitionTexture::from_projection(&projection)))
     }
 }
 
@@ -110,18 +125,13 @@ impl Session {
         let mut textures = Vec::new();
         let mut material_dimensions = BTreeMap::new();
         for target in targets {
-            let part = draft
-                .partitions
-                .iter()
-                .find(|part| part.source.solid == target.solid)
-                .unwrap();
-            let piece = part
-                .loops
-                .iter()
-                .find(|piece| piece.id == target.partition)
+            let piece = draft
+                .pieces()
+                .into_iter()
+                .find(|piece| piece.solid == target.solid && piece.id == target.partition)
                 .unwrap();
             let name = draft
-                .effective_material(&self.document, part, piece.id)
+                .effective_piece_material(&self.document, piece.solid, piece.side, piece.id)
                 .ok_or("Partition source material does not exist")?;
             let dimensions = match material_dimensions.entry(name.trim().to_ascii_lowercase()) {
                 Entry::Occupied(entry) => *entry.get(),
@@ -142,20 +152,15 @@ impl Session {
             let source = map_core::surface::side(
                 &self.document,
                 map_core::surface::FaceId {
-                    solid: part.source.solid,
-                    side: part.source.side,
+                    solid: piece.solid,
+                    side: piece.side,
                 },
             )
             .ok_or("Partition source face does not exist")?;
-            let points = piece
-                .vertices
-                .iter()
-                .map(|vertex| part.vertices[*vertex as usize].position)
-                .collect::<Vec<_>>();
             let texture = draft
-                .effective_texture(&self.document, part, piece.id)
+                .effective_piece_texture(&self.document, piece.solid, piece.side, piece.id)
                 .ok_or("Partition source texture does not exist")?
-                .place(source, &points, dimensions, fit, justify)
+                .place(source, &piece.points, dimensions, fit, justify)
                 .map_err(|error| error.to_string())?;
             textures.push((target, texture));
         }
@@ -189,6 +194,19 @@ impl Session {
         let targets = draft.texture_targets(pieces)?;
         if let Some(texture) = texture {
             texture.validate().map_err(|error| error.to_string())?;
+            for solid in targets
+                .iter()
+                .map(|target| target.solid)
+                .collect::<BTreeSet<_>>()
+            {
+                let side = draft.source_side(solid).unwrap();
+                let source = map_core::surface::side(
+                    &self.document,
+                    map_core::surface::FaceId { solid, side },
+                )
+                .ok_or("Partition source face does not exist")?;
+                texture.project(source).map_err(|error| error.to_string())?;
+            }
         }
         for piece in targets {
             if let Some(texture) = texture {

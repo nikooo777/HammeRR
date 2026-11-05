@@ -52,7 +52,8 @@ Use a VMF file to hand objects between these editors.
 
 - Text is limited to 8 MiB; native reads time out after 5 seconds.
 - Ambiguous, scripted and unsupported numeric references reject.
-- Stale partitions, opaque partition extensions and unrepresentable transformed texture plans reject and retain the previous preview.
+- Stale or opaque partition plans and invalid transformed projections reject.
+  Valid skewed projections retain explicit native axes.
 - MDL model entities require uniform scale. Static/detail model resizing and unsupported spatial metadata reject.
 - A source edit does not change an already copied payload.
 

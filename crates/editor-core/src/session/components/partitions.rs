@@ -2,22 +2,26 @@ use map_core::subobject::{Partition, VertexSource};
 
 use super::*;
 
+mod free;
 mod materials;
 mod picking;
 mod textures;
+
+pub use free::FaceCut;
+pub(super) use free::Preview as FreePreview;
 
 pub(super) fn consume_saved(
     tx: &mut map_core::Transaction,
     requests: &[Crease],
 ) -> Result<(), EditError> {
-    if let Ok(mut metadata) = map_core::partition_metadata::Metadata::parse(tx.vmf()) {
-        let count = metadata.entries.len();
-        for request in requests {
-            metadata.entries.remove(&(request.solid, request.side));
-        }
-        if metadata.entries.len() != count {
-            metadata.write(tx)?;
-        }
+    let mut metadata =
+        map_core::partition_metadata::Metadata::parse(tx.vmf()).map_err(EditError::Invalid)?;
+    let count = metadata.entries.len();
+    for request in requests {
+        metadata.entries.remove(&(request.solid, request.side));
+    }
+    if metadata.entries.len() != count {
+        metadata.write(tx)?;
     }
     Ok(())
 }
@@ -33,6 +37,7 @@ pub struct PartitionRef {
 #[derive(Clone)]
 pub(super) struct Draft {
     pub partitions: Vec<Partition>,
+    pub free_partitions: Vec<subobject::FreePartition>,
     pub rise: f64,
     pub roof_texture_lock: bool,
     pub neighbor_texture_lock: bool,
@@ -41,7 +46,80 @@ pub(super) struct Draft {
     pub textures: BTreeMap<PartitionRef, subobject::PartitionTexture>,
 }
 
+pub(super) struct Piece {
+    pub solid: u32,
+    pub side: u32,
+    pub id: u32,
+    pub points: Vec<DVec3>,
+    pub normal: DVec3,
+}
+
 impl Draft {
+    pub(super) fn is_free(&self) -> bool {
+        !self.free_partitions.is_empty()
+    }
+
+    pub(super) fn source_count(&self) -> usize {
+        self.partitions.len() + self.free_partitions.len()
+    }
+
+    pub(super) fn pieces(&self) -> Vec<Piece> {
+        let mut pieces = self
+            .partitions
+            .iter()
+            .flat_map(|part| {
+                let positions = part.positions(self.rise);
+                part.loops.iter().map(move |piece| Piece {
+                    solid: part.source.solid,
+                    side: part.source.side,
+                    id: piece.id,
+                    normal: part.normal(),
+                    points: piece
+                        .vertices
+                        .iter()
+                        .map(|id| positions[*id as usize])
+                        .collect(),
+                })
+            })
+            .collect::<Vec<_>>();
+        pieces.extend(self.free_partitions.iter().flat_map(|part| {
+            part.pieces.iter().map(|piece| Piece {
+                solid: part.solid,
+                side: part.side,
+                id: piece.id,
+                normal: part.normal(),
+                points: piece
+                    .vertices
+                    .iter()
+                    .map(|id| part.vertices[*id as usize].position)
+                    .collect(),
+            })
+        }));
+        pieces
+    }
+
+    pub(super) fn contains_piece(&self, piece: &PartitionRef) -> bool {
+        self.partitions.iter().any(|part| {
+            part.source.solid == piece.solid
+                && part.loops.iter().any(|item| item.id == piece.partition)
+        }) || self.free_partitions.iter().any(|part| {
+            part.solid == piece.solid && part.pieces.iter().any(|item| item.id == piece.partition)
+        })
+    }
+
+    pub(super) fn source_side(&self, solid: u32) -> Option<u32> {
+        self.partitions
+            .iter()
+            .find(|part| part.source.solid == solid)
+            .map(|part| part.source.side)
+            .or_else(|| {
+                self.free_partitions
+                    .iter()
+                    .find(|part| part.solid == solid)
+                    .map(|part| part.side)
+            })
+    }
+
     fn requests(&self) -> Vec<Crease> {
         self.partitions
             .iter()
@@ -49,7 +127,15 @@ impl Draft {
             .collect()
     }
 
-    pub fn report(&self, document: &map_core::Document, crease: Option<&CreaseDraft>) -> Value {
+    pub fn report(
+        &self,
+        document: &map_core::Document,
+        crease: Option<&CreaseDraft>,
+        free: Option<&FreePreview>,
+    ) -> Value {
+        if self.is_free() {
+            return self.free_report(document, free);
+        }
         let fragments = crease.map_or(0, |crease| crease.plan.fragments.len());
         let output_brushes = if fragments == 0 {
             self.partitions.len()
@@ -71,13 +157,13 @@ impl Draft {
                         .all(|parameters| parameters[index] == *value)
                 })
         });
-        json!({"ridge_supported":self.partitions.iter().all(|part|part.loops.iter().all(|piece|piece.vertices.len()==4)),"edge_parameters":edge_parameters,"rise":self.rise,"roof_texture_lock":self.roof_texture_lock,"neighbor_texture_lock":self.neighbor_texture_lock,"output_brushes":output_brushes,"added_brushes":output_brushes.saturating_sub(self.partitions.len()),"fragment_count":fragments,"can_pick_pieces":fragments==0,"picking_error":(fragments!=0).then_some("Return to flat before picking partition pieces after neighbor attachment"),"temporary":true,"selection":self.selection.iter().map(|part|json!({"solid":part.solid,"partition":part.partition})).collect::<Vec<_>>(),
+        json!({"kind":"boundary_edges","ridge_supported":self.partitions.iter().all(|part|part.loops.iter().all(|piece|piece.vertices.len()==4)),"edge_parameters":edge_parameters,"rise":self.rise,"roof_texture_lock":self.roof_texture_lock,"neighbor_texture_lock":self.neighbor_texture_lock,"output_brushes":output_brushes,"added_brushes":output_brushes.saturating_sub(self.partitions.len()),"fragment_count":fragments,"can_pick_pieces":fragments==0,"picking_error":(fragments!=0).then_some("Return to flat before picking partition pieces after neighbor attachment"),"temporary":true,"selection":self.selection.iter().map(|part|json!({"solid":part.solid,"partition":part.partition})).collect::<Vec<_>>(),
             "partitions":self.partitions.iter().map(|part| {
                 let positions = part.positions(self.rise);
                 let owner = match part.owner {ObjectId::Solid(id)=>format!("solid:{id}"),ObjectId::Entity(id)=>format!("entity:{id}")};
                 json!({"solid":part.source.solid,"source_side":part.source.side,"source_corner_count":part.source_corner_count(),"edges":part.source.edges,"owner":owner,"plane":part.plane.map(|point|point.to_array()),
                     "vertices":part.vertices.iter().map(|vertex|json!({"id":vertex.id,"position":vertex.position.to_array(),"preview_position":positions[vertex.id as usize].to_array(),"source":match &vertex.source {VertexSource::Corner(sides)=>json!({"kind":"corner","sides":sides}),VertexSource::Edge{corners,parameter}=>json!({"kind":"edge","corners":corners,"parameter":parameter})}})).collect::<Vec<_>>(),
-                    "loops":part.loops.iter().map(|piece|json!({"id":piece.id,"vertices":piece.vertices,"shape":match piece.vertices.len(){3=>"triangle",4=>"quad",5=>"pentagon",6=>"hexagon",7=>"heptagon",8=>"octagon",9=>"nonagon",_=>unreachable!()},"source_side":piece.source_side,"top_material":self.materials.get(&PartitionRef{solid:part.source.solid,partition:piece.id}).map(|name|name.to_ascii_lowercase()),"effective_material":self.effective_material(document, part, piece.id).map(str::to_ascii_lowercase),"inherited":!self.materials.contains_key(&PartitionRef{solid:part.source.solid,partition:piece.id}),"texture_plan":self.textures.get(&PartitionRef{solid:part.source.solid,partition:piece.id}).copied().map(textures::texture_json),"effective_texture":self.effective_texture(document,part,piece.id).map(textures::texture_json),"texture_inherited":!self.textures.contains_key(&PartitionRef{solid:part.source.solid,partition:piece.id}),"selected":self.selection.contains(&PartitionRef{solid:part.source.solid,partition:piece.id})})).collect::<Vec<_>>()})
+                    "loops":part.loops.iter().map(|piece|json!({"id":piece.id,"vertices":piece.vertices,"shape":match piece.vertices.len(){3=>"triangle",4=>"quad",5=>"pentagon",6=>"hexagon",7=>"heptagon",8=>"octagon",9=>"nonagon",_=>unreachable!()},"source_side":piece.source_side,"top_material":self.materials.get(&PartitionRef{solid:part.source.solid,partition:piece.id}).map(|name|name.to_ascii_lowercase()),"effective_material":self.effective_material(document, part, piece.id).map(str::to_ascii_lowercase),"inherited":!self.materials.contains_key(&PartitionRef{solid:part.source.solid,partition:piece.id}),"texture_plan":self.textures.get(&PartitionRef{solid:part.source.solid,partition:piece.id}).copied().map(textures::texture_json),"effective_texture":self.effective_texture_json(document,part,piece.id),"texture_inherited":!self.textures.contains_key(&PartitionRef{solid:part.source.solid,partition:piece.id}),"selected":self.selection.contains(&PartitionRef{solid:part.source.solid,partition:piece.id})})).collect::<Vec<_>>()})
             }).collect::<Vec<_>>()})
     }
 }
@@ -85,9 +171,9 @@ impl Draft {
 impl Session {
     pub fn saved_partition_report(&self) -> Value {
         let metadata = map_core::partition_metadata::Metadata::parse(self.document.vmf());
-        let (entries, error) = match metadata {
+        let (mut entries, mut error) = match metadata {
             Ok(metadata) => (metadata.resolve(&self.document).into_iter().map(|entry| {
-                json!({"solid":entry.source.solid,"side":entry.source.side,"edges":entry.source.edges,
+                json!({"kind":"boundary_edges","solid":entry.source.solid,"side":entry.source.side,"edges":entry.source.edges,
                     "piece_membership":metadata.entries.get(&(entry.source.solid, entry.source.side)).and_then(|intent|intent.piece_membership.as_ref()),
                     "source_corner_count":metadata.entries.get(&(entry.source.solid, entry.source.side)).map(|intent|intent.corners.len()),
                     "top_materials":metadata.entries.get(&(entry.source.solid, entry.source.side)).map(|intent|intent.top_materials.each_ref().map(|value|value.as_ref().map(|name|name.to_ascii_lowercase()))),
@@ -97,6 +183,20 @@ impl Session {
             }).collect::<Vec<_>>(), None),
             Err(error) => (Vec::new(), Some(error)),
         };
+        match self.free_saved_entries() {
+            Ok(free) => entries.extend(free),
+            Err(free_error) => {
+                error =
+                    Some(error.map_or(free_error.clone(), |error| format!("{error}; {free_error}")))
+            }
+        }
+        entries.sort_by_key(|entry| {
+            (
+                entry["solid"].as_u64(),
+                entry["side"].as_u64(),
+                entry["kind"].as_str().map(str::to_owned),
+            )
+        });
         json!({"snapshot":self.component_stamp(),"entries":entries,"error":error,
             "limits":{"partitions":map_core::partition_metadata::MAX_PARTITIONS,"text_bytes":map_core::partition_metadata::MAX_TEXT_BYTES}})
     }
@@ -116,7 +216,7 @@ impl Session {
         let picking = self.geometry.components.picking.clone();
         let count = self.edit(actor, "keep flat face partitions", |tx| {
             draft.store(tx)?;
-            Ok(draft.partitions.len())
+            Ok(draft.source_count())
         })?;
         if self.partition_preview_token() == Some(token) {
             self.cancel_component_move(token)?;
@@ -152,6 +252,14 @@ impl Session {
             || sources.len() != solids.len()
         {
             return Err("Resume one saved partition per brush across 1–16 brushes".into());
+        }
+        let free_metadata =
+            map_core::free_partition_metadata::Metadata::parse(self.document.vmf())?;
+        if sources
+            .iter()
+            .any(|source| free_metadata.entries.contains_key(source))
+        {
+            return self.resume_free_component_partitions(&sources, &free_metadata, stamp);
         }
         let metadata = map_core::partition_metadata::Metadata::parse(self.document.vmf())?;
         let mut resolved = metadata
@@ -195,6 +303,7 @@ impl Session {
         self.install_partition_preview(
             Draft {
                 partitions,
+                free_partitions: Vec::new(),
                 rise: 0.0,
                 roof_texture_lock: false,
                 neighbor_texture_lock: false,
@@ -228,15 +337,26 @@ impl Session {
             return Err("Choose 1–64 saved partitions to remove".into());
         }
         let metadata = map_core::partition_metadata::Metadata::parse(self.document.vmf())?;
-        if sources
-            .iter()
-            .any(|source| !metadata.entries.contains_key(source))
-        {
+        let free_metadata =
+            map_core::free_partition_metadata::Metadata::parse(self.document.vmf())?;
+        if sources.iter().any(|source| {
+            !metadata.entries.contains_key(source) && !free_metadata.entries.contains_key(source)
+        }) {
             return Err("Saved partition does not exist".into());
         }
         self.edit(actor, "remove saved face partitions", |tx| {
             for (solid, side) in &sources {
-                map_core::partition_metadata::remove(tx, *solid, *side)?;
+                if metadata.entries.contains_key(&(*solid, *side)) {
+                    map_core::partition_metadata::remove(tx, *solid, *side)?;
+                }
+            }
+            let free_sources = sources
+                .iter()
+                .filter(|source| free_metadata.entries.contains_key(source))
+                .copied()
+                .collect::<Vec<_>>();
+            if !free_sources.is_empty() {
+                map_core::free_partition_metadata::remove(tx, &free_sources)?;
             }
             Ok(sources.len())
         })
@@ -271,6 +391,9 @@ impl Session {
         mut document: Document,
         plan: Option<subobject::CreasePlan>,
     ) -> Result<u64, String> {
+        if draft.is_free() {
+            return self.install_free_partition_preview(draft);
+        }
         let requests = draft.requests();
         let material_sources = plan
             .as_ref()
@@ -322,30 +445,23 @@ impl Session {
         let requests = self.crease_requests(pairs)?;
         let mut partitions = subobject::plan_partitions(&self.document, &requests)
             .map_err(|error| error.to_string())?;
-        let materials = if let Ok(metadata) =
-            map_core::partition_metadata::Metadata::parse(self.document.vmf())
-        {
-            let mut materials = BTreeMap::new();
-            for resolved in metadata.resolve(&self.document) {
-                if let Ok(saved) = resolved.result
-                    && let Some(current) = partitions
-                        .iter_mut()
-                        .find(|part| part.source == saved.source)
-                {
-                    materials.extend(materials::saved_materials(
-                        &metadata,
-                        std::slice::from_ref(&saved),
-                    ));
-                    current.loops = saved.loops;
-                }
+        let metadata = map_core::partition_metadata::Metadata::parse(self.document.vmf())?;
+        let mut materials = BTreeMap::new();
+        for current in &mut partitions {
+            if let Some(intent) = metadata
+                .entries
+                .get(&(current.source.solid, current.source.side))
+                && intent.source == current.source
+            {
+                let saved = intent.resolve(&self.document)?;
+                materials.extend(materials::saved_materials(
+                    &metadata,
+                    std::slice::from_ref(&saved),
+                ));
+                current.loops = saved.loops;
             }
-            materials
-        } else {
-            BTreeMap::new()
-        };
-        let textures = map_core::partition_metadata::Metadata::parse(self.document.vmf())
-            .map(|metadata| textures::saved_textures(&self.document, &metadata, &partitions))
-            .unwrap_or_default();
+        }
+        let textures = textures::saved_textures(&self.document, &metadata, &partitions);
         let selection = partitions
             .iter()
             .flat_map(|part| {
@@ -357,6 +473,7 @@ impl Session {
             .collect();
         let draft = Draft {
             partitions,
+            free_partitions: Vec::new(),
             rise: 0.0,
             roof_texture_lock: false,
             neighbor_texture_lock: false,
@@ -373,6 +490,9 @@ impl Session {
         edge_parameters: [f64; 2],
     ) -> Result<u64, String> {
         let mut draft = self.checked_partition(token)?.clone();
+        if draft.is_free() {
+            return Err("Append a face cut to edit free edges".into());
+        }
         if draft.rise != 0.0 || self.checked_component_preview(token)?.extrusion.is_some() {
             return Err("Return to flat before adjusting the dividing edge".into());
         }
@@ -414,6 +534,9 @@ impl Session {
         neighbor_texture_lock: Option<bool>,
     ) -> Result<u64, String> {
         let mut draft = self.checked_partition(token)?.clone();
+        if draft.is_free() {
+            return Err("Apply face cuts before raising real components".into());
+        }
         draft.roof_texture_lock = roof_texture_lock.unwrap_or(draft.roof_texture_lock);
         draft.neighbor_texture_lock = neighbor_texture_lock.unwrap_or(draft.neighbor_texture_lock);
         if !rise.is_finite()
@@ -480,13 +603,8 @@ impl Session {
         mode: SelectMode,
     ) -> Result<(), String> {
         let draft = self.checked_partition(token)?;
-        if parts.len() > subobject::MAX_SOLIDS * 2
-            || parts.iter().any(|part| {
-                !draft.partitions.iter().any(|source| {
-                    source.source.solid == part.solid
-                        && source.loops.iter().any(|piece| piece.id == part.partition)
-                })
-            })
+        if parts.len() > subobject::MAX_COMPONENTS
+            || parts.iter().any(|part| !draft.contains_piece(part))
         {
             return Err("Choose loops from the current partition draft".into());
         }
@@ -535,28 +653,29 @@ impl Session {
         }
         let draft = self.checked_partition(token)?;
         let mut bounds: Option<(DVec3, DVec3)> = None;
-        for part in &draft.partitions {
-            let positions = part.positions(draft.rise);
-            for piece in &part.loops {
-                if draft.selection.contains(&PartitionRef {
-                    solid: part.source.solid,
-                    partition: piece.id,
-                }) {
-                    for &index in &piece.vertices {
-                        let point = positions[index as usize];
-                        bounds = Some(bounds.map_or((point, point), |(mins, maxs)| {
-                            (mins.min(point), maxs.max(point))
-                        }));
-                        if let Some(extrusion) = &self.checked_component_preview(token)?.extrusion
-                            && extrusion.selection.contains(&PartitionRef {
-                                solid: part.source.solid,
-                                partition: piece.id,
-                            })
-                        {
-                            let top = point + part.normal() * extrusion.spec.height;
-                            bounds = bounds.map(|(mins, maxs)| (mins.min(top), maxs.max(top)));
-                        }
-                    }
+        for piece in draft.pieces() {
+            if !draft.selection.contains(&PartitionRef {
+                solid: piece.solid,
+                partition: piece.id,
+            }) {
+                continue;
+            }
+            for point in piece.points {
+                bounds = Some(bounds.map_or((point, point), |(mins, maxs)| {
+                    (mins.min(point), maxs.max(point))
+                }));
+                if let Some(extrusion) = &self.checked_component_preview(token)?.extrusion
+                    && extrusion.selection.contains(&PartitionRef {
+                        solid: piece.solid,
+                        partition: piece.id,
+                    })
+                    && let Some(part) = draft
+                        .partitions
+                        .iter()
+                        .find(|part| part.source.solid == piece.solid)
+                {
+                    let top = point + part.normal() * extrusion.spec.height;
+                    bounds = bounds.map(|(mins, maxs)| (mins.min(top), maxs.max(top)));
                 }
             }
         }
@@ -575,68 +694,102 @@ impl Session {
             return;
         };
         let visible = self.partition_piece_visibility(&draft);
-        for part in &draft.partitions {
-            let positions = part.positions(draft.rise);
-            let mut pieces = part.loops.iter().collect::<Vec<_>>();
-            pieces.sort_by_key(|piece| {
-                draft.selection.contains(&PartitionRef {
-                    solid: part.source.solid,
-                    partition: piece.id,
-                })
-            });
-            for piece in pieces {
-                if !visible
-                    .get(&PartitionRef {
-                        solid: part.source.solid,
-                        partition: piece.id,
+        for part in &draft.free_partitions {
+            for edge in &part.edges {
+                let adjacent = part
+                    .pieces
+                    .iter()
+                    .filter(|piece| {
+                        edge.vertices
+                            .iter()
+                            .all(|vertex| piece.vertices.contains(vertex))
+                            && visible.get(&PartitionRef {
+                                solid: part.solid,
+                                partition: piece.id,
+                            }) == Some(&true)
                     })
-                    .copied()
-                    .unwrap_or(false)
-                {
+                    .collect::<Vec<_>>();
+                if adjacent.is_empty() {
                     continue;
                 }
-                let selected = draft.selection.contains(&PartitionRef {
-                    solid: part.source.solid,
-                    partition: piece.id,
+                let selected = adjacent.iter().any(|piece| {
+                    draft.selection.contains(&PartitionRef {
+                        solid: part.solid,
+                        partition: piece.id,
+                    })
                 });
                 let color = if selected {
                     [255, 190, 65, 255]
                 } else {
                     [95, 215, 255, 255]
                 };
-                for index in 0..piece.vertices.len() {
-                    for vertex in [
-                        piece.vertices[index],
-                        piece.vertices[(index + 1) % piece.vertices.len()],
+                let [a, b] = edge
+                    .vertices
+                    .map(|vertex| part.vertices[vertex as usize].position + part.normal() * 0.02);
+                let divisions = if edge.authored || edge.boundary { 1 } else { 6 };
+                for index in (0..divisions).step_by(2) {
+                    for parameter in [
+                        f64::from(index) / f64::from(divisions),
+                        f64::from(index + 1) / f64::from(divisions),
                     ] {
                         mesh.lines.push(render::scene::LineVertex {
-                            position: (positions[vertex as usize] + part.normal() * 0.02)
-                                .as_vec3()
-                                .to_array(),
+                            position: a.lerp(b, parameter).as_vec3().to_array(),
                             color,
                         });
                     }
-                    if let Some(extrusion) = self
-                        .geometry
-                        .components
-                        .preview
-                        .as_ref()
-                        .and_then(|preview| preview.extrusion.as_ref())
-                        && extrusion.selection.contains(&PartitionRef {
-                            solid: part.source.solid,
-                            partition: piece.id,
-                        })
-                    {
-                        let base = positions[piece.vertices[index] as usize];
-                        let next =
-                            positions[piece.vertices[(index + 1) % piece.vertices.len()] as usize];
-                        let delta = part.normal() * extrusion.spec.height;
-                        for point in [base + delta, next + delta, base, base + delta] {
-                            mesh.lines.push(render::scene::LineVertex {
-                                position: point.as_vec3().to_array(),
-                                color,
-                            });
-                        }
+                }
+            }
+        }
+        let mut pieces = draft.pieces();
+        pieces.retain(|piece| {
+            !draft
+                .free_partitions
+                .iter()
+                .any(|part| part.solid == piece.solid && part.side == piece.side)
+        });
+        pieces.sort_by_key(|piece| {
+            draft.selection.contains(&PartitionRef {
+                solid: piece.solid,
+                partition: piece.id,
+            })
+        });
+        for piece in pieces {
+            let target = PartitionRef {
+                solid: piece.solid,
+                partition: piece.id,
+            };
+            if visible.get(&target) != Some(&true) {
+                continue;
+            }
+            let normal = piece.normal;
+            let color = if draft.selection.contains(&target) {
+                [255, 190, 65, 255]
+            } else {
+                [95, 215, 255, 255]
+            };
+            for index in 0..piece.points.len() {
+                let base = piece.points[index];
+                let next = piece.points[(index + 1) % piece.points.len()];
+                for point in [base, next] {
+                    mesh.lines.push(render::scene::LineVertex {
+                        position: (point + normal * 0.02).as_vec3().to_array(),
+                        color,
+                    });
+                }
+                if let Some(extrusion) = self
+                    .geometry
+                    .components
+                    .preview
+                    .as_ref()
+                    .and_then(|preview| preview.extrusion.as_ref())
+                    && extrusion.selection.contains(&target)
+                {
+                    let delta = normal * extrusion.spec.height;
+                    for point in [base + delta, next + delta, base, base + delta] {
+                        mesh.lines.push(render::scene::LineVertex {
+                            position: point.as_vec3().to_array(),
+                            color,
+                        });
                     }
                 }
             }

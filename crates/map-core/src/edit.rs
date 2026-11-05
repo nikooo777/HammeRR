@@ -318,10 +318,30 @@ pub fn translate(
     texture_lock: bool,
 ) -> Result<(), EditError> {
     for &id in ids {
+        let saved = crate::partition_metadata::transfer::capture_axes(tx.document(), id)?;
+        let free_saved = crate::free_partition_metadata::transfer::capture_axes(tx.document(), id)?;
         match id {
             ObjectId::Solid(id) => translate_solid(tx.solid_mut(id)?, delta, texture_lock)?,
             ObjectId::Entity(id) => translate_entity(tx.entity_mut(id)?, delta, texture_lock)?,
         }
+        crate::partition_metadata::transfer::transform_saved(
+            tx,
+            saved,
+            Transform {
+                translation: delta,
+                texture_lock,
+                ..Default::default()
+            },
+        )?;
+        crate::free_partition_metadata::transfer::transform_saved(
+            tx,
+            free_saved,
+            Transform {
+                translation: delta,
+                texture_lock,
+                ..Default::default()
+            },
+        )?;
     }
     Ok(())
 }
@@ -330,12 +350,15 @@ fn renumber_solid(
     tx: &mut Transaction,
     solid: &mut Solid,
     mapping: &mut Vec<(ObjectId, ObjectId)>,
+    sides: &mut Vec<(u32, u32)>,
 ) -> Result<(), EditError> {
     let old = solid.id;
     solid.id = tx.new_object_id()?;
     mapping.push((ObjectId::Solid(old), ObjectId::Solid(solid.id)));
     for side in &mut solid.sides {
+        let old = side.id;
         side.id = tx.new_side_id()?;
+        sides.push((old, side.id));
     }
     Ok(())
 }
@@ -347,14 +370,32 @@ pub fn duplicate(
     ids: &[ObjectId],
     offset: DVec3,
 ) -> Result<Vec<ObjectId>, EditError> {
+    let solids = ids
+        .iter()
+        .flat_map(|id| match id {
+            ObjectId::Solid(id) => vec![*id],
+            ObjectId::Entity(id) => tx
+                .document()
+                .entity(*id)
+                .map(|entity| entity.solids.iter().map(|solid| solid.id).collect())
+                .unwrap_or_default(),
+        })
+        .collect();
+    let partitions = crate::partition_metadata::transfer::capture(tx.document(), &solids)?;
+    let free_partitions =
+        crate::free_partition_metadata::transfer::capture(tx.document(), &solids)?;
+    let source = (!partitions.entries.is_empty() || !free_partitions.entries.is_empty())
+        .then(|| tx.document().preview_snapshot());
     let mut copies = Vec::with_capacity(ids.len());
     let mut mapping = Vec::new();
     for &id in ids {
+        let first_mapping = mapping.len();
+        let mut sides = Vec::new();
         let copy = match id {
             ObjectId::Solid(id) => {
                 let (owner, solid) = crate::subobject::solid(tx.document(), id)?;
                 let mut solid = solid.clone();
-                renumber_solid(tx, &mut solid, &mut mapping)?;
+                renumber_solid(tx, &mut solid, &mut mapping, &mut sides)?;
                 translate_solid(&mut solid, offset, true)?;
                 match owner {
                     ObjectId::Solid(_) => tx.add_solid(solid)?,
@@ -374,12 +415,44 @@ pub fn duplicate(
                 entity.id = tx.new_object_id()?;
                 mapping.push((ObjectId::Entity(id), ObjectId::Entity(entity.id)));
                 for solid in &mut entity.solids {
-                    renumber_solid(tx, solid, &mut mapping)?;
+                    renumber_solid(tx, solid, &mut mapping, &mut sides)?;
                 }
                 translate_entity(&mut entity, offset, true)?;
                 tx.add_entity(entity)?
             }
         };
+        if let Some(source) = &source {
+            let solids = mapping[first_mapping..]
+                .iter()
+                .filter_map(|(old, new)| match (old, new) {
+                    (ObjectId::Solid(old), ObjectId::Solid(new)) => Some((*old, *new)),
+                    _ => None,
+                })
+                .collect();
+            let sides = sides.into_iter().collect();
+            let partitions = crate::partition_metadata::transfer::remap(
+                source,
+                tx.document(),
+                &solids,
+                &sides,
+                Transform {
+                    translation: offset,
+                    ..Default::default()
+                },
+            )?;
+            crate::partition_metadata::transfer::merge(tx, &partitions)?;
+            let free_partitions = crate::free_partition_metadata::transfer::remap(
+                source,
+                tx.document(),
+                &solids,
+                &sides,
+                Transform {
+                    translation: offset,
+                    ..Default::default()
+                },
+            )?;
+            crate::free_partition_metadata::transfer::merge(tx, &free_partitions)?;
+        }
         copies.push(copy);
     }
     crate::context::copy_notes(tx, &mapping)?;

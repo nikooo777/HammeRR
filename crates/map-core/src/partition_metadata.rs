@@ -24,11 +24,18 @@ const POLYGON_MATERIAL_KIND: &str = "polygon_boundary_edges_materials";
 const MEMBERSHIP_FIELDS: [&str; 2] = ["piece_0_corner", "piece_1_corner"];
 const MATERIAL_FIELDS: [&str; 2] = ["top_material_0", "top_material_1"];
 const TEXTURE_FIELDS: [&str; 2] = ["top_texture_0", "top_texture_1"];
+const AXIS_FIELDS: [&str; 2] = ["top_texture_axes_0", "top_texture_axes_1"];
 const TEXTURE_KINDS: [&str; 4] = [
     "opposing_midpoints_textures",
     "opposing_edges_textures",
     "boundary_edges_textures",
     "polygon_boundary_edges_textures",
+];
+const AXIS_KINDS: [&str; 4] = [
+    "opposing_midpoints_texture_axes",
+    "opposing_edges_texture_axes",
+    "boundary_edges_texture_axes",
+    "polygon_boundary_edges_texture_axes",
 ];
 const PARAMETERS_FIELD: &str = "edge_parameters";
 const VERSION: &str = "1";
@@ -58,13 +65,13 @@ pub struct Resolution {
 }
 
 #[derive(Default)]
-struct Budget {
+pub(crate) struct Budget {
     text: usize,
     nodes: usize,
 }
 
 impl Budget {
-    fn visit(&mut self, node: &Node, depth: usize) -> Result<(), String> {
+    pub(crate) fn visit(&mut self, node: &Node, depth: usize) -> Result<(), String> {
         if depth > MAX_DEPTH {
             return Err("Partition metadata nesting exceeds 64 levels".into());
         }
@@ -93,6 +100,32 @@ impl Budget {
         }
         Ok(())
     }
+}
+
+pub(crate) fn validate_combined(legacy: Option<&Node>, free: Option<&Node>) -> Result<(), String> {
+    let mut budget = Budget::default();
+    let mut sources = BTreeSet::new();
+    for block in [legacy, free].into_iter().flatten() {
+        budget.visit(block, 1)?;
+        for partition in block
+            .children()
+            .ok_or("Partition metadata must be a block")?
+            .iter()
+            .filter(|node| node.key == "partition")
+        {
+            let fields = partition
+                .children()
+                .ok_or("Partition entry must be a block")?;
+            let source = (id(field(fields, "solid")?)?, id(field(fields, "side")?)?);
+            if !sources.insert(source) {
+                return Err("A source face cannot contain both saved partition formats".into());
+            }
+            if sources.len() > MAX_PARTITIONS {
+                return Err("Saved partitions exceed the shared 64-face budget".into());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn field<'a>(nodes: &'a [Node], key: &str) -> Result<&'a str, String> {
@@ -151,6 +184,13 @@ pub fn normalize_top_material(material: &str) -> Result<String, String> {
 }
 
 impl Intent {
+    fn has_explicit_axes(&self) -> bool {
+        self.top_textures
+            .iter()
+            .flatten()
+            .any(|texture| texture.axes.is_some())
+    }
+
     fn from_partition(partition: &Partition) -> Self {
         Self {
             source: partition.source.clone(),
@@ -294,6 +334,7 @@ impl Intent {
                     && MATERIAL_FIELDS.contains(&node.key.as_str()))
                 || (self.top_textures.iter().any(Option::is_some)
                     && TEXTURE_FIELDS.contains(&node.key.as_str()))
+                || (self.has_explicit_axes() && AXIS_FIELDS.contains(&node.key.as_str()))
                 || (polygon && MEMBERSHIP_FIELDS.contains(&node.key.as_str()))
         }) {
             return Err("Partition extra metadata repeats a reserved field".into());
@@ -306,7 +347,12 @@ impl Intent {
             Node::string(
                 "kind",
                 if self.top_textures.iter().any(Option::is_some) {
-                    TEXTURE_KINDS[if self.piece_membership.is_some() {
+                    let kinds = if self.has_explicit_axes() {
+                        AXIS_KINDS
+                    } else {
+                        TEXTURE_KINDS
+                    };
+                    kinds[if self.piece_membership.is_some() {
                         3
                     } else if self.adjacent {
                         2
@@ -363,6 +409,18 @@ impl Intent {
                         texture.scale[1],
                         texture.rotation
                     ),
+                ));
+            }
+        }
+        for (key, texture) in AXIS_FIELDS.iter().zip(&self.top_textures) {
+            if let Some(axes) = texture.and_then(|texture| texture.axes) {
+                fields.push(Node::string(
+                    *key,
+                    axes.into_iter()
+                        .flatten()
+                        .map(|value| value.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" "),
                 ));
             }
         }
@@ -507,21 +565,28 @@ impl Metadata {
             ]
             .contains(&kind)
                 && !TEXTURE_KINDS.contains(&kind)
+                && !AXIS_KINDS.contains(&kind)
             {
                 return Err(
                     "Unsupported partition intent kind; raw metadata has been preserved".into(),
                 );
             }
-            let textured = TEXTURE_KINDS.contains(&kind);
-            let adjacent =
-                kind == BOUNDARY_KIND || kind == BOUNDARY_MATERIAL_KIND || kind == TEXTURE_KINDS[2];
-            let polygon =
-                kind == POLYGON_KIND || kind == POLYGON_MATERIAL_KIND || kind == TEXTURE_KINDS[3];
+            let explicit_axes = AXIS_KINDS.contains(&kind);
+            let textured = TEXTURE_KINDS.contains(&kind) || explicit_axes;
+            let adjacent = kind == BOUNDARY_KIND
+                || kind == BOUNDARY_MATERIAL_KIND
+                || kind == TEXTURE_KINDS[2]
+                || kind == AXIS_KINDS[2];
+            let polygon = kind == POLYGON_KIND
+                || kind == POLYGON_MATERIAL_KIND
+                || kind == TEXTURE_KINDS[3]
+                || kind == AXIS_KINDS[3];
             let adjusted = polygon
                 || adjacent
                 || kind == EDGE_KIND
                 || kind == EDGE_MATERIAL_KIND
-                || kind == TEXTURE_KINDS[1];
+                || kind == TEXTURE_KINDS[1]
+                || kind == AXIS_KINDS[1];
             let styled = kind == MATERIAL_KIND
                 || kind == EDGE_MATERIAL_KIND
                 || kind == BOUNDARY_MATERIAL_KIND
@@ -572,6 +637,7 @@ impl Metadata {
                             shift: [u, v],
                             scale: [su, sv],
                             rotation,
+                            axes: None,
                         };
                         texture.validate().map_err(|error| error.to_string())?;
                         top_textures[index] = Some(texture);
@@ -580,6 +646,35 @@ impl Metadata {
                 if top_textures.iter().all(Option::is_none) {
                     return Err(
                         "Texture partition intent needs at least one planned texture".into(),
+                    );
+                }
+            }
+            if explicit_axes {
+                for (index, key) in AXIS_FIELDS.iter().enumerate() {
+                    if fields.iter().any(|node| node.key == *key) {
+                        let values = field(fields, key)?
+                            .split_whitespace()
+                            .take(7)
+                            .map(str::parse::<f64>)
+                            .collect::<Result<Vec<_>, _>>()
+                            .map_err(|_| "Planned texture axes need numeric components")?;
+                        let [ux, uy, uz, vx, vy, vz]: [f64; 6] = values
+                            .try_into()
+                            .map_err(|_: Vec<_>| "Planned texture axes need exactly six values")?;
+                        let texture = top_textures[index].as_mut().ok_or(
+                            "Planned texture axes need matching shift, scale and rotation",
+                        )?;
+                        texture.axes = Some([[ux, uy, uz], [vx, vy, vz]]);
+                        texture.validate().map_err(|error| error.to_string())?;
+                    }
+                }
+                if !top_textures
+                    .iter()
+                    .flatten()
+                    .any(|texture| texture.axes.is_some())
+                {
+                    return Err(
+                        "Axis partition intent needs at least one explicit projection".into(),
                     );
                 }
             }
@@ -649,6 +744,7 @@ impl Metadata {
                             && !(adjusted && field.key == PARAMETERS_FIELD)
                             && !(styled && MATERIAL_FIELDS.contains(&field.key.as_str()))
                             && !(textured && TEXTURE_FIELDS.contains(&field.key.as_str()))
+                            && !(explicit_axes && AXIS_FIELDS.contains(&field.key.as_str()))
                             && !(polygon && MEMBERSHIP_FIELDS.contains(&field.key.as_str()))
                     })
                     .cloned()
@@ -707,11 +803,20 @@ impl Metadata {
     pub fn write(&self, tx: &mut Transaction) -> Result<(), EditError> {
         Self::parse(tx.vmf()).map_err(EditError::Invalid)?;
         self.validate().map_err(EditError::Invalid)?;
+        crate::free_partition_metadata::Metadata::parse(tx.vmf()).map_err(EditError::Invalid)?;
         let node = if self.entries.is_empty() && self.extra.is_empty() {
             None
         } else {
             Some(self.node(true))
         };
+        validate_combined(
+            node.as_ref(),
+            tx.vmf()
+                .extra
+                .iter()
+                .find(|node| node.key == crate::free_partition_metadata::KEY),
+        )
+        .map_err(EditError::Invalid)?;
         tx.set_editor_metadata(KEY, node);
         Ok(())
     }

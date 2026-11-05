@@ -101,35 +101,15 @@ impl Session {
                     && self.working_solid_visible(self.render_document(), solid.id)
             },
             |solid, side, point| {
-                if !inward
-                    && let Some(part) = draft
-                        .partitions
-                        .iter()
-                        .find(|part| part.source.solid == solid.id && part.source.side == side.id)
-                {
-                    let positions = part.positions(draft.rise);
-                    let depth =
-                        (point - camera.position.as_dvec3()).dot(camera.forward().as_dvec3());
-                    let half = if camera.projection == Projection::Perspective {
-                        (f64::from(camera.fov_y_degrees).to_radians() * 0.5).tan() * depth
-                    } else {
-                        f64::from(camera.ortho_height) * 0.5
-                    };
-                    let tolerance = PICK_EPSILON.max(half / f64::from(pointer.size.1));
-                    part.loops.iter().any(|piece| {
-                        visible.get(&PartitionRef {
-                            solid: solid.id,
-                            partition: piece.id,
-                        }) == Some(&true)
-                            && contains(
-                                &piece
-                                    .vertices
-                                    .iter()
-                                    .map(|index| positions[*index as usize])
-                                    .collect::<Vec<_>>(),
-                                point,
-                                tolerance,
-                            )
+                if !inward && draft.source_side(solid.id) == Some(side.id) {
+                    let tolerance = PICK_EPSILON;
+                    draft.pieces().iter().any(|piece| {
+                        piece.solid == solid.id
+                            && visible.get(&PartitionRef {
+                                solid: solid.id,
+                                partition: piece.id,
+                            }) == Some(&true)
+                            && contains(&piece.points, point, tolerance)
                     })
                 } else {
                     !hidden_faces.contains(&(solid.id, side.id))
@@ -198,34 +178,23 @@ impl Session {
         };
         let tolerance = PICK_EPSILON.max(half / f64::from(pointer.size.1));
         let mut candidates = Vec::new();
-        for partition in &draft.partitions {
-            if hit.solid != Some(partition.source.solid) {
+        for piece in draft.pieces() {
+            if hit.solid != Some(piece.solid) {
                 continue;
             }
-            let positions = partition.positions(draft.rise);
-            for piece in &partition.loops {
-                let points = piece
-                    .vertices
-                    .iter()
-                    .map(|index| positions[*index as usize])
-                    .collect::<Vec<_>>();
-                if visible.get(&PartitionRef {
-                    solid: partition.source.solid,
-                    partition: piece.id,
-                }) != Some(&true)
-                    || !contains(&points, hit.point, tolerance)
-                {
-                    continue;
-                }
-                candidates.push(PartitionPick {
-                    partition: PartitionRef {
-                        solid: partition.source.solid,
-                        partition: piece.id,
-                    },
-                    position: hit.point,
-                    depth,
-                });
+            let target = PartitionRef {
+                solid: piece.solid,
+                partition: piece.id,
+            };
+            if visible.get(&target) != Some(&true) || !contains(&piece.points, hit.point, tolerance)
+            {
+                continue;
             }
+            candidates.push(PartitionPick {
+                partition: target,
+                position: hit.point,
+                depth,
+            });
         }
         candidates.sort_by(|a, b| {
             a.depth

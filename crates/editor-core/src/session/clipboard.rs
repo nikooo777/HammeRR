@@ -88,6 +88,7 @@ fn cut_objects(
     solids: &BTreeSet<u32>,
 ) -> Result<(), EditError> {
     map_core::partition_metadata::transfer::remove_for_solids(tx, solids)?;
+    map_core::free_partition_metadata::transfer::remove_for_solids(tx, solids)?;
     edit::delete(tx, sources)
 }
 

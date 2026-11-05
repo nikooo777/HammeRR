@@ -16,6 +16,7 @@ pub mod edit;
 pub mod editor_metadata;
 pub mod entity_helpers;
 pub mod fog;
+pub mod free_partition_metadata;
 pub mod groups;
 pub mod hollow;
 pub mod instance_order;

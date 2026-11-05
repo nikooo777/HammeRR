@@ -17,6 +17,7 @@ pub use split::{
     MAX_RISE as MAX_SPLIT_RISE, MIN_RISE as MIN_SPLIT_RISE, SplitChange, SplitFace, SplitPlan,
     split, split_with_textures,
 };
+pub mod fragments;
 mod ridge_fragments;
 pub use ridge_fragments::{CreaseFragment, CreaseFragmentFace, MAX_RIDGE_FRAGMENTS};
 mod crease;
@@ -30,6 +31,14 @@ pub use partition::{
     MAX_PARTITION_LOOP_VERTICES, MAX_PARTITION_VERTICES, Partition, PartitionCut, PartitionLoop,
     PartitionVertex, VertexSource, partition_pairs, plan_partitions, plan_partitions_at,
     polygon_partition_pairs,
+};
+mod free_partition;
+pub use free_partition::{
+    FreePartition, FreePartitionCut, FreePartitionEdge, FreePartitionFace, FreePartitionFragment,
+    FreePartitionPiece, FreePartitionPlan, FreePartitionVertex, FreePieceSurface,
+    MAX_FREE_PARTITION_EDGES, MAX_FREE_PARTITION_FRAGMENTS, MAX_FREE_PARTITION_PIECES,
+    MAX_FREE_PARTITION_VERTICES, materialize_free_partitions, plan_free_partition_materialization,
+    plan_free_partitions,
 };
 mod extrusion;
 pub use extrusion::{

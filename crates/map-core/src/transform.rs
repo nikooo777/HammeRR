@@ -390,8 +390,16 @@ pub(crate) fn transform_projection(
         mapping.texture_lock
     };
     if attached {
-        mapping.axis(&mut projection.u)?;
-        mapping.axis(&mut projection.v)?;
+        for axis in [&mut projection.u, &mut projection.v] {
+            if mapping.translation_only {
+                axis.offset -= mapping.offset.dot(axis.axis) / axis.scale;
+                if !axis.offset.is_finite() {
+                    return Err(invalid("Translation produces a nonfinite texture offset"));
+                }
+            } else {
+                mapping.axis(axis)?;
+            }
+        }
     }
     Ok(projection)
 }
@@ -426,10 +434,14 @@ pub fn transform(
             }
             continue;
         }
+        let saved = crate::partition_metadata::transfer::capture_axes(tx.document(), id)?;
+        let free_saved = crate::free_partition_metadata::transfer::capture_axes(tx.document(), id)?;
         match id {
             ObjectId::Solid(id) => mapping.solid(tx.solid_mut(id)?)?,
             ObjectId::Entity(id) => mapping.entity(tx.entity_mut(id)?, rotate)?,
         }
+        crate::partition_metadata::transfer::transform_saved(tx, saved, transform)?;
+        crate::free_partition_metadata::transfer::transform_saved(tx, free_saved, transform)?;
     }
     Ok(())
 }

@@ -1,7 +1,8 @@
+use super::fragments::{self, upper_distance};
 use super::*;
 use crate::surface::Projection;
 use glam::DVec2;
-use source_formats::vmf::{Properties, Side, UvAxis};
+use source_formats::vmf::Side;
 
 pub const MAX_RIDGE_FRAGMENTS: usize = crate::carve::MAX_FRAGMENTS;
 
@@ -38,11 +39,6 @@ struct Triangle {
     vertices: [usize; 3],
     template: Side,
     source_side: u32,
-}
-
-fn upper_distance(plane: Plane, point: DVec3) -> f64 {
-    let products = (plane.normal * point).map(f64::next_up);
-    (((products.x + products.y).next_up() + products.z).next_up() - plane.dist).next_up()
 }
 
 fn projection(
@@ -229,33 +225,6 @@ fn canonical_boundary(
     })
 }
 
-fn internal_side(points: [DVec3; 3], id: u32) -> Result<Side, EditError> {
-    let plane =
-        Plane::from_points(points).ok_or_else(|| invalid("Ridge has a collapsed internal face"))?;
-    let (u, v) = crate::edit::world_texture_axes(plane.normal);
-    Ok(Side {
-        id,
-        plane: source_formats::vmf::Plane(points),
-        material: "TOOLS/TOOLSNODRAW".into(),
-        u_axis: UvAxis {
-            axis: u,
-            offset: 0.0,
-            scale: crate::edit::DEFAULT_TEXTURE_SCALE,
-        },
-        v_axis: UvAxis {
-            axis: v,
-            offset: 0.0,
-            scale: crate::edit::DEFAULT_TEXTURE_SCALE,
-        },
-        rotation: 0.0,
-        lightmap_scale: crate::edit::DEFAULT_LIGHTMAP_SCALE,
-        smoothing_groups: Some(0),
-        displacement: None,
-        extra_properties: Properties::default(),
-        extra: Vec::new(),
-    })
-}
-
 fn decompose(
     source: &Solid,
     replacement: &Replacement,
@@ -332,178 +301,38 @@ fn decompose(
             ));
         }
     }
-    let center_id = points.len();
-    points.push(center);
-    let mut internals = BTreeMap::<[usize; 3], Vec<[usize; 3]>>::new();
-    let mut fragments = Vec::with_capacity(exterior.len());
-    for triangle in exterior {
-        let [a, b, c] = triangle.vertices;
-        let mut template = triangle.template;
-        let ridge_side = template.id;
-        template
-            .clear_precise_vertices()
-            .map_err(|error| invalid(error.to_string()))?;
-        template.id = 1;
-        template.plane.0 = [points[a], points[b], points[c]];
-        let exterior_plane = Plane::from_points(template.plane.0)
-            .ok_or_else(|| invalid("Ridge exterior triangle is collapsed"))?;
-        if upper_distance(exterior_plane, center) >= 0.0 {
-            return Err(invalid(
-                "Ridge triangle reverses its outward source boundary",
-            ));
-        }
-        let mut sides = vec![template];
-        let mut faces = vec![CreaseFragmentFace {
-            side: 1,
-            source_side: triangle.source_side,
-            exterior: true,
-            ridge_side: Some(ridge_side),
-        }];
-        for (mut vertices, opposite) in [
-            ([a, b, center_id], c),
-            ([b, c, center_id], a),
-            ([c, a, center_id], b),
-        ] {
-            vertices.sort_unstable();
-            let key = vertices;
-            let mut plane = Plane::from_points(vertices.map(|index| points[index]))
-                .ok_or_else(|| invalid("Ridge tetrahedron has a collapsed internal face"))?;
-            if upper_distance(plane, points[opposite]) >= 0.0 {
-                vertices.swap(0, 2);
-                plane = Plane::from_points(vertices.map(|index| points[index])).unwrap();
+    let triangles = exterior
+        .into_iter()
+        .map(|triangle| {
+            let tag = Some(triangle.template.id);
+            fragments::BoundaryTriangle {
+                vertices: triangle.vertices,
+                template: triangle.template,
+                source_side: triangle.source_side,
+                tag,
             }
-            if upper_distance(plane, points[opposite]) >= 0.0 {
-                return Err(invalid(
-                    "Ridge tetrahedron has no certified positive interior",
-                ));
-            }
-            internals.entry(key).or_default().push(vertices);
-            let id = sides.len() as u32 + 1;
-            sides.push(internal_side(vertices.map(|index| points[index]), id)?);
-            faces.push(CreaseFragmentFace {
-                side: id,
-                source_side: 0,
-                exterior: false,
-                ridge_side: None,
-            });
-        }
-        for side in &mut sides {
-            let vertices = side.plane.0;
-            side.set_precise_vertices(&vertices)
-                .map_err(|error| invalid(error.to_string()))?;
-        }
-        let mut solid = source.clone();
-        solid.sides = sides;
-        crate::brush::canonicalize_precise(&mut solid)?;
-        let topology = topology(&solid)?;
-        if topology.vertices.len() != 4 || topology.faces.len() != 4 {
-            return Err(invalid(
-                "Ridge fragment is not a positive closed tetrahedron",
-            ));
-        }
-        fragments.push(CreaseFragment {
-            source: source.id,
-            owner: replacement.owner,
-            solid,
-            faces,
-        });
-    }
-    if internals
-        .values()
-        .any(|faces| faces.len() != 2 || faces[0] != [faces[1][2], faces[1][1], faces[1][0]])
-    {
-        return Err(invalid(
-            "Ridge tetrahedra do not have exact opposite shared internal faces",
-        ));
-    }
-    Ok(fragments)
-}
-
-fn admit_source(source: &Solid) -> Result<(), EditError> {
-    if !source.extra.is_empty()
-        || !source.extra_properties.0.is_empty()
-        || source.sides.iter().any(|side| {
-            !side.extra_properties.0.is_empty()
-                || side
-                    .extra
-                    .iter()
-                    .any(|node| !source_formats::vmf::is_precise_vertices_key(&node.key))
         })
-    {
-        return Err(invalid(format!(
-            "Brush {}: opaque geometry metadata cannot be remapped to ridge fragments",
-            source.id
-        )));
-    }
-    crate::brush::precise::ensure_editable(source)?;
-    Ok(())
-}
-
-fn remap_world_order(
-    tx: &mut Transaction,
-    ordering: Option<crate::instance_order::Ordering>,
-    fragments: &[CreaseFragment],
-) -> Result<(), EditError> {
-    let Some(mut ordering) = ordering else {
-        return Ok(());
-    };
-    let mut identities = BTreeSet::new();
-    let mut replacements = BTreeMap::<u32, Vec<u32>>::new();
-    for fragment in fragments {
-        if !identities.insert(fragment.solid.id) {
-            return Err(invalid("Ridge ordering has duplicate fragment identities"));
-        }
-        if let ObjectId::Solid(owner) = fragment.owner {
-            if owner != fragment.source {
-                return Err(invalid(
-                    "Ridge world fragment has inconsistent source ownership",
-                ));
-            }
-            replacements
-                .entry(fragment.source)
-                .or_default()
-                .push(fragment.solid.id);
-        }
-    }
-    if replacements
-        .iter()
-        .any(|(source, fragments)| fragments.first() != Some(source))
-    {
-        return Err(invalid(
-            "Ridge ordering did not retain its source brush identity",
-        ));
-    }
-    let mut changed = false;
-    for slot in &mut ordering.slots {
-        let crate::instance_order::Content::Materialized { world, .. } = &mut slot.content else {
-            continue;
-        };
-        let mut count = 0usize;
-        for id in world.iter() {
-            count = count
-                .checked_add(replacements.get(id).map_or(1, Vec::len))
-                .filter(|count| *count <= crate::instance_order::MAX_IDS)
-                .ok_or_else(|| {
-                    invalid("Ridge fragments exceed instance ordering's referenced-ID limit")
-                })?;
-        }
-        let mut expanded = Vec::with_capacity(count);
-        for id in world.iter() {
-            expanded.extend_from_slice(
-                replacements
-                    .get(id)
-                    .map_or(std::slice::from_ref(id), Vec::as_slice),
-            );
-        }
-        if expanded != *world {
-            *world = expanded;
-            changed = true;
-        }
-    }
-    if changed {
-        crate::instance_order::install(tx, &ordering)?;
-    }
-    Ok(())
+        .collect();
+    fragments::tetrahedralize(source, &points, triangles, center, limit).map(|pieces| {
+        pieces
+            .into_iter()
+            .map(|piece| CreaseFragment {
+                source: source.id,
+                owner: replacement.owner,
+                solid: piece.solid,
+                faces: piece
+                    .faces
+                    .into_iter()
+                    .map(|face| CreaseFragmentFace {
+                        side: face.side,
+                        source_side: face.source_side,
+                        exterior: face.exterior,
+                        ridge_side: face.tag,
+                    })
+                    .collect(),
+            })
+            .collect()
+    })
 }
 
 pub(super) fn attach(
@@ -511,13 +340,12 @@ pub(super) fn attach(
     plan: &mut CreasePlan,
     originals: &BTreeMap<u32, Solid>,
 ) -> Result<(), EditError> {
-    let ordering = crate::instance_order::read(tx.vmf()).map_err(invalid)?;
     let mut fragments = Vec::new();
     for replacement in &plan.replacements {
         let source = originals
             .get(&replacement.solid.id)
             .ok_or_else(|| invalid("Ridge source provenance is unavailable"))?;
-        admit_source(source)?;
+        fragments::admit_source(source)?;
         let change = plan
             .changes
             .iter()
@@ -557,41 +385,12 @@ pub(super) fn attach(
             face.side = side.id;
         }
     }
-    for replacement in &plan.replacements {
-        let source = replacement.solid.id;
-        let pieces = fragments
+    fragments::install(
+        tx,
+        fragments
             .iter()
-            .filter(|fragment| fragment.source == source)
-            .collect::<Vec<_>>();
-        match replacement.owner {
-            ObjectId::Solid(_) => {
-                let index = tx
-                    .vmf()
-                    .world
-                    .solids
-                    .iter()
-                    .position(|solid| solid.id == source)
-                    .ok_or(EditError::NotFound(ObjectId::Solid(source)))?;
-                *tx.solid_mut(source)? = pieces[0].solid.clone();
-                for (offset, piece) in pieces.iter().enumerate().skip(1) {
-                    tx.insert_solid(index + offset, piece.solid.clone())?;
-                }
-            }
-            ObjectId::Entity(owner) => {
-                let entity = tx.entity_mut(owner)?;
-                let index = entity
-                    .solids
-                    .iter()
-                    .position(|solid| solid.id == source)
-                    .ok_or(EditError::NotFound(ObjectId::Solid(source)))?;
-                entity.solids.splice(
-                    index..=index,
-                    pieces.iter().map(|piece| piece.solid.clone()),
-                );
-            }
-        }
-    }
-    remap_world_order(tx, ordering, &fragments)?;
+            .map(|fragment| (fragment.source, fragment.owner, fragment.solid.clone())),
+    )?;
     plan.fragments = fragments;
     Ok(())
 }

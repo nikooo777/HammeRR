@@ -38,6 +38,9 @@ impl Session {
         spec: ExtrusionSpec,
     ) -> Result<u64, String> {
         let draft = self.checked_partition(token)?.clone();
+        if draft.is_free() {
+            return Err("Apply face cuts before extruding real components".into());
+        }
         if draft.rise != 0.0 {
             return Err("Return to flat before extruding highlighted pieces".into());
         }

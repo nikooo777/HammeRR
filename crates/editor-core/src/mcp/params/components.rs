@@ -111,6 +111,22 @@ pub(in crate::mcp) struct ComponentPartitionArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct ComponentFaceCutsArgs {
+    pub(in crate::mcp) cuts: Vec<crate::session::components::FaceCut>,
+    pub(in crate::mcp) snapshot: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(in crate::mcp) struct AppendComponentFaceCutArgs {
+    pub(in crate::mcp) token: String,
+    pub(in crate::mcp) solid: u32,
+    pub(in crate::mcp) side: u32,
+    pub(in crate::mcp) segment: [[f64; 3]; 2],
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(in crate::mcp) struct SavedPartitionsArgs {
     pub(in crate::mcp) sources: Vec<FaceRef>,
     pub(in crate::mcp) snapshot: String,
@@ -141,10 +157,12 @@ pub(in crate::mcp) struct PartitionMaterialArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(in crate::mcp) struct PartitionTextureSpec {
     pub(in crate::mcp) shift: [f64; 2],
     pub(in crate::mcp) scale: [f64; 2],
     pub(in crate::mcp) rotation: f64,
+    pub(in crate::mcp) axes: Option<[[f64; 3]; 2]>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

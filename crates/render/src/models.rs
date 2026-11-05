@@ -311,6 +311,24 @@ impl Library {
         self.get_with_materials(fs, path, true)
     }
 
+    pub fn check_cached_source(&self, asset: &Asset) -> Result<(), String> {
+        let path = model_path(&asset.path)?;
+        if asset.source_identity.is_none() || asset.source_origins.is_none() {
+            return Err("Resolved model lacks its original source identity; Reload models and prepare again".into());
+        }
+        let Some(entry) = self.entries.get(&path) else {
+            return Ok(());
+        };
+        if entry.result.as_ref().is_ok_and(|cached| {
+            cached.source_identity == asset.source_identity
+                && cached.source_origins == asset.source_origins
+        }) {
+            Ok(())
+        } else {
+            Err("Cached model differs from the resolved original source; Reload models and prepare again".into())
+        }
+    }
+
     pub fn cached_error(&self, path: &str) -> Option<String> {
         let path = model_path(path).ok()?;
         self.entries

@@ -1,0 +1,223 @@
+import { Theme, FieldRow, SectionHeader, SelectableRow } from "kit.slint";
+import { Button, LineEdit, ListView, ScrollView, Slider, Switch } from "widgets.slint";
+
+export struct RopePreviewRow {
+    id: string,
+    label: string,
+    detail: string,
+}
+
+export component RopePreviewWindow inherits Window {
+    title: "Rope preview - HammeRR";
+    background: Theme.panel;
+    preferred-width: 780px;
+    preferred-height: 680px;
+    min-width: 560px;
+    min-height: 560px;
+
+    in property <string> document-label;
+    in property <string> summary;
+    in property <string> scope;
+    in property <string> playback-status;
+    in property <string> time-label;
+    in property <string> time-limits;
+    in property <bool> preview-enabled;
+    in property <bool> playing;
+    in property <bool> ready;
+    in property <bool> published;
+    in property <bool> busy;
+    in property <bool> can-control;
+    in property <bool> can-play;
+    in property <bool> can-cancel;
+    in property <bool> document-active: true;
+    in property <float> max-time-seconds: 1;
+    in-out property <float> time-value;
+    in-out property <string> seek-time;
+    in-out property <bool> time-dirty;
+    in-out property <bool> scrub-dirty;
+    in-out property <string> gravity: "1500";
+    in-out property <string> wind-x: "0";
+    in-out property <string> wind-y: "0";
+    in-out property <string> wind-z: "0";
+    in-out property <bool> environment-dirty;
+    in-out property <bool> environment-expanded;
+    in property <string> environment-status;
+    in property <[RopePreviewRow]> rows;
+    in property <string> selected-id;
+    in property <string> detail-title;
+    in property <string> detail;
+    in property <string> material-status;
+    in property <string> attachment-status;
+    in property <string> physics-status;
+    in property <string> issues;
+    in property <bool> has-issues;
+    in property <string> empty-text: "No rope spans to inspect.";
+    in property <string> message;
+
+    callback enable-preview(bool);
+    callback play-pause();
+    callback reset();
+    callback seek();
+    callback scrub(float);
+    callback apply-environment();
+    callback choose(string);
+    callback refresh();
+    callback cancel-work();
+    callback close-dialog();
+
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: "Rope preview"; font-size: Theme.font-display; font-weight: 600; }
+            Text { text: root.document-label; color: Theme.text-faint; overflow: elide; }
+            HorizontalLayout {
+                spacing: Theme.space-lg;
+                Switch {
+                    text: "Enable rope preview";
+                    checked: root.preview-enabled;
+                    enabled: root.can-control && (root.preview-enabled || !root.busy);
+                    toggled => { root.enable-preview(self.checked); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            Text { text: root.summary; color: root.published && !root.has-issues ? Theme.text : Theme.warning; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button {
+                    text: root.playing ? "Pause" : root.ready ? "Play" : "Prepare preview";
+                    enabled: root.can-control && (root.playing || (!root.busy && root.preview-enabled && (!root.ready || (root.can-play && root.document-active))));
+                    primary: root.can-control;
+                    clicked => { root.play-pause(); }
+                }
+                Button { text: "Reset"; enabled: root.can-control && !root.busy; clicked => { root.reset(); } }
+                Text { text: root.document-active ? root.playback-status : "Inactive document · playback suspended" + (root.busy ? " · " + root.playback-status : ""); color: Theme.text-muted; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
+            }
+            FieldRow {
+                inset: false;
+                label: "Time";
+                label-width: 72px;
+                Slider {
+                    minimum: 0;
+                    maximum: max(0.001, root.max-time-seconds);
+                    step: 0.02;
+                    value <=> root.time-value;
+                    enabled: root.can-control && root.ready && !root.busy;
+                    accessible-label: "Rope preview time in seconds";
+                    changed => { root.scrub-dirty = true; }
+                    released(value) => { root.scrub(value); }
+                }
+                LineEdit {
+                    width: 86px;
+                    text <=> root.seek-time;
+                    enabled: root.can-control && !root.busy;
+                    accessible-label: "Seek time in seconds";
+                    edited => { root.time-dirty = true; }
+                    accepted => { root.seek(); }
+                }
+                Button { text: "Seek"; width: 64px; enabled: root.can-control && !root.busy; clicked => { root.seek(); } }
+            }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Text { text: root.time-label; color: Theme.text-muted; }
+                Text { text: root.time-dirty || root.scrub-dirty ? "Unsubmitted time · " + root.time-limits : root.time-limits; color: Theme.text-faint; horizontal-alignment: right; horizontal-stretch: 1; }
+            }
+            SectionHeader { text: "Environment"; detail: root.environment-dirty ? "Unapplied changes" : "Editor preview"; inset: false; expanded <=> root.environment-expanded; }
+            if root.environment-expanded: VerticalLayout {
+                spacing: Theme.space;
+                FieldRow {
+                    inset: false; label: "Gravity"; label-width: 72px;
+                    LineEdit { width: 86px; text <=> root.gravity; enabled: root.can-control && !root.busy; accessible-label: "Rope preview gravity"; edited => { root.environment-dirty = true; } }
+                    Text { text: "units/s²"; color: Theme.text-faint; vertical-alignment: center; horizontal-stretch: 1; }
+                }
+                FieldRow {
+                    inset: false; label: "Wind"; label-width: 72px;
+                    Text { text: "X"; color: Theme.text-faint; vertical-alignment: center; }
+                    LineEdit { text <=> root.wind-x; placeholder-text: "X"; enabled: root.can-control && !root.busy; accessible-label: "Rope preview wind X"; edited => { root.environment-dirty = true; } }
+                    Text { text: "Y"; color: Theme.text-faint; vertical-alignment: center; }
+                    LineEdit { text <=> root.wind-y; placeholder-text: "Y"; enabled: root.can-control && !root.busy; accessible-label: "Rope preview wind Y"; edited => { root.environment-dirty = true; } }
+                    Text { text: "Z"; color: Theme.text-faint; vertical-alignment: center; }
+                    LineEdit { text <=> root.wind-z; placeholder-text: "Z"; enabled: root.can-control && !root.busy; accessible-label: "Rope preview wind Z"; edited => { root.environment-dirty = true; } }
+                    Text { text: "units/s²"; color: Theme.text-faint; vertical-alignment: center; }
+                }
+                HorizontalLayout {
+                    spacing: Theme.space;
+                    Button { text: "Apply environment"; enabled: root.can-control && !root.busy && root.environment-dirty; clicked => { root.apply-environment(); } }
+                    Text { text: root.environment-status; color: Theme.text-faint; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; }
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-lg;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    width: 240px;
+                    spacing: Theme.space-sm;
+                    SectionHeader { text: "Spans"; inset: false; collapsible: false; }
+                    if root.rows.length > 0: ListView {
+                        for row in root.rows: SelectableRow {
+                            height: 62px;
+                            label: row.label + ". " + row.detail;
+                            selected: row.id == root.selected-id;
+                            clicked => { root.choose(row.id); }
+                            VerticalLayout {
+                                padding: Theme.space;
+                                spacing: Theme.space-xs;
+                                Text { text: row.label; color: Theme.text; overflow: elide; }
+                                Text { text: row.detail; color: Theme.text-faint; font-size: Theme.font-small; overflow: elide; }
+                            }
+                        }
+                    }
+                    if root.rows.length == 0: Rectangle {
+                        vertical-stretch: 1;
+                        background: Theme.base;
+                        border-radius: Theme.radius;
+                        Text { x: Theme.space-lg; width: parent.width - 2 * Theme.space-lg; y: Theme.space-lg; text: root.empty-text; color: Theme.text-muted; wrap: word-wrap; }
+                    }
+                }
+                ScrollView {
+                    content-width: self.width;
+                    horizontal-scrollbar-policy: always-off;
+                    horizontal-stretch: 1;
+                    VerticalLayout {
+                        alignment: start;
+                        padding-right: Theme.space-lg;
+                        spacing: Theme.space-lg;
+                        if root.issues != "": SectionHeader { text: "Needs attention"; inset: false; collapsible: false; }
+                        if root.issues != "": Text { text: root.issues; color: Theme.warning; wrap: word-wrap; }
+                        SectionHeader { text: root.detail-title == "" ? "Preview details" : root.detail-title; inset: false; collapsible: false; }
+                        if root.detail != "": Text { text: root.detail; color: Theme.text-muted; wrap: word-wrap; }
+                        if root.material-status != "": FieldRow {
+                            inset: false; label: "Material"; label-width: 82px;
+                            min-height: max(Theme.control-height, material-value.preferred-height);
+                            material-value := Text { text: root.material-status; color: Theme.text-muted; wrap: word-wrap; horizontal-stretch: 1; }
+                        }
+                        if root.attachment-status != "": FieldRow {
+                            inset: false; label: "Attachments"; label-width: 82px;
+                            min-height: max(Theme.control-height, attachment-value.preferred-height);
+                            attachment-value := Text { text: root.attachment-status; color: Theme.text-muted; wrap: word-wrap; horizontal-stretch: 1; }
+                        }
+                        if root.physics-status != "": FieldRow {
+                            inset: false; label: "Physics"; label-width: 82px;
+                            min-height: max(Theme.control-height, physics-value.preferred-height);
+                            physics-value := Text { text: root.physics-status; color: Theme.text-muted; wrap: word-wrap; horizontal-stretch: 1; }
+                        }
+                        if root.scope != "": Text { text: root.scope; color: Theme.text-faint; wrap: word-wrap; }
+                    }
+                }
+            }
+            Text { text: "Edit rope entity fields in Inspector."; color: Theme.text-faint; font-size: Theme.font-small; }
+            if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Refresh"; clicked => { root.refresh(); } }
+                if root.can-cancel: Button { text: "Cancel work"; clicked => { root.cancel-work(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+            }
+        }
+    }
+}

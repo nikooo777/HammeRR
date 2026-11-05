@@ -11,6 +11,7 @@ use source_formats::vmf::{Color, Entity, Solid, Vmf};
 use crate::materials::{MaterialId, MaterialLibrary};
 
 mod model_lighting;
+mod rope_mesh;
 
 mod terrain;
 
@@ -123,6 +124,7 @@ pub struct SceneMesh {
     pub leak_lines: Vec<LineVertex>,
     pub wire_lines: Vec<LineVertex>,
     pub tool_wire_lines: Vec<LineVertex>,
+    pub rope_wire_lines: Vec<LineVertex>,
     pub rope_lines: Vec<LineVertex>,
     pub mins: Vec3,
     pub maxs: Vec3,
@@ -1672,7 +1674,7 @@ impl SceneMesh {
             indices.extend(list);
         }
         stats.missing_materials = missing_materials.len();
-        let mut mesh = Self {
+        Self {
             baked_faces: None,
             baked_face_materials: Vec::new(),
             baked_face_batches: 0..0,
@@ -1696,72 +1698,11 @@ impl SceneMesh {
             leak_lines: Vec::new(),
             wire_lines: builder.wire_lines,
             tool_wire_lines: builder.tool_wire_lines,
+            rope_wire_lines: Vec::new(),
             rope_lines: Vec::new(),
             mins,
             maxs,
             stats,
-        };
-        let ropes = crate::ropes::prepare(vmf, include);
-        mesh.add_rope_preview(&ropes, selected, selection_tint);
-        mesh
-    }
-
-    fn add_rope_preview(
-        &mut self,
-        preview: &crate::ropes::Preview,
-        selected: &HashSet<ObjectId>,
-        selection_tint: bool,
-    ) {
-        let first_index = self.indices.len() as u32;
-        for link in &preview.links {
-            let selected = selected.contains(&ObjectId::Entity(link.source));
-            let color = if selected && selection_tint {
-                SELECTED_TINT
-            } else {
-                [170, 156, 125]
-            };
-            for points in link.triangles() {
-                let normal = (points[0] - points[1])
-                    .cross(points[2] - points[1])
-                    .normalize_or_zero();
-                for point in points {
-                    self.indices.push(self.vertices.len() as u32);
-                    self.vertices.push(Vertex {
-                        position: point.as_vec3().to_array(),
-                        normal: normal.as_vec3().to_array(),
-                        uv: [0.0; 2],
-                        color: [color[0], color[1], color[2], 0],
-                        lightmap: [0.0; 3],
-                        smoothing: 0,
-                        opacity: 1.0,
-                        texture_alpha: 0,
-                        tangent: [0.0; 4],
-                        baked_irradiance: [0.0; 3],
-                        lighting_receiver: 0,
-                    });
-                    self.mins = self.mins.min(point.as_vec3());
-                    self.maxs = self.maxs.max(point.as_vec3());
-                }
-            }
-            if selected {
-                self.rope_lines
-                    .extend(link.points.windows(2).flat_map(|pair| {
-                        pair.iter().map(|point| LineVertex {
-                            position: point.as_vec3().to_array(),
-                            color: SELECTED_EDGE,
-                        })
-                    }));
-            }
-        }
-        let index_count = self.indices.len() as u32 - first_index;
-        if index_count > 0 {
-            self.batches.push(Batch {
-                material: MaterialLibrary::EDITOR,
-                first_index,
-                index_count,
-                rope: true,
-                model_translucent: false,
-            });
         }
     }
 

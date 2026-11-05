@@ -53,6 +53,7 @@ export {ModelWindow} from "models.slint";
 export {ModelBrowserWindow, ModelChoiceRow, ModelBodygroupRow} from "model-browser.slint";
 export {SoundBrowserWindow, SoundChoiceRow} from "sounds.slint";
 export {ParticleBrowserWindow, ParticleChoiceRow} from "particles.slint";
+export {RopePreviewWindow, RopePreviewRow} from "rope-preview.slint";
 export {PlacementWindow} from "placement.slint";
 export {EntityPlacementWindow} from "entity-placement.slint";
 export {InstanceReferenceWindow} from "instance-reference.slint";
@@ -2340,6 +2341,7 @@ export component AppWindow inherits Window {
     callback edit-instance-reference();
     in property <bool> can-edit-instance-reference;
     in-out property <bool> rope-preview: false;
+    callback inspect-rope-preview();
     in-out property <bool> selection-outlines: true;
     in-out property <bool> selection-tint: true;
     in-out property <bool> entity-images: true;
@@ -2644,6 +2646,7 @@ export component AppWindow inherits Window {
         { id: "authored-lighting", title: root.lighting-preview ? "Turn off authored lighting" : "Turn on authored lighting", group: "View", enabled: true },
         { id: "sky3d", title: "3D sky preview…", group: "View", enabled: true },
         { id: "fog", title: "Fog preview…", group: "View", enabled: true },
+        { id: "rope-preview", title: "Rope preview…", group: "View", enabled: true },
         { id: "color-correction", title: "Color correction…", group: "View", enabled: true },
         { id: "reference-images", title: "Reference images…", group: "View", enabled: true },
         { id: "instance-contents", title: "Instance contents…", group: "View", enabled: true },
@@ -2827,6 +2830,7 @@ export component AppWindow inherits Window {
         else if id == "authored-lighting" { root.lighting-preview = !root.lighting-preview; root.options-changed(); }
         else if id == "sky3d" { root.sky3d-preview(); }
         else if id == "fog" { root.fog-preview(); }
+        else if id == "rope-preview" { root.inspect-rope-preview(); }
         else if id == "color-correction" { root.color-correction-preview(); }
         else if id == "reference-images" { root.reference-images(); }
         else if id == "instance-contents" { root.inspect-instance-contents(); }
@@ -2988,6 +2992,7 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "3D sky preview…"; activated => { root.sky3d-preview(); } }
             MenuItem { title: "Fog preview…"; activated => { root.fog-preview(); } }
+            MenuItem { title: "Rope preview…"; activated => { root.inspect-rope-preview(); } }
             MenuItem { title: "Color correction…"; activated => { root.color-correction-preview(); } }
             MenuItem { title: "Reference images…"; activated => { root.reference-images(); } }
             MenuItem { title: "Instance contents…"; activated => { root.inspect-instance-contents(); } }
@@ -3666,7 +3671,7 @@ export component AppWindow inherits Window {
                                         if root.sky-preview: OverlayNote { text: root.sky-preview-status + " · Perspective, Textured"; }
                                         if root.sky-preview-error != "": OverlayNote { text: root.sky-preview-error; text-color: Theme.warning; }
                                         OverlaySwitch { text: "Rope preview"; checked <=> root.rope-preview; toggled => { root.options-changed(); } }
-                                        if root.rope-preview: OverlayNote { text: root.rope-preview-status + " · static curves"; }
+                                        if root.rope-preview: OverlayNote { text: root.rope-preview-status; }
                                         OverlaySwitch { text: "Instance contents"; checked <=> root.instance-contents; toggled => { root.options-changed(); } }
                                         if root.instance-contents: OverlayNote { text: root.instance-contents-status; }
                                         OverlayLink { text: "3D sky"; status: root.sky3d-preview-status; clicked => { root.overlays-open = false; root.sky3d-preview(); } }

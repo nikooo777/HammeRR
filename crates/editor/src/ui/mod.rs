@@ -52,6 +52,7 @@ mod object_picking;
 mod outliner;
 mod palette;
 mod pointer_lock;
+mod ropes;
 mod selection_filters;
 mod transform_pivot;
 use transform_pivot::*;
@@ -150,6 +151,7 @@ struct Ui {
     material_replace: Option<material_replace_ui::Controller>,
     surface_group: Option<surface_group_ui::Controller>,
     volume: Option<volume_ui::Controller>,
+    ropes: Option<ropes::Controller>,
     compile_status: Option<compile_ui::Controller>,
     saved_views: Option<saved_views_ui::Controller>,
     history: Option<history_ui::Controller>,
@@ -301,6 +303,7 @@ impl Ui {
             material_replace: None,
             surface_group: None,
             volume: None,
+            ropes: None,
             compile_status: None,
             saved_views: None,
             history: None,
@@ -1104,6 +1107,21 @@ fn create_document_window(
             .unwrap()
             .show(&mut lock(&ui.session), aspect)
         {
+            app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_inspect_rope_preview, |app| {
+        let mut ui = ui.borrow_mut();
+        if ui.ropes.is_none() {
+            match ropes::Controller::new_with_access(&ui.document_access()) {
+                Ok(controller) => ui.ropes = Some(controller),
+                Err(error) => {
+                    app.unwrap().set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        if let Err(error) = ui.ropes.as_ref().unwrap().show(&mut lock(&ui.session)) {
             app.unwrap().set_message(error.to_string().into());
         }
     });
@@ -3206,6 +3224,11 @@ fn create_document_window(
                     let shared = ui.session.clone();
                     let mut session = lock(&shared);
                     session.poll_game();
+                    session.preflight_rope_preview();
+                    if let Some(controller) = &ui.ropes {
+                        controller.refresh(&mut session);
+                    }
+                    app.set_rope_preview_status(session.rope_preview_summary().into());
                     let layout_serial = session.workspace_layout_serial();
                     if layout_serial != ui.seen_workspace_layout {
                         ui.seen_workspace_layout = layout_serial;

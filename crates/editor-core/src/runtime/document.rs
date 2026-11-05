@@ -569,6 +569,10 @@ pub struct DocumentContinuation {
 }
 
 impl DocumentAccess {
+    pub fn document_lifecycle(&self) -> Option<DocumentLifecycle> {
+        self.document.as_ref().map(DocumentHandle::lifecycle)
+    }
+
     pub fn start_linked_path_observation(
         &self,
         actor: Actor,
@@ -642,6 +646,87 @@ impl DocumentAccess {
         operation: impl FnOnce(&mut crate::session::Session) -> Result<R, String>,
     ) -> Result<R, String> {
         self.with_shared(|session| operation(&mut lock(session)))
+    }
+
+    pub fn rope_preview(
+        &self,
+        actor: Actor,
+        expected_snapshot: &str,
+        command: crate::session::ropes::Command,
+        background: bool,
+    ) -> Result<Value, String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Rope preview"))
+            .transpose()?;
+        super::rope_preview::execute(
+            &self.session,
+            self.downgrade(),
+            actor,
+            expected_snapshot,
+            command,
+            background,
+            operation,
+        )
+    }
+
+    pub fn inspect_rope_preview(&self) -> Result<Value, String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Rope preview inspection"))
+            .transpose()?;
+        super::rope_preview::inspect(&self.session, operation)
+    }
+
+    pub fn verify_rope_preview(&self) -> Result<(), String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Rope preview render verification"))
+            .transpose()?;
+        super::rope_preview::verify(&self.session, operation)
+    }
+
+    pub fn rope_render_guard(&self) -> Result<super::RopeRenderGuard, String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Rope frame source verification"))
+            .transpose()?;
+        super::rope_preview::render_guard(&self.session, operation)
+    }
+
+    pub fn verify_rope_render_guard(&self, guard: &super::RopeRenderGuard) -> Result<(), String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Rope frame completion verification"))
+            .transpose()?;
+        super::rope_preview::verify_guard(&self.session, guard, operation)
+    }
+
+    pub fn set_rope_presentation_active(&self, active: bool) -> Result<(), String> {
+        self.with_session(|session| session.set_rope_presentation_active(active))
+    }
+
+    pub(crate) fn step_rope_clock(&self, scope: &str) -> Result<bool, String> {
+        {
+            let session = lock(&self.session);
+            if !session.rope_clock_current(scope) {
+                return Err("Rope preview clock is expired".into());
+            }
+            if !session.rope_clock_due() {
+                return Ok(false);
+            }
+        }
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Rope preview clock step"))
+            .transpose()?;
+        super::rope_preview::tick(&self.session, scope, operation)
     }
 
     pub fn start_sky3d_preview(&self, actor: Actor) -> Result<Value, String> {

@@ -317,6 +317,7 @@ pub struct SceneKey {
     pub serial: u64,
     pub reference_images_serial: u64,
     pub instance_contents_serial: u64,
+    pub rope_preview_serial: u64,
     selection_tint: bool,
     sky_channel: crate::sky::Channel,
     entity_images: bool,
@@ -363,6 +364,7 @@ impl ViewOptions {
             serial,
             reference_images_serial: 0,
             instance_contents_serial: 0,
+            rope_preview_serial: 0,
             selection_tint: self.selection_tint,
             sky_channel: self.sky_channel,
             entity_images: self.entity_images,
@@ -456,6 +458,7 @@ pub struct GpuScene {
     leak_lines: Option<(wgpu::Buffer, u32)>,
     wire_lines: Option<(wgpu::Buffer, u32)>,
     tool_wire_lines: Option<(wgpu::Buffer, u32)>,
+    rope_wire_lines: Option<(wgpu::Buffer, u32)>,
     rope_lines: Option<(wgpu::Buffer, u32)>,
 }
 
@@ -1070,6 +1073,7 @@ impl Renderer {
         let reference_lines = wire_buffer("instance reference edges", &mesh.reference_lines);
         let wire_lines = wire_buffer("brush wireframes", &mesh.wire_lines);
         let tool_wire_lines = wire_buffer("tool brush wireframes", &mesh.tool_wire_lines);
+        let rope_wire_lines = wire_buffer("rope wireframes", &mesh.rope_wire_lines);
         let rope_lines = wire_buffer("rope selection", &mesh.rope_lines);
         for (batch_index, &batch) in mesh.batches.iter().enumerate() {
             let baked_surface = mesh.baked_face_batches.contains(&batch_index);
@@ -1272,6 +1276,7 @@ impl Renderer {
             leak_lines,
             wire_lines,
             tool_wire_lines,
+            rope_wire_lines,
             rope_lines,
         };
         let validation = pollster::block_on(validation.pop());
@@ -1820,6 +1825,13 @@ impl Renderer {
                     pass.set_pipeline(&self.line_pipeline);
                     pass.set_vertex_buffer(0, lines.0.slice(..));
                     pass.draw(0..lines.1, 0..1);
+                }
+                if options.rope_preview
+                    && let Some((lines, count)) = &scene.rope_wire_lines
+                {
+                    pass.set_pipeline(&self.line_pipeline);
+                    pass.set_vertex_buffer(0, lines.slice(..));
+                    pass.draw(0..*count, 0..1);
                 }
             }
             if options.instance_contents

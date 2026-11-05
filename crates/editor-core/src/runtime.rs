@@ -18,9 +18,11 @@ pub use document::{
 };
 mod linked_path_observation;
 mod recovery;
+mod rope_preview;
 #[cfg(feature = "mcp")]
 pub(crate) use recovery::RecoverySubmission;
 pub use recovery::start_recovery_snapshot;
+pub use rope_preview::RopeRenderGuard;
 
 pub type SharedSession = Arc<Mutex<Session>>;
 

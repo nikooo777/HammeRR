@@ -2,43 +2,116 @@
 
 # Rope preview
 
-Show the static shape of linked rope entities.
+Inspect linked rope materials, motion and supported contact with the world.
 
-1. Place `move_rope` and `keyframe_rope` entities.
+## Prepare a rope
+
+1. Use **Entity…** to place `move_rope` and `keyframe_rope` entities.
 2. Give each endpoint a unique **Name**.
-3. Set each source's `NextKey` to the next endpoint's name.
-4. Set `Slack`, `Width` and `Subdiv` on each source.
-5. Leave the final endpoint's `NextKey` empty.
-6. Enable **Rope preview** in **Overlays**.
-7. Check the span count and diagnostics.
+3. Set **Next KeyFrame** to the next endpoint's name. Leave this field empty
+   on the final `keyframe_rope`.
+4. In **Inspector**, set **Slack**, **Width (1-64)**, **Type**,
+   **Subdivision**, **Rope Material** and **Texture Scale**.
+   Set **Collide with world**, **Start Dangling** or **Disable Wind** to
+   **Yes** when needed.
+5. Choose **Textured**, then open **View → Rope preview…** and enable
+   **Enable rope preview**.
+6. Click **Prepare preview**. Read **Spans**, **Material**, **Attachments**,
+   **Physics** and any **Needs attention** messages.
 
-![A rope hangs between two masonry posts](images/rope-span.png)
+![Textured cable, rope and chain spans with a model attachment](images/rope-span.png)
 
-Click a span to select its source entity. Edit an endpoint to update the curve.
-Clear **Rope preview** to hide the curves without changing the map.
+Edit rope fields in **Inspector**, then prepare again. An unavailable source
+or asset makes the requested preview unavailable. Each outgoing span simulates
+independently, including self links and cycles.
+
+An `info_target` can also be an endpoint. With `Dangling` set to `1`, an absent
+or empty `NextKey` uses an initial end seed at world origin `0 0 0`, with derived
+rope length 0 and no target. The list shows **World-origin end seed**. A nonempty
+unresolved `NextKey` still reports an error.
+
+## Play or inspect a time
+
+1. Click **Play**. Click **Pause** to stop automatic playback; current work
+   finishes before the timeline stops.
+2. Release the **Time** slider at a new time, or enter seconds and click
+   **Seek**. Seeking pauses playback.
+3. Click **Reset** to pause and return to the initial pose.
+4. Use **Cancel work** to stop pending work and clear the prepared
+   pose. Prepare again to resume.
+5. Use **Refresh** to read shared state after another interface changes it.
+
+The initial pose includes five seconds of gravity settling before time 0.
+The window shows the published pose time separately from a pending requested
+time. Playback suspends while its document tab is inactive.
+**Close** and <kbd>Escape</kbd> pause playback before closing the window.
+
+To change the editor acceleration, expand **Environment**, set **Gravity**
+and **Wind** X/Y/Z, then click **Apply environment**. Changing these values
+pauses playback and invalidates the prepared pose; prepare again. These
+settings do not change entity fields or saved startup defaults.
+Map `env_wind` is not evaluated.
+
+## Parent an endpoint
+
+1. Give an unparented `info_target`, `prop_dynamic` or
+   `prop_dynamic_override` a unique **Name**.
+2. Place the rope endpoint at its desired world position.
+3. Set **Parent** to the parent's name. For a supported fixed model
+   attachment, use `parentName,attachmentName`.
+4. Prepare again and read **Attachments**.
+
+The binding preserves the authored world offset; it does not snap the rope to
+the attachment. Attachment tokens are names, including numeric names.
+Model parents require a supported fixed model at scale 1. Parent chains and
+animated models are unavailable.
 
 ## Frame and select a span
 
-1. Enable **Rope preview**, then select a span or its source endpoint.
-2. Press **F** to frame that source's helper and complete outgoing span, including its width.
-3. Use a marquee or **Select a volume…** around the sagging curve to select its source.
-4. In the volume dialog, choose **Fully inside the box** to require the entire helper and outgoing span, or **Intersects the box** to accept overlap. Marquee uses **Fully inside** and **Intersects**.
+1. Enable **Rope preview** and prepare a pose.
+2. Click a span to select its source entity.
+3. Press <kbd>F</kbd> to frame that source's helper and complete outgoing span,
+   including its width.
+4. Use a marquee or **Select a volume…** around the curve to select its source.
+   Choose **Fully inside the box** to require the complete helper and span,
+   or **Intersects the box** to accept overlap. Marquee uses **Fully inside**
+   and **Intersects**.
 
-Framing, object inspection and area/volume selection share conservative axis-aligned bounds around the displayed sampled curve and half its **Width**.
-A span belongs to its source. Selecting only its target does not include the incoming span; that target keeps its own helper and outgoing span.
-Changing **Rope preview** retires pending marquee and volume reviews. Rejected, hidden or working-region-excluded spans retain ordinary endpoint behavior.
+Rendering, picking and presentation bounds use the same prepared pose.
+Framing, object inspection and area/volume selection use conservative
+axis-aligned boxes around that pose and half its **Width**. These boxes can
+include empty space; they do not test exact tube intersection.
 
-Transform pivots, snap anchors, placement and paint keep their ordinary endpoint-helper bounds. Raw map statistics also remain source bounds.
+Incoming spans do not enlarge their target. Disabled, unavailable, hidden or
+working-region-excluded spans keep ordinary endpoint behavior. Changing the
+displayed rope state retires pending marquee and volume reviews.
+Transform pivots, snap anchors, placement, paint and raw map statistics keep
+ordinary endpoint-helper bounds.
 
 ## Limits
 
-- The shape is a static downward parabola, not a physics simulation.
-- Slack: 0–65536 units. Width: 1–64 units. Subdiv: 0–8.
-- Missing values use FGD defaults: 25, 2 and 2.
-- Missing, ambiguous, cyclic or self-links report errors. Both endpoints must be visible.
-- Parenting, attachment binding, dangling ropes and unsupported interpolators are unavailable.
-- No rope material, wind, collision, stiffness, breakage or runtime animation preview.
-- Bounds-based selection can include empty space inside the curve's axis-aligned box; it does not test exact tube intersection.
+- At most 512 source spans and 72 visual segments per span; coordinates within
+  ±65536. Slack: −2048–2047. Width: 1–64. TextureScale: 0.1–10. Derived rope
+  length: 0–16383.
+- Time: 0–60 seconds; physics uses 0.02-second steps with interpolated poses.
+  Gravity: 0–3000 units/s².
+  Each wind component: −1000–1000 units/s². Wind applies after initial settling;
+  native gust randomness and view-distance behavior are unavailable.
+- `Type` uses 10 nodes for Rope, 4 for Semi-rigid and 2 for other values;
+  omitted `Type` uses 5. `Subdiv` accepts 0–15 and clamps values above 7 to 7.
+  Omitted values use Slack 0, Width 2, Subdiv 2 and TextureScale 4.
+- World contact uses a fixed ±2 node box against supported static world and
+  `func_detail` brushes and terrain. Width does not change this box. Brush-model
+  entities and model props are excluded. Temporary editor visibility and
+  working regions do not remove world collision sources. Only nodes collide;
+  the drawn tube can cross a surface between nodes.
+- Mounted static `Cable` and `UnlitGeneric` base textures support cutout and
+  translucent alpha on an editor tube. Cable bump mapping, native lighting,
+  billboard antialiasing and optional `_back` materials are not rendered.
+  Unsupported or animated materials report unavailable.
+- No runtime inputs, breakage, animated parents, player interaction or native
+  frame/lighting/pixel match. Preview controls preserve map bytes, selection,
+  camera and Undo history.
 
 <!-- page-nav -->
 

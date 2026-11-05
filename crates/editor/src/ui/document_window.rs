@@ -89,6 +89,20 @@ impl RetirementView<'_> {
 }
 
 impl DocumentWindow {
+    fn set_rope_activity(&self, active: bool) -> Result<(), String> {
+        let ui = self
+            .ui
+            .as_ref()
+            .ok_or("The document view has retired")?
+            .try_borrow()
+            .map_err(|_| "The document view is busy; retry switching tabs")?;
+        ui.document_access.set_rope_presentation_active(active)?;
+        if let Some(controller) = &ui.ropes {
+            controller.set_active(active);
+        }
+        Ok(())
+    }
+
     pub(super) fn can_deactivate(&self) -> Result<(), String> {
         let ui = self
             .ui
@@ -105,7 +119,7 @@ impl DocumentWindow {
     pub(super) fn set_active(&self, active: bool) -> Result<(), String> {
         let app = self.app.as_ref().ok_or("The document view has retired")?;
         if app.get_workspace_active() == active {
-            return Ok(());
+            return self.set_rope_activity(active);
         }
         if !active {
             self.can_deactivate()?;
@@ -128,6 +142,7 @@ impl DocumentWindow {
                 timer.restart();
             }
         }
+        self.set_rope_activity(active)?;
         app.set_workspace_active(active);
         Ok(())
     }
@@ -303,6 +318,7 @@ impl Ui {
             material_replace,
             surface_group,
             volume,
+            ropes,
             saved_views,
             history,
             measurements,

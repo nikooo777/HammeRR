@@ -71,7 +71,7 @@ P02,Source material fidelity,25
 P03,2D sky rendering (++),100
 P04,3D skybox preview (++),25
 P05,Fog preview (++),25
-P06,Rope preview (++),45
+P06,Rope preview (++),100
 P07,Particle preview (++),0
 P08,Model/entity appearance preview (++),60
 P09,Helper visibility and selection presentation,100

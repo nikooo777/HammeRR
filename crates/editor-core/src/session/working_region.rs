@@ -80,7 +80,6 @@ impl Record {
 pub(super) struct Evaluation {
     pub models: Models,
     pub helpers: std::collections::BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
-    pub ropes: Arc<render::ropes::Preview>,
     pub objects: HashSet<ObjectId>,
     pub solids: HashSet<u32>,
     pub editor_hidden: Arc<HashSet<ObjectId>>,
@@ -176,6 +175,7 @@ fn records(
     document: &Document,
     models: &Models,
     helpers: &std::collections::BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
+    include: impl Fn(ObjectId) -> bool,
 ) -> Vec<Record> {
     #[derive(Clone, Copy)]
     enum Source<'a> {
@@ -203,7 +203,7 @@ fn records(
                 .map(|entity| (ObjectId::Entity(entity.id), Source::Entity(entity))),
         );
     let mut records = Vec::new();
-    for (id, object) in sources {
+    for (id, object) in sources.filter(|(id, _)| include(*id)) {
         let mut children = Vec::new();
         let (hidden, bounds, source, error) = match object {
             Source::Solid(solid) => (solid.hidden, display_solid_bounds(solid), "brush", None),
@@ -362,6 +362,57 @@ fn apply_editor_hidden(records: &mut [Record], hidden: &HashSet<ObjectId>) {
 }
 
 impl Session {
+    pub(super) fn rope_source_visibility(&self, document: &Document) -> HashSet<ObjectId> {
+        let names = document
+            .vmf()
+            .entities
+            .iter()
+            .filter(|entity| render::ropes::is_rope(entity))
+            .flat_map(|entity| entity.properties.get_all("NextKey"))
+            .map(|name| name.trim().to_ascii_lowercase())
+            .collect::<HashSet<_>>();
+        let relevant = document
+            .vmf()
+            .entities
+            .iter()
+            .filter(|entity| {
+                render::ropes::is_rope(entity)
+                    || entity
+                        .properties
+                        .get_all("targetname")
+                        .any(|name| names.contains(&name.trim().to_ascii_lowercase()))
+            })
+            .map(|entity| ObjectId::Entity(entity.id))
+            .collect::<HashSet<_>>();
+        let models = Models {
+            instances: Vec::new(),
+            issues: std::collections::BTreeMap::new(),
+        };
+        let helpers = self.fgd_helper_appearances(document, &models);
+        let deferred = document
+            .vmf()
+            .entities
+            .iter()
+            .filter(|entity| !entity.solids.is_empty())
+            .map(|entity| ObjectId::Entity(entity.id))
+            .filter(|id| relevant.contains(id))
+            .collect::<HashSet<_>>();
+        let mut records = records(self, document, &models, &helpers, |id| {
+            relevant.contains(&id) && !deferred.contains(&id)
+        });
+        apply_editor_hidden(&mut records, &self.working_region.editor_hidden);
+        let mut included = records
+            .into_iter()
+            .filter(|record| record.included)
+            .map(|record| record.id)
+            .collect::<HashSet<_>>();
+        included.extend(deferred.into_iter().filter(|&id| {
+            !self.editor_object_hidden(id)
+                && matches!(id, ObjectId::Entity(id) if document.entity(id).is_some_and(|entity| !entity.hidden))
+        }));
+        included
+    }
+
     pub(super) fn display_visibility_filtered(&self) -> bool {
         self.working_region_enabled() || !self.working_region.editor_hidden.is_empty()
     }
@@ -489,7 +540,7 @@ impl Session {
         let mut objects = HashSet::new();
         let mut solids = HashSet::new();
         let records = if self.working_region_enabled() {
-            let mut records = records(self, document, &models, &helpers);
+            let mut records = records(self, document, &models, &helpers, |_| true);
             apply_editor_hidden(&mut records, &self.working_region.editor_hidden);
             for record in &records {
                 if record.included {
@@ -547,11 +598,7 @@ impl Session {
                     })
                     .sum::<usize>()
         };
-        let ropes = Arc::new(render::ropes::prepare(document.vmf(), |id| {
-            objects.contains(&id)
-        }));
         let evaluation = Arc::new(Evaluation {
-            ropes,
             models,
             helpers,
             objects,
@@ -756,7 +803,13 @@ impl Session {
         let mut records = if self.working_region_enabled() {
             evaluation.records.clone()
         } else {
-            records(self, document, &evaluation.models, &evaluation.helpers)
+            records(
+                self,
+                document,
+                &evaluation.models,
+                &evaluation.helpers,
+                |_| true,
+            )
         };
         if !self.working_region_enabled() {
             apply_editor_hidden(&mut records, &self.working_region.editor_hidden);

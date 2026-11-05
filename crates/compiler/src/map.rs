@@ -14,6 +14,8 @@ use crate::planes::PlaneSet;
 use crate::winding::Winding;
 use crate::{Control, Diagnostic, Report};
 
+mod rope_collision;
+
 #[path = "bevels.rs"]
 mod bevels;
 
@@ -330,9 +332,34 @@ impl<'a> Map<'a> {
         report: &mut Report,
         control: &Control,
     ) -> Result<PreparedWorld<'a>, String> {
+        Self::prepare_geometry_controlled(vmf, fs, report, control, None)
+    }
+
+    /// Converts static world/detail collision, including native terrain.
+    pub fn prepare_collision_geometry_controlled(
+        vmf: &Vmf,
+        fs: &'a GameFs,
+        sources: &crate::asset_sources::BuildMaterialSources,
+        report: &mut Report,
+        control: &Control,
+    ) -> Result<PreparedWorld<'a>, String> {
+        Self::prepare_geometry_controlled(vmf, fs, report, control, Some(sources))
+    }
+
+    fn prepare_geometry_controlled(
+        vmf: &Vmf,
+        fs: &'a GameFs,
+        report: &mut Report,
+        control: &Control,
+        collision_sources: Option<&crate::asset_sources::BuildMaterialSources>,
+    ) -> Result<PreparedWorld<'a>, String> {
         control.checkpoint()?;
         vmf.validate_ids().map_err(|error| error.to_string())?;
         let mut map = Self::empty(fs, Requirements::GeometrySemantics);
+        if let Some(sources) = collision_sources {
+            map.materials =
+                Materials::with_build_sources(fs, Requirements::GeometrySemantics, sources);
+        }
         map.add_world(vmf);
         let mut source_sides = std::collections::BTreeMap::new();
         let mut displacements = Vec::new();
@@ -357,7 +384,9 @@ impl<'a> Map<'a> {
             );
         for (owner, solid, extra_contents) in sources.filter(|(_, solid, _)| !solid.hidden) {
             control.checkpoint()?;
-            if solid.sides.iter().any(|side| side.displacement.is_some()) {
+            if collision_sources.is_none()
+                && solid.sides.iter().any(|side| side.displacement.is_some())
+            {
                 if origins::checked_geometry(solid, report).is_some() {
                     displacements.push(UnsupportedBrush {
                         owner,
@@ -383,6 +412,9 @@ impl<'a> Map<'a> {
                     },
                 );
             }
+        }
+        if collision_sources.is_some() {
+            map.connect_terrain(report, control)?;
         }
         if report.has_errors() {
             return Err("World geometry preparation reported invalid structural geometry".into());

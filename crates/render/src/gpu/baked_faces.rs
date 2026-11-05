@@ -549,6 +549,7 @@ fn geometry_bytes(mesh: &crate::scene::SceneMesh) -> Result<usize, String> {
         &mesh.reference_lines,
         &mesh.wire_lines,
         &mesh.tool_wire_lines,
+        &mesh.rope_wire_lines,
         &mesh.rope_lines,
     ] {
         bytes = lines

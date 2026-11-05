@@ -38,6 +38,7 @@ pub mod references;
 pub mod region;
 pub mod repeat;
 mod retained_metadata;
+pub mod rope_collision;
 pub mod saved_views;
 pub mod subobject;
 pub mod surface;

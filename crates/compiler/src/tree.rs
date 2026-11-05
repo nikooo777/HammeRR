@@ -475,6 +475,19 @@ impl Tree {
         })
     }
 
+    pub(crate) fn build_limited_with_hints(
+        brushes: &[MapBrush],
+        indices: &[usize],
+        planes: &mut PlaneSet,
+        hints: &[crate::hints::Hint],
+        control: &Control,
+        limits: Limits,
+    ) -> Result<Self, String> {
+        Self::build_impl(brushes, indices, planes, hints, control, Some(limits))
+            .map(|(tree, _)| tree)
+            .map_err(|failure| failure.message())
+    }
+
     fn build_impl(
         brushes: &[MapBrush],
         indices: &[usize],
@@ -688,12 +701,51 @@ impl Tree {
     }
 
     pub fn brush_leaves(&self, brush: &MapBrush, planes: &PlaneSet) -> Result<Vec<usize>, String> {
+        self.brush_leaves_budgeted(brush, planes, &mut Budget::unlimited())
+    }
+
+    pub fn brush_leaf_memberships_limited(
+        &self,
+        brushes: &[MapBrush],
+        indices: &[usize],
+        planes: &PlaneSet,
+        control: &Control,
+        limits: Limits,
+    ) -> Result<Vec<Vec<usize>>, String> {
+        if indices.len() > limits.pending {
+            return Err("BSP brush membership sources exceed their allocation budget".into());
+        }
+        let mut budget = Budget::new(Some(limits), control);
+        let mut memberships = Vec::with_capacity(indices.len());
+        for &index in indices {
+            let brush = brushes
+                .get(index)
+                .ok_or("BSP brush membership index is invalid")?;
+            memberships.push(self.brush_leaves_budgeted(brush, planes, &mut budget)?);
+        }
+        Ok(memberships)
+    }
+
+    fn brush_leaves_budgeted(
+        &self,
+        brush: &MapBrush,
+        planes: &PlaneSet,
+        budget: &mut Budget<'_>,
+    ) -> Result<Vec<usize>, String> {
+        let points = brush
+            .sides
+            .iter()
+            .filter_map(|side| side.winding.as_ref())
+            .map(|winding| winding.0.len())
+            .sum();
+        budget.charge(points, points)?;
         let mut leaves = Vec::new();
         let mut pending = vec![(0, Polyhedron::from_brush(brush))];
         while let Some((index, shape)) = pending.pop() {
+            budget.charge(1, 0)?;
             if let Some((plane, children)) = self.nodes[index].split {
                 let halves = shape
-                    .split_budgeted(plane, planes, &mut Budget::unlimited())
+                    .split_budgeted(plane, planes, budget)
                     .map_err(|error| {
                         split_geometry(
                             &error,
@@ -707,9 +759,11 @@ impl Tree {
                 for (child, half) in children.into_iter().zip(halves) {
                     if let Some(half) = half {
                         pending.push((child, half));
+                        budget.pending(pending.len())?;
                     }
                 }
             } else {
+                budget.charge(1, 1)?;
                 leaves.push(index);
             }
         }

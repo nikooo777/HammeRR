@@ -36,6 +36,7 @@ impl Session {
         let mut key = view.scene_key(self.scene_serial());
         key.instance_contents_serial = self.instance_contents_serial();
         key.reference_images_serial = self.reference_images_serial();
+        key.rope_preview_serial = self.rope_preview_serial();
         key
     }
 

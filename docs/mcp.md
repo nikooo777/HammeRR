@@ -1238,14 +1238,56 @@ Linux CS:S, Steam and a current saved build are required. The private observer
 uses `-insecure` and `sv_lan 1` and preserves the document.
 See [Linked paths](path-authoring.md) for supported paths and trains.
 
-## Rope bounds
+## Rope preview
 
-Set `rope_preview:true` with `set_view` to include admitted spans in source-helper bounds.
-Framing, `get_objects`, `get_selection` and area/volume selection use the same sag and width.
-Bounds are conservative axis-aligned boxes. **Contained** requires the entire span and helper.
-Incoming spans do not enlarge their target. Changing the toggle expires area/volume reviews.
-Temporary `render_view` and `pick_at_pixel` rope overrides also affect camera `focus`.
-Authored pivots, transforms, placement, paint and raw map summaries keep source bounds.
+1. Call `set_view` with `rope_preview:true` to show the prepared pose.
+2. Call `get_rope_preview` to inspect shared settings, the published pose,
+   pending work and issues. Inspection does not start preparation or playback.
+3. Call `set_rope_preview` with `action:"prepare"` and `expected_snapshot`
+   copied from the latest inspection.
+4. Inspect again after each control. Pass the current snapshot to the next
+   `set_rope_preview` request.
+
+| `action` | Additional fields | Effect |
+| --- | --- | --- |
+| `settings` | `gravity` and/or `wind:[x,y,z]` | Set editor acceleration, pause and invalidate the prepared pose. |
+| `prepare` | Optional `background` | Prepare the current map at the retained requested time. |
+| `play` | None | Start playback from the published pose. |
+| `pause` | None | Stop automatic playback; current work finishes. |
+| `seek` | Required `time_seconds`; optional `background` | Pause and replay to a finite time from 0 through 60 seconds with fixed-step interpolation. |
+| `advance` | Required `seconds`; optional `background` | Advance a prepared pose by 0–1 seconds, including while paused. |
+| `reset` | Optional `background` | Pause and return to the initial pose. |
+| `cancel` | None | Cancel pending work and clear the prepared pose. |
+
+Fields for another action and unknown fields reject. `background` defaults to
+`false`: the call waits for owned work outside the Session lock. With `true`,
+inspect until that work finishes. `published` identifies a current complete
+pose; `ready` also requires a resumable solver and no active worker.
+`published_time_seconds` and `requested_time_seconds` distinguish the displayed
+pose from a pending target. Play uses one shared runtime clock in desktop and
+headless sessions. For explicit stepping, pause and call `advance`.
+Inactive desktop documents require activation for Play; explicit Seek and Advance remain available.
+Pause before rendering and picking when matching one exact pose.
+Pause and Cancel accept the current snapshot from either actor.
+Pause allows a running request to publish its result; inspect until `busy`
+is false before matching a stopped pose.
+Cancel requires preparation again. A stale source, failed preparation or
+exhausted limit clears readiness for the complete requested preview.
+
+Gravity is 0–3000 units/s²; wind components are finite within ±1000 units/s².
+Defaults are gravity 1500 and wind `[0,0,0]`. These preview settings do not edit
+entity fields or saved startup defaults, and do not evaluate `env_wind`.
+Preview controls preserve map bytes, selection, camera and Undo history.
+See [Rope preview](ropes.md) for supported anchors, materials, contact and limits.
+
+With `rope_preview:true`, framing, `get_objects`, `get_selection` and area/volume
+selection use the published pose and width. Bounds are conservative
+axis-aligned boxes. **Contained** requires the entire span and source helper;
+incoming spans do not enlarge their target. Changing displayed rope state
+expires area/volume reviews. Temporary `render_view` and `pick_at_pixel` rope
+overrides use the prepared pose and also affect camera `focus`; they do not
+start playback. Authored pivots, transforms, placement, paint and raw map
+summaries keep source bounds.
 
 ## Color correction
 
@@ -2080,7 +2122,7 @@ These groups locate the available operations.
 | [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `preview_terrain_vertex_set`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_attachment`, `transform_pivot_pick`, `transform_pivot_grid` |
-| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_view_layout`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `get_view`, `inspect_baked_lightmaps`, `inspect_baked_surfaces`, `inspect_baked_prop_vertices`, `inspect_baked_prop_samples`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_baked_surfaces`, `set_camera`, `set_view_layout`, `set_fog_preview`, `set_view` |
+| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_view_layout`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `get_view`, `inspect_baked_lightmaps`, `inspect_baked_surfaces`, `inspect_baked_prop_vertices`, `inspect_baked_prop_samples`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_baked_surfaces`, `set_camera`, `set_view_layout`, `set_fog_preview`, `set_rope_preview`, `set_view` |
 | [Working region](working-region.md) | `exclude_visibility_filter`, `get_editor_visibility`, `get_visibility_categories`, `get_visibility_profiles`, `get_working_region`, `remove_visibility_exclusion`, `set_editor_visibility`, `set_visibility_category`, `set_visibility_profile`, `set_working_region` |
 | [Prop leaf bounds](baked-prop-vertices.md) | `get_compiled_prop_leaf_bounds`, `set_compiled_prop_leaf_bounds` |
 | [Compiled visibility](visibility.md) | `frame_compiled_visibility`, `inspect_compiled_visibility`, `set_compiled_visibility_overlay` |

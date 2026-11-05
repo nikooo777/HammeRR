@@ -42,6 +42,8 @@ mod overlay;
 pub(super) use overlay::*;
 mod recent_maps;
 pub(super) use recent_maps::*;
+mod ropes;
+pub(super) use ropes::*;
 mod terrain;
 pub(super) use terrain::*;
 mod view;

@@ -535,7 +535,7 @@ pub struct SetViewArgs {
     pub sky_channel: Option<String>,
     /// HDR sky-only exposure in EV, finite -8 through 8; LDR pixels remain unchanged.
     pub sky_exposure_ev: Option<f64>,
-    /// Show bounded static authored rope spans. No physics, parenting or attachment binding.
+    /// Show the explicitly prepared shared rope pose. Use get/set_rope_preview for preparation and playback.
     pub rope_preview: Option<bool>,
     /// Show the current compilation's leak path through geometry.
     pub leak_path: Option<bool>,
@@ -601,7 +601,7 @@ pub struct RenderArgs {
     pub sky_channel: Option<String>,
     /// HDR sky-only exposure in EV, finite -8 through 8; LDR pixels remain unchanged.
     pub sky_exposure_ev: Option<f64>,
-    /// Temporary static rope preview override; leaves shared view and picking unchanged.
+    /// Temporary prepared rope visibility override; leaves shared view unchanged.
     pub rope_preview: Option<bool>,
     /// Temporary static linear fog override. Requires a supported explicit or currently selected controller.
     pub fog_preview: Option<bool>,

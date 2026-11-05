@@ -298,6 +298,7 @@ pub struct Session {
     color_correction: color_correction::State,
     file_claims: crate::path_claims::Binding,
     instance_contents: instance_contents::State,
+    rope_preview: ropes::State,
     entity_graph: entity_graph::State,
     compile_region: compile_region::State,
     overlay: overlay::State,
@@ -640,6 +641,7 @@ impl Session {
             reference_images: reference_images::State::default(),
             file_claims: crate::path_claims::Binding::default(),
             instance_contents: instance_contents::State::default(),
+            rope_preview: ropes::State::default(),
             entity_graph: entity_graph::State::default(),
             geometry: previews::State::default(),
             compile_region: compile_region::State::default(),
@@ -1609,6 +1611,7 @@ impl Session {
     }
 
     fn adopt_document(&mut self, document: Document, path: Option<PathBuf>, camera: Camera) {
+        self.reset_rope_preview();
         self.retire_terrain_move_handles();
         self.reset_transform_pivot_attachment();
         self.reference_images = reference_images::State::default();
@@ -2085,7 +2088,11 @@ impl Session {
         if self.view.sky_channel != view.sky_channel {
             self.scene_serial += 1;
         }
+        let rope_changed = self.view.rope_preview != view.rope_preview;
         self.view = view;
+        if rope_changed {
+            self.rope_preview_view_changed(view.rope_preview);
+        }
         self.refresh_component_origin();
         self.view_serial += 1;
     }
@@ -2690,6 +2697,7 @@ impl Session {
         self.reset_compiled_details();
         self.reset_baked_surfaces();
         self.shutdown_sky3d_preview();
+        self.shutdown_rope_preview();
         self.shutdown_instance_extraction();
         self.clear_external_comparison();
         self.clear_instance_collapse();
@@ -2897,6 +2905,7 @@ impl Session {
         view: ViewOptions,
         allow_baked_surfaces: bool,
     ) -> SceneMesh {
+        self.preflight_rope_preview();
         self.preflight_compiled_visibility();
         self.preflight_compiled_details();
         self.preflight_baked_surfaces();
@@ -2959,6 +2968,14 @@ impl Session {
             view.entity_helpers,
             |id| evaluation.objects.contains(&id),
         );
+        let mut rope_error = None;
+        let preview = self.rope_preview_geometry_in(document);
+        if let Some(appearance) = self.rope_preview_appearance()
+            && let Err(error) =
+                mesh.append_rope_preview(&preview, &appearance, &selected, view.selection_tint)
+        {
+            rope_error = Some(error);
+        }
         mesh.normal_maps.requested = view.normal_maps;
         mesh.sky3d = sky3d;
         lighting.report.admitted_receivers = mesh.lighting.report.admitted_receivers;
@@ -3068,6 +3085,9 @@ impl Session {
         self.append_terrain_stroke_guides(&mut mesh);
         self.append_clip_points(&mut mesh);
         self.append_reference_images(&mut mesh);
+        if let Some(error) = rope_error {
+            self.fail_rope_preview_render(error);
+        }
         mesh
     }
 

@@ -189,6 +189,10 @@ impl Session {
 }
 
 impl State {
+    pub(super) fn retire_presentation_preview(&mut self) {
+        self.preview = None;
+    }
+
     pub(super) fn close_draft(&self) -> Option<serde_json::Value> {
         self.preview
             .as_ref()

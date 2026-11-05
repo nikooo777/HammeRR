@@ -663,6 +663,7 @@ impl Scene {
             mesh.leak_lines.len(),
             mesh.wire_lines.len(),
             mesh.tool_wire_lines.len(),
+            mesh.rope_wire_lines.len(),
             mesh.rope_lines.len(),
             indices
                 .checked_mul(2)

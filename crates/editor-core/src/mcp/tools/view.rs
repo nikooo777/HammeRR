@@ -1,5 +1,30 @@
 use super::super::*;
 
+impl EditorServer {
+    fn rope_render_context(
+        &self,
+        requested: Option<bool>,
+    ) -> Result<(bool, Option<crate::runtime::RopeRenderGuard>), String> {
+        let enabled = requested.unwrap_or_else(|| self.session().view().rope_preview);
+        let guard = if enabled {
+            Some(self.document_access().rope_render_guard()?)
+        } else {
+            None
+        };
+        Ok((enabled, guard))
+    }
+
+    fn verify_rope_frame(
+        &self,
+        guard: Option<&crate::runtime::RopeRenderGuard>,
+    ) -> Result<(), String> {
+        if let Some(guard) = guard {
+            self.document_access().verify_rope_render_guard(guard)?;
+        }
+        Ok(())
+    }
+}
+
 #[tool_router(router = view_tools, vis = "pub(in crate::mcp)")]
 impl EditorServer {
     #[tool(
@@ -266,11 +291,11 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect the shared Rope preview toggle, checked authored move_rope/keyframe_rope NextKey spans, static curve points, Slack/Width, bounded limits and link diagnostics. Enable through set_view.rope_preview or override one render_view. Neutral helper shading; no RopeMaterial fidelity, physics, collision, wind, runtime I/O, parenting or attachment binding. Clicking a span selects its source entity; endpoint helpers, area selection and framing remain available.",
+        description = "Inspect the shared rope preview, prepared textured poses, source-owned spans and bounds, fixed-step time, environment, collision, attachment and asset diagnostics. Includes the current opaque snapshot for set_rope_preview. Pending requests distinguish published pose time from their requested target. Shared with View → Rope preview…. Source changes and preparation failures make readiness explicitly unavailable. Pause before picking an exact moving pose. Does not edit the VMF or initialize graphics.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_rope_preview(&self) -> ToolResult {
-        ok(self.session().rope_preview_state())
+        run(|| self.document_access().inspect_rope_preview())
     }
 
     #[tool(
@@ -447,7 +472,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Set shared viewport visibility and mode in any projection: instance_contents displays an explicitly refreshed read-only brush and terrain reference layer; it never loads files. inspect_instance_contents reports status and set_instance_contents refreshes/cancels/clears/frames it. lighting_preview enables bounded unshadowed static point/spot and direct sun diffuse lighting; lighting_channel ldr/hdr selects authored inputs independently of sky_channel (default ldr), lighting_quality fast/detail and lighting_exposure_ev -8..8 control its editor display. Inspect get_lighting_preview for admitted/excluded coverage and limits. One visible light_environment uses a shared light slot and headroom budget; duplicate suns are all excluded. lighting_sky_ambient optionally includes the eligible sun's unshadowed compiler ambient or half-sun default for the selected lighting channel; it defaults off and malformed requested ambient excludes that sun. HDR uses compiler overrides, gains and valid absent/negative-RGB inheritance; malformed requested HDR excludes the source without LDR substitution. No baked lighting/material emission, bounce, shadows, sky visibility, occlusion or native-brightness parity. Modes: textured, flat, wireframe, lightmap_density or smoothing_groups. surface_shading defaults off, preserving ordinary weak fixed shading; enable stronger fixed ambient/directional relief on Textured brush, terrain and authored model surfaces. Tool/sky surfaces, editor helpers and reference guides remain unchanged. Admitted authored-light receivers retain their lighting override. This editor direction has no shadows or compile/native-lighting effect. normal_maps defaults off and previews admitted flat-brush normal maps under fixed editor directional shading in Textured views; inspect get_normal_map_preview for diagnostics and limits. Terrain/models/resource guides are excluded; Detail unshadowed authored lighting composes with admitted normal maps. Flat shading ignores brush textures/transparency; wireframe shows geometry through solids. selection_tint defaults on; turn it off to show selected surfaces without their highlight while keeping selection and picking. selection_outlines defaults on and controls selected object/face edges, marker outlines, model brackets and rope centerlines while preserving surfaces, selection tint, picking and diagnostic/tool guides. authored_models, sprite_resources and entity_helpers independently control authored MDL surfaces, supported static Sprite resource images, and ordinary point/light/selected FGD geometric helpers. Hidden authored models retain exact wire bounds; selected helpers retain outlines and relevant cached failures retain amber diagnostics. entity_images controls literal FGD icons and updates sprite_resources only when that option is omitted for compatibility; entity_model_guides controls literal studio/studioprop meshes. Disabled resource categories defer new asset reads. selection_bounds adds aggregate selected bounds/center/XYZ extent guides; get_selection_presentation reports complete counts and dimensions. These display changes preserve picking, bounds, source, ownership and pending reviews. Helpers, selection and tool filters remain active. rope_preview shows bounded static authored NextKey rope spans with Slack/Width; inspect get_rope_preview for diagnostics and limits. No rope physics, parenting or attachment binding. sky_preview resolves world skyname as six mounted skybox faces selected by sky_channel (ldr default or explicit hdr), with sky_exposure_ev -8..8 applying only to HDR under the documented linear/Reinhard editor policy. This does not select game or build channels. The preview draws on sky surfaces in perspective Textured views independently of Tool textures; unavailable faces retain the tool surface. The independent sky3d_preview flag displays only an explicitly selected and prepared 3D sky region; inspect get_3d_sky_preview and prepare with set_3d_sky_preview. No sky fog or material animation; unavailable HDR never falls back to LDR. Choose a smoothing group 1–32; groups 25–32 are hard-edge memberships. Diagnostics inspect authored metadata, not baked lighting or final engine smoothing."
+        description = "Set shared viewport visibility and mode in any projection: instance_contents displays an explicitly refreshed read-only brush and terrain reference layer; it never loads files. inspect_instance_contents reports status and set_instance_contents refreshes/cancels/clears/frames it. lighting_preview enables bounded unshadowed static point/spot and direct sun diffuse lighting; lighting_channel ldr/hdr selects authored inputs independently of sky_channel (default ldr), lighting_quality fast/detail and lighting_exposure_ev -8..8 control its editor display. Inspect get_lighting_preview for admitted/excluded coverage and limits. One visible light_environment uses a shared light slot and headroom budget; duplicate suns are all excluded. lighting_sky_ambient optionally includes the eligible sun's unshadowed compiler ambient or half-sun default for the selected lighting channel; it defaults off and malformed requested ambient excludes that sun. HDR uses compiler overrides, gains and valid absent/negative-RGB inheritance; malformed requested HDR excludes the source without LDR substitution. No baked lighting/material emission, bounce, shadows, sky visibility, occlusion or native-brightness parity. Modes: textured, flat, wireframe, lightmap_density or smoothing_groups. surface_shading defaults off, preserving ordinary weak fixed shading; enable stronger fixed ambient/directional relief on Textured brush, terrain and authored model surfaces. Tool/sky surfaces, editor helpers and reference guides remain unchanged. Admitted authored-light receivers retain their lighting override. This editor direction has no shadows or compile/native-lighting effect. normal_maps defaults off and previews admitted flat-brush normal maps under fixed editor directional shading in Textured views; inspect get_normal_map_preview for diagnostics and limits. Terrain/models/resource guides are excluded; Detail unshadowed authored lighting composes with admitted normal maps. Flat shading ignores brush textures/transparency; wireframe shows geometry through solids. selection_tint defaults on; turn it off to show selected surfaces without their highlight while keeping selection and picking. selection_outlines defaults on and controls selected object/face edges, marker outlines, model brackets and rope centerlines while preserving surfaces, selection tint, picking and diagnostic/tool guides. authored_models, sprite_resources and entity_helpers independently control authored MDL surfaces, supported static Sprite resource images, and ordinary point/light/selected FGD geometric helpers. Hidden authored models retain exact wire bounds; selected helpers retain outlines and relevant cached failures retain amber diagnostics. entity_images controls literal FGD icons and updates sprite_resources only when that option is omitted for compatibility; entity_model_guides controls literal studio/studioprop meshes. Disabled resource categories defer new asset reads. selection_bounds adds aggregate selected bounds/center/XYZ extent guides; get_selection_presentation reports complete counts and dimensions. These display changes preserve picking, bounds, source, ownership and pending reviews. Helpers, selection and tool filters remain active. rope_preview displays an explicitly prepared immutable rope pose with shared source-owned picking and bounds. Use get_rope_preview and set_rope_preview for preparation, playback, world contacts, fixed attachments and diagnostics. sky_preview resolves world skyname as six mounted skybox faces selected by sky_channel (ldr default or explicit hdr), with sky_exposure_ev -8..8 applying only to HDR under the documented linear/Reinhard editor policy. This does not select game or build channels. The preview draws on sky surfaces in perspective Textured views independently of Tool textures; unavailable faces retain the tool surface. The independent sky3d_preview flag displays only an explicitly selected and prepared 3D sky region; inspect get_3d_sky_preview and prepare with set_3d_sky_preview. No sky fog or material animation; unavailable HDR never falls back to LDR. Choose a smoothing group 1–32; groups 25–32 are hard-edge memberships. Diagnostics inspect authored metadata, not baked lighting or final engine smoothing."
     )]
     pub(in crate::mcp) fn set_view(&self, Parameters(args): Parameters<SetViewArgs>) -> ToolResult {
         run(|| {
@@ -509,6 +534,12 @@ impl EditorServer {
         &self,
         Parameters(args): Parameters<RenderArgs>,
     ) -> ToolResult {
+        let (rope_enabled, rope_guard) = match self.rope_render_context(args.rope_preview) {
+            Ok(context) => context,
+            Err(error) => return fail(error),
+        };
+        let mut args = args;
+        args.rope_preview = Some(rope_enabled);
         let size = render_size(args.width, args.height);
         let (camera, mut view) = {
             let mut session = self.session();
@@ -558,6 +589,9 @@ impl EditorServer {
             Ok(rendered) => rendered,
             Err(error) => return fail(error),
         };
+        if let Err(error) = self.verify_rope_frame(rope_guard.as_ref()) {
+            return fail(error);
+        }
         rendered.into_tool_result(camera, size, view, fog_preview, args.include_details)
     }
 
@@ -570,6 +604,9 @@ impl EditorServer {
         Parameters(args): Parameters<PickArgs>,
     ) -> ToolResult {
         run(|| {
+            let (rope_enabled, rope_guard) = self.rope_render_context(args.rope_preview)?;
+            let mut args = args;
+            args.rope_preview = Some(rope_enabled);
             let mut session = self.session();
             session.preflight_instance_contents();
             let (w, h) = render_size(args.width, args.height);
@@ -597,9 +634,12 @@ impl EditorServer {
                 direction: direction.as_dvec3(),
             };
             let hit = session.pick_with_previews(&ray, args.rope_preview, args.instance_contents);
-            Ok(hit.map_or(json!({ "hit": null }), |hit| {
+            let result = hit.map_or(json!({ "hit": null }), |hit| {
                 hit_json(session.render_document(), &hit)
-            }))
+            });
+            drop(session);
+            self.verify_rope_frame(rope_guard.as_ref())?;
+            Ok(result)
         })
     }
 
@@ -609,6 +649,7 @@ impl EditorServer {
     )]
     pub(in crate::mcp) fn raycast(&self, Parameters(args): Parameters<RaycastArgs>) -> ToolResult {
         run(|| {
+            let (rope_enabled, rope_guard) = self.rope_render_context(None)?;
             if vec3(args.direction).length_squared() == 0.0 {
                 return Err("direction must not be zero".into());
             }
@@ -617,10 +658,13 @@ impl EditorServer {
                 origin: vec3(args.origin),
                 direction: vec3(args.direction),
             };
-            let hit = session.pick(&ray);
-            Ok(hit.map_or(json!({ "hit": null }), |hit| {
+            let hit = session.pick_with_previews(&ray, Some(rope_enabled), None);
+            let result = hit.map_or(json!({ "hit": null }), |hit| {
                 hit_json(session.render_document(), &hit)
-            }))
+            });
+            drop(session);
+            self.verify_rope_frame(rope_guard.as_ref())?;
+            Ok(result)
         })
     }
 

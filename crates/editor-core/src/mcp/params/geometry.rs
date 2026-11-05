@@ -538,6 +538,7 @@ pub(in crate::mcp) fn clip_result(result: &map_core::clip::ClipResult) -> Value 
         "source":{"solid":cut.source.solid,"side":cut.source.side},
         "faces":cut.faces.iter().map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>(),
         "source_power":cut.source_power,"output_power":cut.output_power,"vertices":cut.vertices,"triangles":cut.triangles,
+        "verified_neighbors":cut.verified_neighbors,"preserved_links":cut.preserved_links,
     })).collect::<Vec<_>>(),
     "terrain_work":{
         "sources":result.terrain.len(),"patches":result.terrain.iter().map(|cut|cut.faces.len()).sum::<usize>(),
@@ -545,6 +546,7 @@ pub(in crate::mcp) fn clip_result(result: &map_core::clip::ClipResult) -> Value 
         "triangles":result.terrain.iter().map(|cut|cut.triangles).sum::<usize>(),
         "limits":{"sources":map_core::clip::MAX_TERRAIN_SOURCES,"patches":map_core::clip::MAX_TERRAIN_PATCHES,
             "vertices":map_core::clip::MAX_TERRAIN_VERTICES,"triangles":map_core::clip::MAX_TERRAIN_TRIANGLES,
+            "neighbor_faces":map_core::clip::MAX_TERRAIN_NEIGHBOR_FACES,
             "native_map_patches":source_formats::bsp::MAX_DISPLACEMENTS}
     }})
 }

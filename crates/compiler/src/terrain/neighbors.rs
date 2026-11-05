@@ -1,6 +1,4 @@
 use map_core::displacement::neighbors::{self, Span, SurfaceGrid};
-use source_formats::bsp::{DisplacementCorner, DisplacementNeighbor};
-use std::collections::{BTreeMap, BTreeSet};
 
 use super::{NeighborStats, Terrain};
 use crate::emit::stored_vertex;
@@ -51,41 +49,9 @@ pub(super) fn connect(
         .collect::<Vec<_>>();
     let neighbors =
         neighbors::find_spans(&grids, &mut |amount| consume(&mut work, amount, control))?;
-    let mut pending = vec![[[DisplacementNeighbor::default(); 2]; 4]; terrains.len()];
-    for pair in &neighbors.pairs {
-        for (index, edge, span, other, other_edge, other_span) in [
-            (
-                pair.first,
-                pair.first_edge,
-                pair.first_span,
-                pair.second,
-                pair.second_edge,
-                pair.second_span,
-            ),
-            (
-                pair.second,
-                pair.second_edge,
-                pair.second_span,
-                pair.first,
-                pair.first_edge,
-                pair.first_span,
-            ),
-        ] {
-            let span = span.native(edge);
-            let slot = usize::from(span == 2);
-            if pending[index][edge][slot].index != u16::MAX {
-                return Err("Terrain neighbor spans overlap an occupied native slot".into());
-            }
-            pending[index][edge][slot] = DisplacementNeighbor {
-                index: other as u16,
-                orientation: ((2 + other_edge + 4 - edge) % 4) as u8,
-                span,
-                neighbor_span: other_span.native(other_edge),
-                ..Default::default()
-            };
-        }
-    }
-    let (corners, corner_pairs) = corner_neighbors(&grids, &pending, &mut work, control)?;
+    let connections = neighbors::native_connections(&grids, &neighbors.pairs, &mut |amount| {
+        consume(&mut work, amount, control)
+    })?;
     let mixed_pairs = neighbors
         .pairs
         .iter()
@@ -98,7 +64,11 @@ pub(super) fn connect(
         .count();
     let (lod, stats) = super::lod::prepare(terrains, &grids, &neighbors.pairs, &mut work, control)?;
     control.checkpoint()?;
-    for (((terrain, edges), corners), lod) in terrains.iter_mut().zip(pending).zip(corners).zip(lod)
+    for (((terrain, edges), corners), lod) in terrains
+        .iter_mut()
+        .zip(connections.edges)
+        .zip(connections.corners)
+        .zip(lod)
     {
         terrain.info.edges = edges;
         terrain.info.corners = corners;
@@ -117,80 +87,10 @@ pub(super) fn connect(
     }
     Ok(NeighborStats {
         pairs: neighbors.pairs.len(),
-        corner_pairs,
+        corner_pairs: connections.corner_pairs,
         mixed_pairs,
         half_pairs,
         disabled_vertices: stats.disabled,
         snapped_vertices: stats.snapped,
     })
-}
-
-fn corner_neighbors(
-    grids: &[SurfaceGrid<'_>],
-    edges: &[[[DisplacementNeighbor; 2]; 4]],
-    work: &mut usize,
-    control: &Control,
-) -> Result<(Vec<[DisplacementCorner; 4]>, usize), String> {
-    let mut groups = BTreeMap::<[u64; 3], Vec<(usize, usize)>>::new();
-    for (index, grid) in grids.iter().enumerate() {
-        for (corner, point) in grid.corners.iter().enumerate() {
-            consume(work, 1, control)?;
-            let key = point
-                .to_array()
-                .map(|v| if v == 0.0 { 0 } else { v.to_bits() });
-            groups.entry(key).or_default().push((index, corner));
-        }
-    }
-    let mut shared = BTreeMap::<(usize, usize), (usize, usize, usize)>::new();
-    for group in groups.values() {
-        for a in 0..group.len() {
-            for b in a + 1..group.len() {
-                consume(work, 1, control)?;
-                let (i, c) = group[a];
-                let (j, d) = group[b];
-                if i == j {
-                    continue;
-                }
-                let entry = shared.entry((i, j)).or_insert((c, d, 0));
-                entry.2 += 1;
-            }
-        }
-    }
-    let mut pending = vec![[DisplacementCorner::default(); 4]; grids.len()];
-    let edge_pairs = edges
-        .iter()
-        .enumerate()
-        .flat_map(|(index, edges)| {
-            edges
-                .iter()
-                .flatten()
-                .filter(|neighbor| neighbor.index != u16::MAX)
-                .map(move |neighbor| (index, neighbor.index as usize))
-        })
-        .collect::<BTreeSet<_>>();
-    let mut pairs = 0;
-    for ((a, b), (corner_a, corner_b, count)) in shared {
-        consume(work, 1, control)?;
-        if count != 1 || edge_pairs.contains(&(a, b)) || edge_pairs.contains(&(b, a)) {
-            continue;
-        }
-        let point = |index: usize, corner: usize| {
-            let grid = &grids[index];
-            let size = (1usize << grid.power) + 1;
-            grid.positions[[0, (size - 1) * size, size * size - 1, size - 1][corner]]
-        };
-        if point(a, corner_a).distance(point(b, corner_b)) > neighbors::EDGE_TOLERANCE {
-            continue;
-        }
-        for (index, corner, other) in [(a, corner_a, b), (b, corner_b, a)] {
-            let list = &mut pending[index][corner];
-            if list.count as usize == list.neighbors.len() {
-                return Err("Native terrain corners allow up to four non-edge neighbors".into());
-            }
-            list.neighbors[list.count as usize] = other as u16;
-            list.count += 1;
-        }
-        pairs += 1;
-    }
-    Ok((pending, pairs))
 }

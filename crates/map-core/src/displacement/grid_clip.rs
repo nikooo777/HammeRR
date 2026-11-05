@@ -9,6 +9,15 @@ use crate::{BrushGeometry, Document, EditError, ObjectId, Plane};
 const SAMPLE_EPSILON: f64 = 1e-5;
 const CUT_EPSILON: f64 = 1e-7;
 
+mod network;
+pub(crate) use network::{MAX_NEIGHBORS, Replacement, certify};
+
+#[derive(Clone, Copy)]
+pub(crate) struct Child {
+    pub row: usize,
+    pub column: usize,
+}
+
 pub(crate) struct Plan {
     pub parts: Vec<Solid>,
     pub source: FaceId,
@@ -16,6 +25,7 @@ pub(crate) struct Plan {
     pub output_power: u32,
     pub vertices: usize,
     pub triangles: usize,
+    pub children: Vec<Child>,
 }
 
 fn invalid(message: impl Into<String>) -> EditError {
@@ -99,7 +109,7 @@ fn point_segment_distance(point: DVec3, [a, b]: [DVec3; 2]) -> f64 {
     point.distance(a + edge * ((point - a).dot(edge) / length).clamp(0.0, 1.0))
 }
 
-fn touches(first: &[DVec3; 4], second: &[DVec3]) -> bool {
+fn touches(first: &[DVec3], second: &[DVec3]) -> bool {
     (0..first.len()).any(|a| {
         let first = [first[a], first[(a + 1) % first.len()]];
         (0..second.len()).any(|b| {
@@ -126,7 +136,7 @@ fn contains(corners: &[DVec3], point: DVec3) -> bool {
         })
 }
 
-fn isolated(document: &Document, source: u32, corners: &[DVec3; 4]) -> Result<(), EditError> {
+fn resolved_instances(document: &Document) -> Result<(), EditError> {
     let vmf = document.vmf();
     if vmf.entities.iter().any(|entity| {
         entity
@@ -136,34 +146,6 @@ fn isolated(document: &Document, source: u32, corners: &[DVec3; 4]) -> Result<()
         return Err(invalid(
             "Terrain clipping requires resolved instance contents; collapse map instances before checking terrain isolation",
         ));
-    }
-    for solid in vmf
-        .world
-        .solids
-        .iter()
-        .chain(vmf.entities.iter().flat_map(|entity| &entity.solids))
-        .filter(|solid| {
-            solid.id != source && solid.sides.iter().any(|side| side.displacement.is_some())
-        })
-    {
-        let geometry = BrushGeometry::from_solid(solid).map_err(|error| {
-            invalid(format!(
-                "Cannot verify terrain isolation against brush {}: {error}",
-                solid.id
-            ))
-        })?;
-        for face in &geometry.faces {
-            if solid.sides[face.side].displacement.is_some()
-                && (touches(corners, &face.vertices)
-                    || face.vertices.iter().any(|point| contains(corners, *point))
-                    || corners.iter().any(|point| contains(&face.vertices, *point)))
-            {
-                return Err(invalid(format!(
-                    "Terrain clipping requires an isolated world surface; brush {} touches or overlaps its base domain",
-                    solid.id
-                )));
-            }
-        }
     }
     Ok(())
 }
@@ -274,13 +256,13 @@ pub(crate) fn plan(
     if !front || !back {
         return Ok(None);
     }
-    let (corners, mesh) = native::checked_mesh(face, info).map_err(invalid)?;
+    let (_, mesh) = native::checked_mesh(face, info).map_err(invalid)?;
     if document.owner_of_solid(solid.id) != Some(ObjectId::Solid(solid.id)) {
-        return Err(invalid("Terrain clipping requires an isolated world brush"));
+        return Err(invalid("Terrain clipping requires a world brush"));
     }
     validate(info, &mesh)?;
     crate::subobject::fragments::admit_source(solid)?;
-    isolated(document, solid.id, &corners)?;
+    resolved_instances(document)?;
     let (rows, first_back) = half_line(&mesh, plane, true)
         .map(|first_back| (true, first_back))
         .or_else(|| half_line(&mesh, plane, false).map(|first_back| (false, first_back)))
@@ -301,6 +283,7 @@ pub(crate) fn plan(
     )?;
     let original_tags = triangles::native_tags(info, &mesh)?;
     let mut parts = Vec::new();
+    let mut children = Vec::new();
     for back in [true, false] {
         if matches!((keep, back), (Keep::Back, false) | (Keep::Front, true)) {
             continue;
@@ -365,6 +348,7 @@ pub(crate) fn plan(
                 }
             }
             parts.push(part);
+            children.push(Child { row, column });
         }
     }
     let count = parts.len();
@@ -378,5 +362,6 @@ pub(crate) fn plan(
         output_power: info.power - 1,
         vertices: count * (cells + 1) * (cells + 1),
         triangles: count * cells * cells * 2,
+        children,
     }))
 }

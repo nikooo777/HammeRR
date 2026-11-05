@@ -7,8 +7,10 @@ pub const EDGE_TOLERANCE: f64 = 0.02;
 const MAX_TOPOLOGY_WORK: usize = 2_000_000;
 const MAX_NORMAL_WORK: usize = 4_000_000;
 
+mod native;
 mod spans;
 
+pub use native::{NativeConnections, native_connections};
 pub use spans::find_spans;
 
 pub struct SurfaceGrid<'a> {

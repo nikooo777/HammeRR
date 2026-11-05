@@ -779,16 +779,21 @@ original target faces. Results keep geometric source IDs and add
 2. Inspect `get_clip_preview` and `render_view`.
 3. Call `commit_clip_preview` or `cancel_clip_preview`.
 
-An isolated world terrain patch at power 3 or 4 can split along a complete
+World terrain at power 3 or 4 can split along a complete
 existing middle row or column. `keep:"both"` produces four native patches;
 `"front"` or `"back"` produces two. Grid spacing, alpha samples, UV placement
 and physical triangle tags remain unchanged. Child power is one lower.
-Arbitrary cuts, external terrain neighbors, unresolved instances and unsupported
-bindings or metadata refuse before changing the map. Carrier-face material does
-not create a physical wall beneath the cut.
+Connected borders must retain complete native full/half links, sample spacing
+and active LOD. The combined candidate preserves unchanged neighbor grids and
+each retained original triangle. Quarter links, LOD coarsening, overlapping or
+unmatched contacts, arbitrary cuts, unresolved instances and unsupported bindings
+or metadata refuse before changing the map. Carrier-face material does not create
+a physical wall beneath the cut.
 
 Results include `terrain` source/output faces and powers, `side_mapping` and
 `terrain_work` counts and limits. The preview also reports `cubemap_bindings`.
+Each terrain result includes `verified_neighbors` and `preserved_links`.
+The request checks at most 128 neighboring faces.
 Manual face bindings use the checked replacement faces; removing every manual
 face refuses rather than changing the helper to automatic binding.
 

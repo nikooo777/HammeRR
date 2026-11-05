@@ -202,8 +202,9 @@ Unknown displacement payloads stop odd mirrors when their indices cannot be rema
 
 ## Split on the existing grid
 
-Use [plane clipping](brush-tools.md#cut-terrain-on-its-existing-grid) to split an
-isolated power-3/4 world patch at an existing middle grid line without resampling.
+Use [plane clipping](brush-tools.md#cut-terrain-on-its-existing-grid) to split a
+power-3/4 world patch at an existing middle grid line without resampling.
+Matching neighbor borders are checked; their grids remain unchanged.
 
 ## Remove terrain
 

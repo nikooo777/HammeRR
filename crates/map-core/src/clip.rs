@@ -16,6 +16,7 @@ pub const MAX_TERRAIN_SOURCES: usize = 16;
 pub const MAX_TERRAIN_PATCHES: usize = MAX_TERRAIN_SOURCES * 4;
 pub const MAX_TERRAIN_VERTICES: usize = MAX_TERRAIN_PATCHES * 81;
 pub const MAX_TERRAIN_TRIANGLES: usize = MAX_TERRAIN_PATCHES * 128;
+pub const MAX_TERRAIN_NEIGHBOR_FACES: usize = crate::displacement::grid_clip::MAX_NEIGHBORS;
 
 #[derive(Debug)]
 pub(crate) enum HalfError {
@@ -64,6 +65,8 @@ pub struct TerrainCut {
     pub output_power: u32,
     pub vertices: usize,
     pub triangles: usize,
+    pub verified_neighbors: usize,
+    pub preserved_links: usize,
 }
 
 fn invalid(message: impl Into<String>) -> EditError {
@@ -212,6 +215,7 @@ struct PlannedCut {
     parts: Vec<Solid>,
     source_sides: Vec<u32>,
     terrain: Option<TerrainCut>,
+    children: Vec<crate::displacement::grid_clip::Child>,
 }
 
 pub fn clip(
@@ -273,6 +277,7 @@ pub fn clip(
                     source: solid.id,
                     parts: plan.parts,
                     source_sides: solid.sides.iter().map(|side| side.id).collect(),
+                    children: plan.children,
                     terrain: Some(TerrainCut {
                         source: plan.source,
                         faces: Vec::new(),
@@ -280,6 +285,8 @@ pub fn clip(
                         output_power: plan.output_power,
                         vertices: plan.vertices,
                         triangles: plan.triangles,
+                        verified_neighbors: 0,
+                        preserved_links: 0,
                     }),
                 });
                 continue;
@@ -315,6 +322,7 @@ pub fn clip(
                 parts,
                 source_sides: solid.sides.iter().map(|side| side.id).collect(),
                 terrain: None,
+                children: Vec::new(),
             });
         }
     }
@@ -341,6 +349,28 @@ pub fn clip(
             return Err(invalid(
                 "Terrain clipping exceeds the native displacement patch limit",
             ));
+        }
+        let replacements = planned
+            .iter()
+            .filter_map(|cut| {
+                cut.terrain
+                    .as_ref()
+                    .map(|terrain| crate::displacement::grid_clip::Replacement {
+                        source: terrain.source,
+                        parts: &cut.parts,
+                        children: &cut.children,
+                    })
+            })
+            .collect::<Vec<_>>();
+        let verified = crate::displacement::grid_clip::certify(tx.document(), &replacements)?;
+        for (cut, verified) in planned
+            .iter_mut()
+            .filter(|cut| cut.terrain.is_some())
+            .zip(verified)
+        {
+            let terrain = cut.terrain.as_mut().unwrap();
+            terrain.verified_neighbors = verified.neighbors;
+            terrain.preserved_links = verified.links;
         }
     }
     let mut result = ClipResult {

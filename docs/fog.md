@@ -3,6 +3,7 @@
 # Fog preview
 
 Inspect world fog and preview controller inputs without changing the map.
+For independent static `sky_camera` fog, use [miniature fog](sky.md#preview-miniature-fog).
 
 ## Choose a controller
 
@@ -30,8 +31,8 @@ baseline and clear the input sequence; prepare the environment again when used.
 ## Choose an initial rule
 
 1. Expand **Environment** and choose an **Initial rule**:
-   **Authored values** keeps each controller's `fogradial`, while
-   **CS:S official-map rule** initially makes every controller radial.
+   **Authored values** keeps each controller's and sky camera's `fogradial`, while
+   **CS:S official-map rule** initially makes them radial.
 2. Click **Apply preview**.
 3. Use controller inputs normally. A later `SetRadial` overrides the initial rule.
 
@@ -39,6 +40,8 @@ Changing the rule pauses playback and clears preview inputs and time, while
 retaining the prepared environment. **Reset** restores the selected rule's
 baseline. The choice is explicit; source filenames and private build names
 do not select a rule or identify the running game map.
+The rule also applies to the independent miniature profile. You can apply it
+with **Enable fog preview** cleared; world controller inputs do not change sky fog.
 
 ## Use a fixed parent
 
@@ -118,8 +121,9 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
 
 ## Limits
 
-- Fog color and density apply to Perspective Textured surfaces and model meshes.
-  Sky, icons, helpers, selection outlines and the grid keep their colors.
+- World fog color and density apply to Perspective Textured surfaces and model
+  meshes. The 3D miniature uses its own static camera fog. Standard `Sky`
+  backgrounds, icons, helpers, selection outlines and the grid keep their colors.
 - A positive `farz` clips all Perspective geometry, including helpers, in every
   surface mode. It remains active when `fogenable` is 0. Positive values must
   exceed 4 and be at most 1,000,000; nonpositive values disable this override.
@@ -127,6 +131,9 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
   produce finite results within the reported limits; displayed density clamps
   to 0–1. Colors use RGB bytes from 0–255. With `use_angles`, parents must be
   ordinary point `info_target` chains with spawnflags 0 or 1.
+- Fog directions use native 1/32 coordinate conversion, including integer
+  wrapping; for example, 16,385 becomes 1. A received zero vector mixes the
+  two colors equally.
 - Time is 0–3600 seconds, with at most 128 preview input events. Inputs append in
   time order; use **Reset** before adding an input earlier than the last event.
   Starting a transition with zero `foglerptime` is unavailable.
@@ -145,8 +152,8 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
   blending, network delivery and game I/O scheduling are not simulated.
   The initial rule is an explicit preview choice, not live game-map detection.
   `fog_volume` and `trigger_fog` are unavailable.
-- Sky fog and native pixel parity are unavailable. Preview controls preserve
-  map bytes, selection, camera and Undo.
+- HDR fog, runtime sky-camera history and native pixel parity are unavailable.
+  Preview controls preserve map bytes, selection, camera and Undo.
 
 <!-- page-nav -->
 

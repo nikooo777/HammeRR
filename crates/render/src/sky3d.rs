@@ -33,7 +33,7 @@ const VMT_ALLOCATION_FACTOR: usize = 8;
 const TARGET_PIXEL_BYTES: usize = 8;
 static NEXT_SCENE: AtomicU64 = AtomicU64::new(1);
 
-pub const POLICY: &str = "Editor 3D sky preview: explicitly selected sealed flat-world/func_detail miniature; perspective Textured views only. Camera origin + main eye / integer scale 1..128; unchanged direction/FOV, no entity-angle rotation. Editor near plane 4/scale miniature units preserves main-equivalent clipping; native Source uses a different near policy. Static opaque single-base LightmappedGeneric/UnlitGeneric LDR materials with checked axis-aligned static base-texture transforms; finite center/scale/translation values within ±1024, last duplicate operation wins, nonzero rotation rejected; no alpha test, translucency, proxies, normal/detail/blend layers, fog, authored lighting or runtime effects. Missing/unsupported requested assets fail eligibility. SKY receives the miniature; SKY2D retains only the existing 2D sky path. Empty miniature pixels retain the chosen 2D sky when its independent preview is enabled and ready, otherwise the regular authored sky tool surface. Mixed SKY/SKY2D is an editor policy, not native mixed-sky parity. No helpers, selection, guides, projected picking or editing. Limits: 65536 vertices,196608 indices,16384 surfaces,64 materials,64 MiB conservative CPU builder allocation,32 MiB retained GPU geometry/material payload shared across scenes,64 MiB separately charged transient uploads and one 32 MiB color/depth target. The 128 MiB explicit payload/upload/target budget excludes driver allocation overhead and is not a total VRAM ceiling. Retired identities flush pending uploads and wait at most one second for GPU completion before replacement admission. Uploads conservatively charge RGBA rows padded to256 bytes for every mip plus geometry/uniform bytes; live matching identities reuse bindings. Targets/textures are at most2048 pixels per axis. Targets downsample larger viewports preserving aspect; texture assets never downsample or substitute.";
+pub const POLICY: &str = "Editor 3D sky preview: explicitly selected sealed flat-world/func_detail miniature; perspective Textured views only. Camera origin + main eye / integer scale 1..128; unchanged direction/FOV, no entity-angle rotation. Editor near plane 4/scale miniature units preserves main-equivalent clipping; native Source uses a different near policy. Static opaque single-base LightmappedGeneric/UnlitGeneric LDR materials with checked axis-aligned static base-texture transforms; finite center/scale/translation values within ±1024, last duplicate operation wins, nonzero rotation rejected; no alpha test, translucency, proxies, normal/detail/blend layers, authored lighting or runtime effects. The selected sky_camera supplies independent static LDR fog, evaluated in miniature coordinates after one reciprocal range scaling and the current initial radial context; no world controller/water/timeline/far-Z inheritance. Direction uses the checked received 1/32 coordinate grid before biased normalization. Standard Sky 2D backgrounds remain unchanged; combined fog with UnlitGeneric 2D backgrounds requires explicit $nofog 1. No HDR fog, native clipping, repeated client draw-history normalization or pixel parity. Missing/unsupported requested assets fail eligibility. SKY receives the miniature; SKY2D retains only the existing 2D sky path. Empty miniature pixels retain the chosen 2D sky when its independent preview is enabled and ready, otherwise the regular authored sky tool surface. Mixed SKY/SKY2D is an editor policy, not native mixed-sky parity. No helpers, selection, guides, projected picking or editing. Limits: 65536 vertices,196608 indices,16384 surfaces,64 materials,64 MiB conservative CPU builder allocation,32 MiB retained GPU geometry/material payload shared across scenes,64 MiB separately charged transient uploads and one 32 MiB color/depth target. The 128 MiB explicit payload/upload/target budget excludes driver allocation overhead and is not a total VRAM ceiling. Retired identities flush pending uploads and wait at most one second for GPU completion before replacement admission. Uploads conservatively charge RGBA rows padded to256 bytes for every mip plus geometry/uniform bytes; live matching identities reuse bindings. Targets/textures are at most2048 pixels per axis. Targets downsample larger viewports preserving aspect; texture assets never downsample or substitute.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
@@ -118,6 +118,7 @@ pub struct Stats {
 #[derive(Debug)]
 pub struct Scene {
     pub camera: Camera,
+    pub fog: crate::fog::Profile,
     pub stats: Stats,
     pub(crate) id: u64,
     pub(crate) gpu_bytes: usize,
@@ -386,17 +387,25 @@ fn no_checkpoint() -> Result<(), String> {
 
 impl Scene {
     pub fn build(camera: Camera, surfaces: &[Surface], fs: &GameFs) -> Result<Self, String> {
-        Self::build_controlled(camera, surfaces, fs, no_checkpoint)
+        Self::build_controlled(
+            camera,
+            crate::fog::Profile::initial(),
+            surfaces,
+            fs,
+            no_checkpoint,
+        )
     }
 
     pub fn build_controlled(
         camera: Camera,
+        fog: crate::fog::Profile,
         surfaces: &[Surface],
         fs: &GameFs,
         mut checkpoint: impl FnMut() -> Result<(), String>,
     ) -> Result<Self, String> {
         checkpoint()?;
         camera.validate()?;
+        crate::fog::sky_view(fog, camera.scale as f32, Default::default())?;
         let (vertex_count, index_count, mut budget) = geometry_budget(surfaces)?;
         let mut names = BTreeMap::new();
         let mut materials = Vec::new();
@@ -481,6 +490,7 @@ impl Scene {
         checkpoint()?;
         Ok(Self {
             camera,
+            fog,
             stats: Stats {
                 vertices: vertices.len(),
                 indices: indices.len(),

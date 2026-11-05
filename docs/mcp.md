@@ -1238,6 +1238,40 @@ Linux CS:S, Steam and a current saved build are required. The private observer
 uses `-insecure` and `sv_lan 1` and preserves the document.
 See [Linked paths](path-authoring.md) for supported paths and trains.
 
+## 3D sky preview
+
+1. Call `get_3d_sky_preview` and choose an explicit root `sky_camera` ID.
+2. Call `set_3d_sky_preview` with `action:"settings"`, `enabled:true` and
+   `camera:"entity:<id>"`.
+3. Call it with `action:"prepare"`. Optional `background:true` starts owned
+   work; otherwise the request waits outside the Session lock.
+4. Inspect again for readiness and issues. Use `action:"cancel"` to cancel
+   preparation. Source, material or visibility changes require preparation again.
+
+In Perspective Textured views, an enabled ready miniature automatically uses
+its camera's static LDR fog when `fogenable` is true. World fog enable,
+controller selection, channel, input events, time and `farz` remain independent.
+The shared `initial_radial_context` applies even when world fog is disabled;
+change it with `control_fog_preview` settings. No new sky-fog control or temporary
+context override is required. `render_view.sky3d_preview` retains its temporary
+display override without changing shared settings.
+
+Inspect `fog.authored`, `fog.initial` and `fog.effective` for source, initialized
+and scaled profiles. `fog.initial_radial_context`, `fog.defaults`,
+`fog.inert_keys` and `fog.received_origin` retain the context and received origin.
+Profiles keep `direction` and `received_direction`; `selected_camera.origin`
+keeps the source origin. `fog.applied`, `fog.ready` and
+`fog.issue` explain the current view. `prepared` identifies retained geometry;
+`ready` also requires an admitted combined sky/fog configuration. An incompatible
+2D background reports `suppression_reason:"unsupported_sky_fog"`.
+Directions and sky-camera origins use native 1/32 coordinate conversion with
+integer wrapping; reports retain the source and received values separately.
+
+Sky ranges divide by the positive miniature scale once. Standard `Sky`
+backgrounds keep their colors; with miniature fog active, an `UnlitGeneric`
+background needs explicit `$nofog 1`. Parented sky cameras refuse. See
+[Sky previews](sky.md#preview-miniature-fog) for source keys and limits.
+
 ## Fog preview
 
 1. Call `get_fog_preview` to inspect controller choices, effective settings,
@@ -1275,6 +1309,8 @@ or private output names and does not detect the running game's map. Render and
 pick overrides use the current context without a temporary context field.
 Inspect `controllers[].initial_settings`, `current.initial_radial` and
 `current.profile.radial` to distinguish initialization from later evaluated inputs.
+The same context initializes independent static sky-camera fog; world
+controller inputs and transitions do not change that profile.
 
 Each controller's `parent_chain` lists its accepted fixed parent entity IDs.
 With `use_angles`, exact named `info_target` chains support up to 16 parents;

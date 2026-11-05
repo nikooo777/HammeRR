@@ -12,7 +12,7 @@ use crate::tree::Tree;
 use crate::winding::ON_EPSILON;
 use crate::{Control, Report, faces, portals, tree};
 
-pub const MAX_SCALE: u32 = 128;
+pub use map_core::fog::MAX_SKY_SCALE as MAX_SCALE;
 pub const MAX_CAMERA_PROPERTIES: usize = 256;
 pub const MAX_CAMERA_BYTES: usize = 64 * 1024;
 
@@ -143,12 +143,25 @@ pub fn parse_camera(entity: &Entity) -> Result<Camera, String> {
             "entity:{id}: choose a visible root point sky_camera"
         ));
     }
+    map_core::fog::validate_sky_camera_binding(entity)
+        .map_err(|error| format!("entity:{id}: {error}"))?;
     let origin = entity
         .origin()
         .filter(|origin| origin.is_finite())
         .ok_or_else(|| {
             format!("entity:{id}: sky_camera requires a finite three-coordinate origin")
         })?;
+    if origin
+        .as_vec3()
+        .to_array()
+        .iter()
+        .any(|value| !value.is_finite() || value.abs() > map_core::fog::MAX_FIELD_MAGNITUDE)
+    {
+        return Err(format!(
+            "entity:{id}: sky_camera origin components must be finite within float32 ±{}",
+            map_core::fog::MAX_FIELD_MAGNITUDE
+        ));
+    }
     let raw = entity.properties.get("scale").ok_or_else(|| {
         format!("entity:{id}: sky_camera requires an explicit integer scale from 1 to {MAX_SCALE}")
     })?;

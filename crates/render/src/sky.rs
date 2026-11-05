@@ -18,8 +18,17 @@ pub const SUFFIXES: [&str; 6] = ["rt", "bk", "lf", "ft", "up", "dn"];
 const MAX_TEXTURE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_TEXTURE_SIZE: u32 = 4096;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShaderFamily {
+    Sky,
+    UnlitGeneric,
+}
+
 #[derive(Debug)]
 pub struct Face {
+    pub shader_family: Option<ShaderFamily>,
+    pub no_fog: Option<bool>,
     pub hdr_texture: Option<Arc<Vtf>>,
     pub texture_path: Option<String>,
     pub source: Option<crate::icons::Source>,
@@ -39,6 +48,24 @@ pub struct Skybox {
 }
 
 impl Skybox {
+    pub fn fog_compatibility(&self) -> Result<(), String> {
+        if !self.ready() {
+            return Err("Requested 2D sky assets are unavailable alongside 3D sky fog".into());
+        }
+        for face in &self.faces {
+            if face.shader_family != Some(ShaderFamily::Sky)
+                && !(face.shader_family == Some(ShaderFamily::UnlitGeneric)
+                    && face.no_fog == Some(true))
+            {
+                return Err(format!(
+                    "2D sky material {} needs the Sky shader or explicit $nofog 1 for combined 3D sky fog",
+                    face.material
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn hdr(name: String, mut faces: [Face; 6]) -> Self {
         let mut checked = std::collections::HashMap::new();
         for face in &mut faces {
@@ -116,6 +143,8 @@ impl Face {
             }
         };
         Self {
+            shader_family: Some(ShaderFamily::Sky),
+            no_fog: None,
             hdr_texture: if issue.is_none() { texture } else { None },
             texture: None,
             material,
@@ -129,21 +158,25 @@ impl Face {
     fn load(fs: &GameFs, name: &str) -> Self {
         let result = load_texture(fs, name);
         let (texture, issue) = match result {
-            Ok((texture, transform)) => {
+            Ok(loaded) => {
                 return Self {
+                    shader_family: Some(loaded.shader_family),
+                    no_fog: loaded.no_fog,
                     hdr_texture: None,
                     texture_path: None,
                     source: None,
                     texture_source: None,
                     material: name.to_owned(),
-                    texture: Some(texture),
+                    texture: Some(loaded.texture),
                     issue: None,
-                    transform,
+                    transform: loaded.transform,
                 };
             }
             Err(issue) => (None, Some(issue)),
         };
         Self {
+            shader_family: None,
+            no_fog: None,
             hdr_texture: None,
             texture_path: None,
             source: None,
@@ -156,7 +189,14 @@ impl Face {
     }
 }
 
-fn load_texture(fs: &GameFs, name: &str) -> Result<(Vtf, [f32; 4]), String> {
+struct LoadedTexture {
+    texture: Vtf,
+    transform: [f32; 4],
+    shader_family: ShaderFamily,
+    no_fog: Option<bool>,
+}
+
+fn load_texture(fs: &GameFs, name: &str) -> Result<LoadedTexture, String> {
     source_formats::gamefs::asset_relative(name).map_err(|error| error.to_string())?;
     let material = Material::load(fs, name)
         .map_err(|error| error.to_string())?
@@ -207,7 +247,20 @@ fn load_texture(fs: &GameFs, name: &str) -> Result<(Vtf, [f32; 4]), String> {
     if texture.width > MAX_TEXTURE_SIZE || texture.height > MAX_TEXTURE_SIZE {
         return Err(format!("texture exceeds {MAX_TEXTURE_SIZE} pixels"));
     }
-    Ok((texture, transform))
+    Ok(LoadedTexture {
+        texture,
+        transform,
+        shader_family: if material.shader == "sky" {
+            ShaderFamily::Sky
+        } else {
+            ShaderFamily::UnlitGeneric
+        },
+        no_fog: material.get("$nofog").and_then(|value| match value.trim() {
+            "1" => Some(true),
+            "0" => Some(false),
+            _ => None,
+        }),
+    })
 }
 
 pub(crate) fn texture_transform(value: Option<&str>) -> Result<[f32; 4], String> {

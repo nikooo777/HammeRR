@@ -86,6 +86,8 @@ struct Ready {
     scene: Arc<sky3d::Scene>,
     stats: Value,
     snapshot_bytes: usize,
+    fog_defaults: Vec<&'static str>,
+    fog_inert_keys: Vec<String>,
 }
 
 pub struct Request {
@@ -113,14 +115,38 @@ fn bounded(value: &str) -> String {
     map_core::entity_helpers::bounded_preview(value, MAX_DIAGNOSTIC_BYTES)
 }
 
+fn parse_camera(
+    entity: &Entity,
+) -> Result<(sky_region::Camera, map_core::fog::ParsedController), String> {
+    Ok((
+        sky_region::parse_camera(entity)?,
+        map_core::fog::parse_sky_camera(entity)?,
+    ))
+}
+
+fn received_origin(origin: glam::DVec3) -> glam::DVec3 {
+    glam::Vec3::from_array(
+        origin
+            .as_vec3()
+            .to_array()
+            .map(map_core::fog::received_coordinate),
+    )
+    .as_dvec3()
+}
+
 fn camera_row(entity: Option<&Entity>, id: u32) -> Value {
     let parsed = entity
         .ok_or_else(|| format!("entity:{id}: selected sky_camera is missing"))
-        .and_then(sky_region::parse_camera);
+        .and_then(parse_camera);
     json!({"id":format!("entity:{id}"),
         "targetname":entity.and_then(|entity|entity.properties.get("targetname")).map(bounded),
-        "ready":parsed.is_ok(),"origin":parsed.as_ref().ok().map(|camera|camera.origin.to_array()),
-        "scale":parsed.as_ref().ok().map(|camera|camera.scale),"issue":parsed.err().map(|error|bounded(&error))})
+        "ready":parsed.is_ok(),"origin":parsed.as_ref().ok().map(|(camera,_)|camera.origin.to_array()),
+        "received_origin":parsed.as_ref().ok().map(|(camera,_)|received_origin(camera.origin).to_array()),
+        "scale":parsed.as_ref().ok().map(|(camera,_)|camera.scale),
+        "fog":parsed.as_ref().ok().map(|(_,fog)|super::fog::profile_report(fog.profile)),
+        "fog_defaults":parsed.as_ref().ok().map(|(_,fog)|&fog.defaults),
+        "fog_inert_keys":parsed.as_ref().ok().map(|(_,fog)|&fog.inert_keys),
+        "issue":parsed.err().map(|error|bounded(&error))})
 }
 
 impl Request {
@@ -147,6 +173,13 @@ impl Request {
 
     fn prepare(&self) -> Result<Ready, String> {
         self.control.checkpoint()?;
+        let entity = self
+            .vmf
+            .entities
+            .iter()
+            .find(|entity| entity.id == self.key.camera)
+            .ok_or("Selected sky_camera is missing from the frozen source")?;
+        let fog = map_core::fog::parse_sky_camera(entity)?;
         let reservation =
             sky_region::admit(&self.vmf, sky_region::Limits::default(), &self.control)?;
         let cpu_reservation = self
@@ -215,7 +248,7 @@ impl Request {
             })
             .collect::<Vec<_>>();
         let camera = sky3d::Camera {
-            origin: region.origin,
+            origin: received_origin(region.origin),
             scale: f64::from(region.scale),
         };
         let surfaces = region
@@ -230,9 +263,10 @@ impl Request {
                 texture_v: surface.texture_vectors[1].map(f64::from),
             })
             .collect::<Vec<_>>();
-        let scene = sky3d::Scene::build_controlled(camera, &surfaces, &self.game, || {
-            self.control.checkpoint()
-        })?;
+        let scene =
+            sky3d::Scene::build_controlled(camera, fog.profile, &surfaces, &self.game, || {
+                self.control.checkpoint()
+            })?;
         self.control.checkpoint()?;
         let stats = json!({"region":stats,"geometry":scene.stats,"cpu_reservation_bytes":cpu_reservation,
             "source_owners":owners,"source_sides":provenance,"source_sides_total":sources.len(),
@@ -242,6 +276,8 @@ impl Request {
             scene: Arc::new(scene),
             stats,
             snapshot_bytes: self.snapshot_bytes,
+            fog_defaults: fog.defaults,
+            fog_inert_keys: fog.inert_keys,
         })
     }
 }
@@ -258,6 +294,11 @@ impl Session {
         }
         if let Some(camera) = camera {
             sky_region::camera(self.document.vmf(), camera).map_err(|error| bounded(&error))?;
+            let entity = self
+                .document
+                .entity(camera)
+                .ok_or("Selected sky_camera is missing")?;
+            map_core::fog::parse_sky_camera(entity).map_err(|error| bounded(&error))?;
         }
         if self.sky3d_preview.camera != camera {
             self.retire_sky3d_preview("not_prepared", None);
@@ -440,6 +481,69 @@ impl Session {
         self.sky3d_preview_state_for(self.view(), self.camera())
     }
 
+    fn sky3d_fog_report(
+        &mut self,
+        view: render::ViewOptions,
+        camera: render::Camera,
+    ) -> Result<Value, String> {
+        let context = view.sky_fog_initial_radial_context;
+        let prepared = self.sky3d_preview.ready.is_some();
+        let (raw, sky_camera, defaults, inert_keys) = if let Some(ready) = &self.sky3d_preview.ready
+        {
+            (
+                ready.scene.fog,
+                ready.scene.camera,
+                json!(ready.fog_defaults),
+                json!(ready.fog_inert_keys),
+            )
+        } else if let Some(id) = self.sky3d_preview.camera {
+            let entity = self
+                .document
+                .entity(id)
+                .ok_or("Selected sky_camera is missing")?;
+            let (camera, fog) = parse_camera(entity)?;
+            (
+                fog.profile,
+                sky3d::Camera {
+                    origin: received_origin(camera.origin),
+                    scale: f64::from(camera.scale),
+                },
+                json!(fog.defaults),
+                json!(fog.inert_keys),
+            )
+        } else {
+            return Ok(
+                json!({"ready":false,"applied":false,"initial_radial_context":context.name(),"suppression_reason":"no_camera"}),
+            );
+        };
+        let initial = context.initial_profile(raw);
+        let fog = render::fog::sky_view(raw, sky_camera.scale as f32, context)?;
+        let miniature = (camera.projection == render::Projection::Perspective)
+            .then(|| sky_camera.transform(&camera))
+            .transpose()?;
+        let requested = view.sky3d_active(&camera) && raw.enabled;
+        let colors_active = requested && fog.max_density() > 0.0;
+        let compatibility = if prepared && colors_active && view.sky_preview {
+            self.skybox_preview_for(view)
+                .map(|sky| sky.fog_compatibility())
+                .transpose()
+        } else {
+            Ok(None)
+        };
+        let issue = compatibility.err();
+        Ok(
+            json!({"ready":prepared && issue.is_none(),"enabled":raw.enabled,"requested":requested,
+            "applied":prepared && colors_active && issue.is_none(),"issue":issue,
+            "initial_radial_context":context.name(),"authored":super::fog::profile_report(raw),
+            "initial":super::fog::profile_report(initial),"effective":super::fog::profile_report(fog.controller_profile()),
+            "scale":sky_camera.scale,"received_origin":sky_camera.origin.to_array(),
+            "coordinate_policy":"Native SPROP_COORD float32 conversion with a 1/32 grid, 14-bit integer wrapping and canonical positive zero; raw source origin and direction remain inspectable.",
+            "color_linear":miniature.map(|camera|fog.color_for_camera(&camera)),
+            "defaults":defaults,"inert_keys":inert_keys,
+            "policy":"Static selected sky_camera fog applies automatically with a ready enabled 3D sky preview in Textured perspective, independently of world Fog preview, controller, water and timeline. Current initial radial context applies before ranges are divided by sky scale once. Standard Sky backgrounds remain unchanged; combined UnlitGeneric backgrounds require explicit nofog. No sky farz, controller inputs or HDR fog display."}),
+        )
+    }
+
     pub fn sky3d_preview_state_for(
         &mut self,
         view: render::ViewOptions,
@@ -450,12 +554,19 @@ impl Session {
             self.document
                 .entity(id)
                 .ok_or_else(|| format!("entity:{id}: selected sky_camera is missing"))
-                .and_then(sky_region::parse_camera)
+                .and_then(parse_camera)
+        });
+        let fog = self.sky3d_fog_report(view, camera);
+        let fog_issue = fog.as_ref().err().cloned().or_else(|| {
+            fog.as_ref()
+                .ok()
+                .and_then(|fog| fog["issue"].as_str().map(str::to_owned))
         });
         let issue = selected
             .as_ref()
             .and_then(|camera| camera.as_ref().err().map(|error| bounded(error)))
-            .or_else(|| self.sky3d_preview.issue.clone());
+            .or_else(|| self.sky3d_preview.issue.clone())
+            .or_else(|| fog_issue.clone());
         let ready = self.sky3d_preview.ready.as_ref();
         let suppression = if !view.sky3d_preview {
             Some("disabled")
@@ -465,6 +576,8 @@ impl Session {
             Some("unsupported_view")
         } else if ready.is_none() {
             Some("not_prepared")
+        } else if fog_issue.is_some() {
+            Some("unsupported_sky_fog")
         } else {
             None
         };
@@ -504,15 +617,16 @@ impl Session {
             "camera_entity":self.sky3d_preview.camera.map(|id|format!("entity:{id}")),
             "selected_camera":self.sky3d_preview.camera.map(|id|camera_row(self.document.entity(id),id)),
             "cameras":rows,"cameras_truncated":cameras_truncated,"status":status,
-            "ready":ready.is_some(),"loading":pending.is_some(),"worker_active":self.sky3d_preview.worker.busy(),
+            "ready":ready.is_some() && fog_issue.is_none(),"prepared":ready.is_some(),"loading":pending.is_some(),"worker_active":self.sky3d_preview.worker.busy(),
             "active":suppression.is_none(),"eligible":suppression.is_none(),"suppression_reason":suppression,
             "cancellable":pending.is_some_and(|pending|!pending.control.cancelled()),
             "stage":pending.map(|pending|pending.control.progress().stage.name()),
             "source":ready.map(|ready|ready.key.json()),"stats":ready.map(|ready|&ready.stats),
             "snapshot_bytes":ready.map(|ready|ready.snapshot_bytes),"issue":issue,"summary":summary,
+            "fog":fog.unwrap_or_else(|error|json!({"ready":false,"applied":false,"issue":bounded(&error)})),
             "diagnostics":issue.as_ref().map(|issue|vec![json!({"level":"error","message":bounded(issue)})]).unwrap_or_default(),
             "limits":{"region":sky_region::Limits::default(),"material_semantics":{"file_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_BYTES,"total_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_TOTAL_BYTES,"reads":compiler::materials::MAX_GEOMETRY_MATERIAL_READS,"allocation_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_ALLOCATION_BYTES},"render":{"vertices":sky3d::MAX_VERTICES,"indices":sky3d::MAX_INDICES,"surfaces":sky3d::MAX_SURFACES,"materials":sky3d::MAX_MATERIALS,"cpu_bytes":sky3d::MAX_CPU_BYTES,"gpu_bytes":sky3d::MAX_GPU_BYTES,"gpu_asset_bytes":sky3d::MAX_GPU_ASSET_BYTES,"gpu_upload_bytes":sky3d::MAX_GPU_UPLOAD_BYTES,"target_bytes":sky3d::MAX_TARGET_BYTES,"target_dimension":sky3d::MAX_TARGET_DIMENSION},"cpu_bytes":MAX_CPU_BYTES,"auxiliary_bytes":AUXILIARY_BYTES,"snapshot_bytes":snapshot::MAX_BYTES,"snapshot_items":snapshot::MAX_ITEMS,"snapshot_depth":snapshot::MAX_DEPTH,"camera_rows":MAX_CAMERAS,"provenance_rows":MAX_PROVENANCE_ROWS,"active_workers":1,"cached_snapshots":1},
-            "policy":"Explicit root sky_camera; sealed committed flat world/detail component; editor visibility filters display fragments after topology. Static opaque textured miniature only; no sky fog, models, terrain, portals, water, instances or runtime effects. Main picking, source, selection, history and camera remain ordinary editor state. 2D sky preview is independent. No native parity claim."})
+            "policy":"Explicit root sky_camera; sealed committed flat world/detail component; editor visibility filters display fragments after topology. Static opaque textured miniature with its independent static camera fog; no models, terrain, portals, water, instances or runtime effects. Main picking, source, selection, history and camera remain ordinary editor state. 2D sky preview is independent, with combined fog material compatibility required. No native framebuffer parity claim."})
     }
 
     fn retire_sky3d_preview(&mut self, status: &'static str, issue: Option<String>) {

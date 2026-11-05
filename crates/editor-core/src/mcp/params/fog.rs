@@ -33,6 +33,7 @@ pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
             "controller":{
                 "color_domain":"float_byte_rgb", "color":controller.color(),
                 "color2":controller.color2(),"direction":controller.direction(),
+                "received_direction":controller.received_direction(),
                 "start":controller.start(),"end":controller.end(),
                 "max_density":controller.max_density(),"enabled":controller.enabled(),
                 "radial":controller.radial(),"blend":controller.blend(),

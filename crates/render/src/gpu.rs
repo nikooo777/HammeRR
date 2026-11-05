@@ -242,6 +242,7 @@ pub struct ViewOptions {
     pub tool_textures: bool,
     pub sky_preview: bool,
     pub sky3d_preview: bool,
+    pub sky_fog_initial_radial_context: map_core::fog::InitialRadialContext,
     pub sky_channel: crate::sky::Channel,
     pub sky_exposure_ev: f32,
     pub rope_preview: bool,
@@ -284,6 +285,7 @@ impl Default for ViewOptions {
             tool_textures: true,
             sky_preview: false,
             sky3d_preview: false,
+            sky_fog_initial_radial_context: Default::default(),
             sky_channel: crate::sky::Channel::Ldr,
             sky_exposure_ev: 0.0,
             rope_preview: false,
@@ -450,6 +452,7 @@ pub struct GpuScene {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     skybox: Option<wgpu::BindGroup>,
+    sky_fog_background_error: Option<String>,
     sky_channel: crate::sky::Channel,
     opaque: Vec<DrawBatch>,
     translucent: Vec<DrawBatch>,
@@ -503,7 +506,11 @@ pub struct Renderer {
 }
 
 fn scene_shader(device: &wgpu::Device, label: &str, source: &str) -> wgpu::ShaderModule {
-    let source = format!("{}\n{source}", include_str!("globals.wgsl"));
+    let source = format!(
+        "{}\n{}\n{source}",
+        include_str!("globals.wgsl"),
+        include_str!("fog.wgsl")
+    );
     device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -1277,6 +1284,10 @@ impl Renderer {
             icons,
             icon_draws,
             skybox,
+            sky_fog_background_error: mesh
+                .skybox
+                .as_ref()
+                .and_then(|sky| sky.fog_compatibility().err()),
             sky_channel: mesh
                 .skybox
                 .as_ref()
@@ -1636,7 +1647,14 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("map") });
         let mut sky3d_error = scene.sky3d_render_error(camera, options);
         let sky3d_target = if options.sky3d_active(camera) && sky3d_error.is_none() {
-            match self.render_sky3d(ctx, scene, camera, &globals, size, &mut encoder) {
+            match self.render_sky3d(
+                ctx,
+                scene,
+                (camera, options.sky_fog_initial_radial_context),
+                &globals,
+                size,
+                &mut encoder,
+            ) {
                 Ok(binding) => Some(binding),
                 Err(error) => {
                     sky3d_error = Some(error);

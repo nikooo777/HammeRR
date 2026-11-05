@@ -106,7 +106,7 @@ impl ViewFog {
                 let primary = self.controller.color();
                 let secondary = self.controller.color2();
                 let weight = if self.controller.blend() {
-                    let direction = glam::Vec3::from_array(self.controller.direction());
+                    let direction = glam::Vec3::from_array(self.controller.received_direction());
                     let squared = (direction.x * direction.x + direction.y * direction.y)
                         + (direction.z * direction.z + DIRECTION_NORMALIZATION_BIAS);
                     let direction = direction * squared.sqrt().recip();
@@ -142,6 +142,17 @@ pub fn for_color(fog: Option<ViewFog>, camera: &Camera, surface: SurfaceView) ->
 pub fn far_z(fog: Option<ViewFog>, camera: &Camera) -> Option<f32> {
     fog.filter(|_| camera.projection == Projection::Perspective)
         .and_then(ViewFog::far_z)
+}
+
+pub fn sky_view(
+    profile: Profile,
+    scale: f32,
+    context: map_core::fog::InitialRadialContext,
+) -> Result<ViewFog, String> {
+    if profile.far_z != 0.0 || profile.lerp_time != 0.0 {
+        return Err("Static sky fog does not accept controller far-Z or transition state".into());
+    }
+    ViewFog::controller(context.initial_profile(profile).scaled_range(scale)?)
 }
 
 pub(crate) fn uniforms(fog: ViewFog, camera: &Camera) -> ([f32; 4], [f32; 4]) {

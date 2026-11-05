@@ -13,7 +13,8 @@ pub use parents::{
     requires_parent_context,
 };
 pub use profile::{
-    MAX_FIELD_MAGNITUDE, MIN_FAR_Z, ParsedController, Profile, parse_controller, range_parameters,
+    MAX_FIELD_MAGNITUDE, MAX_SKY_SCALE, MIN_FAR_Z, ParsedController, Profile, parse_controller,
+    parse_sky_camera, range_parameters, received_coordinate, validate_sky_camera_binding,
 };
 pub use timeline::{Event, MAX_EVENTS, MAX_TIMELINE_SECONDS, TIMELINE_POLICY, Timeline};
 

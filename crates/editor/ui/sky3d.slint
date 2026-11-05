@@ -56,12 +56,16 @@ export component Sky3dWindow inherits Window {
                 toggled => { root.settings-changed(); }
             }
             ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
                 VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
                     spacing: 12px;
                     Text { text: root.detail; wrap: word-wrap; }
                     if root.diagnostics != "": Text { text: root.diagnostics; wrap: word-wrap; color: Theme.warning; }
                     Text {
-                        text: "Perspective · Textured. Choose an authored sky_camera explicitly, then prepare its sealed world/func_detail region. Preparation runs in the background. Source, material or visibility changes require another preparation.\n\nOnly 3D sky surfaces display the miniature; SKY2D keeps its 2D path. Projected scenery does not change picking or editing. Sky fog, transparency, models, terrain, instances, water, portal boundaries and runtime effects are unavailable. This is an editor preview; native area/PVS and mixed-sky fidelity are not reproduced.";
+                        text: "Perspective · Textured. Choose a sky_camera and prepare its sealed world/func_detail region. Source, material or visibility changes require preparation again.\n\nThe selected camera's fogenable controls independent static LDR sky fog under the current Initial rule. World Fog preview, controllers and far-Z are not inherited.\n\nOnly 3D sky surfaces display the miniature; SKY2D keeps its 2D path. Picking and editing stay unchanged. Transparency, models, terrain, instances, water, portal boundaries and runtime effects are unavailable. Native area/PVS and mixed-sky fidelity are not reproduced.";
                         wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font;
                     }
                     Text { text: root.limits; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }

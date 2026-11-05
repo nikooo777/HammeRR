@@ -18,8 +18,9 @@ pub(crate) use state::ClockLease;
 pub(super) use state::State;
 pub use state::{Channel, Clock, Command, FogView, Overrides, SelectionMode, Settings};
 
-fn profile_report(profile: Profile) -> Value {
+pub(super) fn profile_report(profile: Profile) -> Value {
     json!({"color":profile.color,"color2":profile.color2,"direction":profile.direction,
+        "received_direction":profile.received_direction(),
         "start":profile.start,"end":profile.end,"max_density":profile.max_density,
         "enabled":profile.enabled,"radial":profile.radial,"blend":profile.blend,
         "far_z":profile.far_z,"lerp_time":profile.lerp_time})

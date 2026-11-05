@@ -4,6 +4,7 @@ use super::{Fog, number_property, property};
 
 pub const MIN_FAR_Z: f32 = 4.0;
 pub const MAX_FIELD_MAGNITUDE: f32 = 1_000_000.0;
+pub const MAX_SKY_SCALE: u32 = 128;
 const MAX_VALUE_BYTES: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -93,6 +94,23 @@ impl Profile {
         range_parameters(self.start, self.end)
     }
 
+    pub fn scaled_range(mut self, scale: f32) -> Result<Self, String> {
+        if !scale.is_finite()
+            || !(1.0..=MAX_SKY_SCALE as f32).contains(&scale)
+            || scale.fract() != 0.0
+        {
+            return Err(format!(
+                "Sky fog scale must be an integer from 1 to {MAX_SKY_SCALE}"
+            ));
+        }
+        self.validate()?;
+        let reciprocal = 1.0 / scale;
+        self.start *= reciprocal;
+        self.end *= reciprocal;
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn color(self) -> [f32; 3] {
         self.color
     }
@@ -101,6 +119,9 @@ impl Profile {
     }
     pub fn direction(self) -> [f32; 3] {
         self.direction
+    }
+    pub fn received_direction(self) -> [f32; 3] {
+        self.direction.map(received_coordinate)
     }
     pub fn start(self) -> f32 {
         self.start
@@ -122,6 +143,24 @@ impl Profile {
     }
     pub fn radial(self) -> bool {
         self.radial
+    }
+}
+
+pub fn received_coordinate(value: f32) -> f32 {
+    let integer = value.abs().trunc() as u32;
+    let fraction = ((value * 32.0).trunc().abs() as u32) & 0x1f;
+    let received_integer = if integer > 0 {
+        ((integer - 1) & 0x3fff) + 1
+    } else {
+        0
+    };
+    let received = received_integer as f32 + fraction as f32 / 32.0;
+    if received == 0.0 {
+        0.0
+    } else if value < 0.0 {
+        -received
+    } else {
+        received
     }
 }
 
@@ -249,26 +288,78 @@ fn number(
 }
 
 pub fn parse_controller(entity: &Entity) -> Result<ParsedController, String> {
-    parse(entity, false)
+    parse(
+        entity,
+        Kind::Controller {
+            fixed_parents: false,
+        },
+    )
 }
 
 pub(super) fn parse_fixed_parent_controller(entity: &Entity) -> Result<ParsedController, String> {
-    parse(entity, true)
+    parse(
+        entity,
+        Kind::Controller {
+            fixed_parents: true,
+        },
+    )
 }
 
-fn parse(entity: &Entity, fixed_parents: bool) -> Result<ParsedController, String> {
-    if entity.hidden {
+pub fn parse_sky_camera(entity: &Entity) -> Result<ParsedController, String> {
+    validate_sky_camera_binding(entity)?;
+    parse(entity, Kind::SkyCamera)
+}
+
+pub fn validate_sky_camera_binding(entity: &Entity) -> Result<(), String> {
+    if property(entity, "parentname")?.is_some_and(|value| !value.is_empty()) {
         return Err(
-            "Authored-hidden fog controller is unavailable; show it before previewing".into(),
+            "Parented sky_camera is unavailable: native sky origin uses the parent-local frame"
+                .into(),
         );
     }
+    if property(entity, "parentattachment")?.is_some_and(|value| !value.is_empty() && value != "0")
+    {
+        return Err("Sky camera parent attachments are unavailable".into());
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum Kind {
+    Controller { fixed_parents: bool },
+    SkyCamera,
+}
+
+impl Kind {
+    fn classname(self) -> &'static str {
+        match self {
+            Self::Controller { .. } => "env_fog_controller",
+            Self::SkyCamera => "sky_camera",
+        }
+    }
+}
+
+fn parse(entity: &Entity, kind: Kind) -> Result<ParsedController, String> {
+    if entity.hidden {
+        return Err(match kind {
+            Kind::Controller { .. } => {
+                "Authored-hidden fog controller is unavailable; show it before previewing".into()
+            }
+            Kind::SkyCamera => {
+                "Authored-hidden sky camera is unavailable; show it before previewing".into()
+            }
+        });
+    }
     if !entity.solids.is_empty() {
-        return Err("env_fog_controller must be a point entity".into());
+        return Err(format!("{} must be a point entity", kind.classname()));
     }
     if !property(entity, "classname")?
-        .is_some_and(|class| class.eq_ignore_ascii_case("env_fog_controller"))
+        .is_some_and(|class| class.eq_ignore_ascii_case(kind.classname()))
     {
-        return Err("Selected entity is not an env_fog_controller".into());
+        return Err(match kind {
+            Kind::Controller { .. } => "Selected entity is not an env_fog_controller".into(),
+            Kind::SkyCamera => "Selected entity is not a sky_camera".into(),
+        });
     }
     let mut defaults = Vec::new();
     let mut profile = Profile::initial();
@@ -278,8 +369,12 @@ fn parse(entity: &Entity, fixed_parents: bool) -> Result<ParsedController, Strin
     profile.start = number(entity, "fogstart", 0.0, &mut defaults)?;
     profile.end = number(entity, "fogend", 0.0, &mut defaults)?;
     profile.max_density = number(entity, "fogmaxdensity", 1.0, &mut defaults)?;
-    profile.far_z = number(entity, "farz", 0.0, &mut defaults)?;
-    profile.lerp_time = number(entity, "foglerptime", 0.0, &mut defaults)?;
+    if matches!(kind, Kind::Controller { .. }) {
+        profile.far_z = number(entity, "farz", 0.0, &mut defaults)?;
+        profile.lerp_time = number(entity, "foglerptime", 0.0, &mut defaults)?;
+    } else {
+        value(entity, "scale", &mut defaults)?;
+    }
     if let Some(raw) = value(entity, "fogcolor", &mut defaults)? {
         profile.color = color(raw, "fogcolor")?.map(f32::from);
     }
@@ -290,8 +385,12 @@ fn parse(entity: &Entity, fixed_parents: bool) -> Result<ParsedController, Strin
         profile.direction = vector(raw, "fogdir")?;
     }
     if flag(entity, "use_angles", &mut defaults)? {
-        if !fixed_parents
-            && property(entity, "parentname")?.is_some_and(|parent| !parent.is_empty())
+        if !matches!(
+            kind,
+            Kind::Controller {
+                fixed_parents: true
+            }
+        ) && property(entity, "parentname")?.is_some_and(|parent| !parent.is_empty())
         {
             return Err(
                 "use_angles on a parented fog controller needs a resolved world orientation".into(),
@@ -321,9 +420,20 @@ fn parse(entity: &Entity, fixed_parents: bool) -> Result<ParsedController, Strin
         profile.direction = angles_direction(orientation.to_array());
     }
     profile.validate()?;
-    let inert_keys = ["HDRColorScale", "ZoomFogScale"]
-        .into_iter()
-        .filter(|key| entity.properties.get(key).is_some())
+    let inert_candidates: &[&str] = if matches!(kind, Kind::SkyCamera) {
+        &["farz", "foglerptime", "HDRColorScale", "ZoomFogScale"]
+    } else {
+        &["HDRColorScale", "ZoomFogScale"]
+    };
+    let inert_keys = inert_candidates
+        .iter()
+        .copied()
+        .filter(|key| {
+            entity
+                .properties
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case(key))
+        })
         .map(str::to_owned)
         .collect();
     Ok(ParsedController {

@@ -1994,6 +1994,7 @@ impl Session {
     pub fn view(&self) -> ViewOptions {
         ViewOptions {
             fog: None,
+            sky_fog_initial_radial_context: self.fog_preview_settings().initial_radial_context,
             grid_size: self.spatial.grid_size as f32,
             grid_visible: self.spatial.grid_visible,
             grid_elevation: self.spatial.elevation as f32,

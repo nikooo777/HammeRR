@@ -114,7 +114,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | [Fog](docs/fog.md) | [Spatial guides](docs/measurements.md) |
 | --- | --- |
 | ![Distance fog in a metal hall](docs/images/fog-on.png) | ![An oblique reference plane and attached ruler](docs/images/spatial-guides.png) |
-| Preview world fog, controller inputs and transitions. | Attach rulers to surfaces and snap picks to 3D reference planes. |
+| Preview world fog, controller transitions and independent miniature fog. | Attach rulers to surfaces and snap picks to 3D reference planes. |
 
 | [Color correction](docs/color-correction.md) | [Visibility profiles](docs/working-region.md#saved-rule-profiles) |
 | --- | --- |

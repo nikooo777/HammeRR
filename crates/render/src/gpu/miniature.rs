@@ -38,6 +38,7 @@ impl Drop for Reservation {
 pub(super) struct Miniature {
     id: u64,
     camera: sky3d::Camera,
+    fog: crate::fog::Profile,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     batches: Vec<crate::scene::Batch>,
@@ -280,13 +281,32 @@ impl GpuScene {
             return Some(error.clone());
         }
         match &self.sky3d {
-            Some(scene) => scene.camera.view_projection(camera, 1.0).err().or_else(|| {
-                sky3d::target_size(
-                    (sky3d::MAX_TARGET_DIMENSION, sky3d::MAX_TARGET_DIMENSION),
-                    scene.reservation.allocated.load(Ordering::Relaxed),
-                )
+            Some(scene) => scene
+                .camera
+                .view_projection(camera, 1.0)
                 .err()
-            }),
+                .or_else(|| {
+                    crate::fog::sky_view(
+                        scene.fog,
+                        scene.camera.scale as f32,
+                        options.sky_fog_initial_radial_context,
+                    )
+                    .err()
+                })
+                .or_else(|| {
+                    if options.sky_preview && scene.fog.enabled() && scene.fog.max_density() > 0.0 {
+                        self.sky_fog_background_error.clone()
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| {
+                    sky3d::target_size(
+                        (sky3d::MAX_TARGET_DIMENSION, sky3d::MAX_TARGET_DIMENSION),
+                        scene.reservation.allocated.load(Ordering::Relaxed),
+                    )
+                    .err()
+                }),
             None => Some("3D sky preview requested without a ready miniature scene".into()),
         }
     }
@@ -369,6 +389,7 @@ impl Renderer {
         let miniature = Arc::new(Miniature {
             id: scene.id,
             camera: scene.camera,
+            fog: scene.fog,
             vertices,
             indices,
             batches: scene.batches.clone(),
@@ -387,11 +408,12 @@ impl Renderer {
         &mut self,
         ctx: &GpuContext,
         scene: &GpuScene,
-        camera: &crate::Camera,
+        view: (&crate::Camera, map_core::fog::InitialRadialContext),
         globals: &Globals,
         size: (u32, u32),
         encoder: &mut wgpu::CommandEncoder,
     ) -> Result<wgpu::BindGroup, String> {
+        let (camera, context) = view;
         let scene = scene
             .sky3d
             .as_ref()
@@ -404,14 +426,10 @@ impl Renderer {
             .camera
             .view_projection(camera, size.0 as f32 / size.1.max(1) as f32)?
             .to_cols_array_2d();
-        globals.eye = scene
-            .camera
-            .transform(camera)?
-            .position
-            .extend(1.0)
-            .to_array();
-        globals.fog_color = [0.0; 4];
-        globals.fog_range = [0.0; 4];
+        let miniature_camera = scene.camera.transform(camera)?;
+        globals.eye = miniature_camera.position.extend(1.0).to_array();
+        let fog = crate::fog::sky_view(scene.fog, scene.camera.scale as f32, context)?;
+        (globals.fog_color, globals.fog_range) = crate::fog::uniforms(fog, &miniature_camera);
         globals.lighting_settings = [0.0; 4];
         globals.surface_view = [0; 4];
         ctx.queue

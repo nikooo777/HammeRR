@@ -2,7 +2,7 @@
 
 # Sky previews and assets
 
-Preview the map sky and inspect its mounted LDR and HDR assets.
+Preview the map sky, static miniature fog and mounted LDR and HDR assets.
 
 ## Set and preview the sky
 
@@ -23,6 +23,7 @@ Use a `light_environment` for [sun and sky lighting](compile-and-play.md#lightin
 3. Adjust **Sky EV**.
 
 This exposure affects the editor sky only, not game tone mapping or baked lighting.
+It does not enable HDR fog on the miniature.
 
 ## Preview a 3D sky region
 
@@ -43,6 +44,33 @@ Use **2D sky preview** to fill space behind the miniature.
 | 2D sky only | 3D sky preview enabled |
 | --- | --- |
 | ![An arch with the six-face sky background](images/miniature-sky-off.png) | ![A prepared miniature skyline behind the same arch](images/miniature-sky-on.png) |
+
+## Preview miniature fog
+
+1. Select the preview's `sky_camera`. In **Inspector**, enable **Advanced properties**.
+2. Set **Fog Enable → Yes**, **Primary Fog Color**, **Fog Start** and **Fog End**.
+3. For directional colors, set **Fog Blend → Yes**, then set **Secondary Fog Color**
+   and **Primary Fog Dir**. **Use Angles for Fog Dir → Yes** uses world orientation.
+4. Click **Prepare 3D sky** again after source changes, then enable
+   **Enable 3D sky preview**. Use **Perspective** and **Textured**.
+5. To change radial initialization, open **View → Fog preview…**, expand
+   **Environment**, choose **Initial rule**, then click **Apply preview**.
+   **Authored values** keeps the radial setting; **CS:S official-map rule** initializes
+   it as radial. **Enable fog preview** can remain off.
+
+For density and radial overrides, add raw `fogmaxdensity` or `fogradial` with
+**Property key** and **Value**. They appear as **Fogmaxdensity** and **Fogradial**.
+Set `fogradial` to `1` for radial distance or `0` for view depth.
+To disable miniature fog, choose **Fog Enable → No** and prepare again.
+
+The miniature uses its own camera fog. World fog enable, controller selection,
+inputs, transitions and `farz` do not supply its profile. Start and end distances
+are divided by the positive miniature scale once. Author the original distances;
+do not divide them yourself. Standard `Sky` backgrounds keep their colors.
+
+| Miniature fog off | Miniature fog on |
+| --- | --- |
+| ![The miniature skyline without fog](images/miniature-fog-off.png) | ![Distance fog affects the miniature while the foreground and sky retain their colors](images/miniature-fog-on.png) |
 
 ## Inspect mounted sky assets
 
@@ -68,7 +96,16 @@ The game must enable full HDR to display its HDR channel.
 - 3D sky preparation is explicit; enabling the switch does not silently load or repair sources.
 - 3D sky uses opaque materials with one base texture. Cutouts, transparency, normal maps and detail layers are unsupported.
 - Miniature scale is an integer from 1 to 128. Camera angles do not rotate the miniature preview.
-- The miniature uses unlit textures. It does not preview fog, authored lighting, models, terrain or water.
+- Miniature fog is static LDR. Authored lighting, models, terrain and water are
+  not previewed. HDR fog, runtime sky-camera changes and native clipping or
+  pixel parity are unavailable.
+- A selected sky camera must be unparented, with no attachment binding.
+- Camera origin and fog direction use native 1/32 coordinate conversion,
+  including integer wrapping; for example, 16,385 becomes 1. Reports retain
+  source and received values separately. A received zero direction mixes colors equally.
+- With miniature fog active, an `UnlitGeneric` 2D background requires explicit
+  `$nofog 1`. Other unqualified combinations report unavailable; use a standard
+  `Sky` family or disable **2D sky preview**.
 - Native capture and packing can impose stricter limits than viewport display.
 - Compilation rejects a `sky_camera` in visibility area 255. CS:S reserves that value for no 3D sky. Move the camera into another area.
 

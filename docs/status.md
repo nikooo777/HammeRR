@@ -10,7 +10,7 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 88.5% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 89.7% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
@@ -50,7 +50,7 @@ Scores reflect supported workflows and open gaps. Amber counts only the implemen
 | [Magnetic movement](placement.md#magnetic-translation) | Pointer Move capture to visible brush, terrain and model vertices; individual child-brush support. | Explicit flat-brush source corner; bounded world-unit radius and first-visible target. |
 | [Point-entity gallery](entity-gallery.md) | Paged FGD point classes, actual helper/icon/model examples and reviewed bulk placement with one Undo step. | 1–32 distinct loaded classes per preview; static/reference-pose visual support and mounted asset limits. |
 | [Models](models.md) | Winning-source filters, captured file origins, multi-entity mesh/skin/bodygroup previews and choices, reference poses, dynamic scale, tint, opacity and attachments. | Animation, procedural poses, attachment parenting and physics preview. |
-| [Resource previews](sprite-guides.md) | Supported sprites, [rope playback with static textures, fixed anchors, world contact and pose-aware bounds](ropes.md), [world fog with radial distance, directional colors, an explicit official-map initial rule, fixed point-parent angles, mixed controller inputs and interrupted player switches, prepared underwater context and recorded radial setup history](fog.md), and [LDR/HDR backgrounds and 3D skies with independent static LDR camera fog](sky.md). | Complete native effects; HDR fog, runtime sky-camera history, automatic native render-pass history, automatic volume/trigger selection, authored trigger/I/O histories and live game-map context. |
+| [Resource previews](sprite-guides.md) | Supported sprites, [rope playback with static textures, fixed anchors, world contact and pose-aware bounds](ropes.md), [world fog with radial distance, directional colors, an explicit official-map initial rule, fixed point-parent angles, mixed controller inputs and interrupted player switches, explicit authored fog-trigger touches, prepared underwater context and recorded radial setup history](fog.md), and [LDR/HDR backgrounds and 3D skies with independent static LDR camera fog](sky.md). | Complete native effects; HDR fog, runtime sky-camera history, automatic native render-pass history, automatic volume selection, camera/physics trigger contacts, general game I/O and live game-map context. |
 | [Particles](particles.md) | Active manifest metadata and atomic effect assignment to captured entity sets. | Particle rendering and animation. |
 | [Sounds](sounds.md) | File/script browsing, short audition and atomic multi-entity assignment with source guards, common-field selection and explicit diagnostics. | Game mixing, soundscapes and sentence synthesis. |
 | [Organization](layers.md) | Groups, native layers, automatic kind/class categories, current exclusions, map-local saved query profiles, prefabs, notes and saved views. | Prefab assets stay external. |

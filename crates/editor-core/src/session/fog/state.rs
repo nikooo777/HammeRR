@@ -97,6 +97,35 @@ impl SelectionMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerTouchKind {
+    Enter,
+    Leave,
+}
+
+impl TriggerTouchKind {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "enter" => Ok(Self::Enter),
+            "leave" => Ok(Self::Leave),
+            _ => Err("Trigger touch must be enter or leave".into()),
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Enter => "enter",
+            Self::Leave => "leave",
+        }
+    }
+    pub(super) fn phase(self) -> map_core::fog::TouchPhase {
+        match self {
+            Self::Enter => map_core::fog::TouchPhase::Enter,
+            Self::Leave => map_core::fog::TouchPhase::Leave,
+        }
+    }
+}
+
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -188,6 +217,10 @@ pub enum Command {
     },
     SwitchPlayerController {
         controller: u32,
+    },
+    TriggerTouch {
+        trigger: u32,
+        touch: TriggerTouchKind,
     },
     RecordRenderPass {
         pass: RenderPassKind,
@@ -285,6 +318,7 @@ pub(super) struct Pending {
 #[derive(Clone)]
 pub(super) enum HistoryEvent {
     Controller(map_core::fog::PlayerEvent),
+    Touch(map_core::fog::TouchEvent),
     Pass {
         event: map_core::fog::RenderPassEvent,
         source: serde_json::Value,
@@ -295,6 +329,7 @@ impl HistoryEvent {
     pub(super) fn time(&self) -> f64 {
         match self {
             Self::Controller(event) => event.time,
+            Self::Touch(event) => event.time_seconds,
             Self::Pass { event, .. } => event.time_seconds,
         }
     }
@@ -328,6 +363,7 @@ pub(in crate::session) struct State {
     pub(super) timelines: BTreeMap<u32, Timeline>,
     pub(super) events: Vec<HistoryEvent>,
     pub(super) passes: map_core::fog::PassHistory,
+    pub(super) trigger_expansion: Option<map_core::fog::TriggerExpansion>,
     pub(super) player: Option<map_core::fog::PlayerTimeline>,
     pub(super) time: f64,
     pub(super) playing: bool,
@@ -357,6 +393,7 @@ impl Default for State {
             timelines: BTreeMap::new(),
             events: Vec::new(),
             passes: map_core::fog::PassHistory::default(),
+            trigger_expansion: None,
             player: None,
             time: 0.0,
             playing: false,

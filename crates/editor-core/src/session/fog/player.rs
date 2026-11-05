@@ -31,7 +31,9 @@ impl Session {
     pub(super) fn controller_input_target_admission(&self, controller: u32) -> Result<(), String> {
         self.controller_input_admission()?;
         let profile = self.initial_fog_profile(controller)?;
-        if let Some(player) = &self.fog_preview.player {
+        if self.fog_preview.trigger_expansion.is_some() {
+            Timeline::new(profile)?;
+        } else if let Some(player) = &self.fog_preview.player {
             let mut candidate = player.clone();
             candidate.register_controller(controller, profile)?;
             candidate.can_input(self.fog_preview.time, controller)?;
@@ -47,6 +49,13 @@ impl Session {
         input: Input,
     ) -> Result<(), String> {
         self.controller_input_admission()?;
+        if self.fog_preview.trigger_expansion.is_some() {
+            return self.append_trigger_controller(map_core::fog::PlayerEvent {
+                time: self.fog_preview.time,
+                controller,
+                kind: PlayerEventKind::Input(input),
+            });
+        }
         let profile = self.initial_fog_profile(controller)?;
         if let Some(player) = &self.fog_preview.player {
             let mut candidate = player.clone();
@@ -80,6 +89,28 @@ impl Session {
         Ok(())
     }
 
+    pub(super) fn initial_player_controller(&self) -> Result<u32, String> {
+        if let Some(player) = &self.fog_preview.player {
+            return Ok(player.initial_controller());
+        }
+        let initial = match self.fog_preview.settings.selection {
+            SelectionMode::Explicit => self
+                .fog_preview
+                .settings
+                .controller
+                .ok_or("Choose an initial fog controller before switching the player")?,
+            SelectionMode::Environment => self
+                .fog_preview
+                .environment
+                .as_ref()
+                .ok_or("Prepare the fog environment before switching the player controller")?
+                .snapshot
+                .initial_controller()
+                .ok_or("The prepared environment has no initial fog controller")?,
+        };
+        Ok(initial)
+    }
+
     pub(super) fn player_timeline_for_switch(
         &self,
     ) -> Result<(PlayerTimeline, PlayerFrame), String> {
@@ -105,24 +136,14 @@ impl Session {
             return Err("Enable Fog preview before switching the player controller".into());
         }
         if let Some(player) = &self.fog_preview.player {
-            let frame = player.prepare_switch(self.fog_preview.time)?;
+            let frame = if self.fog_preview.trigger_expansion.is_some() {
+                player.evaluate(self.fog_preview.time)?
+            } else {
+                player.prepare_switch(self.fog_preview.time)?
+            };
             return Ok((player.clone(), frame));
         }
-        let initial = match self.fog_preview.settings.selection {
-            SelectionMode::Explicit => self
-                .fog_preview
-                .settings
-                .controller
-                .ok_or("Choose an initial fog controller before switching the player")?,
-            SelectionMode::Environment => self
-                .fog_preview
-                .environment
-                .as_ref()
-                .ok_or("Prepare the fog environment before switching the player controller")?
-                .snapshot
-                .initial_controller()
-                .ok_or("The prepared environment has no initial fog controller")?,
-        };
+        let initial = self.initial_player_controller()?;
         let profile = self.initial_fog_profile(initial)?;
         ViewFog::controller(profile)?;
         let mut player = PlayerTimeline::new(initial, profile)?;
@@ -153,6 +174,13 @@ impl Session {
             .ok_or("Player fog target is not an authored fog controller")?;
         target.switch_target.as_ref().map_err(Clone::clone)?;
         target.parsed.as_ref().map_err(Clone::clone)?;
+        if self.fog_preview.trigger_expansion.is_some() {
+            return self.append_trigger_controller(map_core::fog::PlayerEvent {
+                time: self.fog_preview.time,
+                controller,
+                kind: PlayerEventKind::Switch,
+            });
+        }
         let profile = self.initial_fog_profile(controller)?;
         player.push(PlayerSwitch {
             time: self.fog_preview.time,
@@ -166,11 +194,13 @@ impl Session {
             kind: PlayerEventKind::Switch,
         }))?;
         self.fog_preview.player = Some(player);
-        self.fog_preview.timelines.clear();
         Ok(())
     }
 
     pub(super) fn validate_player_fog(&self, time: f64) -> Result<(), String> {
+        if !self.fog_player_active(time) {
+            return Ok(());
+        }
         if let Some(player) = &self.fog_preview.player {
             ViewFog::controller(player.evaluate(time)?.profile)?;
         }
@@ -178,7 +208,9 @@ impl Session {
     }
 
     pub(super) fn controller_states_report(&self) -> Vec<Value> {
-        if let Some(player) = &self.fog_preview.player {
+        if let Some(player) = &self.fog_preview.player
+            && self.fog_player_active(self.fog_preview.time)
+        {
             return match player.controller_frames(self.fog_preview.time) {
                 Ok(frames) => frames
                     .into_iter()
@@ -218,6 +250,9 @@ impl Session {
     }
 
     pub(super) fn player_fog_report(&self) -> Result<Value, String> {
+        if !self.fog_player_active(self.fog_preview.time) {
+            return Ok(Value::Null);
+        }
         let Some(player) = &self.fog_preview.player else {
             return Ok(Value::Null);
         };

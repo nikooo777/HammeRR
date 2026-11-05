@@ -66,6 +66,8 @@ pub enum FogPreviewAction {
     SwitchPlayerController,
     /// Capture a declared shader reset, world fog or selected sky fog setup at the current preview time.
     RecordRenderPass,
+    /// Declare Enter or Leave for one alive virtual player at an authored fog trigger.
+    TriggerTouch,
     Play,
     Pause,
     Seek,
@@ -106,6 +108,10 @@ pub struct FogPreviewControlArgs {
     pub value: Option<String>,
     /// Record render pass only: reset, world or sky. Captures the selected setup at the current logical time.
     pub pass: Option<crate::session::fog::RenderPassKind>,
+    /// Trigger touch only: authored trigger_multiple entity:<id> from trigger_choices.
+    pub trigger: Option<String>,
+    /// Trigger touch only: enter or leave. No camera contact or physics is inferred.
+    pub touch: Option<crate::session::fog::TriggerTouchKind>,
     /// Seek only: requested preview time in seconds.
     pub time_seconds: Option<f64>,
     /// Advance only: elapsed preview time in seconds.

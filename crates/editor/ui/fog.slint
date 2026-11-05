@@ -81,6 +81,16 @@ export component FogWindow inherits Window {
     in property <string> player-state;
     in property <string> player-detail;
     in property <bool> player-issue;
+    in-out property <bool> trigger-expanded;
+    in-out property <int> trigger-index;
+    in property <[string]> triggers;
+    in-out property <bool> trigger-dirty;
+    in property <bool> can-enter-trigger;
+    in property <bool> can-leave-trigger;
+    in property <string> trigger-membership;
+    in property <string> trigger-detail;
+    in property <string> trigger-status;
+    in property <bool> trigger-issue;
     in property <string> scope;
 
     callback choice-changed();
@@ -102,6 +112,9 @@ export component FogWindow inherits Window {
     callback switch-player-controller();
     callback pass-changed();
     callback record-render-pass();
+    callback trigger-changed();
+    callback enter-trigger();
+    callback leave-trigger();
 
     forward-focus: dialog-focus;
     dialog-focus := FocusScope {
@@ -307,6 +320,28 @@ export component FogWindow inherits Window {
                         }
                         if root.input-state != "": Text { text: root.input-state; color: Theme.text-muted; wrap: word-wrap; }
                         Text { text: "Inputs change the chosen controller in preview without changing the initial or player controller selection."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
+                    }
+                    SectionHeader { text: "Trigger touches"; detail: root.trigger-dirty ? "Unsubmitted source" : ""; inset: false; expanded <=> root.trigger-expanded; }
+                    if root.trigger-expanded: VerticalLayout {
+                        spacing: Theme.space;
+                        FieldRow {
+                            inset: false; label: "Source"; label-width: 104px;
+                            ComboBox {
+                                model: root.triggers; current-index <=> root.trigger-index;
+                                accessible-label: "Fog trigger touch source";
+                                enabled: root.available;
+                                selected => { root.trigger-dirty = true; root.trigger-changed(); }
+                            }
+                        }
+                        if root.trigger-detail != "": Text { text: root.trigger-detail; color: root.trigger-issue ? Theme.warning : Theme.text-faint; wrap: word-wrap; }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Enter"; enabled: root.can-enter-trigger; clicked => { root.enter-trigger(); } }
+                            Button { text: "Leave"; enabled: root.can-leave-trigger; clicked => { root.leave-trigger(); } }
+                            Text { text: root.trigger-membership; color: Theme.text-muted; vertical-alignment: center; horizontal-stretch: 1; }
+                        }
+                        if root.trigger-status != "": Text { text: root.trigger-status; color: Theme.text-muted; wrap: word-wrap; }
+                        Text { text: "Enter and Leave record explicit touches at the current preview time. One virtual alive player starts outside every source. Camera movement does not detect touches."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
                     }
                     SectionHeader { text: "Current settings"; inset: false; collapsible: false; }
                     Text { text: root.detail; color: Theme.text-muted; wrap: word-wrap; }

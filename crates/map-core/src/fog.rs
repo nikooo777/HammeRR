@@ -7,6 +7,7 @@ mod passes;
 mod player;
 mod profile;
 mod timeline;
+mod triggers;
 
 pub use context::{CSS_OFFICIAL_MAP_CATALOG, INITIAL_RADIAL_CONTEXTS, InitialRadialContext};
 pub use inputs::{Input, InputChoice, input_choices};
@@ -29,6 +30,14 @@ pub use profile::{
 };
 pub use timeline::{
     ControllerFrame, Event, MAX_EVENTS, MAX_TIMELINE_SECONDS, RawParams, TIMELINE_POLICY, Timeline,
+};
+pub use triggers::{
+    MAX_ENROLLED_TRIGGERS, MAX_TRIGGER_ACTIONS, MAX_TRIGGER_SOURCE_ACTIONS,
+    MAX_TRIGGER_SOURCE_BYTES, MAX_TRIGGER_SOURCES, SourceAction, TRIGGER_HISTORY_POLICY,
+    TouchEvent, TouchPhase, TriggerAction, TriggerActionCount, TriggerDefinition, TriggerExpansion,
+    TriggerFrame, TriggerHistoryEvent, TriggerOutput, TriggerSource, TriggerTouchState,
+    TriggeredAction, admit_trigger_source_catalog, expand_trigger_history, parse_trigger_source,
+    parse_trigger_sources,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]

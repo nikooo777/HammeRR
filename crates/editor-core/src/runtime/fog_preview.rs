@@ -96,6 +96,7 @@ pub(super) fn execute(
                 | Command::Cancel
                 | Command::Clear
                 | Command::RecordRenderPass { .. }
+                | Command::TriggerTouch { .. }
         )
     {
         return Err("Background is only available for environment preparation and timeline inputs, Seek, Advance or Reset".into());
@@ -116,6 +117,7 @@ pub(super) fn execute(
                     | Command::Input { .. }
                     | Command::SwitchPlayerController { .. }
                     | Command::RecordRenderPass { .. }
+                    | Command::TriggerTouch { .. }
                     | Command::Seek { .. }
                     | Command::Advance { .. }
                     | Command::Reset

@@ -106,7 +106,7 @@ update time run first and keep their recorded order. Due controller transition
 commits run before events at that time. Controller-only inputs do not add a
 player update. **Seek** and inspection preserve this schedule. Input-only
 preview uses continuous controller interpolation; after the first player
-switch, the combined sequence uses the player update schedule.
+switch or trigger touch, the combined sequence uses the player update schedule.
 
 The player sample time can differ from the requested preview time. The final
 fog uses the copied controller's own transition at the requested time. Missing,
@@ -120,6 +120,49 @@ refuse.
 **Initial controller** selection remains an immediate manual snap. Changing that
 selection, the environment selection mode or the initial rule clears all events,
 resets time and pauses. Source edits also clear the sequence.
+
+## Preview authored fog triggers
+
+1. Use **Tie to entity…** to make a brush `trigger_multiple`.
+   In **Inspector**, set `spawnflags` to `1`, keep `StartDisabled` at `0`,
+   and use a nonnegative `wait`. Leave `parentname` and `filtername` empty.
+2. Open **Connections…**. Add an `OnStartTouch`, `OnStartTouchAll`,
+   `OnEndTouch` or `OnEndTouchAll` connection. Use `!activator` as its target,
+   `SetFogController` as its input and the destination controller's unique
+   literal `targetname` as its parameter. Set the delay and firing count, then
+   click **Apply connection**.
+3. In **Fog preview…**, enable **Enable fog preview** and apply a ready initial
+   controller.
+4. Expand **Trigger touches**, choose **Source**, then click **Enter**.
+5. Read **Inside** or **Outside**, **Generated actions** and the pending/fired
+   counts. Use **Play**, **Pause** and **Seek** to inspect delayed actions.
+6. Click **Leave** to declare the player outside that trigger again.
+
+The preview uses one alive virtual player, initially outside every trigger.
+**Enter** and **Leave** declare its boundary crossings. They do not use the
+camera's position or detect physics contacts. A duplicate **Enter** or a
+**Leave** while outside refuses.
+**Seek** reconstructs membership, counts and queued actions at the requested
+time without recording touches or consuming counts again.
+
+Enter emits `OnStartTouch` then `OnStartTouchAll`; Leave emits `OnEndTouch`
+then `OnEndTouchAll`. Rows within each output run in reverse stored order.
+Actions with the same logical delivery time retain their enqueue order. Due
+queued actions run before an authored event at the same time; newly queued
+immediate actions run before the next authored event.
+
+Firing counts are consumed when actions enter the queue. Delayed actions remain
+queued after **Leave** or later count exhaustion. An action targeting the current
+player controller is a valid no-change delivery: it consumes its count and
+preserves the active blend.
+
+Every connection on a source must fit this catalog. Other outputs, filters,
+parents or attachments, disabled sources, non-client flags or unsupported action
+targets make the complete source unavailable. Destination names must match the
+controller's actual `targetname` exactly. No unsupported rows are skipped.
+`OnTrigger`, other actors, dynamic trigger changes and general game I/O are
+outside this preview. Preview touches preserve map bytes, selection, camera
+and Undo.
 
 ## Play or inspect a time
 
@@ -237,7 +280,8 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
 - Fog directions use native 1/32 coordinate conversion, including integer
   wrapping; for example, 16,385 becomes 1. A received zero vector mixes the
   two colors equally.
-- Time is 0–3600 seconds, with at most 128 combined input, switch and setup events.
+- Time is 0–3600 seconds, with at most 128 combined input, switch, touch and
+  setup events, plus at most 128 generated trigger actions.
   A sequence can use at most 128 controllers. Events append in
   time order; use **Reset** before adding an event earlier than the last one.
   The controller input `StartFogTransition` requires positive `foglerptime`.
@@ -255,8 +299,8 @@ The parent's **Fog preview…** lists only parent controllers; child icons, boun
   preserved foreign metadata and do not scale the root controller preview.
 - Manual controller selection snaps immediately. Mixed controller inputs and
   player switches use the declared preview delivery and update schedule.
-  Automatic volume/trigger selection and authored trigger/I/O histories are
-  unavailable. The schedule does not reproduce native packet delivery,
+  Automatic volume selection, camera/physics trigger contacts and general game
+  I/O are unavailable. The schedule does not reproduce native packet delivery,
   prediction, physics or rendering rates.
   The initial rule is an explicit preview choice, not live game-map detection.
   `fog_volume` and `trigger_fog` are unavailable.

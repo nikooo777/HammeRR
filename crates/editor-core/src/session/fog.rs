@@ -11,6 +11,7 @@ mod passes;
 mod player;
 mod preparation;
 mod state;
+mod triggers;
 
 pub(crate) use controls::Update;
 pub use map_core::fog::InitialRadialContext;
@@ -20,7 +21,7 @@ pub(crate) use state::ClockLease;
 pub(super) use state::State;
 pub use state::{
     Channel, Clock, Command, FogView, Overrides, RenderPassKind, SelectionMode, Settings,
-    WaterRadialContext,
+    TriggerTouchKind, WaterRadialContext,
 };
 
 pub(super) fn profile_report(profile: Profile) -> Value {
@@ -186,6 +187,7 @@ impl Session {
             .fog_preview
             .player
             .as_ref()
+            .filter(|_| self.fog_player_active(self.fog_preview.time))
             .map(|player| player.evaluate(self.fog_preview.time))
             .transpose()?;
         let profile = if let Some(frame) = player_frame {
@@ -427,11 +429,13 @@ impl Session {
                     "No eligible named destination fog controller; inspect switch_targets for each controller's refusal reason".to_owned()
                 })
             });
-        let player_switches=self.fog_preview.player.as_ref().map(|player|player.events().iter().map(|event| {
+        let player_switches=self.fog_preview.events.iter().filter_map(|event| {
+            let state::HistoryEvent::Controller(event) = event else { return None; };
+            if !matches!(event.kind,map_core::fog::PlayerEventKind::Switch) { return None; }
             let name=self.fog_preview.catalog.as_ref().and_then(|catalog|catalog.controllers.get(&event.controller))
                 .and_then(|controller|controller.switch_target.as_ref().ok());
-            json!({"controller":format!("entity:{}",event.controller),"name":name,"time_seconds":event.time})
-        }).collect::<Vec<_>>()).unwrap_or_default();
+            Some(json!({"controller":format!("entity:{}",event.controller),"name":name,"time_seconds":event.time}))
+        }).collect::<Vec<_>>();
         let player = self
             .player_fog_report()
             .unwrap_or_else(|error| json!({"issue":error}));
@@ -466,7 +470,7 @@ impl Session {
             "controllers":controllers,"channels":[{"id":"ldr","label":"LDR","ready":true,"detail":"World fog · LDR"},{"id":"hdr","label":"HDR","ready":false,"detail":"HDR fog display is unavailable"}],
             "selections":[{"id":"explicit","label":"Explicit controller","ready":true,"detail":"Use the selected controller's authored or replayed values"},{"id":"environment","label":"Environment","ready":true,"detail":"Use the prepared initial controller, optional player switches and current-camera water fog."}],
             "inputs":inputs,"input_targets":input_targets,"events":events,"event_count":event_count,"current":current,"requested":current,"time_seconds":clock.time_seconds,"current_time_seconds":clock.time_seconds,
-            "replay_mode":if self.fog_preview.player.is_some(){"mixed_player"}else{"controller_inputs"},"controller_states":self.controller_states_report(),
+            "replay_mode":if !self.fog_player_active(self.fog_preview.time){"controller_inputs"}else if self.fog_preview.trigger_expansion.is_some(){"trigger_player"}else if self.fog_preview.player.is_some(){"mixed_player"}else{"controller_inputs"},"controller_states":self.controller_states_report(),"first_player_operation":self.first_fog_player_operation(),
             "pass_choices":pass_choices,"pass_events":self.fog_pass_events_report(),"pass_history":self.fog_pass_history_report(),
             "can_record_render_pass":can_record_render_pass,"render_pass_issue":if can_record_render_pass {None}else{self.fog_event_admission().err().or_else(||Some("No fog setup can be recorded; inspect pass_choices for the refusal reason".to_owned()))},
             "player":player,"player_switches":player_switches,"switch_targets":switch_targets,
@@ -484,10 +488,13 @@ impl Session {
             "timeline_policy":map_core::fog::TIMELINE_POLICY,
             "player_switch_policy":map_core::fog::PLAYER_TIMELINE_POLICY,
             "pass_history_policy":map_core::fog::PASS_HISTORY_POLICY,
+            "trigger_choices":self.trigger_choices_report(),"trigger_history":self.trigger_history_report(),
+            "trigger_catalog_issue":self.fog_preview.catalog.as_ref().and_then(|catalog|catalog.triggers.as_ref().err()),
+            "trigger_history_policy":map_core::fog::TRIGGER_HISTORY_POLICY,
             "player_target_limits":{"names":catalog::MAX_TARGET_NAMES,"name_bytes":catalog::MAX_TARGET_NAME_BYTES,"total_name_bytes":catalog::MAX_TOTAL_TARGET_NAME_BYTES,"property_visits":catalog::MAX_NAMESPACE_PROPERTIES,"native_match_bytes":catalog::MAX_NAMESPACE_MATCH_BYTES},
             "initial_radial_context_policy":"The selected rule applies to every controller's initial profile before preview inputs. Changing it clears controller inputs and player switches, resets time and pauses, while retaining a current prepared environment. Later SetRadial inputs override the initial value. No running map name or file path is inferred.",
             "playback_policy":"One shared runtime clock drives Play in desktop and headless sessions. Hidden or inactive presentation suspends wall time without catch-up. Seek pauses; explicit Advance remains available. Reset clears controller inputs, player switches and captured passes and restores the current-context initial profile at time zero; recorded radial becomes Unknown. Cancel stops environment preparation and playback; Clear also disables and clears preview state.",
-            "selection_policy":"Manual controller, selection-mode, initial-context or water-context changes clear all preview events and reset time after validation. Initial automatic selection uses the prepared first-controller/last-Master; water is applied after the sampled player state. Inputs address their explicit controller without changing the initial choice or current player handle. Input-only preview retains continuous controller evaluation. The first named player switch replays the original ordered input history from the settled initial epoch under the declared mixed raw delivery schedule; later inputs and switches share that ledger. Temporary controller/selection overrides refuse while mixed player replay exists. Automatic trigger history, fog volumes, live I/O and native packet/prediction/update cadence are not simulated.",
+            "selection_policy":"Manual controller, selection-mode, initial-context or water-context changes clear all preview events and reset time after validation. Initial automatic selection uses the prepared first-controller/last-Master; water is applied after the sampled player state. Inputs address their explicit controller without changing the initial choice or current player handle. Input-only preview retains continuous controller evaluation. Before the first recorded manual switch or Touch time, queries retain analytic controller-input mode. At and after that operation, the original ordered input history replays from the settled initial epoch under the declared mixed raw delivery schedule; later inputs and switches share that ledger. Temporary controller/selection overrides refuse while mixed player replay exists. Automatic trigger history, fog volumes, live I/O and native packet/prediction/update cadence are not simulated.",
             "persistence":"Session view state only; no VMF edits, Undo steps or saved controller mutation. HDRColorScale and ZoomFogScale remain inert foreign metadata in this installed CSS path."})
     }
 

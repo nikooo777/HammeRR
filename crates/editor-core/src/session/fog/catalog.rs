@@ -21,6 +21,7 @@ pub(super) struct Controller {
 
 pub(super) struct Catalog {
     pub controllers: BTreeMap<u32, Controller>,
+    pub triggers: Result<BTreeMap<u32, super::triggers::Trigger>, String>,
 }
 
 fn switch_name(entity: &Entity) -> Result<String, String> {
@@ -188,6 +189,10 @@ impl Catalog {
                 controller.switch_target = Err(error.clone());
             }
         }
-        Ok(Self { controllers })
+        let triggers = super::triggers::capture_catalog(vmf, &controllers);
+        Ok(Self {
+            controllers,
+            triggers,
+        })
     }
 }

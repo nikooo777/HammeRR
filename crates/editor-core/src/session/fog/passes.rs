@@ -160,6 +160,7 @@ impl Session {
                     }
                 },
                 HistoryEvent::Pass { event, source } => pass_report(order, *event, source),
+            HistoryEvent::Touch(event) => json!({"kind":"trigger_touch","order":order,"time_seconds":event.time_seconds,"trigger":format!("entity:{}",event.trigger),"touch":event.phase.name()}),
             })
             .collect()
     }
@@ -171,7 +172,7 @@ impl Session {
             .enumerate()
             .filter_map(|(order, event)| match event {
                 HistoryEvent::Pass { event, source } => Some(pass_report(order, *event, source)),
-                HistoryEvent::Controller(_) => None,
+                HistoryEvent::Controller(_) | HistoryEvent::Touch(_) => None,
             })
             .collect()
     }

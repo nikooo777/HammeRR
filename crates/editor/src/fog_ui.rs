@@ -9,7 +9,7 @@ use crate::FogWindow;
 use crate::runtime::{DocumentAccess, DocumentContinuation, DocumentLifecycle};
 use crate::session::fog::{
     Channel, Command, InitialRadialContext, RenderPassKind, SelectionMode, Settings,
-    WaterRadialContext,
+    TriggerTouchKind, WaterRadialContext,
 };
 use crate::session::{Actor, Session};
 
@@ -22,6 +22,7 @@ struct Form {
     input_snapshot: Option<String>,
     player_snapshot: Option<String>,
     pass_snapshot: Option<String>,
+    trigger_snapshot: Option<String>,
     time_snapshot: Option<String>,
     choices: Vec<Value>,
     channels: Vec<Value>,
@@ -29,6 +30,7 @@ struct Form {
     initial_rules: Vec<Value>,
     water_radial_contexts: Vec<Value>,
     passes: Vec<Value>,
+    triggers: Vec<Value>,
     inputs: Vec<Value>,
     input_targets: Vec<Value>,
     player_targets: Vec<Value>,
@@ -38,6 +40,7 @@ struct Form {
     initial_rule_labels: Vec<slint::SharedString>,
     water_radial_labels: Vec<slint::SharedString>,
     pass_labels: Vec<slint::SharedString>,
+    trigger_labels: Vec<slint::SharedString>,
     input_labels: Vec<slint::SharedString>,
     input_target_labels: Vec<slint::SharedString>,
     player_labels: Vec<slint::SharedString>,
@@ -65,6 +68,7 @@ enum Action {
     Clear,
     SwitchPlayer,
     RecordPass,
+    TriggerTouch(TriggerTouchKind),
 }
 
 fn selected(choices: &[Value], index: i32) -> Option<&Value> {
@@ -196,6 +200,82 @@ fn update_choice(window: &FogWindow, form: &Form) {
     update_input(window, form);
     update_player(window, form);
     update_pass(window, form);
+    update_trigger(window, form);
+}
+
+fn update_trigger(window: &FogWindow, form: &Form) {
+    let source = selected(&form.triggers, window.get_trigger_index() - 1);
+    let history = &form.report["trigger_history"];
+    let stale = form
+        .trigger_snapshot
+        .as_ref()
+        .is_some_and(|snapshot| snapshot != &form.snapshot);
+    let current = window.get_available() && !window.get_selection_dirty() && !stale;
+    window.set_can_enter_trigger(
+        current
+            && source.is_some_and(|source| source["ready"] == true && source["can_enter"] == true),
+    );
+    window.set_can_leave_trigger(
+        current
+            && source.is_some_and(|source| source["ready"] == true && source["can_leave"] == true),
+    );
+    let issue = if window.get_selection_dirty() {
+        Some("Apply preview before recording a trigger touch.")
+    } else if stale {
+        Some("Fog preview changed. Reselect the trigger source before recording a touch.")
+    } else {
+        source
+            .and_then(|source| {
+                source["issue"]
+                    .as_str()
+                    .or_else(|| match source["inside"].as_bool() {
+                        Some(true) if source["can_leave"] != true => source["leave_issue"].as_str(),
+                        Some(false) if source["can_enter"] != true => {
+                            source["enter_issue"].as_str()
+                        }
+                        _ => None,
+                    })
+            })
+            .or_else(|| history["issue"].as_str())
+    };
+    window.set_trigger_issue(issue.is_some());
+    window.set_trigger_detail(
+        issue
+            .or_else(|| source.and_then(|source| source["detail"].as_str()))
+            .unwrap_or("Choose a trigger source.")
+            .into(),
+    );
+    window.set_trigger_membership(
+        source
+            .map(
+                |source| match source["inside"].as_bool().filter(|_| !stale) {
+                    Some(true) => "Inside",
+                    Some(false) => "Outside",
+                    None => "Membership unavailable",
+                },
+            )
+            .unwrap_or_default()
+            .into(),
+    );
+    let generated = history["generated_event_count"]
+        .as_u64()
+        .unwrap_or_default();
+    let pending = history["pending_count"].as_u64().unwrap_or_default();
+    let fired = history["fired_count"].as_u64().unwrap_or_default();
+    let mut status = Vec::new();
+    if generated > 0 || pending > 0 || fired > 0 {
+        status.push(format!(
+            "Generated actions: {generated} / {} · pending {pending} · fired {fired}",
+            history["generated_event_limit"]
+        ));
+    }
+    if history["active"] == true
+        && let Some(detail) = history["detail"].as_str()
+        && !detail.is_empty()
+    {
+        status.push(detail.to_owned());
+    }
+    window.set_trigger_status(status.join("\n").into());
 }
 
 fn update_pass(window: &FogWindow, form: &Form) {
@@ -400,6 +480,12 @@ fn unavailable(window: &FogWindow, error: &str) {
     window.set_can_send_input(false);
     window.set_can_switch_player(false);
     window.set_can_record_pass(false);
+    window.set_can_enter_trigger(false);
+    window.set_can_leave_trigger(false);
+    window.set_trigger_membership("Membership unavailable".into());
+    window.set_trigger_status("".into());
+    window.set_trigger_issue(true);
+    window.set_trigger_detail(error.into());
     window.set_pass_status("Recorded radial: unavailable".into());
     window.set_pass_issue(true);
     window.set_pass_detail(error.into());
@@ -771,6 +857,25 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
         );
     }
     {
+        let previous = selected(&form.triggers, window.get_trigger_index() - 1).cloned();
+        let mut triggers = array(&report, "trigger_choices")?;
+        if window.get_trigger_dirty() {
+            retain_choice(&mut triggers, previous.as_ref());
+        }
+        set_catalog(
+            &triggers,
+            Some("Choose a trigger source"),
+            &mut form.trigger_labels,
+            |model| window.set_triggers(model),
+        );
+        form.triggers = triggers;
+        window.set_trigger_index(
+            previous
+                .as_ref()
+                .map_or(0, |source| index_of(&form.triggers, &source["id"]) + 1),
+        );
+    }
+    {
         let previous = selected(&form.passes, window.get_pass_index()).cloned();
         let mut passes = array(&report, "pass_choices")?;
         if window.get_pass_dirty() {
@@ -817,7 +922,7 @@ fn present(window: &FogWindow, form: &RefCell<Form>, session: &Session) -> Resul
     window.set_time_label(format!("Current time {:.2} s", clock.time_seconds).into());
     window.set_time_limits(
         format!(
-            "0–{} s · {} / {} events",
+            "0–{} s · {} / {} authored events",
             report["max_time_seconds"], report["event_count"], report["limits"]["events"]
         )
         .into(),
@@ -881,6 +986,7 @@ fn command(window: &FogWindow, form: &Form, action: Action) -> Result<(String, C
         Action::Input => form.input_snapshot.as_ref(),
         Action::SwitchPlayer => form.player_snapshot.as_ref(),
         Action::RecordPass => form.pass_snapshot.as_ref(),
+        Action::TriggerTouch(_) => form.trigger_snapshot.as_ref(),
         Action::Seek | Action::Scrub(_) => form.time_snapshot.as_ref(),
         _ => None,
     }
@@ -951,6 +1057,12 @@ fn command(window: &FogWindow, form: &Form, action: Action) -> Result<(String, C
                 "fog setup",
             )?)?,
         },
+        Action::TriggerTouch(touch) => Command::TriggerTouch {
+            trigger: selected(&form.triggers, window.get_trigger_index() - 1)
+                .and_then(|source| entity_id(&source["id"]))
+                .ok_or("Choose a trigger source")?,
+            touch,
+        },
     };
     Ok((snapshot, command))
 }
@@ -1003,6 +1115,13 @@ fn run(window: &FogWindow, form: &RefCell<Form>, target: &DocumentContinuation, 
         if matches!(action, Action::RecordPass | Action::Clear) {
             window.set_pass_dirty(false);
             form.pass_snapshot = None;
+        }
+        if matches!(action, Action::TriggerTouch(_) | Action::Clear) {
+            window.set_trigger_dirty(false);
+            form.trigger_snapshot = None;
+            if matches!(action, Action::Clear) {
+                window.set_trigger_index(0);
+            }
         }
     }
     if let Err(error) = refresh(window, form, target) {
@@ -1073,6 +1192,18 @@ impl Controller {
         window.on_clear_preview(callback(Action::Clear));
         window.on_switch_player_controller(callback(Action::SwitchPlayer));
         window.on_record_render_pass(callback(Action::RecordPass));
+        window.on_enter_trigger(callback(Action::TriggerTouch(TriggerTouchKind::Enter)));
+        window.on_leave_trigger(callback(Action::TriggerTouch(TriggerTouchKind::Leave)));
+        window.on_trigger_changed({
+            let (window, form) = (window.as_weak(), form.clone());
+            move || {
+                if let Some(window) = window.upgrade() {
+                    let mut form = form.borrow_mut();
+                    form.trigger_snapshot = Some(form.snapshot.clone());
+                    update_trigger(&window, &form);
+                }
+            }
+        });
         window.on_pass_changed({
             let (window, form) = (window.as_weak(), form.clone());
             move || {

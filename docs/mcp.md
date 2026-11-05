@@ -1287,6 +1287,7 @@ background needs explicit `$nofog 1`. Parented sky cameras refuse. See
 | `input` | `controller`, `input`, optional `value` and `background` | Send one registered input to that controller in the preview. |
 | `switch_player_controller` | `controller`, optional `background` | Switch player fog to a named controller profile. |
 | `record_render_pass` | `pass` | Capture a declared `reset`, `world` or `sky` fog setup at the current preview time. |
+| `trigger_touch` | `trigger`, `touch` | Record an explicit `enter` or `leave` for the virtual player. |
 | `play`, `pause` | None | Start or stop the shared preview clock. |
 | `seek` | `time_seconds`, optional `background` | Pause and inspect a requested preview time, preserving the event sequence. |
 | `advance` | `seconds`, optional `background` | Advance preview time explicitly by 0–60 seconds. |
@@ -1327,8 +1328,9 @@ Fields for another action and unknown fields reject. `background` defaults to
 `false`; requests wait outside the Session lock when work is needed. With
 `true`, inspect pending status until the operation completes.
 
-Preview time is 0–3600 seconds, with at most 128 combined input, switch and
-render-pass events and 128 participating controllers. Use `seek` with
+Preview time is 0–3600 seconds, with at most 128 combined authored input, switch,
+touch and render-pass events, 128 generated trigger actions and 128 participating
+controllers. Use `seek` with
 `time_seconds:0` to rewind and retain those events. Reset preserves settings
 and a current prepared environment; Clear removes them. Events append in time
 order; Reset before inserting one earlier than the last event. Source/content
@@ -1362,14 +1364,16 @@ actual native input string. Inspect `can_switch_player_controller` and
 `player_switch_issue` before sending a request. This is a player operation,
 separate from the controller input catalogue.
 
-Controller inputs, player switches and render-pass captures share one ordered
-`events` sequence. Input and switch events report `kind` (`input` or
-`switch_player_controller`), `controller` and `time_seconds`; input events also
-report `input` and `value`.
-`player_switches` retains the filtered switch list. `replay_mode` is
-`controller_inputs` until the first switch, then `mixed_player`. Input-only
-preview uses continuous controller interpolation. Adding the first switch
-replays the whole combined sequence under the declared player schedule.
+Controller inputs, player switches, trigger touches and render-pass captures
+share one ordered `events` sequence. Input and switch events report `kind`
+(`input` or `switch_player_controller`), `controller` and `time_seconds`; input
+events also report `input` and `value`.
+`player_switches` retains the filtered switch list. Times before the first
+recorded manual switch or trigger touch retain continuous controller
+interpolation, `replay_mode:"controller_inputs"` and `player:null`. At and after
+that first player operation, `replay_mode` is `mixed_player` for manual switch
+history or `trigger_player` for derived trigger history. Player frames use the
+declared schedule, including when all touch actions are delayed.
 Same-player-controller and earlier append requests refuse. Use Reset to
 insert an earlier event.
 
@@ -1417,8 +1421,9 @@ unchanged. `player.render_time_seconds` is the time used to evaluate the copied
 controller's own transition. `player.update_hz` is 50. Controller transitions
 are evaluated after the player's sampled base blend.
 
-`player` is null without a switch sequence. Its `phase` is `initial`, `blending`
-or `settled`; `progress` is 0–1 and `transitioning` identifies an active blend.
+`player` is null without player history or before its first recorded player
+operation. Its `phase` is `initial`, `blending` or `settled`; `progress` is 0–1
+and `transitioning` identifies an active blend.
 `initial_controller` and `initial_profile` retain the baseline;
 `current_controller` identifies the target. `configured_controller` retains
 the settings choice; top-level `controller` reports the effective selection.
@@ -1426,17 +1431,18 @@ Changing settings controller, selection mode or initial rule clears all events,
 resets time and pauses. Reset, Clear and source retirement also clear the
 sequence. Identical settings and enable-only changes retain it;
 disabling pauses playback. Reset retains the prepared environment and initial
-rule. Automatic volume/trigger selection and authored trigger/I/O histories
-are unavailable. This fixed schedule does not reproduce native packet delivery,
-prediction, physics or rendering rates.
+rule. Automatic volume selection, camera/physics trigger contacts and general
+game I/O are unavailable. This fixed schedule does not reproduce native packet
+delivery, prediction, physics or rendering rates.
 
 `render_view` and `pick_at_pixel` accept temporary `fog_preview`,
 `fog_controller`, `fog_selection`, `fog_channel` and `surface` overrides.
 An explicit `fog_controller` forces explicit selection. Overrides preserve
 shared settings, events and time; environment selection needs its prepared
 context. Combining a controller override with `fog_selection:"environment"`
-rejects. While a player-switch sequence exists, temporary `fog_controller`
-and `fog_selection` overrides reject; `fog_preview` visibility remains available.
+rejects. While a manual switch or trigger touch is recorded, temporary
+`fog_controller` and `fog_selection` overrides reject; `fog_preview` visibility
+remains available.
 Fog color uses Perspective Textured views. Far clipping applies in
 all Perspective surface modes and to the matching pixel pick. Overlap choices
 use the current shared camera's far plane; arbitrary `raycast` remains a
@@ -1446,6 +1452,82 @@ geometric query.
 `enabled`, `controller` and the latest `get_fog_preview.snapshot` as `snapshot`.
 Enabling requires an `env_fog_controller` entity ID. A current snapshot is also
 required when disabling.
+
+### Authored trigger history
+
+1. Choose a ready `trigger_choices[].id` with `can_enter:true` from
+   `get_fog_preview`.
+2. Call `control_fog_preview` with `action:"trigger_touch"`, that ID as
+   `trigger`, `touch:"enter"` and the current `expected_snapshot`.
+3. Inspect again. Use `touch:"leave"` to record the corresponding departure.
+   Use the latest snapshot for each request.
+
+`trigger_touch` accepts no `background` or fields for another action. It requires
+an enabled preview with a ready initial controller. Its actor is one declared
+alive virtual player, initially outside every admitted trigger.
+Camera movement and physics contacts do not create touches. Duplicate Enter
+and Leave while outside refuse. Each `trigger_choices` row reports `ready`,
+`issue`, `inside`, `can_enter`, `enter_issue`, `can_leave`, `leave_issue` and
+source `detail`.
+
+Admitted sources are static, initially enabled, unparented brush
+`trigger_multiple` entities with exactly `spawnflags:1`, empty `filtername` and
+finite `wait` at least zero. Every connection must use `OnStartTouch`,
+`OnStartTouchAll`, `OnEndTouch` or `OnEndTouchAll`, target exactly `!activator`,
+input `SetFogController` and a qualified unique literal controller name.
+The parameter must match the actual qualified `targetname` byte for byte;
+aliases refuse.
+Unsupported rows make that complete source unavailable; other eligible sources
+remain usable. No unsupported rows are skipped.
+
+Enter emits `OnStartTouch` before `OnStartTouchAll`; Leave emits `OnEndTouch`
+before `OnEndTouchAll`. Each output traverses its stored rows in reverse order.
+Equal logical delivery times retain FIFO enqueue order. Due queued actions run
+before an equal-time authored event; new immediate actions run after their
+touch and before the next authored event. Delays must be finite and
+nonnegative, with logical due times within 0–3600 seconds.
+
+Native time and its delay addition use float32 arithmetic. If the native
+deadline does not advance that clock, delivery uses the producer's logical
+time, including zero and tiny positive delays. Otherwise logical delivery uses
+the later of the producer's time and converted native deadline. This is part
+of the declared preview schedule.
+
+Counts belong to individual connection rows and are consumed when queued.
+`-1` and `0` are unlimited; positive counts decrease to zero. Exhaustion prevents
+future queues without canceling already queued actions. Leave also preserves
+delayed actions. A generated action targeting the current controller is a
+delivered no-change: it consumes its count and preserves player blend timing.
+Manual same-controller switch requests retain their refusal.
+
+Canonical `events` entries use `kind:"trigger_touch"`, `trigger`, `touch`,
+`time_seconds` and global `order`. `trigger_history.actor` is
+`one_alive_virtual_player`. Its `membership` entries contain `trigger` and
+`inside`; `action_counts` entries contain `trigger`, `connection_index` and
+`remaining` (`null` for unlimited).
+
+`trigger_history.generated_actions` includes only actions enqueued by the
+requested time. Each entry retains `trigger`, `connection_index`, `output`,
+`source_order`, `enqueue_order`, `enqueue_time_seconds`, `delay_seconds`,
+`native_due_time_seconds`, logical `due_time_seconds`, destination `controller`,
+`delivered`, `switched` and `remaining_after_enqueue`. Pending actions have
+`switched:null`; delivered actions report `true` for a controller change or
+`false` for a no-change. A null remaining count means unlimited.
+`generated_event_count`, `pending_count` and `fired_count` describe the current
+prefix. `total_generated_event_count` covers the complete expanded history;
+`generated_event_limit` is 128. `detail` describes the latest delivery or queue
+state. `first_player_operation` identifies its global `order`, `time_seconds`,
+`kind` and source `controller` or `trigger`; `player_operation_active` reports
+whether the requested time has reached it.
+
+The authored event limit is 128 across all kinds. A separate limit of 128 covers
+all generated actions, including delayed future and no-change deliveries.
+Admission validates the complete candidate before publishing it. Later authored
+operations rebuild future queue decisions while preserving captured pass values.
+Query and Seek reconstruct the prefix at the requested time without adding
+touches, consuming more counts or modifying captures. Reset, Clear, relevant
+settings changes and source retirement clear the trigger history. Cancel
+preserves it.
 
 ### Recorded water radial context
 
@@ -1492,8 +1574,8 @@ Reset metadata is `kind:"shader_default_state"` with `radial:false`.
 global order, setup kind and captured source metadata when present.
 `radial_write:null` records a setup that preserves the prior value. The active
 count covers setup records through the requested time; the total count covers
-all setup records. Top-level `event_count` counts all inputs, switches and
-setup records together. `null` radial means Unknown and refuses the wet
+all setup records. Top-level `event_count` counts all inputs, switches, touches
+and setup records together. `null` radial means Unknown and refuses the wet
 consuming draw. A recorded reset or enabled
 World/Sky setup can establish a value without a world controller.
 

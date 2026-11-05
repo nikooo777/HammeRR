@@ -5,7 +5,8 @@ use super::{ControllerFrame, Input, MAX_EVENTS, Profile, RawParams};
 pub const PLAYER_UPDATE_HZ: u32 = 50;
 pub const PLAYER_UPDATE_INTERVAL_SECONDS: f64 = 1.0 / PLAYER_UPDATE_HZ as f64;
 pub const MAX_PLAYER_CONTROLLERS: usize = 128;
-pub const PLAYER_TIMELINE_POLICY: &str = "Mixed controller/player preview from a settled logical epoch, including initial CREATED delivery and a following ordinary player data update. Controller inputs and due nominal Think commits immediately deliver the full controller raw params without a player data callback. Due commits run before equal-time events. Inputs and switches retain append order. Each switch is a separate player delivery before a scheduled update at the same time: capture old handle, deliver the new handle, drain its callback, cache the last-written player primary RGB/start/end, copy all destination raw params and immediately update once. Ordinary updates run at k/50 seconds after equal-time events; each explicitly includes a player data delivery refreshing oldHandle to the current handle, then one Simulate update. No prediction updates are inserted. An active switch freezes all copied controller params. Completion writes cached destination primary RGB/start/end and clears the switch; recopy can occur only on a later invocation whose old and current handles agree. Blend timing uses float32 elapsed and copied duration; RGB writes truncate to bytes. The renderer applies the copied controller targets/deadline interpolation after the latest player write, at query time. Queries and Seek add no updates; replay is independent of query frequency and clock partitioning. At most 128 combined events and 128 registered controllers, through 3600 seconds. This nominal schedule does not reproduce native packet delivery, prediction, physics or render history.";
+const MAX_EXPANDED_PLAYER_EVENTS: usize = 2 * MAX_EVENTS;
+pub const PLAYER_TIMELINE_POLICY: &str = "Mixed controller/player preview from a settled logical epoch, including initial CREATED delivery and a following ordinary player data update. Controller inputs and due nominal Think commits immediately deliver the full controller raw params without a player data callback. Due commits run before equal-time events. Inputs and switches retain append order. Each switch is a separate player delivery before a scheduled update at the same time: capture old handle, deliver the new handle, drain its callback, cache the last-written player primary RGB/start/end, copy all destination raw params and immediately update once. Ordinary updates run at k/50 seconds after equal-time events; each explicitly includes a player data delivery refreshing oldHandle to the current handle, then one Simulate update. No prediction updates are inserted. An active switch freezes all copied controller params. Completion writes cached destination primary RGB/start/end and clears the switch; recopy can occur only on a later invocation whose old and current handles agree. Blend timing uses float32 elapsed and copied duration; RGB writes truncate to bytes. The renderer applies the copied controller targets/deadline interpolation after the latest player write, at query time. Queries and Seek add no updates; replay is independent of query frequency and clock partitioning. Ordinary manual ledgers admit at most 128 combined events; bounded trigger expansion admits at most 256 raw controller events. At most 128 registered controllers, through 3600 seconds. This nominal schedule does not reproduce native packet delivery, prediction, physics or render history.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlayerSwitch {
@@ -94,7 +95,7 @@ pub struct PlayerFrame {
     pub phase: PlayerSwitchPhase,
 }
 
-fn can_switch_controller(current: u32, controller: u32) -> Result<(), String> {
+pub(super) fn can_switch_controller(current: u32, controller: u32) -> Result<(), String> {
     if controller == current {
         return Err("The player already uses this fog controller; a same-controller request cannot restart a switch".into());
     }
@@ -402,6 +403,46 @@ impl PlayerTimeline {
         Ok(timeline)
     }
 
+    pub fn from_expanded_events(
+        initial_controller: u32,
+        initial_profile: Profile,
+        controllers: &[(u32, Profile)],
+        events: &[PlayerEvent],
+    ) -> Result<Self, String> {
+        if events.len() > MAX_EXPANDED_PLAYER_EVENTS {
+            return Err(format!(
+                "Expanded fog timeline exceeds {MAX_EXPANDED_PLAYER_EVENTS} controller events"
+            ));
+        }
+        let mut timeline = Self::new(initial_controller, initial_profile)?;
+        for &(controller, profile) in controllers {
+            timeline.register_controller(controller, profile)?;
+        }
+        let mut current = initial_controller;
+        for &event in events {
+            timeline.can_append_with_limit(event.time, MAX_EXPANDED_PLAYER_EVENTS)?;
+            let profile = timeline.controller_profile(event.controller)?;
+            match event.kind {
+                PlayerEventKind::Input(input) => input.validate()?,
+                PlayerEventKind::Switch => {
+                    can_switch_controller(current, event.controller)?;
+                    timeline
+                        .switches
+                        .try_reserve(1)
+                        .map_err(|_| "Player fog switch allocation failed")?;
+                    timeline.switches.push(PlayerSwitch {
+                        time: event.time,
+                        controller: event.controller,
+                        profile,
+                    });
+                    current = event.controller;
+                }
+            }
+            timeline.append(event)?;
+        }
+        Ok(timeline)
+    }
+
     pub fn initial_controller(&self) -> u32 {
         self.initial_controller
     }
@@ -443,10 +484,14 @@ impl PlayerTimeline {
     }
 
     fn can_append(&self, time: f64) -> Result<(), String> {
+        self.can_append_with_limit(time, MAX_EVENTS)
+    }
+
+    fn can_append_with_limit(&self, time: f64, limit: usize) -> Result<(), String> {
         checked_time(time)?;
-        if self.history.len() >= MAX_EVENTS {
+        if self.history.len() >= limit {
             return Err(format!(
-                "Player fog timeline exceeds {MAX_EVENTS} combined inputs and switches; Reset before adding more"
+                "Player fog timeline exceeds {limit} combined inputs and switches; Reset before adding more"
             ));
         }
         if self
@@ -470,12 +515,18 @@ impl PlayerTimeline {
 
     pub fn can_input(&self, time: f64, controller: u32) -> Result<(), String> {
         self.can_append(time)?;
-        if !self.controllers.iter().any(|entry| entry.id == controller) {
-            return Err(format!(
-                "Fog controller entity:{controller} is absent from the replay catalog"
-            ));
-        }
+        self.controller_profile(controller)?;
         Ok(())
+    }
+
+    fn controller_profile(&self, controller: u32) -> Result<Profile, String> {
+        self.controllers
+            .iter()
+            .find(|entry| entry.id == controller)
+            .map(|entry| entry.profile)
+            .ok_or_else(|| {
+                format!("Fog controller entity:{controller} is absent from the replay catalog")
+            })
     }
 
     pub fn push_input(&mut self, time: f64, controller: u32, input: Input) -> Result<(), String> {
@@ -490,14 +541,7 @@ impl PlayerTimeline {
 
     pub fn push_switch(&mut self, time: f64, controller: u32) -> Result<(), String> {
         self.can_switch(time, controller)?;
-        let profile = self
-            .controllers
-            .iter()
-            .find(|entry| entry.id == controller)
-            .ok_or_else(|| {
-                format!("Fog controller entity:{controller} is absent from the replay catalog")
-            })?
-            .profile;
+        let profile = self.controller_profile(controller)?;
         let mut candidate = self.clone();
         candidate
             .switches

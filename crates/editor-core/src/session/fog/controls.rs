@@ -58,6 +58,7 @@ impl Session {
             self.fog_preview.timelines.clear();
             self.fog_preview.events.clear();
             self.fog_preview.passes = map_core::fog::PassHistory::default();
+            self.fog_preview.trigger_expansion = None;
             self.fog_preview.player = None;
             self.fog_preview.time = 0.0;
             self.fog_preview.playing = false;
@@ -76,6 +77,7 @@ impl Session {
         self.fog_preview.timelines.clear();
         self.fog_preview.events.clear();
         self.fog_preview.passes = map_core::fog::PassHistory::default();
+        self.fog_preview.trigger_expansion = None;
         self.fog_preview.player = None;
         self.fog_preview.environment = None;
         self.fog_preview.verified = None;
@@ -142,6 +144,7 @@ impl Session {
                 self.fog_preview.timelines.clear();
                 self.fog_preview.events.clear();
                 self.fog_preview.passes = map_core::fog::PassHistory::default();
+                self.fog_preview.trigger_expansion = None;
                 self.fog_preview.player = None;
                 self.fog_preview.environment = None;
                 self.fog_preview.verified = None;
@@ -204,6 +207,7 @@ impl Session {
                     self.fog_preview.timelines.clear();
                     self.fog_preview.events.clear();
                     self.fog_preview.passes = map_core::fog::PassHistory::default();
+                    self.fog_preview.trigger_expansion = None;
                     self.fog_preview.player = None;
                     self.fog_preview.time = 0.0;
                     self.fog_preview.playing = false;
@@ -280,6 +284,10 @@ impl Session {
                 self.append_player_switch(controller)?;
                 self.fog_preview.error = None;
             }
+            Command::TriggerTouch { trigger, touch } => {
+                self.append_trigger_touch(trigger, touch)?;
+                self.fog_preview.error = None;
+            }
             Command::RecordRenderPass { pass } => {
                 self.append_fog_render_pass(pass)?;
                 self.fog_preview.error = None;
@@ -310,7 +318,9 @@ impl Session {
             Command::Seek { time_seconds } => {
                 self.ensure_fog_baseline()?;
                 let time = checked_time(time_seconds)?;
-                Self::validate_fog_timelines(&self.fog_preview.timelines, time)?;
+                if self.fog_preview.player.is_none() || !self.fog_player_active(time) {
+                    Self::validate_fog_timelines(&self.fog_preview.timelines, time)?;
+                }
                 self.validate_player_fog(time)?;
                 self.fog_preview.time = time;
                 self.fog_preview.playing = false;
@@ -324,7 +334,9 @@ impl Session {
                     return Err("Fog Advance seconds must be finite between 0 and 60".into());
                 }
                 let time = checked_time(self.fog_preview.time + seconds)?;
-                Self::validate_fog_timelines(&self.fog_preview.timelines, time)?;
+                if self.fog_preview.player.is_none() || !self.fog_player_active(time) {
+                    Self::validate_fog_timelines(&self.fog_preview.timelines, time)?;
+                }
                 self.validate_player_fog(time)?;
                 self.fog_preview.time = time;
                 self.fog_preview.error = None;
@@ -342,6 +354,7 @@ impl Session {
                 self.fog_preview.timelines = BTreeMap::new();
                 self.fog_preview.events.clear();
                 self.fog_preview.passes = map_core::fog::PassHistory::default();
+                self.fog_preview.trigger_expansion = None;
                 self.fog_preview.player = None;
                 self.fog_preview.time = 0.0;
                 self.fog_preview.playing = false;
@@ -360,6 +373,7 @@ impl Session {
                 | Command::Clear
                 | Command::SwitchPlayerController { .. }
                 | Command::RecordRenderPass { .. }
+                | Command::TriggerTouch { .. }
         ) {
             self.retire_fog_bounds_reviews();
         }
@@ -492,7 +506,9 @@ impl Session {
             return Ok(false);
         }
         let time = (self.fog_preview.time + seconds).min(MAX_TIMELINE_SECONDS);
-        if let Err(error) = Self::validate_fog_timelines(&self.fog_preview.timelines, time) {
+        if (self.fog_preview.player.is_none() || !self.fog_player_active(time))
+            && let Err(error) = Self::validate_fog_timelines(&self.fog_preview.timelines, time)
+        {
             self.fog_preview.playing = false;
             self.fog_preview.error = Some(error.clone());
             self.fog_changed(false);

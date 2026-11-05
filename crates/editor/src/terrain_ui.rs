@@ -618,8 +618,10 @@ impl Controller {
             self.window.set_stale(true);
             return Err(error);
         }
+        let camera = session.camera();
+        let view = session.view();
         let hit = session
-            .pick(ray)
+            .pick_for_view(ray, &camera, view, Default::default(), false)?
             .ok_or("Click a selected terrain surface, or cancel picking")?;
         let face = map_core::surface::FaceId {
             solid: hit.solid.ok_or("Click a selected terrain surface")?,

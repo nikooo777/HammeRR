@@ -561,6 +561,23 @@ impl Session {
         !self.closing && self.rope_preview.scope == scope
     }
 
+    pub(crate) fn rope_clock_draining(&self) -> bool {
+        self.rope_preview.clock.busy()
+            && self
+                .rope_preview
+                .clock_control
+                .as_ref()
+                .is_none_or(|control| control.cancelled())
+    }
+
+    pub(crate) fn rope_clock_scope(&self) -> String {
+        self.rope_preview.scope.clone()
+    }
+
+    pub(crate) fn rope_preview_shutdown_busy(&self) -> bool {
+        self.rope_preview.worker.busy() || self.rope_preview.clock.busy()
+    }
+
     pub(crate) fn rope_clock_due(&self) -> bool {
         if self.closing || !self.rope_preview.presentation_active || !self.view.rope_preview {
             return false;

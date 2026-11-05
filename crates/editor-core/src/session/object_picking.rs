@@ -61,6 +61,8 @@ impl Session {
         {
             return Err("Object picking needs a finite origin and nonzero finite direction".into());
         }
+        let camera = self.camera;
+        let far_z = self.view_far_z(&camera)?;
         self.preflight_instance_contents();
         let references = self.instance_contents_hits(ray, None);
         let hidden = self.hidden_tool_brushes();
@@ -77,7 +79,7 @@ impl Session {
         let filters = self.selection_filters();
         let mode = self.object_selection_mode();
         let mut retain = |mut hit: Hit| {
-            if !filters.allows(document, hit.object) {
+            if !filters.allows(document, hit.object) || !camera.within_far_plane(hit.point, far_z) {
                 return;
             }
             hit.object = mode.hit_object(hit);

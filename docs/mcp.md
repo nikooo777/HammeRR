@@ -1238,6 +1238,69 @@ Linux CS:S, Steam and a current saved build are required. The private observer
 uses `-insecure` and `sv_lan 1` and preserves the document.
 See [Linked paths](path-authoring.md) for supported paths and trains.
 
+## Fog preview
+
+1. Call `get_fog_preview` to inspect controller choices, effective settings,
+   readiness, input choices and limits.
+2. Call `control_fog_preview` with the report's `snapshot` as
+   `expected_snapshot` and an `action` from the table below.
+3. Inspect again after a control and use the current snapshot for the next one.
+
+| `action` | Additional fields | Effect |
+| --- | --- | --- |
+| `settings` | Complete `settings` object | Apply shared preview choices. |
+| `prepare_environment` | Optional `background` | Prepare the selected environment context. |
+| `input` | `controller`, `input`, optional `value` and `background` | Send one registered input to that controller in the preview. |
+| `play`, `pause` | None | Start or stop the shared preview clock. |
+| `seek` | `time_seconds`, optional `background` | Inspect a requested preview time, preserving the input sequence. |
+| `advance` | `seconds`, optional `background` | Advance preview time explicitly by 0–60 seconds. |
+| `reset` | Optional `background` | Clear the input sequence, return to time 0 and restore authored initial values. |
+| `cancel` | None | Stop pending work and playback, retaining the current published state. |
+| `clear` | None | Disable preview and clear controller, environment, input sequence and time. |
+
+The complete `settings` object contains `enabled`, `controller` (an
+`entity:<id>` or `null`), `selection` (`explicit` or `environment`) and `channel`
+(`ldr` or `hdr`). HDR is unavailable and refuses explicitly. The stored
+`configured_controller` and effective `controller` are reported separately.
+Fields for another action and unknown fields reject. `background` defaults to
+`false`; requests wait outside the Session lock when work is needed. With
+`true`, inspect pending status until the operation completes.
+
+Preview time is 0–3600 seconds, with at most 128 input events. Use `seek` with
+`time_seconds:0` to rewind and retain those events. Reset preserves settings
+and a current prepared environment; Clear removes them. Inputs append in time
+order; Reset before inserting one earlier than the last event. Source/content
+changes invalidate the baseline, environment and input sequence.
+Play uses one clock in desktop and headless sessions. Pause before matching a
+rendered frame and pixel pick at one exact preview time.
+
+Environment selection uses the initial first-controller/last-Master policy and
+prepared camera-water context. Call `prepare_environment` after source or
+content changes. Underwater fog requires a world controller for its radial
+context; place/configure one rather than relying on a default. Unsupported or
+ambiguous environment sources report unavailable.
+
+For `input`, pass an exact native input name from the shared catalogue and its
+raw string `value`; omit `value` for parameterless inputs. The shared parser
+validates the parameter. These are preview inputs, with no game I/O execution
+or changes to VMF properties. Preview controls preserve the map and Undo history.
+See [Fog preview](fog.md) for the supported environment and rendering limits.
+
+`render_view` and `pick_at_pixel` accept temporary `fog_preview`,
+`fog_controller`, `fog_selection`, `fog_channel` and `surface` overrides.
+An explicit `fog_controller` forces explicit selection. Overrides preserve
+shared settings, inputs and time; environment selection needs its prepared
+context. Combining a controller override with `fog_selection:"environment"`
+rejects. Fog color uses Perspective Textured views. Far clipping applies in
+all Perspective surface modes and to the matching pixel pick. Overlap choices
+use the current shared camera's far plane; arbitrary `raycast` remains a
+geometric query.
+
+`set_fog_preview` remains available for explicit-controller selection. Pass
+`enabled`, `controller` and the latest `get_fog_preview.snapshot` as `snapshot`.
+Enabling requires an `env_fog_controller` entity ID. A current snapshot is also
+required when disabling.
+
 ## Rope preview
 
 1. Call `set_view` with `rope_preview:true` to show the prepared pose.
@@ -2122,7 +2185,7 @@ These groups locate the available operations.
 | [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |
 | [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `preview_terrain_vertex_set`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_attachment`, `transform_pivot_pick`, `transform_pivot_grid` |
-| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_view_layout`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `get_view`, `inspect_baked_lightmaps`, `inspect_baked_surfaces`, `inspect_baked_prop_vertices`, `inspect_baked_prop_samples`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_baked_surfaces`, `set_camera`, `set_view_layout`, `set_fog_preview`, `set_rope_preview`, `set_view` |
+| [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `control_fog_preview`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_view_layout`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `get_view`, `inspect_baked_lightmaps`, `inspect_baked_surfaces`, `inspect_baked_prop_vertices`, `inspect_baked_prop_samples`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_baked_surfaces`, `set_camera`, `set_view_layout`, `set_fog_preview`, `set_rope_preview`, `set_view` |
 | [Working region](working-region.md) | `exclude_visibility_filter`, `get_editor_visibility`, `get_visibility_categories`, `get_visibility_profiles`, `get_working_region`, `remove_visibility_exclusion`, `set_editor_visibility`, `set_visibility_category`, `set_visibility_profile`, `set_working_region` |
 | [Prop leaf bounds](baked-prop-vertices.md) | `get_compiled_prop_leaf_bounds`, `set_compiled_prop_leaf_bounds` |
 | [Compiled visibility](visibility.md) | `frame_compiled_visibility`, `inspect_compiled_visibility`, `set_compiled_visibility_overlay` |

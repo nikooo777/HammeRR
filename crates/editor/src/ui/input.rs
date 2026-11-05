@@ -11,6 +11,7 @@ pub(super) struct PaneImage {
     pub camera: render::Camera,
     pub scene: render::SceneKey,
     pub size: (u32, u32),
+    pub far_z: Option<f32>,
 }
 
 pub(super) fn release_pane_input(app: &AppWindow, ui: &mut Ui) {
@@ -142,11 +143,15 @@ fn pane_image_current(app: &AppWindow, ui: &SharedUi, pane: usize) -> bool {
         return false;
     };
     let session = lock(&ui.session);
+    let Ok(far_z) = session.view_far_z(&image.camera) else {
+        return false;
+    };
     let scene = session.render_scene_key(session.view());
     app.get_viewport_pane_sizes().iter().any(|size| {
         usize::try_from(size.id).ok() == Some(pane)
             && image.camera == ui.viewport.camera
             && image.scene == scene
+            && image.far_z == far_z
             && image.size
                 == (
                     size.pixel_width.max(0) as u32,

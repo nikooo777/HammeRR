@@ -14,7 +14,12 @@ use crate::planes::PlaneSet;
 use crate::winding::Winding;
 use crate::{Control, Diagnostic, Report};
 
+mod fog_environment;
 mod rope_collision;
+pub use fog_environment::{
+    FogEnvironmentGeometry, FogEnvironmentNode, FogLiquidVolume, MAX_FOG_ENVIRONMENT_LIQUIDS,
+    MAX_FOG_ENVIRONMENT_NODES,
+};
 
 #[path = "bevels.rs"]
 mod bevels;

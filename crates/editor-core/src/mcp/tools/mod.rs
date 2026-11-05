@@ -21,6 +21,7 @@ mod entity_graph;
 mod entity_placement;
 mod external_comparison;
 mod files;
+mod fog;
 mod geometry;
 mod grid_preferences;
 mod groups;

@@ -170,6 +170,8 @@ impl ShutdownGuard {
                     || session.recovery_busy()
                     || session.compiling()
                     || session.instance_workers_busy()
+                    || session.fog_preview_shutdown_busy()
+                    || session.rope_preview_shutdown_busy()
                     || session.definitions_load_busy()
             };
             if !busy && self.admission.count() == 0 {
@@ -727,6 +729,81 @@ impl DocumentAccess {
             .map(|document| document.admit_named("Rope preview clock step"))
             .transpose()?;
         super::rope_preview::tick(&self.session, scope, operation)
+    }
+
+    pub fn fog_preview(
+        &self,
+        actor: Actor,
+        expected_snapshot: &str,
+        command: crate::session::fog::Command,
+        background: bool,
+    ) -> Result<Value, String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Fog preview"))
+            .transpose()?;
+        super::fog_preview::execute(
+            &self.session,
+            self.downgrade(),
+            actor,
+            expected_snapshot,
+            command,
+            background,
+            operation,
+        )
+    }
+
+    pub fn inspect_fog_preview(&self) -> Result<Value, String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Fog preview inspection"))
+            .transpose()?;
+        super::fog_preview::inspect(&self.session, operation)
+    }
+
+    pub fn fog_render_guard(
+        &self,
+        overrides: crate::session::fog::Overrides,
+    ) -> Result<super::FogRenderGuard, String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Fog environment source verification"))
+            .transpose()?;
+        super::fog_preview::render_guard(&self.session, overrides, operation)
+    }
+
+    pub fn verify_fog_render_guard(&self, guard: &super::FogRenderGuard) -> Result<(), String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Fog environment completion verification"))
+            .transpose()?;
+        super::fog_preview::verify_guard(&self.session, guard, operation)
+    }
+
+    pub fn set_fog_presentation_active(&self, active: bool) -> Result<(), String> {
+        self.with_session(|session| session.set_fog_presentation_active(active))
+    }
+
+    pub(crate) fn step_fog_clock(&self, scope: &str) -> Result<bool, String> {
+        {
+            let session = lock(&self.session);
+            if !session.fog_clock_current(scope) {
+                return Err("Fog preview clock is expired".into());
+            }
+            if !session.fog_clock_due() {
+                return Ok(false);
+            }
+        }
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Fog preview clock step"))
+            .transpose()?;
+        super::fog_preview::tick(&self.session, scope, operation)
     }
 
     pub fn start_sky3d_preview(&self, actor: Actor) -> Result<Value, String> {

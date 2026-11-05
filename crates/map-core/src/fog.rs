@@ -1,5 +1,15 @@
 use source_formats::vmf::Entity;
 
+mod inputs;
+mod profile;
+mod timeline;
+
+pub use inputs::{Input, InputChoice, input_choices};
+pub use profile::{
+    MAX_FIELD_MAGNITUDE, MIN_FAR_Z, ParsedController, Profile, parse_controller, range_parameters,
+};
+pub use timeline::{Event, MAX_EVENTS, MAX_TIMELINE_SECONDS, TIMELINE_POLICY, Timeline};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fog {
     color: [u8; 3],

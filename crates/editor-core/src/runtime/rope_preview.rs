@@ -1,14 +1,11 @@
-use std::time::Duration;
-
 use serde_json::Value;
 
+use super::preview_clock::{INTERVAL, wait_for_restart};
 use super::{
     DocumentAccess, DocumentContinuation, DocumentHandle, DocumentOperation, SharedSession, lock,
 };
 use crate::session::Actor;
 use crate::session::ropes::{ClockLease, Command, Request, Update};
-
-const CLOCK_INTERVAL: Duration = Duration::from_millis(20);
 
 pub struct RopeRenderGuard(crate::session::ropes::RenderGuard);
 
@@ -39,12 +36,30 @@ fn clock_loop(continuation: DocumentContinuation, lease: ClockLease) {
                 Err(_) => return,
             }
         }
-        std::thread::sleep(CLOCK_INTERVAL);
+        std::thread::sleep(INTERVAL);
     }
 }
 
 fn ensure_clock(session: &SharedSession, continuation: DocumentContinuation) -> Result<(), String> {
-    let Some(lease) = lock(session).begin_rope_clock() else {
+    let scope = lock(session).rope_clock_scope();
+    let result = wait_for_restart(|| {
+        let mut session = lock(session);
+        if !session.rope_clock_current(&scope) {
+            return Err("Rope clock scope changed before restart".into());
+        }
+        if session.rope_clock_draining() {
+            Ok(None)
+        } else {
+            Ok(Some(session.begin_rope_clock()))
+        }
+    });
+    let Some(lease) = (match result {
+        Ok(lease) => lease,
+        Err(error) => {
+            lock(session).fail_rope_clock(&scope, error.clone());
+            return Err(error);
+        }
+    }) else {
         return Ok(());
     };
     let scope = lease.scope.clone();
@@ -70,17 +85,12 @@ pub(super) fn execute(
 ) -> Result<Value, String> {
     if !matches!(command, Command::Pause | Command::Cancel) {
         inspect(session, None)?;
+        ensure_clock(session, continuation)?;
     }
     let update = lock(session).rope_preview_command(actor, expected, command)?;
     match update {
-        Update::State(report) => {
-            if matches!(command, Command::Play) {
-                ensure_clock(session, continuation)?;
-            }
-            Ok(report)
-        }
+        Update::State(report) => Ok(report),
         Update::Work(request) => {
-            ensure_clock(session, continuation)?;
             if !background {
                 run_request(session, *request)?;
                 return Ok(lock(session).rope_preview_state());

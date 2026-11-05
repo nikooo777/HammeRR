@@ -16,9 +16,12 @@ pub use document::{
     DocumentAccess, DocumentCloseReview, DocumentContinuation, DocumentHandle, DocumentId,
     DocumentLifecycle, DocumentOperation,
 };
+mod fog_preview;
 mod linked_path_observation;
+mod preview_clock;
 mod recovery;
 mod rope_preview;
+pub use fog_preview::FogRenderGuard;
 #[cfg(feature = "mcp")]
 pub(crate) use recovery::RecoverySubmission;
 pub use recovery::start_recovery_snapshot;

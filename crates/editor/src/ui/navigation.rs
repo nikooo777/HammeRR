@@ -134,7 +134,15 @@ pub(super) fn create_block(app: &AppWindow, ui: &SharedUi) {
         direction: direction.as_dvec3(),
     };
     let half = BLOCK_SIZE / 2.0;
-    let (mins, maxs) = match session.pick(&ray) {
+    let view = session.view();
+    let hit = match session.pick_for_view(&ray, &camera, view, Default::default(), false) {
+        Ok(hit) => hit,
+        Err(error) => {
+            app.set_message(error.into());
+            return;
+        }
+    };
+    let (mins, maxs) = match hit {
         Some(hit) => {
             let base = session.spatial().snap_point(hit.point);
             (

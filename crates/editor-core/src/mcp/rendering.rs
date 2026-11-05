@@ -96,12 +96,13 @@ impl RenderedView {
         } = self.metadata;
         color_correction["applied"] =
             json!(color_correction["enabled"] == true && color_correction["ready"] == true);
-        fog_preview["applied"] = json!(
-            view.fog
-                .is_some_and(|fog| fog.enabled() && fog.max_density() > 0.0)
-                && view.surface == render::SurfaceView::Textured
-                && camera.projection == Projection::Perspective
-        );
+        let color_applied = render::fog::for_color(view.fog, &camera, view.surface)
+            .is_some_and(|fog| fog.enabled() && fog.max_density() > 0.0);
+        let far_z = render::fog::far_z(view.fog, &camera);
+        fog_preview["applied"] = json!(color_applied);
+        fog_preview["color_applied"] = json!(color_applied);
+        fog_preview["far_clip_applied"] = json!(far_z.is_some());
+        fog_preview["far_z"] = json!(far_z);
         let preview_issues = self.issues.entries.iter().map(|issue| json!({"brush":issue.solid(),"face":issue.face().map(|face|json!({"solid":face.solid,"side":face.side})),"message":issue.message()})).collect::<Vec<_>>();
         let mut rendered_view = view_state(view);
         let extra = json!({"grid_visible": view.grid_visible, "grid_size": view.grid_size,

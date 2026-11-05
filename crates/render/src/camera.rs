@@ -60,7 +60,7 @@ pub struct Camera {
 }
 
 impl Camera {
-    pub const NEAR: f32 = 4.0;
+    pub const NEAR: f32 = map_core::fog::MIN_FAR_Z;
     pub const ORTHO_DISTANCE: f32 = 65_536.0;
     pub const MIN_ORTHO_HEIGHT: f32 = 1.0;
     pub const MAX_ORTHO_HEIGHT: f32 = 131_072.0;
@@ -202,6 +202,10 @@ impl Camera {
     /// Reverse-Z projection with an infinite far plane: depth 1 at the near
     /// plane, 0 at infinity. Keeps precision across Source's large maps.
     pub fn view_projection(&self, aspect: f32) -> Mat4 {
+        self.view_projection_with_far(aspect, None)
+    }
+
+    pub fn view_projection_with_far(&self, aspect: f32, far_z: Option<f32>) -> Mat4 {
         use glam::camera::rh::{proj::directx, view};
         let view = view::look_to_mat4(self.position, self.forward(), self.up());
         if self.projection != Projection::Perspective {
@@ -216,12 +220,29 @@ impl Camera {
             ) * view;
         }
         // wgpu clip space is Y-up with depth in [0, 1], glam's DirectX convention.
-        let proj = directx::perspective_infinite_reverse(
-            self.fov_y_degrees.to_radians(),
-            aspect,
-            Self::NEAR,
-        );
+        let proj = match far_z {
+            Some(far) => {
+                assert!(far.is_finite() && far > Self::NEAR);
+                directx::perspective(self.fov_y_degrees.to_radians(), aspect, far, Self::NEAR)
+            }
+            None => directx::perspective_infinite_reverse(
+                self.fov_y_degrees.to_radians(),
+                aspect,
+                Self::NEAR,
+            ),
+        };
         proj * view
+    }
+
+    pub fn within_far_plane(&self, point: glam::DVec3, far_z: Option<f32>) -> bool {
+        if !point.is_finite() {
+            return false;
+        }
+        self.projection != Projection::Perspective
+            || far_z.is_none_or(|far| {
+                let depth = (point - self.position.as_dvec3()).dot(self.forward().as_dvec3());
+                depth <= f64::from(far)
+            })
     }
 
     /// Frames a bounding box from `direction` (pointing from the camera
@@ -305,6 +326,7 @@ impl Camera {
         &self,
         corners: [glam::DVec2; 2],
         aspect: f64,
+        far_z: Option<f32>,
     ) -> map_core::region::Region {
         let lo = corners[0].min(corners[1]);
         let hi = corners[0].max(corners[1]);
@@ -326,7 +348,11 @@ impl Camera {
             origin + forward * depth + right * (x * span * aspect) + up * (y * span)
         };
         let near = f64::from(Self::NEAR);
-        let far = f64::from(Self::ORTHO_DISTANCE) * 4.0;
+        let far = if self.projection == Projection::Perspective {
+            far_z.map_or(f64::from(Self::ORTHO_DISTANCE) * 4.0, f64::from)
+        } else {
+            f64::from(Self::ORTHO_DISTANCE) * 4.0
+        };
         let front = [(lo.x, lo.y), (hi.x, lo.y), (hi.x, hi.y), (lo.x, hi.y)]
             .map(|(x, y)| point(x, y, near));
         let back =

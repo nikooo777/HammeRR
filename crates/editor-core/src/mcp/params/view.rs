@@ -326,29 +326,6 @@ pub(in crate::mcp) fn view_state(view: ViewOptions) -> Value {
     json!({"instance_contents": view.instance_contents,"lighting_preview":view.lighting_preview,"lighting_channel":view.lighting_channel.name(),"lighting_sky_ambient":view.lighting_sky_ambient,"lighting_quality":view.lighting_quality.name(),"lighting_exposure_ev":view.lighting_exposure_ev,"normal_maps":view.normal_maps,"surface_shading":view.surface_shading,"tool_textures":view.tool_textures,"sky_preview":view.sky_preview,"sky3d_preview":view.sky3d_preview,"sky_channel":view.sky_channel.name(),"sky_exposure_ev":view.sky_exposure_ev,"rope_preview":view.rope_preview,"selection_outlines":view.selection_outlines,"selection_tint":view.selection_tint,"entity_images":view.entity_images,"additive_sprite_guides":view.additive_sprite_guides,"entity_model_guides":view.entity_model_guides,"authored_models":view.authored_models,"sprite_resources":view.sprite_resources,"entity_helpers":view.entity_helpers,"selection_bounds":view.selection_bounds,"fog":fog_parameters(view),"leak_path":view.leak_path,"surface":view.surface.name(),"smoothing_group":view.smoothing_group})
 }
 
-pub(in crate::mcp) fn fog_parameters(view: ViewOptions) -> Value {
-    view.fog.map_or(Value::Null, |fog|json!({"color":fog.color(),"start":fog.start(),"end":fog.end(),"max_density":fog.max_density(),"enabled":fog.enabled()}))
-}
-
-pub(in crate::mcp) fn fog_controller_id(controller: Option<&str>) -> Result<Option<u32>, String> {
-    controller
-        .map(|id| match parse_id(id)? {
-            ObjectId::Entity(id) => Ok(id),
-            _ => Err("Fog controller must be an entity:<id>".into()),
-        })
-        .transpose()
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FogPreviewArgs {
-    pub enabled: bool,
-    /// Explicit env_fog_controller entity:<id>. Required when enabling. No automatic Master selection.
-    pub controller: Option<String>,
-    /// Latest get_fog_preview.snapshot. Rejects map or view changes while reviewing the dialog.
-    pub snapshot: String,
-}
-
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(in crate::mcp) struct PickClipPointArgs {
     pub(in crate::mcp) x: f64,
@@ -603,10 +580,14 @@ pub struct RenderArgs {
     pub sky_exposure_ev: Option<f64>,
     /// Temporary prepared rope visibility override; leaves shared view unchanged.
     pub rope_preview: Option<bool>,
-    /// Temporary static linear fog override. Requires a supported explicit or currently selected controller.
+    /// Temporary fog visibility override; leaves shared settings unchanged.
     pub fog_preview: Option<bool>,
-    /// Temporary env_fog_controller entity:<id>; does not change shared settings.
+    /// Temporary explicit env_fog_controller entity:<id>; forces explicit selection.
     pub fog_controller: Option<String>,
+    /// Temporary explicit or prepared environment selection, evaluated at the resolved camera.
+    pub fog_selection: Option<crate::session::fog::SelectionMode>,
+    /// Temporary channel; LDR is qualified and HDR requests refuse explicitly.
+    pub fog_channel: Option<crate::session::fog::Channel>,
     pub leak_path: Option<bool>,
     /// Optional viewport mode override; does not change the user's view.
     pub surface: Option<String>,
@@ -627,6 +608,16 @@ pub struct PickArgs {
     pub camera: Option<CameraSpec>,
     /// Match a temporary render_view rope_preview override; defaults to the shared view.
     pub rope_preview: Option<bool>,
+    /// Match render_view's temporary fog visibility override.
+    pub fog_preview: Option<bool>,
+    /// Match render_view's temporary explicit controller override.
+    pub fog_controller: Option<String>,
+    /// Match render_view's temporary fog selection override.
+    pub fog_selection: Option<crate::session::fog::SelectionMode>,
+    /// Match render_view's temporary fog channel override.
+    pub fog_channel: Option<crate::session::fog::Channel>,
+    /// Match render_view's temporary viewport mode.
+    pub surface: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

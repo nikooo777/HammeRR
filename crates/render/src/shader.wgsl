@@ -1,31 +1,8 @@
-struct AuthoredLight {
-    origin_radius: vec4<f32>,
-    intensity_cap: vec4<f32>,
-    coefficients_spot: vec4<f32>,
-    direction_inner: vec4<f32>,
-    outer_exponent_fade: vec4<f32>,
-}
-
 const SUN_KIND: f32 = 2.0;
 const FULL_BILLBOARD_TAG: f32 = -2.5;
 const VERTICAL_BILLBOARD_TAG: f32 = -3.5;
 const BAKED_DETAIL_RECEIVER: u32 = 2u;
 const BAKED_RADIANCE_RECEIVER: u32 = 3u;
-
-struct Globals {
-    view_proj: mat4x4<f32>,
-    light_dir: vec4<f32>,
-    eye: vec4<f32>,
-    surface_view: vec4<u32>,
-    fog_color: vec4<f32>,
-    fog_range: vec4<f32>,
-    forward: vec4<f32>,
-    right: vec4<f32>,
-    up: vec4<f32>,
-    sky_params: vec4<f32>,
-    lighting_settings: vec4<f32>,
-    lighting_lights: array<AuthoredLight, 32>,
-}
 
 // x: alpha test, y: two-layer blend, z: translucent, w: untextured.
 struct MaterialParams {
@@ -33,8 +10,6 @@ struct MaterialParams {
     helper: vec4<f32>,
     normal_transform: vec4<f32>,
 }
-
-@group(0) @binding(0) var<uniform> globals: Globals;
 
 @group(1) @binding(0) var base_texture: texture_2d<f32>;
 @group(1) @binding(1) var blend_texture: texture_2d<f32>;
@@ -130,6 +105,14 @@ fn detail_billboard_basis(origin: vec3<f32>, vertical: bool) -> mat2x3<f32> {
     let distance = length(direction);
     return mat2x3<f32>(vec3<f32>(direction.y/horizontal,-direction.x/horizontal,0.0),
         vec3<f32>(-direction.x*direction.z/(horizontal*distance),-direction.y*direction.z/(horizontal*distance),horizontal/distance));
+}
+
+fn apply_fog(position: vec3<f32>, color: vec3<f32>) -> vec3<f32> {
+    if globals.fog_color.a <= 0.0 { return color; }
+    let offset = position - globals.eye.xyz;
+    let depth = select(dot(offset, globals.forward.xyz), length(offset), globals.fog_range.z > 0.5);
+    let factor = clamp(depth * globals.fog_range.y - globals.fog_range.x, 0.0, globals.fog_color.a);
+    return mix(color, globals.fog_color.rgb, factor * factor);
 }
 
 @vertex
@@ -236,10 +219,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let radiance = texel.rgb * in.color.rgb * in.baked_irradiance;
         color = radiance / (vec3<f32>(1.0) + radiance);
     }
-    if globals.fog_color.a > 0.0 && material.helper.y < 0.5 {
-        let depth = dot(in.world_position - globals.eye.xyz, globals.forward.xyz);
-        let factor = clamp((depth - globals.fog_range.x) * globals.fog_range.y, 0.0, globals.fog_color.a);
-        color = mix(color, globals.fog_color.rgb, factor * factor);
+    if material.helper.y < 0.5 {
+        color = apply_fog(in.world_position, color);
     }
     return vec4<f32>(color, alpha);
 }
@@ -375,16 +356,6 @@ fn baked_diffuse(in: VertexOut, first: vec4<f32>) -> vec3<f32> {
     return diffuse;
 }
 
-fn baked_fog(in: VertexOut, input: vec3<f32>) -> vec3<f32> {
-    var color = input;
-    if globals.fog_color.a > 0.0 {
-        let depth = dot(in.world_position - globals.eye.xyz, globals.forward.xyz);
-        let factor = clamp((depth - globals.fog_range.x) * globals.fog_range.y, 0.0, globals.fog_color.a);
-        color = mix(color, globals.fog_color.rgb, factor * factor);
-    }
-    return color;
-}
-
 @fragment
 fn fs_baked(in: VertexOut) -> @location(0) vec4<f32> {
     let surface_overlay = surface_diagnostic(in, max(fwidth(in.lightmap.xy), vec2<f32>(0.00001)));
@@ -408,7 +379,7 @@ fn fs_baked(in: VertexOut) -> @location(0) vec4<f32> {
         light = (a / divisor) * normalized_weights.x + (b / divisor) * normalized_weights.y + (c / divisor) * normalized_weights.z;
     }
     let color = baked_tonemap(diffuse, in.color.rgb * baked_material.color.rgb, light, scale, weight_scale);
-    return vec4<f32>(baked_fog(in, color), alpha);
+    return vec4<f32>(apply_fog(in.world_position, color), alpha);
 }
 
 @fragment
@@ -419,7 +390,7 @@ fn fs_baked_unlit(in: VertexOut) -> @location(0) vec4<f32> {
     let alpha = baked_coverage(first.a);
     let diffuse = baked_diffuse(in, first);
     let color = baked_tonemap(diffuse, in.color.rgb * baked_material.color.rgb, vec3<f32>(1.0), vec3<f32>(1.0), 1.0);
-    return vec4<f32>(baked_fog(in, color), alpha);
+    return vec4<f32>(apply_fog(in.world_position, color), alpha);
 }
 
 @fragment
@@ -431,7 +402,7 @@ fn fs_baked_vertex(in: VertexOut) -> @location(0) vec4<f32> {
     }
     let diffuse = baked_diffuse(in, first);
     let color = baked_tonemap(diffuse, in.color.rgb * baked_material.color.rgb, in.baked_irradiance, vec3<f32>(1.0), 1.0);
-    return vec4<f32>(baked_fog(in, color), alpha);
+    return vec4<f32>(apply_fog(in.world_position, color), alpha);
 }
 
 struct LineOut {

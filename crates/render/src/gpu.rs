@@ -254,7 +254,7 @@ pub struct ViewOptions {
     pub sprite_resources: bool,
     pub entity_helpers: bool,
     pub selection_bounds: bool,
-    pub fog: Option<crate::fog::Fog>,
+    pub fog: Option<crate::fog::ViewFog>,
     pub leak_path: bool,
     pub grid_visible: bool,
     pub grid_size: f32,
@@ -502,6 +502,14 @@ pub struct Renderer {
     overlay: wgpu::Buffer,
 }
 
+fn scene_shader(device: &wgpu::Device, label: &str, source: &str) -> wgpu::ShaderModule {
+    let source = format!("{}\n{source}", include_str!("globals.wgsl"));
+    device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some(label),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
+    })
+}
+
 impl Renderer {
     pub fn set_color_correction(&mut self, preview: Option<crate::color_correction::Preview>) {
         self.color_correction_preview = preview;
@@ -525,7 +533,7 @@ impl Renderer {
 
     pub fn new(ctx: &GpuContext) -> Self {
         let device = &ctx.device;
-        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+        let shader = scene_shader(device, "map shader", include_str!("shader.wgsl"));
 
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals"),
@@ -625,18 +633,24 @@ impl Renderer {
             bind_group_layouts: &[Some(&globals_layout), Some(&sky_layout)],
             immediate_size: 0,
         });
-        let sky_shader = device.create_shader_module(wgpu::include_wgsl!("sky.wgsl"));
+        let sky_shader = scene_shader(device, "sky shader", include_str!("sky.wgsl"));
         let sky3d = miniature::State::new(device, &globals_layout);
         let sky3d_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("3D sky composite"),
             bind_group_layouts: &[Some(&globals_layout), Some(&sky3d.layout)],
             immediate_size: 0,
         });
-        let sky3d_shader = device.create_shader_module(wgpu::include_wgsl!("sky3d.wgsl"));
-        let sky3d_surface_shader =
-            device.create_shader_module(wgpu::include_wgsl!("sky3d_surface.wgsl"));
-        let sky3d_error_shader =
-            device.create_shader_module(wgpu::include_wgsl!("sky3d_error.wgsl"));
+        let sky3d_shader = scene_shader(device, "3D sky shader", include_str!("sky3d.wgsl"));
+        let sky3d_surface_shader = scene_shader(
+            device,
+            "3D sky surface shader",
+            include_str!("sky3d_surface.wgsl"),
+        );
+        let sky3d_error_shader = scene_shader(
+            device,
+            "3D sky error shader",
+            include_str!("sky3d_error.wgsl"),
+        );
         let sky3d_error_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("3D sky unavailable"),
             bind_group_layouts: &[Some(&globals_layout)],
@@ -825,7 +839,7 @@ impl Renderer {
             false,
         );
 
-        let icon_shader = device.create_shader_module(wgpu::include_wgsl!("icons.wgsl"));
+        let icon_shader = scene_shader(device, "icon shader", include_str!("icons.wgsl"));
         let icon_pipeline = |label, blend| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
@@ -1547,13 +1561,9 @@ impl Renderer {
         let depth = self.depth_view(ctx, size);
         let aspect = size.0 as f32 / size.1.max(1) as f32;
         let light = glam::Vec3::new(0.35, 0.55, 0.75).normalize();
-        let (fog_color, fog_range) = options
-            .fog
-            .filter(|_| {
-                options.surface == SurfaceView::Textured
-                    && camera.projection == crate::Projection::Perspective
-            })
-            .map(crate::fog::uniforms)
+        let fog = crate::fog::for_color(options.fog, camera, options.surface);
+        let (fog_color, fog_range) = fog
+            .map(|fog| crate::fog::uniforms(fog, camera))
             .unwrap_or(([0.0; 4], [0.0; 4]));
         let mut lighting_lights = [crate::lighting::Light::default(); crate::lighting::MAX_LIGHTS];
         let lighting_active = options.lighting_preview
@@ -1575,7 +1585,9 @@ impl Renderer {
                 2f32.powf(options.lighting_exposure_ev) / 255.0,
             ],
             lighting_lights,
-            view_proj: camera.view_projection(aspect).to_cols_array_2d(),
+            view_proj: camera
+                .view_projection_with_far(aspect, crate::fog::far_z(options.fog, camera))
+                .to_cols_array_2d(),
             light_dir: light.extend(0.0).to_array(),
             eye: camera.position.extend(1.0).to_array(),
             fog_color,

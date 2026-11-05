@@ -84,19 +84,19 @@ fn project(camera: Camera, point: DVec3, size: (u32, u32)) -> DVec2 {
     )
 }
 
-fn depth_range(camera: Camera) -> (f64, f64) {
+fn depth_range(camera: Camera, far_z: Option<f32>) -> (f64, f64) {
     (
         f64::from(Camera::NEAR),
         if camera.projection == Projection::Perspective {
-            f64::INFINITY
+            far_z.map_or(f64::INFINITY, f64::from)
         } else {
             f64::from(Camera::ORTHO_DISTANCE) * 2.0
         },
     )
 }
 
-fn clip_edge(camera: Camera, mut a: DVec3, mut b: DVec3) -> Option<[DVec3; 2]> {
-    let (near, far) = depth_range(camera);
+fn clip_edge(camera: Camera, far_z: Option<f32>, mut a: DVec3, mut b: DVec3) -> Option<[DVec3; 2]> {
+    let (near, far) = depth_range(camera, far_z);
     for (plane, lower) in [(near, true), (far, false)] {
         if !plane.is_finite() {
             continue;
@@ -213,10 +213,11 @@ impl Session {
                 "Finish the other geometry preview or enter component picking first".into(),
             );
         }
+        let far_z = self.view_far_z(&camera)?;
         let shapes = self.component_topology(solids)?;
         let hidden = self.hidden_tool_brushes();
         let mut candidates = Vec::new();
-        let (near, far) = depth_range(camera);
+        let (near, far) = depth_range(camera, far_z);
         if kind == Kind::Face {
             let ndc = pointer.ndc();
             let (origin, direction) = camera.ray(
@@ -278,7 +279,7 @@ impl Session {
                 } else {
                     for edge in &shape.edges {
                         let [a, b] = edge.vertices.map(|index| shape.vertices[index].position);
-                        let Some([a, b]) = clip_edge(camera, a, b) else {
+                        let Some([a, b]) = clip_edge(camera, far_z, a, b) else {
                             continue;
                         };
                         let pa = project(camera, a, pointer.size);

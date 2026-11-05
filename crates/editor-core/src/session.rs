@@ -374,7 +374,7 @@ pub struct Session {
     camera: Camera,
     view_layout: view_layout::State,
     view: ViewOptions,
-    fog_preview: fog::Selection,
+    fog_preview: fog::State,
     sky3d_preview: sky3d_preview::State,
     spatial: spatial::Settings,
     workplane: workplane::State,
@@ -717,7 +717,7 @@ impl Session {
             camera,
             view_layout: view_layout::State::new(camera),
             view: ViewOptions::default(),
-            fog_preview: fog::Selection::default(),
+            fog_preview: fog::State::default(),
             sky3d_preview: sky3d_preview::State::default(),
             spatial: spatial::Settings::default(),
             workplane: workplane::State::default(),
@@ -1644,7 +1644,7 @@ impl Session {
         self.camera = camera;
         self.document = document;
         self.history_actors.clear();
-        self.fog_preview = fog::Selection::default();
+        self.reset_fog_preview();
         self.saved_cameras = [None; 4];
         self.document_generation += 1;
         self.compiled = None;
@@ -1993,7 +1993,7 @@ impl Session {
 
     pub fn view(&self) -> ViewOptions {
         ViewOptions {
-            fog: self.current_fog(),
+            fog: None,
             grid_size: self.spatial.grid_size as f32,
             grid_visible: self.spatial.grid_visible,
             grid_elevation: self.spatial.elevation as f32,
@@ -2698,6 +2698,7 @@ impl Session {
         self.reset_baked_surfaces();
         self.shutdown_sky3d_preview();
         self.shutdown_rope_preview();
+        self.shutdown_fog_preview();
         self.shutdown_instance_extraction();
         self.clear_external_comparison();
         self.clear_instance_collapse();
@@ -2726,7 +2727,8 @@ impl Session {
     }
 
     fn content_workers_busy(&self) -> bool {
-        self.linked_path_observation.worker.busy()
+        self.fog_preview_worker_busy()
+            || self.linked_path_observation.worker.busy()
             || self.baked_surfaces.worker.busy()
             || self.compiled_details.worker.busy()
             || self.instance_contents.worker.busy()
@@ -2757,6 +2759,31 @@ impl Session {
 
     pub fn pick_for_selection(&mut self, ray: &Ray) -> Option<Hit> {
         self.pick_filtered_with_previews(ray, None, None, true)
+    }
+
+    pub fn view_far_z(&self, camera: &Camera) -> Result<Option<f32>, String> {
+        let fog = self.fog_render_state_for_view(camera, self.view.surface, Default::default())?;
+        Ok(render::fog::far_z(fog.fog, camera))
+    }
+
+    pub fn pick_for_view(
+        &mut self,
+        ray: &Ray,
+        camera: &Camera,
+        view: ViewOptions,
+        overrides: fog::Overrides,
+        selection_only: bool,
+    ) -> Result<Option<Hit>, String> {
+        let fog = self.fog_render_state_for_view(camera, view.surface, overrides)?;
+        let far_z = render::fog::far_z(fog.fog, camera);
+        Ok(self
+            .pick_filtered_with_previews(
+                ray,
+                Some(view.rope_preview),
+                Some(view.instance_contents),
+                selection_only,
+            )
+            .filter(|hit| camera.within_far_plane(hit.point, far_z)))
     }
 
     fn pick_filtered_with_previews(

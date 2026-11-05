@@ -371,6 +371,7 @@ pub struct TransformDrag {
 
 pub struct AreaPreview {
     filters: Option<u64>,
+    far_z: Option<f32>,
     pub camera: Camera,
     pub start: Pointer,
     pub end: DVec2,
@@ -1113,8 +1114,12 @@ impl Session {
             }
             .ndc(),
         ];
-        let region =
-            camera.selection_region(ndc, f64::from(start.size.0) / f64::from(start.size.1));
+        let far_z = self.view_far_z(&camera)?;
+        let region = camera.selection_region(
+            ndc,
+            f64::from(start.size.0) / f64::from(start.size.1),
+            far_z,
+        );
         if region.planes.len() != 6 {
             return Err("Selection area has a degenerate frustum".into());
         }
@@ -1134,6 +1139,7 @@ impl Session {
         let matches = self.select_region(&region, rule, self.face_mode);
         self.area_preview = Some(AreaPreview {
             filters: (!self.face_mode).then(|| self.selection_filter_revision()),
+            far_z,
             camera,
             start,
             end,
@@ -1177,8 +1183,9 @@ impl Session {
                 .filters
                 .is_some_and(|revision| revision != self.selection_filter_revision())
             || preview.faces != self.face_mode
+            || preview.far_z != self.view_far_z(&preview.camera)?
         {
-            return Err("Map or selection mode changed; draw the area again".into());
+            return Err("Map, selection mode or view clipping changed; draw the area again".into());
         }
         if preview.faces {
             self.select_faces(&preview.matches.faces, preview.mode)?;

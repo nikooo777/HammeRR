@@ -1,7 +1,3 @@
-struct Globals {
-    view_proj: mat4x4<f32>,
-}
-@group(0) @binding(0) var<uniform> globals: Globals;
 @group(1) @binding(0) var miniature: texture_2d<f32>;
 @group(1) @binding(1) var miniature_sampler: sampler;
 @group(1) @binding(2) var<uniform> target_size: vec4<f32>;

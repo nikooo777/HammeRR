@@ -789,6 +789,7 @@ impl EditorServer {
             + Self::placement_tools()
             + Self::recovery_tools()
             + Self::rope_preview_tools()
+            + Self::fog_preview_tools()
             + Self::selection_tools()
             + Self::terrain_tools()
             + Self::transform_pivot_tools()

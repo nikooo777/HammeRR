@@ -1,59 +1,225 @@
-import { Theme } from "theme.slint";
-import { Button, CheckBox, ComboBox, ScrollView } from "widgets.slint";
+import { Theme, FieldRow, SectionHeader } from "kit.slint";
+import { Button, ComboBox, LineEdit, ScrollView, Slider, Switch } from "widgets.slint";
 
 export component FogWindow inherits Window {
     background: Theme.panel;
     title: "Fog preview - HammeRR";
-    preferred-width: 740px;
-    preferred-height: 570px;
+    preferred-width: 760px;
+    preferred-height: 760px;
+    min-width: 560px;
+    min-height: 620px;
+
     in-out property <bool> preview-enabled;
     in-out property <int> controller-index;
     in property <[string]> controllers;
+    in property <string> effective-controller;
     in property <string> current;
     in property <string> detail;
     in property <string> message;
     in property <bool> can-apply;
+    in property <string> document-label;
+    in property <bool> available;
+    in property <bool> has-issue;
+    in-out property <bool> selection-dirty;
+    in property <string> selection-status;
+    in-out property <int> channel-index;
+    in property <[string]> channels;
+    in-out property <int> environment-index;
+    in property <[string]> environments;
+    in property <string> environment-detail;
+    in property <bool> environment-busy;
+    in property <bool> environment-automatic;
+    in property <bool> can-prepare-environment;
+    in property <string> channel-detail;
+    in property <bool> document-active: true;
+    in property <bool> playing;
+    in property <bool> transitioning;
+    in property <bool> can-play;
+    in property <bool> can-seek;
+    in property <string> playback-status;
+    in property <string> time-label;
+    in property <string> time-limits;
+    in property <float> max-time-seconds: 1;
+    in-out property <float> time-value;
+    in-out property <string> seek-time;
+    in-out property <bool> time-dirty;
+    in-out property <bool> scrub-dirty;
+    in-out property <int> input-index;
+    in property <[string]> inputs;
+    in-out property <string> input-value;
+    in property <string> input-help;
+    in property <string> input-target;
+    in property <bool> input-has-value;
+    in property <bool> can-send-input;
+    in-out property <bool> input-dirty;
+    in-out property <bool> environment-expanded;
+    in-out property <bool> input-expanded: true;
+    in-out property <bool> limits-expanded;
+    in property <string> scope;
+
     callback choice-changed();
     callback refresh();
     callback apply();
     callback cancel();
+    callback play-pause();
+    callback reset();
+    callback seek();
+    callback scrub(float);
+    callback time-edited();
+    callback input-changed();
+    callback input-edited();
+    callback send-input();
+    callback prepare-environment();
+    callback cancel-work();
+    callback clear-preview();
+
     forward-focus: dialog-focus;
     dialog-focus := FocusScope {
-        width: parent.width; height: parent.height;
-        key-pressed(event) => { if event.text == Key.Escape { root.cancel(); accept } else { reject } }
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
+        }
         VerticalLayout {
-            padding: Theme.space-xl; spacing: 16px;
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
             Text { text: "Fog preview"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: root.current; wrap: word-wrap; color: Theme.text-muted; }
-            CheckBox {
-                text: "Enable fog preview";
-                checked <=> root.preview-enabled;
-                toggled => { root.choice-changed(); }
+            Text { text: root.document-label; color: Theme.text-faint; overflow: elide; }
+            Text { text: root.current; wrap: word-wrap; color: root.has-issue ? Theme.warning : Theme.text-muted; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Switch {
+                    text: "Enable fog preview";
+                    checked <=> root.preview-enabled;
+                    enabled: root.available;
+                    toggled => { root.selection-dirty = true; root.choice-changed(); }
+                }
+                Text { text: root.selection-dirty ? root.selection-status : ""; color: Theme.text-faint; vertical-alignment: center; horizontal-alignment: right; horizontal-stretch: 1; wrap: word-wrap; }
+                Button { text: "Apply preview"; enabled: root.can-apply; primary: true; clicked => { root.apply(); } }
             }
-            Text { text: "Active controller"; font-weight: 600; }
-            ComboBox {
-                accessible-label: "Active fog controller";
-                model: root.controllers;
-                current-index <=> root.controller-index;
-                selected => { root.choice-changed(); }
+            FieldRow {
+                inset: false; label: "Active controller"; label-width: 104px;
+                if !root.environment-automatic: ComboBox {
+                    accessible-label: "Active fog controller";
+                    model: root.controllers;
+                    current-index <=> root.controller-index;
+                    enabled: root.available;
+                    selected => { root.selection-dirty = true; root.choice-changed(); }
+                }
+                if root.environment-automatic: Text { text: root.effective-controller; color: Theme.text-muted; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
+            }
+            FieldRow {
+                inset: false; label: "Channel"; label-width: 104px;
+                ComboBox {
+                    width: 140px;
+                    accessible-label: "Fog preview channel";
+                    model: root.channels;
+                    current-index <=> root.channel-index;
+                    enabled: root.available;
+                    selected => { root.selection-dirty = true; root.choice-changed(); }
+                }
+                Text { text: root.channel-detail; color: Theme.text-faint; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
             }
             ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                vertical-stretch: 1;
                 VerticalLayout {
-                    spacing: 14px;
-                    Text { text: root.detail; wrap: word-wrap; }
-                    Text {
-                        text: "Preview static fog in Perspective · Textured view. Sky, background and editor helpers stay unchanged.\n\nRadial fog, directional blending, far-Z clipping and HDR/zoom scaling are unsupported. Fog volumes, transitions and runtime I/O are not evaluated. Choose the controller explicitly.";
-                        wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font;
+                    alignment: start;
+                    padding-right: Theme.space-lg;
+                    spacing: Theme.space-lg;
+                    SectionHeader { text: "Playback"; inset: false; collapsible: false; detail: root.transitioning ? "Transition inputs" : ""; }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: root.playing ? "Pause" : "Play"; enabled: root.available && (root.playing || (root.can-play && root.document-active)); clicked => { root.play-pause(); } }
+                        Button { text: "Reset"; enabled: root.available && !root.environment-busy; clicked => { root.reset(); } }
+                        Text { text: root.document-active ? root.playback-status : "Inactive document · playback suspended"; color: Theme.text-muted; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
                     }
+                    FieldRow {
+                        inset: false; label: "Time"; label-width: 104px;
+                        Slider {
+                            minimum: 0; maximum: max(0.001, root.max-time-seconds); step: 0.01;
+                            value <=> root.time-value;
+                            enabled: root.available && root.can-seek;
+                            accessible-label: "Fog preview time in seconds";
+                            changed => { root.scrub-dirty = true; root.time-edited(); }
+                            released(value) => { root.scrub(value); }
+                        }
+                        LineEdit {
+                            width: 80px; text <=> root.seek-time;
+                            accessible-label: "Fog seek time in seconds";
+                            enabled: root.available && root.can-seek;
+                            edited => { root.time-dirty = true; root.time-edited(); }
+                            accepted => { root.seek(); }
+                        }
+                        Button { text: "Seek"; width: 64px; enabled: root.available && root.can-seek; clicked => { root.seek(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Text { text: root.time-label; color: Theme.text-muted; }
+                        Text { text: (root.time-dirty || root.scrub-dirty ? "Unsubmitted time · " : "") + root.time-limits; color: Theme.text-faint; horizontal-alignment: right; horizontal-stretch: 1; }
+                    }
+                    Text { text: "Reset clears preview inputs and restores authored initial values. Seek preserves the input sequence."; color: Theme.text-faint; wrap: word-wrap; font-size: Theme.font-small; }
+                    SectionHeader { text: "Environment"; inset: false; expanded <=> root.environment-expanded; }
+                    if root.environment-expanded: VerticalLayout {
+                        spacing: Theme.space;
+                        FieldRow {
+                            inset: false; label: "Environment"; label-width: 104px;
+                            ComboBox {
+                                model: root.environments; current-index <=> root.environment-index;
+                                accessible-label: "Fog preview environment";
+                                enabled: root.available;
+                                selected => { root.selection-dirty = true; root.choice-changed(); }
+                            }
+                        }
+                        if root.environment-detail != "": Text { text: root.environment-detail; color: Theme.text-faint; wrap: word-wrap; }
+                        if root.environment-automatic || root.environment-busy: HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: root.environment-busy ? "Preparing environment…" : "Prepare environment"; enabled: root.can-prepare-environment; clicked => { root.prepare-environment(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+                    SectionHeader { text: "Controller input"; detail: (root.input-dirty ? "Unsubmitted input · " : "") + root.input-target; inset: false; expanded <=> root.input-expanded; }
+                    if root.input-expanded: VerticalLayout {
+                        spacing: Theme.space;
+                        FieldRow {
+                            inset: false; label: "Input"; label-width: 104px;
+                            ComboBox {
+                                model: root.inputs; current-index <=> root.input-index;
+                                accessible-label: "Fog controller input";
+                                enabled: root.available;
+                                selected => { root.input-dirty = true; root.input-changed(); }
+                            }
+                        }
+                        if root.input-has-value: FieldRow {
+                            inset: false; label: "Value"; label-width: 104px;
+                            LineEdit {
+                                text <=> root.input-value; enabled: root.available;
+                                accessible-label: "Fog controller input value";
+                                edited => { root.input-dirty = true; root.input-edited(); }
+                                accepted => { root.send-input(); }
+                            }
+                        }
+                        if root.input-help != "": Text { text: root.input-help; color: Theme.text-faint; wrap: word-wrap; }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Send input"; enabled: root.can-send-input; clicked => { root.send-input(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+                    SectionHeader { text: "Current settings"; inset: false; collapsible: false; }
+                    Text { text: root.detail; color: Theme.text-muted; wrap: word-wrap; }
+                    if root.scope != "": SectionHeader { text: "Preview limits"; inset: false; expanded <=> root.limits-expanded; }
+                    if root.scope != "" && root.limits-expanded: Text { text: root.scope; color: Theme.text-faint; wrap: word-wrap; }
                 }
             }
+            Text { text: "Edit source fog fields in Inspector."; color: Theme.text-faint; font-size: Theme.font-small; }
             if root.message != "": Text { text: root.message; color: Theme.warning; wrap: word-wrap; }
             HorizontalLayout {
-                spacing: 10px;
+                spacing: Theme.space;
                 Button { text: "Refresh choices"; clicked => { root.refresh(); } }
+                Button { text: "Clear preview"; enabled: root.available; clicked => { root.clear-preview(); } }
+                if root.environment-busy: Button { text: "Cancel work"; clicked => { root.cancel-work(); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: "Apply preview"; enabled: root.can-apply; clicked => { root.apply(); } }
-                Button { text: "Cancel"; clicked => { root.cancel(); } }
+                Button { text: "Close"; clicked => { root.cancel(); } }
             }
         }
     }

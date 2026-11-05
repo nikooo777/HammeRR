@@ -78,6 +78,7 @@ pub struct Stroke {
     generation: u64,
     revision: u64,
     shared_camera: Camera,
+    far_z: Option<f32>,
     groups: Option<super::groups::SelectionIndex>,
     object_mode: super::selection_filters::ObjectSelectionMode,
 }
@@ -281,11 +282,12 @@ impl Session {
         if stroke.generation != self.document_generation
             || stroke.revision != self.document.revision()
             || stroke.shared_camera != self.camera
+            || stroke.far_z != self.view_far_z(&stroke.spec.camera)?
             || stroke
                 .filters
                 .is_some_and(|revision| revision != self.selection_filter_revision())
         {
-            return Err("Map or camera changed; start a new paint stroke".into());
+            return Err("Map, camera or view clipping changed; start a new paint stroke".into());
         }
         Ok(stroke)
     }
@@ -337,6 +339,7 @@ impl Session {
             return Err("Start a paint stroke inside the viewport".into());
         }
         let hidden = self.hidden_brushes_for(false);
+        let far_z = self.view_far_z(&spec.camera)?;
         let evaluation = self.working_evaluation(&self.document);
         let bounds = self.display_bounds_in(&self.document);
         let object_selection = !spec.faces && operation == Operation::Selection;
@@ -391,6 +394,7 @@ impl Session {
             generation: self.document_generation,
             revision: self.document.revision(),
             shared_camera: self.camera,
+            far_z,
             object_mode: self.object_selection_mode(),
             groups: if spec.faces {
                 None
@@ -573,10 +577,14 @@ fn update_stroke(
             ndc.y as f32,
             pointer.size.0 as f32 / pointer.size.1 as f32,
         );
-        if let Some(hit) = stroke.picker.pick(&Ray {
-            origin: origin.as_dvec3(),
-            direction: direction.as_dvec3(),
-        }) {
+        if let Some(hit) = stroke
+            .picker
+            .pick(&Ray {
+                origin: origin.as_dvec3(),
+                direction: direction.as_dvec3(),
+            })
+            .filter(|hit| stroke.spec.camera.within_far_plane(hit.point, stroke.far_z))
+        {
             if stroke.spec.faces {
                 if let (Some(solid), Some(side)) = (hit.solid, hit.side) {
                     faces.insert(FaceId { solid, side });

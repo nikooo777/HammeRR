@@ -1,6 +1,38 @@
 use super::super::*;
 
 impl EditorServer {
+    fn fog_render_context(
+        &self,
+        mut overrides: crate::session::fog::Overrides,
+    ) -> Result<
+        (
+            crate::session::fog::Overrides,
+            Option<crate::runtime::FogRenderGuard>,
+        ),
+        String,
+    > {
+        let enabled = overrides
+            .enabled
+            .unwrap_or_else(|| self.session().fog_preview_settings().enabled);
+        overrides.enabled = Some(enabled);
+        let guard = if enabled {
+            Some(self.document_access().fog_render_guard(overrides)?)
+        } else {
+            None
+        };
+        Ok((overrides, guard))
+    }
+
+    fn verify_fog_frame(
+        &self,
+        guard: Option<&crate::runtime::FogRenderGuard>,
+    ) -> Result<(), String> {
+        if let Some(guard) = guard {
+            self.document_access().verify_fog_render_guard(guard)?;
+        }
+        Ok(())
+    }
+
     fn rope_render_context(
         &self,
         requested: Option<bool>,
@@ -299,28 +331,6 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect shared Fog preview settings and all authored env_fog_controller choices, parsed parameters and visible errors. Defaults off; no automatic controller selection. Snapshot guards reviewed settings. Static initial view-depth range fog in perspective Textured views only; sky/helpers unchanged. No native parity, radial/directional blend, far-Z clipping, HDR/zoom scaling, water, fog-volume switching, runtime I/O or transitions.",
-        annotations(read_only_hint = true)
-    )]
-    pub(in crate::mcp) fn get_fog_preview(&self) -> ToolResult {
-        ok(self.session().fog_preview_state())
-    }
-
-    #[tool(
-        description = "Apply Fog preview using the same Session operation as the Fog preview… dialog. Pass enabled, explicit env_fog_controller entity:<id> when enabling, and latest get_fog_preview.snapshot. Invalid/unsupported controllers and stale snapshots leave settings unchanged. Disabling always works with a fresh snapshot. Preview controls leave map/history unchanged. render_view accepts temporary fog_preview/fog_controller overrides."
-    )]
-    pub(in crate::mcp) fn set_fog_preview(
-        &self,
-        Parameters(args): Parameters<FogPreviewArgs>,
-    ) -> ToolResult {
-        run(|| {
-            let controller = fog_controller_id(args.controller.as_deref())?;
-            self.session()
-                .set_fog_preview(args.enabled, controller, &args.snapshot)
-        })
-    }
-
-    #[tool(
         description = "List named camera views stored in this VMF, including projection, position, orientation, field of view and planar zoom. Also returns generation/revision guards. Up to 64 views; names up to 80 characters. Imported Hammer cameras remain preserved separately."
     )]
     pub(in crate::mcp) fn get_camera_views(&self) -> ToolResult {
@@ -527,21 +537,34 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Render the map to a PNG with the editor's renderer. Textured, flat, wireframe and diagnostic modes work in perspective or planar views, with entity helpers, grid and shared previews. Selection tint and outlines are independent controls. Static policy/limit catalogues are omitted unless include_details=true; availability states, diagnostics and frame identity remain. Optional instance_contents, surface, surface_shading and camera overrides leave shared settings unchanged; surface_shading selects stronger fixed ambient/directional relief for Textured brush/terrain/authored-model surfaces, preserving ordinary weak shading when false and admitted authored-light overrides; tools/helpers stay unchanged. The returned view reports the actual override; the retained instance_contents report describes the exact uploaded reference snapshot; pass camera.focus to frame objects. additive_sprite_guides is an optional authored mode5 LDR editor-image approximation with constrained white/255/FX0 appearance. It requires sprite_resources, preserves literal icons and reports raw/additive policy and rejected appearance in sprite_guides; no native runtime/color-space parity.",
+        description = "Render the map to a PNG with the editor's renderer. Textured, flat, wireframe and diagnostic modes work in perspective or planar views, with entity helpers, grid and shared previews. Selection tint and outlines are independent controls. Static policy/limit catalogues are omitted unless include_details=true; availability states, diagnostics and frame identity remain. Optional instance_contents, surface, surface_shading, camera and fog_preview/controller/selection/channel overrides leave shared settings unchanged; fog uses the resolved camera, with color in Textured perspective and far-plane clipping in every perspective surface mode; surface_shading selects stronger fixed ambient/directional relief for Textured brush/terrain/authored-model surfaces, preserving ordinary weak shading when false and admitted authored-light overrides; tools/helpers stay unchanged. The returned view reports the actual override; the retained instance_contents report describes the exact uploaded reference snapshot; pass camera.focus to frame objects. additive_sprite_guides is an optional authored mode5 LDR editor-image approximation with constrained white/255/FX0 appearance. It requires sprite_resources, preserves literal icons and reports raw/additive policy and rejected appearance in sprite_guides; no native runtime/color-space parity.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn render_view(
         &self,
         Parameters(args): Parameters<RenderArgs>,
     ) -> ToolResult {
+        let overrides = match fog_overrides(
+            args.fog_preview,
+            args.fog_controller.as_deref(),
+            args.fog_selection,
+            args.fog_channel,
+        ) {
+            Ok(overrides) => overrides,
+            Err(error) => return fail(error),
+        };
         let (rope_enabled, rope_guard) = match self.rope_render_context(args.rope_preview) {
+            Ok(context) => context,
+            Err(error) => return fail(error),
+        };
+        let (overrides, fog_guard) = match self.fog_render_context(overrides) {
             Ok(context) => context,
             Err(error) => return fail(error),
         };
         let mut args = args;
         args.rope_preview = Some(rope_enabled);
         let size = render_size(args.width, args.height);
-        let (camera, mut view) = {
+        let (camera, view, fog_preview) = {
             let mut session = self.session();
             session.preflight_instance_contents();
             let default_camera = CameraSpec::default();
@@ -565,25 +588,16 @@ impl EditorServer {
                 Ok(camera) => camera,
                 Err(error) => return fail(error),
             };
-            let view = match session.resolve_view_update(args.view_update()) {
+            let mut view = match session.resolve_view_update(args.view_update()) {
                 Ok(view) => view,
                 Err(error) => return fail(error),
             };
-            (camera, view)
-        };
-        let fog_preview = {
-            let session = self.session();
-            let controller = match fog_controller_id(args.fog_controller.as_deref()) {
-                Ok(controller) => controller,
+            let fog = match session.fog_render_state_for_view(&camera, view.surface, overrides) {
+                Ok(fog) => fog,
                 Err(error) => return fail(error),
             };
-            match session.fog_render_state(args.fog_preview, controller) {
-                Ok((fog, report)) => {
-                    view.fog = fog;
-                    report
-                }
-                Err(error) => return fail(error),
-            }
+            view.fog = fog.fog;
+            (camera, view, fog.report)
         };
         let rendered = match self.render_png(&camera, size, view) {
             Ok(rendered) => rendered,
@@ -592,11 +606,14 @@ impl EditorServer {
         if let Err(error) = self.verify_rope_frame(rope_guard.as_ref()) {
             return fail(error);
         }
+        if let Err(error) = self.verify_fog_frame(fog_guard.as_ref()) {
+            return fail(error);
+        }
         rendered.into_tool_result(camera, size, view, fog_preview, args.include_details)
     }
 
     #[tool(
-        description = "Identify the object and face at a pixel of an image rendered by render_view with the same camera and size. Optional pane selects the configured pane camera without activating or publishing it.",
+        description = "Identify the object and face at a pixel of render_view using the same camera, size, surface and temporary fog overrides. Uses the shared camera-aware fog query and camera-forward far plane; fog color does not hide geometry. Optional pane selects its configured camera without activation. Pause moving previews when pairing an exact rendered pose with a pick.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn pick_at_pixel(
@@ -604,7 +621,14 @@ impl EditorServer {
         Parameters(args): Parameters<PickArgs>,
     ) -> ToolResult {
         run(|| {
+            let overrides = fog_overrides(
+                args.fog_preview,
+                args.fog_controller.as_deref(),
+                args.fog_selection,
+                args.fog_channel,
+            )?;
             let (rope_enabled, rope_guard) = self.rope_render_context(args.rope_preview)?;
+            let (overrides, fog_guard) = self.fog_render_context(overrides)?;
             let mut args = args;
             args.rope_preview = Some(rope_enabled);
             let mut session = self.session();
@@ -633,18 +657,25 @@ impl EditorServer {
                 origin: origin.as_dvec3(),
                 direction: direction.as_dvec3(),
             };
-            let hit = session.pick_with_previews(&ray, args.rope_preview, args.instance_contents);
+            let view = session.resolve_view_update(crate::session::ViewUpdate {
+                instance_contents: args.instance_contents,
+                rope_preview: args.rope_preview,
+                surface: args.surface.as_deref(),
+                ..Default::default()
+            })?;
+            let hit = session.pick_for_view(&ray, &camera, view, overrides, false)?;
             let result = hit.map_or(json!({ "hit": null }), |hit| {
                 hit_json(session.render_document(), &hit)
             });
             drop(session);
             self.verify_rope_frame(rope_guard.as_ref())?;
+            self.verify_fog_frame(fog_guard.as_ref())?;
             Ok(result)
         })
     }
 
     #[tool(
-        description = "Cast a ray and report the first visible object and face hit, e.g. to find the floor below a point. Visible referenced contents select their root instance owner with null solid/side; child geometry is never an editable root face.",
+        description = "Cast an arbitrary world-space geometric ray, independent of the editor camera, fog and camera far plane. Reports the first object/face passing ordinary visibility filters, e.g. the floor below a point. Referenced contents select their root instance owner with null solid/side; child geometry is never an editable root face.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn raycast(&self, Parameters(args): Parameters<RaycastArgs>) -> ToolResult {
@@ -669,7 +700,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect depth-ordered object hits along an explicit world ray without changing selection/history. Returns at most 64 candidates, exact total/truncation, hit object/brush/side/point/distance, brush owner and selection_unit. Shared mode deduplicates to outermost visible nested groups, whole objects or individual solids before the cap; Solids keeps individual brush-entity children. Type/hidden/tool filters match ordinary selection. Usable model triangles replace helper boxes. Stable IDs break equal-depth ties. Requires viewport Objects mode; specialized tools and geometry previews reject.",
+        description = "Inspect depth-ordered object hits along an explicit world ray using the current shared camera and its fog far plane, without changing selection/history. Returns at most 64 candidates, exact total/truncation, hit object/brush/side/point/distance, brush owner and selection_unit. Shared mode deduplicates to outermost visible nested groups, whole objects or individual solids before the cap; Solids keeps individual brush-entity children. Type/hidden/tool filters match ordinary selection. Usable model triangles replace helper boxes. Stable IDs break equal-depth ties. Requires viewport Objects mode; specialized tools and geometry previews reject.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_object_hit_candidates(
@@ -685,7 +716,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Cycle object selection along an explicit world ray through the shared Alt-click operation. Replace-only and stateless: if the current selection interpreted in the active groups/objects/solids mode equals a candidate unit, advance and wrap; otherwise select the nearest. Empty rays preserve selection. Recomputes visible brush/model geometry, type filters and selection rules each call; returns chosen zero-based index plus candidates/total/truncation. Solids mode distinguishes brush-entity children and reports their owner. Limited to the nearest 64 deduplicated units. No source/Undo edit; incompatible tools/previews reject."
+        description = "Cycle object selection along an explicit world ray through the shared Alt-click operation, using the current shared camera and its fog far plane. Replace-only and stateless: if the current selection interpreted in the active groups/objects/solids mode equals a candidate unit, advance and wrap; otherwise select the nearest. Empty rays preserve selection. Recomputes visible brush/model geometry, type filters and selection rules each call; returns chosen zero-based index plus candidates/total/truncation. Solids mode distinguishes brush-entity children and reports their owner. Limited to the nearest 64 deduplicated units. No source/Undo edit; incompatible tools/previews reject."
     )]
     pub(in crate::mcp) fn cycle_object_hit(
         &self,

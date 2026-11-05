@@ -30,6 +30,8 @@ mod entity_placement;
 pub(super) use entity_placement::*;
 mod entities;
 pub(super) use entities::*;
+mod fog;
+pub(super) use fog::*;
 mod geometry;
 pub(super) use geometry::*;
 mod history;

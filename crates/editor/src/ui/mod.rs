@@ -596,12 +596,7 @@ fn refresh_panel(app: &AppWindow, session: &mut Session) {
     refresh_clip(app, session);
     refresh_view_controls(app, session);
     refresh_sky_preview_status(app, session);
-    app.set_fog_preview_status(
-        session.fog_preview_state()["summary"]
-            .as_str()
-            .unwrap()
-            .into(),
-    );
+    app.set_fog_preview_status(session.fog_preview_summary().into());
     let doc = session.document();
     app.set_map_title(session.title().into());
     app.set_can_undo(doc.undo_labels().next().is_some());
@@ -1127,6 +1122,7 @@ fn create_document_window(
     });
     root_callback!(app, ui, on_fog_preview, |app| {
         let mut ui = ui.borrow_mut();
+        let active = app.unwrap().get_workspace_active();
         if ui.fog.is_none() {
             match fog_ui::Controller::new_with_access(&ui.document_access()) {
                 Ok(controller) => ui.fog = Some(controller),
@@ -1136,6 +1132,7 @@ fn create_document_window(
                 }
             }
         }
+        ui.fog.as_ref().unwrap().set_active(active);
         if let Err(error) = ui.fog.as_ref().unwrap().show(&lock(&ui.session)) {
             app.unwrap().set_message(error.to_string().into());
         }
@@ -2892,10 +2889,23 @@ fn create_document_window(
                     .camera
                     .ray(click.ndc.0, click.ndc.1, click.aspect);
             let mut session = lock(&ui.session);
-            let hit = session.pick_for_selection(&Ray {
-                origin: origin.as_dvec3(),
-                direction: direction.as_dvec3(),
-            });
+            let view = session.view();
+            let hit = match session.pick_for_view(
+                &Ray {
+                    origin: origin.as_dvec3(),
+                    direction: direction.as_dvec3(),
+                },
+                &ui.viewport.camera,
+                view,
+                Default::default(),
+                true,
+            ) {
+                Ok(hit) => hit,
+                Err(error) => {
+                    app.set_message(error.into());
+                    return;
+                }
+            };
             let result = if session.face_mode() {
                 let face = hit.and_then(|hit| {
                     Some(map_core::surface::FaceId {
@@ -3228,6 +3238,10 @@ fn create_document_window(
                     if let Some(controller) = &ui.ropes {
                         controller.refresh(&mut session);
                     }
+                    if let Some(controller) = &ui.fog {
+                        controller.refresh(&session);
+                    }
+                    app.set_fog_preview_status(session.fog_preview_summary().into());
                     app.set_rope_preview_status(session.rope_preview_summary().into());
                     let layout_serial = session.workspace_layout_serial();
                     if layout_serial != ui.seen_workspace_layout {
@@ -3496,12 +3510,7 @@ fn create_document_window(
                         }
                         ui.seen_view = session.view_serial();
                         refresh_view_controls(&app, &session);
-                        app.set_fog_preview_status(
-                            session.fog_preview_state()["summary"]
-                                .as_str()
-                                .unwrap()
-                                .into(),
-                        );
+                        app.set_fog_preview_status(session.fog_preview_summary().into());
                         app.set_working_region_active(session.working_region_enabled());
                         ui.viewport.options = session.view();
                         ui.viewport.redraw();
@@ -4021,6 +4030,7 @@ fn create_document_window(
                             camera: request.camera,
                             scene: ui.seen_scene,
                             size: request.size,
+                            far_z: frame.far_z,
                         });
                     let mut row = ui.view_panes.row_data(frame.index).unwrap_or_default();
                     if frame.index == ui.active_view_pane {

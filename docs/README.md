@@ -77,7 +77,7 @@ More in this section:
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="lighting-preview.md"><img src="images/thumbs/authored-lighting-ldr.jpg" width="260" alt=""></a><br><a href="lighting-preview.md"><b>Authored lighting preview</b></a><br>Compare LDR and HDR point, spot and sun lighting before a build.</td>
-<td width="33%" valign="top"><a href="fog.md"><img src="images/thumbs/fog-on.jpg" width="260" alt=""></a><br><a href="fog.md"><b>Fog preview</b></a><br>Inspect an authored fog controller in the editor.</td>
+<td width="33%" valign="top"><a href="fog.md"><img src="images/thumbs/fog-on.jpg" width="260" alt=""></a><br><a href="fog.md"><b>Fog preview</b></a><br>Preview world fog, controller inputs and transitions.</td>
 <td width="33%" valign="top"><a href="color-correction.md"><img src="images/thumbs/color-correction-preview.jpg" width="260" alt=""></a><br><a href="color-correction.md"><b>Color correction</b></a><br>Preview one Source color lookup table (LUT) across the complete editor viewport.</td>
 </tr>
 <tr>

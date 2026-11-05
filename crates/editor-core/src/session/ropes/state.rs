@@ -285,9 +285,11 @@ impl State {
             cancel_control(&frame.sources.control);
         }
         let worker = std::mem::take(&mut self.worker);
+        let clock = std::mem::take(&mut self.clock);
         let presentation_active = self.presentation_active;
         *self = Self {
             worker,
+            clock,
             presentation_active,
             ..Self::default()
         };

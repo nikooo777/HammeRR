@@ -35,6 +35,7 @@ pub struct PaneFrame {
     pub index: usize,
     pub image: slint::Image,
     pub error: Option<String>,
+    pub far_z: Option<f32>,
 }
 
 struct PaneState {
@@ -353,6 +354,7 @@ impl Viewport {
             index,
             image: slint::Image::default(),
             error: Some(error),
+            far_z: None,
         }
     }
 
@@ -468,12 +470,13 @@ impl Viewport {
         ctx: &GpuContext,
         panes: &[PaneRender],
         drawing: &[bool; MAX_PANES],
-        pixel_ratio: f32,
+        options: &[Option<ViewOptions>; MAX_PANES],
         correction_error: Option<&str>,
     ) {
         for request in panes.iter().filter(|request| drawing[request.index]) {
-            let options =
-                pane_options(self.options, request.index == self.active_pane, pixel_ratio);
+            let Some(options) = options[request.index] else {
+                continue;
+            };
             if let Err(error) = self.draw_pane(ctx, request, options, correction_error) {
                 self.panes[request.index].error = Some(error);
             }
@@ -499,6 +502,7 @@ impl Viewport {
                     index,
                     image: slint::Image::default(),
                     error: None,
+                    far_z: None,
                 });
             }
         }
@@ -536,10 +540,23 @@ impl Viewport {
             return frames;
         }
         let mut drawing = [false; MAX_PANES];
+        let mut options = [None; MAX_PANES];
         for request in panes {
-            let options = pane_options(self.options, request.index == active, pixel_ratio);
+            let mut pane_view = pane_options(self.options, request.index == active, pixel_ratio);
+            match session.fog_render_state_for_view(
+                &request.camera,
+                pane_view.surface,
+                Default::default(),
+            ) {
+                Ok(fog) => pane_view.fog = fog.fog,
+                Err(error) => {
+                    frames.push(self.unavailable(request.index, error, false));
+                    continue;
+                }
+            }
+            options[request.index] = Some(pane_view);
             drawing[request.index] =
-                self.panes[request.index].needs_render(request, options, pixel_ratio);
+                self.panes[request.index].needs_render(request, pane_view, pixel_ratio);
         }
         if !drawing.iter().any(|drawing| *drawing) {
             return frames;
@@ -559,25 +576,19 @@ impl Viewport {
             Ok(preview) => (preview, None),
             Err(error) => {
                 for request in panes {
-                    drawing[request.index] = true;
+                    drawing[request.index] = options[request.index].is_some();
                 }
                 (None, Some(error))
             }
         };
         self.renderer.set_color_correction(preview.clone());
-        self.draw_panes(
-            ctx,
-            panes,
-            &drawing,
-            pixel_ratio,
-            correction_error.as_deref(),
-        );
+        self.draw_panes(ctx, panes, &drawing, &options, correction_error.as_deref());
         if let Err(error) = session.verify_color_correction_render(preview.as_ref()) {
             self.renderer.set_color_correction(None);
             for request in panes {
-                drawing[request.index] = true;
+                drawing[request.index] = options[request.index].is_some();
             }
-            self.draw_panes(ctx, panes, &drawing, pixel_ratio, Some(&error));
+            self.draw_panes(ctx, panes, &drawing, &options, Some(&error));
         }
         if let Err(error) = session.verify_baked_surfaces_render(guard.as_ref(), self.options) {
             frames.extend(
@@ -607,6 +618,10 @@ impl Viewport {
                         index: request.index,
                         image,
                         error: pane.message(),
+                        far_z: render::fog::far_z(
+                            options[request.index].and_then(|view| view.fog),
+                            &request.camera,
+                        ),
                     });
                 }
                 Err(error) => frames.push(self.unavailable(request.index, error, false)),

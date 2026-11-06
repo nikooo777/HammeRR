@@ -12,7 +12,10 @@ const MAX_MAPPING_DIMENSION: u32 = 1 << 15;
 const MIN_NORMAL_CROSS_COMPONENT: u32 = (127 - 50) << 23;
 const MAX_NORMAL_CROSS_COMPONENT: u32 = (127 + 50) << 23;
 const MIN_NORMAL_CROSS_MAXIMUM: u32 = (127 - 6) << 23;
-const MAX_HEIGHT_NORMAL_COMPONENT_RATIO: f32 = 256.0;
+const MAX_NORMAL_COMPONENT_RATIO: f32 = 256.0;
+const NORMAL_RATIO_EVENTS_PER_PATCH: usize = 352;
+const NORMAL_STENCIL_RATIO_EVENTS: usize = 9;
+const MAX_NORMAL_RATIO_EVENTS: usize = 1 << 20;
 const ALPHA_NORMALIZATION: f32 = f32::from_bits(0x3b80_8081);
 const ALPHA_BYTE_MAXIMUM: f32 = 255.0;
 const ALPHA_ROUNDING_BIAS: f32 = 8_388_608.0;
@@ -490,6 +493,16 @@ fn conditioned_normal_signs(cross: [f32; 3]) -> io::Result<([i8; 3], u32)> {
     Ok((signs, maximum))
 }
 
+fn common_normal_support(first: [i8; 3], second: [i8; 3]) -> [i8; 3] {
+    std::array::from_fn(|axis| {
+        if first[axis] == second[axis] {
+            first[axis]
+        } else {
+            0
+        }
+    })
+}
+
 impl DisplacementInfo {
     /// Certifies exact edge/cross arithmetic and conditioned inputs for the native
     /// cell-normal stencil, independently of rounding mode. Nonzero cross components
@@ -524,6 +537,112 @@ impl DisplacementInfo {
         self.certify_native_normal_stencil(positions, Some(axis), profile)
     }
 
+    /// Returns every conditioned common component sign for each vertex's native
+    /// adjacent-cell stencil. Callers must retain a common supported component
+    /// across all participants in each neighbor-normal interpolation or average.
+    /// This certifies finite nonzero directions, not native normal bits or pixels.
+    pub fn certify_native_local_normal_inputs(
+        self,
+        positions: &[[f32; 3]],
+        profile: NativeDisplacementProfile,
+    ) -> io::Result<Vec<[i8; 3]>> {
+        let NativeDisplacementProfile::CssLinux64Build25338318 { rounding } = profile;
+        let arithmetic = Arithmetic { rounding };
+        let size = self.grid_size()?;
+        if positions.len() != size * size {
+            return Err(invalid(
+                "native displacement normal input grid dimensions are invalid",
+            ));
+        }
+        let cells = size - 1;
+        let mut cell_support = Vec::with_capacity(cells * cells);
+        for row in 0..cells {
+            for column in 0..cells {
+                let a = positions[row * size + column];
+                let b = positions[row * size + column + 1];
+                let c = positions[(row + 1) * size + column];
+                let d = positions[(row + 1) * size + column + 1];
+                let mut support = None;
+                for [origin, first, second] in [[a, b, c], [b, d, c]] {
+                    let cross = arithmetic.exact_cross(origin, first, second)?;
+                    let (mut signs, maximum) = conditioned_normal_signs(cross)?;
+                    for axis in 0..3 {
+                        let magnitude = f32::from_bits(cross[axis].to_bits() & !SIGN);
+                        if signs[axis] != 0
+                            && maximum
+                                > arithmetic
+                                    .multiply(magnitude, MAX_NORMAL_COMPONENT_RATIO)?
+                                    .to_bits()
+                        {
+                            signs[axis] = 0;
+                        }
+                    }
+                    support = Some(
+                        support.map_or(signs, |previous| common_normal_support(previous, signs)),
+                    );
+                }
+                cell_support.push(support.unwrap());
+            }
+        }
+        let mut result = Vec::with_capacity(positions.len());
+        for row in 0..size {
+            for column in 0..size {
+                let mut support = None;
+                for cell_row in row.saturating_sub(1)..=row.min(cells - 1) {
+                    for cell_column in column.saturating_sub(1)..=column.min(cells - 1) {
+                        let signs = cell_support[cell_row * cells + cell_column];
+                        support = Some(
+                            support
+                                .map_or(signs, |previous| common_normal_support(previous, signs)),
+                        );
+                    }
+                }
+                let support = support.unwrap();
+                if support == [0; 3] {
+                    return Err(invalid(
+                        "native displacement normal stencil has no common conditioned component",
+                    ));
+                }
+                result.push(support);
+            }
+        }
+        Ok(result)
+    }
+
+    /// Intersects support for an addition group or two finalized LERP endpoints.
+    /// The caller must prove reciprocal disjoint spans and that interpolation
+    /// targets never become averaging or interpolation endpoints in this pass.
+    pub fn intersect_native_normal_support(
+        first: [i8; 3],
+        second: [i8; 3],
+        displacement_count: usize,
+    ) -> io::Result<[i8; 3]> {
+        let events = displacement_count
+            .checked_mul(NORMAL_RATIO_EVENTS_PER_PATCH)
+            .and_then(|events| events.checked_add(NORMAL_STENCIL_RATIO_EVENTS));
+        if !(1..=super::MAX_DISPLACEMENTS).contains(&displacement_count)
+            || events.is_none_or(|events| events > MAX_NORMAL_RATIO_EVENTS)
+        {
+            return Err(invalid(
+                "native displacement normal averaging exceeds its conditioning bound",
+            ));
+        }
+        if first
+            .into_iter()
+            .chain(second)
+            .any(|sign| !(-1..=1).contains(&sign))
+        {
+            return Err(invalid("native displacement normal support is invalid"));
+        }
+        let support = common_normal_support(first, second);
+        if support == [0; 3] {
+            return Err(invalid(
+                "native displacement neighbor normals have no common conditioned component",
+            ));
+        }
+        Ok(support)
+    }
+
     fn certify_native_normal_stencil(
         self,
         positions: &[[f32; 3]],
@@ -553,7 +672,7 @@ impl DisplacementInfo {
                         if signs[axis] == 0
                             || maximum
                                 > arithmetic
-                                    .multiply(height, MAX_HEIGHT_NORMAL_COMPONENT_RATIO)?
+                                    .multiply(height, MAX_NORMAL_COMPONENT_RATIO)?
                                     .to_bits()
                         {
                             return Err(invalid(

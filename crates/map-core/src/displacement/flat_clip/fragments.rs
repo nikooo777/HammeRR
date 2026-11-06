@@ -3,11 +3,11 @@ use source_formats::vmf::Solid;
 
 use super::cells::{Sample, sample_window};
 use super::{
-    Admitted, CUT_EPSILON, Child, Context, FIELD_WORK, HeightSheet, Keep, PaintField,
+    Admitted, BaseChart, CUT_EPSILON, Child, Context, FIELD_WORK, Keep, PaintField,
     PartitionRequest, PlanarField, Request, SIZE, TRIANGLES, TerrainPlan, TerrainTexture,
     TriangleField, VERTICES, Work, admit, admit_source, carrier_base, carrier_field,
-    certify_height_normals, connections, data, height_sheet, invalid, native, paint,
-    partition_counts, quads, reconstructed, region, region_unclipped, same, split_ring, stored, uv,
+    certify_local_normals, connections, data, intrinsic_source, invalid, native, orient, paint,
+    partition_counts, quads, reconstructed, region, region_base, same, split_ring, stored, uv,
 };
 use crate::clip::{TerrainBlendError, TerrainBlendMode, TerrainMode};
 use crate::surface::FaceId;
@@ -15,7 +15,7 @@ use crate::{BrushGeometry, Document, EditError, Plane};
 
 struct Prepared<'a> {
     source: Admitted<'a>,
-    sheet: HeightSheet,
+    sheet: BaseChart,
 }
 
 fn prepare<'a>(
@@ -28,7 +28,7 @@ fn prepare<'a>(
     let Some(source) = admit(document, solid, geometry, plane, work)? else {
         return Ok(None);
     };
-    let sheet = height_sheet(&source, work)?;
+    let sheet = intrinsic_source(&source, work)?;
     Ok(Some(Prepared { source, sheet }))
 }
 
@@ -130,7 +130,7 @@ fn groups(
                             row,
                             column,
                             plane: Some(half_plane(plane, back)),
-                            ring,
+                            ring: cell_base_ring(source, row, column),
                         });
                     }
                 }
@@ -152,13 +152,15 @@ fn groups(
                             triangle.map(|index| source.mesh.base_positions[index]),
                             ring,
                         )?);
+                        let axis = field.world_axis();
+                        let axes = [(axis + 1) % 3, (axis + 2) % 3];
                         let paint = Box::new(PaintField::triangle(
                             triangle.map(|index| source.mesh.base_positions[index]),
                             triangle.map(|index| source.mesh.alphas[index]),
                             work,
                         )?);
                         let mut rings = if classification == [true, true] {
-                            split_ring(&ring, &field, prepared.sheet.axes, plane, work)?
+                            split_ring(&ring, &field, axes, plane, work)?
                         } else {
                             let mut rings = [Vec::new(), Vec::new()];
                             rings[usize::from(!classification[0])] = ring.to_vec();
@@ -200,6 +202,16 @@ fn cell_ring(source: &Admitted<'_>, row: usize, column: usize) -> [DVec3; 4] {
     .map(|index| source.mesh.positions[index])
 }
 
+fn cell_base_ring(source: &Admitted<'_>, row: usize, column: usize) -> [DVec3; 4] {
+    [
+        row * source.mesh.size + column,
+        (row + 1) * source.mesh.size + column,
+        (row + 1) * source.mesh.size + column + 1,
+        row * source.mesh.size + column + 1,
+    ]
+    .map(|index| source.mesh.base_positions[index])
+}
+
 enum Expected<'a> {
     Triangle(&'a PlanarField, &'a PaintField),
     Window(&'a [Sample]),
@@ -207,7 +219,6 @@ enum Expected<'a> {
 
 struct Certificate<'a> {
     side: u32,
-    axis: usize,
     texture: TerrainTexture,
     labels: &'a TriangleField,
     blend_mode: TerrainBlendMode,
@@ -279,12 +290,13 @@ impl Certificate<'_> {
         let info = part.sides[side_index].displacement.as_mut().unwrap();
         info.triangle_tags = mapped.tags.clone();
         mapped.verify(info, &mesh, work)?;
-        certify_height_normals(&data, &profiles, self.axis, work)?;
+        certify_local_normals(&data, &profiles, work)?;
         uv(&data, face, mesh.positions.len(), self.texture, work)?;
         Ok((
             part,
             Child {
                 base,
+                base_positions: mesh.base_positions,
                 positions: mesh.positions,
             },
             mapped.blend_error,
@@ -399,7 +411,7 @@ pub(crate) fn partition(
     let work = &mut context.work;
     let source = admit_source(document, solid, geometry, work)?;
     let (count, _, _) = partition_counts(source.info.power, TerrainMode::Fragments)?;
-    let sheet = height_sheet(&source, work)?;
+    let sheet = intrinsic_source(&source, work)?;
     let cells = source.mesh.size - 1;
     work.consume(cells * cells).map_err(invalid)?;
     let mut groups = Vec::with_capacity(cells * cells);
@@ -409,7 +421,7 @@ pub(crate) fn partition(
                 row,
                 column,
                 plane: None,
-                ring: cell_ring(&source, row, column),
+                ring: cell_base_ring(&source, row, column),
             });
         }
     }
@@ -449,7 +461,6 @@ fn materialize(
     )?;
     let certificate = Certificate {
         side: source.side.id,
-        axis: prepared.sheet.axis,
         texture,
         labels: &labels,
         blend_mode: request.blend_mode,
@@ -488,25 +499,13 @@ fn materialize(
                         children.push(child);
                     }
                 }
-                if let Some(plane) = plane {
-                    region(
-                        &ring,
-                        &children[first..],
-                        prepared.sheet.axes,
-                        prepared.sheet.sign,
-                        plane,
-                        None,
-                        work,
-                    )?;
-                } else {
-                    region_unclipped(
-                        &ring,
-                        &children[first..],
-                        prepared.sheet.axes,
-                        prepared.sheet.sign,
-                        work,
-                    )?;
-                }
+                region_base(
+                    &ring,
+                    &children[first..],
+                    prepared.sheet.axes,
+                    prepared.sheet.sign,
+                    work,
+                )?;
             }
             Group::Triangle {
                 field,
@@ -523,7 +522,10 @@ fn materialize(
                     }
                     let first = children.len();
                     let plane = half_plane(cut_plane, back);
-                    for quad in quads(ring, prepared.sheet.axes, prepared.sheet.sign, true)? {
+                    let axis = field.world_axis();
+                    let axes = [(axis + 1) % 3, (axis + 2) % 3];
+                    let sign = orient(ring[0], ring[1], ring[2], axes)?;
+                    for quad in quads(ring, axes, sign, true)? {
                         work.consume(FIELD_WORK * quad.len()).map_err(invalid)?;
                         let mut base = [DVec3::ZERO; 4];
                         for (point, world) in base.iter_mut().zip(quad) {
@@ -555,8 +557,8 @@ fn materialize(
                     region(
                         ring,
                         &children[first..],
-                        prepared.sheet.axes,
-                        prepared.sheet.sign,
+                        axes,
+                        sign,
                         plane,
                         Some(&field),
                         work,

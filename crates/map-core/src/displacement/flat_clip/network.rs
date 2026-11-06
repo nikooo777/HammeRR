@@ -1,5 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+mod normals;
+
 use glam::DVec3;
 use source_formats::{
     bsp,
@@ -56,6 +58,8 @@ struct Surface<'a> {
     base: [[f32; 3]; 4],
     positions: Vec<Vec<DVec3>>,
     sheet: Sheet,
+    embedded: Option<super::embedded::Prepared>,
+    normal_support: Option<Vec<[i8; 3]>>,
 }
 
 struct Sheet {
@@ -156,9 +160,10 @@ impl LodState {
             && self.indices == other.indices)
     }
 
-    fn proof(&self) -> lod_proof::State<'_> {
+    fn proof<'a>(&'a self, surface: &'a Surface<'_>) -> lod_proof::State<'a> {
         lod_proof::State {
             data: &self.data,
+            original_positions: &surface.positions,
             positions: &self.positions,
             ideal_positions: &self.ideal_positions,
             indices: &self.indices,
@@ -185,6 +190,7 @@ fn vertex_bits(vertex: &bsp::DisplacementVertex) -> [u32; 5] {
 fn lod_state(
     surface: &Surface<'_>,
     patch: Option<lod::Patch>,
+    cut: Option<(Plane, Keep)>,
     work: &mut Work,
 ) -> Result<LodState, EditError> {
     work.consume(
@@ -206,13 +212,6 @@ fn lod_state(
             .map_err(invalid)?;
             data.infos[0].allowed_vertices = patch.mask;
             let positions = reconstructed(&data, surface.base, work)?;
-            work.consume(surface.positions.iter().map(Vec::len).sum())
-                .map_err(invalid)?;
-            if positions != surface.positions {
-                return Err(invalid(
-                    "Terrain LOD requires unchanged complete native and compiler geometry",
-                ));
-            }
             (
                 true,
                 patch.mask,
@@ -234,7 +233,7 @@ fn lod_state(
                 .map_err(|error| invalid(error.to_string()))?,
         ),
     };
-    Ok(LodState {
+    let state = LodState {
         coarsened,
         mask,
         active,
@@ -242,7 +241,117 @@ fn lod_state(
         data,
         positions,
         indices,
-    })
+    };
+    work.consume(
+        surface.mesh.positions.len() + surface.positions.iter().map(Vec::len).sum::<usize>(),
+    )
+    .map_err(invalid)?;
+    if state.ideal_positions != surface.mesh.positions || state.positions != surface.positions {
+        let cut = cut.ok_or_else(|| {
+            invalid("Terrain LOD requires unchanged complete native and compiler geometry")
+        })?;
+        lod_proof::certify_geometry(
+            surface.raw.side.displacement.as_ref().unwrap(),
+            &surface.mesh,
+            state.proof(surface),
+            Some(cut),
+            work,
+        )?;
+        certify_lod_profiles(surface, &state, work)?;
+    }
+    Ok(state)
+}
+
+fn certify_lod_profiles(
+    surface: &Surface<'_>,
+    state: &LodState,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    super::projected_source(&surface.mesh, &surface.positions, work)?;
+    let axis = surface.sheet.base.axis();
+    let axes = [(axis + 1) % 3, (axis + 2) % 3];
+    let fine = surface
+        .info
+        .triangle_indices()
+        .map_err(|error| invalid(error.to_string()))?;
+    work.consume(
+        (state.positions.len() + 1)
+            * (FIELD_WORK * (fine.len() + state.indices.len()) + 4 * surface.mesh.size),
+    )
+    .map_err(invalid)?;
+    let original = super::ordered_boundary(&surface.mesh.positions, surface.mesh.size, work)?;
+    for positions in std::iter::once(state.ideal_positions.as_slice())
+        .chain(state.positions.iter().map(Vec::as_slice))
+    {
+        for triangle in fine.iter().chain(&state.indices) {
+            let [a, b, c] = triangle.map(|index| positions[index]);
+            if orient(a, b, c, axes)? != surface.sheet.sign {
+                return Err(invalid(
+                    "Discarded native LOD geometry must retain positive projected fine and maximal triangles",
+                ));
+            }
+        }
+        let ring = super::ordered_boundary(positions, surface.mesh.size, work)?;
+        if ring
+            .iter()
+            .zip(&original)
+            .any(|(&point, &expected)| !polygon::same_point(point, expected, axes))
+        {
+            return Err(invalid(
+                "Discarded native LOD movement must preserve every original projected boundary sample",
+            ));
+        }
+    }
+    super::certify_height_normals(&state.data, &state.positions, axis, work)
+}
+
+fn certify_lod_span(
+    surface: &Surface<'_>,
+    state: &LodState,
+    edge: usize,
+    span: neighbors::Span,
+    common: &[usize],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let border = span.indices(surface.power, edge).map_err(invalid)?;
+    work.consume(
+        (state.positions.len() + 1)
+            * (common.len()
+                + polygon::SEGMENT_WORK * (border.len() + common.len())
+                + 2 * common.len() * border.len()),
+    )
+    .map_err(invalid)?;
+    for positions in std::iter::once(state.ideal_positions.as_slice())
+        .chain(state.positions.iter().map(Vec::as_slice))
+    {
+        if common
+            .iter()
+            .any(|&index| !same(positions[index], surface.mesh.positions[index]))
+        {
+            return Err(invalid(
+                "Discarded terrain LOD movement must preserve every original common seam sample",
+            ));
+        }
+        for pair in common.windows(2) {
+            let first = border.iter().position(|&index| index == pair[0]);
+            let last = border.iter().position(|&index| index == pair[1]);
+            let (Some(first), Some(last)) = (first, last) else {
+                return Err(invalid("Terrain LOD lost its native common border span"));
+            };
+            let segment = [
+                surface.mesh.positions[pair[0]],
+                surface.mesh.positions[pair[1]],
+            ];
+            for &index in &border[first.min(last)..=first.max(last)] {
+                if !on_segment(positions[index], segment)? {
+                    return Err(invalid(
+                        "Discarded terrain LOD movement must preserve its complete exact native seam polyline",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn bounds(points: &[DVec3]) -> (DVec3, DVec3) {
@@ -300,7 +409,7 @@ fn contact_rank(
         .checked_add(second.len())
         .and_then(|count| count.checked_add(1))
         .and_then(|count| count.checked_mul(FIELD_WORK))
-        .ok_or_else(|| invalid("Flat terrain contact work overflow"))?;
+        .ok_or_else(|| invalid("Terrain contact work overflow"))?;
     work.consume(plane_work).map_err(invalid)?;
     let base = BasePlane::new([first[0], first[1], first[2]])?;
     for &point in first.iter().chain(second) {
@@ -328,7 +437,7 @@ fn projected_contact_rank(
         .len()
         .checked_add(second.len())
         .and_then(|count| count.checked_mul(8))
-        .ok_or_else(|| invalid("Flat terrain contact work overflow"))?;
+        .ok_or_else(|| invalid("Terrain contact work overflow"))?;
     let mut touching = Vec::new();
     for points in [first, second] {
         for edge in 0..points.len() {
@@ -374,7 +483,7 @@ fn collect<'a>(vmf: &'a Vmf, work: &mut Work) -> Result<Vec<Raw<'a>>, EditError>
                 .is_some_and(|name| name.eq_ignore_ascii_case("func_instance"))
     }) {
         return Err(invalid(
-            "Connected flat terrain requires complete resolved visible-instance context",
+            "Connected terrain requires complete resolved visible-instance context",
         ));
     }
     let mut result = Vec::new();
@@ -388,7 +497,7 @@ fn collect<'a>(vmf: &'a Vmf, work: &mut Work) -> Result<Vec<Raw<'a>>, EditError>
             }
             if result.len() == bsp::MAX_DISPLACEMENTS {
                 return Err(invalid(
-                    "Flat terrain context exceeds the native displacement limit",
+                    "Terrain context exceeds the native displacement limit",
                 ));
             }
             work.consume(face.vertices.len()).map_err(invalid)?;
@@ -428,7 +537,7 @@ fn affected_sources<'a>(
             .collect::<Vec<_>>();
         let [index] = found.as_slice() else {
             return Err(invalid(
-                "Flat terrain context lost a unique selected source identity",
+                "Terrain context lost a unique selected source identity",
             ));
         };
         affected.insert(*index);
@@ -450,14 +559,14 @@ fn affected_sources<'a>(
                 .cage
                 .len()
                 .checked_mul(raw[second].cage.len())
-                .ok_or_else(|| invalid("Flat terrain contact work overflow"))?;
+                .ok_or_else(|| invalid("Terrain contact work overflow"))?;
             work.consume(comparisons).map_err(invalid)?;
             if grid_clip::related(&raw[first].cage, &raw[second].cage)
                 || contact_rank(&raw[first].cage, &raw[second].cage, work)?.is_some()
             {
                 if affected.len() >= selected.len() + grid_clip::MAX_NEIGHBORS {
                     return Err(invalid(
-                        "Flat terrain context exceeds its affected-neighbor limit",
+                        "Terrain context exceeds its affected-neighbor limit",
                     ));
                 }
                 affected.insert(second);
@@ -473,15 +582,10 @@ fn affected_sources<'a>(
         .collect())
 }
 
-fn prepare<'a>(
-    raw: Raw<'a>,
-    mode: Mode,
-    phase: Phase,
-    work: &mut Work,
-) -> Result<Surface<'a>, EditError> {
+fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>, EditError> {
     if !raw.supported {
         return Err(invalid(
-            "Flat terrain neighbors must be world or func_detail terrain",
+            "Terrain neighbors must be world or func_detail terrain",
         ));
     }
     let info = raw.side.displacement.as_ref().unwrap();
@@ -500,6 +604,7 @@ fn prepare<'a>(
     let positions = reconstructed(&data, base, work)?;
     super::native_base(&mut mesh, &data, base, work)?;
     let base_plane = BasePlane::new([corners[0], corners[1], corners[2]])?;
+    let mut embedded = None;
     let field = match mode {
         Mode::Flat => {
             work.consume(FIELD_WORK * 17).map_err(invalid)?;
@@ -509,7 +614,7 @@ fn prepare<'a>(
             )?)
         }
         Mode::Cells => {
-            super::projected_sheet(&mesh, &positions, phase, work)?;
+            embedded = Some(super::intrinsic_sheet(&mesh, &positions, work)?.1);
             None
         }
     };
@@ -518,7 +623,7 @@ fn prepare<'a>(
     let sign = orient(corners[0], corners[1], corners[2], axes)?;
     if sign == 0 {
         return Err(invalid(
-            "Flat terrain contacts require noncollapsed native cages",
+            "Terrain contacts require noncollapsed native cages",
         ));
     }
     super::convex(&corners, axes, sign)?;
@@ -540,7 +645,7 @@ fn prepare<'a>(
                     .any(|positions| !same(expected, positions[index]))
             {
                 return Err(invalid(
-                    "Connected flat terrain requires authored, native and compiler positions on one exact planar field",
+                    "Connected terrain requires authored, native and compiler positions on one exact planar field",
                 ));
             }
         }
@@ -567,15 +672,22 @@ fn prepare<'a>(
             let points = triangle.map(|index| positions.last().unwrap()[index]);
             if orient(points[0], points[1], points[2], visible_axes)? != visible_sign {
                 return Err(invalid(
-                    "Connected flat terrain currently requires consistently oriented positive native triangles",
+                    "Connected terrain currently requires consistently oriented positive native triangles",
                 ));
             }
         }
     }
-    match mode {
-        Mode::Flat => super::certify_normals(&data, &positions, work)?,
-        Mode::Cells => super::certify_height_normals(&data, &positions, axis, work)?,
-    }
+    let normal_support = match mode {
+        Mode::Flat => {
+            super::certify_normals(&data, &positions, work)?;
+            None
+        }
+        Mode::Cells => Some(super::local_normal_support(
+            data.infos[0],
+            &positions,
+            work,
+        )?),
+    };
     let sheet = Sheet {
         base: base_plane,
         field,
@@ -591,6 +703,8 @@ fn prepare<'a>(
         base,
         positions,
         sheet,
+        embedded,
+        normal_support,
     })
 }
 
@@ -598,6 +712,7 @@ fn graph(
     surfaces: &[&Surface<'_>],
     mode: Mode,
     phase: Phase,
+    cuts: &BTreeMap<FaceId, (Plane, Keep)>,
     work: &mut Work,
 ) -> Result<Graph, EditError> {
     let grids = surfaces
@@ -608,7 +723,7 @@ fn graph(
         neighbors::find_spans(&grids, &mut |amount| work.consume(amount)).map_err(invalid)?;
     if found.ambiguous != 0 || found.mismatched != 0 {
         return Err(invalid(
-            "Flat terrain requires unambiguous matching native full/half contacts",
+            "Terrain requires unambiguous matching native full/half contacts",
         ));
     }
     let connections =
@@ -616,10 +731,41 @@ fn graph(
             .map_err(invalid)?;
     let (patches, _) =
         lod::prepare(&grids, &found.pairs, &mut |amount| work.consume(amount)).map_err(invalid)?;
+    work.consume(surfaces.len()).map_err(invalid)?;
+    let states = surfaces
+        .iter()
+        .zip(patches)
+        .map(|(surface, patch)| {
+            let cut = if mode == Mode::Cells && phase == Phase::Original {
+                cuts.get(&surface.raw.source).copied()
+            } else {
+                None
+            };
+            lod_state(surface, patch, cut, work)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    work.consume(
+        surfaces
+            .iter()
+            .map(|surface| {
+                surface.mesh.positions.len() + surface.positions.iter().map(Vec::len).sum::<usize>()
+            })
+            .sum(),
+    )
+    .map_err(invalid)?;
+    let moved = surfaces
+        .iter()
+        .zip(&states)
+        .enumerate()
+        .filter_map(|(index, (surface, state))| {
+            (state.ideal_positions != surface.mesh.positions
+                || state.positions != surface.positions)
+                .then_some(index)
+        })
+        .collect::<BTreeSet<_>>();
     let mut edges = BTreeSet::new();
     let mut corners = BTreeSet::new();
-    let mut visible_spans = BTreeMap::new();
-    let mut visible_corners = BTreeMap::new();
+    let mut contacts = BTreeMap::new();
     let mut varying = BTreeSet::new();
     let mut result = Graph::default();
     for pair in &found.pairs {
@@ -639,50 +785,58 @@ fn graph(
                 .any(|(a, b)| !same(a[i], b[j]))
             {
                 return Err(invalid(
-                    "Flat terrain shared-edge native and compiler samples differ",
+                    "Terrain shared-edge native and compiler samples differ",
                 ));
             }
+        }
+        if !moved.is_empty() {
+            work.consume(2 * common.len()).map_err(invalid)?;
+            let first = common.iter().map(|&(first, _)| first).collect::<Vec<_>>();
+            let second = common.iter().map(|&(_, second)| second).collect::<Vec<_>>();
+            certify_lod_span(
+                a,
+                &states[pair.first],
+                pair.first_edge,
+                pair.first_span,
+                &first,
+                work,
+            )?;
+            certify_lod_span(
+                b,
+                &states[pair.second],
+                pair.second_edge,
+                pair.second_span,
+                &second,
+                work,
+            )?;
         }
         let key = (pair.first.min(pair.second), pair.first.max(pair.second));
         edges.insert(key);
-        if mode == Mode::Cells && phase == Phase::Original {
-            work.consume(common.len() + 1).map_err(invalid)?;
-            if common.len() < 2
-                || visible_spans
-                    .insert(
-                        key,
-                        common
-                            .iter()
-                            .map(|&(index, _)| a.positions.last().unwrap()[index])
-                            .collect::<Vec<_>>(),
-                    )
-                    .is_some()
-            {
+        let base = &a.corners;
+        let middle = ((base[pair.first_edge] + base[(pair.first_edge + 1) % 4]) * 0.5)
+            .as_vec3()
+            .as_dvec3();
+        let span = match pair.first_span {
+            neighbors::Span::Full => [base[pair.first_edge], base[(pair.first_edge + 1) % 4]],
+            neighbors::Span::FirstHalf => [base[pair.first_edge], middle],
+            neighbors::Span::SecondHalf => [middle, base[(pair.first_edge + 1) % 4]],
+        };
+        for point in span {
+            if !on_segment(
+                point,
+                [base[pair.first_edge], base[(pair.first_edge + 1) % 4]],
+            )? {
                 return Err(invalid(
-                    "Terrain source pair has multiple or ambiguous native edge spans",
+                    "Terrain contacts currently require exact native edge midpoints",
                 ));
             }
         }
+        if contacts.insert(key, span).is_some() {
+            return Err(invalid(
+                "Terrain source pair has multiple native edge spans",
+            ));
+        }
         if a.raw.source != b.raw.source {
-            let base = &a.corners;
-            let middle = ((base[pair.first_edge] + base[(pair.first_edge + 1) % 4]) * 0.5)
-                .as_vec3()
-                .as_dvec3();
-            let span = match pair.first_span {
-                neighbors::Span::Full => [base[pair.first_edge], base[(pair.first_edge + 1) % 4]],
-                neighbors::Span::FirstHalf => [base[pair.first_edge], middle],
-                neighbors::Span::SecondHalf => [middle, base[(pair.first_edge + 1) % 4]],
-            };
-            for point in span {
-                if !on_segment(
-                    point,
-                    [base[pair.first_edge], base[(pair.first_edge + 1) % 4]],
-                )? {
-                    return Err(invalid(
-                        "Flat terrain contacts currently require exact native edge midpoints",
-                    ));
-                }
-            }
             result
                 .edges
                 .push(Contact::new([a.raw.source, b.raw.source], span));
@@ -702,7 +856,7 @@ fn graph(
                     .corners
                     .iter()
                     .position(|&other| same(point, other))
-                    .ok_or_else(|| invalid("Flat terrain native corner identity changed"))?;
+                    .ok_or_else(|| invalid("Terrain native corner identity changed"))?;
                 let indices = |surface: &Surface<'_>, corner| {
                     let size = (1usize << surface.power) + 1;
                     [0, (size - 1) * size, size * size - 1, size - 1][corner]
@@ -715,22 +869,29 @@ fn graph(
                         !same(a_points[indices(a, corner)], b_points[indices(b, other)])
                     })
                 {
-                    return Err(invalid("Flat terrain native corner samples differ"));
+                    return Err(invalid("Terrain native corner samples differ"));
+                }
+                if !moved.is_empty() {
+                    work.consume(2 * (a.positions.len() + 1)).map_err(invalid)?;
+                    for (surface, state, corner) in
+                        [(a, &states[first], corner), (b, &states[second], other)]
+                    {
+                        let index = indices(surface, corner);
+                        if std::iter::once(state.ideal_positions.as_slice())
+                            .chain(state.positions.iter().map(Vec::as_slice))
+                            .any(|positions| !same(positions[index], surface.mesh.positions[index]))
+                        {
+                            return Err(invalid(
+                                "Discarded terrain LOD movement must preserve every original shared corner sample",
+                            ));
+                        }
+                    }
                 }
                 corners.insert((first, second));
-                if mode == Mode::Cells && phase == Phase::Original {
-                    work.consume(1).map_err(invalid)?;
-                    if visible_corners
-                        .insert(
-                            (first, second),
-                            a.positions.last().unwrap()[indices(a, corner)],
-                        )
-                        .is_some()
-                    {
-                        return Err(invalid(
-                            "Terrain source pair has multiple or ambiguous native corner contacts",
-                        ));
-                    }
+                if contacts.insert((first, second), [point; 2]).is_some() {
+                    return Err(invalid(
+                        "Terrain source pair has mixed or multiple native contacts",
+                    ));
                 }
                 if a.raw.source != b.raw.source {
                     result
@@ -747,7 +908,7 @@ fn graph(
             let Some(rank) = contact_rank(a, b, work)? else {
                 if grid_clip::related(a, b) {
                     return Err(invalid(
-                        "Flat terrain near-contact geometry cannot be certified exactly",
+                        "Terrain near-contact geometry cannot be certified exactly",
                     ));
                 }
                 continue;
@@ -767,36 +928,141 @@ fn graph(
                 }
             }
             if grid_clip::overlaps(a, b) || rank == 0 {
-                return Err(invalid("Flat terrain native base domains overlap"));
+                return Err(invalid("Terrain native base domains overlap"));
             }
             if !(edges.contains(&(first, second)) && rank == 1
                 || corners.contains(&(first, second)) && rank == 2)
             {
                 return Err(invalid(
-                    "Flat terrain contact lacks complete native full/half or corner coverage",
+                    "Terrain contact lacks complete native full/half or corner coverage",
                 ));
             }
         }
     }
     certify_contact_normals(surfaces, &edges, &corners, &varying, work)?;
-    if mode == Mode::Cells && phase == Phase::Original {
-        certify_original_footprints(
-            surfaces,
-            &edges,
-            &corners,
-            &visible_spans,
-            &visible_corners,
-            work,
-        )?;
+    if mode == Mode::Cells {
+        certify_moved_footprints(surfaces, &moved, &contacts, work)?;
+        normals::certify(surfaces, &states, &found.pairs, &connections, work)?;
+        certify_native_contacts(surfaces, &states, &contacts, work)?;
     }
     result.pairs = found.pairs;
-    work.consume(surfaces.len()).map_err(invalid)?;
-    result.lod = surfaces
-        .iter()
-        .zip(patches)
-        .map(|(surface, patch)| lod_state(surface, patch, work))
-        .collect::<Result<Vec<_>, _>>()?;
+    result.lod = states;
     Ok(result)
+}
+
+fn profile_positions(state: &LodState, profile: usize) -> &[DVec3] {
+    if profile == 0 {
+        &state.ideal_positions
+    } else {
+        &state.positions[profile - 1]
+    }
+}
+
+fn certify_native_contacts(
+    surfaces: &[&Surface<'_>],
+    states: &[LodState],
+    contacts: &BTreeMap<(usize, usize), [DVec3; 2]>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    if surfaces.len() != states.len() {
+        return Err(invalid(
+            "Terrain contact proof lost its native geometry states",
+        ));
+    }
+    let mut verified = Vec::new();
+    let vertices = surfaces
+        .iter()
+        .map(|surface| surface.mesh.positions.len())
+        .sum::<usize>();
+    for profile in 0..bsp::NativeDisplacementRounding::ALL.len() + 2 {
+        work.consume((verified.len() + 1) * vertices)
+            .map_err(invalid)?;
+        if verified.iter().any(|&previous| {
+            states.iter().all(|state| {
+                profile_positions(state, previous) == profile_positions(state, profile)
+            })
+        }) {
+            continue;
+        }
+        let prepared = surfaces
+            .iter()
+            .zip(states)
+            .map(|(surface, state)| {
+                let positions = profile_positions(state, profile);
+                work.consume(surface.mesh.positions.len())
+                    .map_err(invalid)?;
+                if positions == surface.mesh.positions {
+                    return Ok(None);
+                }
+                let mut mesh = surface.mesh.clone();
+                mesh.positions = positions.to_vec();
+                super::embedded::prepare(&mesh, work).map(Some)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let prepared = prepared
+            .iter()
+            .zip(surfaces)
+            .map(|(prepared, surface)| {
+                prepared
+                    .as_ref()
+                    .or(surface.embedded.as_ref())
+                    .ok_or_else(|| {
+                        invalid("Terrain contact proof lost its prepared native geometry")
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        certify_prepared_contacts(&prepared, contacts, work)?;
+        verified.push(profile);
+    }
+    Ok(())
+}
+
+fn certify_prepared_contacts(
+    surfaces: &[&super::embedded::Prepared],
+    contacts: &BTreeMap<(usize, usize), [DVec3; 2]>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    for first in 0..surfaces.len() {
+        for second in first + 1..surfaces.len() {
+            super::embedded::between_prepared(
+                surfaces[first],
+                surfaces[second],
+                contacts.get(&(first, second)).copied(),
+                work,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn certify_moved_footprints(
+    surfaces: &[&Surface<'_>],
+    moved: &BTreeSet<usize>,
+    contacts: &BTreeMap<(usize, usize), [DVec3; 2]>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let Some(&seed) = moved.first() else {
+        return Ok(());
+    };
+    let axis = surfaces[seed].sheet.base.axis();
+    let mut projected = Vec::with_capacity(surfaces.len());
+    for surface in surfaces {
+        super::projected_source(&surface.mesh, &surface.positions, work)?;
+        if !surfaces[seed].sheet.same_base(&surface.sheet)? {
+            return Err(invalid(
+                "Moved terrain requires one common base chart across all affected sources",
+            ));
+        }
+        work.consume(8 * surface.mesh.positions.len())
+            .map_err(invalid)?;
+        let mut mesh = surface.mesh.clone();
+        for point in &mut mesh.positions {
+            point[axis] = 0.0;
+        }
+        projected.push(super::embedded::prepare(&mesh, work)?);
+    }
+    certify_prepared_contacts(&projected.iter().collect::<Vec<_>>(), contacts, work)?;
+    Ok(())
 }
 
 fn certify_lod(
@@ -845,7 +1111,7 @@ fn certify_lod(
             lod_proof::certify_geometry(
                 surface.raw.side.displacement.as_ref().unwrap(),
                 &surface.mesh,
-                previous.lod[index].proof(),
+                previous.lod[index].proof(surface),
                 None,
                 work,
             )?;
@@ -878,7 +1144,7 @@ fn certify_lod(
                     surface.raw.side.displacement.as_ref().unwrap(),
                     &surface.mesh,
                     surface.sheet.field.as_ref().unwrap(),
-                    state.proof(),
+                    state.proof(surface),
                     texture,
                     work,
                 )?;
@@ -889,7 +1155,7 @@ fn certify_lod(
                     &surface.raw.face,
                     surface.raw.side.displacement.as_ref().unwrap(),
                     &surface.mesh,
-                    state.proof(),
+                    state.proof(surface),
                     replacement.cut,
                     texture,
                     work,
@@ -914,7 +1180,7 @@ fn certify_lod(
                         child.raw.side.displacement.as_ref().unwrap(),
                         &child.mesh,
                         child.sheet.field.as_ref().unwrap(),
-                        state.proof(),
+                        state.proof(child),
                         texture,
                         work,
                     )?,
@@ -925,7 +1191,7 @@ fn certify_lod(
                         &child.raw.face,
                         child.raw.side.displacement.as_ref().unwrap(),
                         &child.mesh,
-                        state.proof(),
+                        state.proof(child),
                         texture,
                         work,
                     )?,
@@ -966,389 +1232,6 @@ fn contact_component(
         }
     }
     Ok(component)
-}
-
-fn certify_original_footprints(
-    surfaces: &[&Surface<'_>],
-    edges: &BTreeSet<(usize, usize)>,
-    corners: &BTreeSet<(usize, usize)>,
-    spans: &BTreeMap<(usize, usize), Vec<DVec3>>,
-    points: &BTreeMap<(usize, usize), DVec3>,
-    work: &mut Work,
-) -> Result<(), EditError> {
-    let mut verified = BTreeSet::new();
-    for &(seed, _) in edges.iter().chain(corners) {
-        if verified.contains(&seed) {
-            continue;
-        }
-        let component = contact_component(seed, edges, corners, work)?;
-        let axis = surfaces[seed].sheet.base.axis();
-        let axes = [(axis + 1) % 3, (axis + 2) % 3];
-        let mut rings = BTreeMap::new();
-        for &index in &component {
-            let surface = surfaces[index];
-            let size = surface
-                .info
-                .grid_size()
-                .map_err(|error| invalid(error.to_string()))?;
-            let ring = super::ordered_boundary(surface.positions.last().unwrap(), size, work)?;
-            work.consume(polygon::CONVEX_WORK * ring.len() * ring.len())
-                .map_err(invalid)?;
-            let convex = polygon::convex(&ring, axes, surface.sheet.sign)?;
-            rings.insert(index, (ring, convex));
-        }
-        for &first in &component {
-            for &second in component.range(first + 1..) {
-                work.consume(2 * FIELD_WORK).map_err(invalid)?;
-                if !surfaces[first].sheet.same_base(&surfaces[second].sheet)? {
-                    return Err(invalid(
-                        "Connected curved terrain footprints require one exact base chart and orientation",
-                    ));
-                }
-                let key = (first, second);
-                let expected = if edges.contains(&key) {
-                    if corners.contains(&key) {
-                        return Err(invalid(
-                            "Terrain source pair has mixed native edge and corner contacts",
-                        ));
-                    }
-                    spans
-                        .get(&key)
-                        .ok_or_else(|| {
-                            invalid("Terrain footprint lost its verified native edge polyline")
-                        })?
-                        .as_slice()
-                } else if corners.contains(&key) {
-                    std::slice::from_ref(points.get(&key).ok_or_else(|| {
-                        invalid("Terrain footprint lost its verified visible native corner")
-                    })?)
-                } else {
-                    &[]
-                };
-                work.consume(expected.len() * expected.len())
-                    .map_err(invalid)?;
-                for (index, &point) in expected.iter().enumerate() {
-                    if expected
-                        .iter()
-                        .skip(index + 1)
-                        .any(|&other| polygon::same_point(point, other, axes))
-                    {
-                        return Err(invalid(
-                            "Native terrain projected seam samples must be distinct",
-                        ));
-                    }
-                }
-                let (a, a_convex) = &rings[&first];
-                let (b, b_convex) = &rings[&second];
-                let straight = expected.len() < 2 || straight_span(expected, axes, work)?;
-                if *a_convex && *b_convex && straight && expected.len() != 1 {
-                    let rank = projected_contact_rank(a, b, axes, work)?;
-                    match expected.len() {
-                        0 if rank.is_none() => {}
-                        count if count >= 2 && rank == Some(1) => {
-                            certify_span_overlap(
-                                a,
-                                b,
-                                [expected[0], expected[count - 1]],
-                                axes,
-                                work,
-                            )?;
-                        }
-                        _ => {
-                            return Err(invalid(
-                                "Curved terrain projected contacts overlap or differ from their exact native contact set",
-                            ));
-                        }
-                    }
-                } else {
-                    certify_boundary(a, b, expected, axes, work)?;
-                    certify_boundary(b, a, expected, axes, work)?;
-                    certify_expected(a, b, expected, axes, work)?;
-                }
-            }
-        }
-        verified.extend(component);
-    }
-    Ok(())
-}
-
-fn straight_span(points: &[DVec3], axes: [usize; 2], work: &mut Work) -> Result<bool, EditError> {
-    work.consume((polygon::ON_SEGMENT_WORK + 2) * points.len())
-        .map_err(invalid)?;
-    let span = [points[0], points[points.len() - 1]];
-    let coordinate = axes
-        .into_iter()
-        .find(|&axis| span[0][axis] != span[1][axis])
-        .ok_or_else(|| invalid("Native terrain visible seam is projected to a point"))?;
-    let increasing = span[0][coordinate] < span[1][coordinate];
-    let mut previous = points[0][coordinate];
-    for &point in &points[1..] {
-        if !polygon::on_segment(point, span, axes)?
-            || if increasing {
-                point[coordinate] <= previous
-            } else {
-                point[coordinate] >= previous
-            }
-        {
-            return Ok(false);
-        }
-        previous = point[coordinate];
-    }
-    Ok(true)
-}
-
-fn split_contact_segment(
-    segment: [DVec3; 2],
-    ring: &[DVec3],
-    expected: &[DVec3],
-    axes: [usize; 2],
-    opposite: bool,
-    work: &mut Work,
-) -> Result<Vec<DVec3>, EditError> {
-    let coordinate = axes
-        .into_iter()
-        .find(|&axis| segment[0][axis] != segment[1][axis])
-        .ok_or_else(|| invalid("Terrain projected contact segment is collapsed"))?;
-    let capacity = 2 + 2 * ring.len() + expected.len();
-    work.consume(
-        polygon::SEGMENT_WORK * ring.len() + polygon::ON_SEGMENT_WORK * expected.len() + capacity,
-    )
-    .map_err(invalid)?;
-    let mut points = Vec::with_capacity(capacity);
-    points.extend(segment);
-    for (index, &point) in ring.iter().enumerate() {
-        let other = [point, ring[(index + 1) % ring.len()]];
-        match polygon::segment_contact(segment, other, axes)? {
-            polygon::SegmentContact::None => {}
-            polygon::SegmentContact::Crossing => {
-                return Err(invalid(
-                    "Curved terrain projected footprint boundaries cross",
-                ));
-            }
-            polygon::SegmentContact::Point(point) => points.push(point),
-            polygon::SegmentContact::Overlap(overlap) => {
-                if opposite
-                    && (segment[0][coordinate] < segment[1][coordinate])
-                        == (other[0][coordinate] < other[1][coordinate])
-                {
-                    return Err(invalid(
-                        "Curved terrain shared boundaries must have opposite winding",
-                    ));
-                }
-                points.extend(overlap);
-            }
-        }
-    }
-    for &point in expected {
-        if polygon::on_segment(point, segment, axes)? {
-            points.push(point);
-        }
-    }
-    work.consume(points.len() * ((usize::BITS - points.len().leading_zeros()) as usize + 2))
-        .map_err(invalid)?;
-    points.sort_by(|a, b| a[coordinate].total_cmp(&b[coordinate]));
-    points.dedup_by(|a, b| polygon::same_point(*a, *b, axes));
-    Ok(points)
-}
-
-fn projected_midpoint([mut a, mut b]: [DVec3; 2], axes: [usize; 2]) -> Result<DVec3, EditError> {
-    let dropped = 3 - axes[0] - axes[1];
-    a[dropped] = 0.0;
-    b[dropped] = 0.0;
-    weighted(&[a, b], &[1, 1], 2)
-}
-
-fn location(
-    point: DVec3,
-    ring: &[DVec3],
-    axes: [usize; 2],
-    work: &mut Work,
-) -> Result<polygon::Location, EditError> {
-    work.consume(polygon::CLASSIFY_WORK * ring.len())
-        .map_err(invalid)?;
-    polygon::classify(point, ring, axes)
-}
-
-fn expected_point(
-    point: DVec3,
-    expected: &[DVec3],
-    axes: [usize; 2],
-    work: &mut Work,
-) -> Result<bool, EditError> {
-    work.consume(1 + polygon::ON_SEGMENT_WORK * expected.len())
-        .map_err(invalid)?;
-    if expected.len() == 1 {
-        return Ok(polygon::same_point(point, expected[0], axes));
-    }
-    for segment in expected.windows(2) {
-        if polygon::on_segment(point, [segment[0], segment[1]], axes)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn expected_segment(
-    segment: [DVec3; 2],
-    expected: &[DVec3],
-    axes: [usize; 2],
-    work: &mut Work,
-) -> Result<bool, EditError> {
-    work.consume(1 + 2 * polygon::ON_SEGMENT_WORK * expected.len())
-        .map_err(invalid)?;
-    for points in expected.windows(2) {
-        if polygon::on_segment(segment[0], [points[0], points[1]], axes)?
-            && polygon::on_segment(segment[1], [points[0], points[1]], axes)?
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn certify_boundary(
-    ring: &[DVec3],
-    other: &[DVec3],
-    expected: &[DVec3],
-    axes: [usize; 2],
-    work: &mut Work,
-) -> Result<(), EditError> {
-    for (index, &point) in ring.iter().enumerate() {
-        let points = split_contact_segment(
-            [point, ring[(index + 1) % ring.len()]],
-            other,
-            expected,
-            axes,
-            true,
-            work,
-        )?;
-        for &point in &points {
-            match location(point, other, axes, work)? {
-                polygon::Location::Inside => {
-                    return Err(invalid(
-                        "Curved terrain projected footprints have positive-area overlap",
-                    ));
-                }
-                polygon::Location::Boundary if !expected_point(point, expected, axes, work)? => {
-                    return Err(invalid(
-                        "Curved terrain projected footprints introduce an unsewn point contact",
-                    ));
-                }
-                _ => {}
-            }
-        }
-        for pair in points.windows(2) {
-            work.consume(FIELD_WORK).map_err(invalid)?;
-            let segment = [pair[0], pair[1]];
-            match location(projected_midpoint(segment, axes)?, other, axes, work)? {
-                polygon::Location::Inside => {
-                    return Err(invalid(
-                        "Curved terrain projected footprints have positive-area overlap",
-                    ));
-                }
-                polygon::Location::Boundary
-                    if !expected_segment(segment, expected, axes, work)? =>
-                {
-                    return Err(invalid(
-                        "Curved terrain projected seam extends outside its complete native polyline",
-                    ));
-                }
-                _ => {}
-            }
-        }
-    }
-    Ok(())
-}
-
-fn certify_expected(
-    first: &[DVec3],
-    second: &[DVec3],
-    expected: &[DVec3],
-    axes: [usize; 2],
-    work: &mut Work,
-) -> Result<(), EditError> {
-    for ring in [first, second] {
-        for &point in expected {
-            if location(point, ring, axes, work)? != polygon::Location::Boundary {
-                return Err(invalid(
-                    "Curved terrain footprint omits a verified native contact sample",
-                ));
-            }
-        }
-        for segment in expected.windows(2) {
-            let points =
-                split_contact_segment([segment[0], segment[1]], ring, expected, axes, false, work)?;
-            for &point in &points {
-                if location(point, ring, axes, work)? != polygon::Location::Boundary {
-                    return Err(invalid(
-                        "Curved terrain footprint omits a verified native seam intersection",
-                    ));
-                }
-            }
-            for pair in points.windows(2) {
-                work.consume(FIELD_WORK).map_err(invalid)?;
-                if location(
-                    projected_midpoint([pair[0], pair[1]], axes)?,
-                    ring,
-                    axes,
-                    work,
-                )? != polygon::Location::Boundary
-                {
-                    return Err(invalid(
-                        "Curved terrain footprint omits part of its complete native seam",
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn certify_span_overlap(
-    first: &[DVec3],
-    second: &[DVec3],
-    span: [DVec3; 2],
-    axes: [usize; 2],
-    work: &mut Work,
-) -> Result<(), EditError> {
-    let coordinate = axes
-        .into_iter()
-        .find(|&axis| span[0][axis] != span[1][axis])
-        .ok_or_else(|| invalid("Native terrain visible edge span is projected to a point"))?;
-    let first = support_interval(first, span, axes, coordinate, work)?;
-    let second = support_interval(second, span, axes, coordinate, work)?;
-    let actual = [first[0].max(second[0]), first[1].min(second[1])];
-    let expected = [
-        span[0][coordinate].min(span[1][coordinate]),
-        span[0][coordinate].max(span[1][coordinate]),
-    ];
-    if actual != expected {
-        return Err(invalid(
-            "Curved terrain projected seam extends beyond or omits its exact native span",
-        ));
-    }
-    Ok(())
-}
-
-fn support_interval(
-    ring: &[DVec3],
-    span: [DVec3; 2],
-    axes: [usize; 2],
-    coordinate: usize,
-    work: &mut Work,
-) -> Result<[f64; 2], EditError> {
-    work.consume((FIELD_WORK + 2) * ring.len())
-        .map_err(invalid)?;
-    let mut interval: Option<[f64; 2]> = None;
-    for &point in ring {
-        if orient(span[0], span[1], point, axes)? == 0 {
-            let value = point[coordinate];
-            interval = Some(interval.map_or([value; 2], |range| {
-                [range[0].min(value), range[1].max(value)]
-            }));
-        }
-    }
-    interval.ok_or_else(|| invalid("Terrain projected footprint lost its native support line"))
 }
 
 fn certify_contact_normals(
@@ -1474,14 +1357,14 @@ fn coverage(
         }
         if !original {
             return Err(invalid(
-                "Flat terrain cut introduced a native contact outside its original source join",
+                "Terrain cut introduced a native contact outside its original source join",
             ));
         }
     }
     for contact in &after.corners {
         if !covered(contact.sources, contact.points[0], before, work)? {
             return Err(invalid(
-                "Flat terrain cut introduced an unproved native corner contact",
+                "Terrain cut introduced an unproved native corner contact",
             ));
         }
     }
@@ -1510,7 +1393,7 @@ fn coverage(
                 && !covered(contact.sources, point, after, work)?
             {
                 return Err(invalid(
-                    "Flat terrain cut disconnected a retained native contact endpoint",
+                    "Terrain cut disconnected a retained native contact endpoint",
                 ));
             }
         }
@@ -1529,7 +1412,7 @@ fn coverage(
             }
             if actual != usize::from(expected) {
                 return Err(invalid(
-                    "Flat terrain cut cannot preserve complete retained native edge coverage",
+                    "Terrain cut cannot preserve complete retained native edge coverage",
                 ));
             }
         }
@@ -1540,9 +1423,7 @@ fn coverage(
             && retained(contact.sources[1], point, surfaces, work)?
             && !covered(contact.sources, point, after, work)?
         {
-            return Err(invalid(
-                "Flat terrain cut disconnected a retained native corner",
-            ));
+            return Err(invalid("Terrain cut disconnected a retained native corner"));
         }
     }
     Ok(())
@@ -1573,7 +1454,7 @@ fn verify_source(
         .sides
         .iter()
         .position(|side| side.id == source.side)
-        .ok_or_else(|| invalid("Flat terrain context lost an original source face"))?;
+        .ok_or_else(|| invalid("Terrain context lost an original source face"))?;
     let side = &solid.sides[index];
     let mut canonical = solid.clone();
     crate::brush::canonicalize_precise(&mut canonical)?;
@@ -1582,14 +1463,14 @@ fn verify_source(
             && assembled.raw.side.plane != canonical.sides[index].plane
     {
         return Err(invalid(
-            "Flat terrain context changed original source ownership or base planes",
+            "Terrain context changed original source ownership or base planes",
         ));
     }
     let mut normalized = side.clone();
     normalized.plane = assembled.raw.side.plane;
     if normalized != *assembled.raw.side {
         return Err(invalid(
-            "Flat terrain context changed original source fields or texture projections",
+            "Terrain context changed original source fields or texture projections",
         ));
     }
     let shape = BrushGeometry::from_solid(solid).map_err(|error| invalid(error.to_string()))?;
@@ -1597,7 +1478,7 @@ fn verify_source(
         .faces
         .into_iter()
         .find(|face| face.side == index)
-        .ok_or_else(|| invalid("Flat terrain source has no effective native face"))?;
+        .ok_or_else(|| invalid("Terrain source has no effective native face"))?;
     let cage = face
         .vertices
         .iter()
@@ -1613,7 +1494,6 @@ fn verify_source(
             cage,
         },
         mode,
-        Phase::Original,
         work,
     )?;
     work.consume(original.positions.iter().map(Vec::len).sum())
@@ -1627,7 +1507,7 @@ fn verify_source(
         || !original.sheet.matches(&assembled.sheet)?
     {
         return Err(invalid(
-            "Flat terrain context changed original native or compiler geometry",
+            "Terrain context changed original native or compiler geometry",
         ));
     }
     Ok(())
@@ -1744,10 +1624,14 @@ pub(crate) fn required_partitions(
     let raw = collect(vmf, work)?;
     let before = affected_sources(raw, &selected, work)?
         .into_iter()
-        .map(|raw| prepare(raw, Mode::Cells, Phase::Original, work))
+        .map(|raw| prepare(raw, Mode::Cells, work))
         .collect::<Result<Vec<_>, _>>()?;
     let references = before.iter().collect::<Vec<_>>();
-    let original = graph(&references, Mode::Cells, Phase::Original, work)?;
+    let cuts = selected
+        .iter()
+        .map(|&source| (source, (plane, keep)))
+        .collect::<BTreeMap<_, _>>();
+    let original = graph(&references, Mode::Cells, Phase::Original, &cuts, work)?;
     work.consume(before.len()).map_err(invalid)?;
     if original.lod.len() != before.len() {
         return Err(invalid(
@@ -1759,7 +1643,7 @@ pub(crate) fn required_partitions(
             lod_proof::certify_geometry(
                 surface.raw.side.displacement.as_ref().unwrap(),
                 &surface.mesh,
-                state.proof(),
+                state.proof(surface),
                 selected
                     .contains(&surface.raw.source)
                     .then_some((plane, keep)),
@@ -1929,7 +1813,7 @@ fn certify_mode(
             .any(|part| part.hidden != source.hidden)
         {
             return Err(invalid(
-                "Flat terrain replacements must preserve saved-hidden visibility",
+                "Terrain replacements must preserve saved-hidden visibility",
             ));
         }
     }
@@ -1946,7 +1830,7 @@ fn certify_mode(
                 .count()
     {
         return Err(invalid(
-            "Flat terrain replacement sources must be bounded and unique",
+            "Terrain replacement sources must be bounded and unique",
         ));
     }
     let vmf = context.vmf.unwrap_or(document.vmf());
@@ -1955,22 +1839,22 @@ fn certify_mode(
     let retained_count = raw
         .len()
         .checked_sub(selected.len())
-        .ok_or_else(|| invalid("Flat terrain context lost selected source identities"))?;
+        .ok_or_else(|| invalid("Terrain context lost selected source identities"))?;
     let output_count = replacements
         .iter()
         .filter(|replacement| selected.contains(&replacement.source))
         .try_fold(retained_count, |count, replacement| {
             count.checked_add(replacement.parts.len())
         })
-        .ok_or_else(|| invalid("Flat terrain output exceeds the native displacement limit"))?;
+        .ok_or_else(|| invalid("Terrain output exceeds the native displacement limit"))?;
     if output_count > bsp::MAX_DISPLACEMENTS {
         return Err(invalid(
-            "Flat terrain output exceeds the native displacement limit",
+            "Terrain output exceeds the native displacement limit",
         ));
     }
     let before = affected_sources(raw, &selected, work)?
         .into_iter()
-        .map(|raw| prepare(raw, mode, Phase::Original, work))
+        .map(|raw| prepare(raw, mode, work))
         .collect::<Result<Vec<_>, _>>()?;
     if context.vmf.is_some() {
         for surface in before
@@ -1981,16 +1865,19 @@ fn certify_mode(
         }
     }
     let before_refs = before.iter().collect::<Vec<_>>();
-    let previous = graph(&before_refs, mode, Phase::Original, work)?;
+    let cuts = replacements
+        .iter()
+        .filter(|replacement| selected.contains(&replacement.source))
+        .filter_map(|replacement| replacement.cut.map(|cut| (replacement.source, cut)))
+        .collect::<BTreeMap<_, _>>();
+    let previous = graph(&before_refs, mode, Phase::Original, &cuts, work)?;
     let mut children = Vec::new();
     for replacement in replacements
         .iter()
         .filter(|replacement| selected.contains(&replacement.source))
     {
         if replacement.parts.is_empty() {
-            return Err(invalid(
-                "Flat terrain replacement lost every retained patch",
-            ));
+            return Err(invalid("Terrain replacement lost every retained patch"));
         }
         for part in replacement.parts {
             let shape =
@@ -2001,11 +1888,11 @@ fn certify_mode(
                 .filter(|face| part.sides[face.side].displacement.is_some())
                 .collect::<Vec<_>>();
             let [face] = faces.as_slice() else {
-                return Err(invalid("Flat terrain child requires one native face"));
+                return Err(invalid("Terrain child requires one native face"));
             };
             let side = &part.sides[face.side];
             if side.id != replacement.source.side {
-                return Err(invalid("Flat terrain child lost its original source side"));
+                return Err(invalid("Terrain child lost its original source side"));
             }
             let cage = face
                 .vertices
@@ -2022,7 +1909,6 @@ fn certify_mode(
                     cage,
                 },
                 mode,
-                Phase::Child,
                 work,
             )?);
         }
@@ -2041,10 +1927,10 @@ fn certify_mode(
     }
     if after.len() > bsp::MAX_DISPLACEMENTS {
         return Err(invalid(
-            "Flat terrain output exceeds the native displacement limit",
+            "Terrain output exceeds the native displacement limit",
         ));
     }
-    let current = graph(&after, mode, Phase::Child, work)?;
+    let current = graph(&after, mode, Phase::Child, &BTreeMap::new(), work)?;
     certify_lod(
         (&before, &previous),
         (&after, &current),

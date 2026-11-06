@@ -6,8 +6,6 @@ use crate::EditError;
 pub(super) const MAX_VERTICES: usize = 64;
 pub(super) const ON_SEGMENT_WORK: usize = FIELD_WORK + 4;
 pub(super) const SEGMENT_WORK: usize = 4 * FIELD_WORK + 16;
-pub(super) const CLASSIFY_WORK: usize = FIELD_WORK + 8;
-pub(super) const CONVEX_WORK: usize = FIELD_WORK;
 pub(super) const SIMPLE_WORK: usize = SEGMENT_WORK + 4;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -16,13 +14,6 @@ pub(super) enum SegmentContact {
     Crossing,
     Point(DVec3),
     Overlap([DVec3; 2]),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Location {
-    Outside,
-    Boundary,
-    Inside,
 }
 
 pub(super) fn same_point(first: DVec3, second: DVec3, axes: [usize; 2]) -> bool {
@@ -155,46 +146,4 @@ pub(super) fn simple(ring: &[DVec3], axes: [usize; 2]) -> Result<(), EditError> 
         }
     }
     Ok(())
-}
-
-pub(super) fn classify(
-    point: DVec3,
-    ring: &[DVec3],
-    axes: [usize; 2],
-) -> Result<Location, EditError> {
-    bounded(ring)?;
-    let mut winding = 0;
-    for (index, &a) in ring.iter().enumerate() {
-        let b = ring[(index + 1) % ring.len()];
-        let side = orient(a, b, point, axes)?;
-        if side == 0 && in_bounds(point, [a, b], axes) {
-            return Ok(Location::Boundary);
-        }
-        if a[axes[1]] <= point[axes[1]] {
-            if b[axes[1]] > point[axes[1]] && side > 0 {
-                winding += 1;
-            }
-        } else if b[axes[1]] <= point[axes[1]] && side < 0 {
-            winding -= 1;
-        }
-    }
-    Ok(if winding == 0 {
-        Location::Outside
-    } else {
-        Location::Inside
-    })
-}
-
-pub(super) fn convex(ring: &[DVec3], axes: [usize; 2], sign: i128) -> Result<bool, EditError> {
-    bounded(ring)?;
-    for (index, &a) in ring.iter().enumerate() {
-        let b = ring[(index + 1) % ring.len()];
-        for &point in ring {
-            let side = orient(a, b, point, axes)?;
-            if side != 0 && side != sign {
-                return Ok(false);
-            }
-        }
-    }
-    Ok(true)
 }

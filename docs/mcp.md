@@ -860,44 +860,34 @@ accept backslashes. Use relative names without extensions or a `materials/`
 prefix. Patch materials, other blend shaders, base transforms, animated/runtime images
 and unsupported providers refuse.
 
-Cells mode accepts curved power-2/3/4 world or `func_detail` terrain with exact
-planar bases, including qualified tilted bases. The cage must be rectangular
-in the coordinate chart chosen by the exact base plane. Curved height and
-non-affine interior tangential warps are supported. Each original projected native
-border must form one exact simple ring. The ring can be concave. Its vertices must
-be distinct and its segments must not collapse. Nonadjacent segments must not
-cross or touch. Adjacent segments can meet only at their shared endpoint.
-Forward collinear samples are allowed; backtracking overlap rejects.
-Every original render triangle must stay strictly positive.
-No boundary approximation is used.
+Cells mode accepts power-2/3/4 world or `func_detail` terrain with exact planar
+bases, including qualified tilted bases. Its base cage must be rectangular in
+the base-plane chart. Curved, warped, folded and overhanging surfaces can qualify.
+Each world triangle must remain noncollapsed. Exact 3D intersection checks reject
+self-intersection, overlap and contacts outside the source grid's shared edges
+and vertices. World triangles need not share one positive projection.
 
-Connected originals must share the exact base plane, chart axis and orientation.
-Every pair in an affected native contact component must match its complete
-verified native edge polylines and corner points. Shared polylines can bend.
-Area overlap, crossings and extra unsewn contacts reject the cut. Forward-collinear
-subdivisions and point touches can pass only within the verified contact set.
-Repeated projected seam samples and ambiguous or multiple native spans reject.
-Whole-neighbor retiling can keep concave outer borders when these checks pass.
-Original and output triangles must preserve orientation
-and pass exact native/compiler position and fixed-diagonal native normal checks.
-Every base-grid sample must lie on the exact base plane after all native profiles
-and the compiler agree on one base grid. Native normals retain the fixed-stencil
-sign and conditioning bound of 256 along the chosen chart axis. Children need
-local geometry, boundary and normal proofs, with straight strictly monotone
-convex quad projections; their interiors need not be affine. Folded projections,
-self-intersecting source borders, overlap and extra unsewn contacts
-refuse. The requested plane
-must follow a complete internal original row or column. Each retained
-whole original cell becomes one power-2 patch. It certifies authored, compiler
-and all four native positions, the original piecewise surface planes, exact UVs,
-piecewise paint and spatial triangle labels. Nonlinear source paint is
-allowed only when every overlapping original and output triangle has the same
-raw alpha and four native packed-alpha functions; vertex equality alone is
+Connected originals must share the exact base plane, chart and orientation.
+Their complete native seam polylines and corner positions must agree. Seams can
+bend; extra unsewn contacts reject. Source and output base domains must retain
+complete, disjoint coverage. Whole-neighbor retiling uses the same rules.
+
+Authored, compiler and four native position profiles must agree. Local normal
+checks use the installed fixed-diagonal stencil and bounded component ratios.
+Shared corner and edge checks cover native averaging, nearest-corner lookup and
+unequal-density interpolation. Uncertain, cancelling or unrepresentable normal
+inputs reject. These checks preserve finite usable normals, not identical final
+normal bits or game pixels.
+
+The requested plane must follow a complete internal original row or column.
+Each retained original cell becomes one power-2 patch. It preserves the original
+piecewise surface, exact UVs, piecewise paint and spatial triangle labels.
+Nonlinear paint requires matching raw alpha and all four native packed-alpha
+fields over every overlapping source/output triangle. Vertex equality alone is
 insufficient. Unrepresentable inserted alpha or changed physical regions reject.
-It never approximates a crease.
 
 `terrain_mode:"fragments"` / **Retile surface triangles** also cuts through
-original cells, using the same interior-warp and original-boundary rules as Cells
+original cells, using the same embedding and native-contact rules as Cells
 on convex original cages in the exact chart of the planar base, including qualified
 tilted bases. It clips each crossing cell's original
 triangles into exact quad fans and quarters whole retained cells. Surface, UVs and spatial labels stay
@@ -905,15 +895,17 @@ exact; raw/packed paint also stays exact by default. Native output contacts must
 no automatic switch from another mode. Output is bounded at 128 patches, 5,184
 vertices and 8,192 triangles per operation.
 
-Cells/Fragments have two exact LOD certificates. Each coarsened patch must keep
-its fine sample positions in the ideal grid and all five compiler/native profiles.
+Cells/Fragments have two exact LOD certificates. Fine sample positions remain
+fixed, except for source movement covered by the strictly discarded certificate.
 Fine and maximal LOD triangulations must positively cover the same complete base cage.
 Triangle identities use cyclic vertex rotations without reversing orientation.
 
 - A one-sided source can use the strictly discarded certificate. Every vertex
-  in the fine/max triangle symmetric difference must lie beyond the cut tolerance
-  on the discarded side in the ideal grid and every reconstructed profile.
-  Retained source triangles stay identical.
+  in the fine/max triangle symmetric difference, and in every triangle incident
+  to a moved sample, must lie strictly beyond the cut tolerance on the discarded
+  side. This holds for authored, pre-LOD, ideal and post-LOD grids. Retained
+  triangles stay identical. Moved sources also require a shared positive
+  projection, fixed projected boundaries and complete native seam custody.
 - Whole geometric equivalence cancels common cyclic triangles. Each max-only
   triangle's exact affine base-to-world field must match every fine-only field
   with positive base-area overlap. Every changed triangle on both sides must have
@@ -933,7 +925,9 @@ Unchanged neighbors need geometry-only equivalence and identical complete LOD
 state; no new paint restriction or material lookup is imposed on them.
 Existing normal, metadata, contact and capacity checks apply. Whole geometric
 equivalence rejects crease-crossing surface changes or mismatched overlap fields.
-Moved samples remain invalid for all certificates.
+Moved retained samples, output samples, whole-neighbor samples and unselected
+neighbor samples remain invalid. The discarded-source permission does not apply
+to **Both sides**.
 
 `blend_mode` selects the shared **Blend samples** choice. Use
 `set_clip_blend_mode({"mode":"native_float"})` after choosing Fragments,

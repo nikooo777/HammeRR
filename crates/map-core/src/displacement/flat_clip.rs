@@ -17,6 +17,7 @@ use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
 pub(crate) mod cells;
 mod editing;
+mod embedded;
 mod field;
 pub(crate) mod fragments;
 mod labels;
@@ -264,8 +265,7 @@ struct Admitted<'a> {
     editing: editing::Editing,
 }
 
-struct HeightSheet {
-    axis: usize,
+struct BaseChart {
     axes: [usize; 2],
     sign: i128,
 }
@@ -372,6 +372,68 @@ fn certify_height_normals(
     work: &mut Work,
 ) -> Result<(), EditError> {
     certify_normal_profiles(data, profiles, Some(axis), work)
+}
+
+fn certify_local_normals(
+    data: &bsp::Displacements,
+    profiles: &[Vec<DVec3>],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let _ = local_normal_support(data.infos[0], profiles, work)?;
+    Ok(())
+}
+
+fn local_normal_support(
+    info: bsp::DisplacementInfo,
+    profiles: &[Vec<DVec3>],
+    work: &mut Work,
+) -> Result<Vec<[i8; 3]>, EditError> {
+    let cells = info
+        .grid_size()
+        .map_err(|error| invalid(error.to_string()))?
+        - 1;
+    if profiles.len() != bsp::NativeDisplacementRounding::ALL.len() + 1 {
+        return Err(invalid(
+            "Terrain local normals require all native reconstruction profiles",
+        ));
+    }
+    let mut common: Option<Vec<[i8; 3]>> = None;
+    for (rounding, points) in bsp::NativeDisplacementRounding::ALL
+        .into_iter()
+        .zip(profiles)
+    {
+        work.consume(NORMAL_SETUP_WORK + NORMAL_CELL_WORK * cells * cells + 3 * points.len())
+            .map_err(invalid)?;
+        let positions = points
+            .iter()
+            .map(|point| point.as_vec3().to_array())
+            .collect::<Vec<_>>();
+        let profile = bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding };
+        let support = info
+            .certify_native_local_normal_inputs(&positions, profile)
+            .map_err(|error| {
+                invalid(format!(
+                    "Terrain native local normal inputs cannot be certified: {error}"
+                ))
+            })?;
+        if let Some(common) = &mut common {
+            for (expected, actual) in common.iter_mut().zip(support) {
+                *expected =
+                    bsp::DisplacementInfo::intersect_native_normal_support(*expected, actual, 1)
+                        .map_err(|error| invalid(error.to_string()))?;
+            }
+        } else {
+            common = Some(support);
+        }
+    }
+    let common =
+        common.ok_or_else(|| invalid("Terrain local normals lost their native profiles"))?;
+    if common.contains(&[0; 3]) {
+        return Err(invalid(
+            "Terrain local normal profiles have no common conditioned direction",
+        ));
+    }
+    Ok(common)
 }
 
 fn certify_normal_profiles(
@@ -608,8 +670,8 @@ fn check_source<'a>(
     Ok(source)
 }
 
-fn height_sheet(source: &Admitted<'_>, work: &mut Work) -> Result<HeightSheet, EditError> {
-    let sheet = projected_sheet(&source.mesh, &source.positions, Phase::Original, work)?;
+fn intrinsic_source(source: &Admitted<'_>, work: &mut Work) -> Result<BaseChart, EditError> {
+    let (sheet, _) = intrinsic_sheet(&source.mesh, &source.positions, work)?;
     let mesh = &source.mesh;
     let cells = mesh.size - 1;
     let corners = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells]
@@ -634,16 +696,80 @@ fn height_sheet(source: &Admitted<'_>, work: &mut Work) -> Result<HeightSheet, E
         }
     }
     paint::validate_data(&source.mesh, &source.data, work)?;
-    certify_height_normals(&source.data, &source.positions, sheet.axis, work)?;
+    certify_local_normals(&source.data, &source.positions, work)?;
     Ok(sheet)
 }
 
-fn projected_sheet(
+fn intrinsic_sheet(
     mesh: &DisplacementMesh,
     positions: &[Vec<DVec3>],
-    phase: Phase,
     work: &mut Work,
-) -> Result<HeightSheet, EditError> {
+) -> Result<(BaseChart, embedded::Prepared), EditError> {
+    if !matches!(mesh.size, 5 | 9 | 17)
+        || mesh.base_positions.len() != mesh.size * mesh.size
+        || mesh.positions.len() != mesh.base_positions.len()
+        || positions.len() != bsp::NativeDisplacementRounding::ALL.len() + 1
+        || positions
+            .iter()
+            .any(|points| points.len() != mesh.positions.len())
+    {
+        return Err(invalid(
+            "Terrain embedded sheets require complete native grids and reconstruction profiles",
+        ));
+    }
+    let cells = mesh.size - 1;
+    let corners = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells]
+        .map(|index| mesh.base_positions[index]);
+    work.consume(
+        FIELD_WORK * (8 + 2 * mesh.positions.len()) + positions.len() * mesh.positions.len(),
+    )
+    .map_err(invalid)?;
+    let plane = BasePlane::new([corners[0], corners[1], corners[2]])?;
+    let axis = plane.axis();
+    let axes = [(axis + 1) % 3, (axis + 2) % 3];
+    let sign = orient(corners[0], corners[1], corners[2], axes)?;
+    convex(&corners, axes, sign)?;
+    for point in corners {
+        stored(point)?;
+    }
+    for (index, &point) in mesh.positions.iter().enumerate() {
+        if !point.is_finite()
+            || !plane.contains(mesh.base_positions[index])?
+            || positions.iter().any(|points| !same(points[index], point))
+        {
+            return Err(invalid(
+                "Terrain embedded sheets require exact BASE planes and matching authored, native and compiler positions",
+            ));
+        }
+    }
+    work.consume(FIELD_WORK * 2 * cells * cells)
+        .map_err(invalid)?;
+    for triangle in mesh.triangles() {
+        if orient(
+            mesh.base_positions[triangle[0]],
+            mesh.base_positions[triangle[1]],
+            mesh.base_positions[triangle[2]],
+            axes,
+        )? != sign
+        {
+            return Err(invalid(
+                "Terrain embedded BASE triangles must preserve their cage orientation",
+            ));
+        }
+    }
+    let indices = mesh.triangles().collect::<Vec<_>>();
+    let mut base_cover = Region::new(&corners, axes, sign, None, None);
+    base_cover.add(&mesh.base_positions, &indices, mesh.size, None, work)?;
+    base_cover.finish()?;
+    let embedded = embedded::source(mesh, work)?;
+    Ok((BaseChart { axes, sign }, embedded))
+}
+
+fn projected_source(
+    mesh: &DisplacementMesh,
+    positions: &[Vec<DVec3>],
+    work: &mut Work,
+) -> Result<BaseChart, EditError> {
     let cells = mesh.size - 1;
     let indices = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells];
     let corners = indices.map(|index| mesh.base_positions[index]);
@@ -664,15 +790,6 @@ fn projected_sheet(
             + 2 * cells * cells,
     )
     .map_err(invalid)?;
-    let visible = indices.map(|index| mesh.positions[index]);
-    if phase == Phase::Child {
-        if orient(visible[0], visible[1], visible[2], axes)? != sign {
-            return Err(invalid(
-                "Curved terrain tangential projection must preserve its base orientation",
-            ));
-        }
-        convex(&visible, axes, sign)?;
-    }
     for (index, &point) in mesh.positions.iter().enumerate() {
         let base = mesh.base_positions[index];
         if !plane.contains(base)?
@@ -693,11 +810,8 @@ fn projected_sheet(
             ));
         }
     }
-    match phase {
-        Phase::Original => simple_boundary(mesh, axes, work)?,
-        Phase::Child => straight_boundary(mesh, visible, axes)?,
-    }
-    Ok(HeightSheet { axis, axes, sign })
+    simple_boundary(mesh, axes, work)?;
+    Ok(BaseChart { axes, sign })
 }
 
 fn simple_boundary(
@@ -741,41 +855,6 @@ fn ordered_boundary(
         }
     }
     Ok(ring)
-}
-
-fn straight_boundary(
-    mesh: &DisplacementMesh,
-    visible: [DVec3; 4],
-    axes: [usize; 2],
-) -> Result<(), EditError> {
-    for side in 0..4 {
-        let a = visible[side];
-        let b = visible[(side + 1) % 4];
-        let coordinate = axes
-            .into_iter()
-            .find(|&coordinate| a[coordinate] != b[coordinate])
-            .ok_or_else(|| invalid("Curved terrain projected boundary is collapsed"))?;
-        let increasing = a[coordinate] < b[coordinate];
-        let mut previous = None;
-        for index in neighbors::edge_indices(mesh.size, side).map_err(invalid)? {
-            let point = mesh.positions[index];
-            if !on_segment(point, a, b, axes)?
-                || previous.is_some_and(|previous| {
-                    if increasing {
-                        point[coordinate] <= previous
-                    } else {
-                        point[coordinate] >= previous
-                    }
-                })
-            {
-                return Err(invalid(
-                    "Curved terrain requires straight, strictly monotone projected boundary edges",
-                ));
-            }
-            previous = Some(point[coordinate]);
-        }
-    }
-    Ok(())
 }
 
 fn prepare<'a>(
@@ -1330,6 +1409,7 @@ fn edge(edges: &mut Edges, a: DVec3, b: DVec3) -> Result<(), EditError> {
 
 struct Child {
     base: [DVec3; 4],
+    base_positions: Vec<DVec3>,
     positions: Vec<DVec3>,
 }
 
@@ -1349,14 +1429,24 @@ fn region(
     region_checked(ring, children, axes, sign, Some(plane), field, work)
 }
 
-fn region_unclipped(
+fn region_base(
     ring: &[DVec3],
     children: &[Child],
     axes: [usize; 2],
     sign: i128,
     work: &mut Work,
 ) -> Result<(), EditError> {
-    region_checked(ring, children, axes, sign, None, None, work)
+    let indices = bsp::DisplacementInfo {
+        power: POWER as i32,
+        ..Default::default()
+    }
+    .triangle_indices()
+    .map_err(|error| invalid(error.to_string()))?;
+    let mut proof = Region::new(ring, axes, sign, None, None);
+    for child in children {
+        proof.add(&child.base_positions, &indices, SIZE, None, work)?;
+    }
+    proof.finish()
 }
 
 fn region_checked(
@@ -1664,6 +1754,7 @@ pub(crate) fn plan(
             uv(&data, face, mesh.positions.len(), texture, work)?;
             children.push(Child {
                 base,
+                base_positions: mesh.base_positions,
                 positions: mesh.positions,
             });
             parts.push(part);

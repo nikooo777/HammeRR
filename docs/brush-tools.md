@@ -165,6 +165,10 @@ severed and unrelated selected neighbors stay unchanged.
 
 ![Painted curved terrain retains its blend through grid-cell cuts](images/terrain-cell-cut.png)
 
+Folded and overhanging surfaces use the same controls.
+
+![A folded, warped terrain sheet retains its creases after a cell cut](images/terrain-folded-cut.png)
+
 ### Cut through curved cells
 
 Cut the original terrain triangles with a free plane.
@@ -261,44 +265,35 @@ previous valid draft; no policy switches automatically after a failure.
   and unsupported resources reject. Changed source images or materials require
   another preview before Apply.
 - **Retile grid cells** requires an exact planar base with a rectangular cage in
-  its base-plane coordinate chart. Tilted bases must pass the same native geometry
-  and normal checks. Curved height and non-affine interior tangential warps are
-  supported. Original projected borders may form simple convex or concave polygons.
-  Border segments must not cross, touch unrelated segments or backtrack.
-  Connected originals must share the exact base chart and orientation.
-  Complete footprint checks must
-  preserve their native contacts and complete shared seam polylines.
-  The cut fails if footprints overlap or form extra unsewn contacts. Output patches retain
-  straight, strictly ordered convex quad projections. Local cell and normal checks
-  can still reject the cut. Every original
-  and output triangle must preserve orientation and pass the exact native geometry
-  and normal checks. Paint samples must preserve each original triangle's raw and
-  packed blend fields exactly. Native texture rules match **Retile flat terrain**.
-  Unchanged curved neighbors may retain a certified corner or have an old edge
-  contact fully severed. They must share the exact base chart and orientation,
-  with matching native contact samples, complete seam polylines and certified normals.
-  Their authored grids and metadata stay unchanged.
-  **Partition selected neighbors** explicitly permits whole retiling of selected
-  noncrossing neighbors required by a retained matched full original edge.
-  Every neighbor must pass complete source, field, material and metadata checks.
-  Missing selection, unsupported partial edges, incompatible native density,
-  uncertified LOD coarsening, contact mismatches, corner
-  capacity overflow, folded projections, self-intersecting borders,
-  extra contacts, unsupported degenerate contacts and uncertain
-  native normal inputs reject.
-  Each retained cell adds 32 native triangles. Powers 2–4 are subject to the
-  shared output and work limits.
+  its base-plane chart. Curved, warped, folded and overhanging surfaces can pass.
+  Exact 3D checks reject collapsed triangles, self-intersection, overlap and extra
+  contacts. Connected originals share the same base chart and preserve complete
+  native seam polylines and corner positions. Output base domains keep exact
+  coverage; world triangles need not share one height projection.
+  Source and output positions must agree across native and compiler arithmetic.
+  Local normals and native edge/corner smoothing must remain finite and usable.
+  Paint retains each original triangle's raw and packed blend fields. Texture
+  rules match **Retile flat terrain**.
+  Unchanged curved neighbors keep their authored grids and metadata.
+  **Partition selected neighbors** permits whole retiling of required selected
+  noncrossing full-edge neighbors. Missing authorization, incompatible density,
+  native corner limits, uncertain normals or failed field checks reject the cut.
+  Each retained cell adds 32 native triangles. Powers 2–4 share output and work
+  limits.
 - **Retile grid cells** and **Retile surface triangles** can use exact equivalent
-  source/output LOD. Each affected patch must preserve its fine sample positions
-  and full base coverage. Changed maximal LOD triangles must match every fine
+  source/output LOD. Fine sample positions stay fixed, except for the discarded
+  source case below. All patches must preserve full base coverage. Changed maximal LOD triangles must match every fine
   triangle field with positive base-area overlap. Different local maps can qualify
   when all overlapping fields agree exactly; other triangles may stay curved.
   Nonuniform paint and triangle labels must retain their original fields. Actual
   maximal collision triangles must retain their primary or secondary material
   regions. **Both sides** and whole-neighbor partitions require whole equivalence
   when coarsened. A one-sided source can also
-  use strictly discarded coarsening. Unchanged coarsened neighbors need whole
-  geometric equivalence and must keep their complete LOD state.
+  use strictly discarded coarsening or movement: every affected triangle must
+  stay fully beyond the cut tolerance in authored and all native profiles. This
+  case also requires a shared positive projection and unchanged native seams.
+  Retained or output movement still rejects. Unchanged coarsened neighbors need
+  whole geometric equivalence and must keep their complete LOD state.
 - **Retile surface triangles** requires a planar base with a convex cage in its
   exact coordinate chart. It shares the geometry, paint, texture, normal and
   contact checks of **Retile grid cells**. Output must fit native edge

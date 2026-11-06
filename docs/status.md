@@ -10,13 +10,13 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 89.83% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 89.87% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
 Scores reflect supported workflows and open gaps. Amber counts only the implemented part of partial groups; grey is unfinished scope.
 
-Plane clipping is **19/21 workflows complete (90.48%)**. Each completed workflow adds 1/21 of that group. The other partial-group scores remain estimates.
+Plane clipping is **20/21 workflows complete (95.24%)**. Each completed workflow adds 1/21 of that group. The other partial-group scores remain estimates.
 
 ## Editor
 
@@ -37,7 +37,7 @@ Plane clipping is **19/21 workflows complete (90.48%)**. Each completed workflow
 | [Working region](working-region.md) | Temporary boxes, camera-following, draw distance and shared object-query rules for display and picking; one Clear restores the view. | Whole owners; unresolved spatial bounds stay visible. Authored query rules suppress native compiled layers. |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | 36 commands, including file/clipboard and held camera directions; logical/physical keys, Ctrl/Shift/Alt/Meta, two-stroke sequences and shared MCP resolution/navigation. | Two slots per command; camera directions use one stroke. Focused controls and the operating system may consume combinations. |
 | [Brushes](brushes.md) | Shapes, checked block creation/import, handles, exact transforms, grid snapping, fixed/attached pivots, terrain mirror/shear and supported point-placement transforms. | Unknown point semantics and unrepresentable model/instance deformation; general surface interpolation. |
-| [Brush tools](brush-tools.md) | Hollow, carve, clip, merge and extrude brushes. Terrain supports native grid cuts with selected neighbor partitions, affine planar retiling with qualified source/output LOD, joined slopes and curved cell/triangle cuts on qualified tilted bases. Curved cuts admit certified interior warps, simple concave native borders, exact shared seam polylines, qualified LOD and whole retiling of required selected full-edge neighbors. New clipped patches reset valid VMF vertex caches. Shared previews preserve geometry, UVs and triangle labels; blend policies report raw/native error bounds. | Qualified materials, projections, arithmetic and topology required. Missing neighbor authorization, incompatible edge/fan density, output limits, folded projections, self-intersecting borders, overlap, extra contacts, unsupported degeneracy, incompatible labels, changed retained LOD surfaces, moved LOD samples and changed neighbor LOD refuse. Concave merge and holes remain unavailable. |
+| [Brush tools](brush-tools.md) | Hollow, carve, clip, merge and extrude brushes. Terrain supports native grid cuts with selected neighbor partitions, affine planar retiling with qualified source/output LOD, joined slopes and curved cell/triangle cuts on qualified tilted bases. Curved cuts admit certified warped, folded and overhanging surfaces, exact 3D contacts and seam polylines, qualified LOD, strictly discarded source LOD movement and whole retiling of required selected full-edge neighbors. New clipped patches reset valid VMF vertex caches. Shared previews preserve geometry, UVs and triangle labels; blend policies report raw/native error bounds. | Qualified materials, projections, arithmetic and topology required. Missing neighbor authorization, incompatible edge/fan density, output limits, self-intersection, overlap, extra contacts, uncertain native normals, unsupported degeneracy, incompatible labels, changed retained LOD surfaces, retained/output LOD movement and changed neighbor LOD refuse. Concave merge and holes remain unavailable. |
 | [Components](components.md) | Move, rotate, scale, weld, split and ridges; free face cuts with interior endpoints and crossings, saved triangle plans, explicit piece UV axes, convex materialization and supported cubemap/order remapping. | Terrain cuts, holes, nonmanifold topology and other face-binding remaps. |
 | [Materials](textures.md) | Grouped browsing, prefix/regex and resolved-shader filters, actual second blend-image inspection, winning-source filters, maps-path exclusion, favorites, mapping, painting, wrapping, replacement, saved named atlas regions, automatic face-island packing, padded image fitting with coplanar continuity, face lighting, checked native texture mip chains and located projection errors. | Full native shader preview. |
 | [Normal maps](normal-maps.md) | Supported flat-brush normal textures. | Terrain/model normal maps and special encodings. |

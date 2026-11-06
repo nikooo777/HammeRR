@@ -2,10 +2,10 @@ use glam::DVec3;
 use source_formats::vmf::Solid;
 
 use super::{
-    Admitted, CUT_EPSILON, Child, Context, Exact, FIELD_WORK, HeightSheet, Keep, PartitionRequest,
+    Admitted, BaseChart, CUT_EPSILON, Child, Context, Exact, FIELD_WORK, Keep, PartitionRequest,
     Request, SIZE, TRIANGLES, TerrainPlan, TriangleField, VERTICES, Work, admit, admit_source,
-    carrier_base, certify_height_normals, connections, data, height_sheet, invalid, native, paint,
-    partition_counts, reconstructed, region, region_unclipped, same, stored, uv, weighted,
+    carrier_base, certify_local_normals, connections, data, intrinsic_source, invalid, native,
+    paint, partition_counts, reconstructed, region_base, same, stored, uv, weighted,
 };
 use crate::clip::{TerrainBlendMode, TerrainMode};
 use crate::displacement::{grid_clip::grid_line, resample};
@@ -36,7 +36,7 @@ impl Cut {
 
 struct Prepared<'a> {
     source: Admitted<'a>,
-    sheet: HeightSheet,
+    sheet: BaseChart,
     cut: Cut,
 }
 
@@ -87,8 +87,8 @@ fn prepare<'a>(
     Ok(Some(Prepared { source, sheet, cut }))
 }
 
-fn cell_sheet(source: &Admitted<'_>, work: &mut Work) -> Result<HeightSheet, EditError> {
-    let sheet = height_sheet(source, work)?;
+fn cell_sheet(source: &Admitted<'_>, work: &mut Work) -> Result<BaseChart, EditError> {
+    let sheet = intrinsic_source(source, work)?;
     let mesh = &source.mesh;
     let cells = mesh.size - 1;
     let indices = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells];
@@ -270,7 +270,7 @@ pub(crate) fn partition(
 fn materialize(
     solid: &Solid,
     source: &Admitted<'_>,
-    sheet: &HeightSheet,
+    sheet: &BaseChart,
     clipping: Option<Retained<'_>>,
     request: PartitionRequest<'_>,
     work: &mut Work,
@@ -409,32 +409,21 @@ fn materialize(
             let info = part.sides[side_index].displacement.as_mut().unwrap();
             info.triangle_tags = mapped.tags.clone();
             mapped.verify(info, &mesh, work)?;
-            certify_height_normals(&data, &profiles, sheet.axis, work)?;
+            certify_local_normals(&data, &profiles, work)?;
             uv(&data, face, mesh.positions.len(), texture, work)?;
             let child = Child {
                 base,
+                base_positions: mesh.base_positions,
                 positions: mesh.positions,
             };
-            let ring = indices.map(|index| source.mesh.positions[index]);
-            if let Some(plane) = plane {
-                region(
-                    &ring,
-                    std::slice::from_ref(&child),
-                    sheet.axes,
-                    sheet.sign,
-                    plane,
-                    None,
-                    work,
-                )?;
-            } else {
-                region_unclipped(
-                    &ring,
-                    std::slice::from_ref(&child),
-                    sheet.axes,
-                    sheet.sign,
-                    work,
-                )?;
-            }
+            let ring = indices.map(|index| source.mesh.base_positions[index]);
+            region_base(
+                &ring,
+                std::slice::from_ref(&child),
+                sheet.axes,
+                sheet.sign,
+                work,
+            )?;
             children.push(child);
             parts.push(part);
         }

@@ -4,8 +4,8 @@ use glam::DVec3;
 use source_formats::{bsp, vmf::DispInfo};
 
 use super::{
-    CUT_EPSILON, Exact, FIELD_WORK, PlanarField, Region, Work, certify_height_normals,
-    certify_normals, convex, field::BasePlane, invalid, labels, orient, paint, same, uv,
+    CUT_EPSILON, Exact, FIELD_WORK, PlanarField, Region, Work, certify_normals, convex,
+    field::BasePlane, invalid, labels, orient, paint, same, uv,
 };
 use crate::clip::{Keep, TerrainTexture};
 use crate::{EditError, Face, Plane, displacement::DisplacementMesh};
@@ -13,6 +13,7 @@ use crate::{EditError, Face, Plane, displacement::DisplacementMesh};
 #[derive(Clone, Copy)]
 pub(super) struct State<'a> {
     pub(super) data: &'a bsp::Displacements,
+    pub(super) original_positions: &'a [Vec<DVec3>],
     pub(super) positions: &'a [Vec<DVec3>],
     pub(super) ideal_positions: &'a [DVec3],
     pub(super) indices: &'a [[usize; 3]],
@@ -69,6 +70,11 @@ fn validate_state(
         || mesh.alphas.len() != count
         || state.active.len() != count
         || state.ideal_positions.len() != count
+        || state.original_positions.len() != bsp::NativeDisplacementRounding::ALL.len() + 1
+        || state
+            .original_positions
+            .iter()
+            .any(|positions| positions.len() != count)
         || state.positions.len() != bsp::NativeDisplacementRounding::ALL.len() + 1
         || state
             .positions
@@ -146,7 +152,7 @@ fn sample_fields(
             .map_err(|error| invalid(error.to_string()))?,
     )?;
     let maximal = triangle_set(state.indices)?;
-    if !all_discarded(&fine, &maximal, *state, cut, work)? {
+    if !all_discarded(mesh, &fine, &maximal, *state, cut, work)? {
         paint::certify_lod(mesh, &fine, &maximal, work)?;
     }
     Ok(SampleFields { physical, texture })
@@ -155,23 +161,36 @@ fn sample_fields(
 fn preserve_positions(
     mesh: &DisplacementMesh,
     state: &State<'_>,
+    cut: Option<(Plane, Keep)>,
     work: &mut Work,
 ) -> Result<(), EditError> {
-    work.consume((state.positions.len() + 1) * mesh.positions.len())
-        .map_err(invalid)?;
-    for (index, &expected) in mesh.positions.iter().enumerate() {
-        if !same(state.ideal_positions[index], expected)
+    work.consume(
+        (state.original_positions.len() + state.positions.len() + 1) * mesh.positions.len(),
+    )
+    .map_err(invalid)?;
+    let moved = mesh.positions.iter().enumerate().any(|(index, &expected)| {
+        !same(state.ideal_positions[index], expected)
             || state
-                .positions
+                .original_positions
                 .iter()
+                .chain(state.positions)
                 .any(|positions| !same(positions[index], expected))
-        {
-            return Err(invalid(
-                "Actual native LOD geometry must preserve every original fine-grid sample under every reconstruction profile",
-            ));
-        }
+    });
+    if !moved {
+        return Ok(());
     }
-    Ok(())
+    let fine = triangle_set(
+        &state.data.infos[0]
+            .triangle_indices()
+            .map_err(|error| invalid(error.to_string()))?,
+    )?;
+    let maximal = triangle_set(state.indices)?;
+    if all_discarded(mesh, &fine, &maximal, *state, cut, work)? {
+        return Ok(());
+    }
+    Err(invalid(
+        "Actual native LOD geometry must preserve every retained fine-grid sample under every reconstruction profile; all changed LOD triangles and triangles incident to moved samples must lie strictly in the discarded half",
+    ))
 }
 
 pub(super) fn certify(
@@ -185,7 +204,7 @@ pub(super) fn certify(
 ) -> Result<Fields, EditError> {
     let native_info = validate_state(info, mesh, &state, work)?;
     let samples = sample_fields(mesh, &state, None, texture, work)?;
-    preserve_positions(mesh, &state, work)?;
+    preserve_positions(mesh, &state, None, work)?;
     let size = mesh.size;
     let count = size * size;
     work.consume(2 * FIELD_WORK * count).map_err(invalid)?;
@@ -239,16 +258,8 @@ fn samples(
 ) -> Result<SampleFields, EditError> {
     validate_state(info, mesh, &state, work)?;
     let samples = sample_fields(mesh, &state, cut, texture, work)?;
-    preserve_positions(mesh, &state, work)?;
+    preserve_positions(mesh, &state, cut, work)?;
     uv(state.data, face, mesh.positions.len(), texture, work)?;
-    work.consume(FIELD_WORK).map_err(invalid)?;
-    let axis = BasePlane::new([
-        mesh.base_positions[0],
-        mesh.base_positions[(mesh.size - 1) * mesh.size],
-        mesh.base_positions[mesh.size * mesh.size - 1],
-    ])?
-    .axis();
-    certify_height_normals(state.data, state.positions, axis, work)?;
     Ok(samples)
 }
 
@@ -287,7 +298,7 @@ pub(super) fn certify_geometry(
     work: &mut Work,
 ) -> Result<(), EditError> {
     validate_state(info, mesh, &state, work)?;
-    preserve_positions(mesh, &state, work)?;
+    preserve_positions(mesh, &state, cut, work)?;
     geometry(mesh, state, cut, work)
 }
 
@@ -308,13 +319,14 @@ fn geometry(
         .map_err(|error| invalid(error.to_string()))?;
     let fine_set = triangle_set(&fine)?;
     let maximal = triangle_set(state.indices)?;
-    if all_discarded(&fine_set, &maximal, state, cut, work)? {
+    if all_discarded(mesh, &fine_set, &maximal, state, cut, work)? {
         return Ok(());
     }
     equivalent(mesh, state, &fine, &fine_set, &maximal, work)
 }
 
 fn all_discarded(
+    mesh: &DisplacementMesh,
     fine: &BTreeSet<[usize; 3]>,
     maximal: &BTreeSet<[usize; 3]>,
     state: State<'_>,
@@ -332,8 +344,38 @@ fn all_discarded(
     if keep == Keep::Both {
         return Ok(false);
     }
-    work.consume(FIELD_WORK * (fine.len() + maximal.len()) * 3 * (state.positions.len() + 1))
-        .map_err(invalid)?;
+    work.consume(
+        FIELD_WORK * (fine.len() + maximal.len())
+            + (state.original_positions.len() + state.positions.len() + 1) * mesh.positions.len(),
+    )
+    .map_err(invalid)?;
+    let moved = mesh
+        .positions
+        .iter()
+        .enumerate()
+        .map(|(index, &point)| {
+            !same(state.ideal_positions[index], point)
+                || state
+                    .original_positions
+                    .iter()
+                    .chain(state.positions)
+                    .any(|positions| !same(positions[index], point))
+        })
+        .collect::<Vec<_>>();
+    let affected = fine
+        .union(maximal)
+        .filter(|triangle| {
+            fine.contains(*triangle) != maximal.contains(*triangle)
+                || triangle.iter().any(|&index| moved[index])
+        })
+        .collect::<Vec<_>>();
+    work.consume(
+        FIELD_WORK
+            * affected.len()
+            * 3
+            * (state.original_positions.len() + state.positions.len() + 2),
+    )
+    .map_err(invalid)?;
     let normal = [
         Exact::float(plane.normal.x)?,
         Exact::float(plane.normal.y)?,
@@ -341,9 +383,11 @@ fn all_discarded(
     ];
     let distance = Exact::float(plane.dist)?;
     let epsilon = Exact::float(CUT_EPSILON)?;
-    for triangle in fine.symmetric_difference(maximal) {
-        for positions in
-            std::iter::once(state.ideal_positions).chain(state.positions.iter().map(Vec::as_slice))
+    for triangle in affected {
+        for positions in std::iter::once(mesh.positions.as_slice())
+            .chain(state.original_positions.iter().map(Vec::as_slice))
+            .chain(std::iter::once(state.ideal_positions))
+            .chain(state.positions.iter().map(Vec::as_slice))
         {
             for &index in triangle {
                 let mut side = Exact::new(0, 0);

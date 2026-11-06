@@ -97,14 +97,22 @@ impl Coefficients {
         })
     }
 
-    fn value(&self, point: DVec3, axis: usize) -> Result<f64, EditError> {
+    fn numerator_at(&self, point: DVec3, axis: usize) -> Result<Exact, EditError> {
         let [u, v] = axes(axis);
         let [u_coefficient, v_coefficient, constant] = self.numerator;
         constant
             .add(u_coefficient.mul(Exact::float(point[u])?)?)?
-            .add(v_coefficient.mul(Exact::float(point[v])?)?)?
+            .add(v_coefficient.mul(Exact::float(point[v])?)?)
+    }
+
+    fn value(&self, point: DVec3, axis: usize) -> Result<f64, EditError> {
+        self.numerator_at(point, axis)?
             .div(self.denominator)?
             .value()
+    }
+
+    fn matches_value(&self, point: DVec3, axis: usize, value: f64) -> Result<bool, EditError> {
+        Ok(self.numerator_at(point, axis)? == Exact::float(value)?.mul(self.denominator)?)
     }
 
     fn matches(&self, other: &Self) -> Result<bool, EditError> {
@@ -229,6 +237,18 @@ impl PlanarField {
             ));
         }
         evaluate(&self.forward, base, self.base.axis)
+    }
+
+    pub(crate) fn maps(&self, base: DVec3, world: DVec3) -> Result<bool, EditError> {
+        if !self.base.contains(base)? {
+            return Ok(false);
+        }
+        for (field, value) in self.forward.iter().zip(world.to_array()) {
+            if !field.matches_value(base, self.base.axis, value)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     pub(crate) fn offset(&self, base: DVec3) -> Result<DVec3, EditError> {

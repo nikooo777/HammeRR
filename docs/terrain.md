@@ -222,7 +222,9 @@ complete request.
 
 Choose [**Retile grid cells**](brush-tools.md#retile-grid-cells) to cut curved
 terrain at any complete original row or column, including power 2. It refines
-whole cells and supports curved height and non-affine interior tangential warps.
+whole cells and supports curved height and non-affine interior tangential warps
+on exact planar bases, including qualified tilted bases. The base cage must be
+rectangular in its exact base-plane coordinate chart.
 Original projected borders must remain straight and convex, with samples ordered
 along each edge. Every original boundary sample must follow one exact affine
 mapping from the base cages to those borders, shared by connected originals.
@@ -233,10 +235,11 @@ and labels must remain exact. Unchanged terrain contacts reject; normals and run
 cuts on eligible planar surfaces, including tilted base cages and affine
 tangential offsets. Joined planar patches can have different slopes on a common
 planar base, including tilted bases, when they share one exact coordinate
-projection with exact native contacts and certified normals. **Retile grid cells**
-and **Retile surface triangles** still require world-axis bases.
+projection with exact native contacts and certified normals.
 Choose [**Retile surface triangles**](brush-tools.md#cut-through-curved-cells)
 to cut through curved cells while preserving their original triangle surfaces.
+It accepts convex cages in the exact chart of its planar base, including qualified
+tilted bases. Native geometry and normal checks still apply.
 Under **Blend samples**, **Exact fields** preserves raw and native packed paint
 fields, including representable fractional samples. **Native float** and
 **Nearest byte** explicitly permit bounded error in inserted samples. The preview

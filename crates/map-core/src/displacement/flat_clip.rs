@@ -589,9 +589,8 @@ fn projected_sheet(
     let cells = mesh.size - 1;
     let indices = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells];
     let corners = indices.map(|index| mesh.base_positions[index]);
-    let axis = (0..3)
-        .find(|&axis| corners.iter().all(|point| point[axis] == corners[0][axis]))
-        .ok_or_else(|| invalid("Curved terrain sheets require a world-axis base cage"))?;
+    let plane = BasePlane::new([corners[0], corners[1], corners[2]])?;
+    let axis = plane.axis();
     let axes = [(axis + 1) % 3, (axis + 2) % 3];
     let sign = orient(corners[0], corners[1], corners[2], axes)?;
     if sign == 0 {
@@ -616,7 +615,7 @@ fn projected_sheet(
     convex(&visible, axes, sign)?;
     for (index, &point) in mesh.positions.iter().enumerate() {
         let base = mesh.base_positions[index];
-        if base[axis] != corners[0][axis]
+        if !plane.contains(base)?
             || positions
                 .iter()
                 .any(|positions| !same(positions[index], point))

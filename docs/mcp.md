@@ -835,13 +835,20 @@ accept backslashes. Use relative names without extensions or a `materials/`
 prefix. Patch materials, other blend shaders, base transforms, animated/runtime images
 and unsupported providers refuse.
 
-Cells mode accepts curved power-2/3/4 world or `func_detail` terrain with world-axis
-rectangular bases. Curved height and non-affine interior tangential warps are
-supported when the original projected boundary stays straight, strictly monotone
+Cells mode accepts curved power-2/3/4 world or `func_detail` terrain with exact
+planar bases, including qualified tilted bases. The cage must be rectangular
+in the coordinate chart chosen by the exact base plane. Curved height and
+non-affine interior tangential warps are supported when the original projected
+boundary stays straight, strictly monotone
 and convex. Every original boundary sample must follow one exact affine
-boundary/cage mapping shared by its original native contact component.
+boundary/cage mapping shared by its original native contact component, using the
+coordinate pair chosen by the base-plane chart.
 Original and output triangles must preserve orientation
 and pass exact native/compiler position and fixed-diagonal native normal checks.
+Every base-grid sample must lie on the exact base plane after all native profiles
+and the compiler agree on one base grid. Native normals retain the fixed-stencil
+sign and conditioning bound of 256 along the chosen chart axis. Children need
+local geometry, boundary and normal proofs; their interiors need not be affine.
 Folded projections and nonlinear boundary mappings refuse. The requested plane
 must follow a complete internal original row or column. Each retained
 whole original cell becomes one power-2 patch. It certifies authored, compiler
@@ -854,7 +861,8 @@ It never approximates a crease.
 
 `terrain_mode:"fragments"` / **Retile surface triangles** also cuts through
 original cells, using the same interior-warp and original-boundary rules as Cells
-on world-axis convex original cages. It clips each crossing cell's original
+on convex original cages in the exact chart of the planar base, including qualified
+tilted bases. It clips each crossing cell's original
 triangles into exact quad fans and quarters whole retained cells. Surface, UVs and spatial labels stay
 exact; raw/packed paint also stays exact by default. Native contacts must fit without LOD coarsening. There is
 no automatic switch from another mode. Output is bounded at 128 patches, 5,184

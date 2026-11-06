@@ -137,7 +137,8 @@ after a failed cut.
 
 ### Retile grid cells
 
-Cut curved terrain along a complete existing row or column.
+Cut curved terrain along a complete existing row or column, including qualified
+tilted bases.
 
 1. Select the world or `func_detail` terrain to cut.
 2. Click **Clip selected brushes**.
@@ -235,9 +236,11 @@ previous valid draft; no policy switches automatically after a failure.
   Patch materials, other blend shaders, base transforms, animated or runtime textures
   and unsupported resources reject. Changed source images or materials require
   another preview before Apply.
-- **Retile grid cells** requires world-axis rectangular bases. Curved height and
-  non-affine interior tangential warps are supported. Original projected borders
-  must stay straight and convex, with boundary samples progressing without
+- **Retile grid cells** requires an exact planar base with a rectangular cage in
+  its base-plane coordinate chart. Tilted bases must pass the same native geometry
+  and normal checks. Curved height and non-affine interior tangential warps are
+  supported. Original projected borders must stay straight and convex, with
+  boundary samples progressing without
   reversals. Every boundary sample must follow one exact affine mapping from the
   base cages to those borders, shared by connected originals. Every original
   and output triangle must preserve orientation and pass the exact native geometry
@@ -249,8 +252,9 @@ previous valid draft; no policy switches automatically after a failure.
   normal inputs.
   Each retained cell adds 32 native triangles. Powers 2–4 are subject to the
   shared output and work limits.
-- **Retile surface triangles** uses the same projected-sheet, texture, normal and
-  selected-contact rules as **Retile grid cells**. Output must fit native edge
+- **Retile surface triangles** requires a planar base with a convex cage in its
+  exact coordinate chart. It shares the geometry, paint, texture, normal and
+  selected-contact checks of **Retile grid cells**. Output must fit native edge
   and corner limits without LOD coarsening. Skew quarter grids, high-valence
   corners, unrepresentable raw paint and changed native packed fields in
   **Exact fields** can refuse. The error names the unrepresentable field.

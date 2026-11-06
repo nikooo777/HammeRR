@@ -92,7 +92,7 @@ fn prepare<'a>(
             != 1
         {
             return Err(invalid(
-                "Cell terrain requires a world-axis rectangular base cage",
+                "Cell terrain requires a rectangular base cage in its exact plane chart",
             ));
         }
     }

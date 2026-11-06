@@ -487,11 +487,11 @@ impl ClipPlane {
 pub struct ClipArgs {
     pub ids: Option<Vec<String>>,
     pub plane: ClipPlane,
-    /// front is the arrow/positive-normal side, back the opposite; defaults to both.
+    /// front is the arrow/positive-normal side, back the opposite; defaults to both. The discarded-side Cells/Fragments source LOD exception requires front or back.
     pub keep: Option<String>,
     /// New cap/carrier-face material; omitted inherits the source's first material. Native terrain has no sealed cut wall.
     pub material: Option<String>,
-    /// grid preserves native samples and maps qualified selected/output LOD; flat retiles planar fields, including qualified initially coarsened sources with constant paint and uniform labels; cells refines whole original cells; fragments cuts original surface triangles. Cells/Fragments accept exact simple projected source rings, including concave borders, on qualified planar charts. Native contacts must match complete shared polylines and corner points. Cells needs a rectangular base cage; Fragments needs a convex base cage. Output patches need straight convex quad borders. Terrain clips reset valid present ten-word VMF caches only on new children; absent stays absent and malformed refuses. Source/native/compiler geometry, fields, normals, topology, LOD and work limits still apply. Omitted uses the shared choice.
+    /// grid preserves native samples and maps qualified selected/output LOD; flat retiles planar fields, including qualified initially coarsened sources with constant paint and uniform labels; cells refines whole original cells; fragments cuts original surface triangles. Cells/Fragments accept exact simple projected source rings, including concave borders, on qualified planar charts. Their source LOD requires all changed triangles strictly discarded by front/back; outputs and unchanged neighbors cannot coarsen. Native contacts must match complete shared polylines and corner points. Cells needs a rectangular base cage; Fragments needs a convex base cage. Output patches need straight convex quad borders. Terrain clips reset valid present ten-word VMF caches only on new children; absent stays absent and malformed refuses. Source/native/compiler geometry, fields, normals, topology, LOD and work limits still apply. Omitted uses the shared choice.
     pub terrain_mode: Option<ClipTerrainMode>,
     /// exact (default), native_float, or nearest_byte. Non-exact modes require fragments. Omitted uses the shared choice.
     pub blend_mode: Option<ClipBlendMode>,

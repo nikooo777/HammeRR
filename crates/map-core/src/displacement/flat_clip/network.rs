@@ -24,6 +24,7 @@ pub(crate) struct Replacement<'a> {
     pub source: FaceId,
     pub parts: &'a [Solid],
     pub texture: Option<crate::clip::TerrainTexture>,
+    pub cut: Option<(Plane, Keep)>,
 }
 
 pub(crate) struct Verification {
@@ -209,7 +210,7 @@ fn lod_state(
                 .map_err(invalid)?;
             if positions != surface.positions {
                 return Err(invalid(
-                    "Flat terrain LOD requires unchanged complete native and compiler geometry",
+                    "Terrain LOD requires unchanged complete native and compiler geometry",
                 ));
             }
             (
@@ -615,7 +616,7 @@ fn graph(
             .map_err(invalid)?;
     let (patches, _) =
         lod::prepare(&grids, &found.pairs, &mut |amount| work.consume(amount)).map_err(invalid)?;
-    if mode == Mode::Cells && patches.iter().any(Option::is_some) {
+    if mode == Mode::Cells && phase == Phase::Child && patches.iter().any(Option::is_some) {
         return Err(invalid(
             "Connected curved terrain cuts cannot change or retain affected native LOD coarsening",
         ));
@@ -794,14 +795,12 @@ fn graph(
         )?;
     }
     result.pairs = found.pairs;
-    if mode == Mode::Flat {
-        work.consume(surfaces.len()).map_err(invalid)?;
-        result.lod = surfaces
-            .iter()
-            .zip(patches)
-            .map(|(surface, patch)| lod_state(surface, patch, work))
-            .collect::<Result<Vec<_>, _>>()?;
-    }
+    work.consume(surfaces.len()).map_err(invalid)?;
+    result.lod = surfaces
+        .iter()
+        .zip(patches)
+        .map(|(surface, patch)| lod_state(surface, patch, work))
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(result)
 }
 
@@ -810,14 +809,18 @@ fn certify_lod(
     current: (&[&Surface<'_>], &Graph),
     selected: &BTreeSet<FaceId>,
     replacements: &[Replacement<'_>],
+    mode: Mode,
     work: &mut Work,
 ) -> Result<(), EditError> {
+    enum Fields<'a> {
+        Flat(&'a lod_proof::Fields),
+        Curved(&'a lod_proof::UniformFields),
+    }
+
     let (before, previous) = previous;
     let (after, current) = current;
     if previous.lod.len() != before.len() || current.lod.len() != after.len() {
-        return Err(invalid(
-            "Flat terrain LOD certificate lost its native states",
-        ));
+        return Err(invalid("Terrain LOD certificate lost its native states"));
     }
     work.consume(2 * before.len() + after.len())
         .map_err(invalid)?;
@@ -837,10 +840,10 @@ fn certify_lod(
         let (retained_index, _) = retained
             .next()
             .filter(|_| retained.next().is_none())
-            .ok_or_else(|| invalid("Flat terrain LOD certificate lost an unchanged neighbor"))?;
+            .ok_or_else(|| invalid("Terrain LOD certificate lost an unchanged neighbor"))?;
         if !previous.lod[index].matches(&current.lod[retained_index], work)? {
             return Err(invalid(
-                "Flat terrain clipping cannot change an unselected neighbor's native LOD state",
+                "Terrain clipping cannot change an unselected neighbor's native LOD state",
             ));
         }
     }
@@ -860,39 +863,77 @@ fn certify_lod(
             continue;
         }
         work.consume(replacements.len()).map_err(invalid)?;
-        let texture = replacements
+        let replacement = replacements
             .iter()
             .find(|replacement| replacement.source == surface.raw.source)
-            .and_then(|replacement| replacement.texture)
-            .ok_or_else(|| {
-                invalid("Flat terrain LOD requires guarded native texture mapping dimensions")
-            })?;
-        let expected = lod_proof::certify(
-            &surface.raw.face,
-            surface.raw.side.displacement.as_ref().unwrap(),
-            &surface.mesh,
-            surface.sheet.field.as_ref().unwrap(),
-            state.proof(),
-            texture,
-            work,
-        )?;
+            .ok_or_else(|| invalid("Terrain LOD certificate lost its selected replacement"))?;
+        let texture = replacement.texture.ok_or_else(|| {
+            invalid("Terrain LOD requires guarded native texture mapping dimensions")
+        })?;
+        let flat_fields;
+        let curved_fields;
+        let expected = match mode {
+            Mode::Flat => {
+                flat_fields = lod_proof::certify(
+                    &surface.raw.face,
+                    surface.raw.side.displacement.as_ref().unwrap(),
+                    &surface.mesh,
+                    surface.sheet.field.as_ref().unwrap(),
+                    state.proof(),
+                    texture,
+                    work,
+                )?;
+                Fields::Flat(&flat_fields)
+            }
+            Mode::Cells => {
+                let cut = replacement.cut.ok_or_else(|| {
+                    invalid("Curved source LOD requires a cut with a discarded half; whole-source partitioning is unsupported")
+                })?;
+                curved_fields = lod_proof::certify_discarded(
+                    &surface.raw.face,
+                    surface.raw.side.displacement.as_ref().unwrap(),
+                    &surface.mesh,
+                    state.proof(),
+                    cut,
+                    texture,
+                    work,
+                )?;
+                Fields::Curved(&curved_fields)
+            }
+        };
         for (child, state) in after.iter().zip(&current.lod) {
             work.consume(1).map_err(invalid)?;
             if child.raw.source != surface.raw.source {
                 continue;
             }
-            let actual = lod_proof::certify(
-                &child.raw.face,
-                child.raw.side.displacement.as_ref().unwrap(),
-                &child.mesh,
-                child.sheet.field.as_ref().unwrap(),
-                state.proof(),
-                texture,
-                work,
-            )?;
-            if !expected.matches(&actual, work)? {
+            let matches = match &expected {
+                Fields::Flat(expected) => expected.matches(
+                    &lod_proof::certify(
+                        &child.raw.face,
+                        child.raw.side.displacement.as_ref().unwrap(),
+                        &child.mesh,
+                        child.sheet.field.as_ref().unwrap(),
+                        state.proof(),
+                        texture,
+                        work,
+                    )?,
+                    work,
+                )?,
+                Fields::Curved(expected) => expected.matches(
+                    &lod_proof::certify_uniform(
+                        &child.raw.face,
+                        child.raw.side.displacement.as_ref().unwrap(),
+                        &child.mesh,
+                        state.proof(),
+                        texture,
+                        work,
+                    )?,
+                    work,
+                )?,
+            };
+            if !matches {
                 return Err(invalid(
-                    "Flat terrain LOD retiling must preserve the exact affine field, constant paint and uniform native labels",
+                    "Terrain LOD retiling must preserve its certified fields, constant paint and uniform native labels",
                 ));
             }
         }
@@ -1706,6 +1747,19 @@ pub(crate) fn required_partitions(
         .collect::<Result<Vec<_>, _>>()?;
     let references = before.iter().collect::<Vec<_>>();
     let original = graph(&references, Mode::Cells, Phase::Original, work)?;
+    work.consume(before.len()).map_err(invalid)?;
+    if original.lod.len() != before.len() {
+        return Err(invalid(
+            "Terrain edge closure lost its original native LOD states",
+        ));
+    }
+    for (surface, state) in before.iter().zip(&original.lod) {
+        if state.coarsened && !selected.contains(&surface.raw.source) {
+            return Err(invalid(
+                "Curved terrain edge closure cannot retain an unchanged coarsened native neighbor",
+            ));
+        }
+    }
     let mut queue = Vec::new();
     for &face in &selected {
         let index = before
@@ -1984,15 +2038,14 @@ fn certify_mode(
         ));
     }
     let current = graph(&after, mode, Phase::Child, work)?;
-    if mode == Mode::Flat {
-        certify_lod(
-            (&before, &previous),
-            (&after, &current),
-            &selected,
-            replacements,
-            work,
-        )?;
-    }
+    certify_lod(
+        (&before, &previous),
+        (&after, &current),
+        &selected,
+        replacements,
+        mode,
+        work,
+    )?;
     coverage(&previous, &current, &after, work)?;
     let mut adjacency = BTreeMap::<FaceId, BTreeSet<FaceId>>::new();
     for contact in previous.edges.iter().chain(&previous.corners) {

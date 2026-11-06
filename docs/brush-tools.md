@@ -282,12 +282,18 @@ previous valid draft; no policy switches automatically after a failure.
   noncrossing neighbors required by a retained matched full original edge.
   Every neighbor must pass complete source, field, material and metadata checks.
   Missing selection, unsupported partial edges, incompatible native density,
-  affected LOD coarsening, contact mismatches, corner
+  retained or cut-touching LOD coarsening, contact mismatches, corner
   capacity overflow, folded projections, self-intersecting borders,
   extra contacts, unsupported degenerate contacts and uncertain
   native normal inputs reject.
   Each retained cell adds 32 native triangles. Powers 2–4 are subject to the
   shared output and work limits.
+- **Retile grid cells** and **Retile surface triangles** can discard source LOD
+  in a one-sided cut. All changed LOD triangles must lie beyond the cut tolerance
+  on the discarded side. Source paint must be constant and triangle labels uniform.
+  **Both sides**, retained or cut-touching coarsening and LOD-bearing whole-neighbor
+  partitions reject this case. Outputs and unchanged curved neighbors cannot
+  require LOD coarsening.
 - **Retile surface triangles** requires a planar base with a convex cage in its
   exact coordinate chart. It shares the geometry, paint, texture, normal and
   contact checks of **Retile grid cells**. Output must fit native edge

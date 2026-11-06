@@ -235,6 +235,10 @@ Local cell and normal checks can still reject the cut.
 Folded projections, self-intersecting borders, overlap, extra unsewn contacts and
 unsupported degenerate contacts reject.
 Native geometry, piecewise raw/native paint fields and labels must remain exact.
+A one-sided cut can discard all source LOD with constant paint and uniform labels.
+Every changed triangle must lie beyond the cut tolerance on the discarded side.
+**Both sides**, retained or cut-touching coarsening and LOD-bearing whole neighbors
+reject this case. Curved outputs and unchanged neighbors cannot require LOD.
 Unchanged curved neighbors can retain a certified corner, or an old edge contact
 can be fully severed. They must share the exact base chart and orientation.
 Native contact checks cover complete seam polylines. Normal checks still apply.
@@ -242,7 +246,7 @@ Their authored grids
 stay unchanged. To retain a full original edge, select the required noncrossing
 neighbor and enable **Partition selected neighbors**. This explicitly retiles the
 entire neighbor: one power-2 patch per old cell in **Retile grid cells**, four in
-**Retile surface triangles**. Partial edges, incompatible density, affected LOD
+**Retile surface triangles**. Partial edges, incompatible density, retained/output LOD
 and output limits can still reject; corner-only, severed and unrelated neighbors
 stay unchanged. Normals and runtime LOD are regenerated for the new patches.
 [**Retile flat terrain**](brush-tools.md#retile-flat-terrain) supports non-grid

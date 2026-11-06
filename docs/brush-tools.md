@@ -66,13 +66,17 @@ resulting child brushes. Selecting a whole entity clips all crossing children.
 
 ### Cut terrain on its existing grid
 
-1. Select power-3/4 world or `func_detail` terrain brushes.
+1. Select power-3/4 world or `func_detail` terrain brushes. Include any
+   noncrossing neighbors you authorize the operation to partition.
 2. Click **Clip selected brushes**.
 3. Under **Terrain cut**, choose **Existing grid**.
-4. Set a plane through a complete middle row or column. Power 4 also permits
+4. Enable **Partition selected neighbors** if retained quarter-grid joins need
+   extra partitions. It is off by default.
+5. Set a plane through a complete middle row or column. Power 4 also permits
    quarter-grid lines: row or column 4 or 12 of its 16 cells.
-5. Choose **Arrow side**, **Opposite side** or **Both sides**.
-6. Inspect the native terrain patches, then click **Apply cut**.
+6. Choose **Arrow side**, **Opposite side** or **Both sides**.
+7. Inspect the native patches and separate counts of cut brushes and partitioned
+   neighbors, then click **Apply cut**.
 
 A middle cut produces two patches per retained half, at one lower power.
 A quarter cut produces four power-2 patches on the short side and six power-2/3
@@ -80,7 +84,14 @@ patches on the long side. **Both sides** produces ten patches.
 Grid spacing, paint samples and triangle flags stay the same.
 The cut follows the displaced surface, not its backing brush.
 It does not create a wall beneath the cut.
-Matching neighbor borders are checked before Apply. Neighbor grids stay unchanged.
+Matching neighbor borders are checked before Apply.
+**Partition selected neighbors** permits one subdivision of each required,
+selected noncrossing power-3/4 neighbor to retain native full/half joins.
+The operation can propagate through required selected neighbors within the
+shared limits. Unselected and unrelated selected terrain stay unchanged.
+Missing selection, a required deeper subdivision or an unrepresentable native
+result rejects the complete request. The option never enables itself after a
+failed cut. Changing it discards the preview; changing **Terrain cut** turns it off.
 The preview also checks retained points at native game precision. A cut that
 cannot keep those points and their side of the plane rejects.
 Visible map instances use freshly resolved child terrain for these checks. Save
@@ -158,7 +169,7 @@ Geometry, UVs, triangle flags and collision-material regions stay exact.
 | Choice | Inserted samples | Raw error limit | Native packed error limit |
 | --- | --- | --- | --- |
 | **Exact fields** (default) | Preserve raw and all four native packed fields exactly. | 0 | 0 |
-| **Native float** | Store fractional values at native float32 precision. | 2⁻¹⁷/255 | (1 + 2⁻¹⁷)/255 |
+| **Native float** | Store fractional values at native float32 precision. | 2⁻¹⁷/255 | (1 + 3·2⁻¹⁷)/255 |
 | **Nearest byte** | Round to the nearest integer, ties to even. | 0.5/255 | 1.5/255 |
 
 Original samples stay unchanged. Fractional paint is supported when the selected
@@ -186,11 +197,16 @@ previous valid draft; no policy switches automatically after a failure.
   collision triangles and maximal render triangles. Unselected neighbors must
   keep their complete native state.
 - **Existing grid** rejects other cut lines, power-2 splitting, quarter-edge
-  links, changed LOD geometry and overlapping or unmatched borders.
+  links that cannot be resolved by **Partition selected neighbors**, changed LOD
+  geometry and overlapping or unmatched borders. Neighbor partitioning permits
+  at most one subdivision per selected original power-3/4 patch; it cannot
+  partition unselected terrain or satisfy a deeper subdivision.
   Missing or unsupported child sources stop the preview. Saved-hidden references
   are omitted; display filters do not remove compiler neighbors.
-- **Retile flat terrain** requires a common base plane, surface plane and
-  orientation across its affected contact component. Curved neighbors, overlaps,
+- **Retile flat terrain** requires a common base plane and orientation. Joined
+  planar surfaces can have different slopes on world-axis bases when they share
+  one exact affine tangential projection and pass the native normal checks.
+  Tilted bases still require a common visible plane. Curved neighbors, overlaps,
   unsupported partial joins and affected LOD coarsening reject. Paint must remain
   affine; restricted masks and opaque metadata reject.
   Native positions, shared samples and texture fields must remain exact.
@@ -231,12 +247,13 @@ previous valid draft; no policy switches automatically after a failure.
   **Exact fields** can refuse. The error names the unrepresentable field.
   **Native float** and **Nearest byte** do not relax geometry, UV, triangle-label
   or collision-material checks.
-- Terrain cuts accept 16 sources and 128 output patches. Unsupported bindings,
+- Terrain cuts accept 16 sources, including partitioned neighbors, and 128 output patches. Unsupported bindings,
   notes, masks and opaque payloads reject before the map changes.
 - Numerically uncertain cuts reject. They do not move retained points to fit
   the new patch cages.
 - Select one child in **Solids** mode, or the whole `func_detail` entity.
-  Only targeted crossing brushes change. Runtime brush-model terrain rejects.
+  Targeted crossing brushes and explicitly authorized required neighbors can
+  change. Runtime brush-model terrain rejects.
 - A connected cut checks at most 128 neighboring faces. Terrain and resolved
   instance context share a 64 MiB snapshot budget.
 - Invalid, collapsed or excessively thin results reject before the map changes.

@@ -346,8 +346,17 @@ fn certify_normal_profiles(
     axis: Option<usize>,
     work: &mut Work,
 ) -> Result<(), EditError> {
+    certify_normal_info(data.infos[0], profiles, axis, work)
+}
+
+fn certify_normal_info(
+    info: bsp::DisplacementInfo,
+    profiles: &[Vec<DVec3>],
+    axis: Option<usize>,
+    work: &mut Work,
+) -> Result<(), EditError> {
     let mut normal_inputs = BTreeSet::new();
-    let cells = data.infos[0]
+    let cells = info
         .grid_size()
         .map_err(|error| invalid(error.to_string()))?
         - 1;
@@ -368,9 +377,9 @@ fn certify_normal_profiles(
                 .map_err(invalid)?;
             let profile = bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding };
             let result = if let Some(axis) = axis {
-                data.infos[0].certify_native_height_normal_inputs(&positions, axis, profile)
+                info.certify_native_height_normal_inputs(&positions, axis, profile)
             } else {
-                data.infos[0].certify_native_normal_inputs(&positions, profile)
+                info.certify_native_normal_inputs(&positions, profile)
             };
             result.map_err(|error| {
                 invalid(format!(
@@ -380,6 +389,65 @@ fn certify_normal_profiles(
         }
     }
     Ok(())
+}
+
+struct NormalProjection {
+    fields: [ScalarField; 2],
+    axis: usize,
+    sign: i128,
+}
+
+impl NormalProjection {
+    fn matches(&self, other: &Self) -> Result<bool, EditError> {
+        Ok(self.axis == other.axis
+            && self.sign == other.sign
+            && self.fields[0].matches(&other.fields[0])?
+            && self.fields[1].matches(&other.fields[1])?)
+    }
+}
+
+fn certify_projected_normals(
+    info: bsp::DisplacementInfo,
+    base: [DVec3; 4],
+    profiles: &[Vec<DVec3>],
+    work: &mut Work,
+) -> Result<NormalProjection, EditError> {
+    let size = info
+        .grid_size()
+        .map_err(|error| invalid(error.to_string()))?;
+    let axis = (0..3)
+        .find(|&axis| base.iter().all(|point| point[axis] == base[0][axis]))
+        .ok_or_else(|| {
+            invalid("Noncoplanar flat terrain contacts require one common world-axis base plane")
+        })?;
+    let axes = [(axis + 1) % 3, (axis + 2) % 3];
+    work.consume(FIELD_WORK * (20 + profiles.len()))
+        .map_err(invalid)?;
+    let sign = orient(base[0], base[1], base[2], axes)?;
+    let points = profiles
+        .last()
+        .filter(|points| points.len() == size * size)
+        .ok_or_else(|| invalid("Terrain normal projection requires a complete native grid"))?;
+    let corners = [0, (size - 1) * size, size * size - 1, size - 1].map(|index| points[index]);
+    let fields = [
+        ScalarField::new(base, corners.map(|point| point[axes[0]]))?,
+        ScalarField::new(base, corners.map(|point| point[axes[1]]))?,
+    ];
+    if sign == 0 || orient(corners[0], corners[1], corners[2], axes)? != sign {
+        return Err(invalid(
+            "Noncoplanar flat terrain contacts require an orientation-preserving common projection",
+        ));
+    }
+    for points in profiles {
+        if points.len() != size * size || orient(points[0], points[size], points[1], axes)? != sign
+        {
+            return Err(invalid(
+                "Noncoplanar flat terrain native normal projections must share one positive direction",
+            ));
+        }
+    }
+    certify_normal_info(info, profiles, Some(axis), work)?;
+    Ok(NormalProjection { fields, axis, sign })
 }
 
 fn admit<'a>(

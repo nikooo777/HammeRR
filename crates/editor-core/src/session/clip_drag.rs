@@ -225,6 +225,7 @@ impl Session {
         self.check_clip_stamp(&drag.snapshot)?;
         if drag.before.terrain_mode != self.clip_terrain_mode
             || drag.before.blend_mode != self.clip_blend_mode
+            || drag.before.partition_neighbors != self.clip_partition_neighbors
         {
             return Err("Terrain cut settings changed; start the cut-plane drag again".into());
         }
@@ -336,6 +337,7 @@ impl Session {
                             terrain_mode: Some(drag.before.terrain_mode),
                             blend_mode: Some(drag.before.blend_mode),
                             round_blend: None,
+                            partition_neighbors: Some(drag.before.partition_neighbors),
                         },
                     )?;
                     self.clip_points = points;

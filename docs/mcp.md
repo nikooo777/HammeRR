@@ -786,7 +786,8 @@ original target faces. Results keep geometric source IDs and add
 
 Grid is the default. The choice is shared with drawn lines, picked points and
 plane handles. Changing it cancels the current cut draft without changing the
-map or Undo history, and resets **Blend samples** to **Exact fields**. Optional
+map or Undo history, resets **Blend samples** to **Exact fields**, and turns off
+**Partition selected neighbors**. Optional
 `clip_brushes.terrain_mode` accepts `"grid"`,
 `"flat"`, `"cells"` or `"fragments"` for that request; success adopts the choice, while failure keeps the
 previous choice and valid draft. A failed request never switches modes.
@@ -797,9 +798,11 @@ supported. Each visible sheet must follow one exact affine mapping from its
 base cage to a plane. Native-representable alpha must form
 one exact affine field; vertex masks stay unrestricted. Four-corner retained regions stay
 one power-2 patch when joins permit; triangle/pentagon regions use quad fans.
-Compatible coplanar flat components support repeated cuts. The full affected
-component, including unchanged and resolved child neighbors, must share its base
-plane, surface plane and orientation. Native edge/corner samples must match;
+Compatible flat components support repeated cuts. The full affected component,
+including unchanged and resolved child neighbors, must share its base plane and
+orientation. On world-axis bases, visible planes can differ if the component
+shares one exact affine tangential projection and passes native normal checks.
+Tilted-base components still require a common visible plane. Native edge/corner samples must match;
 partial/uncertain joins, overlaps, affected LOD coarsening and nonflat neighbors
 refuse. Geometry and texture fields remain exact. Native cell-normal edge/cross
 arithmetic must be exact and conditioned; this does not promise identical
@@ -853,7 +856,7 @@ or pass `blend_mode` to `clip_brushes`:
 | Mode | Inserted alpha | Raw error limit | Each packed-profile error limit |
 | --- | --- | --- | --- |
 | **Exact fields** (`exact`, default) | Exact native float32 representation | 0 | 0 |
-| **Native float** (`native_float`) | One float32 rounding | 2⁻¹⁷ | 1 + 2⁻¹⁷ |
+| **Native float** (`native_float`) | One float32 rounding | 2⁻¹⁷ | 1 + 3·2⁻¹⁷ |
 | **Nearest byte** (`nearest_byte`) | Nearest integer, ties to even | 0.5 | 1.5 |
 
 Limits use byte units out of 255. Native float and Nearest byte require Fragments;
@@ -861,8 +864,8 @@ explicit requests in another terrain mode fail. Exact also accepts fractional
 source alpha when the authored and native float32 values agree and every raw
 and packed field remains exact. Unsupported source values refuse in all modes.
 Only inserted alpha can be rounded; source paint is not quantized or clamped.
-The packed limits are measured admission gates. Exceeding one rejects the cut;
-they are not universal native-quantizer error guarantees. Rounding-dependent
+The limits include native quantization. Each output triangle must pass the
+certificate; an error above its limit rejects the cut. Rounding-dependent
 secondary collision-material classes also reject.
 
 Omitted overrides use the current choice, or **Exact fields** when changing
@@ -895,6 +898,20 @@ and physical triangle tags remain unchanged. Child power is one lower.
 Power 4 also permits complete quarter-grid lines: row or column 4 or 12.
 Both sides produces ten patches; the short side has four power-2 patches,
 and the long side has six power-2/3 patches.
+
+**Partition selected neighbors** is off by default and available only with
+**Existing grid**. To retain full/half native contacts during a quarter-grid cut,
+select the required noncrossing power-3/4 neighbors alongside the crossing terrain,
+then call `set_clip_neighbor_partition({"enabled":true})`, or pass
+`partition_neighbors:true` to `clip_brushes`. Only neighbors required by the cut
+are partitioned, at most one quadrant level per source. Unselected blockers or
+insufficient depth refuse; unrelated selected terrain stays unchanged.
+
+Omitted `partition_neighbors` uses the current choice, or false when changing
+`terrain_mode`. Success adopts an override; failure preserves the previous
+setting and valid draft. Explicit true outside Grid refuses. Changing the shared
+setting cancels the old draft; changing terrain mode resets it to false.
+
 Retained positions and complete plane separation must also agree at native f32
 precision under every supported rounding mode. Uncertain arithmetic or a changed
 native point refuses the preview; points are not moved to fit a child cage.
@@ -912,7 +929,10 @@ before changing the map. Carrier-face material does not create
 a physical wall beneath the cut.
 
 Results include `terrain` source/output faces and powers, `side_mapping` and
-`terrain_work` counts and limits. The preview also reports `cubemap_bindings`.
+`terrain_work` counts and limits. State, preview and results report
+`partition_neighbors`. Each terrain result has `operation:"cut"` or
+`operation:"partition"`; `partitioned_neighbors:[{solid,side}]` lists the original
+neighbor faces partitioned by the operation. The preview also reports `cubemap_bindings`.
 The `get_clip_preview` response reports the shared `terrain_mode` and frozen
 `preview.terrain_mode`. Flat previews add
 `preview.terrain_materials` with material names, captured primary
@@ -2696,7 +2716,7 @@ These groups locate the available operations.
 | [Magnetic movement](placement.md#magnetic-translation) | `cancel_magnetic_translation`, `commit_magnetic_translation`, `get_magnetic_snap_sources`, `get_magnetic_snapping`, `preview_magnetic_translation`, `set_magnetic_snapping` |
 | [Helpers and selection](selection-presentation.md) | `get_helper_presentation`, `get_selection_presentation` |
 | [External map comparison](map-comparison.md) | `external_map_comparison`, `get_external_map_comparison` |
-| [Brush geometry and transforms](brushes.md) | `begin_clip_drag`, `cancel_block_preview`, `cancel_carve`, `cancel_clip_drag`, `cancel_clip_preview`, `cancel_hollow`, `cancel_merge`, `cancel_primitive_preview`, `clip_brushes`, `commit_carve`, `commit_clip_preview`, `commit_hollow`, `commit_merge`, `commit_primitive_preview`, `create_block`, `create_blocks`, `create_polygon_brush`, `create_primitive`, `draw_block`, `finish_clip_drag`, `frame_primitive_preview`, `get_carve_preview`, `get_clip_handles`, `get_clip_preview`, `get_hollow_preview`, `get_merge_preview`, `get_primitive_preview`, `look_inside_hollow`, `pick_clip_point`, `preview_carve`, `preview_carve_many`, `preview_hollow`, `preview_merge`, `set_clip_handle_options`, `set_clip_points`, `set_clip_terrain_mode`, `set_clip_tool`, `set_spatial_settings`, `update_clip_drag` |
+| [Brush geometry and transforms](brushes.md) | `begin_clip_drag`, `cancel_block_preview`, `cancel_carve`, `cancel_clip_drag`, `cancel_clip_preview`, `cancel_hollow`, `cancel_merge`, `cancel_primitive_preview`, `clip_brushes`, `commit_carve`, `commit_clip_preview`, `commit_hollow`, `commit_merge`, `commit_primitive_preview`, `create_block`, `create_blocks`, `create_polygon_brush`, `create_primitive`, `draw_block`, `finish_clip_drag`, `frame_primitive_preview`, `get_carve_preview`, `get_clip_handles`, `get_clip_preview`, `get_hollow_preview`, `get_merge_preview`, `get_primitive_preview`, `look_inside_hollow`, `pick_clip_point`, `preview_carve`, `preview_carve_many`, `preview_hollow`, `preview_merge`, `set_clip_blend_mode`, `set_clip_blend_rounding`, `set_clip_handle_options`, `set_clip_neighbor_partition`, `set_clip_points`, `set_clip_terrain_mode`, `set_clip_tool`, `set_spatial_settings`, `update_clip_drag` |
 | [Grid defaults](basics.md) | `get_grid_defaults`, `set_grid_defaults` |
 | [Groups and layers](groups.md) | `add_object_group_selection`, `apply_layer_edit`, `apply_object_group_edit`, `begin_layer_edit`, `begin_object_group_edit`, `cancel_layer_edit`, `cancel_object_group_edit`, `get_layers`, `get_object_groups`, `select_layer_members`, `select_object_group`, `select_object_group_member`, `set_group_selection_bypass`, `set_layer_visibility`, `update_layer_edit`, `update_object_group_edit` |
 | [History](history.md) | `get_history`, `navigate_history` |

@@ -7,7 +7,7 @@ use source_formats::{
 };
 
 use super::{
-    Child, Context, CutLine, NativePositions, POSITION_PROFILES, SAMPLE_EPSILON,
+    Child, Context, CutLine, NativePositions, Operation, POSITION_PROFILES, Plan, SAMPLE_EPSILON,
     certified_encoded_positions, certified_native_positions, contains, invalid, touches,
 };
 use crate::displacement::{
@@ -20,8 +20,307 @@ use crate::{BrushGeometry, Document, EditError, Face, Plane};
 
 const MAX_WORK: usize = 32_000_000;
 pub const MAX_NEIGHBORS: usize = 128;
+const SPAN_STEPS: i32 = 16;
+
+struct Leaf {
+    origin: Child,
+    corners: [DVec3; 4],
+}
+
+#[derive(Clone, Copy)]
+struct Interval {
+    start: i32,
+    end: i32,
+    points: [DVec3; 2],
+}
+
+impl Interval {
+    fn native_span(self, start: i32, end: i32) -> Option<neighbors::Span> {
+        let middle = (self.start + self.end) / 2;
+        match (start, end) {
+            (a, b) if a == self.start && b == self.end => Some(neighbors::Span::Full),
+            (a, b) if a == self.start && b == middle => Some(neighbors::Span::FirstHalf),
+            (a, b) if a == middle && b == self.end => Some(neighbors::Span::SecondHalf),
+            _ => None,
+        }
+    }
+}
+
+fn intervals(
+    leaves: &[Leaf],
+    power: u32,
+    edge: usize,
+    span: neighbors::Span,
+    reverse: bool,
+) -> Vec<Interval> {
+    let last = 1 << power;
+    let (start, end) = match span {
+        neighbors::Span::Full => (0, last),
+        neighbors::Span::FirstHalf => (0, last / 2),
+        neighbors::Span::SecondHalf => (last / 2, last),
+    };
+    leaves
+        .iter()
+        .filter_map(|leaf| {
+            let Child { row, column, .. } = leaf.origin;
+            let cells = leaf.origin.cells();
+            let (a, b) = match edge {
+                0 if column == 0 => (row, row + cells),
+                1 if row + cells == last => (column, column + cells),
+                2 if column + cells == last => (last - row - cells, last - row),
+                3 if row == 0 => (last - column - cells, last - column),
+                _ => return None,
+            };
+            if a.max(start) >= b.min(end) {
+                return None;
+            }
+            let mut points = [leaf.corners[edge], leaf.corners[(edge + 1) % 4]];
+            let (a, b) = if reverse {
+                points.swap(0, 1);
+                (end as i32 - b as i32, end as i32 - a as i32)
+            } else {
+                (a as i32 - start as i32, b as i32 - start as i32)
+            };
+            let scale = SPAN_STEPS / (end - start) as i32;
+            Some(Interval {
+                start: a * scale,
+                end: b * scale,
+                points,
+            })
+        })
+        .collect()
+}
+
+fn half_edges([a, b]: [DVec3; 2]) -> [[DVec3; 2]; 2] {
+    let middle = ((a + b) * 0.5).as_vec3().as_dvec3();
+    [[a, middle], [middle, b]]
+}
+
+fn quarter_of(small: Interval, large: Interval) -> bool {
+    half_edges(large.points)
+        .into_iter()
+        .flat_map(half_edges)
+        .any(|points| points == small.points)
+}
+
+fn child_leaves(
+    parts: &[Solid],
+    children: &[Child],
+    work: &mut Work,
+) -> Result<Vec<Leaf>, EditError> {
+    if parts.len() != children.len() {
+        return Err(invalid("Terrain clipping lost its child grid origins"));
+    }
+    let mut result = Vec::with_capacity(parts.len());
+    for (part, &origin) in parts.iter().zip(children) {
+        work.consume(part.sides.len() + (origin.cells() + 1).pow(2))
+            .map_err(invalid)?;
+        let geometry =
+            BrushGeometry::from_solid(part).map_err(|error| invalid(error.to_string()))?;
+        let (side, face) = super::source_face(part, &geometry)?;
+        let (_, mesh) =
+            native::checked_mesh(face, side.displacement.as_ref().unwrap()).map_err(invalid)?;
+        let size = mesh.size;
+        result.push(Leaf {
+            origin,
+            corners: [0, (size - 1) * size, size * size - 1, size - 1]
+                .map(|index| native::stored_vertex(mesh.base_positions[index])),
+        });
+    }
+    Ok(result)
+}
+
+fn required_partition(
+    surfaces: &[Surface<'_>],
+    pairs: &[neighbors::NeighborPair],
+    leaves: &BTreeMap<FaceId, Vec<Leaf>>,
+    work: &mut Work,
+) -> Result<Option<FaceId>, EditError> {
+    for pair in pairs {
+        let first = &surfaces[pair.first];
+        let second = &surfaces[pair.second];
+        let a = intervals(
+            &leaves[&first.raw.id],
+            first.grid().power,
+            pair.first_edge,
+            pair.first_span,
+            false,
+        );
+        let b = intervals(
+            &leaves[&second.raw.id],
+            second.grid().power,
+            pair.second_edge,
+            pair.second_span,
+            true,
+        );
+        work.consume(16 * (a.len() * b.len() + a.len() + b.len()))
+            .map_err(invalid)?;
+        for &a in &a {
+            for &b in &b {
+                let start = a.start.max(b.start).max(0);
+                let end = a.end.min(b.end).min(SPAN_STEPS);
+                if start >= end {
+                    continue;
+                }
+                let spans = (a.native_span(start, end), b.native_span(start, end));
+                if matches!(
+                    spans,
+                    (Some(neighbors::Span::Full), Some(_)) | (Some(_), Some(neighbors::Span::Full))
+                ) {
+                    continue;
+                }
+                let (small, large, source) = match spans {
+                    (Some(neighbors::Span::Full), None) if b.end - b.start == 4 * (end - start) => {
+                        (a, b, second.raw.id)
+                    }
+                    (None, Some(neighbors::Span::Full)) if a.end - a.start == 4 * (end - start) => {
+                        (b, a, first.raw.id)
+                    }
+                    _ => {
+                        return Err(invalid(
+                            "Terrain neighbor partitioning cannot close retained native spans within one subdivision",
+                        ));
+                    }
+                };
+                if !quarter_of(small, large) {
+                    return Err(invalid(
+                        "Terrain neighbor partitioning requires exact native quarter-edge cage coordinates",
+                    ));
+                }
+                return Ok(Some(source));
+            }
+        }
+    }
+    Ok(None)
+}
+
+pub(crate) fn partition_neighbors(
+    document: &Document,
+    authorized: &[crate::clip::Source<'_>],
+    replacements: &[Replacement<'_>],
+    plane: Plane,
+    material: Option<&str>,
+    context: &mut Context<'_>,
+) -> Result<Vec<Plan>, EditError> {
+    if !replacements
+        .iter()
+        .any(|replacement| replacement.operation == Operation::Cut)
+    {
+        return Ok(Vec::new());
+    }
+    let before = component(document, replacements, context.vmf, &mut context.work)?;
+    if before.is_empty() {
+        return Ok(Vec::new());
+    }
+    let original = graph(&before, &mut context.work)?;
+    let mut leaves = before
+        .iter()
+        .map(|surface| {
+            (
+                surface.raw.id,
+                vec![Leaf {
+                    origin: surface.origin,
+                    corners: surface.grid().corners,
+                }],
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    for replacement in replacements {
+        if let Some(leaves) = leaves.get_mut(&replacement.source) {
+            *leaves = child_leaves(replacement.parts, replacement.children, &mut context.work)?;
+        }
+    }
+    let mut plans = BTreeMap::<FaceId, Plan>::new();
+    let mut patches = replacements
+        .iter()
+        .map(|replacement| replacement.parts.len())
+        .sum::<usize>();
+    let mut vertices = replacements
+        .iter()
+        .flat_map(|replacement| replacement.children)
+        .map(|child| (child.cells() + 1).pow(2))
+        .sum::<usize>();
+    let mut triangles = replacements
+        .iter()
+        .flat_map(|replacement| replacement.children)
+        .map(|child| 2 * child.cells().pow(2))
+        .sum::<usize>();
+    while let Some(face) = required_partition(&before, &original.pairs, &leaves, &mut context.work)?
+    {
+        if plans.contains_key(&face) {
+            return Err(crate::clip::source_error(
+                face.solid,
+                invalid("Terrain neighbor partitioning needs more than one subdivision"),
+            ));
+        }
+        if replacements
+            .iter()
+            .any(|replacement| replacement.source == face)
+        {
+            return Err(crate::clip::source_error(
+                face.solid,
+                invalid("Terrain neighbor partitioning requires a noncrossing original source"),
+            ));
+        }
+        let source = authorized
+            .iter()
+            .find(|source| source.solid.id == face.solid)
+            .ok_or_else(|| {
+                crate::clip::source_error(
+                    face.solid,
+                    invalid("Select this terrain neighbor to authorize native grid partitioning"),
+                )
+            })?;
+        let power = source
+            .solid
+            .sides
+            .iter()
+            .find(|side| side.id == face.side)
+            .and_then(|side| side.displacement.as_ref())
+            .map(|info| info.power)
+            .filter(|power| (3..=4).contains(power))
+            .ok_or_else(|| {
+                crate::clip::source_error(
+                    face.solid,
+                    invalid("Terrain neighbor partitioning requires an original power 3 or 4 grid"),
+                )
+            })?;
+        let cells = 1usize << (power - 1);
+        patches += 4;
+        vertices += 4 * (cells + 1).pow(2);
+        triangles += 8 * cells.pow(2);
+        if replacements.len() + plans.len() + 1 > crate::clip::MAX_TERRAIN_SOURCES
+            || patches > crate::clip::MAX_TERRAIN_PATCHES
+            || vertices > crate::clip::MAX_TERRAIN_VERTICES
+            || triangles > crate::clip::MAX_TERRAIN_TRIANGLES
+        {
+            return Err(invalid(
+                "Terrain clipping exceeds its source, patch, vertex or triangle limit",
+            ));
+        }
+        let geometry =
+            BrushGeometry::from_solid(source.solid).map_err(|error| invalid(error.to_string()))?;
+        let material = material
+            .map(str::trim)
+            .unwrap_or(&source.solid.sides[0].material);
+        let plan = super::partition(document, source.solid, &geometry, plane, material, context)
+            .map_err(|error| crate::clip::source_error(face.solid, error))?;
+        if plan.source != face || plan.operation != Operation::Partition {
+            return Err(invalid(
+                "Terrain neighbor partitioning lost its authorized source face",
+            ));
+        }
+        leaves.insert(
+            face,
+            child_leaves(&plan.parts, &plan.children, &mut context.work)?,
+        );
+        plans.insert(face, plan);
+    }
+    Ok(plans.into_values().collect())
+}
 
 pub(crate) struct Replacement<'a> {
+    pub operation: Operation,
     pub source: FaceId,
     pub source_power: u32,
     pub parts: &'a [Solid],
@@ -106,6 +405,7 @@ struct Links {
 }
 
 struct Graph {
+    pairs: Vec<neighbors::NeighborPair>,
     links: Links,
     lod: Vec<Option<LodState>>,
 }
@@ -481,7 +781,11 @@ fn graph(surfaces: &[Surface<'_>], work: &mut Work) -> Result<Graph, EditError> 
             }
         }
     }
-    Ok(Graph { links, lod })
+    Ok(Graph {
+        pairs: neighbors.pairs,
+        links,
+        lod,
+    })
 }
 
 fn canonical(mut triangle: [usize; 3]) -> [usize; 3] {
@@ -496,15 +800,17 @@ fn certify_lod(
     outputs: &[Surface<'_>],
     current: &Graph,
     retained: &BTreeSet<Vertex>,
-    cut: &CutLine,
+    cut: Option<&CutLine>,
     work: &mut Work,
 ) -> Result<(), EditError> {
     let previous = NativeState::prepare(original, previous, work)?;
-    cut.certify(&previous.positions, original.mesh.size, work)?;
+    if let Some(cut) = cut {
+        cut.certify(&previous.positions, original.mesh.size, work)?;
+    }
     let mut expected = BTreeSet::new();
     for &triangle in &previous.indices {
         work.consume(1).map_err(invalid)?;
-        if cut.straddles(triangle, original.mesh.size) {
+        if cut.is_some_and(|cut| cut.straddles(triangle, original.mesh.size)) {
             return Err(invalid(
                 "Native terrain LOD triangles straddle the cut line",
             ));
@@ -513,7 +819,11 @@ fn certify_lod(
             .iter()
             .all(|index| retained.contains(&original.vertex(*index)))
         {
-            expected.insert(canonical(triangle));
+            expected.insert(if cut.is_some() {
+                canonical(triangle)
+            } else {
+                triangle
+            });
         }
     }
     let mut actual = BTreeSet::new();
@@ -542,7 +852,12 @@ fn certify_lod(
             }
         }
         for triangle in state.indices {
-            let mapped = canonical(triangle.map(|index| output.vertex(index).index));
+            let mapped = triangle.map(|index| output.vertex(index).index);
+            let mapped = if cut.is_some() {
+                canonical(mapped)
+            } else {
+                mapped
+            };
             if !actual.insert(mapped) {
                 return Err(invalid(
                     "Terrain clipping duplicated a maximal native LOD triangle",
@@ -701,13 +1016,12 @@ fn verify_selected_source(
     Ok(())
 }
 
-pub(crate) fn certify(
-    document: &Document,
+fn component<'a>(
+    document: &'a Document,
     replacements: &[Replacement<'_>],
-    context: &mut Context<'_>,
-) -> Result<Vec<Verification>, EditError> {
-    let work = &mut context.work;
-    let cuts = &context.cuts;
+    vmf: Option<&'a Vmf>,
+    work: &mut Work,
+) -> Result<Vec<Surface<'a>>, EditError> {
     let selected = replacements
         .iter()
         .filter(|replacement| {
@@ -716,20 +1030,14 @@ pub(crate) fn certify(
         .map(|replacement| replacement.source)
         .collect::<BTreeSet<_>>();
     if selected.is_empty() {
-        return Ok(replacements
-            .iter()
-            .map(|_| Verification {
-                neighbors: 0,
-                links: 0,
-            })
-            .collect());
+        return Ok(Vec::new());
     }
     let hidden = replacements
         .iter()
         .map(|replacement| replacement.source)
         .filter(|face| !selected.contains(face))
         .collect::<BTreeSet<_>>();
-    let mut raw = collect(context.vmf.unwrap_or(document.vmf()))?;
+    let mut raw = collect(vmf.unwrap_or(document.vmf()))?;
     raw.retain(|face| !hidden.contains(&face.id));
     for face in &selected {
         if raw.iter().filter(|raw| raw.id == *face).count() != 1 {
@@ -739,7 +1047,7 @@ pub(crate) fn certify(
             ));
         }
     }
-    if let Some(context) = context.vmf {
+    if let Some(context) = vmf {
         verify_selected(document, context, &raw, replacements, work)?;
     }
     let internal = replacements
@@ -792,16 +1100,9 @@ pub(crate) fn certify(
         }
     }
     if engaged.is_empty() {
-        return Ok(replacements
-            .iter()
-            .map(|_| Verification {
-                neighbors: 0,
-                links: 0,
-            })
-            .collect());
+        return Ok(Vec::new());
     }
-    let before = raw
-        .into_iter()
+    raw.into_iter()
         .enumerate()
         .filter(|(index, _)| engaged.contains(index))
         .map(|(_, raw)| {
@@ -822,7 +1123,41 @@ pub(crate) fn certify(
                 size,
             )
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+}
+
+pub(crate) fn certify(
+    document: &Document,
+    replacements: &[Replacement<'_>],
+    context: &mut Context<'_>,
+) -> Result<Vec<Verification>, EditError> {
+    let work = &mut context.work;
+    let cuts = &context.cuts;
+    for replacement in replacements {
+        if (replacement.operation == Operation::Cut) != cuts.contains_key(&replacement.source) {
+            return Err(crate::clip::source_error(
+                replacement.source.solid,
+                invalid("Terrain clipping lost its explicit cut or partition identity"),
+            ));
+        }
+    }
+    let selected = replacements
+        .iter()
+        .filter(|replacement| {
+            native::terrain_source_is_visible(document.vmf(), replacement.source.solid)
+        })
+        .map(|replacement| replacement.source)
+        .collect::<BTreeSet<_>>();
+    let before = component(document, replacements, context.vmf, work)?;
+    if before.is_empty() {
+        return Ok(replacements
+            .iter()
+            .map(|_| Verification {
+                neighbors: 0,
+                links: 0,
+            })
+            .collect());
+    }
     let previous = graph(&before, work)?;
     let mut after = Vec::new();
     for surface in &before {
@@ -902,9 +1237,27 @@ pub(crate) fn certify(
     }
     for (original_index, original) in before.iter().enumerate() {
         if selected.contains(&original.raw.id) {
-            let cut = cuts
-                .get(&original.raw.id)
-                .ok_or_else(|| invalid("Terrain clipping lost its certified cut line"))?;
+            let replacement = replacements
+                .iter()
+                .find(|replacement| replacement.source == original.raw.id)
+                .unwrap();
+            let cut = match replacement.operation {
+                Operation::Cut => Some(
+                    cuts.get(&original.raw.id)
+                        .ok_or_else(|| invalid("Terrain clipping lost its certified cut line"))?,
+                ),
+                Operation::Partition => {
+                    if cuts.contains_key(&original.raw.id)
+                        || (0..original.vertices.len())
+                            .any(|index| !retained.contains(&original.vertex(index)))
+                    {
+                        return Err(invalid(
+                            "Terrain neighbor partitioning must retain its entire noncrossing source grid",
+                        ));
+                    }
+                    None
+                }
+            };
             certify_lod(
                 original,
                 previous.lod[original_index].as_ref(),

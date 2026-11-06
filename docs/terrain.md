@@ -212,6 +212,13 @@ collision and maximal render geometry. Save a new parent before cutting.
 For `func_detail`, select individual children in **Solids** mode or their whole
 entity. The cut retains the owner and unselected siblings.
 
+For quarter-grid joins, select the required noncrossing power-3/4 neighbors and
+enable **Partition selected neighbors** under **Existing grid**. The default-off
+option permits one subdivision per required selected neighbor. The preview
+counts cut brushes and partitioned neighbors separately. Unselected and
+unrelated terrain stay unchanged; missing selection or unsupported subdivision
+depth rejects the complete request.
+
 Choose [**Retile grid cells**](brush-tools.md#retile-grid-cells) to cut curved
 terrain at any complete original row or column, including power 2. It refines
 whole cells and supports curved height with an exact, orientation-preserving
@@ -219,7 +226,9 @@ affine tangential projection. Native geometry, piecewise raw/native paint fields
 and labels must remain exact. Unchanged terrain contacts reject; normals and runtime LOD are regenerated.
 [**Retile flat terrain**](brush-tools.md#retile-flat-terrain) supports non-grid
 cuts on eligible planar surfaces, including tilted base cages and affine
-tangential offsets.
+tangential offsets. Joined planar patches can have different slopes when they
+share a world-axis base plane and affine tangential projection, with exact native
+contacts and certified normals.
 Choose [**Retile surface triangles**](brush-tools.md#cut-through-curved-cells)
 to cut through curved cells while preserving their original triangle surfaces.
 Under **Blend samples**, **Exact fields** preserves raw and native packed paint

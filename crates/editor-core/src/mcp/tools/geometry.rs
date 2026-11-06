@@ -466,7 +466,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Set the shared Terrain cut choice: grid (Existing grid, the default), flat (Retile flat terrain), cells (Retile grid cells), or fragments (Retile surface triangles). Changing it resets the blend mode to exact and cancels the owned cut preview, points and plane drag while preserving map and Undo history. All drawn lines, three-point picks and handles use this same choice. Flat is an explicit eligible-flat-terrain operation; failed grid cuts never switch modes."
+        description = "Set the shared Terrain cut choice: grid (Existing grid, the default), flat (Retile flat terrain), cells (Retile grid cells), or fragments (Retile surface triangles). Changing it resets the blend mode to exact, disables neighbor partitioning and cancels the owned cut preview, points and plane drag while preserving map and Undo history. All drawn lines, three-point picks and handles use this same choice. Flat is an explicit eligible-flat-terrain operation; failed grid cuts never switch modes."
     )]
     pub(in crate::mcp) fn set_clip_terrain_mode(
         &self,
@@ -480,7 +480,21 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Set the shared terrain blend mode: exact (default), native_float or nearest_byte. Non-exact modes require fragments. Native float stores inserted alpha as float32, with raw error <=2^-17/255 and each packed-profile error <=(1+2^-17)/255. Nearest byte uses ties-to-even rounding, with raw error <=0.5/255 and packed error <=1.5/255. Geometry, UVs and spatial labels stay exact. Changing the mode cancels the owned cut draft; invalid requests preserve it."
+        description = "Set Partition selected neighbors for grid terrain cuts; default off. Explicitly selected noncrossing power-3/4 terrain may be partitioned one quadrant level when required to retain native full/half contacts during a quarter-grid cut. Unselected blockers and insufficient depth refuse; unrelated selected sources stay unchanged. Enabling outside grid refuses. Changing the setting cancels the owned cut draft while preserving map and Undo history."
+    )]
+    pub(in crate::mcp) fn set_clip_neighbor_partition(
+        &self,
+        Parameters(args): Parameters<ClipToolArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.set_clip_neighbor_partition(Actor::Agent, args.enabled)?;
+            Ok(clip_state(&session))
+        })
+    }
+
+    #[tool(
+        description = "Set the shared terrain blend mode: exact (default), native_float or nearest_byte. Non-exact modes require fragments. Native float stores inserted alpha as float32, with raw error <=2^-17/255 and each packed-profile error <=(1+3*2^-17)/255. Nearest byte uses ties-to-even rounding, with raw error <=0.5/255 and packed error <=1.5/255. Geometry, UVs and spatial labels stay exact. Changing the mode cancels the owned cut draft; invalid requests preserve it."
     )]
     pub(in crate::mcp) fn set_clip_blend_mode(
         &self,
@@ -571,7 +585,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Clip selected brushes, individual entity-child solids or whole brush entities by normal/distance, three VMF-wound points or a snapped planar line. Keep front (arrow side), back or both. terrain_mode chooses grid (default), flat, cells or fragments; omitted uses the shared choice. Grid preserves native samples; Flat retiles eligible planar affine terrain; Cells refines complete original cells; Fragments cuts original surface triangles. Native geometry, UVs and spatial labels stay exact; incompatible fields, contacts, LOD or material guards refuse. blend_mode chooses exact (default), native_float or nearest_byte; non-exact modes require fragments. Native float has raw error <=2^-17/255 and each packed-profile error <=(1+2^-17)/255; Nearest byte uses ties-to-even with raw error <=0.5/255 and packed error <=1.5/255. Exact accepts native-representable fractional source alpha when raw and packed fields stay exact. Omitted blend_mode uses the shared choice, or exact when changing terrain_mode. Successful overrides update the shared choices; failure preserves settings and the prior draft. Legacy round_blend maps true to nearest_byte and false to exact; supplying both blend fields refuses. No fallback changes a failed request. Caps inherit the source material unless material is supplied; terrain has no sealed cut walls. Normals and runtime LOD are regenerated. preview=true leaves map and Undo untouched; inspect get_clip_preview and render_view, then commit or cancel."
+        description = "Clip selected brushes, individual entity-child solids or whole brush entities by normal/distance, three VMF-wound points or a snapped planar line. Keep front (arrow side), back or both. terrain_mode chooses grid (default), flat, cells or fragments; omitted uses the shared choice. Grid preserves native samples; Flat retiles eligible planar affine terrain; Cells refines complete original cells; Fragments cuts original surface triangles. Native geometry, UVs and spatial labels stay exact; incompatible fields, contacts, LOD or material guards refuse. blend_mode chooses exact (default), native_float or nearest_byte; non-exact modes require fragments. Native float has raw error <=2^-17/255 and each packed-profile error <=(1+3*2^-17)/255; Nearest byte uses ties-to-even with raw error <=0.5/255 and packed error <=1.5/255. Exact accepts native-representable fractional source alpha when raw and packed fields stay exact. Omitted blend_mode uses the shared choice, or exact when changing terrain_mode. Successful overrides update the shared choices; failure preserves settings and the prior draft. Legacy round_blend maps true to nearest_byte and false to exact; supplying both blend fields refuses. partition_neighbors explicitly allows required selected noncrossing Grid neighbors to be partitioned one quadrant level; default false. Omission uses the shared setting, or false when changing terrain_mode. True outside grid refuses. Unselected blockers and insufficient depth refuse; unrelated selected terrain stays unchanged. No fallback changes a failed request. Caps inherit the source material unless material is supplied; terrain has no sealed cut walls. Normals and runtime LOD are regenerated. preview=true leaves map and Undo untouched; inspect get_clip_preview and render_view, then commit or cancel."
     )]
     pub(in crate::mcp) fn clip_brushes(
         &self,
@@ -598,16 +612,17 @@ impl EditorServer {
                     terrain_mode: args.terrain_mode.map(ClipTerrainMode::mode),
                     blend_mode: args.blend_mode.map(ClipBlendMode::mode),
                     round_blend: args.round_blend,
+                    partition_neighbors: args.partition_neighbors,
                 },
             )?;
             Ok(
-                json!({"result": clip_result(&result, session.clip_blend_mode()), "state": clip_state(&session)}),
+                json!({"result": clip_result(&result, session.clip_blend_mode(), session.clip_partition_neighbors()), "state": clip_state(&session)}),
             )
         })
     }
 
     #[tool(
-        description = "Inspect the shared clipping tool and cut preview, including shared and frozen terrain_mode and blend_mode choices, plus the legacy round_blend flag, normalized plane, keep side, material, result IDs, piece bounds and face projections. Native terrain results include source/output faces, grid powers, verified neighbors and retained links, side mappings, bounded patch/sample work and manual cubemap rebindings. Terrain results with blend certification report blend_error with the certified raw bound, four native packed-profile bounds and their mode-specific limits in /255 units. Retiled previews retain guarded runtime primary material mapping dimensions and optional detail scales and expose their guard_error without accepting fresh assets. Referenced terrain contexts additionally expose instance/dependency counts, source-qualified child faces and guard_error; full dependency bytes are checked during preparation and Apply.",
+        description = "Inspect the shared clipping tool and cut preview, including shared and frozen terrain_mode and blend_mode choices, plus partition_neighbors and the legacy round_blend flag, normalized plane, keep side, material, result IDs, piece bounds and face projections. Native terrain results identify cut or partition operations, list partitioned_neighbors source faces and include source/output faces, grid powers, verified neighbors and retained links, side mappings, bounded patch/sample work and manual cubemap rebindings. Terrain results with blend certification report blend_error with the certified raw bound, four native packed-profile bounds and their mode-specific limits in /255 units. Retiled previews retain guarded runtime primary material mapping dimensions and optional detail scales and expose their guard_error without accepting fresh assets. Referenced terrain contexts additionally expose instance/dependency counts, source-qualified child faces and guard_error; full dependency bytes are checked during preparation and Apply.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_clip_preview(&self) -> ToolResult {
@@ -621,7 +636,11 @@ impl EditorServer {
         run(|| {
             let mut session = self.session();
             let result = session.commit_clip_preview(Actor::Agent)?;
-            Ok(clip_result(&result, session.clip_blend_mode()))
+            Ok(clip_result(
+                &result,
+                session.clip_blend_mode(),
+                session.clip_partition_neighbors(),
+            ))
         })
     }
 

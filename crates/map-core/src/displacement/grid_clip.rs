@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use glam::DVec3;
 use source_formats::{
     bsp,
-    vmf::{DispInfo, Solid, Vmf},
+    vmf::{DispInfo, Side, Solid, Vmf},
 };
 
 use super::{ALLOWED_VERTEX_MASK_WORDS, DisplacementMesh, native, neighbors, smoothing, triangles};
@@ -22,7 +22,7 @@ type NativePositions = [Vec<[u32; 3]>; POSITION_PROFILES];
 
 mod network;
 pub(crate) use network::Work;
-pub(crate) use network::{MAX_NEIGHBORS, Replacement, certify};
+pub(crate) use network::{MAX_NEIGHBORS, Replacement, certify, partition_neighbors};
 pub(super) use network::{overlaps, related};
 
 pub(crate) struct Context<'a> {
@@ -98,7 +98,14 @@ impl Child {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Operation {
+    Cut,
+    Partition,
+}
+
 pub(crate) struct Plan {
+    pub operation: Operation,
     pub parts: Vec<Solid>,
     pub source: FaceId,
     pub source_power: u32,
@@ -419,17 +426,18 @@ fn child_carrier(
     Ok(part)
 }
 
-pub(crate) fn plan(
-    document: &Document,
-    solid: &Solid,
-    geometry: &BrushGeometry,
-    plane: Plane,
-    keep: Keep,
-    material: &str,
-    context: &mut Context<'_>,
-) -> Result<Option<Plan>, EditError> {
-    let vmf = context.vmf;
-    let work = &mut context.work;
+struct Prepared<'a> {
+    solid: &'a Solid,
+    side: &'a Side,
+    face: &'a Face,
+    mesh: DisplacementMesh,
+    native: NativePositions,
+}
+
+fn source_face<'a>(
+    solid: &'a Solid,
+    geometry: &'a BrushGeometry,
+) -> Result<(&'a Side, &'a Face), EditError> {
     let displaced = solid
         .sides
         .iter()
@@ -446,11 +454,17 @@ pub(crate) fn plan(
         .iter()
         .find(|face| face.side == *side_index)
         .ok_or_else(|| invalid("Terrain has no effective base face"))?;
+    Ok((side, face))
+}
+
+fn prepare<'a>(
+    document: &Document,
+    solid: &'a Solid,
+    geometry: &'a BrushGeometry,
+    context: &mut Context<'_>,
+) -> Result<Prepared<'a>, EditError> {
+    let (side, face) = source_face(solid, geometry)?;
     let info = side.displacement.as_ref().unwrap();
-    let mesh = DisplacementMesh::build(face, info).map_err(|error| invalid(error.to_string()))?;
-    if !crosses(&mesh, plane) {
-        return Ok(None);
-    }
     let (_, mesh) = native::checked_mesh(face, info).map_err(invalid)?;
     let (owner, _) = crate::subobject::solid(document, solid.id)?;
     if let ObjectId::Entity(id) = owner
@@ -463,72 +477,47 @@ pub(crate) fn plan(
     validate(info, &mesh)?;
     crate::subobject::fragments::admit_source(solid)?;
     if native::terrain_source_is_visible(document.vmf(), solid.id) {
-        resolved_instances(vmf.unwrap_or(document.vmf()))?;
+        resolved_instances(context.vmf.unwrap_or(document.vmf()))?;
     }
-    let middle = mesh.size / 2;
-    let cuts = if info.power == 4 {
-        vec![middle, middle / 2, middle + middle / 2]
-    } else {
-        vec![middle]
-    };
-    let (rows, cut, first_back) = cuts
-        .into_iter()
-        .find_map(|cut| {
-            grid_line(&mesh.positions, mesh.size, plane, true, cut)
-                .map(|first_back| (true, cut, first_back))
-                .or_else(|| {
-                    grid_line(&mesh.positions, mesh.size, plane, false, cut)
-                        .map(|first_back| (false, cut, first_back))
-                })
-        })
-        .ok_or_else(|| {
-            invalid("Cut plane must follow a complete existing terrain grid half-line, or a power 4 quarter-line, with each region wholly on one side")
-        })?;
-    let original_native = certified_native_positions(face, &mesh, info.power, work)?;
-    let cut_line = CutLine {
-        plane,
-        rows,
-        cut,
-        first_back,
-    };
-    cut_line.certify(&original_native, mesh.size, work)?;
-    let last = mesh.size - 1;
-    let leaves = quadrants(Child {
-        row: 0,
-        column: 0,
-        power: info.power,
+    let native = certified_native_positions(face, &mesh, info.power, &mut context.work)?;
+    Ok(Prepared {
+        solid,
+        side,
+        face,
+        mesh,
+        native,
     })
-    .into_iter()
-    .flat_map(|child| {
-        let origin = if rows { child.row } else { child.column };
-        if origin < cut && cut < origin + child.cells() {
-            quadrants(child).to_vec()
-        } else {
-            vec![child]
-        }
-    })
-    .collect::<Vec<_>>();
-    let original_tags = triangles::native_tags(info, &mesh)?;
-    let mut parts = Vec::new();
-    let mut children = Vec::new();
-    for back in [true, false] {
-        if matches!((keep, back), (Keep::Back, false) | (Keep::Front, true)) {
-            continue;
-        }
-        for &child in &leaves {
+}
+
+impl Prepared<'_> {
+    fn materialize(
+        &self,
+        children: Vec<Child>,
+        material: &str,
+        operation: Operation,
+        work: &mut Work,
+    ) -> Result<Plan, EditError> {
+        let Self {
+            solid,
+            side,
+            face,
+            mesh,
+            native: original_native,
+        } = self;
+        let info = side.displacement.as_ref().unwrap();
+        let last = mesh.size - 1;
+        let original_tags = triangles::native_tags(info, mesh)?;
+        let mut parts = Vec::with_capacity(children.len());
+        for &child in &children {
             let Child { row, column, .. } = child;
             let cells = child.cells();
-            let second = if rows { row >= cut } else { column >= cut };
-            if (first_back != second) != back {
-                continue;
-            }
-            let mut part = child_carrier(solid, &mesh, face.plane.normal, child, material)?;
+            let mut part = child_carrier(solid, mesh, face.plane.normal, child, material)?;
             let index = part
                 .sides
                 .iter()
                 .position(|candidate| candidate.id == side.id)
                 .ok_or_else(|| invalid("Terrain child lost its base face"))?;
-            part.sides[index].displacement = Some(child_info(info, &mesh, child));
+            part.sides[index].displacement = Some(child_info(info, mesh, child));
             let geometry =
                 BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
             let face = geometry
@@ -587,31 +576,143 @@ pub(crate) fn plan(
                 }
             }
             parts.push(part);
-            children.push(child);
+        }
+        let power = children[0].power;
+        let output_power = children
+            .iter()
+            .all(|child| child.power == power)
+            .then_some(power);
+        let vertices = children
+            .iter()
+            .map(|child| (child.cells() + 1).pow(2))
+            .sum();
+        let triangles = children.iter().map(|child| child.cells().pow(2) * 2).sum();
+        Ok(Plan {
+            operation,
+            parts,
+            source: FaceId {
+                solid: solid.id,
+                side: side.id,
+            },
+            source_power: info.power,
+            output_power,
+            vertices,
+            triangles,
+            children,
+        })
+    }
+}
+
+pub(crate) fn partition(
+    document: &Document,
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    plane: Plane,
+    material: &str,
+    context: &mut Context<'_>,
+) -> Result<Plan, EditError> {
+    let source = prepare(document, solid, geometry, context)?;
+    context
+        .work
+        .consume((POSITION_PROFILES + 1) * source.mesh.positions.len())
+        .map_err(invalid)?;
+    if crosses(&source.mesh, plane)
+        || source.native.iter().any(|positions| {
+            let mut back = false;
+            let mut front = false;
+            for point in positions {
+                let point = DVec3::from_array(point.map(|bits| f64::from(f32::from_bits(bits))));
+                let distance = plane.distance_to(point);
+                back |= distance < -CUT_EPSILON;
+                front |= distance > CUT_EPSILON;
+            }
+            back && front
+        })
+    {
+        return Err(invalid(
+            "Terrain neighbor partitioning requires a noncrossing source in authored, native and compiler geometry",
+        ));
+    }
+    let children = quadrants(Child {
+        row: 0,
+        column: 0,
+        power: source.side.displacement.as_ref().unwrap().power,
+    })
+    .to_vec();
+    source.materialize(children, material, Operation::Partition, &mut context.work)
+}
+
+pub(crate) fn plan(
+    document: &Document,
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    plane: Plane,
+    keep: Keep,
+    material: &str,
+    context: &mut Context<'_>,
+) -> Result<Option<Plan>, EditError> {
+    let (side, face) = source_face(solid, geometry)?;
+    let info = side.displacement.as_ref().unwrap();
+    let mesh = DisplacementMesh::build(face, info).map_err(|error| invalid(error.to_string()))?;
+    if !crosses(&mesh, plane) {
+        return Ok(None);
+    }
+    let source = prepare(document, solid, geometry, context)?;
+    let mesh = &source.mesh;
+    let middle = mesh.size / 2;
+    let cuts = if info.power == 4 {
+        vec![middle, middle / 2, middle + middle / 2]
+    } else {
+        vec![middle]
+    };
+    let (rows, cut, first_back) = cuts
+        .into_iter()
+        .find_map(|cut| {
+            grid_line(&mesh.positions, mesh.size, plane, true, cut)
+                .map(|first_back| (true, cut, first_back))
+                .or_else(|| {
+                    grid_line(&mesh.positions, mesh.size, plane, false, cut)
+                        .map(|first_back| (false, cut, first_back))
+                })
+        })
+        .ok_or_else(|| {
+            invalid("Cut plane must follow a complete existing terrain grid half-line, or a power 4 quarter-line, with each region wholly on one side")
+        })?;
+    let cut_line = CutLine {
+        plane,
+        rows,
+        cut,
+        first_back,
+    };
+    cut_line.certify(&source.native, mesh.size, &mut context.work)?;
+    let leaves = quadrants(Child {
+        row: 0,
+        column: 0,
+        power: info.power,
+    })
+    .into_iter()
+    .flat_map(|child| {
+        let origin = if rows { child.row } else { child.column };
+        if origin < cut && cut < origin + child.cells() {
+            quadrants(child).to_vec()
+        } else {
+            vec![child]
+        }
+    })
+    .collect::<Vec<_>>();
+    let mut children = Vec::new();
+    for back in [true, false] {
+        if matches!((keep, back), (Keep::Back, false) | (Keep::Front, true)) {
+            continue;
+        }
+        for &child in &leaves {
+            let coordinate = if rows { child.row } else { child.column };
+            if (first_back != (coordinate >= cut)) == back {
+                children.push(child);
+            }
         }
     }
-    let power = children[0].power;
-    let output_power = children
-        .iter()
-        .all(|child| child.power == power)
-        .then_some(power);
-    let vertices = children
-        .iter()
-        .map(|child| (child.cells() + 1).pow(2))
-        .sum();
-    let triangles = children.iter().map(|child| child.cells().pow(2) * 2).sum();
-    let source = FaceId {
-        solid: solid.id,
-        side: side.id,
-    };
-    context.cuts.insert(source, cut_line);
-    Ok(Some(Plan {
-        parts,
-        source,
-        source_power: info.power,
-        output_power,
-        vertices,
-        triangles,
-        children,
-    }))
+    let plan = source.materialize(children, material, Operation::Cut, &mut context.work)?;
+    context.cuts.insert(plan.source, cut_line);
+    Ok(Some(plan))
 }

@@ -21,6 +21,7 @@ pub struct ClipRequest<'a> {
     pub terrain_mode: Option<TerrainMode>,
     pub blend_mode: Option<TerrainBlendMode>,
     pub round_blend: Option<bool>,
+    pub partition_neighbors: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -32,6 +33,7 @@ pub struct ClipPreview {
     pub material: Option<String>,
     pub terrain_mode: TerrainMode,
     pub blend_mode: TerrainBlendMode,
+    pub partition_neighbors: bool,
     pub bounds: [DVec3; 2],
     pub result: ClipResult,
     generation: u64,
@@ -66,6 +68,9 @@ impl ClipPreview {
         }
         if self.blend_mode != session.clip_blend_mode {
             return Some("Terrain blend mode changed; preview the cut again".into());
+        }
+        if self.partition_neighbors != session.clip_partition_neighbors {
+            return Some("Neighbor partition setting changed; preview the cut again".into());
         }
         self.source_error(session)
     }
@@ -150,6 +155,35 @@ impl Session {
         )
     }
 
+    pub fn clip_partition_neighbors(&self) -> bool {
+        self.clip_partition_neighbors
+    }
+
+    pub fn set_clip_neighbor_partition(
+        &mut self,
+        actor: Actor,
+        enabled: bool,
+    ) -> Result<(), String> {
+        if enabled && self.clip_terrain_mode != TerrainMode::Grid {
+            return Err("Partition selected neighbors requires Existing grid".into());
+        }
+        if self.clip_partition_neighbors == enabled {
+            return Ok(());
+        }
+        self.cancel_clip_preview();
+        self.clip_partition_neighbors = enabled;
+        self.view_serial += 1;
+        self.log(
+            actor,
+            if enabled {
+                "Partition selected neighbors: on"
+            } else {
+                "Partition selected neighbors: off"
+            },
+        );
+        Ok(())
+    }
+
     pub fn set_clip_terrain_mode(&mut self, actor: Actor, mode: TerrainMode) -> Result<(), String> {
         if self.clip_terrain_mode == mode {
             return Ok(());
@@ -157,6 +191,7 @@ impl Session {
         self.cancel_clip_preview();
         self.clip_terrain_mode = mode;
         self.clip_blend_mode = TerrainBlendMode::Exact;
+        self.clip_partition_neighbors = false;
         self.view_serial += 1;
         self.log(
             actor,
@@ -282,6 +317,7 @@ impl Session {
                 terrain_mode: None,
                 blend_mode: None,
                 round_blend: None,
+                partition_neighbors: None,
             },
         )
     }
@@ -315,6 +351,12 @@ impl Session {
         if blend_mode != TerrainBlendMode::Exact && terrain_mode != TerrainMode::Fragments {
             return Err("Native float and Nearest byte require Retile surface triangles".into());
         }
+        let partition_neighbors = request
+            .partition_neighbors
+            .unwrap_or(terrain_mode == self.clip_terrain_mode && self.clip_partition_neighbors);
+        if partition_neighbors && terrain_mode != TerrainMode::Grid {
+            return Err("Partition selected neighbors requires Existing grid".into());
+        }
         if request.preview
             && let Some(previous) = &self.geometry.clip_preview
             && previous.ids == request.ids
@@ -323,13 +365,15 @@ impl Session {
             && previous.material == request.material
             && previous.terrain_mode == terrain_mode
             && previous.blend_mode == blend_mode
+            && previous.partition_neighbors == partition_neighbors
         {
             if let Some(error) = previous.stale_error(self) {
                 return Err(error);
             }
             return Ok(previous.result.clone());
         }
-        let mut prepared = self.prepare_clip(&request, terrain_mode, blend_mode)?;
+        let mut prepared =
+            self.prepare_clip(&request, terrain_mode, blend_mode, partition_neighbors)?;
         if request.preview {
             let result = prepared.result.clone();
             self.select(request.ids, SelectMode::Replace)?;
@@ -349,6 +393,7 @@ impl Session {
             self.cancel_block_preview();
             self.clip_terrain_mode = terrain_mode;
             self.clip_blend_mode = blend_mode;
+            self.clip_partition_neighbors = partition_neighbors;
             self.geometry.clip_preview = Some(prepared);
             self.clip_epoch += 1;
             self.scene_serial += 1;
@@ -364,6 +409,7 @@ impl Session {
         request: &ClipRequest<'_>,
         terrain_mode: TerrainMode,
         blend_mode: TerrainBlendMode,
+        partition_neighbors: bool,
     ) -> Result<ClipPreview, String> {
         let ids = request.ids;
         let plane = request.plane;
@@ -412,6 +458,7 @@ impl Session {
                     clip::ClipOptions {
                         terrain_mode,
                         blend_mode,
+                        partition_neighbors,
                         textures: terrain_materials
                             .as_ref()
                             .map(|materials| &materials.textures),
@@ -458,6 +505,7 @@ impl Session {
             material,
             terrain_mode,
             blend_mode,
+            partition_neighbors,
             bounds: [mins, maxs],
             result,
             generation: self.document_generation,
@@ -514,6 +562,7 @@ impl Session {
                 clip::ClipOptions {
                     terrain_mode: preview.terrain_mode,
                     blend_mode: preview.blend_mode,
+                    partition_neighbors: preview.partition_neighbors,
                     textures: preview
                         .terrain_materials
                         .as_ref()
@@ -551,6 +600,7 @@ impl Session {
         self.select(&selection, SelectMode::Replace)?;
         self.clip_terrain_mode = preview.terrain_mode;
         self.clip_blend_mode = preview.blend_mode;
+        self.clip_partition_neighbors = preview.partition_neighbors;
         self.clip_epoch += 1;
         self.clip_tool = false;
         self.view_serial += 1;

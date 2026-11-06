@@ -11,6 +11,7 @@ use crate::{BrushGeometry, Document, EditError, ObjectId, Plane, Transaction};
 const PLANE_POINT_SPAN: f64 = 64.0;
 const MAX_COORDINATE: f64 = 65_536.0;
 const MIN_VOLUME: f64 = 1e-6;
+const NATIVE_ALPHA_QUANTIZATION_SPAN: f64 = 1.0 + 1.0 / 65_536.0;
 
 pub const MAX_TERRAIN_SOURCES: usize = 16;
 pub const MAX_TERRAIN_PATCHES: usize = 128;
@@ -84,7 +85,10 @@ impl TerrainBlendMode {
     pub fn error_limits(self) -> (f64, f64) {
         match self {
             Self::Exact => (0.0, 0.0),
-            Self::NativeFloat => (1.0 / 131_072.0, 1.0 + 1.0 / 131_072.0),
+            Self::NativeFloat => {
+                let raw = 1.0 / 131_072.0;
+                (raw, NATIVE_ALPHA_QUANTIZATION_SPAN + raw)
+            }
             Self::NearestByte => (0.5, 1.5),
         }
     }
@@ -147,6 +151,7 @@ pub struct TerrainTexture {
 pub struct ClipOptions<'a> {
     pub terrain_mode: TerrainMode,
     pub blend_mode: TerrainBlendMode,
+    pub partition_neighbors: bool,
     pub textures: Option<&'a BTreeMap<FaceId, TerrainTexture>>,
     pub terrain_context: Option<&'a Vmf>,
 }
@@ -168,6 +173,7 @@ pub struct ClipResult {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TerrainCut {
+    pub partitioned: bool,
     pub source: FaceId,
     pub faces: Vec<FaceId>,
     pub source_power: u32,
@@ -407,6 +413,127 @@ struct PlannedCut {
     children: Option<Vec<crate::displacement::grid_clip::Child>>,
 }
 
+#[derive(Default)]
+struct TerrainBudget {
+    sources: usize,
+    patches: usize,
+    visible_sources: usize,
+    visible_patches: usize,
+    vertices: usize,
+    triangles: usize,
+}
+
+impl TerrainBudget {
+    fn add(
+        &mut self,
+        document: &Document,
+        context: Option<&Vmf>,
+        solid: &Solid,
+        plan: &TerrainPlan,
+    ) -> Result<(), EditError> {
+        let visible =
+            crate::displacement::native::terrain_source_is_visible(document.vmf(), solid.id);
+        if visible && let Some(context) = context {
+            let matches = crate::displacement::native::visible_terrain_sources(context)
+                .filter(|(candidate, _)| candidate.id == solid.id)
+                .collect::<Vec<_>>();
+            if !matches!(matches.as_slice(), [(_, true)]) {
+                return Err(source_error(
+                    solid.id,
+                    invalid(
+                        "Resolved terrain context lost a visible selected terrain source or supported owner",
+                    ),
+                ));
+            }
+        }
+        self.sources += 1;
+        self.patches += plan.parts.len();
+        if visible {
+            self.visible_sources += solid
+                .sides
+                .iter()
+                .filter(|side| side.displacement.is_some())
+                .count();
+            self.visible_patches += plan
+                .parts
+                .iter()
+                .filter(|part| !part.hidden)
+                .flat_map(|part| &part.sides)
+                .filter(|side| side.displacement.is_some())
+                .count();
+        }
+        self.vertices += plan.vertices;
+        self.triangles += plan.triangles;
+        if self.sources > MAX_TERRAIN_SOURCES
+            || self.patches > MAX_TERRAIN_PATCHES
+            || self.vertices > MAX_TERRAIN_VERTICES
+            || self.triangles > MAX_TERRAIN_TRIANGLES
+        {
+            return Err(invalid(
+                "Terrain clipping exceeds its source, patch, vertex or triangle limit",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl PlannedCut {
+    fn terrain(source: &Source<'_>, plan: TerrainPlan, partitioned: bool) -> Self {
+        let Source {
+            solid,
+            owner,
+            target,
+        } = *source;
+        Self {
+            owner,
+            target,
+            source: solid.id,
+            parts: plan.parts,
+            source_sides: solid.sides.iter().map(|side| side.id).collect(),
+            children: plan.children,
+            terrain: Some(TerrainCut {
+                partitioned,
+                source: plan.source,
+                faces: Vec::new(),
+                source_power: plan.source_power,
+                output_power: plan.output_power,
+                face_powers: Vec::new(),
+                vertices: plan.vertices,
+                triangles: plan.triangles,
+                verified_neighbors: 0,
+                preserved_links: 0,
+                blend_error: plan.blend_error,
+            }),
+        }
+    }
+}
+
+fn grid_replacements(
+    planned: &[PlannedCut],
+) -> Vec<crate::displacement::grid_clip::Replacement<'_>> {
+    planned
+        .iter()
+        .filter_map(|cut| {
+            cut.terrain
+                .as_ref()
+                .zip(cut.children.as_ref())
+                .map(
+                    |(terrain, children)| crate::displacement::grid_clip::Replacement {
+                        operation: if terrain.partitioned {
+                            crate::displacement::grid_clip::Operation::Partition
+                        } else {
+                            crate::displacement::grid_clip::Operation::Cut
+                        },
+                        source: terrain.source,
+                        source_power: terrain.source_power,
+                        parts: &cut.parts,
+                        children,
+                    },
+                )
+        })
+        .collect()
+}
+
 pub(crate) struct TerrainPlan {
     pub parts: Vec<Solid>,
     pub source: FaceId,
@@ -416,6 +543,21 @@ pub(crate) struct TerrainPlan {
     pub triangles: usize,
     pub children: Option<Vec<crate::displacement::grid_clip::Child>>,
     pub blend_error: Option<TerrainBlendError>,
+}
+
+impl From<crate::displacement::grid_clip::Plan> for TerrainPlan {
+    fn from(plan: crate::displacement::grid_clip::Plan) -> Self {
+        Self {
+            parts: plan.parts,
+            source: plan.source,
+            source_power: plan.source_power,
+            output_power: plan.output_power,
+            vertices: plan.vertices,
+            triangles: plan.triangles,
+            children: Some(plan.children),
+            blend_error: None,
+        }
+    }
 }
 
 pub fn terrain_texture_faces(
@@ -547,6 +689,11 @@ pub fn clip_with_options(
     material: Option<&str>,
     options: ClipOptions<'_>,
 ) -> std::result::Result<ClipResult, EditError> {
+    if options.partition_neighbors && options.terrain_mode != TerrainMode::Grid {
+        return Err(invalid(
+            "Partition selected neighbors requires Existing grid",
+        ));
+    }
     if options.blend_mode != TerrainBlendMode::Exact
         && options.terrain_mode != TerrainMode::Fragments
     {
@@ -569,19 +716,15 @@ pub fn clip_with_options(
     }
     let mut planned = Vec::new();
     let mut unchanged = Vec::new();
-    let mut terrain_sources = 0;
-    let mut terrain_patches = 0;
-    let mut visible_sources = 0;
-    let mut visible_patches = 0;
-    let mut terrain_vertices = 0;
-    let mut terrain_triangles = 0;
+    let mut terrain_budget = TerrainBudget::default();
     let mut terrain_context = crate::displacement::grid_clip::Context::new(context);
-    for Source {
-        solid,
-        owner,
-        target,
-    } in sources(tx.document(), ids)?
-    {
+    let sources = sources(tx.document(), ids)?;
+    for source in &sources {
+        let Source {
+            solid,
+            owner,
+            target,
+        } = *source;
         let shape = geometry(solid).map_err(|error| source_error(solid.id, error))?;
         let material = material.map(str::trim).unwrap_or(&solid.sides[0].material);
         if solid.sides.iter().any(|side| side.displacement.is_some()) {
@@ -596,16 +739,7 @@ pub fn clip_with_options(
                     &mut terrain_context,
                 )
                 .map_err(|error| source_error(solid.id, error))?
-                .map(|plan| TerrainPlan {
-                    parts: plan.parts,
-                    source: plan.source,
-                    source_power: plan.source_power,
-                    output_power: plan.output_power,
-                    vertices: plan.vertices,
-                    triangles: plan.triangles,
-                    children: Some(plan.children),
-                    blend_error: None,
-                }),
+                .map(TerrainPlan::from),
                 TerrainMode::Flat | TerrainMode::Cells | TerrainMode::Fragments => {
                     let plan = if options.terrain_mode == TerrainMode::Cells {
                         crate::displacement::flat_clip::cells::plan
@@ -643,68 +777,8 @@ pub fn clip_with_options(
                     ));
                 }
             }
-            let visible =
-                crate::displacement::native::terrain_source_is_visible(tx.vmf(), solid.id);
-            if visible && let Some(context) = context {
-                let matches = crate::displacement::native::visible_terrain_sources(context)
-                    .filter(|(candidate, _)| candidate.id == solid.id)
-                    .collect::<Vec<_>>();
-                if !matches!(matches.as_slice(), [(_, true)]) {
-                    return Err(source_error(
-                        solid.id,
-                        invalid(
-                            "Resolved terrain context lost a visible selected terrain source or supported owner",
-                        ),
-                    ));
-                }
-            }
-            terrain_sources += 1;
-            terrain_patches += plan.parts.len();
-            if visible {
-                visible_sources += solid
-                    .sides
-                    .iter()
-                    .filter(|side| side.displacement.is_some())
-                    .count();
-                visible_patches += plan
-                    .parts
-                    .iter()
-                    .filter(|part| !part.hidden)
-                    .flat_map(|part| &part.sides)
-                    .filter(|side| side.displacement.is_some())
-                    .count();
-            }
-            terrain_vertices += plan.vertices;
-            terrain_triangles += plan.triangles;
-            if terrain_sources > MAX_TERRAIN_SOURCES
-                || terrain_patches > MAX_TERRAIN_PATCHES
-                || terrain_vertices > MAX_TERRAIN_VERTICES
-                || terrain_triangles > MAX_TERRAIN_TRIANGLES
-            {
-                return Err(invalid(
-                    "Terrain clipping exceeds its source, patch, vertex or triangle limit",
-                ));
-            }
-            planned.push(PlannedCut {
-                owner,
-                target,
-                source: solid.id,
-                parts: plan.parts,
-                source_sides: solid.sides.iter().map(|side| side.id).collect(),
-                children: plan.children,
-                terrain: Some(TerrainCut {
-                    source: plan.source,
-                    faces: Vec::new(),
-                    source_power: plan.source_power,
-                    output_power: plan.output_power,
-                    face_powers: Vec::new(),
-                    vertices: plan.vertices,
-                    triangles: plan.triangles,
-                    verified_neighbors: 0,
-                    preserved_links: 0,
-                    blend_error: plan.blend_error,
-                }),
-            });
+            terrain_budget.add(tx.document(), context, solid, &plan)?;
+            planned.push(PlannedCut::terrain(source, plan, false));
             continue;
         }
         let mut front = false;
@@ -742,12 +816,38 @@ pub fn clip_with_options(
             children: None,
         });
     }
+    if options.partition_neighbors && terrain_budget.sources != 0 {
+        let replacements = grid_replacements(&planned);
+        let partitions = crate::displacement::grid_clip::partition_neighbors(
+            tx.document(),
+            &sources,
+            &replacements,
+            plane,
+            material,
+            &mut terrain_context,
+        )?;
+        for plan in partitions {
+            if plan.operation != crate::displacement::grid_clip::Operation::Partition {
+                return Err(invalid(
+                    "Terrain neighbor partitioning returned an unexpected operation",
+                ));
+            }
+            let source = sources
+                .iter()
+                .find(|source| source.solid.id == plan.source.solid)
+                .ok_or_else(|| invalid("Terrain neighbor partitioning lost its selected source"))?;
+            let plan = TerrainPlan::from(plan);
+            terrain_budget.add(tx.document(), context, source.solid, &plan)?;
+            unchanged.retain(|id| *id != source.solid.id);
+            planned.push(PlannedCut::terrain(source, plan, true));
+        }
+    }
     if planned.is_empty() {
         return Err(invalid(
             "Cut plane does not cross any selected brush; nothing changed",
         ));
     }
-    if terrain_sources != 0 {
+    if terrain_budget.sources != 0 {
         let vmf = context.unwrap_or(tx.vmf());
         let existing = crate::displacement::native::visible_terrain_sources(vmf)
             .map(|(solid, _)| solid)
@@ -755,8 +855,8 @@ pub fn clip_with_options(
             .filter(|side| side.displacement.is_some())
             .count();
         let final_count = existing
-            .checked_sub(visible_sources)
-            .and_then(|count| count.checked_add(visible_patches))
+            .checked_sub(terrain_budget.visible_sources)
+            .and_then(|count| count.checked_add(terrain_budget.visible_patches))
             .ok_or_else(|| invalid("Terrain clipping patch count overflow"))?;
         if final_count > source_formats::bsp::MAX_DISPLACEMENTS {
             return Err(invalid(
@@ -765,19 +865,7 @@ pub fn clip_with_options(
         }
         let verified = match options.terrain_mode {
             TerrainMode::Grid => {
-                let replacements = planned
-                    .iter()
-                    .filter_map(|cut| {
-                        cut.terrain.as_ref().zip(cut.children.as_ref()).map(
-                            |(terrain, children)| crate::displacement::grid_clip::Replacement {
-                                source: terrain.source,
-                                source_power: terrain.source_power,
-                                parts: &cut.parts,
-                                children,
-                            },
-                        )
-                    })
-                    .collect::<Vec<_>>();
+                let replacements = grid_replacements(&planned);
                 crate::displacement::grid_clip::certify(
                     tx.document(),
                     &replacements,

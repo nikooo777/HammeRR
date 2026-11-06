@@ -497,6 +497,8 @@ pub struct ClipArgs {
     pub blend_mode: Option<ClipBlendMode>,
     /// Compatibility alias: true selects nearest_byte; false selects exact. Cannot be supplied with blend_mode.
     pub round_blend: Option<bool>,
+    /// Grid only: allow required selected noncrossing neighbors to be partitioned once to retain native contacts. Omitted uses the shared choice.
+    pub partition_neighbors: Option<bool>,
     #[serde(default)]
     pub preview: bool,
 }
@@ -604,9 +606,13 @@ pub(in crate::mcp) struct ClipPointsArgs {
 pub(in crate::mcp) fn clip_result(
     result: &map_core::clip::ClipResult,
     blend_mode: map_core::clip::TerrainBlendMode,
+    partition_neighbors: bool,
 ) -> Value {
     let (raw_limit, packed_limit) = blend_mode.error_limits();
     json!({"blend_mode":clip_blend_mode_name(blend_mode),
+    "partition_neighbors":partition_neighbors,
+    "partitioned_neighbors":result.terrain.iter().filter(|cut|cut.partitioned)
+        .map(|cut|json!({"solid":cut.source.solid,"side":cut.source.side})).collect::<Vec<_>>(),
     "round_blend":blend_mode == map_core::clip::TerrainBlendMode::NearestByte,
     "cuts": result.cuts.iter().map(|cut| json!({"source": cut.source, "solids": cut.solids})).collect::<Vec<_>>(),
     "objects": result.objects.iter().copied().map(id_string).collect::<Vec<_>>(), "unchanged": result.unchanged,
@@ -614,6 +620,7 @@ pub(in crate::mcp) fn clip_result(
     "terrain":result.terrain.iter().map(|cut| {
         let mut value = json!({
             "source":{"solid":cut.source.solid,"side":cut.source.side},
+            "operation":if cut.partitioned { "partition" } else { "cut" },
             "faces":cut.faces.iter().map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>(),
             "source_power":cut.source_power,"output_power":cut.output_power,"vertices":cut.vertices,"triangles":cut.triangles,
             "verified_neighbors":cut.verified_neighbors,"preserved_links":cut.preserved_links,
@@ -651,9 +658,10 @@ pub(in crate::mcp) fn clip_state(session: &Session) -> Value {
             "material": preview.material, "ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(),
             "terrain_mode": clip_terrain_mode_name(preview.terrain_mode),
             "blend_mode":clip_blend_mode_name(preview.blend_mode),
+            "partition_neighbors":preview.partition_neighbors,
             "round_blend":preview.blend_mode == map_core::clip::TerrainBlendMode::NearestByte,
             "guard_error": session.clip_preview_error(),
-            "result": clip_result(&preview.result, preview.blend_mode),
+            "result": clip_result(&preview.result, preview.blend_mode, preview.partition_neighbors),
             "cubemap_bindings":preview.cubemap_bindings_report(),
             "pieces": preview.result.cuts.iter().flat_map(|cut| &cut.solids)
                 .filter_map(|id| map_core::surface::solid(&preview.document, *id))
@@ -668,7 +676,7 @@ pub(in crate::mcp) fn clip_state(session: &Session) -> Value {
         }
         value
     });
-    json!({"enabled": session.clip_tool(), "terrain_mode":clip_terrain_mode_name(session.clip_terrain_mode()), "blend_mode":clip_blend_mode_name(session.clip_blend_mode()), "round_blend":session.clip_round_blend(), "snapshot":session.clip_point_stamp(), "point_draft":session.clip_points_report(), "handle_options":session.clip_handles_report(), "drag":session.clip_drag_report(), "preview":preview})
+    json!({"enabled": session.clip_tool(), "terrain_mode":clip_terrain_mode_name(session.clip_terrain_mode()), "blend_mode":clip_blend_mode_name(session.clip_blend_mode()), "partition_neighbors":session.clip_partition_neighbors(), "round_blend":session.clip_round_blend(), "snapshot":session.clip_point_stamp(), "point_draft":session.clip_points_report(), "handle_options":session.clip_handles_report(), "drag":session.clip_drag_report(), "preview":preview})
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

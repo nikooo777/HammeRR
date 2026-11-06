@@ -44,6 +44,7 @@ struct Raw<'a> {
 
 struct Surface<'a> {
     raw: Raw<'a>,
+    info: bsp::DisplacementInfo,
     power: u32,
     corners: [DVec3; 4],
     base_positions: Vec<DVec3>,
@@ -58,8 +59,12 @@ struct Sheet {
 }
 
 impl Sheet {
+    fn same_base(&self, other: &Self) -> Result<bool, EditError> {
+        Ok(self.sign == other.sign && self.base.matches(&other.base)?)
+    }
+
     fn matches(&self, other: &Self) -> Result<bool, EditError> {
-        if self.sign != other.sign || !self.base.matches(&other.base)? {
+        if !self.same_base(other)? {
             return Ok(false);
         }
         match (&self.field, &other.field) {
@@ -346,6 +351,7 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
         sign,
     };
     Ok(Surface {
+        info: data.infos[0],
         power: info.power,
         raw,
         corners,
@@ -379,6 +385,7 @@ fn graph(surfaces: &[&Surface<'_>], work: &mut Work) -> Result<Graph, EditError>
     }
     let mut edges = BTreeSet::new();
     let mut corners = BTreeSet::new();
+    let mut varying = BTreeSet::new();
     let mut result = Graph::default();
     for pair in &found.pairs {
         let a = surfaces[pair.first];
@@ -479,11 +486,17 @@ fn graph(surfaces: &[&Surface<'_>], work: &mut Work) -> Result<Graph, EditError>
             };
             work.consume(2 * FIELD_WORK).map_err(invalid)?;
             if !surfaces[first].sheet.matches(&surfaces[second].sheet)? {
-                return Err(invalid(if surfaces[first].sheet.field.is_some() {
-                    "Connected flat terrain currently requires compatible coplanar native fields and orientation"
+                if surfaces[first].sheet.field.is_some()
+                    && surfaces[second].sheet.field.is_some()
+                    && surfaces[first].sheet.same_base(&surfaces[second].sheet)?
+                {
+                    varying.insert(first);
+                    varying.insert(second);
                 } else {
-                    "Connected terrain cells require a common native base plane and orientation"
-                }));
+                    return Err(invalid(
+                        "Connected terrain requires a common native base plane and orientation",
+                    ));
+                }
             }
             if grid_clip::overlaps(a, b) || rank == 0 {
                 return Err(invalid("Flat terrain native base domains overlap"));
@@ -497,7 +510,61 @@ fn graph(surfaces: &[&Surface<'_>], work: &mut Work) -> Result<Graph, EditError>
             }
         }
     }
+    certify_contact_normals(surfaces, &edges, &corners, &varying, work)?;
     Ok(result)
+}
+
+fn certify_contact_normals(
+    surfaces: &[&Surface<'_>],
+    edges: &BTreeSet<(usize, usize)>,
+    corners: &BTreeSet<(usize, usize)>,
+    varying: &BTreeSet<usize>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let mut verified = BTreeSet::new();
+    for &first in varying {
+        if verified.contains(&first) {
+            continue;
+        }
+        let mut component = BTreeSet::from([first]);
+        let mut pending = vec![first];
+        while let Some(current) = pending.pop() {
+            for &(a, b) in edges.iter().chain(corners) {
+                work.consume(1).map_err(invalid)?;
+                let peer = if a == current {
+                    b
+                } else if b == current {
+                    a
+                } else {
+                    continue;
+                };
+                if component.insert(peer) {
+                    pending.push(peer);
+                }
+            }
+        }
+        let mut projection: Option<super::NormalProjection> = None;
+        for &index in &component {
+            let surface = surfaces[index];
+            let actual = super::certify_projected_normals(
+                surface.info,
+                surface.corners,
+                &surface.positions,
+                work,
+            )?;
+            work.consume(2 * FIELD_WORK).map_err(invalid)?;
+            if let Some(expected) = &projection
+                && !expected.matches(&actual)?
+            {
+                return Err(invalid(
+                    "Noncoplanar flat terrain contacts require one exact common affine tangential projection",
+                ));
+            }
+            projection = Some(actual);
+        }
+        verified.extend(component);
+    }
+    Ok(())
 }
 
 fn on_segment(point: DVec3, segment: [DVec3; 2]) -> Result<bool, EditError> {

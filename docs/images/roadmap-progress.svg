@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="700" height="92" viewBox="0 0 700 92" role="img" aria-labelledby="title description">
   <title id="title">Implementation estimate: 89.9%</title>
   <desc id="description">Estimated implementation across 107 equally weighted groups: 82 closed, 23 partial, 2 missing. Partial groups contribute their individual implementation percentages from docs/progress.csv. Green represents closed groups; amber represents delivered partial scope; grey represents unfinished scope.</desc>
-  <metadata id="implementation-progress">{"groups":107,"closed":82,"partial":23,"missing":2,"implemented_percentage_points":9619.0,"partial_percentage_points":1419.0}</metadata>
+  <metadata id="implementation-progress">{"groups":107,"closed":82,"partial":23,"missing":2,"implemented_percentage_points":9620.0,"partial_percentage_points":1420.0}</metadata>
   <defs>
     <clipPath id="track"><rect x="16" y="38" width="668" height="16" rx="8"/></clipPath>
     <pattern id="partial" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
@@ -16,7 +16,7 @@
     <g clip-path="url(#track)">
       <rect x="16" y="38" width="668" height="16" fill="#475569"/>
       <rect id="closed-segment" x="16" y="38" width="511.925234" height="16" fill="#22c55e"/>
-      <rect id="partial-segment" x="527.925234" y="38" width="88.588037" height="16" fill="url(#partial)"/>
+      <rect id="partial-segment" x="527.925234" y="38" width="88.650467" height="16" fill="url(#partial)"/>
     </g>
     <circle cx="20" cy="75" r="4" fill="#22c55e"/>
     <text x="32" y="79" font-size="13" fill="#cbd5e1">82 closed groups</text>

@@ -2237,6 +2237,7 @@ export component AppWindow inherits Window {
     in-out property <int> clip-keep-index: 2;
     in-out property <int> clip-terrain-mode-index: 0;
     in-out property <int> clip-blend-mode: 0;
+    in-out property <bool> clip-partition-neighbors: false;
     in-out property <string> clip-normal-x: "1";
     in-out property <string> clip-normal-y: "0";
     in-out property <string> clip-normal-z: "0";
@@ -2458,6 +2459,7 @@ export component AppWindow inherits Window {
     callback clip-settings-changed();
     callback clip-terrain-mode-changed();
     callback clip-blend-mode-changed();
+    callback clip-neighbor-partition-changed();
     callback clip-inputs-changed();
     callback apply-clip();
     callback cancel-clip();
@@ -4215,6 +4217,18 @@ export component AppWindow inherits Window {
                                         current-index <=> root.clip-terrain-mode-index;
                                         selected => { root.clip-terrain-mode-changed(); }
                                     }
+                                }
+                                if root.clip-terrain-mode-index == 0: HorizontalLayout {
+                                    spacing: Theme.space;
+                                    CheckBox {
+                                        text: "Partition selected neighbors";
+                                        checked <=> root.clip-partition-neighbors;
+                                        toggled => { root.clip-neighbor-partition-changed(); }
+                                        Tooltip {
+                                            text: @markdown("Authorize extra partitions of selected, noncrossing terrain neighbors only where the retained cut needs native full/half joins. Unselected and unrelated terrain stay unchanged. Inspect the extra partitions in the preview before Apply cut.");
+                                        }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
                                 }
                                 if root.clip-terrain-mode-index == 3: FieldRow {
                                     inset: false;

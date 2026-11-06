@@ -1,4 +1,20 @@
 use super::*;
+use std::collections::BTreeSet;
+
+fn clip_replacement_counts(result: &map_core::clip::ClipResult) -> (usize, usize) {
+    let partitioned = result
+        .terrain
+        .iter()
+        .filter(|cut| cut.partitioned)
+        .map(|cut| cut.source.solid)
+        .collect::<BTreeSet<_>>();
+    let cut_count = result
+        .cuts
+        .iter()
+        .filter(|cut| !partitioned.contains(&cut.source))
+        .count();
+    (cut_count, partitioned.len())
+}
 
 fn clip_blend_bound(value: f64) -> String {
     if value == 0.0 {
@@ -28,6 +44,7 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
         map_core::clip::TerrainBlendMode::NativeFloat => 1,
         map_core::clip::TerrainBlendMode::NearestByte => 2,
     });
+    app.set_clip_partition_neighbors(session.clip_partition_neighbors());
     let options = session.clip_handle_options();
     app.set_clip_handles_mode(match options.mode {
         Some(render::handles::Mode::Move) => 1,
@@ -67,10 +84,15 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
             map_core::clip::Keep::Both => 2,
         });
         app.set_clip_material(preview.material.clone().unwrap_or_default().into());
+        let (cut_count, partitioned_count) = clip_replacement_counts(&preview.result);
+        let replacements = if preview.partition_neighbors || partitioned_count > 0 {
+            format!("Brush cuts: {cut_count} · Neighbor partitions: {partitioned_count}")
+        } else {
+            format!("Brush cuts: {cut_count}")
+        };
         let mut summary = if preview.result.terrain.is_empty() {
             format!(
-                "{} brushes cut · {} pieces · {} unchanged · preview only",
-                preview.result.cuts.len(),
+                "{replacements} · {} pieces · {} unchanged · preview only",
                 preview
                     .result
                     .cuts
@@ -81,8 +103,7 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
             )
         } else {
             format!(
-                "{} brushes cut · {} native terrain patches · {} unchanged · preview only",
-                preview.result.cuts.len(),
+                "{replacements} · {} native terrain patches · {} unchanged · preview only",
                 preview
                     .result
                     .terrain
@@ -190,12 +211,17 @@ pub(super) fn preview_clip_plane(app: &AppWindow, session: &mut Session) {
 pub(super) fn apply_clip(app: &AppWindow, session: &mut Session) {
     match session.commit_clip_preview(Actor::User) {
         Ok(result) => {
+            let (cut_count, partitioned_count) = clip_replacement_counts(&result);
+            let replacements = if partitioned_count > 0 {
+                format!("Clipped brushes: {cut_count} · Partitioned neighbors: {partitioned_count}")
+            } else {
+                format!("Clipped brushes: {cut_count}")
+            };
             let message = if result.terrain.is_empty() {
-                format!("Clipped {} brushes in one undo step", result.cuts.len())
+                format!("{replacements} in one undo step")
             } else {
                 format!(
-                    "Clipped {} brushes · {} native terrain patches · one undo step",
-                    result.cuts.len(),
+                    "{replacements} · {} native terrain patches · one undo step",
                     result
                         .terrain
                         .iter()
@@ -236,6 +262,17 @@ pub(super) fn change_clip_points(
 }
 
 pub(super) fn bind_clip_controls_with_access(app: &AppWindow, access: &runtime::DocumentAccess) {
+    app.on_clip_neighbor_partition_changed({
+        let callback = admission::SessionCallback::new(app, access);
+        move || {
+            callback.input(|app, session| {
+                let result = session
+                    .set_clip_neighbor_partition(Actor::User, app.get_clip_partition_neighbors());
+                app.set_message(result.err().unwrap_or_default().into());
+                refresh_clip(&app, session);
+            })
+        }
+    });
     app.on_clip_blend_mode_changed({
         let callback = admission::SessionCallback::new(app, access);
         move || {

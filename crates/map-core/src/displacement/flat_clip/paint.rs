@@ -5,7 +5,6 @@ use super::{FIELD_WORK, PlanarField, Work, invalid};
 use crate::{EditError, displacement::DisplacementMesh};
 
 const PACK_WORK: usize = 8;
-const MATERIAL_TRIANGLE_WORK: usize = 16;
 const MATERIAL_ALPHA_THRESHOLD: f32 = 382.5;
 
 #[derive(Clone, Copy)]
@@ -127,54 +126,11 @@ impl PaintField {
     }
 }
 
-fn triangle_class(values: [f32; 3]) -> Result<bool, EditError> {
+pub(super) fn triangle_class(values: [f32; 3]) -> Result<bool, EditError> {
     let mut sum = 0.0;
     for value in values {
         alpha(f64::from(value))?;
         sum += value;
     }
     Ok(sum > MATERIAL_ALPHA_THRESHOLD)
-}
-
-fn record_class(class: &mut Option<bool>, values: [f32; 3]) -> Result<(), EditError> {
-    let value = triangle_class(values)?;
-    if class.is_some_and(|class| class != value) {
-        return Err(invalid(
-            "Flat terrain paint requires one native collision-material alpha class across every source and child triangle",
-        ));
-    }
-    *class = Some(value);
-    Ok(())
-}
-
-pub(super) fn material_class(
-    mesh: &DisplacementMesh,
-    data: &bsp::Displacements,
-    work: &mut Work,
-) -> Result<bool, EditError> {
-    let info = data
-        .infos
-        .first()
-        .ok_or_else(|| invalid("Terrain paint has no native displacement"))?;
-    let native = info
-        .triangle_indices()
-        .map_err(|error| invalid(error.to_string()))?;
-    work.consume(MATERIAL_TRIANGLE_WORK * (native.len() + 2 * (mesh.size - 1).pow(2)))
-        .map_err(invalid)?;
-    let mut class = None;
-    for triangle in mesh.triangles() {
-        record_class(&mut class, triangle.map(|index| mesh.alphas[index] as f32))?;
-    }
-    for triangle in native {
-        let mut values = [0.0; 3];
-        for (output, index) in values.iter_mut().zip(triangle) {
-            *output = data
-                .vertices
-                .get(index)
-                .ok_or_else(|| invalid("Terrain paint has invalid native triangle indices"))?
-                .alpha;
-        }
-        record_class(&mut class, values)?;
-    }
-    class.ok_or_else(|| invalid("Terrain paint requires source triangles"))
 }

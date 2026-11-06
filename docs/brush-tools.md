@@ -107,7 +107,8 @@ Four-corner regions stay one patch when their joins permit. Select the results
 to cut them again. Compatible joined patches are checked as one component.
 Each surface must remain on one exact plane. Height can vary linearly along
 the base normal. Paint must vary linearly across the surface, with exact integer
-alpha from 0 to 255. Physical triangle flags must be uniform. Retiling keeps
+alpha from 0 to 255. Triangle flags and collision materials retain their original
+regions. Retiling keeps
 these fields, material, texture placement and smoothing. It does not flatten a
 curved or nonlinearly painted surface. **Existing grid** never switches modes
 after a failed cut.
@@ -137,13 +138,15 @@ after a failed cut.
 - **Retile flat terrain** requires a common base plane, surface plane and
   orientation across its affected contact component. Curved neighbors, overlaps,
   unsupported partial joins and affected LOD coarsening reject. Paint must remain
-  affine and physical tags must be uniform; restricted masks and opaque metadata reject.
+  affine; restricted masks and opaque metadata reject.
   Native positions, shared samples and texture fields must remain exact.
   Normal inputs must pass the native arithmetic and conditioning checks.
   Normal bits and final pixels can differ after retiling.
 - Paint samples must preserve the same native packed-alpha field under each
-  rounding profile. A material with `$surfaceprop2` requires one collision-material
-  alpha class across the source and output triangles. Other fields reject.
+  rounding profile. Each output triangle must retain the original flags and, with `$surfaceprop2`,
+  the original collision-material alpha class over its complete area. A triangle
+  that crosses incompatible source regions rejects. Edge-only contacts do not
+  transfer labels. Other paint fields reject.
 - Retiling requires direct static `LightmappedGeneric` or plain
   `WorldVertexTransition` materials. Both transition layers use their original
   textures and the primary mapping size. Texture inputs must be untransformed,

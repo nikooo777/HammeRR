@@ -791,7 +791,7 @@ previous choice and valid draft. A failed grid cut never falls back to flat.
 Flat mode accepts convex world or `func_detail` quad terrain at powers 2–4.
 Base cages stay on world-axis planes. The visible sheet can be sloped, with
 one exact affine height field along its base normal. Integral alpha must form
-one exact affine field; physical tags stay uniform and vertex masks stay unrestricted. Four-corner retained regions stay
+one exact affine field; vertex masks stay unrestricted. Four-corner retained regions stay
 one power-2 patch when joins permit; triangle/pentagon regions use quad fans.
 Compatible coplanar flat components support repeated cuts. The full affected
 component, including unchanged and resolved child neighbors, must share its base
@@ -804,7 +804,10 @@ planar/normal admission for an unrelated cut.
 
 Paint preserves authored and native BSP alpha exactly. Native packed-alpha
 fields must remain affine under each rounding profile. With `$surfaceprop2`,
-every source and output triangle must retain one collision-material alpha class.
+each output triangle must retain the original collision-material alpha class
+over its complete area. VMF force/cache flags and native walk/build flags follow
+the same spatial check. Different original regions are allowed; a new triangle
+that crosses incompatible regions rejects. Boundary-only contact transfers nothing.
 This does not promise identical pixels or packed bytes across different runtime
 rounding modes. Material reports include `has_secondary_surface`.
 

@@ -16,10 +16,12 @@ use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
 mod field;
+mod labels;
 pub(crate) mod network;
 mod paint;
 
 use field::PlanarField;
+use labels::TriangleField;
 use paint::PaintField;
 
 const POWER: u32 = 2;
@@ -218,7 +220,6 @@ struct Prepared<'a> {
     paint: PaintField,
     axes: [usize; 2],
     sign: i128,
-    tag: u16,
     ring: [DVec3; 4],
     data: bsp::Displacements,
 }
@@ -395,17 +396,7 @@ fn prepare<'a>(
             "Flat terrain requires absent or zero offset normals",
         ));
     }
-    if let Some(tags) = triangles::source_tags(info)?
-        && tags.iter().any(|tag| *tag != tags[0])
-    {
-        return Err(invalid("Flat terrain requires uniform triangle tags"));
-    }
     let tags = triangles::native_tags(info, &mesh)?;
-    if tags.iter().any(|tag| *tag != tags[0]) {
-        return Err(invalid(
-            "Flat terrain requires uniform native physical triangle tags",
-        ));
-    }
     let indices = [
         0,
         (mesh.size - 1) * mesh.size,
@@ -469,7 +460,6 @@ fn prepare<'a>(
         paint,
         axes,
         sign,
-        tag: tags[0],
         ring,
         data,
     }))
@@ -786,9 +776,7 @@ fn carrier(
     info.offsets = None;
     info.offset_normals = None;
     info.alphas = None;
-    if let Some(tags) = &source.info.triangle_tags {
-        info.triangle_tags = Some(vec![vec![tags[0][0]; 2 * (SIZE - 1)]; SIZE - 1]);
-    }
+    info.triangle_tags = None;
     let geometry = BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
     let face = geometry
         .faces
@@ -996,10 +984,12 @@ pub(crate) fn plan(
     };
     let texture = request.textures.and_then(|textures| textures.get(&identity)).copied()
         .ok_or_else(|| invalid("Flat terrain clipping requires guarded native texture projection and mapping dimensions"))?;
-    let material_class = texture
-        .has_secondary_surface
-        .then(|| paint::material_class(&source.mesh, &source.data, work))
-        .transpose()?;
+    let labels = TriangleField::new(
+        source.info,
+        &source.mesh,
+        texture.has_secondary_surface,
+        work,
+    )?;
     uv(
         &source.data,
         source.face,
@@ -1035,7 +1025,7 @@ pub(crate) fn plan(
             for (output, point) in base.iter_mut().zip(quad) {
                 *output = stored(source.field.base_position(point)?)?;
             }
-            let part = carrier(solid, &source, base, request.material, work)?;
+            let mut part = carrier(solid, &source, base, request.material, work)?;
             let shape =
                 BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
             let side_index = part
@@ -1076,21 +1066,10 @@ pub(crate) fn plan(
                 }
             }
             source.paint.certify(&mesh, &data, work)?;
-            if let Some(class) = material_class
-                && paint::material_class(&mesh, &data, work)? != class
-            {
-                return Err(invalid(
-                    "Flat terrain child changed its native collision-material alpha class",
-                ));
-            }
-            if triangles::native_tags(info, &mesh)?
-                .iter()
-                .any(|tag| *tag != source.tag)
-            {
-                return Err(invalid(
-                    "Flat terrain child changed its uniform physical tags",
-                ));
-            }
+            let mapped = labels.map(&mesh, work)?;
+            let info = part.sides[side_index].displacement.as_mut().unwrap();
+            info.triangle_tags = mapped.tags.clone();
+            mapped.verify(info, &mesh, work)?;
             certify_normals(&data, &positions, work)?;
             uv(&data, face, mesh.positions.len(), texture, work)?;
             children.push(Child {

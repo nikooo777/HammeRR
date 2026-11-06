@@ -289,8 +289,9 @@ previous valid draft; no policy switches automatically after a failure.
   shared output and work limits.
 - **Retile grid cells** and **Retile surface triangles** can use exact equivalent
   source/output LOD. Each affected patch must preserve its fine sample positions
-  and full base coverage. All changed triangles in that patch need one exact affine
-  mapping from base coordinates to world positions; other triangles may stay curved.
+  and full base coverage. Changed maximal LOD triangles must match every fine
+  triangle field with positive base-area overlap. Different local maps can qualify
+  when all overlapping fields agree exactly; other triangles may stay curved.
   A selected source with LOD before the cut or in any output needs constant paint
   and uniform triangle labels, as do all its outputs. **Both sides** and whole-neighbor
   partitions require whole equivalence when coarsened. A one-sided source can also

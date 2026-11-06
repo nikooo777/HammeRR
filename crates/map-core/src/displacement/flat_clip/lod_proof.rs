@@ -404,26 +404,58 @@ fn equivalent(
     if fine == maximal {
         return Ok(());
     }
-    let &seed = fine
+    let removed_count = fine.difference(maximal).count();
+    let added_count = maximal.difference(fine).count();
+    if removed_count == 0 || added_count == 0 {
+        return Err(invalid(
+            "Terrain LOD changed domains require both original fine and maximal triangles",
+        ));
+    }
+    work.consume(
+        17 * FIELD_WORK * (removed_count + added_count)
+            + labels::AABB_WORK * removed_count * added_count
+            + removed_count,
+    )
+    .map_err(invalid)?;
+    let mut removed = fine
         .difference(maximal)
-        .next()
-        .ok_or_else(|| invalid("Terrain LOD changed domains lost their original fine triangle"))?;
-    work.consume(FIELD_WORK * (16 + 9 * (fine.len() + maximal.len())))
-        .map_err(invalid)?;
-    let field = PlanarField::triangle(
-        seed.map(|index| mesh.base_positions[index]),
-        seed.map(|index| mesh.positions[index]),
-    )?;
-    for triangle in fine.symmetric_difference(maximal) {
-        for &index in triangle {
-            let base = mesh.base_positions[index];
-            let world = mesh.positions[index];
-            if !same(field.position(base)?, world) || !same(field.base_position(world)?, base) {
+        .map(|&triangle| {
+            let base = triangle.map(|index| mesh.base_positions[index]);
+            Ok((
+                labels::Projected::new(base, axes)?,
+                PlanarField::triangle(base, triangle.map(|index| mesh.positions[index]))?,
+                false,
+            ))
+        })
+        .collect::<Result<Vec<_>, EditError>>()?;
+    for &triangle in maximal.difference(fine) {
+        let base = triangle.map(|index| mesh.base_positions[index]);
+        let projected = labels::Projected::new(base, axes)?;
+        let field = PlanarField::triangle(base, triangle.map(|index| mesh.positions[index]))?;
+        let mut matched = false;
+        for (source, surface, covered) in &mut removed {
+            if !projected.overlaps(source, axes, work)? {
+                continue;
+            }
+            work.consume(FIELD_WORK).map_err(invalid)?;
+            if !field.matches(surface)? {
                 return Err(invalid(
-                    "Changed native LOD triangles must share one exact affine base-to-world mapping",
+                    "Native LOD triangle changed an overlapping original affine surface field",
                 ));
             }
+            *covered = true;
+            matched = true;
         }
+        if !matched {
+            return Err(invalid(
+                "Native LOD triangle has no positive-area original fine coverage",
+            ));
+        }
+    }
+    if removed.iter().any(|(_, _, covered)| !*covered) {
+        return Err(invalid(
+            "Original fine triangle has no positive-area native LOD coverage",
+        ));
     }
     Ok(())
 }

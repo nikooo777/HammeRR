@@ -10,7 +10,7 @@ use crate::{EditError, displacement::DisplacementMesh};
 const BASE_WORK: usize = 16;
 const LABEL_WORK: usize = 64;
 const TRIANGLE_WORK: usize = 64;
-const AABB_WORK: usize = 8;
+pub(super) const AABB_WORK: usize = 8;
 const SAT_WORK: usize = 18 * 32;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -108,7 +108,7 @@ fn read_labels(
         .collect()
 }
 
-struct Projected {
+pub(super) struct Projected {
     points: [DVec3; 3],
     bounds: [[f64; 2]; 2],
     sign: i128,
@@ -133,7 +133,7 @@ fn bounds_overlap(first: [[f64; 2]; 2], second: [[f64; 2]; 2]) -> bool {
 }
 
 impl Projected {
-    fn new(points: [DVec3; 3], axes: [usize; 2]) -> Result<Self, EditError> {
+    pub(super) fn new(points: [DVec3; 3], axes: [usize; 2]) -> Result<Self, EditError> {
         let sign = orient(points[0], points[1], points[2], axes)?;
         if sign == 0 {
             return Err(invalid(
@@ -148,7 +148,12 @@ impl Projected {
         })
     }
 
-    fn overlaps(&self, other: &Self, axes: [usize; 2], work: &mut Work) -> Result<bool, EditError> {
+    pub(super) fn overlaps(
+        &self,
+        other: &Self,
+        axes: [usize; 2],
+        work: &mut Work,
+    ) -> Result<bool, EditError> {
         if !bounds_overlap(self.bounds, other.bounds) {
             return Ok(false);
         }

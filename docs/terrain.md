@@ -235,9 +235,9 @@ Local cell and normal checks can still reject the cut.
 Folded projections, self-intersecting borders, overlap, extra unsewn contacts and
 unsupported degenerate contacts reject.
 Native geometry, piecewise raw/native paint fields and labels must remain exact.
-Curved source/output LOD can qualify. All changed triangles in each affected patch
-must share one exact affine mapping from base coordinates to world positions.
-Other regions may stay curved.
+Curved source/output LOD can qualify when changed maximal triangles match every
+fine triangle field with positive base-area overlap. Different local maps are
+allowed when overlapping fields agree exactly. Other regions may stay curved.
 The source and all outputs need constant paint and uniform labels when any uses LOD.
 **Both sides** and whole-neighbor partitions require whole equivalence when coarsened.
 A one-sided source can also use strictly discarded coarsening.

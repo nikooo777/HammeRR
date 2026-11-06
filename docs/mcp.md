@@ -908,9 +908,12 @@ Triangle identities use cyclic vertex rotations without reversing orientation.
   in the fine/max triangle symmetric difference must lie beyond the cut tolerance
   on the discarded side in the ideal grid and every reconstructed profile.
   Retained source triangles stay identical.
-- Whole geometric equivalence keeps common triangles identical. All vertices in
-  both triangle differences must follow one exact affine base-to-world map per
-  LOD patch. Unchanged triangles may remain curved. Maps can differ between patches.
+- Whole geometric equivalence cancels common cyclic triangles. Each max-only
+  triangle's exact affine base-to-world field must match every fine-only field
+  with positive base-area overlap. Every changed triangle on both sides must have
+  positive overlap with the opposite changed set. Full base coverage then preserves
+  the complete piecewise-linear surface. Different local maps are allowed when
+  all overlapping fields agree exactly. Common triangles may stay curved.
 
 The source uses the discarded-side classification when applicable; otherwise it
 needs whole equivalence. Coarsened outputs and unchanged neighbors always need
@@ -921,8 +924,9 @@ Their raw paint and all four packed paint fields must be constant.
 
 Unchanged neighbors need geometry-only equivalence and identical complete LOD
 state; no new paint restriction or material lookup is imposed on them.
-Existing normal, metadata, contact and capacity checks apply. Multiple affine maps
-within one patch's changed region, moved samples or failed field proofs reject.
+Existing normal, metadata, contact and capacity checks apply. Whole geometric
+equivalence rejects crease-crossing surface changes or mismatched overlap fields.
+Moved samples remain invalid for all certificates.
 
 `blend_mode` selects the shared **Blend samples** choice. Use
 `set_clip_blend_mode({"mode":"native_float"})` after choosing Fragments,

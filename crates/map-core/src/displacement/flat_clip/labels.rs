@@ -20,28 +20,6 @@ struct Label {
     secondary: Option<bool>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) struct UniformLabel(Label);
-
-pub(super) fn uniform(
-    info: &DispInfo,
-    mesh: &DisplacementMesh,
-    has_secondary_surface: bool,
-    work: &mut Work,
-) -> Result<UniformLabel, EditError> {
-    let labels = read_labels(info, mesh, has_secondary_surface, work)?;
-    let first = labels
-        .first()
-        .copied()
-        .ok_or_else(|| invalid("Terrain LOD source has no triangle labels"))?;
-    if labels.iter().any(|&label| label != first) {
-        return Err(invalid(
-            "Retiled native LOD currently requires uniform raw and native flags and collision-material labels",
-        ));
-    }
-    Ok(UniformLabel(first))
-}
-
 fn power(mesh: &DisplacementMesh) -> Result<u32, EditError> {
     let power = (2..=4)
         .find(|&power| mesh.size == (1 << power) + 1)
@@ -56,6 +34,32 @@ fn power(mesh: &DisplacementMesh) -> Result<u32, EditError> {
         ));
     }
     Ok(power)
+}
+
+pub(super) fn projection(
+    mesh: &DisplacementMesh,
+    work: &mut Work,
+) -> Result<(BasePlane, [usize; 2]), EditError> {
+    power(mesh)?;
+    work.consume(BASE_WORK * mesh.base_positions.len())
+        .map_err(invalid)?;
+    if mesh.base_positions.iter().any(|point| !point.is_finite()) {
+        return Err(invalid("Terrain triangle field coordinates must be finite"));
+    }
+    let base = BasePlane::new([
+        mesh.base_positions[0],
+        mesh.base_positions[(mesh.size - 1) * mesh.size],
+        mesh.base_positions[mesh.size * mesh.size - 1],
+    ])?;
+    for &point in &mesh.base_positions {
+        if !base.contains(point)? {
+            return Err(invalid(
+                "Terrain triangle fields require one exact base plane",
+            ));
+        }
+    }
+    let axis = base.axis();
+    Ok((base, [(axis + 1) % 3, (axis + 2) % 3]))
 }
 
 fn read_labels(
@@ -182,6 +186,94 @@ impl Projected {
     }
 }
 
+struct PhysicalTriangle {
+    projected: Projected,
+    secondary: bool,
+}
+
+pub(super) struct PhysicalField {
+    base: BasePlane,
+    axes: [usize; 2],
+    bounds: [[f64; 2]; 2],
+    triangles: Vec<PhysicalTriangle>,
+}
+
+impl PhysicalField {
+    pub(super) fn new(
+        mesh: &DisplacementMesh,
+        data: &source_formats::bsp::Displacements,
+        indices: &[[usize; 3]],
+        has_secondary_surface: bool,
+        work: &mut Work,
+    ) -> Result<Self, EditError> {
+        paint::validate_data(mesh, data, work)?;
+        let (base, axes) = projection(mesh, work)?;
+        work.consume(LABEL_WORK * indices.len()).map_err(invalid)?;
+        let mut triangles = Vec::with_capacity(indices.len());
+        for &triangle in indices {
+            if triangle.iter().any(|&index| index >= data.vertices.len()) {
+                return Err(invalid(
+                    "Terrain physical-material regions require valid emitted triangle indices",
+                ));
+            }
+            let secondary = has_secondary_surface
+                && native::secondary_alpha_class(triangle.map(|index| data.vertices[index].alpha))
+                    .map_err(invalid)?;
+            triangles.push(PhysicalTriangle {
+                projected: Projected::new(triangle.map(|index| mesh.base_positions[index]), axes)?,
+                secondary,
+            });
+        }
+        if triangles.is_empty() {
+            return Err(invalid(
+                "Terrain physical-material regions require emitted native triangles",
+            ));
+        }
+        Ok(Self {
+            base,
+            axes,
+            bounds: projected_bounds(&mesh.base_positions, axes),
+            triangles,
+        })
+    }
+
+    pub(super) fn matches(&self, child: &Self, work: &mut Work) -> Result<bool, EditError> {
+        work.consume(FIELD_WORK + AABB_WORK * self.triangles.len())
+            .map_err(invalid)?;
+        if self.axes != child.axes || !self.base.matches(&child.base)? {
+            return Ok(false);
+        }
+        let candidates = self
+            .triangles
+            .iter()
+            .filter(|source| bounds_overlap(child.bounds, source.projected.bounds))
+            .collect::<Vec<_>>();
+        work.consume(AABB_WORK * candidates.len() * child.triangles.len())
+            .map_err(invalid)?;
+        for triangle in &child.triangles {
+            let mut covered = false;
+            for source in &candidates {
+                if !triangle
+                    .projected
+                    .overlaps(&source.projected, self.axes, work)?
+                {
+                    continue;
+                }
+                if triangle.secondary != source.secondary {
+                    return Ok(false);
+                }
+                covered = true;
+            }
+            if !covered {
+                return Err(invalid(
+                    "Terrain emitted physical-material triangle has no positive-area source coverage",
+                ));
+            }
+        }
+        Ok(true)
+    }
+}
+
 struct SourceTriangle {
     projected: Projected,
     label: Label,
@@ -250,26 +342,7 @@ impl TriangleField {
         blend_mode: TerrainBlendMode,
         work: &mut Work,
     ) -> Result<Self, EditError> {
-        power(mesh)?;
-        work.consume(BASE_WORK * mesh.base_positions.len())
-            .map_err(invalid)?;
-        if mesh.base_positions.iter().any(|point| !point.is_finite()) {
-            return Err(invalid("Terrain triangle label coordinates must be finite"));
-        }
-        let base = BasePlane::new([
-            mesh.base_positions[0],
-            mesh.base_positions[(mesh.size - 1) * mesh.size],
-            mesh.base_positions[mesh.size * mesh.size - 1],
-        ])?;
-        for &point in &mesh.base_positions {
-            if !base.contains(point)? {
-                return Err(invalid(
-                    "Terrain triangle labels require one exact base plane",
-                ));
-            }
-        }
-        let axis = base.axis();
-        let axes = [(axis + 1) % 3, (axis + 2) % 3];
+        let (base, axes) = projection(mesh, work)?;
         let uniform_alpha = if certify_surface {
             work.consume(BASE_WORK * mesh.alphas.len())
                 .map_err(invalid)?;

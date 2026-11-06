@@ -328,7 +328,15 @@ fn quarter(
     {
         *point = stored(samples[index].base)?;
     }
-    let (mut part, mesh) = carrier_base(solid, source.side, source.face, base, material)?;
+    let (mut part, mesh) = carrier_base(
+        solid,
+        source.side,
+        source.face,
+        base,
+        material,
+        &source.editing,
+        work,
+    )?;
     let mut offsets = Vec::with_capacity(VERTICES);
     for (sample, &point) in samples.iter().zip(&mesh.base_positions) {
         offsets.push(sample.offset(point)?);
@@ -341,7 +349,9 @@ fn quarter(
         .displacement
         .as_mut()
         .unwrap();
-    info.offsets = Some(offsets.chunks(SIZE).map(<[_]>::to_vec).collect());
+    if !source.editing.enabled() {
+        info.offsets = Some(offsets.chunks(SIZE).map(<[_]>::to_vec).collect());
+    }
     info.alphas = source.info.alphas.as_ref().map(|_| {
         samples
             .chunks(SIZE)
@@ -526,6 +536,7 @@ fn materialize(
                             base,
                             &field,
                             &paint,
+                            &source.editing,
                             request.material,
                             request.blend_mode,
                             work,

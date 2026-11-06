@@ -809,7 +809,7 @@ fn certify_lod(
 ) -> Result<(), EditError> {
     enum Fields<'a> {
         Flat(&'a lod_proof::Fields),
-        Curved(&'a lod_proof::UniformFields),
+        Curved(&'a lod_proof::SampleFields),
     }
 
     let (before, previous) = previous;
@@ -902,6 +902,11 @@ fn certify_lod(
             if child.raw.source != surface.raw.source {
                 continue;
             }
+            if child.raw.side.material != surface.raw.side.material {
+                return Err(invalid(
+                    "Terrain LOD retiling must preserve its guarded primary and secondary material identities",
+                ));
+            }
             let matches = match &expected {
                 Fields::Flat(expected) => expected.matches(
                     &lod_proof::certify(
@@ -916,7 +921,7 @@ fn certify_lod(
                     work,
                 )?,
                 Fields::Curved(expected) => expected.matches(
-                    &lod_proof::certify_uniform(
+                    &lod_proof::certify_samples(
                         &child.raw.face,
                         child.raw.side.displacement.as_ref().unwrap(),
                         &child.mesh,
@@ -929,7 +934,7 @@ fn certify_lod(
             };
             if !matches {
                 return Err(invalid(
-                    "Terrain LOD retiling must preserve its certified fields, constant paint and uniform native labels",
+                    "Terrain LOD retiling must preserve its certified fields and emitted physical-material regions",
                 ));
             }
         }

@@ -4,8 +4,8 @@ use glam::DVec3;
 use source_formats::{bsp, vmf::DispInfo};
 
 use super::{
-    CUT_EPSILON, Exact, FIELD_WORK, PaintField, PlanarField, Region, Work, certify_height_normals,
-    certify_normals, convex, field::BasePlane, invalid, labels, orient, same, uv,
+    CUT_EPSILON, Exact, FIELD_WORK, PlanarField, Region, Work, certify_height_normals,
+    certify_normals, convex, field::BasePlane, invalid, labels, orient, paint, same, uv,
 };
 use crate::clip::{Keep, TerrainTexture};
 use crate::{EditError, Face, Plane, displacement::DisplacementMesh};
@@ -22,27 +22,24 @@ pub(super) struct State<'a> {
 
 pub(super) struct Fields {
     field: PlanarField,
-    uniform: UniformFields,
+    samples: SampleFields,
 }
 
-pub(super) struct UniformFields {
-    paint: PaintField,
-    label: labels::UniformLabel,
+pub(super) struct SampleFields {
+    physical: labels::PhysicalField,
     texture: TerrainTexture,
 }
 
 impl Fields {
     pub(super) fn matches(&self, other: &Self, work: &mut Work) -> Result<bool, EditError> {
         work.consume(FIELD_WORK).map_err(invalid)?;
-        Ok(self.field.matches(&other.field)? && self.uniform.matches(&other.uniform, work)?)
+        Ok(self.field.matches(&other.field)? && self.samples.matches(&other.samples, work)?)
     }
 }
 
-impl UniformFields {
+impl SampleFields {
     pub(super) fn matches(&self, other: &Self, work: &mut Work) -> Result<bool, EditError> {
-        Ok(self.label == other.label
-            && self.texture == other.texture
-            && self.paint.matches(&other.paint, work)?)
+        Ok(self.texture == other.texture && self.physical.matches(&other.physical, work)?)
     }
 }
 
@@ -123,33 +120,36 @@ fn validate_state(
     Ok(*native_info)
 }
 
-fn uniform_fields(
-    info: &DispInfo,
+fn sample_fields(
     mesh: &DisplacementMesh,
     state: &State<'_>,
+    cut: Option<(Plane, Keep)>,
     texture: TerrainTexture,
     work: &mut Work,
-) -> Result<UniformFields, EditError> {
-    let alpha = mesh.alphas[0];
-    if mesh.alphas.iter().any(|&value| value != alpha) {
-        return Err(invalid(
-            "Retiled native LOD currently requires constant terrain paint",
-        ));
-    }
-    let size = mesh.size;
-    let corners = [0, (size - 1) * size, size * size - 1, size - 1];
-    let paint = PaintField::new(
-        corners.map(|index| mesh.base_positions[index]),
-        [alpha; 4],
+) -> Result<SampleFields, EditError> {
+    let physical = labels::PhysicalField::new(
+        mesh,
+        state.data,
+        state.indices,
+        texture.has_secondary_surface,
         work,
     )?;
-    paint.certify(mesh, state.data, work)?;
-    let label = labels::uniform(info, mesh, texture.has_secondary_surface, work)?;
-    Ok(UniformFields {
-        paint,
-        label,
-        texture,
-    })
+    let native_info = state.data.infos[0];
+    let count = native_info
+        .triangle_count()
+        .map_err(|error| invalid(error.to_string()))?;
+    work.consume(FIELD_WORK * (count + state.indices.len()))
+        .map_err(invalid)?;
+    let fine = triangle_set(
+        &native_info
+            .triangle_indices()
+            .map_err(|error| invalid(error.to_string()))?,
+    )?;
+    let maximal = triangle_set(state.indices)?;
+    if !all_discarded(&fine, &maximal, *state, cut, work)? {
+        paint::certify_lod(mesh, &fine, &maximal, work)?;
+    }
+    Ok(SampleFields { physical, texture })
 }
 
 fn preserve_positions(
@@ -184,7 +184,7 @@ pub(super) fn certify(
     work: &mut Work,
 ) -> Result<Fields, EditError> {
     let native_info = validate_state(info, mesh, &state, work)?;
-    let uniform = uniform_fields(info, mesh, &state, texture, work)?;
+    let samples = sample_fields(mesh, &state, None, texture, work)?;
     preserve_positions(mesh, &state, work)?;
     let size = mesh.size;
     let count = size * size;
@@ -224,20 +224,21 @@ pub(super) fn certify(
     }
     Ok(Fields {
         field: *field,
-        uniform,
+        samples,
     })
 }
 
-fn uniform_samples(
+fn samples(
     face: &Face,
     info: &DispInfo,
     mesh: &DisplacementMesh,
     state: State<'_>,
+    cut: Option<(Plane, Keep)>,
     texture: TerrainTexture,
     work: &mut Work,
-) -> Result<UniformFields, EditError> {
+) -> Result<SampleFields, EditError> {
     validate_state(info, mesh, &state, work)?;
-    let uniform = uniform_fields(info, mesh, &state, texture, work)?;
+    let samples = sample_fields(mesh, &state, cut, texture, work)?;
     preserve_positions(mesh, &state, work)?;
     uv(state.data, face, mesh.positions.len(), texture, work)?;
     work.consume(FIELD_WORK).map_err(invalid)?;
@@ -248,20 +249,20 @@ fn uniform_samples(
     ])?
     .axis();
     certify_height_normals(state.data, state.positions, axis, work)?;
-    Ok(uniform)
+    Ok(samples)
 }
 
-pub(super) fn certify_uniform(
+pub(super) fn certify_samples(
     face: &Face,
     info: &DispInfo,
     mesh: &DisplacementMesh,
     state: State<'_>,
     texture: TerrainTexture,
     work: &mut Work,
-) -> Result<UniformFields, EditError> {
-    let uniform = uniform_samples(face, info, mesh, state, texture, work)?;
+) -> Result<SampleFields, EditError> {
+    let samples = samples(face, info, mesh, state, None, texture, work)?;
     geometry(mesh, state, None, work)?;
-    Ok(uniform)
+    Ok(samples)
 }
 
 pub(super) fn certify_curved(
@@ -272,10 +273,10 @@ pub(super) fn certify_curved(
     cut: Option<(Plane, Keep)>,
     texture: TerrainTexture,
     work: &mut Work,
-) -> Result<UniformFields, EditError> {
-    let uniform = uniform_samples(face, info, mesh, state, texture, work)?;
+) -> Result<SampleFields, EditError> {
+    let samples = samples(face, info, mesh, state, cut, texture, work)?;
     geometry(mesh, state, cut, work)?;
-    Ok(uniform)
+    Ok(samples)
 }
 
 pub(super) fn certify_geometry(

@@ -1,8 +1,10 @@
+use std::collections::BTreeSet;
+
 use glam::DVec3;
 use source_formats::bsp;
 
 use super::field::ScalarField;
-use super::{Exact, FIELD_WORK, Work, invalid};
+use super::{Exact, FIELD_WORK, Work, invalid, labels};
 use crate::clip::{TerrainBlendError, TerrainBlendMode};
 use crate::{EditError, displacement::DisplacementMesh};
 
@@ -205,6 +207,69 @@ pub(super) fn validate_data(
                 "Terrain authored and native alpha encodings must match exactly",
             ));
         }
+    }
+    Ok(())
+}
+
+pub(super) fn certify_lod(
+    mesh: &DisplacementMesh,
+    fine: &BTreeSet<[usize; 3]>,
+    maximal: &BTreeSet<[usize; 3]>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    if fine == maximal {
+        return Ok(());
+    }
+    let removed_count = fine.difference(maximal).count();
+    let added_count = maximal.difference(fine).count();
+    if removed_count == 0 || added_count == 0 {
+        return Err(invalid(
+            "Terrain LOD paint requires both original fine and maximal changed triangles",
+        ));
+    }
+    work.consume(
+        FIELD_WORK * (removed_count + added_count + 1)
+            + labels::AABB_WORK * removed_count * added_count
+            + removed_count,
+    )
+    .map_err(invalid)?;
+    let (_, axes) = labels::projection(mesh, work)?;
+    let mut removed = Vec::with_capacity(removed_count);
+    for &triangle in fine.difference(maximal) {
+        let points = triangle.map(|index| mesh.base_positions[index]);
+        removed.push((
+            labels::Projected::new(points, axes)?,
+            PaintField::triangle(points, triangle.map(|index| mesh.alphas[index]), work)?,
+            false,
+        ));
+    }
+    for &triangle in maximal.difference(fine) {
+        let points = triangle.map(|index| mesh.base_positions[index]);
+        let projected = labels::Projected::new(points, axes)?;
+        let paint = PaintField::triangle(points, triangle.map(|index| mesh.alphas[index]), work)?;
+        let mut matched = false;
+        for (source, source_paint, covered) in &mut removed {
+            if !projected.overlaps(source, axes, work)? {
+                continue;
+            }
+            if !paint.matches(source_paint, work)? {
+                return Err(invalid(
+                    "Native LOD triangle changed an overlapping original raw or native packed paint field",
+                ));
+            }
+            *covered = true;
+            matched = true;
+        }
+        if !matched {
+            return Err(invalid(
+                "Native LOD paint triangle has no positive-area original fine coverage",
+            ));
+        }
+    }
+    if removed.iter().any(|(_, _, covered)| !*covered) {
+        return Err(invalid(
+            "Original fine paint triangle has no positive-area native LOD coverage",
+        ));
     }
     Ok(())
 }

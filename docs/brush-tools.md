@@ -233,11 +233,11 @@ previous valid draft; no policy switches automatically after a failure.
   tilted bases. Joined planar surfaces can have different slopes when the component
   shares one exact coordinate projection and passes native arithmetic, orientation
   and conditioning checks. Curved neighbors, overlaps and unsupported partial joins reject.
-  Paint must remain affine. Native LOD coarsening on a selected source or any output requires
-  constant paint and uniform raw, native and physical triangle labels. The source and all
-  its outputs must pass exact LOD geometry, UV and full-region coverage checks.
+  Paint must remain affine. Source and output LOD must preserve geometry, UVs,
+  raw alpha, packed alpha and full-region coverage. Nonuniform triangle labels
+  must match every overlapping original region.
   Unchanged neighbors must keep their complete LOD state.
-  Nonzero offset normals and opaque metadata reject.
+  Opaque metadata rejects.
   Native positions, shared samples and texture fields must remain exact.
   Normal inputs must pass the native arithmetic and conditioning checks.
   Normal bits and final pixels can differ after retiling.
@@ -293,9 +293,10 @@ previous valid draft; no policy switches automatically after a failure.
   and full base coverage. Changed maximal LOD triangles must match every fine
   triangle field with positive base-area overlap. Different local maps can qualify
   when all overlapping fields agree exactly; other triangles may stay curved.
-  A selected source with LOD before the cut or in any output needs constant paint
-  and uniform triangle labels, as do all its outputs. **Both sides** and whole-neighbor
-  partitions require whole equivalence when coarsened. A one-sided source can also
+  Nonuniform paint and triangle labels must retain their original fields. Actual
+  maximal collision triangles must retain their primary or secondary material
+  regions. **Both sides** and whole-neighbor partitions require whole equivalence
+  when coarsened. A one-sided source can also
   use strictly discarded coarsening. Unchanged coarsened neighbors need whole
   geometric equivalence and must keep their complete LOD state.
 - **Retile surface triangles** requires a planar base with a convex cage in its
@@ -306,6 +307,11 @@ previous valid draft; no policy switches automatically after a failure.
   **Exact fields** can refuse. The error names the unrepresentable field.
   **Native float** and **Nearest byte** do not relax geometry, UV, triangle-label
   or collision-material checks.
+- Retiling preserves explicit nonzero editing directions and their source vector,
+  distance and offset fields. Original samples stay exact; new samples use the
+  same piecewise-linear fields without normalization. This requires zero elevation
+  and exact native component arithmetic. Mixed zero/nonzero editing normals,
+  newly zero normals, changed field breaks or changed geometry reject.
 - Clipping accepts a valid ten-word VMF allowed-vertex cache. New patches reset
   present caches and keep absent caches absent. Malformed caches reject the cut.
   Native LOD masks still pass all checks.

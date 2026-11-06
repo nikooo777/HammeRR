@@ -808,8 +808,8 @@ Flat mode accepts convex world or `func_detail` quad terrain at powers 2–4.
 Base cages must be planar. Tilted cages and affine tangential offsets are
 supported. Each visible sheet must follow one exact affine mapping from its
 base cage to a plane. Native-representable alpha must form
-one exact affine field. Nonzero `offset_normals` and opaque payloads remain
-unsupported. Four-corner retained regions stay
+one exact affine field. Nonzero editing fields follow the component-preservation
+rules below. Opaque payloads reject. Four-corner retained regions stay
 one power-2 patch when joins permit; triangle/pentagon regions use quad fans.
 Compatible flat components support repeated cuts. The full affected component,
 including unchanged and resolved child neighbors, must share its base plane and
@@ -924,9 +924,10 @@ Triangle identities use cyclic vertex rotations without reversing orientation.
 The source uses the discarded-side classification when applicable; otherwise it
 needs whole equivalence. Coarsened outputs and unchanged neighbors always need
 whole equivalence. **Both sides** and whole-neighbor partitions can qualify this way.
-If a selected source has LOD before the cut or in any output, that source and all
-its outputs need uniform raw/native/physical triangle labels and guarded UVs.
-Their raw paint and all four packed paint fields must be constant.
+Selected sources and outputs retain guarded UVs, full-fine raw/native triangle
+labels and matching raw/four-profile packed paint fields over every changed
+LOD region. Actual maximal collision triangles retain their original physical
+material classes. Nonuniform fields are allowed when these exact checks pass.
 
 Unchanged neighbors need geometry-only equivalence and identical complete LOD
 state; no new paint restriction or material lookup is imposed on them.
@@ -988,6 +989,11 @@ complete existing middle row or column. Per crossing source, `keep:"both"` produ
 four native patches; `"front"` or `"back"` produces two. Grid spacing, alpha samples, UV placement
 and physical triangle tags remain unchanged. Child power is one lower.
 Grid cuts preserve finite `offset_normals` rows through the original sample mapping.
+Flat, Cells and Fragments can preserve nonzero editing-direction fields and their
+vector, distance and offset components. They require zero elevation, exact native
+arithmetic and unchanged piecewise-linear fields. Mixed zero/nonzero normals and
+new zero normals reject. Nonuniform paint and labels also work with certified LOD;
+actual maximal collision triangles must retain their material regions.
 Power 4 also permits complete quarter-grid lines: row or column 4 or 12.
 Both sides produces ten patches; the short side has four power-2 patches,
 and the long side has six power-2/3 patches.

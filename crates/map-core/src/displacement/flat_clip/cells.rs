@@ -333,8 +333,15 @@ fn materialize(
             for (point, index) in base.iter_mut().zip(indices) {
                 *point = stored(source.mesh.base_positions[index])?;
             }
-            let (mut part, base_mesh) =
-                carrier_base(solid, source.side, source.face, base, request.material)?;
+            let (mut part, base_mesh) = carrier_base(
+                solid,
+                source.side,
+                source.face,
+                base,
+                request.material,
+                &source.editing,
+                work,
+            )?;
             let side_index = part
                 .sides
                 .iter()
@@ -349,7 +356,9 @@ fn materialize(
                 offsets.push(sample.offset(point)?);
             }
             let info = part.sides[side_index].displacement.as_mut().unwrap();
-            info.offsets = Some(offsets.chunks(SIZE).map(<[_]>::to_vec).collect());
+            if !source.editing.enabled() {
+                info.offsets = Some(offsets.chunks(SIZE).map(<[_]>::to_vec).collect());
+            }
             info.alphas = source.info.alphas.as_ref().map(|_| {
                 samples
                     .chunks(SIZE)

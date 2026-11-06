@@ -16,6 +16,7 @@ use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
 pub(crate) mod cells;
+mod editing;
 mod field;
 pub(crate) mod fragments;
 mod labels;
@@ -239,19 +240,6 @@ fn convex(points: &[DVec3], axes: [usize; 2], sign: i128) -> Result<(), EditErro
     Ok(())
 }
 
-fn rows<T: PartialEq>(rows: &Option<Vec<Vec<T>>>, size: usize) -> Result<(), EditError> {
-    if let Some(rows) = rows
-        && (rows.len() != size
-            || rows.iter().any(|row| row.len() != size)
-            || rows.iter().flatten().any(|value| value != &rows[0][0]))
-    {
-        return Err(invalid(
-            "Terrain retiling requires uniform, correctly sized source fields",
-        ));
-    }
-    Ok(())
-}
-
 struct Prepared<'a> {
     side: &'a Side,
     info: &'a DispInfo,
@@ -259,6 +247,7 @@ struct Prepared<'a> {
     mesh: DisplacementMesh,
     field: PlanarField,
     paint: PaintField,
+    editing: editing::Editing,
     axes: [usize; 2],
     sign: i128,
     ring: [DVec3; 4],
@@ -272,6 +261,7 @@ struct Admitted<'a> {
     mesh: DisplacementMesh,
     data: bsp::Displacements,
     positions: Vec<Vec<DVec3>>,
+    editing: editing::Editing,
 }
 
 struct HeightSheet {
@@ -576,6 +566,7 @@ fn read_source<'a>(
             mesh,
             data,
             positions,
+            editing: editing::Editing::default(),
         },
         base,
     ))
@@ -610,19 +601,10 @@ fn check_source<'a>(
     {
         return Err(invalid("Terrain retiling cannot remap opaque payloads"));
     }
-    rows(&info.offset_normals, source.mesh.size)?;
-    if info
-        .offset_normals
-        .as_ref()
-        .is_some_and(|rows| rows.iter().flatten().any(|normal| *normal != DVec3::ZERO))
-    {
-        return Err(invalid(
-            "Terrain retiling requires absent or zero offset normals",
-        ));
-    }
     let tags = triangles::native_tags(info, &source.mesh)?;
     work.consume(tags.len()).map_err(invalid)?;
     native_base(&mut source.mesh, &source.data, base, work)?;
+    source.editing = editing::Editing::new(info, &source.mesh, work)?;
     Ok(source)
 }
 
@@ -810,6 +792,7 @@ fn prepare<'a>(
         mesh,
         data,
         positions,
+        editing,
     }) = admit(document, solid, geometry, plane, work)?
     else {
         return Ok(None);
@@ -881,6 +864,7 @@ fn prepare<'a>(
         mesh,
         field,
         paint,
+        editing,
         axes,
         sign,
         ring,
@@ -1149,6 +1133,8 @@ fn carrier_base(
     face: &Face,
     quad: [DVec3; 4],
     material: &str,
+    editing: &editing::Editing,
+    work: &mut Work,
 ) -> Result<(Solid, DisplacementMesh), EditError> {
     let center = weighted(&quad, &[1, 1, 1, 1], 4)?;
     let mut part = solid.clone();
@@ -1221,7 +1207,34 @@ fn carrier_base(
         .iter()
         .find(|face| face.side == index)
         .ok_or_else(numeric)?;
+    let mut base_mesh =
+        DisplacementMesh::build(face, &info).map_err(|error| invalid(error.to_string()))?;
+    if editing.enabled() {
+        let (base_data, base) = data(face, &base_mesh, POWER)?;
+        let authored = base_mesh.base_positions.clone();
+        native_base(&mut base_mesh, &base_data, base, work)?;
+        if authored
+            .iter()
+            .zip(&base_mesh.base_positions)
+            .any(|(&authored, &native)| !same(authored, native))
+        {
+            return Err(invalid(
+                "Retiled editing fields require matching authored and native base samples",
+            ));
+        }
+    }
+    let editing_positions = editing.apply(&mut info, &base_mesh, work)?;
     let mesh = DisplacementMesh::build(face, &info).map_err(|error| invalid(error.to_string()))?;
+    if editing_positions.is_some_and(|positions| {
+        positions
+            .iter()
+            .zip(&mesh.positions)
+            .any(|(&native, &authored)| !same(native, authored))
+    }) {
+        return Err(invalid(
+            "Retiled native editing components changed their authored positions",
+        ));
+    }
     part.sides[index].displacement = Some(info);
     Ok((part, mesh))
 }
@@ -1240,6 +1253,7 @@ fn carrier(
         quad,
         &source.field,
         &source.paint,
+        &source.editing,
         material,
         TerrainBlendMode::Exact,
         work,
@@ -1254,11 +1268,12 @@ fn carrier_field(
     quad: [DVec3; 4],
     field: &PlanarField,
     paint: &PaintField,
+    editing: &editing::Editing,
     material: &str,
     blend_mode: TerrainBlendMode,
     work: &mut Work,
 ) -> Result<Solid, EditError> {
-    let (mut part, mesh) = carrier_base(solid, side, face, quad, material)?;
+    let (mut part, mesh) = carrier_base(solid, side, face, quad, material, editing, work)?;
     let source_info = side.displacement.as_ref().unwrap();
     let info = part
         .sides
@@ -1272,12 +1287,14 @@ fn carrier_field(
         FIELD_WORK * mesh.base_positions.len() * (1 + usize::from(source_info.alphas.is_some())),
     )
     .map_err(invalid)?;
-    info.offsets = Some(
-        mesh.base_positions
-            .chunks(SIZE)
-            .map(|row| row.iter().map(|&base| field.offset(base)).collect())
-            .collect::<Result<_, _>>()?,
-    );
+    if !editing.enabled() {
+        info.offsets = Some(
+            mesh.base_positions
+                .chunks(SIZE)
+                .map(|row| row.iter().map(|&base| field.offset(base)).collect())
+                .collect::<Result<_, _>>()?,
+        );
+    }
     info.alphas = source_info
         .alphas
         .as_ref()

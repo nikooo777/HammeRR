@@ -22,7 +22,7 @@ mod labels;
 pub(crate) mod network;
 mod paint;
 
-use field::{PlanarField, ScalarField};
+use field::{BasePlane, PlanarField, ScalarField};
 use labels::TriangleField;
 use paint::PaintField;
 
@@ -432,13 +432,9 @@ fn certify_projected_normals(
     let size = info
         .grid_size()
         .map_err(|error| invalid(error.to_string()))?;
-    let axis = (0..3)
-        .find(|&axis| base.iter().all(|point| point[axis] == base[0][axis]))
-        .ok_or_else(|| {
-            invalid("Noncoplanar flat terrain contacts require one common world-axis base plane")
-        })?;
+    let axis = BasePlane::new([base[0], base[1], base[2]])?.axis();
     let axes = [(axis + 1) % 3, (axis + 2) % 3];
-    work.consume(FIELD_WORK * (20 + profiles.len()))
+    work.consume(FIELD_WORK * (21 + profiles.len()))
         .map_err(invalid)?;
     let sign = orient(base[0], base[1], base[2], axes)?;
     let points = profiles

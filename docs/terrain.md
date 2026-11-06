@@ -231,9 +231,10 @@ Native geometry, piecewise raw/native paint fields
 and labels must remain exact. Unchanged terrain contacts reject; normals and runtime LOD are regenerated.
 [**Retile flat terrain**](brush-tools.md#retile-flat-terrain) supports non-grid
 cuts on eligible planar surfaces, including tilted base cages and affine
-tangential offsets. Joined planar patches can have different slopes when they
-share a world-axis base plane and affine tangential projection, with exact native
-contacts and certified normals.
+tangential offsets. Joined planar patches can have different slopes on a common
+planar base, including tilted bases, when they share one exact coordinate
+projection with exact native contacts and certified normals. **Retile grid cells**
+and **Retile surface triangles** still require world-axis bases.
 Choose [**Retile surface triangles**](brush-tools.md#cut-through-curved-cells)
 to cut through curved cells while preserving their original triangle surfaces.
 Under **Blend samples**, **Exact fields** preserves raw and native packed paint

@@ -118,6 +118,8 @@ Use this mode to cut an eligible planar surface across its existing grid.
 Each retained three-to-five-corner region becomes power-2 quadrilateral patches.
 Four-corner regions stay one patch when their joins permit. Select the results
 to cut them again. Compatible joined patches are checked as one component.
+Joined surfaces may have different slopes on a common tilted or world-axis base
+plane when they share one exact coordinate projection and pass native normal checks.
 Each surface must follow one exact affine mapping from its base cage to a
 visible plane. Paint must vary linearly across the surface, with native float
 alpha from 0 to 255 that preserves its raw and native packed fields exactly.
@@ -205,10 +207,10 @@ previous valid draft; no policy switches automatically after a failure.
   unselected terrain or refine below native power 2.
   Missing or unsupported child sources stop the preview. Saved-hidden references
   are omitted; display filters do not remove compiler neighbors.
-- **Retile flat terrain** requires a common base plane and orientation. Joined
-  planar surfaces can have different slopes on world-axis bases when they share
-  one exact affine tangential projection and pass the native normal checks.
-  Tilted bases still require a common visible plane. Curved neighbors, overlaps,
+- **Retile flat terrain** requires a common planar base and orientation, including
+  tilted bases. Joined planar surfaces can have different slopes when the component
+  shares one exact coordinate projection and passes native arithmetic, orientation
+  and conditioning checks. Curved neighbors, overlaps,
   unsupported partial joins and affected LOD coarsening reject. Paint must remain
   affine; restricted masks and opaque metadata reject.
   Native positions, shared samples and texture fields must remain exact.

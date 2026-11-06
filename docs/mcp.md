@@ -800,12 +800,17 @@ one exact affine field; vertex masks stay unrestricted. Four-corner retained reg
 one power-2 patch when joins permit; triangle/pentagon regions use quad fans.
 Compatible flat components support repeated cuts. The full affected component,
 including unchanged and resolved child neighbors, must share its base plane and
-orientation. On world-axis bases, visible planes can differ if the component
-shares one exact affine tangential projection and passes native normal checks.
-Tilted-base components still require a common visible plane. Native edge/corner samples must match;
+orientation. Visible planes can differ on tilted or world-axis bases if the
+component shares one exact affine coordinate projection and passes native normal
+checks. The joined-contact projection uses the exact base-plane chart's axis for
+both base and visible coordinates; its two retained coordinate fields must match
+across the complete component. Native edge/corner samples must match;
 partial/uncertain joins, overlaps, affected LOD coarsening and nonflat neighbors
 refuse. Geometry and texture fields remain exact. Native cell-normal edge/cross
-arithmetic must be exact and conditioned; this does not promise identical
+arithmetic must be exact and conditioned. For each fixed-stencil native cell
+triangle under all four profiles, the chart-axis cross-product component must
+keep one nonzero sign and its absolute value must be at least the largest
+absolute cross-product component divided by 256. This does not promise identical
 normal bits or pixels. Non-crossing terrain stays unchanged and does not require
 planar/normal admission for an unrelated cut.
 

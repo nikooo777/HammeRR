@@ -51,6 +51,46 @@ pub enum TerrainMode {
     Fragments,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TerrainBlendError {
+    pub raw: f64,
+    pub packed: [f64; 4],
+}
+
+impl TerrainBlendError {
+    pub const RAW_LIMIT: f64 = 0.5;
+    pub const PACKED_LIMIT: f64 = 1.5;
+
+    pub(crate) fn validate(&self) -> Result<(), EditError> {
+        if !self.raw.is_finite()
+            || !(0.0..=Self::RAW_LIMIT).contains(&self.raw)
+            || self
+                .packed
+                .iter()
+                .any(|value| !value.is_finite() || !(0.0..=Self::PACKED_LIMIT).contains(value))
+        {
+            return Err(invalid(format!(
+                "Invalid rounded terrain blend error: raw {} (limit {}), packed {:?} (limit {} per profile)",
+                self.raw,
+                Self::RAW_LIMIT,
+                self.packed,
+                Self::PACKED_LIMIT,
+            )));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn merge(&mut self, other: Self) -> Result<(), EditError> {
+        self.validate()?;
+        other.validate()?;
+        self.raw = self.raw.max(other.raw);
+        for (value, other) in self.packed.iter_mut().zip(other.packed) {
+            *value = value.max(other);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TerrainTexture {
     pub texture_vecs: [[f32; 4]; 2],
@@ -62,6 +102,7 @@ pub struct TerrainTexture {
 #[derive(Default)]
 pub struct ClipOptions<'a> {
     pub terrain_mode: TerrainMode,
+    pub round_blend: bool,
     pub textures: Option<&'a BTreeMap<FaceId, TerrainTexture>>,
     pub terrain_context: Option<&'a Vmf>,
 }
@@ -92,6 +133,7 @@ pub struct TerrainCut {
     pub triangles: usize,
     pub verified_neighbors: usize,
     pub preserved_links: usize,
+    pub blend_error: Option<TerrainBlendError>,
 }
 
 pub struct Source<'a> {
@@ -329,6 +371,7 @@ pub(crate) struct TerrainPlan {
     pub vertices: usize,
     pub triangles: usize,
     pub children: Option<Vec<crate::displacement::grid_clip::Child>>,
+    pub blend_error: Option<TerrainBlendError>,
 }
 
 pub fn terrain_texture_faces(
@@ -460,6 +503,11 @@ pub fn clip_with_options(
     material: Option<&str>,
     options: ClipOptions<'_>,
 ) -> std::result::Result<ClipResult, EditError> {
+    if options.round_blend && options.terrain_mode != TerrainMode::Fragments {
+        return Err(invalid(
+            "Round new blend samples requires Retile surface triangles",
+        ));
+    }
     let context = options.terrain_context;
     if let Some(context) = context {
         context
@@ -510,6 +558,7 @@ pub fn clip_with_options(
                     vertices: plan.vertices,
                     triangles: plan.triangles,
                     children: Some(plan.children),
+                    blend_error: None,
                 }),
                 TerrainMode::Flat | TerrainMode::Cells | TerrainMode::Fragments => {
                     let plan = if options.terrain_mode == TerrainMode::Cells {
@@ -528,6 +577,7 @@ pub fn clip_with_options(
                             keep,
                             material,
                             textures: options.textures,
+                            round_blend: options.round_blend,
                         },
                         &mut terrain_context,
                     )
@@ -538,6 +588,15 @@ pub fn clip_with_options(
                 unchanged.push(solid.id);
                 continue;
             };
+            match (options.round_blend, plan.blend_error) {
+                (true, Some(error)) => error.validate()?,
+                (false, None) => {}
+                _ => {
+                    return Err(invalid(
+                        "Terrain blend rounding certificate is missing or unexpected",
+                    ));
+                }
+            }
             let visible =
                 crate::displacement::native::terrain_source_is_visible(tx.vmf(), solid.id);
             if visible && let Some(context) = context {
@@ -597,6 +656,7 @@ pub fn clip_with_options(
                     triangles: plan.triangles,
                     verified_neighbors: 0,
                     preserved_links: 0,
+                    blend_error: plan.blend_error,
                 }),
             });
             continue;

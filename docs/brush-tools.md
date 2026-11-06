@@ -145,15 +145,23 @@ Cut the original terrain triangles with a free plane.
 1. Select world or `func_detail` terrain brushes.
 2. Click **Clip selected brushes**.
 3. Under **Terrain cut**, choose **Retile surface triangles**.
-4. Draw or enter the cut plane.
-5. Choose **Arrow side**, **Opposite side** or **Both sides**.
-6. Inspect the patches, then click **Apply cut**.
+4. Enable **Round new blend samples** only if byte precision is acceptable.
+5. Draw or enter the cut plane.
+6. Choose **Arrow side**, **Opposite side** or **Both sides**.
+7. Inspect the patches and blend-error bounds, then click **Apply cut**.
 
 Cut cells become quad fans. Whole retained cells become quarter-cell patches.
-The result must retain the original surface, blend fields, UVs and triangle labels.
-This mode does not smooth a crease or round an inserted paint value.
+Geometry, UVs and triangle labels stay exact. Blend fields stay exact when
+**Round new blend samples** is off.
 
-![Both curved-terrain halves moved apart after a cut through original cells](images/terrain-surface-cut.png)
+Rounding uses the nearest byte, with ties to even. The preview reports certified
+error bounds: at most 0.5/255 for raw blends and 1.5/255 for each native packed
+profile. These bounds describe this cut's blend fields. Repeated rounding can
+accumulate error; final pixels also depend on materials and lighting.
+Changing the rounding choice discards the old preview. Other terrain modes reset
+the choice to off. A failed request keeps the previous valid draft.
+
+![Both painted curved-terrain halves moved apart after a through-cell cut](images/terrain-surface-cut.png)
 
 ## Limits
 
@@ -207,8 +215,9 @@ This mode does not smooth a crease or round an inserted paint value.
 - **Retile surface triangles** uses the same height-field, texture, normal and
   selected-contact rules as **Retile grid cells**. Output must fit native edge
   and corner limits without LOD coarsening. Skew quarter grids, high-valence
-  corners and fractional inserted paint can refuse. The error gives the paint
-  value when it cannot be stored.
+  corners and fractional inserted paint in exact mode can refuse. The error
+  names an unrepresentable paint value. Rounding does not relax geometry, UV,
+  triangle-label or collision-material checks.
 - Terrain cuts accept 16 sources and 128 output patches. Unsupported bindings,
   notes, masks and opaque payloads reject before the map changes.
 - Numerically uncertain cuts reject. They do not move retained points to fit

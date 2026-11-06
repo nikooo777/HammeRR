@@ -220,6 +220,8 @@ terrain contacts reject; normals and runtime LOD are regenerated.
 cuts on eligible flat or sloped planar surfaces.
 Choose [**Retile surface triangles**](brush-tools.md#cut-through-curved-cells)
 to cut through curved cells while preserving their original triangle surfaces.
+The optional **Round new blend samples** choice reports per-cut raw and native
+blend-error bounds. Geometry and collision classifications remain exact.
 
 ## Remove terrain
 

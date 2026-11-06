@@ -837,10 +837,26 @@ It never approximates a crease.
 
 `terrain_mode:"fragments"` / **Retile surface triangles** also cuts through
 original cells. It clips each crossing cell's original triangles into exact quad
-fans and quarters whole retained cells. Surface, raw/packed paint, UVs and spatial
-labels must stay exact. Native contacts must fit without LOD coarsening. There is
-no automatic switch from another mode. Output is bounded at128 patches,5184
-vertices and8192 triangles per operation.
+fans and quarters whole retained cells. Surface, UVs and spatial labels stay
+exact; raw/packed paint also stays exact by default. Native contacts must fit without LOD coarsening. There is
+no automatic switch from another mode. Output is bounded at 128 patches, 5,184
+vertices and 8,192 triangles per operation.
+
+`round_blend:true` explicitly selects nearest-byte blend rounding in Fragments
+mode. Ties round to even; values are not clamped. The shared choice defaults to
+false. Use `set_clip_blend_rounding({"enabled":true})` after choosing Fragments,
+or pass the override to `clip_brushes`. Omitted overrides use the current choice;
+success adopts explicit overrides. True in another mode fails. Leaving Fragments
+resets rounding to false; changing it cancels the old preview. Exact requests
+never retry with rounding.
+
+Each rounded terrain result includes `blend_error`: certified `raw` and four
+`packed` bounds, plus `raw_limit:0.5` and `packed_limit:1.5`, in byte units out
+of 255. Packed order is nearest-even, toward-negative, toward-positive, toward-zero.
+Bounds cover every output triangle interior through the original affine fields.
+They apply to this operation, not accumulated edit history or final pixels.
+Geometry, UVs, triangle flags and secondary-contact classifications stay exact;
+unsupported inputs and excess bounds reject without changing the prior draft.
 
 Every affected original must be a crossing replacement; unchanged external
 terrain contacts reject. Existing guarded instance, native connection, capacity

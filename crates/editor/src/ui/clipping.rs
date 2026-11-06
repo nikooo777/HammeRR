@@ -10,6 +10,7 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
         map_core::clip::TerrainMode::Cells => 2,
         map_core::clip::TerrainMode::Fragments => 3,
     });
+    app.set_clip_round_blend(session.clip_round_blend());
     let options = session.clip_handle_options();
     app.set_clip_handles_mode(match options.mode {
         Some(render::handles::Mode::Move) => 1,
@@ -49,7 +50,7 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
             map_core::clip::Keep::Both => 2,
         });
         app.set_clip_material(preview.material.clone().unwrap_or_default().into());
-        let summary = if preview.result.terrain.is_empty() {
+        let mut summary = if preview.result.terrain.is_empty() {
             format!(
                 "{} brushes cut · {} pieces · {} unchanged · preview only",
                 preview.result.cuts.len(),
@@ -74,6 +75,20 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
                 preview.result.unchanged.len()
             )
         };
+        let blend_error = preview
+            .result
+            .terrain
+            .iter()
+            .filter_map(|cut| cut.blend_error)
+            .map(|error| (error.raw, error.packed.into_iter().fold(0.0, f64::max)))
+            .reduce(|(raw, packed), (next_raw, next_packed)| {
+                (raw.max(next_raw), packed.max(next_packed))
+            });
+        if let Some((raw, packed)) = blend_error {
+            summary.push_str(&format!(
+                "\nBlend error: raw {raw}/255 · native {packed}/255"
+            ));
+        }
         app.set_clip_summary(summary.into());
         if let Some(error) = session.clip_drag().and_then(|drag| drag.error.as_ref()) {
             app.set_clip_summary(error.clone().into());
@@ -183,6 +198,17 @@ pub(super) fn change_clip_points(
 }
 
 pub(super) fn bind_clip_controls_with_access(app: &AppWindow, access: &runtime::DocumentAccess) {
+    app.on_clip_blend_rounding_changed({
+        let callback = admission::SessionCallback::new(app, access);
+        move || {
+            callback.input(|app, session| {
+                let result =
+                    session.set_clip_blend_rounding(Actor::User, app.get_clip_round_blend());
+                app.set_message(result.err().unwrap_or_default().into());
+                refresh_clip(&app, session);
+            })
+        }
+    });
     app.on_clip_terrain_mode_changed({
         let callback = admission::SessionCallback::new(app, access);
         move || {

@@ -493,6 +493,8 @@ pub struct ClipArgs {
     pub material: Option<String>,
     /// grid preserves samples; flat retiles planar fields; cells refines whole cells; fragments cuts original surface triangles. Omitted uses the shared form choice.
     pub terrain_mode: Option<ClipTerrainMode>,
+    /// Fragments only: round inserted blend samples to the nearest byte, ties to even. Omitted uses the shared choice.
+    pub round_blend: Option<bool>,
     #[serde(default)]
     pub preview: bool,
 }
@@ -582,6 +584,13 @@ pub(in crate::mcp) fn clip_result(result: &map_core::clip::ClipResult) -> Value 
                 .map(|(face, power)|json!({"solid":face.solid,"side":face.side,"power":power}))
                 .collect::<Vec<_>>());
         }
+        if let Some(error) = cut.blend_error {
+            value["blend_error"] = json!({
+                "raw":error.raw,"packed":error.packed,
+                "raw_limit":map_core::clip::TerrainBlendError::RAW_LIMIT,
+                "packed_limit":map_core::clip::TerrainBlendError::PACKED_LIMIT,
+            });
+        }
         value
     }).collect::<Vec<_>>(),
     "terrain_work":{
@@ -602,6 +611,7 @@ pub(in crate::mcp) fn clip_state(session: &Session) -> Value {
             "keep": match preview.keep { map_core::clip::Keep::Front => "front", map_core::clip::Keep::Back => "back", map_core::clip::Keep::Both => "both" },
             "material": preview.material, "ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(),
             "terrain_mode": clip_terrain_mode_name(preview.terrain_mode),
+            "round_blend":preview.round_blend,
             "guard_error": session.clip_preview_error(),
             "result": clip_result(&preview.result),
             "cubemap_bindings":preview.cubemap_bindings_report(),
@@ -618,7 +628,7 @@ pub(in crate::mcp) fn clip_state(session: &Session) -> Value {
         }
         value
     });
-    json!({"enabled": session.clip_tool(), "terrain_mode":clip_terrain_mode_name(session.clip_terrain_mode()), "snapshot":session.clip_point_stamp(), "point_draft":session.clip_points_report(), "handle_options":session.clip_handles_report(), "drag":session.clip_drag_report(), "preview":preview})
+    json!({"enabled": session.clip_tool(), "terrain_mode":clip_terrain_mode_name(session.clip_terrain_mode()), "round_blend":session.clip_round_blend(), "snapshot":session.clip_point_stamp(), "point_draft":session.clip_points_report(), "handle_options":session.clip_handles_report(), "drag":session.clip_drag_report(), "preview":preview})
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

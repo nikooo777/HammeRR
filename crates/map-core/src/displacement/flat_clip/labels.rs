@@ -3,6 +3,7 @@ use source_formats::vmf::DispInfo;
 
 use super::paint::PaintField;
 use super::{FIELD_WORK, PlanarField, Work, invalid, orient, paint, same, triangles};
+use crate::clip::TerrainBlendError;
 use crate::{EditError, displacement::DisplacementMesh};
 
 const BASE_WORK: usize = 16;
@@ -153,6 +154,7 @@ pub(super) struct TriangleField {
     has_secondary_surface: bool,
     certify_surface: bool,
     uniform_alpha: Option<f64>,
+    round_blend: bool,
 }
 
 impl TriangleField {
@@ -162,7 +164,7 @@ impl TriangleField {
         has_secondary_surface: bool,
         work: &mut Work,
     ) -> Result<Self, EditError> {
-        Self::prepare(info, mesh, has_secondary_surface, false, work)
+        Self::prepare(info, mesh, has_secondary_surface, false, false, work)
     }
 
     pub(super) fn surface(
@@ -171,7 +173,17 @@ impl TriangleField {
         has_secondary_surface: bool,
         work: &mut Work,
     ) -> Result<Self, EditError> {
-        Self::prepare(info, mesh, has_secondary_surface, true, work)
+        Self::surface_with_rounding(info, mesh, has_secondary_surface, false, work)
+    }
+
+    pub(super) fn surface_with_rounding(
+        info: &DispInfo,
+        mesh: &DisplacementMesh,
+        has_secondary_surface: bool,
+        round_blend: bool,
+        work: &mut Work,
+    ) -> Result<Self, EditError> {
+        Self::prepare(info, mesh, has_secondary_surface, true, round_blend, work)
     }
 
     fn prepare(
@@ -179,6 +191,7 @@ impl TriangleField {
         mesh: &DisplacementMesh,
         has_secondary_surface: bool,
         certify_surface: bool,
+        round_blend: bool,
         work: &mut Work,
     ) -> Result<Self, EditError> {
         power(mesh)?;
@@ -257,6 +270,7 @@ impl TriangleField {
             has_secondary_surface,
             certify_surface,
             uniform_alpha,
+            round_blend,
         })
     }
 
@@ -300,6 +314,7 @@ impl TriangleField {
         work.consume(AABB_WORK * count * candidates.len())
             .map_err(invalid)?;
         let mut labels = Vec::with_capacity(count);
+        let mut blend_error = TerrainBlendError::default();
         // The caller proves complete child coverage inside the retained source region.
         for triangle in child.triangles() {
             let projected =
@@ -313,7 +328,7 @@ impl TriangleField {
                     )
                 })
                 .transpose()?;
-            let paint = (self.certify_surface && self.uniform_alpha.is_none())
+            let paint = (self.certify_surface && self.uniform_alpha.is_none() && !self.round_blend)
                 .then(|| {
                     PaintField::triangle(
                         triangle.map(|index| child.base_positions[index]),
@@ -339,13 +354,21 @@ impl TriangleField {
                     }
                 }
                 if let Some(source_paint) = &source.paint {
-                    let paint = paint
-                        .as_ref()
-                        .ok_or_else(|| invalid("Terrain triangle mapping lost its paint field"))?;
-                    if !source_paint.matches(paint, work)? {
-                        return Err(invalid(
-                            "Terrain output triangle changed an original raw or native packed paint field",
-                        ));
+                    if self.round_blend {
+                        blend_error.merge(source_paint.rounding_error(
+                            projected.points,
+                            triangle.map(|index| child.alphas[index]),
+                            work,
+                        )?)?;
+                    } else {
+                        let paint = paint.as_ref().ok_or_else(|| {
+                            invalid("Terrain triangle mapping lost its paint field")
+                        })?;
+                        if !source_paint.matches(paint, work)? {
+                            return Err(invalid(
+                                "Terrain output triangle changed an original raw or native packed paint field",
+                            ));
+                        }
                     }
                 }
                 if label.is_some_and(|label| label != source.label) {
@@ -378,6 +401,7 @@ impl TriangleField {
             .transpose()?;
         Ok(Mapped {
             tags,
+            blend_error,
             power,
             base: child.base_positions.clone(),
             positions: self.certify_surface.then(|| child.positions.clone()),
@@ -390,6 +414,7 @@ impl TriangleField {
 
 pub(super) struct Mapped {
     pub(super) tags: Option<Vec<Vec<i32>>>,
+    pub(super) blend_error: TerrainBlendError,
     power: u32,
     base: Vec<DVec3>,
     positions: Option<Vec<DVec3>>,

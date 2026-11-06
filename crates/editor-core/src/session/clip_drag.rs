@@ -4,7 +4,7 @@ use render::Camera;
 use render::handles::{self, Guide, Handle, Mode};
 use serde_json::{Value, json};
 
-use super::clipping::ClipPreview;
+use super::clipping::{ClipPreview, ClipRequest};
 use super::manipulation::{axis_parameter, plane_parameter};
 use super::{Actor, Pointer, Session, clip_points};
 
@@ -171,6 +171,9 @@ impl Session {
         if self.clip_drag.is_some() {
             return Err("Finish or cancel the current cut-plane drag first".into());
         }
+        if let Some(error) = self.clip_preview_error() {
+            return Err(error);
+        }
         let guide = self
             .clip_guide()
             .ok_or("Preview a cut and enable plane handles first")?;
@@ -220,6 +223,11 @@ impl Session {
             .filter(|d| d.token == token)
             .ok_or("Cut-plane drag was closed or replaced")?;
         self.check_clip_stamp(&drag.snapshot)?;
+        if drag.before.terrain_mode != self.clip_terrain_mode
+            || drag.before.round_blend != self.clip_round_blend
+        {
+            return Err("Terrain cut settings changed; start the cut-plane drag again".into());
+        }
         if self.camera != drag.camera {
             return Err("Camera changed; start the cut-plane drag again".into());
         }
@@ -317,13 +325,17 @@ impl Session {
                             }
                         }
                     }
-                    self.clip_brushes(
+                    self.clip_brushes_request(
                         Actor::User,
-                        &drag.before.ids,
-                        plane,
-                        drag.before.keep,
-                        drag.before.material.clone(),
-                        true,
+                        ClipRequest {
+                            ids: &drag.before.ids,
+                            plane,
+                            keep: drag.before.keep,
+                            material: drag.before.material.clone(),
+                            preview: true,
+                            terrain_mode: Some(drag.before.terrain_mode),
+                            round_blend: Some(drag.before.round_blend),
+                        },
                     )?;
                     self.clip_points = points;
                     drag.origin = drag.pivot + delta;

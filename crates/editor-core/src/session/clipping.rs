@@ -19,6 +19,7 @@ pub struct ClipRequest<'a> {
     pub material: Option<String>,
     pub preview: bool,
     pub terrain_mode: Option<TerrainMode>,
+    pub round_blend: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -29,6 +30,7 @@ pub struct ClipPreview {
     pub keep: Keep,
     pub material: Option<String>,
     pub terrain_mode: TerrainMode,
+    pub round_blend: bool,
     pub bounds: [DVec3; 2],
     pub result: ClipResult,
     generation: u64,
@@ -60,6 +62,9 @@ impl ClipPreview {
     fn stale_error(&self, session: &Session) -> Option<String> {
         if self.terrain_mode != session.clip_terrain_mode {
             return Some("Terrain cut mode changed; preview the cut again".into());
+        }
+        if self.round_blend != session.clip_round_blend {
+            return Some("Terrain blend rounding changed; preview the cut again".into());
         }
         self.source_error(session)
     }
@@ -100,12 +105,40 @@ impl Session {
         self.clip_terrain_mode
     }
 
+    pub fn clip_round_blend(&self) -> bool {
+        self.clip_round_blend
+    }
+
+    pub fn set_clip_blend_rounding(&mut self, actor: Actor, enabled: bool) -> Result<(), String> {
+        if enabled && self.clip_terrain_mode != TerrainMode::Fragments {
+            return Err("Round new blend samples requires Retile surface triangles".into());
+        }
+        if self.clip_round_blend == enabled {
+            return Ok(());
+        }
+        self.cancel_clip_preview();
+        self.clip_round_blend = enabled;
+        self.view_serial += 1;
+        self.log(
+            actor,
+            if enabled {
+                "Round new blend samples: on"
+            } else {
+                "Round new blend samples: off"
+            },
+        );
+        Ok(())
+    }
+
     pub fn set_clip_terrain_mode(&mut self, actor: Actor, mode: TerrainMode) -> Result<(), String> {
         if self.clip_terrain_mode == mode {
             return Ok(());
         }
         self.cancel_clip_preview();
         self.clip_terrain_mode = mode;
+        if mode != TerrainMode::Fragments {
+            self.clip_round_blend = false;
+        }
         self.view_serial += 1;
         self.log(
             actor,
@@ -229,6 +262,7 @@ impl Session {
                 material,
                 preview,
                 terrain_mode: None,
+                round_blend: None,
             },
         )
     }
@@ -240,6 +274,12 @@ impl Session {
     ) -> Result<ClipResult, String> {
         request.plane = clip::normalized_plane(request.plane).map_err(|error| error.to_string())?;
         let terrain_mode = request.terrain_mode.unwrap_or(self.clip_terrain_mode);
+        let round_blend = request
+            .round_blend
+            .unwrap_or(terrain_mode == TerrainMode::Fragments && self.clip_round_blend);
+        if round_blend && terrain_mode != TerrainMode::Fragments {
+            return Err("Round new blend samples requires Retile surface triangles".into());
+        }
         if request.preview
             && let Some(previous) = &self.geometry.clip_preview
             && previous.ids == request.ids
@@ -247,13 +287,14 @@ impl Session {
             && previous.keep == request.keep
             && previous.material == request.material
             && previous.terrain_mode == terrain_mode
+            && previous.round_blend == round_blend
         {
             if let Some(error) = previous.stale_error(self) {
                 return Err(error);
             }
             return Ok(previous.result.clone());
         }
-        let mut prepared = self.prepare_clip(&request, terrain_mode)?;
+        let mut prepared = self.prepare_clip(&request, terrain_mode, round_blend)?;
         if request.preview {
             let result = prepared.result.clone();
             self.select(request.ids, SelectMode::Replace)?;
@@ -272,6 +313,7 @@ impl Session {
 
             self.cancel_block_preview();
             self.clip_terrain_mode = terrain_mode;
+            self.clip_round_blend = round_blend;
             self.geometry.clip_preview = Some(prepared);
             self.clip_epoch += 1;
             self.scene_serial += 1;
@@ -286,6 +328,7 @@ impl Session {
         &self,
         request: &ClipRequest<'_>,
         terrain_mode: TerrainMode,
+        round_blend: bool,
     ) -> Result<ClipPreview, String> {
         let ids = request.ids;
         let plane = request.plane;
@@ -333,6 +376,7 @@ impl Session {
                     material.as_deref(),
                     clip::ClipOptions {
                         terrain_mode,
+                        round_blend,
                         textures: terrain_materials
                             .as_ref()
                             .map(|materials| &materials.textures),
@@ -378,6 +422,7 @@ impl Session {
             keep,
             material,
             terrain_mode,
+            round_blend,
             bounds: [mins, maxs],
             result,
             generation: self.document_generation,
@@ -433,6 +478,7 @@ impl Session {
                 preview.material.as_deref(),
                 clip::ClipOptions {
                     terrain_mode: preview.terrain_mode,
+                    round_blend: preview.round_blend,
                     textures: preview
                         .terrain_materials
                         .as_ref()
@@ -469,6 +515,7 @@ impl Session {
         selection.extend(&result.objects);
         self.select(&selection, SelectMode::Replace)?;
         self.clip_terrain_mode = preview.terrain_mode;
+        self.clip_round_blend = preview.round_blend;
         self.clip_epoch += 1;
         self.clip_tool = false;
         self.view_serial += 1;

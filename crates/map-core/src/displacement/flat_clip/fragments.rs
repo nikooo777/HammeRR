@@ -9,6 +9,7 @@ use super::{
     height_sheet, invalid, native, paint, quads, reconstructed, region, same, split_ring, stored,
     uv,
 };
+use crate::clip::TerrainBlendError;
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Plane};
 
@@ -205,6 +206,7 @@ struct Certificate<'a> {
     axis: usize,
     texture: TerrainTexture,
     labels: &'a TriangleField,
+    round_blend: bool,
 }
 
 impl Certificate<'_> {
@@ -215,7 +217,7 @@ impl Certificate<'_> {
         plane: Plane,
         expected: Expected<'_>,
         work: &mut Work,
-    ) -> Result<(Solid, Child), EditError> {
+    ) -> Result<(Solid, Child, TerrainBlendError), EditError> {
         let side_index = part
             .sides
             .iter()
@@ -264,8 +266,10 @@ impl Certificate<'_> {
             }
         }
         match expected {
-            Expected::Triangle(_, paint) => paint.certify(&mesh, &data, work)?,
-            Expected::Window(_) => paint::validate_data(&mesh, &data, work)?,
+            Expected::Triangle(_, paint) if !self.round_blend => {
+                paint.certify(&mesh, &data, work)?;
+            }
+            _ => paint::validate_data(&mesh, &data, work)?,
         }
         let mapped = self.labels.map(&mesh, work)?;
         let info = part.sides[side_index].displacement.as_mut().unwrap();
@@ -279,6 +283,7 @@ impl Certificate<'_> {
                 base,
                 positions: mesh.positions,
             },
+            mapped.blend_error,
         ))
     }
 }
@@ -289,13 +294,20 @@ fn quarter(
     window: [usize; 4],
     material: &str,
     axis: usize,
+    round_blend: bool,
     work: &mut Work,
 ) -> Result<(Solid, [DVec3; 4], Vec<Sample>), EditError> {
     let [row, column, child_row, child_column] = window;
     work.consume(4 * FIELD_WORK * VERTICES).map_err(invalid)?;
-    let samples = (0..VERTICES)
+    let mut samples = (0..VERTICES)
         .map(|index| sample_window(source, row, column, index, child_row, child_column, 2))
         .collect::<Result<Vec<_>, _>>()?;
+    if round_blend {
+        work.consume(FIELD_WORK * samples.len()).map_err(invalid)?;
+        for sample in &mut samples {
+            sample.alpha = paint::round_alpha(sample.alpha)?;
+        }
+    }
     let mut base = [DVec3::ZERO; 4];
     for (point, index) in base
         .iter_mut()
@@ -358,10 +370,11 @@ pub(crate) fn plan(
     };
     let texture = request.textures.and_then(|textures| textures.get(&identity)).copied()
         .ok_or_else(|| invalid("Terrain fragments require guarded native texture projection and mapping dimensions"))?;
-    let labels = TriangleField::surface(
+    let labels = TriangleField::surface_with_rounding(
         source.info,
         &source.mesh,
         texture.has_secondary_surface,
+        request.round_blend,
         work,
     )?;
     uv(
@@ -376,7 +389,9 @@ pub(crate) fn plan(
         axis: prepared.sheet.axis,
         texture,
         labels: &labels,
+        round_blend: request.round_blend,
     };
+    let mut blend_error = TerrainBlendError::default();
     let mut parts = Vec::with_capacity(count);
     let mut children = Vec::with_capacity(count);
     for group in groups {
@@ -397,15 +412,17 @@ pub(crate) fn plan(
                             [row, column, child_row, child_column],
                             request.material,
                             prepared.sheet.axis,
+                            request.round_blend,
                             work,
                         )?;
-                        let (part, child) = certificate.child(
+                        let (part, child, error) = certificate.child(
                             part,
                             base,
                             plane,
                             Expected::Window(&samples),
                             work,
                         )?;
+                        blend_error.merge(error)?;
                         parts.push(part);
                         children.push(child);
                     }
@@ -446,15 +463,17 @@ pub(crate) fn plan(
                             &field,
                             &paint,
                             request.material,
+                            request.round_blend,
                             work,
                         )?;
-                        let (part, child) = certificate.child(
+                        let (part, child, error) = certificate.child(
                             part,
                             base,
                             plane,
                             Expected::Triangle(&field, &paint),
                             work,
                         )?;
+                        blend_error.merge(error)?;
                         parts.push(part);
                         children.push(child);
                     }
@@ -480,5 +499,6 @@ pub(crate) fn plan(
         source_power: source.info.power,
         output_power: Some(super::POWER),
         children: None,
+        blend_error: request.round_blend.then_some(blend_error),
     }))
 }

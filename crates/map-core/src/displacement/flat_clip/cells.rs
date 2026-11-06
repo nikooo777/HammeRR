@@ -362,5 +362,6 @@ pub(crate) fn plan(
         source_power: source.info.power,
         output_power: Some(super::POWER),
         children: None,
+        blend_error: None,
     }))
 }

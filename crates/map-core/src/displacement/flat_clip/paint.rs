@@ -1,11 +1,13 @@
 use glam::DVec3;
 use source_formats::bsp;
 
-use super::{FIELD_WORK, PlanarField, Work, invalid};
+use super::{Exact, FIELD_WORK, PlanarField, Work, invalid};
+use crate::clip::TerrainBlendError;
 use crate::{EditError, displacement::DisplacementMesh};
 
 const PACK_WORK: usize = 8;
 const ALPHA_WORK: usize = 8;
+const DIFFERENCE_WORK: usize = 8;
 const MATERIAL_ALPHA_THRESHOLD: f32 = 382.5;
 
 #[derive(Clone, Copy)]
@@ -26,6 +28,13 @@ impl ScalarField {
     fn value(&self, base: DVec3) -> Result<f64, EditError> {
         Ok(self.0.position(base)?[self.0.axis()])
     }
+
+    fn error(&self, base: DVec3, actual: f64) -> Result<f64, EditError> {
+        Ok(Exact::float(self.value(base)?)?
+            .sub(Exact::float(actual)?)?
+            .value()?
+            .abs())
+    }
 }
 
 fn alpha(value: f64) -> Result<f32, EditError> {
@@ -36,6 +45,24 @@ fn alpha(value: f64) -> Result<f32, EditError> {
         )));
     }
     Ok(encoded)
+}
+
+pub(super) fn round_alpha(value: f64) -> Result<f64, EditError> {
+    if !(0.0..=255.0).contains(&value) {
+        return Err(invalid(format!(
+            "Terrain paint sample {value} must remain between 0 and 255 before rounding"
+        )));
+    }
+    let rounded = value.round_ties_even();
+    alpha(rounded)?;
+    Ok(rounded)
+}
+
+fn packed_alpha(value: f32, rounding: bsp::NativeDisplacementRounding) -> Result<f64, EditError> {
+    let profile = bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding };
+    Ok(f64::from(
+        bsp::native_alpha_byte(value, profile).map_err(|error| invalid(error.to_string()))?,
+    ))
 }
 
 pub(super) struct PaintField {
@@ -74,13 +101,9 @@ impl PaintField {
         })?;
         let mut packed = [raw; 4];
         for (field, rounding) in packed.iter_mut().zip(bsp::NativeDisplacementRounding::ALL) {
-            let profile = bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding };
             let mut values = [0.0; 4];
             for (output, value) in values.iter_mut().zip(encoded) {
-                *output = f64::from(
-                    bsp::native_alpha_byte(value, profile)
-                        .map_err(|error| invalid(error.to_string()))?,
-                );
+                *output = packed_alpha(value, rounding)?;
             }
             *field = ScalarField::new(base, values).map_err(|error| {
                 invalid(format!(
@@ -110,6 +133,35 @@ impl PaintField {
         Ok(value)
     }
 
+    pub(super) fn rounded_alpha(&self, base: DVec3) -> Result<f64, EditError> {
+        round_alpha(self.raw.value(base)?)
+    }
+
+    pub(super) fn rounding_error(
+        &self,
+        base: [DVec3; 3],
+        values: [f64; 3],
+        work: &mut Work,
+    ) -> Result<TerrainBlendError, EditError> {
+        work.consume(3 * (5 * (FIELD_WORK + DIFFERENCE_WORK) + 4 * PACK_WORK + ALPHA_WORK))
+            .map_err(invalid)?;
+        let mut error = TerrainBlendError::default();
+        for (base, value) in base.into_iter().zip(values) {
+            let encoded = alpha(value)?;
+            error.raw = error.raw.max(self.raw.error(base, value)?);
+            for ((field, bound), rounding) in self
+                .packed
+                .iter()
+                .zip(&mut error.packed)
+                .zip(bsp::NativeDisplacementRounding::ALL)
+            {
+                *bound = (*bound).max(field.error(base, packed_alpha(encoded, rounding)?)?);
+            }
+        }
+        error.validate()?;
+        Ok(error)
+    }
+
     pub(super) fn certify(
         &self,
         mesh: &DisplacementMesh,
@@ -131,10 +183,7 @@ impl PaintField {
                 ));
             }
             for (field, rounding) in self.packed.iter().zip(bsp::NativeDisplacementRounding::ALL) {
-                let profile = bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding };
-                let packed = bsp::native_alpha_byte(vertex.alpha, profile)
-                    .map_err(|error| invalid(error.to_string()))?;
-                if field.value(base)? != f64::from(packed) {
+                if field.value(base)? != packed_alpha(vertex.alpha, rounding)? {
                     return Err(invalid(
                         "Flat terrain native packed alpha must remain affine under every rounding profile",
                     ));

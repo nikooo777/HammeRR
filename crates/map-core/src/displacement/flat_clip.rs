@@ -47,6 +47,7 @@ pub(crate) struct Request<'a> {
     pub keep: Keep,
     pub material: &'a str,
     pub textures: Option<&'a BTreeMap<FaceId, TerrainTexture>>,
+    pub round_blend: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -930,6 +931,7 @@ fn carrier(
         &source.field,
         &source.paint,
         material,
+        false,
         work,
     )
 }
@@ -943,6 +945,7 @@ fn carrier_field(
     field: &PlanarField,
     paint: &PaintField,
     material: &str,
+    round_blend: bool,
     work: &mut Work,
 ) -> Result<Solid, EditError> {
     let (mut part, mesh) = carrier_base(solid, side, face, quad, material)?;
@@ -971,7 +974,17 @@ fn carrier_field(
         .map(|_| {
             mesh.base_positions
                 .chunks(SIZE)
-                .map(|row| row.iter().map(|&base| paint.alpha(base)).collect())
+                .map(|row| {
+                    row.iter()
+                        .map(|&base| {
+                            if round_blend {
+                                paint.rounded_alpha(base)
+                            } else {
+                                paint.alpha(base)
+                            }
+                        })
+                        .collect()
+                })
                 .collect::<Result<_, _>>()
         })
         .transpose()?;
@@ -1263,5 +1276,6 @@ pub(crate) fn plan(
         source_power: source.info.power,
         output_power: Some(POWER),
         children: None,
+        blend_error: None,
     }))
 }

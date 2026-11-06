@@ -10,11 +10,13 @@ Successful tag builds publish Linux and Windows x86_64 packages, SHA-256 checksu
 
 ## Group completion
 
-![Estimated implementation: 89.9% across 107 equally weighted capability groups](images/roadmap-progress.svg)
+![Estimated implementation: 89.74% across 107 equally weighted capability groups](images/roadmap-progress.svg)
 
 The bar averages the [per-group implementation estimates](progress.csv).
 Each group has equal weight: a 10% implemented group contributes 0.1 of a complete group.
 Scores reflect supported workflows and open gaps. Amber counts only the implemented part of partial groups; grey is unfinished scope.
+
+Plane clipping is **17/21 workflows complete (80.95%)**. Each completed workflow adds 1/21 of that group. The other partial-group scores remain estimates.
 
 ## Editor
 

@@ -53,6 +53,7 @@ pub enum TerrainMode {
 pub struct TerrainTexture {
     pub texture_vecs: [[f32; 4]; 2],
     pub mapping_size: [u32; 2],
+    pub detail_scale: Option<f32>,
 }
 
 #[derive(Default)]
@@ -643,39 +644,60 @@ pub fn clip_with_options(
                 "Terrain clipping exceeds the native displacement patch limit",
             ));
         }
-        let replacements = planned
-            .iter()
-            .filter_map(|cut| {
-                cut.terrain
-                    .as_ref()
-                    .zip(cut.children.as_ref())
-                    .map(
-                        |(terrain, children)| crate::displacement::grid_clip::Replacement {
-                            source: terrain.source,
-                            source_power: terrain.source_power,
-                            parts: &cut.parts,
-                            children,
-                        },
-                    )
-            })
-            .collect::<Vec<_>>();
-        let verified = if replacements.is_empty() {
-            Vec::new()
-        } else {
-            crate::displacement::grid_clip::certify(
-                tx.document(),
-                &replacements,
-                &mut terrain_context,
-            )?
+        let verified = match options.terrain_mode {
+            TerrainMode::Grid => {
+                let replacements = planned
+                    .iter()
+                    .filter_map(|cut| {
+                        cut.terrain.as_ref().zip(cut.children.as_ref()).map(
+                            |(terrain, children)| crate::displacement::grid_clip::Replacement {
+                                source: terrain.source,
+                                source_power: terrain.source_power,
+                                parts: &cut.parts,
+                                children,
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                crate::displacement::grid_clip::certify(
+                    tx.document(),
+                    &replacements,
+                    &mut terrain_context,
+                )?
+                .into_iter()
+                .map(|verified| (verified.neighbors, verified.links))
+                .collect::<Vec<_>>()
+            }
+            TerrainMode::Flat => {
+                let replacements = planned
+                    .iter()
+                    .filter_map(|cut| {
+                        cut.terrain.as_ref().map(|terrain| {
+                            crate::displacement::flat_clip::network::Replacement {
+                                source: terrain.source,
+                                parts: &cut.parts,
+                            }
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                crate::displacement::flat_clip::network::certify(
+                    tx.document(),
+                    &replacements,
+                    &mut terrain_context,
+                )?
+                .into_iter()
+                .map(|verified| (verified.neighbors, verified.links))
+                .collect::<Vec<_>>()
+            }
         };
-        for (cut, verified) in planned
+        for (cut, (neighbors, links)) in planned
             .iter_mut()
-            .filter(|cut| cut.terrain.is_some() && cut.children.is_some())
+            .filter(|cut| cut.terrain.is_some())
             .zip(verified)
         {
             let terrain = cut.terrain.as_mut().unwrap();
-            terrain.verified_neighbors = verified.neighbors;
-            terrain.preserved_links = verified.links;
+            terrain.verified_neighbors = neighbors;
+            terrain.preserved_links = links;
         }
     }
     let mut result = ClipResult {

@@ -788,18 +788,25 @@ map or Undo history. Optional `clip_brushes.terrain_mode` accepts `"grid"` or
 `"flat"` for that request; success adopts the choice, while failure keeps the
 previous choice and valid draft. A failed grid cut never falls back to flat.
 
-Flat mode accepts isolated axis-aligned rectangular world or `func_detail`
-terrain at powers 2–4 with constant normal displacement, uniform integral alpha,
-uniform native physical triangle tags and unrestricted vertex masks. Retained
-convex three-to-five-corner regions become native power-2 quadrilateral patches.
-Native positions, shared edges and affine UVs must remain exactly representable.
-Touching or overlapping terrain base bounds, curved or varying fields, varying
-paint/tags and unsupported metadata refuse. Materials must be direct static
-`LightmappedGeneric` with an untransformed ordinary single-frame `$basetexture`
-VTF and positive power-of-two dimensions no larger than 32768. Material and
-texture references use case-insensitive lookup.
-Use relative names without extensions or a `materials/` prefix. Patch materials,
-blend shaders, animated/runtime textures and unsupported resources refuse.
+Flat mode accepts convex world or `func_detail` quad terrain on world-axis
+planes, at powers 2–4, with constant normal displacement, uniform integral alpha,
+uniform physical tags and unrestricted masks. Four-corner retained regions stay
+one power-2 patch when joins permit; triangle/pentagon regions use quad fans.
+Compatible coplanar flat components support repeated cuts. The full affected
+component, including unchanged and resolved child neighbors, must share its base
+plane, surface plane and orientation. Native edge/corner samples must match;
+partial/uncertain joins, overlaps, affected LOD coarsening and nonflat neighbors
+refuse. Geometry and texture fields remain exact.
+
+Materials require guarded direct static `LightmappedGeneric` base textures with
+ordinary single-frame power-of-two VTF dimensions no larger than 32768. Optional
+static `$detail` textures support modes 0–3, factor 0–1 and an exactly representable
+normal f32 scale. Scale literals have at most 32 ASCII characters, no exponent;
+the verified native default is 4. Every source/child scaled UV sample must also
+remain exact. Material names use case-insensitive lookup; texture references also
+accept backslashes. Use relative names without extensions or a `materials/`
+prefix. Patch materials, blend shaders, base transforms, animated/runtime images
+and unsupported providers refuse.
 
 Grid mode lets world and `func_detail` terrain at power 3 or 4 split along a
 complete existing middle row or column. `keep:"both"` produces four native patches;
@@ -828,7 +835,8 @@ Results include `terrain` source/output faces and powers, `side_mapping` and
 `terrain_work` counts and limits. The preview also reports `cubemap_bindings`.
 The `get_clip_preview` response reports the shared `terrain_mode` and frozen
 `preview.terrain_mode`. Flat previews add
-`terrain_materials` with material names and captured runtime `mapping_size`.
+`preview.terrain_materials` with material names, captured primary
+`mapping_size` and optional `detail_scale`.
 `preview.guard_error` reports stale map, content, material or context guards.
 Changed sources require a new preview; Apply checks the retained sources again.
 Each terrain result includes `verified_neighbors` and `preserved_links`.

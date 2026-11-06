@@ -13,24 +13,33 @@ use crate::brush_shadow_casters::{opaque_parameters, static_material_raw};
 
 const MAX_PATH_BYTES: usize = 259;
 const MAX_TEXTURE_EDGE: u32 = 32768;
+const MAX_DETAIL_SCALAR_BYTES: usize = 32;
+const DEFAULT_DETAIL_SCALE: f32 = 4.0;
+const MAX_DETAIL_BLEND_MODE: u32 = 3;
 const UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x80 | 0x800 | 0x4000 | 0x8000 | 0x1_0000 | 0x800_0000;
-const MATERIAL_PARAMETERS: [&str; 5] = [
+const MATERIAL_PARAMETERS: [&str; 9] = [
     "$basetexture",
     "$surfaceprop",
     "$surfaceprop2",
     "$reflectivity",
     "%keywords",
+    "$detail",
+    "$detailscale",
+    "$detailblendfactor",
+    "$detailblendmode",
 ];
 
 #[derive(Debug, Clone)]
 pub struct FlatTerrainMaterialCapture {
     pub dimensions: BTreeMap<String, [u32; 2]>,
+    pub detail_scales: BTreeMap<String, f32>,
     pub sources: AssetSourceGuard,
 }
 
 /// Captures static LightmappedGeneric base-VTF mapping dimensions and original asset guards.
 /// Names are case-insensitive relative references without prefixes or extensions.
 /// Uses geometry-material and metric-texture read limits without retaining payloads.
+/// Detail scales require a separate exact scaled-UV check on every native sample.
 pub fn capture_flat_terrain_materials<'a>(
     game: &GameFs,
     names: impl IntoIterator<Item = &'a str>,
@@ -40,6 +49,7 @@ pub fn capture_flat_terrain_materials<'a>(
     let mut materials =
         Materials::with_build_sources(game, Requirements::GeometrySemantics, &sources);
     let mut dimensions = BTreeMap::new();
+    let mut detail_scales = BTreeMap::new();
     for (index, name) in names.into_iter().enumerate() {
         control.checkpoint()?;
         if index >= map_core::clip::MAX_TERRAIN_SOURCES {
@@ -58,7 +68,10 @@ pub fn capture_flat_terrain_materials<'a>(
         if dimensions.contains_key(&name) {
             continue;
         }
-        let size = capture_material(&mut materials, &name, control)?;
+        let (size, detail_scale) = capture_material(&mut materials, &name, control)?;
+        if let Some(scale) = detail_scale {
+            detail_scales.insert(name.clone(), scale);
+        }
         dimensions.insert(name, size);
     }
     if dimensions.is_empty() {
@@ -69,6 +82,7 @@ pub fn capture_flat_terrain_materials<'a>(
         .map_err(|error| format!("Flat terrain material sources changed: {error}"))?;
     Ok(FlatTerrainMaterialCapture {
         dimensions,
+        detail_scales,
         sources,
     })
 }
@@ -117,7 +131,7 @@ fn capture_material(
     materials: &mut Materials<'_>,
     name: &str,
     control: &Control,
-) -> Result<[u32; 2], String> {
+) -> Result<([u32; 2], Option<f32>), String> {
     let path = vmt::material_path(name);
     checked_path(&path)?;
     let material = Material::load_with_reader(&path, &mut |path| {
@@ -158,16 +172,120 @@ fn capture_material(
         super::parse_reflectivity(reflectivity)
             .map_err(|error| format!("Flat terrain material {path}: {error}"))?;
     }
-    let provider = HeaderProvider::new(&material, "$basetexture")
+    let detail_scale = detail_parameters(&material)
+        .map_err(|error| format!("Flat terrain material {path}: {error}"))?;
+    let dimensions = capture_texture(materials, &material, "$basetexture", &path, control)?;
+    if detail_scale.is_some() {
+        capture_texture(materials, &material, "$detail", &path, control)?;
+    }
+    Ok((dimensions, detail_scale))
+}
+
+fn detail_parameters(material: &Material) -> Result<Option<f32>, String> {
+    let controls = ["$detailscale", "$detailblendfactor", "$detailblendmode"];
+    if material.get("$detail").is_none() {
+        if controls.iter().any(|key| material.get(key).is_some()) {
+            return Err("Detail controls require an explicit static $detail texture".into());
+        }
+        return Ok(None);
+    }
+    if let Some(value) = material.get("$detailblendfactor") {
+        let value = value.trim_ascii();
+        if value.len() > MAX_DETAIL_SCALAR_BYTES {
+            return Err("$detailblendfactor requires a finite scalar from zero to one".into());
+        }
+        let factor = value.parse::<f32>().map_err(|_| {
+            "$detailblendfactor requires a finite scalar from zero to one".to_string()
+        })?;
+        if !factor.is_finite() || !(0.0..=1.0).contains(&factor) {
+            return Err("$detailblendfactor requires a finite scalar from zero to one".into());
+        }
+    }
+    if let Some(value) = material.get("$detailblendmode") {
+        let value = value.trim_ascii();
+        if value.len() > MAX_DETAIL_SCALAR_BYTES {
+            return Err("$detailblendmode requires an integer from zero to three".into());
+        }
+        let mode = value
+            .parse::<u32>()
+            .map_err(|_| "$detailblendmode requires an integer from zero to three".to_string())?;
+        if mode > MAX_DETAIL_BLEND_MODE {
+            return Err("$detailblendmode requires an integer from zero to three".into());
+        }
+    }
+    material
+        .get("$detailscale")
+        .map_or(Ok(DEFAULT_DETAIL_SCALE), detail_scale)
+        .map(Some)
+}
+
+fn detail_scale(value: &str) -> Result<f32, String> {
+    let invalid = || {
+        format!(
+            "$detailscale requires a positive exact native float in a decimal literal of at most {MAX_DETAIL_SCALAR_BYTES} bytes without an exponent"
+        )
+    };
+    let value = value.trim_ascii();
+    if value.len() > MAX_DETAIL_SCALAR_BYTES {
+        return Err(invalid());
+    }
+    let value = value.strip_prefix('+').unwrap_or(value);
+    let mut numerator = 0u128;
+    let mut denominator = 1u128;
+    let mut fractional = false;
+    let mut digits = 0;
+    for byte in value.bytes() {
+        if byte == b'.' && !fractional {
+            fractional = true;
+            continue;
+        }
+        if !byte.is_ascii_digit() {
+            return Err(invalid());
+        }
+        numerator = numerator * 10 + u128::from(byte - b'0');
+        if fractional {
+            denominator *= 10;
+        }
+        digits += 1;
+    }
+    if digits == 0 || numerator == 0 {
+        return Err(invalid());
+    }
+    while denominator.is_multiple_of(5) {
+        if !numerator.is_multiple_of(5) {
+            return Err(invalid());
+        }
+        numerator /= 5;
+        denominator /= 5;
+    }
+    if u128::BITS - numerator.leading_zeros() - numerator.trailing_zeros() > f32::MANTISSA_DIGITS {
+        return Err(invalid());
+    }
+    let scale = (numerator as f64 / denominator as f64) as f32;
+    scale.is_normal().then_some(scale).ok_or_else(invalid)
+}
+
+fn capture_texture(
+    materials: &mut Materials<'_>,
+    material: &Material,
+    key: &'static str,
+    path: &str,
+    control: &Control,
+) -> Result<[u32; 2], String> {
+    let provider = HeaderProvider::new(material, key)
         .map_err(|error| format!("Flat terrain material {path}: {error}"))?;
     checked_path(&provider.path)?;
     if provider.runtime() {
         return Err(format!(
-            "Flat terrain material {path} uses a runtime-generated base texture",
+            "Flat terrain material {path} uses a runtime-generated {key} texture",
         ));
     }
     checked_reference(
-        &material.get("$basetexture").unwrap().to_ascii_lowercase(),
+        &material
+            .get(key)
+            .unwrap()
+            .replace('\\', "/")
+            .to_ascii_lowercase(),
         ".vtf",
     )
     .map_err(|error| format!("Flat terrain material {path}: {error}"))?;
@@ -178,16 +296,16 @@ fn capture_material(
         .map_err(|error| format!("Flat terrain material {path}: {error}"))?
         .ok_or_else(|| {
             format!(
-                "Flat terrain material {path} base texture {} was not found",
+                "Flat terrain material {path} {key} texture {} was not found",
                 provider.path
             )
         })?;
     let texture = Vtf::parse(bytes)
-        .map_err(|error| format!("Flat terrain base texture {}: {error}", provider.path))?;
+        .map_err(|error| format!("Flat terrain {key} texture {}: {error}", provider.path))?;
     control.checkpoint()?;
     validate_texture(&texture).map_err(|error| {
         format!(
-            "Flat terrain base texture {} cannot supply native mapping dimensions: {error}",
+            "Flat terrain {key} texture {} cannot supply static native UV data: {error}",
             provider.path
         )
     })?;

@@ -273,7 +273,7 @@ fn collect(vmf: &Vmf) -> Result<Vec<Raw<'_>>, EditError> {
     Ok(raw)
 }
 
-fn overlaps(first: &[DVec3], second: &[DVec3]) -> bool {
+pub(in crate::displacement) fn overlaps(first: &[DVec3], second: &[DVec3]) -> bool {
     let Some(plane) = Plane::from_points([first[0], first[1], first[2]]) else {
         return true;
     };
@@ -309,7 +309,7 @@ fn overlaps(first: &[DVec3], second: &[DVec3]) -> bool {
     true
 }
 
-fn related(first: &[DVec3], second: &[DVec3]) -> bool {
+pub(in crate::displacement) fn related(first: &[DVec3], second: &[DVec3]) -> bool {
     touches(first, second)
         || first.iter().any(|point| contains(second, *point))
         || second.iter().any(|point| contains(first, *point))

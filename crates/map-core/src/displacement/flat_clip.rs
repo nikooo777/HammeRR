@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use glam::DVec3;
 use source_formats::{
     bsp,
-    vmf::{DispInfo, Side, Solid, Vmf},
+    vmf::{DispInfo, Side, Solid},
 };
 
 use super::{
@@ -15,6 +15,8 @@ use crate::clip::{Keep, TerrainPlan, TerrainTexture};
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
+pub(crate) mod network;
+
 const POWER: u32 = 2;
 const SIZE: usize = (1 << POWER) + 1;
 const VERTICES: usize = SIZE * SIZE;
@@ -22,6 +24,7 @@ const TRIANGLES: usize = (SIZE - 1) * (SIZE - 1) * 2;
 const POSITION_WORK: usize = 256;
 const UV_WORK: usize = 1024;
 const UV_VERTEX_WORK: usize = 128;
+const DETAIL_UV_VERTEX_WORK: usize = 8;
 const CARRIER_EPSILON: f64 = 1e-8;
 
 type Point = [u64; 3];
@@ -231,7 +234,7 @@ fn data(
         .vertices
         .as_slice()
         .try_into()
-        .map_err(|_| invalid("Flat terrain requires a rectangular quad cage"))?;
+        .map_err(|_| invalid("Flat terrain requires a convex quad cage"))?;
     Ok((
         bsp::Displacements {
             infos: vec![bsp::DisplacementInfo {
@@ -378,21 +381,13 @@ fn prepare<'a>(
     let corners: [DVec3; 4] = face.vertices.as_slice().try_into().unwrap();
     let axis = (0..3)
         .find(|&axis| corners.iter().all(|point| point[axis] == corners[0][axis]))
-        .ok_or_else(|| invalid("Flat terrain requires an axis-aligned rectangular base"))?;
+        .ok_or_else(|| invalid("Flat terrain requires a quad cage on an axis-aligned plane"))?;
     let axes = [(axis + 1) % 3, (axis + 2) % 3];
     let sign = orient(corners[0], corners[1], corners[2], axes)?;
     if sign == 0 {
         return Err(invalid("Flat terrain cage is collapsed"));
     }
     convex(&corners, axes, sign)?;
-    for edge in 0..4 {
-        let delta = corners[(edge + 1) % 4] - corners[edge];
-        if (delta[axes[0]] == 0.0) == (delta[axes[1]] == 0.0) {
-            return Err(invalid(
-                "Flat terrain requires an axis-aligned rectangular base",
-            ));
-        }
-    }
     for point in corners {
         stored(point)?;
     }
@@ -409,6 +404,20 @@ fn prepare<'a>(
         {
             return Err(invalid(
                 "Flat terrain native, compiler and authored positions must agree exactly on one constant-offset sheet",
+            ));
+        }
+    }
+    work.consume(tags.len()).map_err(invalid)?;
+    for [a, b, c] in mesh.triangles() {
+        if orient(
+            mesh.positions[a],
+            mesh.positions[b],
+            mesh.positions[c],
+            axes,
+        )? != sign
+        {
+            return Err(invalid(
+                "Flat terrain source triangles must have positive orientation",
             ));
         }
     }
@@ -585,8 +594,16 @@ fn weighted(points: &[DVec3], weights: &[i128], denominator: i128) -> Result<DVe
     Ok(result)
 }
 
-fn fan(ring: &[DVec3], axes: [usize; 2], sign: i128) -> Result<Vec<[DVec3; 4]>, EditError> {
+fn quads(
+    ring: &[DVec3],
+    axes: [usize; 2],
+    sign: i128,
+    fan_quad: bool,
+) -> Result<Vec<[DVec3; 4]>, EditError> {
     convex(ring, axes, sign)?;
+    if !fan_quad && let Ok(quad) = <[DVec3; 4]>::try_from(ring) {
+        return Ok(vec![quad]);
+    }
     let (weights, denominator): (&[i128], i128) = match ring.len() {
         3 => (&[3, 3, 2], 8),
         4 => (&[1, 1, 1, 1], 4),
@@ -609,69 +626,6 @@ fn fan(ring: &[DVec3], axes: [usize; 2], sign: i128) -> Result<Vec<[DVec3; 4]>, 
     Ok(result)
 }
 
-fn overlap(a: &[DVec3], b: &[DVec3]) -> bool {
-    let bounds = |points: &[DVec3]| {
-        points
-            .iter()
-            .fold((DVec3::MAX, DVec3::MIN), |(low, high), &point| {
-                (low.min(point), high.max(point))
-            })
-    };
-    let (a0, a1) = bounds(a);
-    let (b0, b1) = bounds(b);
-    a0.cmple(b1 + DVec3::splat(neighbors::EDGE_TOLERANCE)).all()
-        && b0.cmple(a1 + DVec3::splat(neighbors::EDGE_TOLERANCE)).all()
-}
-
-fn isolated(
-    solid: &Solid,
-    source: &Prepared<'_>,
-    vmf: &Vmf,
-    work: &mut Work,
-) -> Result<(), EditError> {
-    if vmf.entities.iter().any(|entity| {
-        !entity.hidden
-            && entity
-                .classname()
-                .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
-    }) {
-        return Err(invalid(
-            "Flat terrain clipping requires complete resolved visible-instance context",
-        ));
-    }
-    for (other, _) in native::visible_terrain_sources(vmf) {
-        if other.id == solid.id {
-            continue;
-        }
-        work.consume(1).map_err(invalid)?;
-        let geometry =
-            BrushGeometry::from_solid(other).map_err(|error| invalid(error.to_string()))?;
-        for face in &geometry.faces {
-            if other.sides[face.side].displacement.is_none() {
-                continue;
-            }
-            work.consume(face.vertices.len()).map_err(invalid)?;
-            if face.vertices.iter().any(|point| !point.is_finite()) {
-                return Err(invalid(
-                    "Flat terrain isolation requires finite native base cages",
-                ));
-            }
-            let base = face
-                .vertices
-                .iter()
-                .copied()
-                .map(native::stored_vertex)
-                .collect::<Vec<_>>();
-            if overlap(&source.face.vertices, &base) {
-                return Err(invalid(
-                    "Flat terrain retiling requires isolated native base cages without overlapping bounds or contacts",
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
 fn uv(
     data: &bsp::Displacements,
     face: &Face,
@@ -684,18 +638,38 @@ fn uv(
     for rounding in bsp::NativeDisplacementRounding::ALL {
         work.consume(UV_WORK + UV_VERTEX_WORK * vertices)
             .map_err(invalid)?;
-        data.native_affine_texture_coordinates(
-            0,
-            base,
-            texture.texture_vecs,
-            texture.mapping_size,
-            bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding },
-        )
-        .map_err(|error| {
-            invalid(format!(
-                "Flat terrain native affine UV cannot be certified: {error}"
-            ))
-        })?;
+        let coordinates = data
+            .native_affine_texture_coordinates(
+                0,
+                base,
+                texture.texture_vecs,
+                texture.mapping_size,
+                bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding },
+            )
+            .map_err(|error| {
+                invalid(format!(
+                    "Flat terrain native affine UV cannot be certified: {error}"
+                ))
+            })?;
+        if let Some(scale) = texture.detail_scale {
+            if !scale.is_normal() || scale <= 0.0 {
+                return Err(invalid(
+                    "Flat terrain detail scale must be positive and normal",
+                ));
+            }
+            work.consume(DETAIL_UV_VERTEX_WORK * coordinates.len())
+                .map_err(invalid)?;
+            let scale = Exact::float(f64::from(scale))?;
+            for coordinate in coordinates.into_iter().flatten() {
+                let product = Exact::float(f64::from(coordinate))?.mul(scale)?.value()?;
+                let encoded = product as f32;
+                if !encoded.is_finite() || encoded.is_subnormal() || f64::from(encoded) != product {
+                    return Err(invalid(
+                        "Flat terrain detail UV scaling must remain exact at every native vertex",
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -860,31 +834,32 @@ fn region(
                 edge(&mut actual, points[index], points[(index + 1) % 3])?;
             }
         }
-        for side in [0, 3] {
+        for side in 0..4 {
             let positions = neighbors::edge_indices(SIZE, side).map_err(invalid)?;
             let points = positions
                 .iter()
                 .map(|&index| child.positions[index])
                 .collect::<Vec<_>>();
-            let mut matched = false;
+            let mut boundary_edge = None;
             for index in 0..ring.len() {
                 let a = ring[index];
                 let b = ring[(index + 1) % ring.len()];
-                if points
-                    .iter()
-                    .map(|&point| on_segment(point, a, b, source.axes))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .all(|value| value)
+                if on_segment(points[0], a, b, source.axes)?
+                    && on_segment(points[SIZE - 1], a, b, source.axes)?
                 {
-                    matched = true;
+                    boundary_edge = Some([a, b]);
                     break;
                 }
             }
-            if !matched {
-                return Err(invalid(
-                    "Flat terrain retained boundary does not lie on its exact polygon edges",
-                ));
+            let Some([a, b]) = boundary_edge else {
+                continue;
+            };
+            for &point in &points {
+                if !on_segment(point, a, b, source.axes)? {
+                    return Err(invalid(
+                        "Flat terrain retained boundary does not lie on its exact polygon edges",
+                    ));
+                }
             }
             for pair in points.windows(2) {
                 edge(&mut boundary, pair[0], pair[1])?;
@@ -956,9 +931,6 @@ pub(crate) fn plan(
     };
     let texture = request.textures.and_then(|textures| textures.get(&identity)).copied()
         .ok_or_else(|| invalid("Flat terrain clipping requires guarded native texture projection and mapping dimensions"))?;
-    if native::terrain_source_is_visible(document.vmf(), solid.id) {
-        isolated(solid, &source, context.vmf.unwrap_or(document.vmf()), work)?;
-    }
     uv(
         &source.data,
         source.face,
@@ -969,6 +941,8 @@ pub(crate) fn plan(
     let mut parts = Vec::new();
     let mut children = Vec::new();
     let polygons = split(&source, request.plane)?;
+    let fan_quad = request.keep == Keep::Both
+        && matches!([polygons[0].len(), polygons[1].len()], [3, 4] | [4, 3]);
     for back in [true, false] {
         if matches!(
             (request.keep, back),
@@ -986,7 +960,7 @@ pub(crate) fn plan(
         };
         let ring = &polygons[usize::from(!back)];
         let first = children.len();
-        for quad in fan(ring, source.axes, source.sign)? {
+        for quad in quads(ring, source.axes, source.sign, fan_quad)? {
             let mut base = [DVec3::ZERO; 4];
             for (output, point) in base.iter_mut().zip(quad) {
                 *output = stored(translate(point, -source.offset)?)?;

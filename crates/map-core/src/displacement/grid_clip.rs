@@ -23,6 +23,7 @@ type NativePositions = [Vec<[u32; 3]>; POSITION_PROFILES];
 mod network;
 pub(crate) use network::Work;
 pub(crate) use network::{MAX_NEIGHBORS, Replacement, certify};
+pub(super) use network::{overlaps, related};
 
 pub(crate) struct Context<'a> {
     pub(super) vmf: Option<&'a Vmf>,

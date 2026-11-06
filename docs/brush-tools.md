@@ -93,8 +93,8 @@ child edits or a parent save.
 
 Use this mode to cut an eligible flat surface across its existing grid.
 
-1. Select isolated power-2/3/4 world or `func_detail` terrain with an
-   axis-aligned rectangular base.
+1. Select flat power-2/3/4 world or `func_detail` terrain on a world-axis
+   plane. Select all patches that the cut must split.
 2. Click **Clip selected brushes**.
 3. Under **Terrain cut**, choose **Retile flat terrain**.
 4. Draw a line, enter a plane, or choose **Pick three points**.
@@ -102,6 +102,8 @@ Use this mode to cut an eligible flat surface across its existing grid.
 6. Inspect the new native patches, then click **Apply cut**.
 
 Each retained three-to-five-corner region becomes power-2 quadrilateral patches.
+Four-corner regions stay one patch when their joins permit. Select the results
+to cut them again. Compatible joined patches are checked as one component.
 The surface must have one constant displacement normal to its base, uniform
 integral blend alpha and uniform native physical triangle flags. Retiling keeps
 that field, material, texture placement and smoothing. It does not flatten a
@@ -126,17 +128,23 @@ failed cut.
   links, changed LOD geometry and overlapping or unmatched borders.
   Missing or unsupported child sources stop the preview. Saved-hidden references
   are omitted; display filters do not remove compiler neighbors.
-- **Retile flat terrain** rejects touching or overlapping terrain base bounds,
-  curved or varying displacement, varying paint or tags, restricted vertex masks
-  and unsupported metadata. Native positions, shared edges and affine UVs must
-  remain exactly representable.
+- **Retile flat terrain** requires a common base plane, surface plane and
+  orientation across its affected contact component. Curved neighbors, overlaps,
+  unsupported partial joins and affected LOD coarsening reject. Source paint and
+  physical tags must be uniform; restricted masks and opaque metadata reject.
+  Native positions, shared samples and texture fields must remain exact.
 - Retiling requires a direct static `LightmappedGeneric` material with an
   untransformed `$basetexture` and an ordinary single-frame VTF with positive
   power-of-two dimensions no larger than 32768. Material and texture references
   use case-insensitive lookup.
   Use relative names without extensions or a `materials/` prefix.
-  Patch materials, blend shaders, animated or runtime textures and unsupported
-  resources reject. Changed material sources require another preview before Apply.
+  An optional static `$detail` layer supports blend modes 0–3 and a factor from
+  zero to one. Its scale must be an exact native float, written without an
+  exponent in at most 32 characters. Omitted scale uses the native value 4.
+  Each scaled UV sample must stay exact; some otherwise valid scales reject.
+  Patch materials, blend shaders, base transforms, animated or runtime textures
+  and unsupported resources reject. Changed source images or materials require
+  another preview before Apply.
 - Terrain cuts accept 16 sources and 64 output patches. Unsupported bindings,
   notes, masks and opaque payloads reject before the map changes.
 - Numerically uncertain cuts reject. They do not move retained points to fit

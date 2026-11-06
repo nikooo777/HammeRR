@@ -13,6 +13,7 @@ use super::Session;
 pub(super) struct Prepared {
     pub(super) textures: BTreeMap<FaceId, TerrainTexture>,
     dimensions: BTreeMap<String, [u32; 2]>,
+    detail_scales: BTreeMap<String, f32>,
     sources: AssetSourceGuard,
     content: u64,
     materials: u64,
@@ -50,12 +51,14 @@ impl Prepared {
                 TerrainTexture {
                     texture_vecs,
                     mapping_size,
+                    detail_scale: captured.detail_scales.get(&name).copied(),
                 },
             );
         }
         Ok(Some(Arc::new(Self {
             textures,
             dimensions: captured.dimensions,
+            detail_scales: captured.detail_scales,
             sources: captured.sources,
             content: session.build_content_epoch(),
             materials: session.materials.generation(),
@@ -83,7 +86,7 @@ impl Prepared {
 
     pub(super) fn report(&self) -> Value {
         json!({"faces":self.textures.len(), "materials":self.dimensions.iter().map(|(name, size)| {
-            json!({"name":name,"mapping_size":size})
+            json!({"name":name,"mapping_size":size,"detail_scale":self.detail_scales.get(name)})
         }).collect::<Vec<_>>()})
     }
 }

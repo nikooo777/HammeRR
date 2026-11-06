@@ -219,6 +219,8 @@ limits: one level for power 3 and up to two for power 4. The preview counts cut
 brushes and partitioned neighbors separately. Unselected and unrelated terrain
 stay unchanged; missing selection or insufficient native power rejects the
 complete request.
+All terrain cut modes accept valid ten-word VMF vertex caches and reset present
+caches only on new patches. Native LOD masks remain guarded.
 
 Choose [**Retile grid cells**](brush-tools.md#retile-grid-cells) to cut curved
 terrain at any complete original row or column, including power 2. It refines

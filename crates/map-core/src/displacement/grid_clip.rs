@@ -6,7 +6,7 @@ use source_formats::{
     vmf::{DispInfo, Side, Solid, Vmf},
 };
 
-use super::{ALLOWED_VERTEX_MASK_WORDS, DisplacementMesh, native, neighbors, smoothing, triangles};
+use super::{DisplacementMesh, native, neighbors, smoothing, triangles};
 use crate::clip::Keep;
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
@@ -175,6 +175,7 @@ fn slice<T: Clone>(
 }
 
 fn validate(info: &DispInfo, mesh: &DisplacementMesh) -> Result<Vec<u16>, EditError> {
+    native::validate_allowed_vertex_cache(info).map_err(invalid)?;
     if !(3..=4).contains(&info.power) {
         return Err(invalid(
             "Terrain clipping requires a power 3 or 4 grid half-line, or a power 4 grid quarter-line",
@@ -203,13 +204,6 @@ fn validate(info: &DispInfo, mesh: &DisplacementMesh) -> Result<Vec<u16>, EditEr
     {
         return Err(invalid(
             "Opaque terrain payloads cannot be remapped to clipped grids",
-        ));
-    }
-    if info.allowed_verts.as_ref().is_some_and(|mask| {
-        mask.len() != ALLOWED_VERTEX_MASK_WORDS || mask.iter().any(|word| *word != -1)
-    }) {
-        return Err(invalid(
-            "Restricted terrain vertex masks cannot be remapped to clipped grids",
         ));
     }
     smoothing::angle(info).map_err(invalid)?;
@@ -391,10 +385,15 @@ fn behind(mut plane: Plane, point: DVec3) -> Plane {
     plane
 }
 
-fn child_info(info: &DispInfo, mesh: &DisplacementMesh, child: Child) -> DispInfo {
+fn child_info(
+    info: &DispInfo,
+    mesh: &DisplacementMesh,
+    child: Child,
+) -> Result<DispInfo, EditError> {
     let Child { row, column, power } = child;
     let cells = child.cells();
     let mut result = info.clone();
+    native::reset_allowed_vertex_cache(&mut result).map_err(invalid)?;
     result.power = power;
     result.start_position = mesh.base_positions[row * mesh.size + column];
     result.normals = slice(&info.normals, row, column, cells);
@@ -408,7 +407,7 @@ fn child_info(info: &DispInfo, mesh: &DisplacementMesh, child: Child) -> DispInf
             .map(|row| row[column * 2..(column + cells) * 2].to_vec())
             .collect()
     });
-    result
+    Ok(result)
 }
 
 fn quadrants(child: Child) -> [Child; 4] {
@@ -566,7 +565,7 @@ impl Prepared<'_> {
                 .iter()
                 .position(|candidate| candidate.id == side.id)
                 .ok_or_else(|| invalid("Terrain child lost its base face"))?;
-            part.sides[index].displacement = Some(child_info(info, mesh, child));
+            part.sides[index].displacement = Some(child_info(info, mesh, child)?);
             let geometry =
                 BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
             let face = geometry

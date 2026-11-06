@@ -600,19 +600,15 @@ fn check_source<'a>(
     native::checked_mesh(source.face, info).map_err(invalid)?;
     crate::subobject::fragments::admit_source(solid)?;
     smoothing::angle(info).map_err(invalid)?;
+    native::validate_allowed_vertex_cache(info).map_err(invalid)?;
     if !info.extra.is_empty()
         || info.extra_properties.iter().any(|(key, _)| {
             !["smooth", "mintess", "uaxis", "vaxis"]
                 .iter()
                 .any(|known| key.eq_ignore_ascii_case(known))
         })
-        || info.allowed_verts.as_ref().is_some_and(|mask| {
-            mask.len() != super::ALLOWED_VERTEX_MASK_WORDS || mask.iter().any(|word| *word != -1)
-        })
     {
-        return Err(invalid(
-            "Terrain retiling cannot remap opaque payloads or restricted vertex masks",
-        ));
+        return Err(invalid("Terrain retiling cannot remap opaque payloads"));
     }
     rows(&info.offset_normals, source.mesh.size)?;
     if info
@@ -1209,6 +1205,7 @@ fn carrier_base(
         .map_err(|error| invalid(error.to_string()))?;
     crate::brush::canonicalize_precise(&mut part)?;
     let mut info = side.displacement.as_ref().unwrap().clone();
+    native::reset_allowed_vertex_cache(&mut info).map_err(invalid)?;
     info.power = POWER;
     info.start_position = quad[0];
     info.elevation = 0.0;

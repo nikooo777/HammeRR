@@ -792,12 +792,18 @@ map or Undo history, resets **Blend samples** to **Exact fields**, and turns off
 `"flat"`, `"cells"` or `"fragments"` for that request; success adopts the choice, while failure keeps the
 previous choice and valid draft. A failed request never switches modes.
 
+All terrain clip modes accept a VMF `allowed_verts` cache with ten signed 32-bit
+words. New children reset a present cache to ten `-1` words. An absent cache stays
+absent. Malformed caches reject the cut. Unchanged sources and neighbors keep
+their original cache. Actual BSP/runtime LOD masks still pass all geometry and
+state checks.
+
 Flat mode accepts convex world or `func_detail` quad terrain at powers 2–4.
 Base cages must be planar. Tilted cages and affine tangential offsets are
 supported. Each visible sheet must follow one exact affine mapping from its
 base cage to a plane. Native-representable alpha must form
-one exact affine field. Restricted source vertex masks, nonzero `offset_normals`
-and opaque payloads remain unsupported. Four-corner retained regions stay
+one exact affine field. Nonzero `offset_normals` and opaque payloads remain
+unsupported. Four-corner retained regions stay
 one power-2 patch when joins permit; triangle/pentagon regions use quad fans.
 Compatible flat components support repeated cuts. The full affected component,
 including unchanged and resolved child neighbors, must share its base plane and
@@ -820,8 +826,10 @@ Paint must be constant in the raw field and all four packed fields. Raw, native
 and physical triangle labels must be uniform. Each such source and all its
 outputs need exact affine geometry, native UVs and full maximal-render and
 fine-collision region coverage. The proof checks ideal and encoded LOD geometry
-with the compiler decoder and all four native profiles. A source that was not
-coarsened before the cut cannot acquire output LOD. Unchanged neighbors must retain
+with the compiler decoder and all four native profiles. Each coarsened original
+or output grid must reproduce its own fine sample positions exactly in all five
+profiles. A source that was not coarsened before the cut cannot acquire output LOD.
+Unchanged neighbors must retain
 their complete logical LOD state. Curved Cells/Fragments LOD still rejects.
 
 Paint preserves authored and native BSP alpha exactly. Native packed-alpha
@@ -943,6 +951,7 @@ Grid mode lets world and `func_detail` terrain at power 3 or 4 split along a
 complete existing middle row or column. Per crossing source, `keep:"both"` produces
 four native patches; `"front"` or `"back"` produces two. Grid spacing, alpha samples, UV placement
 and physical triangle tags remain unchanged. Child power is one lower.
+Grid cuts preserve finite `offset_normals` rows through the original sample mapping.
 Power 4 also permits complete quarter-grid lines: row or column 4 or 12.
 Both sides produces ten patches; the short side has four power-2 patches,
 and the long side has six power-2/3 patches.

@@ -4,11 +4,32 @@ use source_formats::{
     vmf::{DispInfo, Solid, Vmf},
 };
 
-use super::DisplacementMesh;
+use super::{ALLOWED_VERTEX_MASK_WORDS, DisplacementMesh};
 use crate::{brush::Face, checks::SOURCE_COORDINATE_LIMIT};
 
 const VERTEX_PRECISION: f64 = 10_000.0;
 pub const GEOMETRY_EPSILON: f64 = 0.02;
+
+pub fn validate_allowed_vertex_cache(info: &DispInfo) -> Result<(), String> {
+    if info
+        .allowed_verts
+        .as_ref()
+        .is_some_and(|cache| cache.len() != ALLOWED_VERTEX_MASK_WORDS)
+    {
+        return Err(format!(
+            "Terrain allowed-vertex cache must contain {ALLOWED_VERTEX_MASK_WORDS} words"
+        ));
+    }
+    Ok(())
+}
+
+pub fn reset_allowed_vertex_cache(info: &mut DispInfo) -> Result<(), String> {
+    validate_allowed_vertex_cache(info)?;
+    if let Some(cache) = &mut info.allowed_verts {
+        cache.fill(-1);
+    }
+    Ok(())
+}
 
 pub fn secondary_alpha_class(values: [f32; 3]) -> Result<bool, String> {
     if values.iter().any(|value| !value.is_finite()) {

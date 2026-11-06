@@ -236,8 +236,8 @@ previous valid draft; no policy switches automatically after a failure.
   constant paint and uniform raw, native and physical triangle labels. It and all
   its outputs must pass exact LOD geometry, UV and full-region coverage checks.
   A source that was not coarsened before the cut cannot acquire output LOD.
-  Unchanged neighbors must keep their complete LOD state. Restricted masks,
-  nonzero offset normals and opaque metadata reject.
+  Unchanged neighbors must keep their complete LOD state.
+  Nonzero offset normals and opaque metadata reject.
   Native positions, shared samples and texture fields must remain exact.
   Normal inputs must pass the native arithmetic and conditioning checks.
   Normal bits and final pixels can differ after retiling.
@@ -296,8 +296,11 @@ previous valid draft; no policy switches automatically after a failure.
   **Exact fields** can refuse. The error names the unrepresentable field.
   **Native float** and **Nearest byte** do not relax geometry, UV, triangle-label
   or collision-material checks.
+- Clipping accepts a valid ten-word VMF allowed-vertex cache. New patches reset
+  present caches and keep absent caches absent. Malformed caches reject the cut.
+  Native LOD masks still pass all checks.
 - Terrain cuts accept 16 sources, including partitioned neighbors, and 128 output patches. Unsupported bindings,
-  notes, masks and opaque payloads reject before the map changes.
+  notes, native mask states and opaque payloads reject before the map changes.
 - Numerically uncertain cuts reject. They do not move retained points to fit
   the new patch cages.
 - Select one child in **Solids** mode, or the whole `func_detail` entity.

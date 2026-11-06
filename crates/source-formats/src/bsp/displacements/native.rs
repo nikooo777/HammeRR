@@ -16,6 +16,7 @@ const MAX_HEIGHT_NORMAL_COMPONENT_RATIO: f32 = 256.0;
 const ALPHA_NORMALIZATION: f32 = f32::from_bits(0x3b80_8081);
 const ALPHA_BYTE_MAXIMUM: f32 = 255.0;
 const ALPHA_ROUNDING_BIAS: f32 = 8_388_608.0;
+const SECONDARY_ALPHA_THRESHOLD: f32 = 382.5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeDisplacementRounding {
@@ -61,6 +62,21 @@ pub fn native_alpha_byte(alpha: f32, profile: NativeDisplacementProfile) -> io::
     let scaled = arithmetic.multiply(normalized, ALPHA_BYTE_MAXIMUM)?;
     let encoded = arithmetic.add(scaled, ALPHA_ROUNDING_BIAS)?;
     Ok(encoded.to_bits() as u8)
+}
+
+/// Selects the installed collision route's secondary material from raw alpha
+/// values supplied in native triangle index order.
+pub fn native_alpha_secondary(
+    alphas: [f32; 3],
+    profile: NativeDisplacementProfile,
+) -> io::Result<bool> {
+    let NativeDisplacementProfile::CssLinux64Build25338318 { rounding } = profile;
+    let arithmetic = Arithmetic { rounding };
+    let mut sum = 0.0;
+    for alpha in alphas {
+        sum = arithmetic.add(sum, alpha)?;
+    }
+    Ok(sum > SECONDARY_ALPHA_THRESHOLD)
 }
 
 #[derive(Clone, Copy)]

@@ -1,10 +1,10 @@
 use glam::DVec3;
-use source_formats::vmf::DispInfo;
+use source_formats::{bsp::DisplacementInfo, vmf::DispInfo};
 
 use super::field::BasePlane;
 use super::paint::PaintField;
-use super::{FIELD_WORK, PlanarField, Work, invalid, orient, paint, same, triangles};
-use crate::clip::TerrainBlendError;
+use super::{FIELD_WORK, PlanarField, Work, invalid, native, orient, paint, same, triangles};
+use crate::clip::{TerrainBlendError, TerrainBlendMode};
 use crate::{EditError, displacement::DisplacementMesh};
 
 const BASE_WORK: usize = 16;
@@ -56,14 +56,30 @@ fn read_labels(
             "Terrain triangle labels differ from their source order",
         ));
     }
-    mesh.triangles()
-        .enumerate()
-        .map(|(index, triangle)| {
+    let alpha_indices = if has_secondary_surface {
+        DisplacementInfo {
+            power: info.power as i32,
+            ..Default::default()
+        }
+        .collision_triangle_indices()
+        .map_err(|error| invalid(error.to_string()))?
+    } else {
+        Vec::new()
+    };
+    (0..count)
+        .map(|index| {
             Ok(Label {
                 raw: raw.as_ref().map(|raw| raw[index]),
                 native: native[index],
                 secondary: has_secondary_surface
-                    .then(|| paint::triangle_class(triangle.map(|index| mesh.alphas[index] as f32)))
+                    .then(|| {
+                        let values = alpha_indices[index].map(|index| mesh.alphas[index]);
+                        for value in values {
+                            paint::sample_alpha(value, TerrainBlendMode::Exact)?;
+                        }
+                        native::secondary_alpha_class(values.map(|value| value as f32))
+                            .map_err(invalid)
+                    })
                     .transpose()?,
             })
         })
@@ -154,7 +170,7 @@ pub(super) struct TriangleField {
     has_secondary_surface: bool,
     certify_surface: bool,
     uniform_alpha: Option<f64>,
-    round_blend: bool,
+    blend_mode: TerrainBlendMode,
 }
 
 impl TriangleField {
@@ -164,7 +180,14 @@ impl TriangleField {
         has_secondary_surface: bool,
         work: &mut Work,
     ) -> Result<Self, EditError> {
-        Self::prepare(info, mesh, has_secondary_surface, false, false, work)
+        Self::prepare(
+            info,
+            mesh,
+            has_secondary_surface,
+            false,
+            TerrainBlendMode::Exact,
+            work,
+        )
     }
 
     pub(super) fn surface(
@@ -173,17 +196,23 @@ impl TriangleField {
         has_secondary_surface: bool,
         work: &mut Work,
     ) -> Result<Self, EditError> {
-        Self::surface_with_rounding(info, mesh, has_secondary_surface, false, work)
+        Self::surface_with_blend_mode(
+            info,
+            mesh,
+            has_secondary_surface,
+            TerrainBlendMode::Exact,
+            work,
+        )
     }
 
-    pub(super) fn surface_with_rounding(
+    pub(super) fn surface_with_blend_mode(
         info: &DispInfo,
         mesh: &DisplacementMesh,
         has_secondary_surface: bool,
-        round_blend: bool,
+        blend_mode: TerrainBlendMode,
         work: &mut Work,
     ) -> Result<Self, EditError> {
-        Self::prepare(info, mesh, has_secondary_surface, true, round_blend, work)
+        Self::prepare(info, mesh, has_secondary_surface, true, blend_mode, work)
     }
 
     fn prepare(
@@ -191,7 +220,7 @@ impl TriangleField {
         mesh: &DisplacementMesh,
         has_secondary_surface: bool,
         certify_surface: bool,
-        round_blend: bool,
+        blend_mode: TerrainBlendMode,
         work: &mut Work,
     ) -> Result<Self, EditError> {
         power(mesh)?;
@@ -219,12 +248,8 @@ impl TriangleField {
                 .map_err(invalid)?;
             let first = mesh.alphas[0];
             if mesh.alphas.iter().all(|&alpha| alpha == first) {
-                if !(0.0..=255.0).contains(&first) || first.fract() != 0.0 {
-                    return Err(invalid(
-                        "Terrain paint requires integral alpha values from 0 to 255",
-                    ));
-                }
-                Some(first)
+                paint::sample_alpha(first, TerrainBlendMode::Exact)?;
+                (paint::sample_alpha(first, blend_mode)? == first).then_some(first)
             } else {
                 None
             }
@@ -274,7 +299,7 @@ impl TriangleField {
             has_secondary_surface,
             certify_surface,
             uniform_alpha,
-            round_blend,
+            blend_mode,
         })
     }
 
@@ -330,7 +355,9 @@ impl TriangleField {
                     )
                 })
                 .transpose()?;
-            let paint = (self.certify_surface && self.uniform_alpha.is_none() && !self.round_blend)
+            let paint = (self.certify_surface
+                && self.uniform_alpha.is_none()
+                && self.blend_mode == TerrainBlendMode::Exact)
                 .then(|| {
                     PaintField::triangle(
                         triangle.map(|index| child.base_positions[index]),
@@ -356,10 +383,11 @@ impl TriangleField {
                     }
                 }
                 if let Some(source_paint) = &source.paint {
-                    if self.round_blend {
+                    if self.blend_mode != TerrainBlendMode::Exact {
                         blend_error.merge(source_paint.rounding_error(
                             projected.points,
                             triangle.map(|index| child.alphas[index]),
+                            self.blend_mode,
                             work,
                         )?)?;
                     } else {

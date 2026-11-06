@@ -3,13 +3,12 @@ use source_formats::vmf::Solid;
 
 use super::cells::{Sample, sample_window};
 use super::{
-    Admitted, CUT_EPSILON, Child, Context, Exact, FIELD_WORK, HeightSheet, Keep, PaintField,
-    PlanarField, Request, SIZE, TRIANGLES, TerrainPlan, TerrainTexture, TriangleField, VERTICES,
-    Work, admit, carrier_base, carrier_field, certify_height_normals, connections, data,
-    height_sheet, invalid, native, paint, quads, reconstructed, region, same, split_ring, stored,
-    uv,
+    Admitted, CUT_EPSILON, Child, Context, FIELD_WORK, HeightSheet, Keep, PaintField, PlanarField,
+    Request, SIZE, TRIANGLES, TerrainPlan, TerrainTexture, TriangleField, VERTICES, Work, admit,
+    carrier_base, carrier_field, certify_height_normals, connections, data, height_sheet, invalid,
+    native, paint, quads, reconstructed, region, same, split_ring, stored, uv,
 };
-use crate::clip::TerrainBlendError;
+use crate::clip::{TerrainBlendError, TerrainBlendMode};
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Plane};
 
@@ -206,7 +205,7 @@ struct Certificate<'a> {
     axis: usize,
     texture: TerrainTexture,
     labels: &'a TriangleField,
-    round_blend: bool,
+    blend_mode: TerrainBlendMode,
 }
 
 impl Certificate<'_> {
@@ -266,7 +265,7 @@ impl Certificate<'_> {
             }
         }
         match expected {
-            Expected::Triangle(_, paint) if !self.round_blend => {
+            Expected::Triangle(_, paint) if self.blend_mode == TerrainBlendMode::Exact => {
                 paint.certify(&mesh, &data, work)?;
             }
             _ => paint::validate_data(&mesh, &data, work)?,
@@ -293,8 +292,7 @@ fn quarter(
     source: &Admitted<'_>,
     window: [usize; 4],
     material: &str,
-    axis: usize,
-    round_blend: bool,
+    blend_mode: TerrainBlendMode,
     work: &mut Work,
 ) -> Result<(Solid, [DVec3; 4], Vec<Sample>), EditError> {
     let [row, column, child_row, child_column] = window;
@@ -302,10 +300,20 @@ fn quarter(
     let mut samples = (0..VERTICES)
         .map(|index| sample_window(source, row, column, index, child_row, child_column, 2))
         .collect::<Result<Vec<_>, _>>()?;
-    if round_blend {
-        work.consume(FIELD_WORK * samples.len()).map_err(invalid)?;
+    if blend_mode != TerrainBlendMode::Exact {
+        let source_work = if blend_mode == TerrainBlendMode::NearestByte {
+            source.mesh.base_positions.len()
+        } else {
+            0
+        };
+        work.consume((FIELD_WORK + source_work) * samples.len())
+            .map_err(invalid)?;
         for sample in &mut samples {
-            sample.alpha = paint::round_alpha(sample.alpha)?;
+            if blend_mode != TerrainBlendMode::NearestByte
+                || !source.mesh.base_positions.contains(&sample.base)
+            {
+                sample.alpha = paint::sample_alpha(sample.alpha, blend_mode)?;
+            }
         }
     }
     let mut base = [DVec3::ZERO; 4];
@@ -318,20 +326,7 @@ fn quarter(
     let (mut part, mesh) = carrier_base(solid, source.side, source.face, base, material)?;
     let mut offsets = Vec::with_capacity(VERTICES);
     for (sample, &point) in samples.iter().zip(&mesh.base_positions) {
-        if !same(sample.base, point)
-            || (0..3).any(|coordinate| {
-                coordinate != axis && sample.point[coordinate] != point[coordinate]
-            })
-        {
-            return Err(invalid(
-                "Terrain quarter-cell samples differ from their exact child base grid",
-            ));
-        }
-        let mut offset = DVec3::ZERO;
-        offset[axis] = Exact::float(sample.point[axis])?
-            .sub(Exact::float(point[axis])?)?
-            .value()?;
-        offsets.push(offset);
+        offsets.push(sample.offset(point)?);
     }
     let info = part
         .sides
@@ -370,11 +365,11 @@ pub(crate) fn plan(
     };
     let texture = request.textures.and_then(|textures| textures.get(&identity)).copied()
         .ok_or_else(|| invalid("Terrain fragments require guarded native texture projection and mapping dimensions"))?;
-    let labels = TriangleField::surface_with_rounding(
+    let labels = TriangleField::surface_with_blend_mode(
         source.info,
         &source.mesh,
         texture.has_secondary_surface,
-        request.round_blend,
+        request.blend_mode,
         work,
     )?;
     uv(
@@ -389,7 +384,7 @@ pub(crate) fn plan(
         axis: prepared.sheet.axis,
         texture,
         labels: &labels,
-        round_blend: request.round_blend,
+        blend_mode: request.blend_mode,
     };
     let mut blend_error = TerrainBlendError::default();
     let mut parts = Vec::with_capacity(count);
@@ -411,8 +406,7 @@ pub(crate) fn plan(
                             source,
                             [row, column, child_row, child_column],
                             request.material,
-                            prepared.sheet.axis,
-                            request.round_blend,
+                            request.blend_mode,
                             work,
                         )?;
                         let (part, child, error) = certificate.child(
@@ -463,7 +457,7 @@ pub(crate) fn plan(
                             &field,
                             &paint,
                             request.material,
-                            request.round_blend,
+                            request.blend_mode,
                             work,
                         )?;
                         let (part, child, error) = certificate.child(
@@ -499,6 +493,6 @@ pub(crate) fn plan(
         source_power: source.info.power,
         output_power: Some(super::POWER),
         children: None,
-        blend_error: request.round_blend.then_some(blend_error),
+        blend_error: (request.blend_mode != TerrainBlendMode::Exact).then_some(blend_error),
     }))
 }

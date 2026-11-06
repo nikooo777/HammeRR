@@ -11,7 +11,7 @@ use super::{
     grid_clip::{CUT_EPSILON, Context, Work},
     native, neighbors, smoothing, triangles,
 };
-use crate::clip::{Keep, TerrainPlan, TerrainTexture};
+use crate::clip::{Keep, TerrainBlendMode, TerrainPlan, TerrainTexture};
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
@@ -22,7 +22,7 @@ mod labels;
 pub(crate) mod network;
 mod paint;
 
-use field::PlanarField;
+use field::{PlanarField, ScalarField};
 use labels::TriangleField;
 use paint::PaintField;
 
@@ -47,7 +47,7 @@ pub(crate) struct Request<'a> {
     pub keep: Keep,
     pub material: &'a str,
     pub textures: Option<&'a BTreeMap<FaceId, TerrainTexture>>,
-    pub round_blend: bool,
+    pub blend_mode: TerrainBlendMode,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -473,27 +473,15 @@ fn admit<'a>(
 }
 
 fn height_sheet(source: &Admitted<'_>, work: &mut Work) -> Result<HeightSheet, EditError> {
+    let sheet = projected_sheet(&source.mesh, &source.positions, work)?;
     let mesh = &source.mesh;
     let cells = mesh.size - 1;
-    let indices = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells];
-    let corners = indices.map(|index| mesh.base_positions[index]);
-    let axis = (0..3)
-        .find(|&axis| corners.iter().all(|point| point[axis] == corners[0][axis]))
-        .ok_or_else(|| invalid("Terrain height sheets require a world-axis base cage"))?;
-    let axes = [(axis + 1) % 3, (axis + 2) % 3];
-    let sign = orient(corners[0], corners[1], corners[2], axes)?;
-    if sign == 0 {
-        return Err(invalid("Terrain height-sheet base cage is collapsed"));
-    }
-    convex(&corners, axes, sign)?;
-    for point in corners {
-        stored(point)?;
-    }
+    let corners = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells]
+        .map(|index| mesh.base_positions[index]);
     work.consume(3 * FIELD_WORK * mesh.positions.len())
         .map_err(invalid)?;
     for row in 0..mesh.size {
         for column in 0..mesh.size {
-            let index = row * mesh.size + column;
             let weights = [
                 (cells - row) * (cells - column),
                 row * (cells - column),
@@ -502,22 +490,77 @@ fn height_sheet(source: &Admitted<'_>, work: &mut Work) -> Result<HeightSheet, E
             ]
             .map(|weight| weight as i128);
             let base = weighted(&corners, &weights, (cells * cells) as i128)?;
-            let point = mesh.positions[index];
-            if !same(base, mesh.base_positions[index])
-                || axes.iter().any(|&axis| point[axis] != base[axis])
-                || source
-                    .positions
-                    .iter()
-                    .any(|positions| !same(positions[index], point))
-            {
+            if !same(base, mesh.base_positions[row * mesh.size + column]) {
                 return Err(invalid(
-                    "Terrain height sheets require an exact bilinear base and height-only grid shared by authored, native and compiler positions",
+                    "Curved terrain sheets require an exact bilinear source base grid",
                 ));
             }
         }
     }
-    paint::validate_data(mesh, &source.data, work)?;
-    certify_height_normals(&source.data, &source.positions, axis, work)?;
+    paint::validate_data(&source.mesh, &source.data, work)?;
+    certify_height_normals(&source.data, &source.positions, sheet.axis, work)?;
+    Ok(sheet)
+}
+
+fn projected_sheet(
+    mesh: &DisplacementMesh,
+    positions: &[Vec<DVec3>],
+    work: &mut Work,
+) -> Result<HeightSheet, EditError> {
+    let cells = mesh.size - 1;
+    let indices = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells];
+    let corners = indices.map(|index| mesh.base_positions[index]);
+    let axis = (0..3)
+        .find(|&axis| corners.iter().all(|point| point[axis] == corners[0][axis]))
+        .ok_or_else(|| invalid("Curved terrain sheets require a world-axis base cage"))?;
+    let axes = [(axis + 1) % 3, (axis + 2) % 3];
+    let sign = orient(corners[0], corners[1], corners[2], axes)?;
+    if sign == 0 {
+        return Err(invalid("Curved terrain-sheet base cage is collapsed"));
+    }
+    convex(&corners, axes, sign)?;
+    for point in corners {
+        stored(point)?;
+    }
+    work.consume(
+        FIELD_WORK * (8 + 2 * mesh.positions.len())
+            + positions.len() * mesh.positions.len()
+            + 2 * cells * cells,
+    )
+    .map_err(invalid)?;
+    let visible = indices.map(|index| mesh.positions[index]);
+    if orient(visible[0], visible[1], visible[2], axes)? != sign {
+        return Err(invalid(
+            "Curved terrain tangential projection must preserve its base orientation",
+        ));
+    }
+    convex(&visible, axes, sign)?;
+    let projection = [
+        ScalarField::new(corners, visible.map(|point| point[axes[0]]))?,
+        ScalarField::new(corners, visible.map(|point| point[axes[1]]))?,
+    ];
+    for (index, &point) in mesh.positions.iter().enumerate() {
+        let base = mesh.base_positions[index];
+        if base[axis] != corners[0][axis]
+            || point[axes[0]] != projection[0].value(base)?
+            || point[axes[1]] != projection[1].value(base)?
+            || positions
+                .iter()
+                .any(|positions| !same(positions[index], point))
+        {
+            return Err(invalid(
+                "Curved terrain sheets require an exact base plane and affine tangential projection shared by authored, native and compiler positions",
+            ));
+        }
+    }
+    for triangle in mesh.triangles() {
+        let [a, b, c] = triangle.map(|index| mesh.positions[index]);
+        if orient(a, b, c, axes)? != sign {
+            return Err(invalid(
+                "Curved terrain tangential projection must keep every original triangle positively oriented",
+            ));
+        }
+    }
     Ok(HeightSheet { axis, axes, sign })
 }
 
@@ -965,7 +1008,7 @@ fn carrier(
         &source.field,
         &source.paint,
         material,
-        false,
+        TerrainBlendMode::Exact,
         work,
     )
 }
@@ -979,7 +1022,7 @@ fn carrier_field(
     field: &PlanarField,
     paint: &PaintField,
     material: &str,
-    round_blend: bool,
+    blend_mode: TerrainBlendMode,
     work: &mut Work,
 ) -> Result<Solid, EditError> {
     let (mut part, mesh) = carrier_base(solid, side, face, quad, material)?;
@@ -1010,13 +1053,7 @@ fn carrier_field(
                 .chunks(SIZE)
                 .map(|row| {
                     row.iter()
-                        .map(|&base| {
-                            if round_blend {
-                                paint.rounded_alpha(base)
-                            } else {
-                                paint.alpha(base)
-                            }
-                        })
+                        .map(|&base| paint.sample_alpha(base, blend_mode))
                         .collect()
                 })
                 .collect::<Result<_, _>>()

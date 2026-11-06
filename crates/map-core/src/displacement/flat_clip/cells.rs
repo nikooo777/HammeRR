@@ -131,6 +131,23 @@ pub(super) struct Sample {
     pub(super) alpha: f64,
 }
 
+impl Sample {
+    pub(super) fn offset(&self, base: DVec3) -> Result<DVec3, EditError> {
+        if !same(self.base, base) {
+            return Err(invalid(
+                "Terrain cell samples differ from their exact child base grid",
+            ));
+        }
+        let mut offset = DVec3::ZERO;
+        for axis in 0..3 {
+            offset[axis] = Exact::float(self.point[axis])?
+                .sub(Exact::float(base[axis])?)?
+                .value()?;
+        }
+        Ok(offset)
+    }
+}
+
 fn sample(
     source: &Admitted<'_>,
     row: usize,
@@ -271,21 +288,7 @@ pub(crate) fn plan(
                 .collect::<Result<Vec<_>, _>>()?;
             let mut offsets = Vec::with_capacity(VERTICES);
             for (sample, &point) in samples.iter().zip(&base_mesh.base_positions) {
-                if !same(sample.base, point)
-                    || prepared
-                        .axes
-                        .iter()
-                        .any(|&axis| sample.point[axis] != point[axis])
-                {
-                    return Err(invalid(
-                        "Cell terrain child orientation differs from its exact original cell",
-                    ));
-                }
-                let mut offset = DVec3::ZERO;
-                offset[prepared.axis] = Exact::float(sample.point[prepared.axis])?
-                    .sub(Exact::float(point[prepared.axis])?)?
-                    .value()?;
-                offsets.push(offset);
+                offsets.push(sample.offset(point)?);
             }
             let info = part.sides[side_index].displacement.as_mut().unwrap();
             info.offsets = Some(offsets.chunks(SIZE).map(<[_]>::to_vec).collect());

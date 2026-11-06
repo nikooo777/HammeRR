@@ -214,15 +214,19 @@ entity. The cut retains the owner and unselected siblings.
 
 Choose [**Retile grid cells**](brush-tools.md#retile-grid-cells) to cut curved
 terrain at any complete original row or column, including power 2. It refines
-whole cells and requires exact native geometry, piecewise integer paint and labels. Unchanged
-terrain contacts reject; normals and runtime LOD are regenerated.
+whole cells and supports curved height with an exact, orientation-preserving
+affine tangential projection. Native geometry, piecewise raw/native paint fields
+and labels must remain exact. Unchanged terrain contacts reject; normals and runtime LOD are regenerated.
 [**Retile flat terrain**](brush-tools.md#retile-flat-terrain) supports non-grid
 cuts on eligible planar surfaces, including tilted base cages and affine
 tangential offsets.
 Choose [**Retile surface triangles**](brush-tools.md#cut-through-curved-cells)
 to cut through curved cells while preserving their original triangle surfaces.
-The optional **Round new blend samples** choice reports per-cut raw and native
-blend-error bounds. Geometry and collision classifications remain exact.
+Under **Blend samples**, **Exact fields** preserves raw and native packed paint
+fields, including representable fractional samples. **Native float** and
+**Nearest byte** explicitly permit bounded error in inserted samples. The preview
+reports the selected policy, actual per-cut raw/native error bounds and limits.
+Geometry, UVs and collision classifications remain exact.
 
 ## Remove terrain
 

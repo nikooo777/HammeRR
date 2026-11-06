@@ -10,6 +10,32 @@ use crate::{brush::Face, checks::SOURCE_COORDINATE_LIMIT};
 const VERTEX_PRECISION: f64 = 10_000.0;
 pub const GEOMETRY_EPSILON: f64 = 0.02;
 
+pub fn secondary_alpha_class(values: [f32; 3]) -> Result<bool, String> {
+    if values.iter().any(|value| !value.is_finite()) {
+        return Err("Terrain collision alpha must remain finite".into());
+    }
+    let [rounding, classes @ ..] = bsp::NativeDisplacementRounding::ALL;
+    let expected = bsp::native_alpha_secondary(
+        values,
+        bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding },
+    )
+    .map_err(|error| error.to_string())?;
+    for rounding in classes {
+        let actual = bsp::native_alpha_secondary(
+            values,
+            bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding },
+        )
+        .map_err(|error| error.to_string())?;
+        if actual != expected {
+            return Err(
+                "Terrain collision-material alpha classification differs across native rounding profiles"
+                    .into(),
+            );
+        }
+    }
+    Ok(expected)
+}
+
 pub fn visible_terrain_sources(vmf: &Vmf) -> impl Iterator<Item = (&Solid, bool)> {
     vmf.world
         .solids

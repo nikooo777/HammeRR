@@ -2236,7 +2236,7 @@ export component AppWindow inherits Window {
     in property <string> clip-points-summary;
     in-out property <int> clip-keep-index: 2;
     in-out property <int> clip-terrain-mode-index: 0;
-    in-out property <bool> clip-round-blend: false;
+    in-out property <int> clip-blend-mode: 0;
     in-out property <string> clip-normal-x: "1";
     in-out property <string> clip-normal-y: "0";
     in-out property <string> clip-normal-z: "0";
@@ -2457,7 +2457,7 @@ export component AppWindow inherits Window {
     callback preview-clip-plane();
     callback clip-settings-changed();
     callback clip-terrain-mode-changed();
-    callback clip-blend-rounding-changed();
+    callback clip-blend-mode-changed();
     callback clip-inputs-changed();
     callback apply-clip();
     callback cancel-clip();
@@ -4216,17 +4216,19 @@ export component AppWindow inherits Window {
                                         selected => { root.clip-terrain-mode-changed(); }
                                     }
                                 }
-                                if root.clip-terrain-mode-index == 3: HorizontalLayout {
-                                    spacing: Theme.space;
-                                    CheckBox {
-                                        text: "Round new blend samples";
-                                        checked <=> root.clip-round-blend;
-                                        toggled => { root.clip-blend-rounding-changed(); }
+                                if root.clip-terrain-mode-index == 3: FieldRow {
+                                    inset: false;
+                                    label: "Blend samples";
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        accessible-label: "Blend samples";
+                                        model: ["Exact fields", "Native float", "Nearest byte"];
+                                        current-index <=> root.clip-blend-mode;
+                                        selected => { root.clip-blend-mode-changed(); }
                                         Tooltip {
-                                            text: @markdown("Round inserted blend values to the nearest byte, ties to even. Source geometry stays exact. Preview reports raw and native blend error bounds.");
+                                            text: @markdown("Exact fields preserves raw and native packed blend fields. Native float stores inserted samples at native float precision. Nearest byte rounds inserted samples, ties to even. Preview reports each policy's certified limits and actual error. Geometry, UVs, triangle flags and collision classifications stay exact.");
                                         }
                                     }
-                                    Rectangle { horizontal-stretch: 1; }
                                 }
                                 FieldRow {
                                     inset: false;

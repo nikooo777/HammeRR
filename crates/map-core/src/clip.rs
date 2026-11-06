@@ -51,6 +51,45 @@ pub enum TerrainMode {
     Fragments,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TerrainBlendMode {
+    #[default]
+    Exact,
+    NativeFloat,
+    NearestByte,
+}
+
+impl TerrainBlendMode {
+    pub fn sample_alpha(self, value: f64) -> Result<f64, EditError> {
+        if !value.is_finite() || !(0.0..=255.0).contains(&value) {
+            return Err(invalid(format!(
+                "Terrain paint sample {value} must remain between 0 and 255"
+            )));
+        }
+        let sampled = match self {
+            Self::Exact => {
+                if f64::from(value as f32) != value {
+                    return Err(invalid(format!(
+                        "Terrain paint sample {value} must be an exact native float alpha from 0 to 255"
+                    )));
+                }
+                value
+            }
+            Self::NativeFloat => f64::from(value as f32),
+            Self::NearestByte => value.round_ties_even(),
+        };
+        Ok(sampled)
+    }
+
+    pub fn error_limits(self) -> (f64, f64) {
+        match self {
+            Self::Exact => (0.0, 0.0),
+            Self::NativeFloat => (1.0 / 131_072.0, 1.0 + 1.0 / 131_072.0),
+            Self::NearestByte => (0.5, 1.5),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TerrainBlendError {
     pub raw: f64,
@@ -58,31 +97,36 @@ pub struct TerrainBlendError {
 }
 
 impl TerrainBlendError {
-    pub const RAW_LIMIT: f64 = 0.5;
-    pub const PACKED_LIMIT: f64 = 1.5;
-
-    pub(crate) fn validate(&self) -> Result<(), EditError> {
+    fn validate_bounds(&self) -> Result<(), EditError> {
         if !self.raw.is_finite()
-            || !(0.0..=Self::RAW_LIMIT).contains(&self.raw)
+            || self.raw < 0.0
             || self
                 .packed
                 .iter()
-                .any(|value| !value.is_finite() || !(0.0..=Self::PACKED_LIMIT).contains(value))
+                .any(|value| !value.is_finite() || *value < 0.0)
         {
+            return Err(invalid(
+                "Terrain blend error bounds must be finite and nonnegative",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate(&self, mode: TerrainBlendMode) -> Result<(), EditError> {
+        self.validate_bounds()?;
+        let (raw_limit, packed_limit) = mode.error_limits();
+        if self.raw > raw_limit || self.packed.iter().any(|&value| value > packed_limit) {
             return Err(invalid(format!(
-                "Invalid rounded terrain blend error: raw {} (limit {}), packed {:?} (limit {} per profile)",
-                self.raw,
-                Self::RAW_LIMIT,
-                self.packed,
-                Self::PACKED_LIMIT,
+                "Invalid {mode:?} terrain blend error: raw {} (limit {}), packed {:?} (limit {} per profile)",
+                self.raw, raw_limit, self.packed, packed_limit,
             )));
         }
         Ok(())
     }
 
     pub(crate) fn merge(&mut self, other: Self) -> Result<(), EditError> {
-        self.validate()?;
-        other.validate()?;
+        self.validate_bounds()?;
+        other.validate_bounds()?;
         self.raw = self.raw.max(other.raw);
         for (value, other) in self.packed.iter_mut().zip(other.packed) {
             *value = value.max(other);
@@ -102,7 +146,7 @@ pub struct TerrainTexture {
 #[derive(Default)]
 pub struct ClipOptions<'a> {
     pub terrain_mode: TerrainMode,
-    pub round_blend: bool,
+    pub blend_mode: TerrainBlendMode,
     pub textures: Option<&'a BTreeMap<FaceId, TerrainTexture>>,
     pub terrain_context: Option<&'a Vmf>,
 }
@@ -503,9 +547,11 @@ pub fn clip_with_options(
     material: Option<&str>,
     options: ClipOptions<'_>,
 ) -> std::result::Result<ClipResult, EditError> {
-    if options.round_blend && options.terrain_mode != TerrainMode::Fragments {
+    if options.blend_mode != TerrainBlendMode::Exact
+        && options.terrain_mode != TerrainMode::Fragments
+    {
         return Err(invalid(
-            "Round new blend samples requires Retile surface triangles",
+            "Native float and nearest-byte blend samples require Retile surface triangles",
         ));
     }
     let context = options.terrain_context;
@@ -577,7 +623,7 @@ pub fn clip_with_options(
                             keep,
                             material,
                             textures: options.textures,
-                            round_blend: options.round_blend,
+                            blend_mode: options.blend_mode,
                         },
                         &mut terrain_context,
                     )
@@ -588,12 +634,12 @@ pub fn clip_with_options(
                 unchanged.push(solid.id);
                 continue;
             };
-            match (options.round_blend, plan.blend_error) {
-                (true, Some(error)) => error.validate()?,
-                (false, None) => {}
+            match (options.blend_mode, plan.blend_error) {
+                (TerrainBlendMode::Exact, None) => {}
+                (mode, Some(error)) if mode != TerrainBlendMode::Exact => error.validate(mode)?,
                 _ => {
                     return Err(invalid(
-                        "Terrain blend rounding certificate is missing or unexpected",
+                        "Terrain blend error certificate is missing or unexpected",
                     ));
                 }
             }

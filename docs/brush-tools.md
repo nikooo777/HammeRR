@@ -106,10 +106,10 @@ Each retained three-to-five-corner region becomes power-2 quadrilateral patches.
 Four-corner regions stay one patch when their joins permit. Select the results
 to cut them again. Compatible joined patches are checked as one component.
 Each surface must follow one exact affine mapping from its base cage to a
-visible plane. Paint must vary linearly across the surface, with exact integer
-alpha from 0 to 255. Triangle flags and collision materials retain their original
-regions. Retiling keeps
-these fields, material, texture placement and smoothing. It does not flatten a
+visible plane. Paint must vary linearly across the surface, with native float
+alpha from 0 to 255 that preserves its raw and native packed fields exactly.
+Triangle flags and collision materials retain their original regions. Retiling
+keeps these fields, material, texture placement and smoothing. It does not flatten a
 curved or nonlinearly painted surface. **Existing grid** never switches modes
 after a failed cut.
 
@@ -145,21 +145,31 @@ Cut the original terrain triangles with a free plane.
 1. Select world or `func_detail` terrain brushes.
 2. Click **Clip selected brushes**.
 3. Under **Terrain cut**, choose **Retile surface triangles**.
-4. Enable **Round new blend samples** only if byte precision is acceptable.
+4. Under **Blend samples**, choose **Exact fields**, **Native float** or
+   **Nearest byte**.
 5. Draw or enter the cut plane.
 6. Choose **Arrow side**, **Opposite side** or **Both sides**.
 7. Inspect the patches and blend-error bounds, then click **Apply cut**.
 
 Cut cells become quad fans. Whole retained cells become quarter-cell patches.
-Geometry, UVs and triangle labels stay exact. Blend fields stay exact when
-**Round new blend samples** is off.
+Geometry, UVs, triangle flags and collision-material regions stay exact.
+**Blend samples** chooses how inserted paint samples are stored:
 
-Rounding uses the nearest byte, with ties to even. The preview reports certified
-error bounds: at most 0.5/255 for raw blends and 1.5/255 for each native packed
-profile. These bounds describe this cut's blend fields. Repeated rounding can
-accumulate error; final pixels also depend on materials and lighting.
-Changing the rounding choice discards the old preview. Other terrain modes reset
-the choice to off. A failed request keeps the previous valid draft.
+| Choice | Inserted samples | Raw error limit | Native packed error limit |
+| --- | --- | --- | --- |
+| **Exact fields** (default) | Preserve raw and all four native packed fields exactly. | 0 | 0 |
+| **Native float** | Store fractional values at native float32 precision. | 2⁻¹⁷/255 | (1 + 2⁻¹⁷)/255 |
+| **Nearest byte** | Round to the nearest integer, ties to even. | 0.5/255 | 1.5/255 |
+
+Original samples stay unchanged. Fractional paint is supported when the selected
+policy can certify it. A bound above its limit rejects the cut. The preview reports the policy, actual raw error bound,
+largest error bound across the four native packed profiles, and their limits.
+These bounds describe this cut's blend fields. Repeated rounding can accumulate
+error; final pixels also depend on materials and lighting.
+Changing **Blend samples** discards the old preview. Changing **Terrain cut**
+resets **Blend samples** to **Exact fields**. **Native float** and **Nearest byte**
+are available only for **Retile surface triangles**. A failed request keeps the
+previous valid draft; no policy switches automatically after a failure.
 
 ![Both painted curved-terrain halves moved apart after a through-cell cut](images/terrain-surface-cut.png)
 
@@ -186,11 +196,12 @@ the choice to off. A failed request keeps the previous valid draft.
   Native positions, shared samples and texture fields must remain exact.
   Normal inputs must pass the native arithmetic and conditioning checks.
   Normal bits and final pixels can differ after retiling.
-- Paint samples must preserve the same native packed-alpha field under each
-  rounding profile. Each output triangle must retain the original flags and, with `$surfaceprop2`,
+- Source paint must be representable as native float32 alpha from 0 to 255.
+  **Exact fields** preserves raw alpha and the same native packed-alpha field
+  under all four rounding profiles. Each output triangle must retain the original flags and, with `$surfaceprop2`,
   the original collision-material alpha class over its complete area. A triangle
   that crosses incompatible source regions rejects. Edge-only contacts do not
-  transfer labels. Other paint fields reject.
+  transfer labels. Rounding-dependent collision classifications reject.
 - Retiling requires direct static `LightmappedGeneric` or plain
   `WorldVertexTransition` materials. Both transition layers use their original
   textures and the primary mapping size. Texture inputs must be untransformed,
@@ -205,19 +216,21 @@ the choice to off. A failed request keeps the previous valid draft.
   and unsupported resources reject. Changed source images or materials require
   another preview before Apply.
 - **Retile grid cells** requires world-axis rectangular bases. Displacement
-  can vary only along the base normal. Paint samples must stay integral and
-  preserve each original triangle's raw and packed blend fields. Native texture
+  supports curved height with an exact affine tangential projection that preserves
+  orientation. Paint samples must preserve each original
+  triangle's raw and packed blend fields exactly. Native texture
   rules match **Retile flat terrain**. Every touching original patch
   must also be cut in the operation; unchanged contacts reject. No affected LOD
-  coarsening, tangential fields or uncertain native normal inputs.
+  coarsening, non-affine tangential fields or uncertain native normal inputs.
   Each retained cell adds 32 native triangles. Powers 2–4 are subject to the
   shared output and work limits.
-- **Retile surface triangles** uses the same height-field, texture, normal and
+- **Retile surface triangles** uses the same projected-sheet, texture, normal and
   selected-contact rules as **Retile grid cells**. Output must fit native edge
   and corner limits without LOD coarsening. Skew quarter grids, high-valence
-  corners and fractional inserted paint in exact mode can refuse. The error
-  names an unrepresentable paint value. Rounding does not relax geometry, UV,
-  triangle-label or collision-material checks.
+  corners, unrepresentable raw paint and changed native packed fields in
+  **Exact fields** can refuse. The error names the unrepresentable field.
+  **Native float** and **Nearest byte** do not relax geometry, UV, triangle-label
+  or collision-material checks.
 - Terrain cuts accept 16 sources and 128 output patches. Unsupported bindings,
   notes, masks and opaque payloads reject before the map changes.
 - Numerically uncertain cuts reject. They do not move retained points to fit

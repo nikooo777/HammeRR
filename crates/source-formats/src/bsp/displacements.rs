@@ -9,7 +9,9 @@ mod samples;
 pub use samples::{DisplacementLightmapSample, DisplacementSurfaceSample};
 mod lod;
 mod native;
-pub use native::{NativeDisplacementProfile, NativeDisplacementRounding, native_alpha_byte};
+pub use native::{
+    NativeDisplacementProfile, NativeDisplacementRounding, native_alpha_byte, native_alpha_secondary,
+};
 mod surface;
 pub use surface::{DisplacementGeometricSample, DisplacementSurfaceSampler};
 
@@ -129,6 +131,25 @@ impl DisplacementInfo {
     pub fn triangle_count(self) -> io::Result<usize> {
         let cells = self.grid_size()? - 1;
         Ok(cells * cells * 2)
+    }
+
+    /// Returns the installed collision route's row-major triangles, preserving
+    /// the corner order used by its raw-alpha material classification.
+    pub fn collision_triangle_indices(self) -> io::Result<Vec<[usize; 3]>> {
+        let size = self.grid_size()?;
+        let mut triangles = Vec::with_capacity(self.triangle_count()?);
+        for row in 0..size - 1 {
+            for column in 0..size - 1 {
+                let a = row * size + column;
+                let [b, c, d] = [a + 1, a + size, a + size + 1];
+                triangles.extend(if a % 2 == 1 {
+                    [[a, c, b], [b, c, d]]
+                } else {
+                    [[a, c, d], [a, d, b]]
+                });
+            }
+        }
+        Ok(triangles)
     }
 
     pub fn triangle_indices(self) -> io::Result<Vec<[usize; 3]>> {

@@ -263,28 +263,21 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
     let (data, base) = data(&raw.face, &mesh, info.power)?;
     let positions = reconstructed(&data, base, work)?;
     super::native_base(&mut mesh, &data, base, work)?;
-    work.consume(
-        FIELD_WORK
-            * match mode {
-                Mode::Flat => 17,
-                Mode::Cells => 5,
-            },
-    )
-    .map_err(invalid)?;
     let base_plane = BasePlane::new([corners[0], corners[1], corners[2]])?;
     let field = match mode {
-        Mode::Flat => Some(PlanarField::new(
-            corners,
-            corner_indices.map(|index| mesh.positions[index]),
-        )?),
-        Mode::Cells => None,
+        Mode::Flat => {
+            work.consume(FIELD_WORK * 17).map_err(invalid)?;
+            Some(PlanarField::new(
+                corners,
+                corner_indices.map(|index| mesh.positions[index]),
+            )?)
+        }
+        Mode::Cells => {
+            super::projected_sheet(&mesh, &positions, work)?;
+            None
+        }
     };
     let axis = base_plane.axis();
-    if mode == Mode::Cells && corners.iter().any(|point| point[axis] != corners[0][axis]) {
-        return Err(invalid(
-            "Terrain cell contacts require a world-axis base plane",
-        ));
-    }
     let axes = [(axis + 1) % 3, (axis + 2) % 3];
     let sign = orient(corners[0], corners[1], corners[2], axes)?;
     if sign == 0 {
@@ -306,16 +299,16 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
             "Connected terrain contacts require noncollapsed visible native sheets",
         ));
     }
-    work.consume(mesh.positions.len() * (positions.len() + FIELD_WORK * 3))
-        .map_err(invalid)?;
-    for (index, &point) in mesh.positions.iter().enumerate() {
-        let base = mesh.base_positions[index];
-        if !base_plane.contains(base)? {
-            return Err(invalid(
-                "Connected terrain base samples must share one exact native plane",
-            ));
-        }
-        if let Some(field) = &field {
+    if let Some(field) = &field {
+        work.consume(mesh.positions.len() * (positions.len() + FIELD_WORK * 3))
+            .map_err(invalid)?;
+        for (index, &point) in mesh.positions.iter().enumerate() {
+            let base = mesh.base_positions[index];
+            if !base_plane.contains(base)? {
+                return Err(invalid(
+                    "Connected terrain base samples must share one exact native plane",
+                ));
+            }
             let expected = field.position(base)?;
             if !same(base, field.base_position(point)?)
                 || !same(point, expected)
@@ -327,27 +320,20 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
                     "Connected flat terrain requires authored, native and compiler positions on one exact planar field",
                 ));
             }
-        } else if base[axis] != corners[0][axis]
-            || axes.iter().any(|&axis| point[axis] != base[axis])
-            || positions
-                .iter()
-                .any(|positions| !same(point, positions[index]))
-        {
-            return Err(invalid(
-                "Connected terrain cells require exact authored, native and compiler height-only positions",
-            ));
         }
     }
-    let indices = data.infos[0]
-        .triangle_indices()
-        .map_err(|error| invalid(error.to_string()))?;
-    work.consume(indices.len()).map_err(invalid)?;
-    for triangle in indices {
-        let points = triangle.map(|index| positions.last().unwrap()[index]);
-        if orient(points[0], points[1], points[2], visible_axes)? != visible_sign {
-            return Err(invalid(
-                "Connected flat terrain currently requires consistently oriented positive native triangles",
-            ));
+    if mode == Mode::Flat {
+        let indices = data.infos[0]
+            .triangle_indices()
+            .map_err(|error| invalid(error.to_string()))?;
+        work.consume(indices.len()).map_err(invalid)?;
+        for triangle in indices {
+            let points = triangle.map(|index| positions.last().unwrap()[index]);
+            if orient(points[0], points[1], points[2], visible_axes)? != visible_sign {
+                return Err(invalid(
+                    "Connected flat terrain currently requires consistently oriented positive native triangles",
+                ));
+            }
         }
     }
     match mode {

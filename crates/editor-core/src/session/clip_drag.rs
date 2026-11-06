@@ -224,7 +224,7 @@ impl Session {
             .ok_or("Cut-plane drag was closed or replaced")?;
         self.check_clip_stamp(&drag.snapshot)?;
         if drag.before.terrain_mode != self.clip_terrain_mode
-            || drag.before.round_blend != self.clip_round_blend
+            || drag.before.blend_mode != self.clip_blend_mode
         {
             return Err("Terrain cut settings changed; start the cut-plane drag again".into());
         }
@@ -334,7 +334,8 @@ impl Session {
                             material: drag.before.material.clone(),
                             preview: true,
                             terrain_mode: Some(drag.before.terrain_mode),
-                            round_blend: Some(drag.before.round_blend),
+                            blend_mode: Some(drag.before.blend_mode),
+                            round_blend: None,
                         },
                     )?;
                     self.clip_points = points;

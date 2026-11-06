@@ -779,21 +779,22 @@ original target faces. Results keep geometric source IDs and add
 
 1. Call `set_clip_terrain_mode {"mode":"grid"}` for **Existing grid**, or
    `{"mode":"flat"}` for **Retile flat terrain**, or `{"mode":"cells"}` for
-   **Retile grid cells**.
+   **Retile grid cells**, or `{"mode":"fragments"}` for **Retile surface triangles**.
 2. Call `clip_brushes` with the brush `ids`, `plane`, `keep` and `preview:true`.
 3. Inspect `get_clip_preview` and `render_view`.
 4. Call `commit_clip_preview` or `cancel_clip_preview`.
 
 Grid is the default. The choice is shared with drawn lines, picked points and
 plane handles. Changing it cancels the current cut draft without changing the
-map or Undo history. Optional `clip_brushes.terrain_mode` accepts `"grid"`,
+map or Undo history, and resets **Blend samples** to **Exact fields**. Optional
+`clip_brushes.terrain_mode` accepts `"grid"`,
 `"flat"`, `"cells"` or `"fragments"` for that request; success adopts the choice, while failure keeps the
 previous choice and valid draft. A failed request never switches modes.
 
 Flat mode accepts convex world or `func_detail` quad terrain at powers 2–4.
 Base cages must be planar. Tilted cages and affine tangential offsets are
 supported. Each visible sheet must follow one exact affine mapping from its
-base cage to a plane. Integral alpha must form
+base cage to a plane. Native-representable alpha must form
 one exact affine field; vertex masks stay unrestricted. Four-corner retained regions stay
 one power-2 patch when joins permit; triangle/pentagon regions use quad fans.
 Compatible coplanar flat components support repeated cuts. The full affected
@@ -827,11 +828,12 @@ prefix. Patch materials, other blend shaders, base transforms, animated/runtime 
 and unsupported providers refuse.
 
 Cells mode accepts curved power-2/3/4 world or `func_detail` terrain with world-axis
-rectangular bases and displacement only along the base normal. The requested
+rectangular bases and curved height with an exact, orientation-preserving affine
+tangential projection. Non-affine or folded projections refuse. The requested
 plane must follow a complete internal original row or column. Each retained
 whole original cell becomes one power-2 patch. It certifies authored, compiler
 and all four native positions, the original piecewise surface planes, exact UVs,
-piecewise integer paint and spatial triangle labels. Nonlinear source paint is
+piecewise paint and spatial triangle labels. Nonlinear source paint is
 allowed only when every overlapping original and output triangle has the same
 raw alpha and four native packed-alpha functions; vertex equality alone is
 insufficient. Unrepresentable inserted alpha or changed physical regions reject.
@@ -844,21 +846,42 @@ exact; raw/packed paint also stays exact by default. Native contacts must fit wi
 no automatic switch from another mode. Output is bounded at 128 patches, 5,184
 vertices and 8,192 triangles per operation.
 
-`round_blend:true` explicitly selects nearest-byte blend rounding in Fragments
-mode. Ties round to even; values are not clamped. The shared choice defaults to
-false. Use `set_clip_blend_rounding({"enabled":true})` after choosing Fragments,
-or pass the override to `clip_brushes`. Omitted overrides use the current choice;
-success adopts explicit overrides. True in another mode fails. Leaving Fragments
-resets rounding to false; changing it cancels the old preview. Exact requests
-never retry with rounding.
+`blend_mode` selects the shared **Blend samples** choice. Use
+`set_clip_blend_mode({"mode":"native_float"})` after choosing Fragments,
+or pass `blend_mode` to `clip_brushes`:
 
-Each rounded terrain result includes `blend_error`: certified `raw` and four
-`packed` bounds, plus `raw_limit:0.5` and `packed_limit:1.5`, in byte units out
-of 255. Packed order is nearest-even, toward-negative, toward-positive, toward-zero.
-Bounds cover every output triangle interior through the original affine fields.
-They apply to this operation, not accumulated edit history or final pixels.
-Geometry, UVs, triangle flags and secondary-contact classifications stay exact;
-unsupported inputs and excess bounds reject without changing the prior draft.
+| Mode | Inserted alpha | Raw error limit | Each packed-profile error limit |
+| --- | --- | --- | --- |
+| **Exact fields** (`exact`, default) | Exact native float32 representation | 0 | 0 |
+| **Native float** (`native_float`) | One float32 rounding | 2⁻¹⁷ | 1 + 2⁻¹⁷ |
+| **Nearest byte** (`nearest_byte`) | Nearest integer, ties to even | 0.5 | 1.5 |
+
+Limits use byte units out of 255. Native float and Nearest byte require Fragments;
+explicit requests in another terrain mode fail. Exact also accepts fractional
+source alpha when the authored and native float32 values agree and every raw
+and packed field remains exact. Unsupported source values refuse in all modes.
+Only inserted alpha can be rounded; source paint is not quantized or clamped.
+The packed limits are measured admission gates. Exceeding one rejects the cut;
+they are not universal native-quantizer error guarantees. Rounding-dependent
+secondary collision-material classes also reject.
+
+Omitted overrides use the current choice, or **Exact fields** when changing
+`terrain_mode`.
+Success adopts explicit overrides; failure preserves settings and the prior draft.
+Changing the shared mode cancels the old preview. Exact requests never retry with
+another mode. Legacy `round_blend:true` and
+`set_clip_blend_rounding({"enabled":true})` select Nearest byte; false selects
+**Exact fields**. Supplying both `blend_mode` and `round_blend` rejects, even when equivalent.
+
+State, preview and result reports include `blend_mode` and compatibility
+`round_blend`, which is true only for **Nearest byte**. Non-exact terrain results
+include `blend_error`: certified `raw` and four `packed` bounds, plus mode-specific
+`raw_limit` and `packed_limit`. Packed order is nearest-even, toward-negative,
+toward-positive, toward-zero. Bounds cover every output triangle interior through
+the original affine fields. They apply to this operation, not accumulated edit
+history or final pixels. Geometry, UVs, triangle flags and secondary-contact
+classifications stay exact; unsupported inputs and excess bounds reject without
+changing the prior draft.
 
 Every affected original must be a crossing replacement; unchanged external
 terrain contacts reject. Existing guarded instance, native connection, capacity

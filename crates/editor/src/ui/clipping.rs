@@ -1,5 +1,18 @@
 use super::*;
 
+fn clip_blend_bound(value: f64) -> String {
+    if value == 0.0 {
+        "0".into()
+    } else if value < 0.001 {
+        format!("≈{value:.3e}")
+    } else {
+        format!("≈{value:.6}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .into()
+    }
+}
+
 pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
     app.set_can_clip(session.can_clip_selection());
     app.set_clipping(session.clip_tool());
@@ -10,7 +23,11 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
         map_core::clip::TerrainMode::Cells => 2,
         map_core::clip::TerrainMode::Fragments => 3,
     });
-    app.set_clip_round_blend(session.clip_round_blend());
+    app.set_clip_blend_mode(match session.clip_blend_mode() {
+        map_core::clip::TerrainBlendMode::Exact => 0,
+        map_core::clip::TerrainBlendMode::NativeFloat => 1,
+        map_core::clip::TerrainBlendMode::NearestByte => 2,
+    });
     let options = session.clip_handle_options();
     app.set_clip_handles_mode(match options.mode {
         Some(render::handles::Mode::Move) => 1,
@@ -75,19 +92,40 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
                 preview.result.unchanged.len()
             )
         };
-        let blend_error = preview
-            .result
-            .terrain
-            .iter()
-            .filter_map(|cut| cut.blend_error)
-            .map(|error| (error.raw, error.packed.into_iter().fold(0.0, f64::max)))
-            .reduce(|(raw, packed), (next_raw, next_packed)| {
-                (raw.max(next_raw), packed.max(next_packed))
-            });
-        if let Some((raw, packed)) = blend_error {
-            summary.push_str(&format!(
-                "\nBlend error: raw {raw}/255 · native {packed}/255"
-            ));
+        if !preview.result.terrain.is_empty() {
+            let blend_error = preview
+                .result
+                .terrain
+                .iter()
+                .filter_map(|cut| cut.blend_error)
+                .map(|error| (error.raw, error.packed.into_iter().fold(0.0, f64::max)))
+                .reduce(|(raw, packed), (next_raw, next_packed)| {
+                    (raw.max(next_raw), packed.max(next_packed))
+                });
+            let blend_mode = match preview.blend_mode {
+                map_core::clip::TerrainBlendMode::Exact => "Exact fields",
+                map_core::clip::TerrainBlendMode::NativeFloat => "Native float",
+                map_core::clip::TerrainBlendMode::NearestByte => "Nearest byte",
+            };
+            let (raw_limit, packed_limit) = preview.blend_mode.error_limits();
+            summary.push_str(&format!("\nBlend samples: {blend_mode}"));
+            if let Some((raw, packed)) = blend_error {
+                let raw = clip_blend_bound(raw);
+                let packed = clip_blend_bound(packed);
+                let raw_limit = clip_blend_bound(raw_limit);
+                let packed_limit = clip_blend_bound(packed_limit);
+                summary.push_str(&format!(
+                    "\nRaw bound {raw}/255 · limit {raw_limit}/255\nNative bound {packed}/255 · limit {packed_limit}/255"
+                ));
+            } else if preview.blend_mode == map_core::clip::TerrainBlendMode::Exact {
+                summary.push_str("\nRaw/native fields certified exact");
+            } else {
+                let raw_limit = clip_blend_bound(raw_limit);
+                let packed_limit = clip_blend_bound(packed_limit);
+                summary.push_str(&format!(
+                    "\nBlend error bounds unavailable (limits: raw {raw_limit}/255 · native {packed_limit}/255)"
+                ));
+            }
         }
         app.set_clip_summary(summary.into());
         if let Some(error) = session.clip_drag().and_then(|drag| drag.error.as_ref()) {
@@ -198,12 +236,21 @@ pub(super) fn change_clip_points(
 }
 
 pub(super) fn bind_clip_controls_with_access(app: &AppWindow, access: &runtime::DocumentAccess) {
-    app.on_clip_blend_rounding_changed({
+    app.on_clip_blend_mode_changed({
         let callback = admission::SessionCallback::new(app, access);
         move || {
             callback.input(|app, session| {
-                let result =
-                    session.set_clip_blend_rounding(Actor::User, app.get_clip_round_blend());
+                let mode = match app.get_clip_blend_mode() {
+                    0 => map_core::clip::TerrainBlendMode::Exact,
+                    1 => map_core::clip::TerrainBlendMode::NativeFloat,
+                    2 => map_core::clip::TerrainBlendMode::NearestByte,
+                    _ => {
+                        app.set_message("Invalid blend sample policy".into());
+                        refresh_clip(&app, session);
+                        return;
+                    }
+                };
+                let result = session.set_clip_blend_mode(Actor::User, mode);
                 app.set_message(result.err().unwrap_or_default().into());
                 refresh_clip(&app, session);
             })

@@ -3,13 +3,12 @@ use source_formats::bsp;
 
 use super::field::ScalarField;
 use super::{Exact, FIELD_WORK, Work, invalid};
-use crate::clip::TerrainBlendError;
+use crate::clip::{TerrainBlendError, TerrainBlendMode};
 use crate::{EditError, displacement::DisplacementMesh};
 
 const PACK_WORK: usize = 8;
 const ALPHA_WORK: usize = 8;
 const DIFFERENCE_WORK: usize = 8;
-const MATERIAL_ALPHA_THRESHOLD: f32 = 382.5;
 
 fn scalar_error(field: &ScalarField, base: DVec3, actual: f64) -> Result<f64, EditError> {
     Ok(Exact::float(field.value(base)?)?
@@ -19,24 +18,11 @@ fn scalar_error(field: &ScalarField, base: DVec3, actual: f64) -> Result<f64, Ed
 }
 
 fn alpha(value: f64) -> Result<f32, EditError> {
-    let encoded = value as f32;
-    if !(0.0..=255.0).contains(&value) || value.fract() != 0.0 || f64::from(encoded) != value {
-        return Err(invalid(format!(
-            "Terrain paint sample {value} must be an exact integral native alpha from 0 to 255"
-        )));
-    }
-    Ok(encoded)
+    Ok(TerrainBlendMode::Exact.sample_alpha(value)? as f32)
 }
 
-pub(super) fn round_alpha(value: f64) -> Result<f64, EditError> {
-    if !(0.0..=255.0).contains(&value) {
-        return Err(invalid(format!(
-            "Terrain paint sample {value} must remain between 0 and 255 before rounding"
-        )));
-    }
-    let rounded = value.round_ties_even();
-    alpha(rounded)?;
-    Ok(rounded)
+pub(super) fn sample_alpha(value: f64, mode: TerrainBlendMode) -> Result<f64, EditError> {
+    mode.sample_alpha(value)
 }
 
 fn packed_alpha(value: f32, rounding: bsp::NativeDisplacementRounding) -> Result<f64, EditError> {
@@ -49,6 +35,8 @@ fn packed_alpha(value: f32, rounding: bsp::NativeDisplacementRounding) -> Result
 pub(super) struct PaintField {
     raw: ScalarField,
     packed: [ScalarField; 4],
+    source_base: [DVec3; 4],
+    source_alpha: [f64; 4],
 }
 
 impl PaintField {
@@ -92,7 +80,12 @@ impl PaintField {
                 ))
             })?;
         }
-        Ok(Self { raw, packed })
+        Ok(Self {
+            raw,
+            packed,
+            source_base: base,
+            source_alpha: values,
+        })
     }
 
     pub(super) fn matches(&self, other: &Self, work: &mut Work) -> Result<bool, EditError> {
@@ -114,14 +107,28 @@ impl PaintField {
         Ok(value)
     }
 
-    pub(super) fn rounded_alpha(&self, base: DVec3) -> Result<f64, EditError> {
-        round_alpha(self.raw.value(base)?)
+    pub(super) fn sample_alpha(
+        &self,
+        base: DVec3,
+        mode: TerrainBlendMode,
+    ) -> Result<f64, EditError> {
+        for (source_base, source_alpha) in self.source_base.iter().zip(self.source_alpha) {
+            if *source_base == base {
+                return Ok(source_alpha);
+            }
+        }
+        if mode == TerrainBlendMode::Exact {
+            self.alpha(base)
+        } else {
+            sample_alpha(self.raw.value(base)?, mode)
+        }
     }
 
     pub(super) fn rounding_error(
         &self,
         base: [DVec3; 3],
         values: [f64; 3],
+        mode: TerrainBlendMode,
         work: &mut Work,
     ) -> Result<TerrainBlendError, EditError> {
         work.consume(3 * (5 * (FIELD_WORK + DIFFERENCE_WORK) + 4 * PACK_WORK + ALPHA_WORK))
@@ -139,7 +146,7 @@ impl PaintField {
                 *bound = (*bound).max(scalar_error(field, base, packed_alpha(encoded, rounding)?)?);
             }
         }
-        error.validate()?;
+        error.validate(mode)?;
         Ok(error)
     }
 
@@ -200,13 +207,4 @@ pub(super) fn validate_data(
         }
     }
     Ok(())
-}
-
-pub(super) fn triangle_class(values: [f32; 3]) -> Result<bool, EditError> {
-    let mut sum = 0.0;
-    for value in values {
-        alpha(f64::from(value))?;
-        sum += value;
-    }
-    Ok(sum > MATERIAL_ALPHA_THRESHOLD)
 }

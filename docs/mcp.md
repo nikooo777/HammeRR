@@ -794,7 +794,10 @@ Connected borders must retain complete native full/half links, sample spacing
 and active LOD. The combined candidate preserves unchanged neighbor grids and
 each retained original triangle. Unselected coarsened neighbors can remain only
 with identical masks, active flags, snapped positions, encoded vertices and
-max-allowed triangles. Selected or resulting coarsened patches reject.
+max-allowed triangles. Selected and output coarsened patches must preserve mapped
+allowed/active masks, alpha, ordered fine collision triangles/tags, native positions
+in all four rounding modes and the retained maximal render triangles. A maximal
+triangle crossing the cut, inactive output roots or any changed mapped state refuses.
 Quarter links, changed neighbor LOD, overlapping or
 unmatched contacts, arbitrary cuts and unsupported bindings or metadata refuse
 before changing the map. Carrier-face material does not create

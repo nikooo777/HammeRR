@@ -139,7 +139,7 @@ propagate_face_texture folds a sample through selected connected faces and rejec
 preview_hollow builds inward/outward wall shells with shared geometry and cavity inspection. Get the stamp from get_hollow_preview, inspect with look_inside_hollow, then commit_hollow or cancel_hollow using the token. \
 clip_brushes cuts brushes by a normal/distance, three points, or a snapped planar line. \
 Use preview: true, inspect get_clip_preview and render_view, then commit_clip_preview \
-or cancel_clip_preview. Keep front (arrow side), back, or both; displacements cannot be clipped. \
+or cancel_clip_preview. Keep front (arrow side), back, or both. World/detail terrain supports certified power-3/4 middle-grid and power-4 quarter-grid cuts, including coarsened sources; incompatible native geometry or topology refuses. \
 get_clip_handles and set_clip_handle_options expose shared cut-plane movement/rotation. Begin with begin_clip_drag and the latest clipping snapshot; update_clip_drag takes the returned token and pointer or total amounts. finish_clip_drag only finishes positioning; commit_clip_preview explicitly applies the cut. cancel_clip_drag restores the starting plane. \
 Discover entity classes with search_entity_classes and get_entity_class. create_entity \
 applies FGD defaults, including light brightness; set_entity_properties validates declared \

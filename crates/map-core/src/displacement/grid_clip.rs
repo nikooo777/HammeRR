@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use glam::DVec3;
 use source_formats::{
     bsp,
@@ -14,8 +16,9 @@ const CUT_EPSILON: f64 = 1e-7;
 const NATIVE_SETUP_WORK: usize = 256;
 const NATIVE_VERTEX_WORK: usize = 32;
 const NATIVE_ROUNDINGS: [bsp::NativeDisplacementRounding; 4] = bsp::NativeDisplacementRounding::ALL;
+const POSITION_PROFILES: usize = NATIVE_ROUNDINGS.len() + 1;
 
-type NativePositions = [Vec<[u32; 3]>; NATIVE_ROUNDINGS.len()];
+type NativePositions = [Vec<[u32; 3]>; POSITION_PROFILES];
 
 mod network;
 use network::Work;
@@ -24,6 +27,7 @@ pub(crate) use network::{MAX_NEIGHBORS, Replacement, certify};
 pub(crate) struct Context<'a> {
     vmf: Option<&'a Vmf>,
     work: Work,
+    cuts: BTreeMap<FaceId, CutLine>,
 }
 
 impl<'a> Context<'a> {
@@ -31,7 +35,52 @@ impl<'a> Context<'a> {
         Self {
             vmf,
             work: Work::default(),
+            cuts: BTreeMap::new(),
         }
+    }
+}
+
+struct CutLine {
+    plane: Plane,
+    rows: bool,
+    cut: usize,
+    first_back: bool,
+}
+
+impl CutLine {
+    fn certify(
+        &self,
+        native: &NativePositions,
+        size: usize,
+        work: &mut Work,
+    ) -> Result<(), EditError> {
+        work.consume(POSITION_PROFILES * size * size)
+            .map_err(invalid)?;
+        for positions in native {
+            let positions = positions
+                .iter()
+                .map(|point| DVec3::from_array(point.map(|bits| f64::from(f32::from_bits(bits)))))
+                .collect::<Vec<_>>();
+            if grid_line(&positions, size, self.plane, self.rows, self.cut) != Some(self.first_back)
+            {
+                return Err(invalid(
+                    "Cut plane cannot preserve complete terrain grid separation for native and compiler reconstruction",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn straddles(&self, triangle: [usize; 3], size: usize) -> bool {
+        let coordinates = triangle.map(|index| {
+            if self.rows {
+                index / size
+            } else {
+                index % size
+            }
+        });
+        coordinates.iter().any(|coordinate| *coordinate < self.cut)
+            && coordinates.iter().any(|coordinate| *coordinate > self.cut)
     }
 }
 
@@ -228,6 +277,16 @@ fn certified_native_positions(
     power: u32,
     work: &mut Work,
 ) -> Result<NativePositions, EditError> {
+    certified_encoded_positions(face, mesh, power, native::vertices(mesh), work)
+}
+
+fn certified_encoded_positions(
+    face: &Face,
+    mesh: &DisplacementMesh,
+    power: u32,
+    vertices: Vec<bsp::DisplacementVertex>,
+    work: &mut Work,
+) -> Result<NativePositions, EditError> {
     let base: [DVec3; 4] = face
         .vertices
         .as_slice()
@@ -240,11 +299,8 @@ fn certified_native_positions(
         power: power as i32,
         ..Default::default()
     };
-    let vertices = native::vertices(mesh);
-    work.consume(
-        NATIVE_ROUNDINGS.len() * (NATIVE_SETUP_WORK + NATIVE_VERTEX_WORK * vertices.len()),
-    )
-    .map_err(invalid)?;
+    work.consume(POSITION_PROFILES * (NATIVE_SETUP_WORK + NATIVE_VERTEX_WORK * vertices.len()))
+        .map_err(invalid)?;
     let data = bsp::Displacements {
         infos: vec![info],
         vertices,
@@ -265,6 +321,16 @@ fn certified_native_positions(
             .map(|point| point.map(f32::to_bits))
             .collect();
     }
+    result[NATIVE_ROUNDINGS.len()] = data
+        .positions(0, base)
+        .map_err(|error| {
+            invalid(format!(
+                "Terrain compiler reconstruction cannot be certified: {error}"
+            ))
+        })?
+        .into_iter()
+        .map(|point| point.map(f32::to_bits))
+        .collect();
     Ok(result)
 }
 
@@ -416,19 +482,13 @@ pub(crate) fn plan(
             invalid("Cut plane must follow a complete existing terrain grid half-line, or a power 4 quarter-line, with each region wholly on one side")
         })?;
     let original_native = certified_native_positions(face, &mesh, info.power, work)?;
-    work.consume(NATIVE_ROUNDINGS.len() * mesh.positions.len())
-        .map_err(invalid)?;
-    for positions in &original_native {
-        let positions = positions
-            .iter()
-            .map(|point| DVec3::from_array(point.map(|bits| f64::from(f32::from_bits(bits)))))
-            .collect::<Vec<_>>();
-        if grid_line(&positions, mesh.size, plane, rows, cut) != Some(first_back) {
-            return Err(invalid(
-                "Cut plane cannot preserve complete native terrain grid separation under every rounding mode",
-            ));
-        }
-    }
+    let cut_line = CutLine {
+        plane,
+        rows,
+        cut,
+        first_back,
+    };
+    cut_line.certify(&original_native, mesh.size, work)?;
     let last = mesh.size - 1;
     let leaves = quadrants(Child {
         row: 0,
@@ -476,7 +536,7 @@ pub(crate) fn plan(
             let output_info = part.sides[index].displacement.as_ref().unwrap();
             let (_, output) = native::checked_mesh(face, output_info).map_err(invalid)?;
             let output_native = certified_native_positions(face, &output, output_info.power, work)?;
-            work.consume(NATIVE_ROUNDINGS.len() * output.positions.len())
+            work.consume(POSITION_PROFILES * output.positions.len())
                 .map_err(invalid)?;
             for child_row in 0..output.size {
                 for child_column in 0..output.size {
@@ -490,7 +550,7 @@ pub(crate) fn plan(
                         .any(|(original, output)| original[source] != output[target])
                     {
                         return Err(invalid(
-                            "Terrain carrier cannot preserve native vertex bits under every rounding mode",
+                            "Terrain carrier cannot preserve native and compiler vertex bits",
                         ));
                     }
                     if output.positions[target].distance(mesh.positions[source]) > SAMPLE_EPSILON
@@ -537,12 +597,14 @@ pub(crate) fn plan(
         .map(|child| (child.cells() + 1).pow(2))
         .sum();
     let triangles = children.iter().map(|child| child.cells().pow(2) * 2).sum();
+    let source = FaceId {
+        solid: solid.id,
+        side: side.id,
+    };
+    context.cuts.insert(source, cut_line);
     Ok(Some(Plan {
         parts,
-        source: FaceId {
-            solid: solid.id,
-            side: side.id,
-        },
+        source,
         source_power: info.power,
         output_power,
         vertices,

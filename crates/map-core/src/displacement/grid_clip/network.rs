@@ -7,8 +7,8 @@ use source_formats::{
 };
 
 use super::{
-    Child, Context, NATIVE_ROUNDINGS, SAMPLE_EPSILON, certified_native_positions, contains,
-    invalid, touches,
+    Child, Context, CutLine, NativePositions, POSITION_PROFILES, SAMPLE_EPSILON,
+    certified_encoded_positions, certified_native_positions, contains, invalid, touches,
 };
 use crate::displacement::{
     DisplacementMesh, lod, native,
@@ -118,6 +118,76 @@ struct LodState {
     encoded_vertices: Vec<[u32; 5]>,
     emitted_positions: Vec<[u32; 3]>,
     indices: Vec<[usize; 3]>,
+}
+
+struct NativeState {
+    allowed: Vec<bool>,
+    active: Vec<bool>,
+    alphas: Vec<u32>,
+    positions: NativePositions,
+    indices: Vec<[usize; 3]>,
+}
+
+impl NativeState {
+    fn prepare(
+        surface: &Surface<'_>,
+        lod: Option<&LodState>,
+        work: &mut Work,
+    ) -> Result<Self, EditError> {
+        let count = surface.vertices.len();
+        let indices = lod.map_or(surface.indices.as_slice(), |lod| lod.indices.as_slice());
+        work.consume(count * 4 + indices.len()).map_err(invalid)?;
+        let allowed = (0..count)
+            .map(|index| lod.is_none_or(|lod| lod.mask[index / 32] & (1 << (index % 32)) != 0))
+            .collect::<Vec<_>>();
+        let active = lod.map_or_else(|| vec![true; count], |lod| lod.active.clone());
+        let size = surface.mesh.size;
+        if [
+            0,
+            size - 1,
+            size * (size - 1),
+            size * size - 1,
+            size * (size / 2) + size / 2,
+        ]
+        .into_iter()
+        .any(|index| !allowed[index] || !active[index])
+        {
+            return Err(invalid(
+                "Terrain clipping requires active native roots and corners in every output grid",
+            ));
+        }
+        let vertices = lod.map_or_else(
+            || surface.vertices.clone(),
+            |lod| {
+                lod.encoded_vertices
+                    .iter()
+                    .map(|vertex| bsp::DisplacementVertex {
+                        direction: [vertex[0], vertex[1], vertex[2]].map(f32::from_bits),
+                        distance: f32::from_bits(vertex[3]),
+                        alpha: f32::from_bits(vertex[4]),
+                    })
+                    .collect()
+            },
+        );
+        let alphas = vertices
+            .iter()
+            .map(|vertex| vertex.alpha.to_bits())
+            .collect();
+        let positions = certified_encoded_positions(
+            &surface.raw.face,
+            &surface.mesh,
+            surface.raw.side.displacement.as_ref().unwrap().power,
+            vertices,
+            work,
+        )?;
+        Ok(Self {
+            allowed,
+            active,
+            alphas,
+            positions,
+            indices: indices.to_vec(),
+        })
+    }
 }
 
 fn lod_state(
@@ -432,6 +502,74 @@ fn canonical(mut triangle: [usize; 3]) -> [usize; 3] {
     triangle
 }
 
+fn certify_lod(
+    original: &Surface<'_>,
+    previous: Option<&LodState>,
+    outputs: &[Surface<'_>],
+    current: &Graph,
+    retained: &BTreeSet<Vertex>,
+    cut: &CutLine,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let previous = NativeState::prepare(original, previous, work)?;
+    cut.certify(&previous.positions, original.mesh.size, work)?;
+    let mut expected = BTreeSet::new();
+    for &triangle in &previous.indices {
+        work.consume(1).map_err(invalid)?;
+        if cut.straddles(triangle, original.mesh.size) {
+            return Err(invalid(
+                "Native terrain LOD triangles straddle the cut line",
+            ));
+        }
+        if triangle
+            .iter()
+            .all(|index| retained.contains(&original.vertex(*index)))
+        {
+            expected.insert(canonical(triangle));
+        }
+    }
+    let mut actual = BTreeSet::new();
+    for (output_index, output) in outputs
+        .iter()
+        .enumerate()
+        .filter(|(_, output)| output.raw.id == original.raw.id)
+    {
+        let state = NativeState::prepare(output, current.lod[output_index].as_ref(), work)?;
+        work.consume(POSITION_PROFILES * output.vertices.len() + state.indices.len())
+            .map_err(invalid)?;
+        for index in 0..output.vertices.len() {
+            let source = output.vertex(index).index;
+            if previous.allowed[source] != state.allowed[index]
+                || previous.active[source] != state.active[index]
+                || previous.alphas[source] != state.alphas[index]
+                || previous
+                    .positions
+                    .iter()
+                    .zip(&state.positions)
+                    .any(|(original, output)| original[source] != output[index])
+            {
+                return Err(invalid(
+                    "Terrain clipping cannot preserve mapped native LOD masks, active vertices, alpha and encoded geometry",
+                ));
+            }
+        }
+        for triangle in state.indices {
+            let mapped = canonical(triangle.map(|index| output.vertex(index).index));
+            if !actual.insert(mapped) {
+                return Err(invalid(
+                    "Terrain clipping duplicated a maximal native LOD triangle",
+                ));
+            }
+        }
+    }
+    if actual != expected {
+        return Err(invalid(
+            "Terrain clipping cannot preserve the retained maximal native LOD triangle multiset",
+        ));
+    }
+    Ok(())
+}
+
 fn verify_selected(
     document: &Document,
     context: &Vmf,
@@ -535,11 +673,11 @@ fn verify_selected(
             certified_native_positions(&original.raw.face, &original.mesh, power, work)?;
         let assembled_native =
             certified_native_positions(&assembled.raw.face, &assembled.mesh, power, work)?;
-        work.consume(NATIVE_ROUNDINGS.len() * original.vertices.len())
+        work.consume(POSITION_PROFILES * original.vertices.len())
             .map_err(invalid)?;
         if original_native != assembled_native {
             return Err(invalid(
-                "Resolved terrain context changed selected native vertex bits under a supported rounding mode",
+                "Resolved terrain context changed selected native or compiler vertex bits",
             ));
         }
         for index in 0..original.vertices.len() {
@@ -569,6 +707,7 @@ pub(crate) fn certify(
     context: &mut Context<'_>,
 ) -> Result<Vec<Verification>, EditError> {
     let work = &mut context.work;
+    let cuts = &context.cuts;
     let raw = collect(context.vmf.unwrap_or(document.vmf()))?;
     if let Some(context) = context.vmf {
         verify_selected(document, context, &raw, replacements, work)?;
@@ -658,15 +797,6 @@ pub(crate) fn certify(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let previous = graph(&before, work)?;
-    if before
-        .iter()
-        .zip(&previous.lod)
-        .any(|(surface, lod)| selected.contains(&surface.raw.id) && lod.is_some())
-    {
-        return Err(invalid(
-            "Selected terrain uses LOD-coarsened native geometry and cannot be clipped",
-        ));
-    }
     let mut after = Vec::new();
     for surface in &before {
         if let Some(replacement) = replacements
@@ -714,15 +844,6 @@ pub(crate) fn certify(
         }
     }
     let current = graph(&after, work)?;
-    if after
-        .iter()
-        .zip(&current.lod)
-        .any(|(surface, lod)| selected.contains(&surface.raw.id) && lod.is_some())
-    {
-        return Err(invalid(
-            "Clipped terrain would require LOD-coarsened native geometry",
-        ));
-    }
     let mut retained = BTreeSet::new();
     for surface in &after {
         retained.extend((0..surface.vertices.len()).map(|index| surface.vertex(index)));
@@ -753,14 +874,28 @@ pub(crate) fn certify(
         ));
     }
     for (original_index, original) in before.iter().enumerate() {
+        if selected.contains(&original.raw.id) {
+            let cut = cuts
+                .get(&original.raw.id)
+                .ok_or_else(|| invalid("Terrain clipping lost its certified cut line"))?;
+            certify_lod(
+                original,
+                previous.lod[original_index].as_ref(),
+                &after,
+                &current,
+                &retained,
+                cut,
+                work,
+            )?;
+        }
+        // Native collision classifies alpha with an ordered three-f32 sum.
         let mut expected = BTreeMap::new();
         for (index, triangle) in original.indices.iter().enumerate() {
-            let key = canonical(*triangle);
             if triangle
                 .iter()
                 .all(|vertex| retained.contains(&original.vertex(*vertex)))
             {
-                expected.insert(key, original.tags[index]);
+                expected.insert(*triangle, original.tags[index]);
             }
         }
         let mut actual = BTreeMap::new();
@@ -790,7 +925,7 @@ pub(crate) fn certify(
                 ));
             }
             for (index, triangle) in output.indices.iter().enumerate() {
-                let key = canonical(triangle.map(|vertex| output.vertex(vertex).index));
+                let key = triangle.map(|vertex| output.vertex(vertex).index);
                 if actual.insert(key, output.tags[index]).is_some() {
                     return Err(invalid(
                         "Terrain clipping duplicated a native source triangle",
@@ -813,7 +948,7 @@ pub(crate) fn certify(
         }
         if actual != expected {
             return Err(invalid(
-                "Terrain clipping cannot preserve the retained native triangle and tag multiset",
+                "Terrain clipping cannot preserve the retained ordered native triangle and tag multiset",
             ));
         }
     }

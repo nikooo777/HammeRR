@@ -94,9 +94,10 @@ child edits or a parent save.
   world or `func_detail` patch and a complete middle grid line, or a power-4
   quarter line.
   Matching full/half borders must retain their sample spacing and LOD state.
-  Unselected coarsened neighbors can remain; their complete native state must
-  stay unchanged. Selected or resulting coarsened patches reject.
-- Arbitrary cuts, power-2 splitting, quarter-edge links, LOD changes and
+  Coarsened source and output patches must retain their native masks, positions,
+  collision triangles and maximal render triangles. Unselected neighbors must
+  keep their complete native state.
+- Arbitrary cuts, power-2 splitting, quarter-edge links, changed LOD geometry and
   overlapping or unmatched borders reject. Missing or unsupported child sources
   stop the preview. Saved-hidden references are omitted; display filters do not
   remove compiler neighbors.

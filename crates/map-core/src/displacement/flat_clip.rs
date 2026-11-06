@@ -278,6 +278,12 @@ struct HeightSheet {
     sign: i128,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Original,
+    Child,
+}
+
 fn data(
     face: &Face,
     mesh: &DisplacementMesh,
@@ -623,8 +629,7 @@ fn check_source<'a>(
 }
 
 fn height_sheet(source: &Admitted<'_>, work: &mut Work) -> Result<HeightSheet, EditError> {
-    let sheet = projected_sheet(&source.mesh, &source.positions, work)?;
-    original_boundary_projection(&source.mesh, &sheet, work)?;
+    let sheet = projected_sheet(&source.mesh, &source.positions, Phase::Original, work)?;
     let mesh = &source.mesh;
     let cells = mesh.size - 1;
     let corners = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells]
@@ -656,6 +661,7 @@ fn height_sheet(source: &Admitted<'_>, work: &mut Work) -> Result<HeightSheet, E
 fn projected_sheet(
     mesh: &DisplacementMesh,
     positions: &[Vec<DVec3>],
+    phase: Phase,
     work: &mut Work,
 ) -> Result<HeightSheet, EditError> {
     let cells = mesh.size - 1;
@@ -705,6 +711,70 @@ fn projected_sheet(
             ));
         }
     }
+    match phase {
+        Phase::Original => polygonal_boundary(mesh, axes, sign, work)?,
+        Phase::Child => straight_boundary(mesh, visible, axes)?,
+    }
+    Ok(HeightSheet { axis, axes, sign })
+}
+
+fn polygonal_boundary(
+    mesh: &DisplacementMesh,
+    axes: [usize; 2],
+    sign: i128,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    if !matches!(mesh.size, 5 | 9 | 17) {
+        return Err(invalid(
+            "Terrain projected boundaries require power 2, 3 or 4",
+        ));
+    }
+    let cells = mesh.size - 1;
+    let count = 4 * cells;
+    work.consume((FIELD_WORK + 1) * count * count + count)
+        .map_err(invalid)?;
+    let mut ring = Vec::with_capacity(count);
+    for side in 0..4 {
+        for index in neighbors::edge_indices(mesh.size, side)
+            .map_err(invalid)?
+            .into_iter()
+            .take(cells)
+        {
+            ring.push(mesh.positions[index]);
+        }
+    }
+    for first in 0..ring.len() {
+        let a = ring[first];
+        let b = ring[(first + 1) % ring.len()];
+        if axes.iter().all(|&axis| a[axis] == b[axis]) {
+            return Err(invalid(
+                "Terrain projected boundary contains a collapsed edge",
+            ));
+        }
+        for point in ring.iter().skip(first + 1) {
+            if axes.iter().all(|&axis| a[axis] == point[axis]) {
+                return Err(invalid(
+                    "Terrain projected boundary vertices must be unique",
+                ));
+            }
+        }
+        for &point in &ring {
+            let side = orient(a, b, point, axes)?;
+            if side != 0 && side != sign {
+                return Err(invalid(
+                    "Original curved terrain requires a convex projected polygonal boundary",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn straight_boundary(
+    mesh: &DisplacementMesh,
+    visible: [DVec3; 4],
+    axes: [usize; 2],
+) -> Result<(), EditError> {
     for side in 0..4 {
         let a = visible[side];
         let b = visible[(side + 1) % 4];
@@ -732,28 +802,32 @@ fn projected_sheet(
             previous = Some(point[coordinate]);
         }
     }
-    Ok(HeightSheet { axis, axes, sign })
+    Ok(())
 }
 
 fn original_boundary_projection(
-    mesh: &DisplacementMesh,
-    sheet: &HeightSheet,
+    base_positions: &[DVec3],
+    positions: &[DVec3],
+    size: usize,
+    axis: usize,
+    sign: i128,
     work: &mut Work,
 ) -> Result<NormalProjection, EditError> {
-    work.consume(FIELD_WORK * (16 + 8 * mesh.size))
+    work.consume(FIELD_WORK * (16 + 8 * size))
         .map_err(invalid)?;
-    let cells = mesh.size - 1;
-    let indices = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells];
+    let cells = size - 1;
+    let indices = [0, cells * size, size * size - 1, cells];
     let projection = NormalProjection::new(
-        indices.map(|index| mesh.base_positions[index]),
-        indices.map(|index| mesh.positions[index]),
-        sheet.axis,
-        sheet.sign,
+        indices.map(|index| base_positions[index]),
+        indices.map(|index| positions[index]),
+        axis,
+        sign,
     )?;
+    let axes = [(axis + 1) % 3, (axis + 2) % 3];
     for side in 0..4 {
-        for index in neighbors::edge_indices(mesh.size, side).map_err(invalid)? {
-            for (field, coordinate) in projection.fields.iter().zip(sheet.axes) {
-                if field.value(mesh.base_positions[index])? != mesh.positions[index][coordinate] {
+        for index in neighbors::edge_indices(size, side).map_err(invalid)? {
+            for (field, coordinate) in projection.fields.iter().zip(axes) {
+                if field.value(base_positions[index])? != positions[index][coordinate] {
                     return Err(invalid(
                         "Original curved terrain boundaries must retain one exact affine tangential cage mapping",
                     ));

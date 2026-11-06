@@ -838,18 +838,28 @@ and unsupported providers refuse.
 Cells mode accepts curved power-2/3/4 world or `func_detail` terrain with exact
 planar bases, including qualified tilted bases. The cage must be rectangular
 in the coordinate chart chosen by the exact base plane. Curved height and
-non-affine interior tangential warps are supported when the original projected
-boundary stays straight, strictly monotone
-and convex. Every original boundary sample must follow one exact affine
-boundary/cage mapping shared by its original native contact component, using the
-coordinate pair chosen by the base-plane chart.
+non-affine interior tangential warps are supported. An isolated original, with no
+original native edge or corner contacts, may have bowed borders when its exact
+projected native perimeter forms one simple convex polygon. Boundary vertices
+must be distinct and segments noncollapsed. Each directed segment must keep all
+other boundary vertices in its exact closed interior half-plane with the source
+winding; collinear forward samples are allowed. The four visible corner
+projections remain strictly convex and every original render triangle remains
+strictly positive. No approximate hull or boundary is substituted.
+
+Any component with an original native edge or corner contact still requires one
+common exact affine boundary/cage mapping at every sample on every original border, including
+untouched sides, using the coordinate pair chosen by the base-plane chart.
+Whole-neighbor retiling remains subject to this connected-boundary rule.
 Original and output triangles must preserve orientation
 and pass exact native/compiler position and fixed-diagonal native normal checks.
 Every base-grid sample must lie on the exact base plane after all native profiles
 and the compiler agree on one base grid. Native normals retain the fixed-stencil
 sign and conditioning bound of 256 along the chosen chart axis. Children need
-local geometry, boundary and normal proofs; their interiors need not be affine.
-Folded projections and nonlinear boundary mappings refuse. The requested plane
+local geometry, boundary and normal proofs, with straight strictly monotone
+convex quad projections; their interiors need not be affine. Folded projections,
+concave or self-intersecting source borders and non-affine connected boundaries
+refuse. The requested plane
 must follow a complete internal original row or column. Each retained
 whole original cell becomes one power-2 patch. It certifies authored, compiler
 and all four native positions, the original piecewise surface planes, exact UVs,

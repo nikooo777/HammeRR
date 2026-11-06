@@ -225,10 +225,12 @@ terrain at any complete original row or column, including power 2. It refines
 whole cells and supports curved height and non-affine interior tangential warps
 on exact planar bases, including qualified tilted bases. The base cage must be
 rectangular in its exact base-plane coordinate chart.
-Original projected borders must remain straight and convex, with samples ordered
-along each edge. Every original boundary sample must follow one exact affine
-mapping from the base cages to those borders, shared by connected originals.
-Folded projections and nonlinear border mappings reject.
+Isolated originals may have bowed borders when their exact projected native
+samples form a simple convex polygon. Originals joined by native edges or corners
+still require straight borders and one exact affine boundary mapping at every sample,
+shared across the component. Output patches retain straight, strictly ordered
+convex quad projections. Folded projections, concave or self-intersecting borders
+and non-affine connected boundaries reject.
 Native geometry, piecewise raw/native paint fields and labels must remain exact.
 Unchanged curved neighbors can retain a certified corner, or an old edge contact
 can be fully severed. They must share the exact base, orientation and original

@@ -7,7 +7,7 @@ use source_formats::{
 };
 
 use super::{
-    CUT_EPSILON, Exact, FIELD_WORK, data,
+    CUT_EPSILON, Exact, FIELD_WORK, Phase, data,
     field::{BasePlane, PlanarField},
     invalid, orient, reconstructed, same, weighted,
 };
@@ -35,12 +35,6 @@ enum Mode {
     Cells,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    Original,
-    Child,
-}
-
 struct Raw<'a> {
     source: FaceId,
     side: &'a Side,
@@ -57,7 +51,6 @@ struct Surface<'a> {
     base_positions: Vec<DVec3>,
     positions: Vec<Vec<DVec3>>,
     sheet: Sheet,
-    projection: Option<super::NormalProjection>,
 }
 
 struct Sheet {
@@ -92,10 +85,19 @@ impl Surface<'_> {
         }
     }
 
-    fn original_projection(&self) -> Result<&super::NormalProjection, EditError> {
-        self.projection.as_ref().ok_or_else(|| {
-            invalid("Original curved terrain lost its affine boundary projection proof")
-        })
+    fn original_projection(&self, work: &mut Work) -> Result<super::NormalProjection, EditError> {
+        let size = self
+            .info
+            .grid_size()
+            .map_err(|error| invalid(error.to_string()))?;
+        super::original_boundary_projection(
+            &self.base_positions,
+            self.positions.last().unwrap(),
+            size,
+            self.sheet.base.axis(),
+            self.sheet.sign,
+            work,
+        )
     }
 }
 
@@ -359,24 +361,17 @@ fn prepare<'a>(
     let positions = reconstructed(&data, base, work)?;
     super::native_base(&mut mesh, &data, base, work)?;
     let base_plane = BasePlane::new([corners[0], corners[1], corners[2]])?;
-    let (field, projection) = match mode {
+    let field = match mode {
         Mode::Flat => {
             work.consume(FIELD_WORK * 17).map_err(invalid)?;
-            (
-                Some(PlanarField::new(
-                    corners,
-                    corner_indices.map(|index| mesh.positions[index]),
-                )?),
-                None,
-            )
+            Some(PlanarField::new(
+                corners,
+                corner_indices.map(|index| mesh.positions[index]),
+            )?)
         }
         Mode::Cells => {
-            let sheet = super::projected_sheet(&mesh, &positions, work)?;
-            let projection = match phase {
-                Phase::Original => Some(super::original_boundary_projection(&mesh, &sheet, work)?),
-                Phase::Child => None,
-            };
-            (None, projection)
+            super::projected_sheet(&mesh, &positions, phase, work)?;
+            None
         }
     };
     let axis = base_plane.axis();
@@ -455,7 +450,6 @@ fn prepare<'a>(
         base_positions: mesh.base_positions,
         positions,
         sheet,
-        projection,
     })
 }
 
@@ -627,11 +621,15 @@ fn certify_original_projections(
     corners: &BTreeSet<(usize, usize)>,
     work: &mut Work,
 ) -> Result<(), EditError> {
+    let mut projections = BTreeMap::new();
     for &(first, second) in edges.iter().chain(corners) {
         work.consume(2 * FIELD_WORK).map_err(invalid)?;
-        let first = surfaces[first].original_projection()?;
-        let second = surfaces[second].original_projection()?;
-        if !first.matches(second)? {
+        for index in [first, second] {
+            if let std::collections::btree_map::Entry::Vacant(entry) = projections.entry(index) {
+                entry.insert(surfaces[index].original_projection(work)?);
+            }
+        }
+        if !projections[&first].matches(&projections[&second])? {
             return Err(invalid(
                 "Connected original curved terrain requires one exact common affine boundary projection",
             ));

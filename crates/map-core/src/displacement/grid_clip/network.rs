@@ -18,7 +18,7 @@ use crate::displacement::{
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Face, Plane};
 
-const MAX_WORK: usize = 8_000_000;
+const MAX_WORK: usize = 16_000_000;
 pub const MAX_NEIGHBORS: usize = 128;
 
 pub(crate) struct Replacement<'a> {

@@ -491,7 +491,7 @@ pub struct ClipArgs {
     pub keep: Option<String>,
     /// New cap/carrier-face material; omitted inherits the source's first material. Native terrain has no sealed cut wall.
     pub material: Option<String>,
-    /// grid preserves existing samples; flat explicitly retiles eligible flat terrain. Omitted uses the shared form choice.
+    /// grid preserves samples; flat retiles planar fields; cells refines complete original cells. Omitted uses the shared form choice.
     pub terrain_mode: Option<ClipTerrainMode>,
     #[serde(default)]
     pub preview: bool,
@@ -507,6 +507,7 @@ pub struct ClipToolArgs {
 pub enum ClipTerrainMode {
     Grid,
     Flat,
+    Cells,
 }
 
 impl ClipTerrainMode {
@@ -514,6 +515,7 @@ impl ClipTerrainMode {
         match self {
             Self::Grid => map_core::clip::TerrainMode::Grid,
             Self::Flat => map_core::clip::TerrainMode::Flat,
+            Self::Cells => map_core::clip::TerrainMode::Cells,
         }
     }
 }
@@ -527,6 +529,7 @@ fn clip_terrain_mode_name(mode: map_core::clip::TerrainMode) -> &'static str {
     match mode {
         map_core::clip::TerrainMode::Grid => "grid",
         map_core::clip::TerrainMode::Flat => "flat",
+        map_core::clip::TerrainMode::Cells => "cells",
     }
 }
 

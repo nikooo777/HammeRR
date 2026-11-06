@@ -8,7 +8,7 @@ fn invalid(message: &str) -> EditError {
     EditError::Invalid(message.into())
 }
 
-fn weights(size: usize, row: f64, col: f64) -> ([usize; 3], [f64; 3]) {
+pub(super) fn weights(size: usize, row: f64, col: f64) -> ([usize; 3], [f64; 3]) {
     let r = (row as usize).min(size - 2);
     let c = (col as usize).min(size - 2);
     let y = row - r as f64;

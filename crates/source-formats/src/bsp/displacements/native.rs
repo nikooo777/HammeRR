@@ -12,6 +12,7 @@ const MAX_MAPPING_DIMENSION: u32 = 1 << 15;
 const MIN_NORMAL_CROSS_COMPONENT: u32 = (127 - 50) << 23;
 const MAX_NORMAL_CROSS_COMPONENT: u32 = (127 + 50) << 23;
 const MIN_NORMAL_CROSS_MAXIMUM: u32 = (127 - 6) << 23;
+const MAX_HEIGHT_NORMAL_COMPONENT_RATIO: f32 = 256.0;
 const ALPHA_NORMALIZATION: f32 = f32::from_bits(0x3b80_8081);
 const ALPHA_BYTE_MAXIMUM: f32 = 255.0;
 const ALPHA_ROUNDING_BIAS: f32 = 8_388_608.0;
@@ -449,7 +450,7 @@ impl Arithmetic {
     }
 }
 
-fn conditioned_normal_signs(cross: [f32; 3]) -> io::Result<[i8; 3]> {
+fn conditioned_normal_signs(cross: [f32; 3]) -> io::Result<([i8; 3], u32)> {
     let mut signs = [0; 3];
     let mut maximum = 0;
     for (axis, component) in cross.into_iter().enumerate() {
@@ -470,7 +471,7 @@ fn conditioned_normal_signs(cross: [f32; 3]) -> io::Result<[i8; 3]> {
             "native displacement normal triangles are collapsed or poorly conditioned",
         ));
     }
-    Ok(signs)
+    Ok((signs, maximum))
 }
 
 impl DisplacementInfo {
@@ -482,6 +483,35 @@ impl DisplacementInfo {
     pub fn certify_native_normal_inputs(
         self,
         positions: &[[f32; 3]],
+        profile: NativeDisplacementProfile,
+    ) -> io::Result<()> {
+        self.certify_native_normal_stencil(positions, None, profile)
+    }
+
+    /// Certifies exact, bounded native cell-normal inputs for a heightfield.
+    /// Nonzero cross magnitudes must lie in [2^-50, 2^50], with at least one
+    /// magnitude of 2^-6 or greater per triangle.
+    /// Each triangle must have a nonzero, consistently signed height component,
+    /// with every component at most 256 times its magnitude. Tangential components
+    /// may cancel or flush to zero; the height projection keeps the averages finite
+    /// and nonzero. The caller must prove heightfield geometry and positive projected
+    /// orientation. This does not certify native normal bits or pixels.
+    pub fn certify_native_height_normal_inputs(
+        self,
+        positions: &[[f32; 3]],
+        axis: usize,
+        profile: NativeDisplacementProfile,
+    ) -> io::Result<()> {
+        if axis >= 3 {
+            return Err(invalid("native displacement height axis must be 0, 1 or 2"));
+        }
+        self.certify_native_normal_stencil(positions, Some(axis), profile)
+    }
+
+    fn certify_native_normal_stencil(
+        self,
+        positions: &[[f32; 3]],
+        height_axis: Option<usize>,
         profile: NativeDisplacementProfile,
     ) -> io::Result<()> {
         let NativeDisplacementProfile::CssLinux64Build25338318 { rounding } = profile;
@@ -501,7 +531,23 @@ impl DisplacementInfo {
                 let d = positions[(row + 1) * size + column + 1];
                 for [origin, first, second] in [[a, b, c], [b, d, c]] {
                     let cross = arithmetic.exact_cross(origin, first, second)?;
-                    let signs = conditioned_normal_signs(cross)?;
+                    let (mut signs, maximum) = conditioned_normal_signs(cross)?;
+                    if let Some(axis) = height_axis {
+                        let height = f32::from_bits(cross[axis].to_bits() & !SIGN);
+                        if signs[axis] == 0
+                            || maximum
+                                > arithmetic
+                                    .multiply(height, MAX_HEIGHT_NORMAL_COMPONENT_RATIO)?
+                                    .to_bits()
+                        {
+                            return Err(invalid(
+                                "native displacement height normal projection is collapsed or poorly conditioned",
+                            ));
+                        }
+                        let sign = signs[axis];
+                        signs = [0; 3];
+                        signs[axis] = sign;
+                    }
                     if expected_signs.is_some_and(|expected| expected != signs) {
                         return Err(invalid(
                             "native displacement normal stencil changes orientation",

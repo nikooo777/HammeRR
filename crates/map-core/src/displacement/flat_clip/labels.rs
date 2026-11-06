@@ -1,7 +1,7 @@
 use glam::DVec3;
 use source_formats::vmf::DispInfo;
 
-use super::{Work, invalid, orient, paint, same, triangles};
+use super::{FIELD_WORK, PlanarField, Work, invalid, orient, paint, same, triangles};
 use crate::{EditError, displacement::DisplacementMesh};
 
 const BASE_WORK: usize = 16;
@@ -73,6 +73,24 @@ struct Projected {
     sign: i128,
 }
 
+fn projected_bounds(points: &[DVec3], axes: [usize; 2]) -> [[f64; 2]; 2] {
+    axes.map(|axis| {
+        let mut bounds = [points[0][axis]; 2];
+        for point in &points[1..] {
+            bounds[0] = bounds[0].min(point[axis]);
+            bounds[1] = bounds[1].max(point[axis]);
+        }
+        bounds
+    })
+}
+
+fn bounds_overlap(first: [[f64; 2]; 2], second: [[f64; 2]; 2]) -> bool {
+    first
+        .iter()
+        .zip(second)
+        .all(|(a, b)| a[1] > b[0] && b[1] > a[0])
+}
+
 impl Projected {
     fn new(points: [DVec3; 3], axes: [usize; 2]) -> Result<Self, EditError> {
         let sign = orient(points[0], points[1], points[2], axes)?;
@@ -81,14 +99,7 @@ impl Projected {
                 "Terrain triangle labels require positive-area triangles",
             ));
         }
-        let bounds = axes.map(|axis| {
-            let mut bounds = [points[0][axis]; 2];
-            for point in &points[1..] {
-                bounds[0] = bounds[0].min(point[axis]);
-                bounds[1] = bounds[1].max(point[axis]);
-            }
-            bounds
-        });
+        let bounds = projected_bounds(&points, axes);
         Ok(Self {
             points,
             bounds,
@@ -97,12 +108,7 @@ impl Projected {
     }
 
     fn overlaps(&self, other: &Self, axes: [usize; 2], work: &mut Work) -> Result<bool, EditError> {
-        if self
-            .bounds
-            .iter()
-            .zip(other.bounds)
-            .any(|(a, b)| a[1] <= b[0] || b[1] <= a[0])
-        {
+        if !bounds_overlap(self.bounds, other.bounds) {
             return Ok(false);
         }
         work.consume(SAT_WORK).map_err(invalid)?;
@@ -133,6 +139,7 @@ impl Projected {
 struct SourceTriangle {
     projected: Projected,
     label: Label,
+    surface: Option<PlanarField>,
 }
 
 pub(super) struct TriangleField {
@@ -142,6 +149,7 @@ pub(super) struct TriangleField {
     source: Vec<SourceTriangle>,
     has_raw_tags: bool,
     has_secondary_surface: bool,
+    certify_surface: bool,
 }
 
 impl TriangleField {
@@ -149,6 +157,25 @@ impl TriangleField {
         info: &DispInfo,
         mesh: &DisplacementMesh,
         has_secondary_surface: bool,
+        work: &mut Work,
+    ) -> Result<Self, EditError> {
+        Self::prepare(info, mesh, has_secondary_surface, false, work)
+    }
+
+    pub(super) fn surface(
+        info: &DispInfo,
+        mesh: &DisplacementMesh,
+        has_secondary_surface: bool,
+        work: &mut Work,
+    ) -> Result<Self, EditError> {
+        Self::prepare(info, mesh, has_secondary_surface, true, work)
+    }
+
+    fn prepare(
+        info: &DispInfo,
+        mesh: &DisplacementMesh,
+        has_secondary_surface: bool,
+        certify_surface: bool,
         work: &mut Work,
     ) -> Result<Self, EditError> {
         power(mesh)?;
@@ -167,8 +194,10 @@ impl TriangleField {
         let coordinate = mesh.base_positions[0][axis];
         let axes = [(axis + 1) % 3, (axis + 2) % 3];
         let labels = read_labels(info, mesh, has_secondary_surface, work)?;
-        work.consume(TRIANGLE_WORK * labels.len())
-            .map_err(invalid)?;
+        work.consume(
+            (TRIANGLE_WORK + usize::from(certify_surface) * 8 * FIELD_WORK) * labels.len(),
+        )
+        .map_err(invalid)?;
         let source = mesh
             .triangles()
             .zip(labels)
@@ -179,6 +208,14 @@ impl TriangleField {
                         axes,
                     )?,
                     label,
+                    surface: certify_surface
+                        .then(|| {
+                            PlanarField::triangle(
+                                triangle.map(|index| mesh.base_positions[index]),
+                                triangle.map(|index| mesh.positions[index]),
+                            )
+                        })
+                        .transpose()?,
                 })
             })
             .collect::<Result<_, EditError>>()?;
@@ -189,6 +226,7 @@ impl TriangleField {
             source,
             has_raw_tags: info.triangle_tags.is_some(),
             has_secondary_surface,
+            certify_surface,
         })
     }
 
@@ -201,8 +239,8 @@ impl TriangleField {
         let count = 2 * (child.size - 1).pow(2);
         work.consume(
             BASE_WORK * child.base_positions.len()
-                + TRIANGLE_WORK * count
-                + AABB_WORK * count * self.source.len(),
+                + (TRIANGLE_WORK + usize::from(self.certify_surface) * 8 * FIELD_WORK) * count
+                + AABB_WORK * self.source.len(),
         )
         .map_err(invalid)?;
         if child
@@ -214,15 +252,43 @@ impl TriangleField {
                 "Terrain triangle labels must remain on their original base plane",
             ));
         }
+        let bounds = projected_bounds(&child.base_positions, self.axes);
+        let candidates = self
+            .source
+            .iter()
+            .filter(|source| bounds_overlap(bounds, source.projected.bounds))
+            .collect::<Vec<_>>();
+        work.consume(AABB_WORK * count * candidates.len())
+            .map_err(invalid)?;
         let mut labels = Vec::with_capacity(count);
         // The caller proves complete child coverage inside the retained source region.
         for triangle in child.triangles() {
             let projected =
                 Projected::new(triangle.map(|index| child.base_positions[index]), self.axes)?;
+            let surface = self
+                .certify_surface
+                .then(|| {
+                    PlanarField::triangle(
+                        triangle.map(|index| child.base_positions[index]),
+                        triangle.map(|index| child.positions[index]),
+                    )
+                })
+                .transpose()?;
             let mut label = None;
-            for source in &self.source {
+            for source in &candidates {
                 if !projected.overlaps(&source.projected, self.axes, work)? {
                     continue;
+                }
+                if let Some(source_surface) = &source.surface {
+                    work.consume(FIELD_WORK).map_err(invalid)?;
+                    let surface = surface.as_ref().ok_or_else(|| {
+                        invalid("Terrain triangle mapping lost its surface field")
+                    })?;
+                    if !source_surface.matches(surface)? {
+                        return Err(invalid(
+                            "Terrain output triangle crosses an original surface crease",
+                        ));
+                    }
                 }
                 if label.is_some_and(|label| label != source.label) {
                     return Err(invalid(
@@ -256,6 +322,7 @@ impl TriangleField {
             tags,
             power,
             base: child.base_positions.clone(),
+            positions: self.certify_surface.then(|| child.positions.clone()),
             labels,
             has_secondary_surface: self.has_secondary_surface,
         })
@@ -266,6 +333,7 @@ pub(super) struct Mapped {
     pub(super) tags: Option<Vec<Vec<i32>>>,
     power: u32,
     base: Vec<DVec3>,
+    positions: Option<Vec<DVec3>>,
     labels: Vec<Label>,
     has_secondary_surface: bool,
 }
@@ -289,6 +357,18 @@ impl Mapped {
                 .any(|(&actual, &expected)| !same(actual, expected))
         {
             return Err(invalid("Terrain mapped triangle label geometry changed"));
+        }
+        if let Some(positions) = &self.positions {
+            work.consume(BASE_WORK * positions.len()).map_err(invalid)?;
+            if child.positions.len() != positions.len()
+                || child
+                    .positions
+                    .iter()
+                    .zip(positions)
+                    .any(|(&actual, &expected)| !same(actual, expected))
+            {
+                return Err(invalid("Terrain mapped triangle surface changed"));
+            }
         }
         let actual = read_labels(info, child, self.has_secondary_surface, work)?;
         if actual != self.labels {

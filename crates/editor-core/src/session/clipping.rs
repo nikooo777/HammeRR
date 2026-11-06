@@ -112,6 +112,7 @@ impl Session {
             match mode {
                 TerrainMode::Grid => "Terrain cut: Existing grid",
                 TerrainMode::Flat => "Terrain cut: Retile flat terrain",
+                TerrainMode::Cells => "Terrain cut: Retile grid cells",
             },
         );
         Ok(())
@@ -302,24 +303,24 @@ impl Session {
         if has_terrain {
             components::admit_fragment_snapshot(self.document.vmf())?;
         }
-        let flat_faces = if terrain_mode == TerrainMode::Flat {
-            clip::flat_texture_faces(&self.document, ids, plane)
+        let retile_faces = if terrain_mode != TerrainMode::Grid {
+            clip::terrain_texture_faces(&self.document, ids, plane, terrain_mode)
                 .map_err(|error| error.to_string())?
         } else {
             Vec::new()
         };
         let terrain_context = if has_terrain {
-            let visible_flat_crossing = flat_faces.iter().any(|face| {
+            let visible_retile_crossing = retile_faces.iter().any(|face| {
                 map_core::displacement::native::terrain_source_is_visible(
                     self.document.vmf(),
                     face.solid,
                 )
             });
-            context::Context::prepare(self, ids, plane, terrain_mode, visible_flat_crossing)?
+            context::Context::prepare(self, ids, plane, terrain_mode, visible_retile_crossing)?
         } else {
             None
         };
-        let terrain_materials = materials::Prepared::prepare(self, &flat_faces)?;
+        let terrain_materials = materials::Prepared::prepare(self, &retile_faces)?;
         let mut document = self.document.preview_snapshot();
         let result = document
             .edit("preview clip", |tx| {

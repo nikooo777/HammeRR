@@ -777,16 +777,17 @@ original target faces. Results keep geometric source IDs and add
 ### Clip terrain
 
 1. Call `set_clip_terrain_mode {"mode":"grid"}` for **Existing grid**, or
-   `{"mode":"flat"}` for **Retile flat terrain**.
+   `{"mode":"flat"}` for **Retile flat terrain**, or `{"mode":"cells"}` for
+   **Retile grid cells**.
 2. Call `clip_brushes` with the brush `ids`, `plane`, `keep` and `preview:true`.
 3. Inspect `get_clip_preview` and `render_view`.
 4. Call `commit_clip_preview` or `cancel_clip_preview`.
 
 Grid is the default. The choice is shared with drawn lines, picked points and
 plane handles. Changing it cancels the current cut draft without changing the
-map or Undo history. Optional `clip_brushes.terrain_mode` accepts `"grid"` or
-`"flat"` for that request; success adopts the choice, while failure keeps the
-previous choice and valid draft. A failed grid cut never falls back to flat.
+map or Undo history. Optional `clip_brushes.terrain_mode` accepts `"grid"`,
+`"flat"` or `"cells"` for that request; success adopts the choice, while failure keeps the
+previous choice and valid draft. A failed request never switches modes.
 
 Flat mode accepts convex world or `func_detail` quad terrain at powers 2–4.
 Base cages stay on world-axis planes. The visible sheet can be sloped, with
@@ -822,6 +823,17 @@ remain exact. Material names use case-insensitive lookup; texture references als
 accept backslashes. Use relative names without extensions or a `materials/`
 prefix. Patch materials, other blend shaders, base transforms, animated/runtime images
 and unsupported providers refuse.
+
+Cells mode accepts curved power-2/3/4 world or `func_detail` terrain with world-axis
+rectangular bases and displacement only along the base normal. The requested
+plane must follow a complete internal original row or column. Each retained
+whole original cell becomes one power-2 patch. It certifies authored, compiler
+and all four native positions, the original piecewise surface planes, exact UVs,
+affine integer paint and spatial triangle labels. It never approximates a crease.
+Every affected original must be a crossing replacement; unchanged external
+terrain contacts reject. Existing guarded instance, native connection, capacity
+and no-LOD rules remain. Normals and runtime LOD are regenerated. Retained cells
+must fit the shared 64-patch and checked-work limits; no automatic mode change.
 
 Grid mode lets world and `func_detail` terrain at power 3 or 4 split along a
 complete existing middle row or column. `keep:"both"` produces four native patches;

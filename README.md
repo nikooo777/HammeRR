@@ -5,7 +5,7 @@
 Edit VMF maps with native game assets. Build playable BSPs with integrated visibility, lighting and engine physics.
 Humans and AI agents share the same editing operations, previews and Undo history.
 
-[![Estimated implementation: 89.8% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
+[![Estimated implementation: 89.9% across 107 equally weighted capability groups](docs/images/roadmap-progress.svg)](docs/status.md#group-completion)
 
 ![A HammeRR courtyard running in Counter-Strike: Source](docs/images/showcase-native-pool.png)
 
@@ -58,8 +58,8 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Carved openings](docs/brush-tools.md#carve) | [Clip planes](docs/brush-tools.md#clip) |
 | --- | --- |
-| ![An arch cut through a brick wall](docs/images/carved-doorway.png) | ![A diagonally clipped brush](docs/images/clipped-brush.png) |
-| Subtract shapes to form doors and passages. | Preview plane cuts on brushes and terrain. |
+| ![An arch cut through a brick wall](docs/images/carved-doorway.png) | ![A curved terrain cut into native cell patches](docs/images/terrain-cell-cut.png) |
+| Subtract shapes to form doors and passages. | Cut brushes, planar surfaces and curved terrain. |
 
 | [Component editing](docs/components.md) | [Arrays and surface scatter](docs/repeated-placement.md) |
 | --- | --- |

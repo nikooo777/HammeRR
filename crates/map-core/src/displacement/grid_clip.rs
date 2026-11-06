@@ -240,7 +240,7 @@ pub(crate) fn crosses(mesh: &DisplacementMesh, plane: Plane) -> bool {
             .any(|point| plane.distance_to(*point) < -CUT_EPSILON)
 }
 
-fn grid_line(
+pub(super) fn grid_line(
     positions: &[DVec3],
     size: usize,
     plane: Plane,

@@ -15,6 +15,7 @@ use crate::clip::{Keep, TerrainPlan, TerrainTexture};
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
+pub(crate) mod cells;
 mod field;
 mod labels;
 pub(crate) mod network;
@@ -205,7 +206,7 @@ fn rows<T: PartialEq>(rows: &Option<Vec<Vec<T>>>, size: usize) -> Result<(), Edi
             || rows.iter().flatten().any(|value| value != &rows[0][0]))
     {
         return Err(invalid(
-            "Flat terrain requires uniform, correctly sized source fields",
+            "Terrain retiling requires uniform, correctly sized source fields",
         ));
     }
     Ok(())
@@ -224,6 +225,15 @@ struct Prepared<'a> {
     data: bsp::Displacements,
 }
 
+struct Admitted<'a> {
+    side: &'a Side,
+    info: &'a DispInfo,
+    face: &'a Face,
+    mesh: DisplacementMesh,
+    data: bsp::Displacements,
+    positions: Vec<Vec<DVec3>>,
+}
+
 fn data(
     face: &Face,
     mesh: &DisplacementMesh,
@@ -233,7 +243,7 @@ fn data(
         .vertices
         .as_slice()
         .try_into()
-        .map_err(|_| invalid("Flat terrain requires a convex quad cage"))?;
+        .map_err(|_| invalid("Terrain retiling requires a convex quad cage"))?;
     Ok((
         bsp::Displacements {
             infos: vec![bsp::DisplacementInfo {
@@ -285,6 +295,24 @@ fn certify_normals(
     profiles: &[Vec<DVec3>],
     work: &mut Work,
 ) -> Result<(), EditError> {
+    certify_normal_profiles(data, profiles, None, work)
+}
+
+fn certify_height_normals(
+    data: &bsp::Displacements,
+    profiles: &[Vec<DVec3>],
+    axis: usize,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    certify_normal_profiles(data, profiles, Some(axis), work)
+}
+
+fn certify_normal_profiles(
+    data: &bsp::Displacements,
+    profiles: &[Vec<DVec3>],
+    axis: Option<usize>,
+    work: &mut Work,
+) -> Result<(), EditError> {
     let mut normal_inputs = BTreeSet::new();
     let cells = data.infos[0]
         .grid_size()
@@ -305,28 +333,29 @@ fn certify_normals(
         if normal_inputs.insert(identity) {
             work.consume(NORMAL_SETUP_WORK + NORMAL_CELL_WORK * cells * cells)
                 .map_err(invalid)?;
-            data.infos[0]
-                .certify_native_normal_inputs(
-                    &positions,
-                    bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding },
-                )
-                .map_err(|error| {
-                    invalid(format!(
-                        "Terrain native normal inputs cannot be certified: {error}"
-                    ))
-                })?;
+            let profile = bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding };
+            let result = if let Some(axis) = axis {
+                data.infos[0].certify_native_height_normal_inputs(&positions, axis, profile)
+            } else {
+                data.infos[0].certify_native_normal_inputs(&positions, profile)
+            };
+            result.map_err(|error| {
+                invalid(format!(
+                    "Terrain native normal inputs cannot be certified: {error}"
+                ))
+            })?;
         }
     }
     Ok(())
 }
 
-fn prepare<'a>(
+fn admit<'a>(
     document: &Document,
     solid: &'a Solid,
     geometry: &'a BrushGeometry,
     plane: Plane,
     work: &mut Work,
-) -> Result<Option<Prepared<'a>>, EditError> {
+) -> Result<Option<Admitted<'a>>, EditError> {
     let displaced = solid
         .sides
         .iter()
@@ -335,7 +364,7 @@ fn prepare<'a>(
         .collect::<Vec<_>>();
     let [(index, side)] = displaced.as_slice() else {
         return Err(invalid(
-            "Flat terrain clipping requires one displaced face per brush",
+            "Terrain retiling requires one displaced face per brush",
         ));
     };
     let face = geometry
@@ -366,7 +395,7 @@ fn prepare<'a>(
         && document.entity(id).and_then(|entity| entity.classname()) != Some("func_detail")
     {
         return Err(invalid(
-            "Flat terrain clipping requires world or func_detail brushes",
+            "Terrain retiling requires world or func_detail brushes",
         ));
     }
     native::checked_mesh(face, info).map_err(invalid)?;
@@ -383,7 +412,7 @@ fn prepare<'a>(
         })
     {
         return Err(invalid(
-            "Flat terrain cannot remap opaque payloads or restricted vertex masks",
+            "Terrain retiling cannot remap opaque payloads or restricted vertex masks",
         ));
     }
     rows(&info.offset_normals, mesh.size)?;
@@ -393,10 +422,39 @@ fn prepare<'a>(
         .is_some_and(|rows| rows.iter().flatten().any(|normal| *normal != DVec3::ZERO))
     {
         return Err(invalid(
-            "Flat terrain requires absent or zero offset normals",
+            "Terrain retiling requires absent or zero offset normals",
         ));
     }
     let tags = triangles::native_tags(info, &mesh)?;
+    work.consume(tags.len()).map_err(invalid)?;
+    Ok(Some(Admitted {
+        side,
+        info,
+        face,
+        mesh,
+        data,
+        positions,
+    }))
+}
+
+fn prepare<'a>(
+    document: &Document,
+    solid: &'a Solid,
+    geometry: &'a BrushGeometry,
+    plane: Plane,
+    work: &mut Work,
+) -> Result<Option<Prepared<'a>>, EditError> {
+    let Some(Admitted {
+        side,
+        info,
+        face,
+        mesh,
+        data,
+        positions,
+    }) = admit(document, solid, geometry, plane, work)?
+    else {
+        return Ok(None);
+    };
     let indices = [
         0,
         (mesh.size - 1) * mesh.size,
@@ -432,7 +490,6 @@ fn prepare<'a>(
     }
     let paint = PaintField::new(corners, indices.map(|index| mesh.alphas[index]), work)?;
     paint.certify(&mesh, &data, work)?;
-    work.consume(tags.len()).map_err(invalid)?;
     for [a, b, c] in mesh.triangles() {
         if orient(
             mesh.positions[a],
@@ -706,20 +763,20 @@ fn uv(
     Ok(())
 }
 
-fn carrier(
+fn carrier_base(
     solid: &Solid,
-    source: &Prepared<'_>,
+    side: &Side,
+    face: &Face,
     quad: [DVec3; 4],
     material: &str,
-    work: &mut Work,
-) -> Result<Solid, EditError> {
+) -> Result<(Solid, DisplacementMesh), EditError> {
     let center = weighted(&quad, &[1, 1, 1, 1], 4)?;
     let mut part = solid.clone();
     for edge in 0..4 {
         let a = quad[edge];
         let b = quad[(edge + 1) % 4];
         let normal = (b - a)
-            .cross(source.face.plane.normal)
+            .cross(face.plane.normal)
             .try_normalize()
             .ok_or_else(numeric)?;
         let mut plane = Plane {
@@ -743,8 +800,8 @@ fn carrier(
     let index = part
         .sides
         .iter()
-        .position(|side| side.id == source.side.id)
-        .ok_or_else(|| invalid("Flat terrain carrier lost its source surface"))?;
+        .position(|candidate| candidate.id == side.id)
+        .ok_or_else(|| invalid("Terrain carrier lost its source surface"))?;
     let geometry = BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
     let face = geometry
         .faces
@@ -759,7 +816,7 @@ fn carrier(
         })
     {
         return Err(invalid(
-            "Flat terrain carrier cannot preserve its exact planned quad",
+            "Terrain carrier cannot preserve its exact planned quad",
         ));
     }
     crate::brush::refresh_precise(&mut part, true)?;
@@ -767,7 +824,7 @@ fn carrier(
         .set_precise_vertices(&quad)
         .map_err(|error| invalid(error.to_string()))?;
     crate::brush::canonicalize_precise(&mut part)?;
-    let mut info = source.info.clone();
+    let mut info = side.displacement.as_ref().unwrap().clone();
     info.power = POWER;
     info.start_position = quad[0];
     info.elevation = 0.0;
@@ -784,6 +841,26 @@ fn carrier(
         .find(|face| face.side == index)
         .ok_or_else(numeric)?;
     let mesh = DisplacementMesh::build(face, &info).map_err(|error| invalid(error.to_string()))?;
+    part.sides[index].displacement = Some(info);
+    Ok((part, mesh))
+}
+
+fn carrier(
+    solid: &Solid,
+    source: &Prepared<'_>,
+    quad: [DVec3; 4],
+    material: &str,
+    work: &mut Work,
+) -> Result<Solid, EditError> {
+    let (mut part, mesh) = carrier_base(solid, source.side, source.face, quad, material)?;
+    let info = part
+        .sides
+        .iter_mut()
+        .find(|side| side.id == source.side.id)
+        .unwrap()
+        .displacement
+        .as_mut()
+        .unwrap();
     work.consume(
         FIELD_WORK * mesh.base_positions.len() * (1 + usize::from(source.info.alphas.is_some())),
     )
@@ -805,7 +882,6 @@ fn carrier(
                 .collect::<Result<_, _>>()
         })
         .transpose()?;
-    part.sides[index].displacement = Some(info);
     Ok(part)
 }
 
@@ -840,8 +916,10 @@ fn on_segment(point: DVec3, a: DVec3, b: DVec3, axes: [usize; 2]) -> Result<bool
 fn region(
     ring: &[DVec3],
     children: &[Child],
-    source: &Prepared<'_>,
+    axes: [usize; 2],
+    sign: i128,
     plane: Plane,
+    field: Option<&PlanarField>,
     work: &mut Work,
 ) -> Result<(), EditError> {
     let indices = bsp::DisplacementInfo {
@@ -861,15 +939,12 @@ fn region(
                     "Flat terrain native triangles cross the retained cut-plane precision",
                 ));
             }
-            let _ = source.field.base_position(point)?;
+            if let Some(field) = field {
+                let _ = field.base_position(point)?;
+            }
             for index in 0..ring.len() {
-                let value = orient(
-                    ring[index],
-                    ring[(index + 1) % ring.len()],
-                    point,
-                    source.axes,
-                )?;
-                if value != 0 && value != source.sign {
+                let value = orient(ring[index], ring[(index + 1) % ring.len()], point, axes)?;
+                if value != 0 && value != sign {
                     return Err(invalid(
                         "Flat terrain triangle lies outside its retained polygon",
                     ));
@@ -878,7 +953,7 @@ fn region(
         }
         for triangle in &indices {
             let points = triangle.map(|index| child.positions[index]);
-            if orient(points[0], points[1], points[2], source.axes)? != source.sign {
+            if orient(points[0], points[1], points[2], axes)? != sign {
                 return Err(invalid(
                     "Flat terrain native triangles must have positive orientation",
                 ));
@@ -897,9 +972,7 @@ fn region(
             for index in 0..ring.len() {
                 let a = ring[index];
                 let b = ring[(index + 1) % ring.len()];
-                if on_segment(points[0], a, b, source.axes)?
-                    && on_segment(points[SIZE - 1], a, b, source.axes)?
-                {
+                if on_segment(points[0], a, b, axes)? && on_segment(points[SIZE - 1], a, b, axes)? {
                     boundary_edge = Some([a, b]);
                     break;
                 }
@@ -908,7 +981,7 @@ fn region(
                 continue;
             };
             for &point in &points {
-                if !on_segment(point, a, b, source.axes)? {
+                if !on_segment(point, a, b, axes)? {
                     return Err(invalid(
                         "Flat terrain retained boundary does not lie on its exact polygon edges",
                     ));
@@ -1078,7 +1151,15 @@ pub(crate) fn plan(
             });
             parts.push(part);
         }
-        region(ring, &children[first..], &source, plane, work)?;
+        region(
+            ring,
+            &children[first..],
+            source.axes,
+            source.sign,
+            plane,
+            Some(&source.field),
+            work,
+        )?;
     }
     connections(&children, work)?;
     Ok(Some(TerrainPlan {

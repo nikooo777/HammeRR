@@ -4209,7 +4209,7 @@ export component AppWindow inherits Window {
                                     ComboBox {
                                         horizontal-stretch: 1;
                                         accessible-label: "Terrain cut";
-                                        model: ["Existing grid", "Retile flat terrain"];
+                                        model: ["Existing grid", "Retile flat terrain", "Retile grid cells"];
                                         current-index <=> root.clip-terrain-mode-index;
                                         selected => { root.clip-terrain-mode-changed(); }
                                     }

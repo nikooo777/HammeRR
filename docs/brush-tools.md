@@ -119,6 +119,24 @@ after a failed cut.
 
 ![Repeated cuts preserve a two-texture terrain paint field](images/terrain-painted-cuts.png)
 
+
+### Retile grid cells
+
+Cut curved terrain along a complete existing row or column.
+
+1. Select the world or `func_detail` terrain to cut.
+2. Click **Clip selected brushes**.
+3. Under **Terrain cut**, choose **Retile grid cells**.
+4. Set a plane through one complete internal row or column of the visible surface.
+5. Choose **Arrow side**, **Opposite side** or **Both sides**.
+6. Inspect the patches, then click **Apply cut**.
+
+Each retained original cell becomes one power-2 patch. The original piecewise
+surface, UVs, paint and triangle labels must stay exact. Normals and runtime LOD
+are regenerated. This mode does not cut through part of an original cell.
+
+![A curved terrain sheet retiles into native grid-cell patches](images/terrain-cell-cut.png)
+
 ## Limits
 
 - Hollow: 16 brushes, 64 faces per brush, 256 walls; thickness 0.125–4096 units.
@@ -160,6 +178,13 @@ after a failed cut.
   Patch materials, other blend shaders, base transforms, animated or runtime textures
   and unsupported resources reject. Changed source images or materials require
   another preview before Apply.
+- **Retile grid cells** requires world-axis rectangular bases. Displacement
+  can vary only along the base normal. Paint uses the same affine integer and
+  native texture rules as **Retile flat terrain**. Every touching original patch
+  must also be cut in the operation; unchanged contacts reject. No affected LOD
+  coarsening, tangential fields or uncertain native normal inputs.
+  Each retained cell adds 32 native triangles. Powers 2–4 are subject to the
+  shared output and work limits.
 - Terrain cuts accept 16 sources and 64 output patches. Unsupported bindings,
   notes, masks and opaque payloads reject before the map changes.
 - Numerically uncertain cuts reject. They do not move retained points to fit

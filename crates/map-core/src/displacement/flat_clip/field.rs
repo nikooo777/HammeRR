@@ -12,6 +12,13 @@ pub(crate) struct PlanarField {
 }
 
 impl PlanarField {
+    pub(crate) fn triangle(base: [DVec3; 3], world: [DVec3; 3]) -> Result<Self, EditError> {
+        Self::new(
+            [base[0], base[1], base[2], base[0]],
+            [world[0], world[1], world[2], world[0]],
+        )
+    }
+
     pub(crate) fn new(base: [DVec3; 4], world: [DVec3; 4]) -> Result<Self, EditError> {
         if base.iter().chain(&world).any(|point| !point.is_finite()) {
             return Err(numeric());

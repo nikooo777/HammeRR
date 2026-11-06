@@ -141,9 +141,7 @@ fn removal_targets(
 ) -> Result<Vec<(FaceId, usize)>, EditError> {
     let faces = faces.iter().copied().collect::<BTreeSet<_>>();
     if faces.is_empty() || faces.len() > 16 {
-        return Err(EditError::Invalid(
-            "Select 1–16 terrain faces to remove".into(),
-        ));
+        return Err(EditError::Invalid("Select 1–16 terrain faces".into()));
     }
     let mut planned = Vec::with_capacity(faces.len());
     for target in faces {

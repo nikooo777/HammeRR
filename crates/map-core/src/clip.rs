@@ -47,6 +47,7 @@ pub enum TerrainMode {
     #[default]
     Grid,
     Flat,
+    Cells,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -329,12 +330,18 @@ pub(crate) struct TerrainPlan {
     pub children: Option<Vec<crate::displacement::grid_clip::Child>>,
 }
 
-pub fn flat_texture_faces(
+pub fn terrain_texture_faces(
     document: &Document,
     ids: &[ObjectId],
     plane: Plane,
+    mode: TerrainMode,
 ) -> Result<Vec<FaceId>, EditError> {
     let plane = normalized_plane(plane)?;
+    let inspect = match mode {
+        TerrainMode::Grid => return Ok(Vec::new()),
+        TerrainMode::Flat => crate::displacement::flat_clip::texture_face,
+        TerrainMode::Cells => crate::displacement::flat_clip::cells::texture_face,
+    };
     let mut work = crate::displacement::grid_clip::Work::default();
     let mut result = Vec::new();
     for source in sources(document, ids)? {
@@ -346,14 +353,8 @@ pub fn flat_texture_faces(
         {
             let shape =
                 geometry(source.solid).map_err(|error| source_error(source.solid.id, error))?;
-            if let Some(face) = crate::displacement::flat_clip::texture_face(
-                document,
-                source.solid,
-                &shape,
-                plane,
-                &mut work,
-            )
-            .map_err(|error| source_error(source.solid.id, error))?
+            if let Some(face) = inspect(document, source.solid, &shape, plane, &mut work)
+                .map_err(|error| source_error(source.solid.id, error))?
             {
                 result.push(face);
             }
@@ -508,19 +509,26 @@ pub fn clip_with_options(
                     triangles: plan.triangles,
                     children: Some(plan.children),
                 }),
-                TerrainMode::Flat => crate::displacement::flat_clip::plan(
-                    tx.document(),
-                    solid,
-                    &shape,
-                    crate::displacement::flat_clip::Request {
-                        plane,
-                        keep,
-                        material,
-                        textures: options.textures,
-                    },
-                    &mut terrain_context,
-                )
-                .map_err(|error| source_error(solid.id, error))?,
+                TerrainMode::Flat | TerrainMode::Cells => {
+                    let plan = if options.terrain_mode == TerrainMode::Cells {
+                        crate::displacement::flat_clip::cells::plan
+                    } else {
+                        crate::displacement::flat_clip::plan
+                    };
+                    plan(
+                        tx.document(),
+                        solid,
+                        &shape,
+                        crate::displacement::flat_clip::Request {
+                            plane,
+                            keep,
+                            material,
+                            textures: options.textures,
+                        },
+                        &mut terrain_context,
+                    )
+                    .map_err(|error| source_error(solid.id, error))?
+                }
             };
             let Some(plan) = plan else {
                 unchanged.push(solid.id);
@@ -669,7 +677,7 @@ pub fn clip_with_options(
                 .map(|verified| (verified.neighbors, verified.links))
                 .collect::<Vec<_>>()
             }
-            TerrainMode::Flat => {
+            TerrainMode::Flat | TerrainMode::Cells => {
                 let replacements = planned
                     .iter()
                     .filter_map(|cut| {
@@ -681,14 +689,15 @@ pub fn clip_with_options(
                         })
                     })
                     .collect::<Vec<_>>();
-                crate::displacement::flat_clip::network::certify(
-                    tx.document(),
-                    &replacements,
-                    &mut terrain_context,
-                )?
-                .into_iter()
-                .map(|verified| (verified.neighbors, verified.links))
-                .collect::<Vec<_>>()
+                let certify = if options.terrain_mode == TerrainMode::Cells {
+                    crate::displacement::flat_clip::network::certify_cells
+                } else {
+                    crate::displacement::flat_clip::network::certify
+                };
+                certify(tx.document(), &replacements, &mut terrain_context)?
+                    .into_iter()
+                    .map(|verified| (verified.neighbors, verified.links))
+                    .collect::<Vec<_>>()
             }
         };
         for (cut, (neighbors, links)) in planned

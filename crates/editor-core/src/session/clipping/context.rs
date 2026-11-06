@@ -38,14 +38,14 @@ impl Context {
         ids: &[ObjectId],
         plane: Plane,
         terrain_mode: TerrainMode,
-        flat_crossing: bool,
+        retile_crossing: bool,
     ) -> Result<Option<Arc<Self>>, String> {
         let vmf = session.document.vmf();
         let needed = match terrain_mode {
             TerrainMode::Grid => clip::requires_terrain_context(&session.document, ids, plane)
                 .map_err(|error| error.to_string())?,
-            TerrainMode::Flat => {
-                flat_crossing
+            TerrainMode::Flat | TerrainMode::Cells => {
+                retile_crossing
                     && vmf.entities.iter().any(|entity| {
                         !entity.hidden
                             && entity

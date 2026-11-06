@@ -26,6 +26,12 @@ pub(crate) struct Verification {
     pub links: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Flat,
+    Cells,
+}
+
 struct Raw<'a> {
     source: FaceId,
     side: &'a Side,
@@ -38,13 +44,30 @@ struct Surface<'a> {
     raw: Raw<'a>,
     power: u32,
     corners: [DVec3; 4],
+    base_positions: Vec<DVec3>,
     positions: Vec<Vec<DVec3>>,
     sheet: Sheet,
 }
 
 struct Sheet {
-    field: PlanarField,
+    axis: usize,
+    coordinate: f64,
+    field: Option<PlanarField>,
     sign: i128,
+}
+
+impl Sheet {
+    fn matches(&self, other: &Self) -> Result<bool, EditError> {
+        if self.axis != other.axis || self.coordinate != other.coordinate || self.sign != other.sign
+        {
+            return Ok(false);
+        }
+        match (&self.field, &other.field) {
+            (Some(first), Some(second)) => first.matches(second),
+            (None, None) => Ok(true),
+            _ => Ok(false),
+        }
+    }
 }
 
 impl Surface<'_> {
@@ -203,7 +226,7 @@ fn collect<'a>(vmf: &'a Vmf, work: &mut Work) -> Result<Vec<Raw<'a>>, EditError>
     Ok(result)
 }
 
-fn prepare<'a>(raw: Raw<'a>, work: &mut Work) -> Result<Surface<'a>, EditError> {
+fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>, EditError> {
     if !raw.supported {
         return Err(invalid(
             "Flat terrain neighbors must be world or func_detail terrain",
@@ -225,8 +248,21 @@ fn prepare<'a>(raw: Raw<'a>, work: &mut Work) -> Result<Surface<'a>, EditError> 
     let positions = reconstructed(&data, base, work)?;
     work.consume(FIELD_WORK * corner_indices.len())
         .map_err(invalid)?;
-    let field = PlanarField::new(corners, corner_indices.map(|index| mesh.positions[index]))?;
-    let axis = field.axis();
+    let field = match mode {
+        Mode::Flat => Some(PlanarField::new(
+            corners,
+            corner_indices.map(|index| mesh.positions[index]),
+        )?),
+        Mode::Cells => None,
+    };
+    let axis = if let Some(field) = &field {
+        field.axis()
+    } else {
+        (0..3)
+            .find(|&axis| corners.iter().all(|point| point[axis] == corners[0][axis]))
+            .ok_or_else(|| invalid("Terrain cell contacts require a world-axis base plane"))?
+    };
+    let coordinate = corners[0][axis];
     let axes = [(axis + 1) % 3, (axis + 2) % 3];
     let sign = orient(corners[0], corners[1], corners[2], axes)?;
     if sign == 0 {
@@ -239,15 +275,26 @@ fn prepare<'a>(raw: Raw<'a>, work: &mut Work) -> Result<Surface<'a>, EditError> 
         .map_err(invalid)?;
     for (index, &point) in mesh.positions.iter().enumerate() {
         let base = mesh.base_positions[index];
-        let expected = field.position(base)?;
-        if !same(base, field.base_position(point)?)
-            || !same(point, expected)
+        if let Some(field) = &field {
+            let expected = field.position(base)?;
+            if !same(base, field.base_position(point)?)
+                || !same(point, expected)
+                || positions
+                    .iter()
+                    .any(|positions| !same(expected, positions[index]))
+            {
+                return Err(invalid(
+                    "Connected flat terrain requires authored, native and compiler positions on one exact planar field",
+                ));
+            }
+        } else if base[axis] != coordinate
+            || axes.iter().any(|&axis| point[axis] != base[axis])
             || positions
                 .iter()
-                .any(|positions| !same(expected, positions[index]))
+                .any(|positions| !same(point, positions[index]))
         {
             return Err(invalid(
-                "Connected flat terrain requires authored, native and compiler positions on one exact planar field",
+                "Connected terrain cells require exact authored, native and compiler height-only positions",
             ));
         }
     }
@@ -263,12 +310,21 @@ fn prepare<'a>(raw: Raw<'a>, work: &mut Work) -> Result<Surface<'a>, EditError> 
             ));
         }
     }
-    super::certify_normals(&data, &positions, work)?;
-    let sheet = Sheet { field, sign };
+    match mode {
+        Mode::Flat => super::certify_normals(&data, &positions, work)?,
+        Mode::Cells => super::certify_height_normals(&data, &positions, axis, work)?,
+    }
+    let sheet = Sheet {
+        axis,
+        coordinate,
+        field,
+        sign,
+    };
     Ok(Surface {
         power: info.power,
         raw,
         corners,
+        base_positions: mesh.base_positions,
         positions,
         sheet,
     })
@@ -397,15 +453,12 @@ fn graph(surfaces: &[&Surface<'_>], work: &mut Work) -> Result<Graph, EditError>
                 continue;
             };
             work.consume(FIELD_WORK).map_err(invalid)?;
-            if surfaces[first].sheet.sign != surfaces[second].sheet.sign
-                || !surfaces[first]
-                    .sheet
-                    .field
-                    .matches(&surfaces[second].sheet.field)?
-            {
-                return Err(invalid(
-                    "Connected flat terrain currently requires compatible coplanar native fields and orientation",
-                ));
+            if !surfaces[first].sheet.matches(&surfaces[second].sheet)? {
+                return Err(invalid(if surfaces[first].sheet.field.is_some() {
+                    "Connected flat terrain currently requires compatible coplanar native fields and orientation"
+                } else {
+                    "Connected terrain cells require a common native base plane and orientation"
+                }));
             }
             if grid_clip::overlaps(a, b) || rank == 0 {
                 return Err(invalid("Flat terrain native base domains overlap"));
@@ -435,7 +488,7 @@ fn on_segment(point: DVec3, segment: [DVec3; 2]) -> Result<bool, EditError> {
 
 fn contains(surface: &Surface<'_>, point: DVec3) -> Result<bool, EditError> {
     let points = surface.corners;
-    let axis = surface.sheet.field.axis();
+    let axis = surface.sheet.axis;
     if point[axis] != points[0][axis] {
         return Ok(false);
     }
@@ -586,6 +639,7 @@ fn verify_source(
     document: &Document,
     vmf: &Vmf,
     assembled: &Surface<'_>,
+    mode: Mode,
     work: &mut Work,
 ) -> Result<(), EditError> {
     let source = assembled.raw.source;
@@ -645,16 +699,25 @@ fn verify_source(
             supported: true,
             cage,
         },
+        mode,
         work,
     )?;
     work.consume(original.positions.iter().map(Vec::len).sum())
         .map_err(invalid)?;
-    work.consume(FIELD_WORK).map_err(invalid)?;
+    work.consume(
+        FIELD_WORK
+            + if mode == Mode::Cells {
+                original.base_positions.len()
+            } else {
+                0
+            },
+    )
+    .map_err(invalid)?;
     if original.power != assembled.power
         || original.corners != assembled.corners
         || original.positions != assembled.positions
-        || original.sheet.sign != assembled.sheet.sign
-        || !original.sheet.field.matches(&assembled.sheet.field)?
+        || mode == Mode::Cells && original.base_positions != assembled.base_positions
+        || !original.sheet.matches(&assembled.sheet)?
     {
         return Err(invalid(
             "Flat terrain context changed original native or compiler geometry",
@@ -667,6 +730,23 @@ pub(crate) fn certify(
     document: &Document,
     replacements: &[Replacement<'_>],
     context: &mut Context<'_>,
+) -> Result<Vec<Verification>, EditError> {
+    certify_mode(document, replacements, context, Mode::Flat)
+}
+
+pub(crate) fn certify_cells(
+    document: &Document,
+    replacements: &[Replacement<'_>],
+    context: &mut Context<'_>,
+) -> Result<Vec<Verification>, EditError> {
+    certify_mode(document, replacements, context, Mode::Cells)
+}
+
+fn certify_mode(
+    document: &Document,
+    replacements: &[Replacement<'_>],
+    context: &mut Context<'_>,
+    mode: Mode,
 ) -> Result<Vec<Verification>, EditError> {
     let empty = || {
         replacements
@@ -778,6 +858,11 @@ pub(crate) fn certify(
             if grid_clip::related(&raw[first].cage, &raw[second].cage)
                 || contact_rank(&raw[first].cage, &raw[second].cage, work)?.is_some()
             {
+                if mode == Mode::Cells && !selected.contains(&raw[second].source) {
+                    return Err(invalid(
+                        "Terrain cell cuts require every affected original patch to be a crossing replacement; unchanged neighbor normal custody is unproved",
+                    ));
+                }
                 if affected.len() >= selected.len() + grid_clip::MAX_NEIGHBORS {
                     return Err(invalid(
                         "Flat terrain context exceeds its affected-neighbor limit",
@@ -792,14 +877,14 @@ pub(crate) fn certify(
         .into_iter()
         .enumerate()
         .filter(|(index, _)| affected.contains(index))
-        .map(|(_, raw)| prepare(raw, work))
+        .map(|(_, raw)| prepare(raw, mode, work))
         .collect::<Result<Vec<_>, _>>()?;
     if context.vmf.is_some() {
         for surface in before
             .iter()
             .filter(|surface| selected.contains(&surface.raw.source))
         {
-            verify_source(document, vmf, surface, work)?;
+            verify_source(document, vmf, surface, mode, work)?;
         }
     }
     let before_refs = before.iter().collect::<Vec<_>>();
@@ -843,6 +928,7 @@ pub(crate) fn certify(
                     supported: true,
                     cage,
                 },
+                mode,
                 work,
             )?);
         }

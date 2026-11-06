@@ -206,11 +206,18 @@ Use [plane clipping](brush-tools.md#cut-terrain-on-its-existing-grid) to split a
 power-3/4 world or `func_detail` patch at a complete middle grid line without resampling.
 Power 4 also permits quarter-grid lines, with mixed power-2/3 output patches.
 Matching neighbor borders are checked, including supported visible map instances.
-Their grids and child files remain unchanged. Unselected coarsened neighbors
-are accepted only when their native LOD state stays identical. Selected or
-resulting coarsened patches reject. Save a new parent before cutting.
+Their child files remain unchanged. Unselected coarsened neighbors need identical
+native LOD state. Selected and output coarsening must preserve mapped masks, fine
+collision and maximal render geometry. Save a new parent before cutting.
 For `func_detail`, select individual children in **Solids** mode or their whole
 entity. The cut retains the owner and unselected siblings.
+
+Choose [**Retile grid cells**](brush-tools.md#retile-grid-cells) to cut curved
+terrain at any complete original row or column, including power 2. It refines
+whole cells and requires exact native geometry, paint and labels. Unchanged
+terrain contacts reject; normals and runtime LOD are regenerated.
+[**Retile flat terrain**](brush-tools.md#retile-flat-terrain) supports non-grid
+cuts on eligible flat or sloped planar surfaces.
 
 ## Remove terrain
 

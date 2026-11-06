@@ -31,7 +31,8 @@ impl Prepared {
         let sides = faces
             .iter()
             .map(|face| {
-                surface::side(&session.document, *face).ok_or("Flat terrain source face is missing")
+                surface::side(&session.document, *face)
+                    .ok_or("Retiled terrain source face is missing")
             })
             .collect::<Result<Vec<_>, _>>()?;
         let captured = compiler::materials::capture_flat_terrain_materials(
@@ -45,7 +46,7 @@ impl Prepared {
             let mapping_size = *captured
                 .dimensions
                 .get(&name)
-                .ok_or("Flat terrain material has no captured runtime mapping dimensions")?;
+                .ok_or("Retiled terrain material has no captured runtime mapping dimensions")?;
             let [texture_vecs, _] = compiler::map::native_side_projections(side, DVec3::ZERO)?;
             textures.insert(
                 *face,
@@ -73,18 +74,19 @@ impl Prepared {
             || self.materials != session.materials.generation()
         {
             return Err(
-                "Material or content settings changed; preview the flat terrain cut again".into(),
+                "Material or content settings changed; preview the retiled terrain cut again"
+                    .into(),
             );
         }
         self.sources
             .verify_metadata()
-            .map_err(|error| format!("Flat terrain material sources changed: {error}"))
+            .map_err(|error| format!("Retiled terrain material sources changed: {error}"))
     }
 
     pub(super) fn verify(&self, game: &GameFs) -> Result<(), String> {
         self.sources
             .verify_sources(game, &compiler::Control::default())
-            .map_err(|error| format!("Flat terrain material sources changed: {error}"))
+            .map_err(|error| format!("Retiled terrain material sources changed: {error}"))
     }
 
     pub(super) fn report(&self) -> Value {

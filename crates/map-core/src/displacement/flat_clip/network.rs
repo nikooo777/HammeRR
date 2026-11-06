@@ -616,11 +616,6 @@ fn graph(
             .map_err(invalid)?;
     let (patches, _) =
         lod::prepare(&grids, &found.pairs, &mut |amount| work.consume(amount)).map_err(invalid)?;
-    if mode == Mode::Cells && phase == Phase::Child && patches.iter().any(Option::is_some) {
-        return Err(invalid(
-            "Connected curved terrain cuts cannot change or retain affected native LOD coarsening",
-        ));
-    }
     let mut edges = BTreeSet::new();
     let mut corners = BTreeSet::new();
     let mut visible_spans = BTreeMap::new();
@@ -846,16 +841,20 @@ fn certify_lod(
                 "Terrain clipping cannot change an unselected neighbor's native LOD state",
             ));
         }
+        if mode == Mode::Cells && previous.lod[index].coarsened {
+            lod_proof::certify_geometry(
+                surface.raw.side.displacement.as_ref().unwrap(),
+                &surface.mesh,
+                previous.lod[index].proof(),
+                None,
+                work,
+            )?;
+        }
     }
     for (surface, state) in after.iter().zip(&current.lod) {
         work.consume(1).map_err(invalid)?;
-        if selected.contains(&surface.raw.source)
-            && state.coarsened
-            && !coarsened.contains(&surface.raw.source)
-        {
-            return Err(invalid(
-                "Flat terrain clipping cannot introduce native LOD coarsening on a previously full selected source",
-            ));
+        if selected.contains(&surface.raw.source) && state.coarsened {
+            coarsened.insert(surface.raw.source);
         }
     }
     for (surface, state) in before.iter().zip(&previous.lod) {
@@ -886,15 +885,12 @@ fn certify_lod(
                 Fields::Flat(&flat_fields)
             }
             Mode::Cells => {
-                let cut = replacement.cut.ok_or_else(|| {
-                    invalid("Curved source LOD requires a cut with a discarded half; whole-source partitioning is unsupported")
-                })?;
-                curved_fields = lod_proof::certify_discarded(
+                curved_fields = lod_proof::certify_curved(
                     &surface.raw.face,
                     surface.raw.side.displacement.as_ref().unwrap(),
                     &surface.mesh,
                     state.proof(),
-                    cut,
+                    replacement.cut,
                     texture,
                     work,
                 )?;
@@ -1754,10 +1750,16 @@ pub(crate) fn required_partitions(
         ));
     }
     for (surface, state) in before.iter().zip(&original.lod) {
-        if state.coarsened && !selected.contains(&surface.raw.source) {
-            return Err(invalid(
-                "Curved terrain edge closure cannot retain an unchanged coarsened native neighbor",
-            ));
+        if state.coarsened {
+            lod_proof::certify_geometry(
+                surface.raw.side.displacement.as_ref().unwrap(),
+                &surface.mesh,
+                state.proof(),
+                selected
+                    .contains(&surface.raw.source)
+                    .then_some((plane, keep)),
+                work,
+            )?;
         }
     }
     let mut queue = Vec::new();

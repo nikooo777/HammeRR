@@ -128,7 +128,7 @@ keeps these fields, material, texture placement and smoothing. It does not flatt
 curved or nonlinearly painted surface. **Existing grid** never switches modes
 after a failed cut.
 
-This mode also accepts qualified sources that are already coarsened by native LOD.
+This mode also accepts qualified native LOD coarsening in selected sources or their output patches.
 
 ![A diagonal cut retiles flat terrain into native quad patches](images/terrain-flat-cut.png)
 
@@ -232,10 +232,9 @@ previous valid draft; no policy switches automatically after a failure.
   tilted bases. Joined planar surfaces can have different slopes when the component
   shares one exact coordinate projection and passes native arithmetic, orientation
   and conditioning checks. Curved neighbors, overlaps and unsupported partial joins reject.
-  Paint must remain affine. A selected source with native LOD before the cut needs
-  constant paint and uniform raw, native and physical triangle labels. It and all
+  Paint must remain affine. Native LOD coarsening on a selected source or any output requires
+  constant paint and uniform raw, native and physical triangle labels. The source and all
   its outputs must pass exact LOD geometry, UV and full-region coverage checks.
-  A source that was not coarsened before the cut cannot acquire output LOD.
   Unchanged neighbors must keep their complete LOD state.
   Nonzero offset normals and opaque metadata reject.
   Native positions, shared samples and texture fields must remain exact.
@@ -282,22 +281,25 @@ previous valid draft; no policy switches automatically after a failure.
   noncrossing neighbors required by a retained matched full original edge.
   Every neighbor must pass complete source, field, material and metadata checks.
   Missing selection, unsupported partial edges, incompatible native density,
-  retained or cut-touching LOD coarsening, contact mismatches, corner
+  uncertified LOD coarsening, contact mismatches, corner
   capacity overflow, folded projections, self-intersecting borders,
   extra contacts, unsupported degenerate contacts and uncertain
   native normal inputs reject.
   Each retained cell adds 32 native triangles. Powers 2–4 are subject to the
   shared output and work limits.
-- **Retile grid cells** and **Retile surface triangles** can discard source LOD
-  in a one-sided cut. All changed LOD triangles must lie beyond the cut tolerance
-  on the discarded side. Source paint must be constant and triangle labels uniform.
-  **Both sides**, retained or cut-touching coarsening and LOD-bearing whole-neighbor
-  partitions reject this case. Outputs and unchanged curved neighbors cannot
-  require LOD coarsening.
+- **Retile grid cells** and **Retile surface triangles** can use exact equivalent
+  source/output LOD. Each affected patch must preserve its fine sample positions
+  and full base coverage. All changed triangles in that patch need one exact affine
+  mapping from base coordinates to world positions; other triangles may stay curved.
+  A selected source with LOD before the cut or in any output needs constant paint
+  and uniform triangle labels, as do all its outputs. **Both sides** and whole-neighbor
+  partitions require whole equivalence when coarsened. A one-sided source can also
+  use strictly discarded coarsening. Unchanged coarsened neighbors need whole
+  geometric equivalence and must keep their complete LOD state.
 - **Retile surface triangles** requires a planar base with a convex cage in its
   exact coordinate chart. It shares the geometry, paint, texture, normal and
   contact checks of **Retile grid cells**. Output must fit native edge
-  and corner limits without LOD coarsening. Skew quarter grids, high-valence
+  and corner limits with the same LOD certificates. Skew quarter grids, high-valence
   corners, unrepresentable raw paint and changed native packed fields in
   **Exact fields** can refuse. The error names the unrepresentable field.
   **Native float** and **Nearest byte** do not relax geometry, UV, triangle-label

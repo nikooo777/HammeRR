@@ -821,17 +821,17 @@ absolute cross-product component divided by 256. This does not promise identical
 normal bits or pixels. Non-crossing terrain stays unchanged and does not require
 planar/normal admission for an unrelated cut.
 
-Selected Flat sources that already have native LOD coarsening may qualify.
+Selected Flat sources can qualify with native coarsening before the cut or in any output
+patch. The source and all its outputs must pass the same checks.
 Paint must be constant in the raw field and all four packed fields. Raw, native
 and physical triangle labels must be uniform. Each such source and all its
 outputs need exact affine geometry, native UVs and full maximal-render and
 fine-collision region coverage. The proof checks ideal and encoded LOD geometry
 with the compiler decoder and all four native profiles. Each coarsened original
 or output grid must reproduce its own fine sample positions exactly in all five
-profiles. A source that was not coarsened before the cut cannot acquire output LOD.
+profiles.
 Unchanged neighbors must retain
-their complete logical LOD state. Cells/Fragments permit only the discarded-side
-source LOD case described below.
+their complete logical LOD state. Cells/Fragments use the separate certificates below.
 
 Paint preserves authored and native BSP alpha exactly. Native packed-alpha
 fields must remain affine under each rounding profile. With `$surfaceprop2`,
@@ -895,22 +895,34 @@ original cells, using the same interior-warp and original-boundary rules as Cell
 on convex original cages in the exact chart of the planar base, including qualified
 tilted bases. It clips each crossing cell's original
 triangles into exact quad fans and quarters whole retained cells. Surface, UVs and spatial labels stay
-exact; raw/packed paint also stays exact by default. Native output contacts must fit without LOD coarsening. There is
+exact; raw/packed paint also stays exact by default. Native output contacts must pass the LOD certificates below. There is
 no automatic switch from another mode. Output is bounded at 128 patches, 5,184
 vertices and 8,192 triangles per operation.
 
-Cells/Fragments can cut a coarsened source only with `keep:"front"` or `"back"`
-when all coarsening is discarded. Source paint must be constant in the raw and
-four packed fields; raw, native and physical triangle labels must be uniform.
-Ideal LOD positions and all five compiler/native reconstructions must equal the
-source fine positions. Fine and maximal LOD triangle sets are compared with
-cyclic vertex rotations treated as identical. Every vertex of every triangle in
-their symmetric difference must lie beyond the cut tolerance on the discarded
-side, in the ideal grid and all five profiles. The retained source triangles
-must have literal fine-triangle identity. **Both sides**, cut-touching or retained
-coarsening and whole-neighbor partitions with source LOD reject. Outputs and
-unchanged curved neighbors must have no LOD coarsening. Unchanged neighbor state
-must remain identical. Existing UV, field, normal, metadata and capacity checks apply.
+Cells/Fragments have two exact LOD certificates. Each coarsened patch must keep
+its fine sample positions in the ideal grid and all five compiler/native profiles.
+Fine and maximal LOD triangulations must positively cover the same complete base cage.
+Triangle identities use cyclic vertex rotations without reversing orientation.
+
+- A one-sided source can use the strictly discarded certificate. Every vertex
+  in the fine/max triangle symmetric difference must lie beyond the cut tolerance
+  on the discarded side in the ideal grid and every reconstructed profile.
+  Retained source triangles stay identical.
+- Whole geometric equivalence keeps common triangles identical. All vertices in
+  both triangle differences must follow one exact affine base-to-world map per
+  LOD patch. Unchanged triangles may remain curved. Maps can differ between patches.
+
+The source uses the discarded-side classification when applicable; otherwise it
+needs whole equivalence. Coarsened outputs and unchanged neighbors always need
+whole equivalence. **Both sides** and whole-neighbor partitions can qualify this way.
+If a selected source has LOD before the cut or in any output, that source and all
+its outputs need uniform raw/native/physical triangle labels and guarded UVs.
+Their raw paint and all four packed paint fields must be constant.
+
+Unchanged neighbors need geometry-only equivalence and identical complete LOD
+state; no new paint restriction or material lookup is imposed on them.
+Existing normal, metadata, contact and capacity checks apply. Multiple affine maps
+within one patch's changed region, moved samples or failed field proofs reject.
 
 `blend_mode` selects the shared **Blend samples** choice. Use
 `set_clip_blend_mode({"mode":"native_float"})` after choosing Fragments,
@@ -955,9 +967,9 @@ They must share the exact base plane, chart axis and orientation, with exact
 complete native seam polylines and matching contact samples across authored, compiler and
 all four native profiles. Complete before/after contact graphs and same-chart-axis native
 normal proofs still apply. Retained edges can request explicit selected-neighbor
-retiling as described below. Incompatible final density/contacts, retained or output LOD,
+retiling as described below. Incompatible final density/contacts, uncertified LOD,
 sample mismatches and native corner-capacity overflow refuse. Existing
-guarded instance, native connection, capacity and output-LOD rules remain. Normals and
+guarded instance, native connection, capacity and LOD certificates remain. Normals and
 runtime LOD are regenerated for new patches. Retained cells must fit the shared
 128-patch and checked-work limits; no automatic mode change.
 

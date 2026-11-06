@@ -487,11 +487,11 @@ impl ClipPlane {
 pub struct ClipArgs {
     pub ids: Option<Vec<String>>,
     pub plane: ClipPlane,
-    /// front is the arrow/positive-normal side, back the opposite; defaults to both. The discarded-side Cells/Fragments source LOD exception requires front or back.
+    /// front is the arrow/positive-normal side, back the opposite; defaults to both. Cells/Fragments source LOD needs the appropriate geometric certificate; both can qualify through whole equivalence.
     pub keep: Option<String>,
     /// New cap/carrier-face material; omitted inherits the source's first material. Native terrain has no sealed cut wall.
     pub material: Option<String>,
-    /// grid preserves native samples and maps qualified selected/output LOD; flat retiles planar fields, including qualified initially coarsened sources with constant paint and uniform labels; cells refines whole original cells; fragments cuts original surface triangles. Cells/Fragments accept exact simple projected source rings, including concave borders, on qualified planar charts. Their source LOD requires all changed triangles strictly discarded by front/back; outputs and unchanged neighbors cannot coarsen. Native contacts must match complete shared polylines and corner points. Cells needs a rectangular base cage; Fragments needs a convex base cage. Output patches need straight convex quad borders. Terrain clips reset valid present ten-word VMF caches only on new children; absent stays absent and malformed refuses. Source/native/compiler geometry, fields, normals, topology, LOD and work limits still apply. Omitted uses the shared choice.
+    /// grid preserves samples and mapped LOD; flat retiles affine fields with qualified source/output LOD; cells refines whole cells; fragments cuts original triangles. Cells/Fragments admit exact simple source rings, including concave borders, on qualified planar charts. Curved LOD needs fine-position custody and exact whole equivalence per patch, or the strict discarded-source certificate when applicable. Selected source/output families need constant paint and uniform labels when coarsened. Unchanged coarsened neighbors need geometry-only equivalence and identical LOD state. Existing contact, UV, normal, metadata and resource guards apply. Omitted uses the shared choice.
     pub terrain_mode: Option<ClipTerrainMode>,
     /// exact (default), native_float, or nearest_byte. Non-exact modes require fragments. Omitted uses the shared choice.
     pub blend_mode: Option<ClipBlendMode>,

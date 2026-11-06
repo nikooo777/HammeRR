@@ -5,7 +5,7 @@ use source_formats::{bsp, vmf::DispInfo};
 
 use super::{
     CUT_EPSILON, Exact, FIELD_WORK, PaintField, PlanarField, Region, Work, certify_height_normals,
-    certify_normals, field::BasePlane, invalid, labels, orient, same, uv,
+    certify_normals, convex, field::BasePlane, invalid, labels, orient, same, uv,
 };
 use crate::clip::{Keep, TerrainTexture};
 use crate::{EditError, Face, Plane, displacement::DisplacementMesh};
@@ -228,7 +228,7 @@ pub(super) fn certify(
     })
 }
 
-pub(super) fn certify_uniform(
+fn uniform_samples(
     face: &Face,
     info: &DispInfo,
     mesh: &DisplacementMesh,
@@ -251,27 +251,51 @@ pub(super) fn certify_uniform(
     Ok(uniform)
 }
 
-pub(super) fn certify_discarded(
+pub(super) fn certify_uniform(
     face: &Face,
     info: &DispInfo,
     mesh: &DisplacementMesh,
     state: State<'_>,
-    cut: (Plane, Keep),
     texture: TerrainTexture,
     work: &mut Work,
 ) -> Result<UniformFields, EditError> {
-    let (plane, keep) = cut;
-    if keep == Keep::Both {
-        return Err(invalid(
-            "Curved source LOD requires a cut that discards every changed triangle",
-        ));
-    }
-    if !plane.normal.is_finite() || plane.normal == DVec3::ZERO || !plane.dist.is_finite() {
-        return Err(invalid(
-            "Terrain LOD requires a finite noncollapsed cut plane",
-        ));
-    }
-    let uniform = certify_uniform(face, info, mesh, state, texture, work)?;
+    let uniform = uniform_samples(face, info, mesh, state, texture, work)?;
+    geometry(mesh, state, None, work)?;
+    Ok(uniform)
+}
+
+pub(super) fn certify_curved(
+    face: &Face,
+    info: &DispInfo,
+    mesh: &DisplacementMesh,
+    state: State<'_>,
+    cut: Option<(Plane, Keep)>,
+    texture: TerrainTexture,
+    work: &mut Work,
+) -> Result<UniformFields, EditError> {
+    let uniform = uniform_samples(face, info, mesh, state, texture, work)?;
+    geometry(mesh, state, cut, work)?;
+    Ok(uniform)
+}
+
+pub(super) fn certify_geometry(
+    info: &DispInfo,
+    mesh: &DisplacementMesh,
+    state: State<'_>,
+    cut: Option<(Plane, Keep)>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    validate_state(info, mesh, &state, work)?;
+    preserve_positions(mesh, &state, work)?;
+    geometry(mesh, state, cut, work)
+}
+
+fn geometry(
+    mesh: &DisplacementMesh,
+    state: State<'_>,
+    cut: Option<(Plane, Keep)>,
+    work: &mut Work,
+) -> Result<(), EditError> {
     let native_info = state.data.infos[0];
     let count = native_info
         .triangle_count()
@@ -281,8 +305,32 @@ pub(super) fn certify_discarded(
     let fine = native_info
         .triangle_indices()
         .map_err(|error| invalid(error.to_string()))?;
-    let fine = triangle_set(&fine)?;
+    let fine_set = triangle_set(&fine)?;
     let maximal = triangle_set(state.indices)?;
+    if all_discarded(&fine_set, &maximal, state, cut, work)? {
+        return Ok(());
+    }
+    equivalent(mesh, state, &fine, &fine_set, &maximal, work)
+}
+
+fn all_discarded(
+    fine: &BTreeSet<[usize; 3]>,
+    maximal: &BTreeSet<[usize; 3]>,
+    state: State<'_>,
+    cut: Option<(Plane, Keep)>,
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    let Some((plane, keep)) = cut else {
+        return Ok(false);
+    };
+    if !plane.normal.is_finite() || plane.normal == DVec3::ZERO || !plane.dist.is_finite() {
+        return Err(invalid(
+            "Terrain LOD requires a finite noncollapsed cut plane",
+        ));
+    }
+    if keep == Keep::Both {
+        return Ok(false);
+    }
     work.consume(FIELD_WORK * (fine.len() + maximal.len()) * 3 * (state.positions.len() + 1))
         .map_err(invalid)?;
     let normal = [
@@ -292,7 +340,7 @@ pub(super) fn certify_discarded(
     ];
     let distance = Exact::float(plane.dist)?;
     let epsilon = Exact::float(CUT_EPSILON)?;
-    for triangle in fine.symmetric_difference(&maximal) {
+    for triangle in fine.symmetric_difference(maximal) {
         for positions in
             std::iter::once(state.ideal_positions).chain(state.positions.iter().map(Vec::as_slice))
         {
@@ -308,14 +356,76 @@ pub(super) fn certify_discarded(
                     Keep::Both => false,
                 };
                 if !discarded {
-                    return Err(invalid(
-                        "Every changed native LOD triangle must lie strictly in the discarded half beyond cut precision under every reconstruction profile",
-                    ));
+                    return Ok(false);
                 }
             }
         }
     }
-    Ok(uniform)
+    Ok(true)
+}
+
+fn equivalent(
+    mesh: &DisplacementMesh,
+    state: State<'_>,
+    fine_indices: &[[usize; 3]],
+    fine: &BTreeSet<[usize; 3]>,
+    maximal: &BTreeSet<[usize; 3]>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let size = mesh.size;
+    let ring =
+        [0, (size - 1) * size, size * size - 1, size - 1].map(|index| mesh.base_positions[index]);
+    work.consume(FIELD_WORK * (5 + mesh.base_positions.len()))
+        .map_err(invalid)?;
+    let plane = BasePlane::new([ring[0], ring[1], ring[2]])?;
+    let axis = plane.axis();
+    let axes = [(axis + 1) % 3, (axis + 2) % 3];
+    let sign = orient(ring[0], ring[1], ring[2], axes)?;
+    convex(&ring, axes, sign)?;
+    for &base in &mesh.base_positions {
+        if !plane.contains(base)? {
+            return Err(invalid(
+                "Terrain LOD base coverage requires one exact plane",
+            ));
+        }
+    }
+    let mut fine_cover = Region::new(&ring, axes, sign, None, None);
+    fine_cover.add(&mesh.base_positions, fine_indices, size, None, work)?;
+    fine_cover.finish()?;
+    let mut maximal_cover = Region::new(&ring, axes, sign, None, None);
+    maximal_cover.add(
+        &mesh.base_positions,
+        state.indices,
+        size,
+        Some(state.active),
+        work,
+    )?;
+    maximal_cover.finish()?;
+    if fine == maximal {
+        return Ok(());
+    }
+    let &seed = fine
+        .difference(maximal)
+        .next()
+        .ok_or_else(|| invalid("Terrain LOD changed domains lost their original fine triangle"))?;
+    work.consume(FIELD_WORK * (16 + 9 * (fine.len() + maximal.len())))
+        .map_err(invalid)?;
+    let field = PlanarField::triangle(
+        seed.map(|index| mesh.base_positions[index]),
+        seed.map(|index| mesh.positions[index]),
+    )?;
+    for triangle in fine.symmetric_difference(maximal) {
+        for &index in triangle {
+            let base = mesh.base_positions[index];
+            let world = mesh.positions[index];
+            if !same(field.position(base)?, world) || !same(field.base_position(world)?, base) {
+                return Err(invalid(
+                    "Changed native LOD triangles must share one exact affine base-to-world mapping",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn triangle_set(triangles: &[[usize; 3]]) -> Result<BTreeSet<[usize; 3]>, EditError> {

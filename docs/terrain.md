@@ -235,10 +235,12 @@ Local cell and normal checks can still reject the cut.
 Folded projections, self-intersecting borders, overlap, extra unsewn contacts and
 unsupported degenerate contacts reject.
 Native geometry, piecewise raw/native paint fields and labels must remain exact.
-A one-sided cut can discard all source LOD with constant paint and uniform labels.
-Every changed triangle must lie beyond the cut tolerance on the discarded side.
-**Both sides**, retained or cut-touching coarsening and LOD-bearing whole neighbors
-reject this case. Curved outputs and unchanged neighbors cannot require LOD.
+Curved source/output LOD can qualify. All changed triangles in each affected patch
+must share one exact affine mapping from base coordinates to world positions.
+Other regions may stay curved.
+The source and all outputs need constant paint and uniform labels when any uses LOD.
+**Both sides** and whole-neighbor partitions require whole equivalence when coarsened.
+A one-sided source can also use strictly discarded coarsening.
 Unchanged curved neighbors can retain a certified corner, or an old edge contact
 can be fully severed. They must share the exact base chart and orientation.
 Native contact checks cover complete seam polylines. Normal checks still apply.
@@ -246,17 +248,17 @@ Their authored grids
 stay unchanged. To retain a full original edge, select the required noncrossing
 neighbor and enable **Partition selected neighbors**. This explicitly retiles the
 entire neighbor: one power-2 patch per old cell in **Retile grid cells**, four in
-**Retile surface triangles**. Partial edges, incompatible density, retained/output LOD
+**Retile surface triangles**. Partial edges, incompatible density, uncertified LOD
 and output limits can still reject; corner-only, severed and unrelated neighbors
 stay unchanged. Normals and runtime LOD are regenerated for the new patches.
+Coarsened unchanged neighbors need whole geometric equivalence and identical LOD state.
 [**Retile flat terrain**](brush-tools.md#retile-flat-terrain) supports non-grid
 cuts on eligible planar surfaces, including tilted base cages and affine
 tangential offsets. Joined planar patches can have different slopes on a common
 planar base, including tilted bases, when they share one exact coordinate
 projection with exact native contacts and certified normals.
-Initially coarsened selected Flat sources may qualify with constant paint, uniform
-labels and exact LOD checks. A source that was not coarsened before the cut cannot
-acquire output LOD.
+Flat source or output LOD may qualify with constant paint, uniform labels and exact
+LOD checks. The proof covers the source and all its outputs.
 Unchanged neighbors keep their full LOD state.
 Choose [**Retile surface triangles**](brush-tools.md#cut-through-curved-cells)
 to cut through curved cells while preserving their original triangle surfaces.

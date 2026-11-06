@@ -77,6 +77,8 @@ Grid spacing, paint samples and triangle flags stay the same.
 The cut follows the displaced surface, not its backing brush.
 It does not create a wall beneath the cut.
 Matching neighbor borders are checked before Apply. Neighbor grids stay unchanged.
+The preview also checks retained points at native game precision. A cut that
+cannot keep those points and their side of the plane rejects.
 Visible map instances use freshly resolved child terrain for these checks. Save
 a new parent first. Child maps stay unchanged; prepare another preview after
 child edits or a parent save.
@@ -100,6 +102,8 @@ child edits or a parent save.
   remove compiler neighbors.
 - Terrain cuts accept 16 sources and 64 output patches. Unsupported bindings,
   notes, masks and opaque payloads reject before the map changes.
+- Numerically uncertain cuts reject. They do not move retained points to fit
+  the new patch cages.
 - Select one child in **Solids** mode, or the whole `func_detail` entity.
   Only targeted crossing brushes change. Runtime brush-model terrain rejects.
 - A connected cut checks at most 128 neighboring faces. Terrain and resolved

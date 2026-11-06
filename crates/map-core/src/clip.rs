@@ -378,6 +378,7 @@ fn clip_in_context(
     let mut terrain_patches = 0;
     let mut terrain_vertices = 0;
     let mut terrain_triangles = 0;
+    let mut terrain_context = crate::displacement::grid_clip::Context::new(context);
     for Source {
         solid,
         owner,
@@ -394,7 +395,7 @@ fn clip_in_context(
                 plane,
                 keep,
                 material,
-                context,
+                &mut terrain_context,
             )?;
             let Some(plan) = plan else {
                 unchanged.push(solid.id);
@@ -506,8 +507,11 @@ fn clip_in_context(
                     })
             })
             .collect::<Vec<_>>();
-        let verified =
-            crate::displacement::grid_clip::certify(tx.document(), context, &replacements)?;
+        let verified = crate::displacement::grid_clip::certify(
+            tx.document(),
+            &replacements,
+            &mut terrain_context,
+        )?;
         for (cut, verified) in planned
             .iter_mut()
             .filter(|cut| cut.terrain.is_some())

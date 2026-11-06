@@ -8,6 +8,8 @@ use super::{Bsp, Edge, Face, Record, invalid, lump};
 mod samples;
 pub use samples::{DisplacementLightmapSample, DisplacementSurfaceSample};
 mod lod;
+mod native;
+pub use native::{NativeDisplacementProfile, NativeDisplacementRounding};
 mod surface;
 pub use surface::{DisplacementGeometricSample, DisplacementSurfaceSampler};
 

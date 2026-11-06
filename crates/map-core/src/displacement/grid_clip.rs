@@ -1,16 +1,39 @@
 use glam::DVec3;
-use source_formats::vmf::{DispInfo, Solid, Vmf};
+use source_formats::{
+    bsp,
+    vmf::{DispInfo, Solid, Vmf},
+};
 
 use super::{ALLOWED_VERTEX_MASK_WORDS, DisplacementMesh, native, neighbors, smoothing, triangles};
 use crate::clip::Keep;
 use crate::surface::FaceId;
-use crate::{BrushGeometry, Document, EditError, ObjectId, Plane};
+use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
 const SAMPLE_EPSILON: f64 = 1e-5;
 const CUT_EPSILON: f64 = 1e-7;
+const NATIVE_SETUP_WORK: usize = 256;
+const NATIVE_VERTEX_WORK: usize = 32;
+const NATIVE_ROUNDINGS: [bsp::NativeDisplacementRounding; 4] = bsp::NativeDisplacementRounding::ALL;
+
+type NativePositions = [Vec<[u32; 3]>; NATIVE_ROUNDINGS.len()];
 
 mod network;
+use network::Work;
 pub(crate) use network::{MAX_NEIGHBORS, Replacement, certify};
+
+pub(crate) struct Context<'a> {
+    vmf: Option<&'a Vmf>,
+    work: Work,
+}
+
+impl<'a> Context<'a> {
+    pub(crate) fn new(vmf: Option<&'a Vmf>) -> Self {
+        Self {
+            vmf,
+            work: Work::default(),
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct Child {
@@ -167,15 +190,17 @@ pub(crate) fn crosses(mesh: &DisplacementMesh, plane: Plane) -> bool {
             .any(|point| plane.distance_to(*point) < -CUT_EPSILON)
 }
 
-fn grid_line(mesh: &DisplacementMesh, plane: Plane, rows: bool, cut: usize) -> Option<bool> {
+fn grid_line(
+    positions: &[DVec3],
+    size: usize,
+    plane: Plane,
+    rows: bool,
+    cut: usize,
+) -> Option<bool> {
     let mut negative = [false; 2];
     let mut positive = [false; 2];
-    for (index, point) in mesh.positions.iter().enumerate() {
-        let coordinate = if rows {
-            index / mesh.size
-        } else {
-            index % mesh.size
-        };
+    for (index, point) in positions.iter().enumerate() {
+        let coordinate = if rows { index / size } else { index % size };
         let distance = plane.distance_to(*point);
         if coordinate == cut {
             if distance.abs() > CUT_EPSILON {
@@ -195,6 +220,52 @@ fn grid_line(mesh: &DisplacementMesh, plane: Plane, rows: bool, cut: usize) -> O
         ([false, true], [true, false]) => Some(false),
         _ => None,
     }
+}
+
+fn certified_native_positions(
+    face: &Face,
+    mesh: &DisplacementMesh,
+    power: u32,
+    work: &mut Work,
+) -> Result<NativePositions, EditError> {
+    let base: [DVec3; 4] = face
+        .vertices
+        .as_slice()
+        .try_into()
+        .map_err(|_| invalid("Terrain native certificate needs a quad base"))?;
+    let info = bsp::DisplacementInfo {
+        start: native::stored_vertex(mesh.base_positions[0])
+            .as_vec3()
+            .to_array(),
+        power: power as i32,
+        ..Default::default()
+    };
+    let vertices = native::vertices(mesh);
+    work.consume(
+        NATIVE_ROUNDINGS.len() * (NATIVE_SETUP_WORK + NATIVE_VERTEX_WORK * vertices.len()),
+    )
+    .map_err(invalid)?;
+    let data = bsp::Displacements {
+        infos: vec![info],
+        vertices,
+        triangles: Vec::new(),
+    };
+    let base = base.map(|point| native::stored_vertex(point).as_vec3().to_array());
+    let mut result = std::array::from_fn(|_| Vec::new());
+    for (output, rounding) in result.iter_mut().zip(NATIVE_ROUNDINGS) {
+        let profile = bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding };
+        *output = data
+            .native_positions(0, base, profile)
+            .map_err(|error| {
+                invalid(format!(
+                    "Terrain native reconstruction cannot be certified: {error}"
+                ))
+            })?
+            .into_iter()
+            .map(|point| point.map(f32::to_bits))
+            .collect();
+    }
+    Ok(result)
 }
 
 fn carrier_plane(a: DVec3, b: DVec3, normal: DVec3) -> Result<Plane, EditError> {
@@ -288,8 +359,10 @@ pub(crate) fn plan(
     plane: Plane,
     keep: Keep,
     material: &str,
-    context: Option<&Vmf>,
+    context: &mut Context<'_>,
 ) -> Result<Option<Plan>, EditError> {
+    let vmf = context.vmf;
+    let work = &mut context.work;
     let displaced = solid
         .sides
         .iter()
@@ -322,7 +395,7 @@ pub(crate) fn plan(
     }
     validate(info, &mesh)?;
     crate::subobject::fragments::admit_source(solid)?;
-    resolved_instances(context.unwrap_or(document.vmf()))?;
+    resolved_instances(vmf.unwrap_or(document.vmf()))?;
     let middle = mesh.size / 2;
     let cuts = if info.power == 4 {
         vec![middle, middle / 2, middle + middle / 2]
@@ -332,16 +405,30 @@ pub(crate) fn plan(
     let (rows, cut, first_back) = cuts
         .into_iter()
         .find_map(|cut| {
-            grid_line(&mesh, plane, true, cut)
+            grid_line(&mesh.positions, mesh.size, plane, true, cut)
                 .map(|first_back| (true, cut, first_back))
                 .or_else(|| {
-                    grid_line(&mesh, plane, false, cut)
+                    grid_line(&mesh.positions, mesh.size, plane, false, cut)
                         .map(|first_back| (false, cut, first_back))
                 })
         })
         .ok_or_else(|| {
             invalid("Cut plane must follow a complete existing terrain grid half-line, or a power 4 quarter-line, with each region wholly on one side")
         })?;
+    let original_native = certified_native_positions(face, &mesh, info.power, work)?;
+    work.consume(NATIVE_ROUNDINGS.len() * mesh.positions.len())
+        .map_err(invalid)?;
+    for positions in &original_native {
+        let positions = positions
+            .iter()
+            .map(|point| DVec3::from_array(point.map(|bits| f64::from(f32::from_bits(bits)))))
+            .collect::<Vec<_>>();
+        if grid_line(&positions, mesh.size, plane, rows, cut) != Some(first_back) {
+            return Err(invalid(
+                "Cut plane cannot preserve complete native terrain grid separation under every rounding mode",
+            ));
+        }
+    }
     let last = mesh.size - 1;
     let leaves = quadrants(Child {
         row: 0,
@@ -388,12 +475,24 @@ pub(crate) fn plan(
                 .ok_or_else(|| invalid("Terrain child has no effective base face"))?;
             let output_info = part.sides[index].displacement.as_ref().unwrap();
             let (_, output) = native::checked_mesh(face, output_info).map_err(invalid)?;
+            let output_native = certified_native_positions(face, &output, output_info.power, work)?;
+            work.consume(NATIVE_ROUNDINGS.len() * output.positions.len())
+                .map_err(invalid)?;
             for child_row in 0..output.size {
                 for child_column in 0..output.size {
                     let target = child_row * output.size + child_column;
                     let source = (row + child_row) * mesh.size + column + child_column;
                     let original_uv = crate::brush::texel_uv(side, mesh.base_positions[source]);
                     let child_uv = crate::brush::texel_uv(side, output.base_positions[target]);
+                    if original_native
+                        .iter()
+                        .zip(&output_native)
+                        .any(|(original, output)| original[source] != output[target])
+                    {
+                        return Err(invalid(
+                            "Terrain carrier cannot preserve native vertex bits under every rounding mode",
+                        ));
+                    }
                     if output.positions[target].distance(mesh.positions[source]) > SAMPLE_EPSILON
                         || output.base_positions[target].distance(mesh.base_positions[source])
                             > SAMPLE_EPSILON

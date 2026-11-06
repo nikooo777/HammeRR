@@ -787,6 +787,9 @@ and physical triangle tags remain unchanged. Child power is one lower.
 Power 4 also permits complete quarter-grid lines: row or column 4 or 12.
 Both sides produces ten patches; the short side has four power-2 patches,
 and the long side has six power-2/3 patches.
+Retained positions and complete plane separation must also agree at native f32
+precision under every supported rounding mode. Uncertain arithmetic or a changed
+native point refuses the preview; points are not moved to fit a child cage.
 Connected borders must retain complete native full/half links, sample spacing
 and active LOD. The combined candidate preserves unchanged neighbor grids and
 each retained original triangle. Unselected coarsened neighbors can remain only

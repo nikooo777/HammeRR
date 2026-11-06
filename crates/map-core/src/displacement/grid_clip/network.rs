@@ -6,7 +6,10 @@ use source_formats::{
     vmf::{Side, Solid, Vmf},
 };
 
-use super::{Child, SAMPLE_EPSILON, contains, invalid, touches};
+use super::{
+    Child, Context, NATIVE_ROUNDINGS, SAMPLE_EPSILON, certified_native_positions, contains,
+    invalid, touches,
+};
 use crate::displacement::{
     DisplacementMesh, lod, native,
     neighbors::{self, SurfaceGrid},
@@ -30,15 +33,16 @@ pub(crate) struct Verification {
     pub links: usize,
 }
 
-struct Work(usize);
+#[derive(Default)]
+pub(super) struct Work(usize);
 
 impl Work {
-    fn consume(&mut self, amount: usize) -> Result<(), String> {
+    pub(super) fn consume(&mut self, amount: usize) -> Result<(), String> {
         self.0 = self
             .0
             .checked_add(amount)
             .filter(|work| *work <= MAX_WORK)
-            .ok_or("Terrain clipping neighbor certificate exceeds its work limit")?;
+            .ok_or("Terrain clipping certificate exceeds its work limit")?;
         Ok(())
     }
 }
@@ -433,6 +437,7 @@ fn verify_selected(
     context: &Vmf,
     raw: &[Raw<'_>],
     replacements: &[Replacement<'_>],
+    work: &mut Work,
 ) -> Result<(), EditError> {
     for replacement in replacements {
         let (owner, solid) = crate::subobject::solid(document, replacement.source.solid)?;
@@ -526,6 +531,17 @@ fn verify_selected(
                 "Resolved terrain context changed selected native vertices, triangle identities or tags",
             ));
         }
+        let original_native =
+            certified_native_positions(&original.raw.face, &original.mesh, power, work)?;
+        let assembled_native =
+            certified_native_positions(&assembled.raw.face, &assembled.mesh, power, work)?;
+        work.consume(NATIVE_ROUNDINGS.len() * original.vertices.len())
+            .map_err(invalid)?;
+        if original_native != assembled_native {
+            return Err(invalid(
+                "Resolved terrain context changed selected native vertex bits under a supported rounding mode",
+            ));
+        }
         for index in 0..original.vertices.len() {
             if original.positions[index].distance(assembled.positions[index]) > SAMPLE_EPSILON
                 || original.mesh.positions[index].distance(assembled.mesh.positions[index])
@@ -549,12 +565,13 @@ fn verify_selected(
 
 pub(crate) fn certify(
     document: &Document,
-    context: Option<&Vmf>,
     replacements: &[Replacement<'_>],
+    context: &mut Context<'_>,
 ) -> Result<Vec<Verification>, EditError> {
-    let raw = collect(context.unwrap_or(document.vmf()))?;
-    if let Some(context) = context {
-        verify_selected(document, context, &raw, replacements)?;
+    let work = &mut context.work;
+    let raw = collect(context.vmf.unwrap_or(document.vmf()))?;
+    if let Some(context) = context.vmf {
+        verify_selected(document, context, &raw, replacements, work)?;
     }
     let selected = replacements
         .iter()
@@ -570,7 +587,6 @@ pub(crate) fn certify(
         })
         .map(|replacement| replacement.source)
         .collect::<BTreeSet<_>>();
-    let mut work = Work(0);
     let mut affected = raw
         .iter()
         .enumerate()
@@ -641,7 +657,7 @@ pub(crate) fn certify(
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let previous = graph(&before, &mut work)?;
+    let previous = graph(&before, work)?;
     if before
         .iter()
         .zip(&previous.lod)
@@ -697,7 +713,7 @@ pub(crate) fn certify(
             )?);
         }
     }
-    let current = graph(&after, &mut work)?;
+    let current = graph(&after, work)?;
     if after
         .iter()
         .zip(&current.lod)

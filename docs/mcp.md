@@ -790,8 +790,8 @@ previous choice and valid draft. A failed grid cut never falls back to flat.
 
 Flat mode accepts convex world or `func_detail` quad terrain at powers 2–4.
 Base cages stay on world-axis planes. The visible sheet can be sloped, with
-one exact affine height field along its base normal. Integral alpha and physical
-tags must be uniform; vertex masks stay unrestricted. Four-corner retained regions stay
+one exact affine height field along its base normal. Integral alpha must form
+one exact affine field; physical tags stay uniform and vertex masks stay unrestricted. Four-corner retained regions stay
 one power-2 patch when joins permit; triangle/pentagon regions use quad fans.
 Compatible coplanar flat components support repeated cuts. The full affected
 component, including unchanged and resolved child neighbors, must share its base
@@ -802,14 +802,22 @@ arithmetic must be exact and conditioned; this does not promise identical
 normal bits or pixels. Non-crossing terrain stays unchanged and does not require
 planar/normal admission for an unrelated cut.
 
-Materials require guarded direct static `LightmappedGeneric` base textures with
-ordinary single-frame power-of-two VTF dimensions no larger than 32768. Optional
+Paint preserves authored and native BSP alpha exactly. Native packed-alpha
+fields must remain affine under each rounding profile. With `$surfaceprop2`,
+every source and output triangle must retain one collision-material alpha class.
+This does not promise identical pixels or packed bytes across different runtime
+rounding modes. Material reports include `has_secondary_surface`.
+
+Materials require guarded direct static `LightmappedGeneric` or plain
+`WorldVertexTransition` base textures with ordinary single-frame power-of-two VTF dimensions no larger than 32768. Transition
+materials require both original base textures; both share the primary mapping
+size. Detail controls remain limited to `LightmappedGeneric`. Optional
 static `$detail` textures support modes 0–3, factor 0–1 and an exactly representable
 normal f32 scale. Scale literals have at most 32 ASCII characters, no exponent;
 the verified native default is 4. Every source/child scaled UV sample must also
 remain exact. Material names use case-insensitive lookup; texture references also
 accept backslashes. Use relative names without extensions or a `materials/`
-prefix. Patch materials, blend shaders, base transforms, animated/runtime images
+prefix. Patch materials, other blend shaders, base transforms, animated/runtime images
 and unsupported providers refuse.
 
 Grid mode lets world and `func_detail` terrain at power 3 or 4 split along a

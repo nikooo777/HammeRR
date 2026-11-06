@@ -51,7 +51,7 @@ pub use displacements::{
     DisplacementNeighbor, DisplacementSurfaceSample, DisplacementSurfaceSampler,
     DisplacementTriangle, DisplacementVertex, Displacements, INVALID_DISPLACEMENT_NEIGHBOR,
     MAX_DISPLACEMENT_TRIANGLES, MAX_DISPLACEMENT_VERTICES, MAX_DISPLACEMENTS,
-    NativeDisplacementProfile, NativeDisplacementRounding,
+    NativeDisplacementProfile, NativeDisplacementRounding, native_alpha_byte,
 };
 pub use lighting::{
     FaceLighting, Lighting, LightingKind, MAX_LIGHTING_BYTES, MAX_LIGHTING_FACES, MAX_WORLD_LIGHTS,

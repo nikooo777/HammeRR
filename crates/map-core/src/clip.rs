@@ -54,6 +54,7 @@ pub struct TerrainTexture {
     pub texture_vecs: [[f32; 4]; 2],
     pub mapping_size: [u32; 2],
     pub detail_scale: Option<f32>,
+    pub has_secondary_surface: bool,
 }
 
 #[derive(Default)]

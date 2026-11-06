@@ -9,7 +9,7 @@ mod samples;
 pub use samples::{DisplacementLightmapSample, DisplacementSurfaceSample};
 mod lod;
 mod native;
-pub use native::{NativeDisplacementProfile, NativeDisplacementRounding};
+pub use native::{NativeDisplacementProfile, NativeDisplacementRounding, native_alpha_byte};
 mod surface;
 pub use surface::{DisplacementGeometricSample, DisplacementSurfaceSampler};
 

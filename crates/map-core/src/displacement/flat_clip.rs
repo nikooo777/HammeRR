@@ -17,8 +17,10 @@ use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
 mod field;
 pub(crate) mod network;
+mod paint;
 
 use field::PlanarField;
+use paint::PaintField;
 
 const POWER: u32 = 2;
 const SIZE: usize = (1 << POWER) + 1;
@@ -213,6 +215,7 @@ struct Prepared<'a> {
     face: &'a Face,
     mesh: DisplacementMesh,
     field: PlanarField,
+    paint: PaintField,
     axes: [usize; 2],
     sign: i128,
     tag: u16,
@@ -383,7 +386,6 @@ fn prepare<'a>(
         ));
     }
     rows(&info.offset_normals, mesh.size)?;
-    rows(&info.alphas, mesh.size)?;
     if info
         .offset_normals
         .as_ref()
@@ -391,12 +393,6 @@ fn prepare<'a>(
     {
         return Err(invalid(
             "Flat terrain requires absent or zero offset normals",
-        ));
-    }
-    let alpha = mesh.alphas[0];
-    if !(0.0..=255.0).contains(&alpha) || alpha.fract() != 0.0 {
-        return Err(invalid(
-            "Flat terrain requires uniform integral 8-bit alpha",
         ));
     }
     if let Some(tags) = triangles::source_tags(info)?
@@ -443,6 +439,8 @@ fn prepare<'a>(
             ));
         }
     }
+    let paint = PaintField::new(corners, indices.map(|index| mesh.alphas[index]), work)?;
+    paint.certify(&mesh, &data, work)?;
     work.consume(tags.len()).map_err(invalid)?;
     for [a, b, c] in mesh.triangles() {
         if orient(
@@ -468,6 +466,7 @@ fn prepare<'a>(
         face,
         mesh,
         field,
+        paint,
         axes,
         sign,
         tag: tags[0],
@@ -786,11 +785,7 @@ fn carrier(
     info.distances = None;
     info.offsets = None;
     info.offset_normals = None;
-    info.alphas = source
-        .info
-        .alphas
-        .as_ref()
-        .map(|_| vec![vec![source.mesh.alphas[0]; SIZE]; SIZE]);
+    info.alphas = None;
     if let Some(tags) = &source.info.triangle_tags {
         info.triangle_tags = Some(vec![vec![tags[0][0]; 2 * (SIZE - 1)]; SIZE - 1]);
     }
@@ -801,14 +796,27 @@ fn carrier(
         .find(|face| face.side == index)
         .ok_or_else(numeric)?;
     let mesh = DisplacementMesh::build(face, &info).map_err(|error| invalid(error.to_string()))?;
-    work.consume(FIELD_WORK * mesh.base_positions.len())
-        .map_err(invalid)?;
+    work.consume(
+        FIELD_WORK * mesh.base_positions.len() * (1 + usize::from(source.info.alphas.is_some())),
+    )
+    .map_err(invalid)?;
     info.offsets = Some(
         mesh.base_positions
             .chunks(SIZE)
             .map(|row| row.iter().map(|&base| source.field.offset(base)).collect())
             .collect::<Result<_, _>>()?,
     );
+    info.alphas = source
+        .info
+        .alphas
+        .as_ref()
+        .map(|_| {
+            mesh.base_positions
+                .chunks(SIZE)
+                .map(|row| row.iter().map(|&base| source.paint.alpha(base)).collect())
+                .collect::<Result<_, _>>()
+        })
+        .transpose()?;
     part.sides[index].displacement = Some(info);
     Ok(part)
 }
@@ -988,6 +996,10 @@ pub(crate) fn plan(
     };
     let texture = request.textures.and_then(|textures| textures.get(&identity)).copied()
         .ok_or_else(|| invalid("Flat terrain clipping requires guarded native texture projection and mapping dimensions"))?;
+    let material_class = texture
+        .has_secondary_surface
+        .then(|| paint::material_class(&source.mesh, &source.data, work))
+        .transpose()?;
     uv(
         &source.data,
         source.face,
@@ -1063,16 +1075,20 @@ pub(crate) fn plan(
                     ));
                 }
             }
-            if mesh
-                .alphas
-                .iter()
-                .any(|alpha| *alpha != source.mesh.alphas[0])
-                || triangles::native_tags(info, &mesh)?
-                    .iter()
-                    .any(|tag| *tag != source.tag)
+            source.paint.certify(&mesh, &data, work)?;
+            if let Some(class) = material_class
+                && paint::material_class(&mesh, &data, work)? != class
             {
                 return Err(invalid(
-                    "Flat terrain child changed its uniform alpha or physical tags",
+                    "Flat terrain child changed its native collision-material alpha class",
+                ));
+            }
+            if triangles::native_tags(info, &mesh)?
+                .iter()
+                .any(|tag| *tag != source.tag)
+            {
+                return Err(invalid(
+                    "Flat terrain child changed its uniform physical tags",
                 ));
             }
             certify_normals(&data, &positions, work)?;

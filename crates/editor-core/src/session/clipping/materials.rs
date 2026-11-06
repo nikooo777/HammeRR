@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use compiler::asset_sources::AssetSourceGuard;
@@ -14,6 +14,7 @@ pub(super) struct Prepared {
     pub(super) textures: BTreeMap<FaceId, TerrainTexture>,
     dimensions: BTreeMap<String, [u32; 2]>,
     detail_scales: BTreeMap<String, f32>,
+    secondary_surfaces: BTreeSet<String>,
     sources: AssetSourceGuard,
     content: u64,
     materials: u64,
@@ -52,6 +53,7 @@ impl Prepared {
                     texture_vecs,
                     mapping_size,
                     detail_scale: captured.detail_scales.get(&name).copied(),
+                    has_secondary_surface: captured.secondary_surfaces.contains(&name),
                 },
             );
         }
@@ -59,6 +61,7 @@ impl Prepared {
             textures,
             dimensions: captured.dimensions,
             detail_scales: captured.detail_scales,
+            secondary_surfaces: captured.secondary_surfaces,
             sources: captured.sources,
             content: session.build_content_epoch(),
             materials: session.materials.generation(),
@@ -86,7 +89,7 @@ impl Prepared {
 
     pub(super) fn report(&self) -> Value {
         json!({"faces":self.textures.len(), "materials":self.dimensions.iter().map(|(name, size)| {
-            json!({"name":name,"mapping_size":size,"detail_scale":self.detail_scales.get(name)})
+            json!({"name":name,"mapping_size":size,"detail_scale":self.detail_scales.get(name),"has_secondary_surface":self.secondary_surfaces.contains(name)})
         }).collect::<Vec<_>>()})
     }
 }

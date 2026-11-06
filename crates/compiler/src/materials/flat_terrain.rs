@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
 use source_formats::gamefs::{GameFs, asset_relative};
@@ -17,12 +17,14 @@ const MAX_DETAIL_SCALAR_BYTES: usize = 32;
 const DEFAULT_DETAIL_SCALE: f32 = 4.0;
 const MAX_DETAIL_BLEND_MODE: u32 = 3;
 const UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x80 | 0x800 | 0x4000 | 0x8000 | 0x1_0000 | 0x800_0000;
-const MATERIAL_PARAMETERS: [&str; 9] = [
+const MATERIAL_PARAMETERS: [&str; 5] = [
     "$basetexture",
     "$surfaceprop",
     "$surfaceprop2",
     "$reflectivity",
     "%keywords",
+];
+const DETAIL_PARAMETERS: [&str; 4] = [
     "$detail",
     "$detailscale",
     "$detailblendfactor",
@@ -33,10 +35,11 @@ const MATERIAL_PARAMETERS: [&str; 9] = [
 pub struct FlatTerrainMaterialCapture {
     pub dimensions: BTreeMap<String, [u32; 2]>,
     pub detail_scales: BTreeMap<String, f32>,
+    pub secondary_surfaces: BTreeSet<String>,
     pub sources: AssetSourceGuard,
 }
 
-/// Captures static LightmappedGeneric base-VTF mapping dimensions and original asset guards.
+/// Captures static LightmappedGeneric or WorldVertexTransition mapping dimensions and asset guards.
 /// Names are case-insensitive relative references without prefixes or extensions.
 /// Uses geometry-material and metric-texture read limits without retaining payloads.
 /// Detail scales require a separate exact scaled-UV check on every native sample.
@@ -50,6 +53,7 @@ pub fn capture_flat_terrain_materials<'a>(
         Materials::with_build_sources(game, Requirements::GeometrySemantics, &sources);
     let mut dimensions = BTreeMap::new();
     let mut detail_scales = BTreeMap::new();
+    let mut secondary_surfaces = BTreeSet::new();
     for (index, name) in names.into_iter().enumerate() {
         control.checkpoint()?;
         if index >= map_core::clip::MAX_TERRAIN_SOURCES {
@@ -68,9 +72,13 @@ pub fn capture_flat_terrain_materials<'a>(
         if dimensions.contains_key(&name) {
             continue;
         }
-        let (size, detail_scale) = capture_material(&mut materials, &name, control)?;
+        let (size, detail_scale, secondary_surface) =
+            capture_material(&mut materials, &name, control)?;
         if let Some(scale) = detail_scale {
             detail_scales.insert(name.clone(), scale);
+        }
+        if secondary_surface {
+            secondary_surfaces.insert(name.clone());
         }
         dimensions.insert(name, size);
     }
@@ -83,6 +91,7 @@ pub fn capture_flat_terrain_materials<'a>(
     Ok(FlatTerrainMaterialCapture {
         dimensions,
         detail_scales,
+        secondary_surfaces,
         sources,
     })
 }
@@ -131,7 +140,7 @@ fn capture_material(
     materials: &mut Materials<'_>,
     name: &str,
     control: &Control,
-) -> Result<([u32; 2], Option<f32>), String> {
+) -> Result<([u32; 2], Option<f32>, bool), String> {
     let path = vmt::material_path(name);
     checked_path(&path)?;
     let material = Material::load_with_reader(&path, &mut |path| {
@@ -143,16 +152,16 @@ fn capture_material(
             None,
         )?;
         if let Some(bytes) = &bytes {
-            let direct = static_material_raw(path, bytes, &["lightmappedgeneric"]).map_err(|error| {
+            let direct = static_material_raw(path, bytes, &["lightmappedgeneric", "worldvertextransition"]).map_err(|error| {
                 io::Error::new(
                     error.kind(),
-                    format!("Flat terrain retiling requires a direct static LightmappedGeneric material: {error}"),
+                    format!("Flat terrain retiling requires a direct static LightmappedGeneric or WorldVertexTransition material: {error}"),
                 )
             })?;
             if !direct {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "Flat terrain retiling requires a direct static LightmappedGeneric material; Patch is unsupported",
+                    "Flat terrain retiling requires a direct static LightmappedGeneric or WorldVertexTransition material; Patch is unsupported",
                 ));
             }
         }
@@ -160,8 +169,14 @@ fn capture_material(
     })
     .map_err(|error| format!("Flat terrain material {path}: {error}"))?
     .ok_or_else(|| format!("Flat terrain material {path} was not found"))?;
+    let transition = material.shader == "worldvertextransition";
     for (key, _) in &material.params {
-        if !MATERIAL_PARAMETERS.contains(&key.as_str()) {
+        let shader_parameter = if transition {
+            key == "$basetexture2"
+        } else {
+            DETAIL_PARAMETERS.contains(&key.as_str())
+        };
+        if !MATERIAL_PARAMETERS.contains(&key.as_str()) && !shader_parameter {
             return Err(format!(
                 "Flat terrain material {path} has unsupported parameter {key}; retiling requires an untransformed static base texture",
             ));
@@ -172,13 +187,36 @@ fn capture_material(
         super::parse_reflectivity(reflectivity)
             .map_err(|error| format!("Flat terrain material {path}: {error}"))?;
     }
-    let detail_scale = detail_parameters(&material)
+    let secondary_surface = secondary_surface(&material)
         .map_err(|error| format!("Flat terrain material {path}: {error}"))?;
+    let detail_scale = if transition {
+        None
+    } else {
+        detail_parameters(&material)
+            .map_err(|error| format!("Flat terrain material {path}: {error}"))?
+    };
     let dimensions = capture_texture(materials, &material, "$basetexture", &path, control)?;
+    if transition {
+        capture_texture(materials, &material, "$basetexture2", &path, control)?;
+    }
     if detail_scale.is_some() {
         capture_texture(materials, &material, "$detail", &path, control)?;
     }
-    Ok((dimensions, detail_scale))
+    Ok((dimensions, detail_scale, secondary_surface))
+}
+
+fn secondary_surface(material: &Material) -> Result<bool, String> {
+    let Some(value) = material.get("$surfaceprop2") else {
+        return Ok(false);
+    };
+    let value = value.trim();
+    if !crate::physics::valid_surface_property(value) {
+        return Err(
+            "$surfaceprop2 requires 1–127 ASCII letters, digits, underscores, dots or dashes"
+                .into(),
+        );
+    }
+    Ok(true)
 }
 
 fn detail_parameters(material: &Material) -> Result<Option<f32>, String> {

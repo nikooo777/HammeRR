@@ -163,7 +163,7 @@ fn default_materials() -> Vec<String> {
     vec!["default".into()]
 }
 
-fn valid_surface_property(value: &str) -> bool {
+pub(crate) fn valid_surface_property(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 127
         && value

@@ -12,6 +12,9 @@ const MAX_MAPPING_DIMENSION: u32 = 1 << 15;
 const MIN_NORMAL_CROSS_COMPONENT: u32 = (127 - 50) << 23;
 const MAX_NORMAL_CROSS_COMPONENT: u32 = (127 + 50) << 23;
 const MIN_NORMAL_CROSS_MAXIMUM: u32 = (127 - 6) << 23;
+const ALPHA_NORMALIZATION: f32 = f32::from_bits(0x3b80_8081);
+const ALPHA_BYTE_MAXIMUM: f32 = 255.0;
+const ALPHA_ROUNDING_BIAS: f32 = 8_388_608.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeDisplacementRounding {
@@ -38,6 +41,25 @@ pub enum NativeDisplacementProfile {
     CssLinux64Build25338318 {
         rounding: NativeDisplacementRounding,
     },
+}
+
+/// Encodes the alpha byte written by the installed BSP-load static-mesh route
+/// under the selected profile's rounding mode. This does not establish the
+/// runtime mode or certify shader interpolation and final pixels.
+pub fn native_alpha_byte(alpha: f32, profile: NativeDisplacementProfile) -> io::Result<u8> {
+    let NativeDisplacementProfile::CssLinux64Build25338318 { rounding } = profile;
+    let arithmetic = Arithmetic { rounding };
+    let normalized = arithmetic.multiply(alpha, ALPHA_NORMALIZATION)?;
+    let normalized = if normalized.to_bits() & SIGN != 0 {
+        0.0
+    } else if normalized.to_bits() >= 1.0f32.to_bits() {
+        1.0
+    } else {
+        normalized
+    };
+    let scaled = arithmetic.multiply(normalized, ALPHA_BYTE_MAXIMUM)?;
+    let encoded = arithmetic.add(scaled, ALPHA_ROUNDING_BIAS)?;
+    Ok(encoded.to_bits() as u8)
 }
 
 #[derive(Clone, Copy)]

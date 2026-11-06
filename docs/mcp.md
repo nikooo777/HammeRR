@@ -838,23 +838,21 @@ and unsupported providers refuse.
 Cells mode accepts curved power-2/3/4 world or `func_detail` terrain with exact
 planar bases, including qualified tilted bases. The cage must be rectangular
 in the coordinate chart chosen by the exact base plane. Curved height and
-non-affine interior tangential warps are supported. Each original may have bowed
-borders when its exact projected native perimeter forms one simple convex polygon.
-Boundary vertices must be distinct and segments noncollapsed. Each directed segment must keep all
-other boundary vertices in its exact closed interior half-plane with the source
-winding; collinear forward samples are allowed. The four visible corner
-projections remain strictly convex and every original render triangle remains
-strictly positive. No approximate hull or boundary is substituted.
+non-affine interior tangential warps are supported. Each original projected native
+border must form one exact simple ring. The ring can be concave. Its vertices must
+be distinct and its segments must not collapse. Nonadjacent segments must not
+cross or touch. Adjacent segments can meet only at their shared endpoint.
+Forward collinear samples are allowed; backtracking overlap rejects.
+Every original render triangle must stay strictly positive.
+No boundary approximation is used.
 
 Connected originals must share the exact base plane, chart axis and orientation.
-Every pair in each original native edge/corner component passes exact
-two-dimensional separating-axis checks over its complete projected native borders.
-Positive-area overlap and extra unsewn contact refuse. A native edge contact must have a support-line
-intersection interval exactly equal to its verified native visible seam span;
-matching contact dimension alone is insufficient. Corner-only contacts need two
-independent exact support directions. Degenerate collinear corner/edge tangencies
-can conservatively refuse. Whole-neighbor retiling can retain bowed outer borders
-when this complete contact certificate passes.
+Every pair in an affected native contact component must match its complete
+verified native edge polylines and corner points. Shared polylines can bend.
+Area overlap, crossings and extra unsewn contacts reject the cut. Forward-collinear
+subdivisions and point touches can pass only within the verified contact set.
+Repeated projected seam samples and ambiguous or multiple native spans reject.
+Whole-neighbor retiling can keep concave outer borders when these checks pass.
 Original and output triangles must preserve orientation
 and pass exact native/compiler position and fixed-diagonal native normal checks.
 Every base-grid sample must lie on the exact base plane after all native profiles
@@ -862,7 +860,7 @@ and the compiler agree on one base grid. Native normals retain the fixed-stencil
 sign and conditioning bound of 256 along the chosen chart axis. Children need
 local geometry, boundary and normal proofs, with straight strictly monotone
 convex quad projections; their interiors need not be affine. Folded projections,
-concave or self-intersecting source borders, overlap and extra unsewn contacts
+self-intersecting source borders, overlap and extra unsewn contacts
 refuse. The requested plane
 must follow a complete internal original row or column. Each retained
 whole original cell becomes one power-2 patch. It certifies authored, compiler
@@ -922,7 +920,7 @@ changing the prior draft.
 Cells and Fragments can retain unchanged curved corner neighbors or fully sever
 an old edge contact. Original neighbors retain their authored data verbatim.
 They must share the exact base plane, chart axis and orientation, with exact
-native seam extents and matching contact samples across authored, compiler and
+complete native seam polylines and matching contact samples across authored, compiler and
 all four native profiles. Complete before/after contact graphs and same-chart-axis native
 normal proofs still apply. Retained edges can request explicit selected-neighbor
 retiling as described below. Incompatible final density/contacts, affected LOD,
@@ -956,6 +954,8 @@ through the same geometry, UV, paint, physics-label, normal, LOD, material and
 metadata guards as crossing terrain. Corner-only neighbors, fully severed old
 edges and unrelated selected sources stay unchanged. Partial retained edges or
 incompatible fan density can still refuse in the final native contact graph.
+Retained-edge checks use every seam sample under all native profiles.
+The endpoints alone cannot qualify a bent seam.
 
 Grid propagation follows original native contacts. All modes share the existing
 source/work limits and the 128-patch, 5,184-vertex and 8,192-triangle caps. **Both

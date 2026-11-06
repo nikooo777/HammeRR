@@ -9,7 +9,7 @@ use source_formats::{
 use super::{
     CUT_EPSILON, Exact, FIELD_WORK, Phase, data,
     field::{BasePlane, PlanarField},
-    invalid, orient, reconstructed, same, weighted,
+    invalid, orient, polygon, reconstructed, same, weighted,
 };
 use crate::clip::Keep;
 use crate::displacement::{
@@ -382,19 +382,6 @@ fn prepare<'a>(
         ));
     }
     super::convex(&corners, axes, sign)?;
-    let visible_axis = field.as_ref().map_or(axis, PlanarField::world_axis);
-    let visible_axes = [(visible_axis + 1) % 3, (visible_axis + 2) % 3];
-    let visible_sign = orient(
-        mesh.positions[corner_indices[0]],
-        mesh.positions[corner_indices[1]],
-        mesh.positions[corner_indices[2]],
-        visible_axes,
-    )?;
-    if visible_sign == 0 {
-        return Err(invalid(
-            "Connected terrain contacts require noncollapsed visible native sheets",
-        ));
-    }
     if let Some(field) = &field {
         work.consume(mesh.positions.len() * (positions.len() + FIELD_WORK * 3))
             .map_err(invalid)?;
@@ -419,6 +406,19 @@ fn prepare<'a>(
         }
     }
     if mode == Mode::Flat {
+        let visible_axis = field.as_ref().unwrap().world_axis();
+        let visible_axes = [(visible_axis + 1) % 3, (visible_axis + 2) % 3];
+        let visible_sign = orient(
+            mesh.positions[corner_indices[0]],
+            mesh.positions[corner_indices[1]],
+            mesh.positions[corner_indices[2]],
+            visible_axes,
+        )?;
+        if visible_sign == 0 {
+            return Err(invalid(
+                "Connected terrain contacts require noncollapsed visible native sheets",
+            ));
+        }
         let indices = data.infos[0]
             .triangle_indices()
             .map_err(|error| invalid(error.to_string()))?;
@@ -482,6 +482,7 @@ fn graph(
     let mut edges = BTreeSet::new();
     let mut corners = BTreeSet::new();
     let mut visible_spans = BTreeMap::new();
+    let mut visible_corners = BTreeMap::new();
     let mut varying = BTreeSet::new();
     let mut result = Graph::default();
     for pair in &found.pairs {
@@ -508,23 +509,15 @@ fn graph(
         let key = (pair.first.min(pair.second), pair.first.max(pair.second));
         edges.insert(key);
         if mode == Mode::Cells && phase == Phase::Original {
-            work.consume(1).map_err(invalid)?;
-            let first = common
-                .first()
-                .ok_or_else(|| invalid("Native terrain edge span has no shared endpoints"))?
-                .0;
-            let last = common
-                .last()
-                .ok_or_else(|| invalid("Native terrain edge span has no shared endpoints"))?
-                .0;
-            if first == last
+            work.consume(common.len() + 1).map_err(invalid)?;
+            if common.len() < 2
                 || visible_spans
                     .insert(
                         key,
-                        [
-                            a.positions.last().unwrap()[first],
-                            a.positions.last().unwrap()[last],
-                        ],
+                        common
+                            .iter()
+                            .map(|&(index, _)| a.positions.last().unwrap()[index])
+                            .collect::<Vec<_>>(),
                     )
                     .is_some()
             {
@@ -588,6 +581,20 @@ fn graph(
                     return Err(invalid("Flat terrain native corner samples differ"));
                 }
                 corners.insert((first, second));
+                if mode == Mode::Cells && phase == Phase::Original {
+                    work.consume(1).map_err(invalid)?;
+                    if visible_corners
+                        .insert(
+                            (first, second),
+                            a.positions.last().unwrap()[indices(a, corner)],
+                        )
+                        .is_some()
+                    {
+                        return Err(invalid(
+                            "Terrain source pair has multiple or ambiguous native corner contacts",
+                        ));
+                    }
+                }
                 if a.raw.source != b.raw.source {
                     result
                         .corners
@@ -636,7 +643,14 @@ fn graph(
     }
     certify_contact_normals(surfaces, &edges, &corners, &varying, work)?;
     if mode == Mode::Cells && phase == Phase::Original {
-        certify_original_footprints(surfaces, &edges, &corners, &visible_spans, work)?;
+        certify_original_footprints(
+            surfaces,
+            &edges,
+            &corners,
+            &visible_spans,
+            &visible_corners,
+            work,
+        )?;
     }
     result.pairs = found.pairs;
     Ok(result)
@@ -672,7 +686,8 @@ fn certify_original_footprints(
     surfaces: &[&Surface<'_>],
     edges: &BTreeSet<(usize, usize)>,
     corners: &BTreeSet<(usize, usize)>,
-    spans: &BTreeMap<(usize, usize), [DVec3; 2]>,
+    spans: &BTreeMap<(usize, usize), Vec<DVec3>>,
+    points: &BTreeMap<(usize, usize), DVec3>,
     work: &mut Work,
 ) -> Result<(), EditError> {
     let mut verified = BTreeSet::new();
@@ -690,10 +705,11 @@ fn certify_original_footprints(
                 .info
                 .grid_size()
                 .map_err(|error| invalid(error.to_string()))?;
-            rings.insert(
-                index,
-                super::ordered_boundary(surface.positions.last().unwrap(), size, work)?,
-            );
+            let ring = super::ordered_boundary(surface.positions.last().unwrap(), size, work)?;
+            work.consume(polygon::CONVEX_WORK * ring.len() * ring.len())
+                .map_err(invalid)?;
+            let convex = polygon::convex(&ring, axes, surface.sheet.sign)?;
+            rings.insert(index, (ring, convex));
         }
         for &first in &component {
             for &second in component.range(first + 1..) {
@@ -703,32 +719,301 @@ fn certify_original_footprints(
                         "Connected curved terrain footprints require one exact base chart and orientation",
                     ));
                 }
-                let rank = projected_contact_rank(&rings[&first], &rings[&second], axes, work)?;
                 let key = (first, second);
-                if edges.contains(&key) {
-                    let span = spans.get(&key).ok_or_else(|| {
-                        invalid("Terrain footprint lost its verified native edge span")
-                    })?;
-                    if rank != Some(1) {
+                let expected = if edges.contains(&key) {
+                    if corners.contains(&key) {
                         return Err(invalid(
-                            "Curved terrain projected edge contact differs from its native seam",
+                            "Terrain source pair has mixed native edge and corner contacts",
                         ));
                     }
-                    certify_span_overlap(&rings[&first], &rings[&second], *span, axes, work)?;
+                    spans
+                        .get(&key)
+                        .ok_or_else(|| {
+                            invalid("Terrain footprint lost its verified native edge polyline")
+                        })?
+                        .as_slice()
                 } else if corners.contains(&key) {
-                    if rank != Some(2) {
+                    std::slice::from_ref(points.get(&key).ok_or_else(|| {
+                        invalid("Terrain footprint lost its verified visible native corner")
+                    })?)
+                } else {
+                    &[]
+                };
+                work.consume(expected.len() * expected.len())
+                    .map_err(invalid)?;
+                for (index, &point) in expected.iter().enumerate() {
+                    if expected
+                        .iter()
+                        .skip(index + 1)
+                        .any(|&other| polygon::same_point(point, other, axes))
+                    {
                         return Err(invalid(
-                            "Curved terrain projected corner contact is ambiguous or overlaps",
+                            "Native terrain projected seam samples must be distinct",
                         ));
                     }
-                } else if rank.is_some() {
-                    return Err(invalid(
-                        "Curved terrain projected footprints overlap or introduce an unsewn contact",
-                    ));
+                }
+                let (a, a_convex) = &rings[&first];
+                let (b, b_convex) = &rings[&second];
+                let straight = expected.len() < 2 || straight_span(expected, axes, work)?;
+                if *a_convex && *b_convex && straight && expected.len() != 1 {
+                    let rank = projected_contact_rank(a, b, axes, work)?;
+                    match expected.len() {
+                        0 if rank.is_none() => {}
+                        count if count >= 2 && rank == Some(1) => {
+                            certify_span_overlap(
+                                a,
+                                b,
+                                [expected[0], expected[count - 1]],
+                                axes,
+                                work,
+                            )?;
+                        }
+                        _ => {
+                            return Err(invalid(
+                                "Curved terrain projected contacts overlap or differ from their exact native contact set",
+                            ));
+                        }
+                    }
+                } else {
+                    certify_boundary(a, b, expected, axes, work)?;
+                    certify_boundary(b, a, expected, axes, work)?;
+                    certify_expected(a, b, expected, axes, work)?;
                 }
             }
         }
         verified.extend(component);
+    }
+    Ok(())
+}
+
+fn straight_span(points: &[DVec3], axes: [usize; 2], work: &mut Work) -> Result<bool, EditError> {
+    work.consume((polygon::ON_SEGMENT_WORK + 2) * points.len())
+        .map_err(invalid)?;
+    let span = [points[0], points[points.len() - 1]];
+    let coordinate = axes
+        .into_iter()
+        .find(|&axis| span[0][axis] != span[1][axis])
+        .ok_or_else(|| invalid("Native terrain visible seam is projected to a point"))?;
+    let increasing = span[0][coordinate] < span[1][coordinate];
+    let mut previous = points[0][coordinate];
+    for &point in &points[1..] {
+        if !polygon::on_segment(point, span, axes)?
+            || if increasing {
+                point[coordinate] <= previous
+            } else {
+                point[coordinate] >= previous
+            }
+        {
+            return Ok(false);
+        }
+        previous = point[coordinate];
+    }
+    Ok(true)
+}
+
+fn split_contact_segment(
+    segment: [DVec3; 2],
+    ring: &[DVec3],
+    expected: &[DVec3],
+    axes: [usize; 2],
+    opposite: bool,
+    work: &mut Work,
+) -> Result<Vec<DVec3>, EditError> {
+    let coordinate = axes
+        .into_iter()
+        .find(|&axis| segment[0][axis] != segment[1][axis])
+        .ok_or_else(|| invalid("Terrain projected contact segment is collapsed"))?;
+    let capacity = 2 + 2 * ring.len() + expected.len();
+    work.consume(
+        polygon::SEGMENT_WORK * ring.len() + polygon::ON_SEGMENT_WORK * expected.len() + capacity,
+    )
+    .map_err(invalid)?;
+    let mut points = Vec::with_capacity(capacity);
+    points.extend(segment);
+    for (index, &point) in ring.iter().enumerate() {
+        let other = [point, ring[(index + 1) % ring.len()]];
+        match polygon::segment_contact(segment, other, axes)? {
+            polygon::SegmentContact::None => {}
+            polygon::SegmentContact::Crossing => {
+                return Err(invalid(
+                    "Curved terrain projected footprint boundaries cross",
+                ));
+            }
+            polygon::SegmentContact::Point(point) => points.push(point),
+            polygon::SegmentContact::Overlap(overlap) => {
+                if opposite
+                    && (segment[0][coordinate] < segment[1][coordinate])
+                        == (other[0][coordinate] < other[1][coordinate])
+                {
+                    return Err(invalid(
+                        "Curved terrain shared boundaries must have opposite winding",
+                    ));
+                }
+                points.extend(overlap);
+            }
+        }
+    }
+    for &point in expected {
+        if polygon::on_segment(point, segment, axes)? {
+            points.push(point);
+        }
+    }
+    work.consume(points.len() * ((usize::BITS - points.len().leading_zeros()) as usize + 2))
+        .map_err(invalid)?;
+    points.sort_by(|a, b| a[coordinate].total_cmp(&b[coordinate]));
+    points.dedup_by(|a, b| polygon::same_point(*a, *b, axes));
+    Ok(points)
+}
+
+fn projected_midpoint([mut a, mut b]: [DVec3; 2], axes: [usize; 2]) -> Result<DVec3, EditError> {
+    let dropped = 3 - axes[0] - axes[1];
+    a[dropped] = 0.0;
+    b[dropped] = 0.0;
+    weighted(&[a, b], &[1, 1], 2)
+}
+
+fn location(
+    point: DVec3,
+    ring: &[DVec3],
+    axes: [usize; 2],
+    work: &mut Work,
+) -> Result<polygon::Location, EditError> {
+    work.consume(polygon::CLASSIFY_WORK * ring.len())
+        .map_err(invalid)?;
+    polygon::classify(point, ring, axes)
+}
+
+fn expected_point(
+    point: DVec3,
+    expected: &[DVec3],
+    axes: [usize; 2],
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    work.consume(1 + polygon::ON_SEGMENT_WORK * expected.len())
+        .map_err(invalid)?;
+    if expected.len() == 1 {
+        return Ok(polygon::same_point(point, expected[0], axes));
+    }
+    for segment in expected.windows(2) {
+        if polygon::on_segment(point, [segment[0], segment[1]], axes)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn expected_segment(
+    segment: [DVec3; 2],
+    expected: &[DVec3],
+    axes: [usize; 2],
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    work.consume(1 + 2 * polygon::ON_SEGMENT_WORK * expected.len())
+        .map_err(invalid)?;
+    for points in expected.windows(2) {
+        if polygon::on_segment(segment[0], [points[0], points[1]], axes)?
+            && polygon::on_segment(segment[1], [points[0], points[1]], axes)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn certify_boundary(
+    ring: &[DVec3],
+    other: &[DVec3],
+    expected: &[DVec3],
+    axes: [usize; 2],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    for (index, &point) in ring.iter().enumerate() {
+        let points = split_contact_segment(
+            [point, ring[(index + 1) % ring.len()]],
+            other,
+            expected,
+            axes,
+            true,
+            work,
+        )?;
+        for &point in &points {
+            match location(point, other, axes, work)? {
+                polygon::Location::Inside => {
+                    return Err(invalid(
+                        "Curved terrain projected footprints have positive-area overlap",
+                    ));
+                }
+                polygon::Location::Boundary if !expected_point(point, expected, axes, work)? => {
+                    return Err(invalid(
+                        "Curved terrain projected footprints introduce an unsewn point contact",
+                    ));
+                }
+                _ => {}
+            }
+        }
+        for pair in points.windows(2) {
+            work.consume(FIELD_WORK).map_err(invalid)?;
+            let segment = [pair[0], pair[1]];
+            match location(projected_midpoint(segment, axes)?, other, axes, work)? {
+                polygon::Location::Inside => {
+                    return Err(invalid(
+                        "Curved terrain projected footprints have positive-area overlap",
+                    ));
+                }
+                polygon::Location::Boundary
+                    if !expected_segment(segment, expected, axes, work)? =>
+                {
+                    return Err(invalid(
+                        "Curved terrain projected seam extends outside its complete native polyline",
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+fn certify_expected(
+    first: &[DVec3],
+    second: &[DVec3],
+    expected: &[DVec3],
+    axes: [usize; 2],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    for ring in [first, second] {
+        for &point in expected {
+            if location(point, ring, axes, work)? != polygon::Location::Boundary {
+                return Err(invalid(
+                    "Curved terrain footprint omits a verified native contact sample",
+                ));
+            }
+        }
+        for segment in expected.windows(2) {
+            let points =
+                split_contact_segment([segment[0], segment[1]], ring, expected, axes, false, work)?;
+            for &point in &points {
+                if location(point, ring, axes, work)? != polygon::Location::Boundary {
+                    return Err(invalid(
+                        "Curved terrain footprint omits a verified native seam intersection",
+                    ));
+                }
+            }
+            for pair in points.windows(2) {
+                work.consume(FIELD_WORK).map_err(invalid)?;
+                if location(
+                    projected_midpoint([pair[0], pair[1]], axes)?,
+                    ring,
+                    axes,
+                    work,
+                )? != polygon::Location::Boundary
+                {
+                    return Err(invalid(
+                        "Curved terrain footprint omits part of its complete native seam",
+                    ));
+                }
+            }
+        }
     }
     Ok(())
 }

@@ -257,26 +257,28 @@ previous valid draft; no policy switches automatically after a failure.
 - **Retile grid cells** requires an exact planar base with a rectangular cage in
   its base-plane coordinate chart. Tilted bases must pass the same native geometry
   and normal checks. Curved height and non-affine interior tangential warps are
-  supported. Original borders may be bowed when their exact projected native
-  samples form simple convex polygons. Connected originals must share the exact
-  base chart and orientation. Complete pairwise footprint checks must preserve
-  only their native edge/corner contacts and exact visible seam extents, without
-  overlap or extra unsewn contact. Output patches retain
-  straight, strictly ordered convex quad projections. Every original
+  supported. Original projected borders may form simple convex or concave polygons.
+  Border segments must not cross, touch unrelated segments or backtrack.
+  Connected originals must share the exact base chart and orientation.
+  Complete footprint checks must
+  preserve their native contacts and complete shared seam polylines.
+  The cut fails if footprints overlap or form extra unsewn contacts. Output patches retain
+  straight, strictly ordered convex quad projections. Local cell and normal checks
+  can still reject the cut. Every original
   and output triangle must preserve orientation and pass the exact native geometry
   and normal checks. Paint samples must preserve each original triangle's raw and
   packed blend fields exactly. Native texture rules match **Retile flat terrain**.
   Unchanged curved neighbors may retain a certified corner or have an old edge
   contact fully severed. They must share the exact base chart and orientation,
-  with matching native contact samples, exact seam extents and certified normals.
+  with matching native contact samples, complete seam polylines and certified normals.
   Their authored grids and metadata stay unchanged.
   **Partition selected neighbors** explicitly permits whole retiling of selected
   noncrossing neighbors required by a retained matched full original edge.
   Every neighbor must pass complete source, field, material and metadata checks.
   Missing selection, unsupported partial edges, incompatible native density,
   affected LOD coarsening, contact mismatches, corner
-  capacity overflow, folded projections, concave or self-intersecting borders,
-  extra contacts, ambiguous collinear corners and uncertain
+  capacity overflow, folded projections, self-intersecting borders,
+  extra contacts, unsupported degenerate contacts and uncertain
   native normal inputs reject.
   Each retained cell adds 32 native triangles. Powers 2–4 are subject to the
   shared output and work limits.

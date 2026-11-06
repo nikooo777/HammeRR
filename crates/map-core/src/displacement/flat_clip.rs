@@ -21,6 +21,7 @@ pub(crate) mod fragments;
 mod labels;
 pub(crate) mod network;
 mod paint;
+mod polygon;
 
 use field::{BasePlane, PlanarField, ScalarField};
 use labels::TriangleField;
@@ -685,12 +686,14 @@ fn projected_sheet(
     )
     .map_err(invalid)?;
     let visible = indices.map(|index| mesh.positions[index]);
-    if orient(visible[0], visible[1], visible[2], axes)? != sign {
-        return Err(invalid(
-            "Curved terrain tangential projection must preserve its base orientation",
-        ));
+    if phase == Phase::Child {
+        if orient(visible[0], visible[1], visible[2], axes)? != sign {
+            return Err(invalid(
+                "Curved terrain tangential projection must preserve its base orientation",
+            ));
+        }
+        convex(&visible, axes, sign)?;
     }
-    convex(&visible, axes, sign)?;
     for (index, &point) in mesh.positions.iter().enumerate() {
         let base = mesh.base_positions[index];
         if !plane.contains(base)?
@@ -712,16 +715,15 @@ fn projected_sheet(
         }
     }
     match phase {
-        Phase::Original => polygonal_boundary(mesh, axes, sign, work)?,
+        Phase::Original => simple_boundary(mesh, axes, work)?,
         Phase::Child => straight_boundary(mesh, visible, axes)?,
     }
     Ok(HeightSheet { axis, axes, sign })
 }
 
-fn polygonal_boundary(
+fn simple_boundary(
     mesh: &DisplacementMesh,
     axes: [usize; 2],
-    sign: i128,
     work: &mut Work,
 ) -> Result<(), EditError> {
     if !matches!(mesh.size, 5 | 9 | 17) {
@@ -730,34 +732,10 @@ fn polygonal_boundary(
         ));
     }
     let count = 4 * (mesh.size - 1);
-    work.consume((FIELD_WORK + 1) * count * count + count)
+    work.consume(polygon::SIMPLE_WORK * count * count + count)
         .map_err(invalid)?;
     let ring = ordered_boundary(&mesh.positions, mesh.size, work)?;
-    for first in 0..ring.len() {
-        let a = ring[first];
-        let b = ring[(first + 1) % ring.len()];
-        if axes.iter().all(|&axis| a[axis] == b[axis]) {
-            return Err(invalid(
-                "Terrain projected boundary contains a collapsed edge",
-            ));
-        }
-        for point in ring.iter().skip(first + 1) {
-            if axes.iter().all(|&axis| a[axis] == point[axis]) {
-                return Err(invalid(
-                    "Terrain projected boundary vertices must be unique",
-                ));
-            }
-        }
-        for &point in &ring {
-            let side = orient(a, b, point, axes)?;
-            if side != 0 && side != sign {
-                return Err(invalid(
-                    "Original curved terrain requires a convex projected polygonal boundary",
-                ));
-            }
-        }
-    }
-    Ok(())
+    polygon::simple(&ring, axes)
 }
 
 fn ordered_boundary(
@@ -1341,10 +1319,7 @@ struct Child {
 }
 
 fn on_segment(point: DVec3, a: DVec3, b: DVec3, axes: [usize; 2]) -> Result<bool, EditError> {
-    Ok(orient(a, b, point, axes)? == 0
-        && axes
-            .into_iter()
-            .all(|axis| point[axis] >= a[axis].min(b[axis]) && point[axis] <= a[axis].max(b[axis])))
+    polygon::on_segment(point, [a, b], axes)
 }
 
 fn region(

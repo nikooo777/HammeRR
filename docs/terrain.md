@@ -225,17 +225,18 @@ terrain at any complete original row or column, including power 2. It refines
 whole cells and supports curved height and non-affine interior tangential warps
 on exact planar bases, including qualified tilted bases. The base cage must be
 rectangular in its exact base-plane coordinate chart.
-Original borders may be bowed when their exact projected native samples form
-simple convex polygons. Connected originals must share the exact base chart and
-orientation, with complete footprint checks preserving only the native contacts
-and exact visible seam extents. Output patches retain straight, strictly ordered
-convex quad projections. Folded projections, concave or self-intersecting borders,
-overlap and extra unsewn contacts reject. Some collinear corner contacts may also
-refuse.
+Original projected borders may form simple convex or concave polygons.
+Connected originals need the same exact base chart and orientation. Complete footprint
+checks must preserve the native contacts and complete shared seam polylines.
+Output patches retain straight, strictly ordered convex quad projections.
+Local cell and normal checks can still reject the cut.
+Folded projections, self-intersecting borders, overlap, extra unsewn contacts and
+unsupported degenerate contacts reject.
 Native geometry, piecewise raw/native paint fields and labels must remain exact.
 Unchanged curved neighbors can retain a certified corner, or an old edge contact
-can be fully severed. They must share the exact base chart and orientation and
-pass native contact, seam-extent and normal checks. Their authored grids
+can be fully severed. They must share the exact base chart and orientation.
+Native contact checks cover complete seam polylines. Normal checks still apply.
+Their authored grids
 stay unchanged. To retain a full original edge, select the required noncrossing
 neighbor and enable **Partition selected neighbors**. This explicitly retiles the
 entire neighbor: one power-2 patch per old cell in **Retile grid cells**, four in

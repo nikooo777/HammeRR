@@ -1028,6 +1028,10 @@ pub fn clip_with_options(
                             crate::displacement::flat_clip::network::Replacement {
                                 source: terrain.source,
                                 parts: &cut.parts,
+                                texture: options
+                                    .textures
+                                    .and_then(|textures| textures.get(&terrain.source))
+                                    .copied(),
                             }
                         })
                     })

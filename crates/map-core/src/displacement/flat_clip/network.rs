@@ -9,10 +9,11 @@ use source_formats::{
 use super::{
     CUT_EPSILON, Exact, FIELD_WORK, Phase, data,
     field::{BasePlane, PlanarField},
-    invalid, orient, polygon, reconstructed, same, weighted,
+    invalid, lod_proof, orient, polygon, reconstructed, same, weighted,
 };
 use crate::clip::Keep;
 use crate::displacement::{
+    DisplacementMesh,
     grid_clip::{self, Context, Work},
     lod, native, neighbors, triangles,
 };
@@ -22,6 +23,7 @@ use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 pub(crate) struct Replacement<'a> {
     pub source: FaceId,
     pub parts: &'a [Solid],
+    pub texture: Option<crate::clip::TerrainTexture>,
 }
 
 pub(crate) struct Verification {
@@ -48,7 +50,9 @@ struct Surface<'a> {
     info: bsp::DisplacementInfo,
     power: u32,
     corners: [DVec3; 4],
-    base_positions: Vec<DVec3>,
+    mesh: DisplacementMesh,
+    data: bsp::Displacements,
+    base: [[f32; 3]; 4],
     positions: Vec<Vec<DVec3>>,
     sheet: Sheet,
 }
@@ -103,6 +107,141 @@ struct Graph {
     pairs: Vec<neighbors::NeighborPair>,
     edges: Vec<Contact>,
     corners: Vec<Contact>,
+    lod: Vec<LodState>,
+}
+
+struct LodState {
+    coarsened: bool,
+    mask: [u32; crate::displacement::ALLOWED_VERTEX_MASK_WORDS],
+    active: Vec<bool>,
+    ideal_positions: Vec<DVec3>,
+    data: bsp::Displacements,
+    positions: Vec<Vec<DVec3>>,
+    indices: Vec<[usize; 3]>,
+}
+
+impl LodState {
+    fn matches(&self, other: &Self, work: &mut Work) -> Result<bool, EditError> {
+        work.consume(
+            self.active.len()
+                + self.ideal_positions.len()
+                + self.data.vertices.len()
+                + self.positions.iter().map(Vec::len).sum::<usize>()
+                + self.indices.len(),
+        )
+        .map_err(invalid)?;
+        Ok(self.mask == other.mask
+            && self.active == other.active
+            && self.ideal_positions.len() == other.ideal_positions.len()
+            && self
+                .ideal_positions
+                .iter()
+                .zip(&other.ideal_positions)
+                .all(|(&a, &b)| position_bits(a) == position_bits(b))
+            && self.data.vertices.len() == other.data.vertices.len()
+            && self
+                .data
+                .vertices
+                .iter()
+                .zip(&other.data.vertices)
+                .all(|(a, b)| vertex_bits(a) == vertex_bits(b))
+            && self.positions.len() == other.positions.len()
+            && self.positions.iter().zip(&other.positions).all(|(a, b)| {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b)
+                        .all(|(&a, &b)| position_bits(a) == position_bits(b))
+            })
+            && self.indices == other.indices)
+    }
+
+    fn proof(&self) -> lod_proof::State<'_> {
+        lod_proof::State {
+            data: &self.data,
+            positions: &self.positions,
+            ideal_positions: &self.ideal_positions,
+            indices: &self.indices,
+            active: &self.active,
+            mask: &self.mask,
+        }
+    }
+}
+
+fn position_bits(point: DVec3) -> [u64; 3] {
+    point.to_array().map(f64::to_bits)
+}
+
+fn vertex_bits(vertex: &bsp::DisplacementVertex) -> [u32; 5] {
+    [
+        vertex.direction[0].to_bits(),
+        vertex.direction[1].to_bits(),
+        vertex.direction[2].to_bits(),
+        vertex.distance.to_bits(),
+        vertex.alpha.to_bits(),
+    ]
+}
+
+fn lod_state(
+    surface: &Surface<'_>,
+    patch: Option<lod::Patch>,
+    work: &mut Work,
+) -> Result<LodState, EditError> {
+    work.consume(
+        8 * surface.data.vertices.len()
+            + 3 * surface
+                .info
+                .triangle_count()
+                .map_err(|error| invalid(error.to_string()))?,
+    )
+    .map_err(invalid)?;
+    let mut data = surface.data.clone();
+    let (coarsened, mask, active, ideal_positions, positions, indices) = match patch {
+        Some(patch) => {
+            data.vertices = lod::encoded_vertices(
+                &surface.data.vertices,
+                surface.positions.last().unwrap(),
+                &patch,
+            )
+            .map_err(invalid)?;
+            data.infos[0].allowed_vertices = patch.mask;
+            let positions = reconstructed(&data, surface.base, work)?;
+            work.consume(surface.positions.iter().map(Vec::len).sum())
+                .map_err(invalid)?;
+            if positions != surface.positions {
+                return Err(invalid(
+                    "Flat terrain LOD requires unchanged complete native and compiler geometry",
+                ));
+            }
+            (
+                true,
+                patch.mask,
+                patch.active,
+                patch.positions,
+                positions,
+                patch.indices,
+            )
+        }
+        None => (
+            false,
+            surface.info.allowed_vertices,
+            vec![true; surface.data.vertices.len()],
+            surface.positions.last().unwrap().clone(),
+            surface.positions.clone(),
+            surface
+                .info
+                .triangle_indices()
+                .map_err(|error| invalid(error.to_string()))?,
+        ),
+    };
+    Ok(LodState {
+        coarsened,
+        mask,
+        active,
+        ideal_positions,
+        data,
+        positions,
+        indices,
+    })
 }
 
 fn bounds(points: &[DVec3]) -> (DVec3, DVec3) {
@@ -446,7 +585,9 @@ fn prepare<'a>(
         power: info.power,
         raw,
         corners,
-        base_positions: mesh.base_positions,
+        mesh,
+        data,
+        base,
         positions,
         sheet,
     })
@@ -474,9 +615,9 @@ fn graph(
             .map_err(invalid)?;
     let (patches, _) =
         lod::prepare(&grids, &found.pairs, &mut |amount| work.consume(amount)).map_err(invalid)?;
-    if patches.iter().any(Option::is_some) {
+    if mode == Mode::Cells && patches.iter().any(Option::is_some) {
         return Err(invalid(
-            "Connected flat terrain cuts cannot change or retain affected native LOD coarsening",
+            "Connected curved terrain cuts cannot change or retain affected native LOD coarsening",
         ));
     }
     let mut edges = BTreeSet::new();
@@ -653,7 +794,110 @@ fn graph(
         )?;
     }
     result.pairs = found.pairs;
+    if mode == Mode::Flat {
+        work.consume(surfaces.len()).map_err(invalid)?;
+        result.lod = surfaces
+            .iter()
+            .zip(patches)
+            .map(|(surface, patch)| lod_state(surface, patch, work))
+            .collect::<Result<Vec<_>, _>>()?;
+    }
     Ok(result)
+}
+
+fn certify_lod(
+    previous: (&[Surface<'_>], &Graph),
+    current: (&[&Surface<'_>], &Graph),
+    selected: &BTreeSet<FaceId>,
+    replacements: &[Replacement<'_>],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let (before, previous) = previous;
+    let (after, current) = current;
+    if previous.lod.len() != before.len() || current.lod.len() != after.len() {
+        return Err(invalid(
+            "Flat terrain LOD certificate lost its native states",
+        ));
+    }
+    work.consume(2 * before.len() + after.len())
+        .map_err(invalid)?;
+    let mut coarsened = BTreeSet::new();
+    for (index, surface) in before.iter().enumerate() {
+        if selected.contains(&surface.raw.source) {
+            if previous.lod[index].coarsened {
+                coarsened.insert(surface.raw.source);
+            }
+            continue;
+        }
+        work.consume(after.len()).map_err(invalid)?;
+        let mut retained = after
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| candidate.raw.source == surface.raw.source);
+        let (retained_index, _) = retained
+            .next()
+            .filter(|_| retained.next().is_none())
+            .ok_or_else(|| invalid("Flat terrain LOD certificate lost an unchanged neighbor"))?;
+        if !previous.lod[index].matches(&current.lod[retained_index], work)? {
+            return Err(invalid(
+                "Flat terrain clipping cannot change an unselected neighbor's native LOD state",
+            ));
+        }
+    }
+    for (surface, state) in after.iter().zip(&current.lod) {
+        work.consume(1).map_err(invalid)?;
+        if selected.contains(&surface.raw.source)
+            && state.coarsened
+            && !coarsened.contains(&surface.raw.source)
+        {
+            return Err(invalid(
+                "Flat terrain clipping cannot introduce native LOD coarsening on a previously full selected source",
+            ));
+        }
+    }
+    for (surface, state) in before.iter().zip(&previous.lod) {
+        if !coarsened.contains(&surface.raw.source) {
+            continue;
+        }
+        work.consume(replacements.len()).map_err(invalid)?;
+        let texture = replacements
+            .iter()
+            .find(|replacement| replacement.source == surface.raw.source)
+            .and_then(|replacement| replacement.texture)
+            .ok_or_else(|| {
+                invalid("Flat terrain LOD requires guarded native texture mapping dimensions")
+            })?;
+        let expected = lod_proof::certify(
+            &surface.raw.face,
+            surface.raw.side.displacement.as_ref().unwrap(),
+            &surface.mesh,
+            surface.sheet.field.as_ref().unwrap(),
+            state.proof(),
+            texture,
+            work,
+        )?;
+        for (child, state) in after.iter().zip(&current.lod) {
+            work.consume(1).map_err(invalid)?;
+            if child.raw.source != surface.raw.source {
+                continue;
+            }
+            let actual = lod_proof::certify(
+                &child.raw.face,
+                child.raw.side.displacement.as_ref().unwrap(),
+                &child.mesh,
+                child.sheet.field.as_ref().unwrap(),
+                state.proof(),
+                texture,
+                work,
+            )?;
+            if !expected.matches(&actual, work)? {
+                return Err(invalid(
+                    "Flat terrain LOD retiling must preserve the exact affine field, constant paint and uniform native labels",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn contact_component(
@@ -1332,12 +1576,12 @@ fn verify_source(
     )?;
     work.consume(original.positions.iter().map(Vec::len).sum())
         .map_err(invalid)?;
-    work.consume(2 * FIELD_WORK + original.base_positions.len())
+    work.consume(2 * FIELD_WORK + original.mesh.base_positions.len())
         .map_err(invalid)?;
     if original.power != assembled.power
         || original.corners != assembled.corners
         || original.positions != assembled.positions
-        || original.base_positions != assembled.base_positions
+        || original.mesh.base_positions != assembled.mesh.base_positions
         || !original.sheet.matches(&assembled.sheet)?
     {
         return Err(invalid(
@@ -1740,6 +1984,15 @@ fn certify_mode(
         ));
     }
     let current = graph(&after, mode, Phase::Child, work)?;
+    if mode == Mode::Flat {
+        certify_lod(
+            (&before, &previous),
+            (&after, &current),
+            &selected,
+            replacements,
+            work,
+        )?;
+    }
     coverage(&previous, &current, &after, work)?;
     let mut adjacency = BTreeMap::<FaceId, BTreeSet<FaceId>>::new();
     for contact in previous.edges.iter().chain(&previous.corners) {

@@ -19,6 +19,7 @@ pub(crate) mod cells;
 mod field;
 pub(crate) mod fragments;
 mod labels;
+mod lod_proof;
 pub(crate) mod network;
 mod paint;
 mod polygon;
@@ -1359,51 +1360,118 @@ fn region_checked(
     }
     .triangle_indices()
     .map_err(|error| invalid(error.to_string()))?;
-    let mut actual = Edges::new();
-    let mut boundary = Edges::new();
+    let mut proof = Region::new(ring, axes, sign, plane, field);
     for child in children {
-        work.consume(indices.len() + child.positions.len() * (ring.len() + FIELD_WORK))
+        proof.add(&child.positions, &indices, SIZE, None, work)?;
+    }
+    proof.finish()
+}
+
+struct Region<'a> {
+    ring: &'a [DVec3],
+    axes: [usize; 2],
+    sign: i128,
+    plane: Option<Plane>,
+    field: Option<&'a PlanarField>,
+    actual: Edges,
+    boundary: Edges,
+}
+
+impl<'a> Region<'a> {
+    fn new(
+        ring: &'a [DVec3],
+        axes: [usize; 2],
+        sign: i128,
+        plane: Option<Plane>,
+        field: Option<&'a PlanarField>,
+    ) -> Self {
+        Self {
+            ring,
+            axes,
+            sign,
+            plane,
+            field,
+            actual: Edges::new(),
+            boundary: Edges::new(),
+        }
+    }
+
+    fn add(
+        &mut self,
+        positions: &[DVec3],
+        indices: &[[usize; 3]],
+        size: usize,
+        active: Option<&[bool]>,
+        work: &mut Work,
+    ) -> Result<(), EditError> {
+        work.consume(indices.len() + positions.len() * (self.ring.len() + FIELD_WORK))
             .map_err(invalid)?;
-        for &point in &child.positions {
-            if plane.is_some_and(|plane| plane.distance_to(point) > CUT_EPSILON) {
+        if !matches!(size, 5 | 9 | 17)
+            || positions.len() != size * size
+            || active.is_some_and(|active| active.len() != positions.len())
+            || indices
+                .iter()
+                .flatten()
+                .any(|&index| index >= positions.len())
+        {
+            return Err(invalid(
+                "Terrain region requires complete bounded grids and triangle indices",
+            ));
+        }
+        for &point in positions {
+            if self
+                .plane
+                .is_some_and(|plane| plane.distance_to(point) > CUT_EPSILON)
+            {
                 return Err(invalid(
                     "Flat terrain native triangles cross the retained cut-plane precision",
                 ));
             }
-            if let Some(field) = field {
+            if let Some(field) = self.field {
                 let _ = field.base_position(point)?;
             }
-            for index in 0..ring.len() {
-                let value = orient(ring[index], ring[(index + 1) % ring.len()], point, axes)?;
-                if value != 0 && value != sign {
+            for index in 0..self.ring.len() {
+                let value = orient(
+                    self.ring[index],
+                    self.ring[(index + 1) % self.ring.len()],
+                    point,
+                    self.axes,
+                )?;
+                if value != 0 && value != self.sign {
                     return Err(invalid(
                         "Flat terrain triangle lies outside its retained polygon",
                     ));
                 }
             }
         }
-        for triangle in &indices {
-            let points = triangle.map(|index| child.positions[index]);
-            if orient(points[0], points[1], points[2], axes)? != sign {
+        for triangle in indices {
+            let points = triangle.map(|index| positions[index]);
+            if orient(points[0], points[1], points[2], self.axes)? != self.sign {
                 return Err(invalid(
                     "Flat terrain native triangles must have positive orientation",
                 ));
             }
             for index in 0..3 {
-                edge(&mut actual, points[index], points[(index + 1) % 3])?;
+                edge(&mut self.actual, points[index], points[(index + 1) % 3])?;
             }
         }
         for side in 0..4 {
-            let positions = neighbors::edge_indices(SIZE, side).map_err(invalid)?;
-            let points = positions
+            let border = neighbors::edge_indices(size, side).map_err(invalid)?;
+            let points = border
                 .iter()
-                .map(|&index| child.positions[index])
+                .filter(|&&index| active.is_none_or(|active| active[index]))
+                .map(|&index| positions[index])
                 .collect::<Vec<_>>();
+            if points.len() < 2 {
+                return Err(invalid("Terrain region lost an active native border"));
+            }
             let mut boundary_edge = None;
-            for index in 0..ring.len() {
-                let a = ring[index];
-                let b = ring[(index + 1) % ring.len()];
-                if on_segment(points[0], a, b, axes)? && on_segment(points[SIZE - 1], a, b, axes)? {
+            for index in 0..self.ring.len() {
+                let a = self.ring[index];
+                let b = self.ring[(index + 1) % self.ring.len()];
+                if on_segment(points[0], a, b, self.axes)?
+                    && on_segment(*points.last().unwrap(), a, b, self.axes)?
+                {
                     boundary_edge = Some([a, b]);
                     break;
                 }
@@ -1412,23 +1480,27 @@ fn region_checked(
                 continue;
             };
             for &point in &points {
-                if !on_segment(point, a, b, axes)? {
+                if !on_segment(point, a, b, self.axes)? {
                     return Err(invalid(
                         "Flat terrain retained boundary does not lie on its exact polygon edges",
                     ));
                 }
             }
             for pair in points.windows(2) {
-                edge(&mut boundary, pair[0], pair[1])?;
+                edge(&mut self.boundary, pair[0], pair[1])?;
             }
         }
+        Ok(())
     }
-    if actual != boundary || boundary.values().any(|count| *count != 1) {
-        return Err(invalid(
-            "Flat terrain triangles do not have the exact oriented retained boundary and internal seams",
-        ));
+
+    fn finish(self) -> Result<(), EditError> {
+        if self.actual != self.boundary || self.boundary.values().any(|count| *count != 1) {
+            return Err(invalid(
+                "Flat terrain triangles do not have the exact oriented retained boundary and internal seams",
+            ));
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 fn connections(children: &[Child], work: &mut Work) -> Result<(), EditError> {

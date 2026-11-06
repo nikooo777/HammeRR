@@ -248,6 +248,10 @@ cuts on eligible planar surfaces, including tilted base cages and affine
 tangential offsets. Joined planar patches can have different slopes on a common
 planar base, including tilted bases, when they share one exact coordinate
 projection with exact native contacts and certified normals.
+Initially coarsened selected Flat sources may qualify with constant paint, uniform
+labels and exact LOD checks. A source that was not coarsened before the cut cannot
+acquire output LOD.
+Unchanged neighbors keep their full LOD state.
 Choose [**Retile surface triangles**](brush-tools.md#cut-through-curved-cells)
 to cut through curved cells while preserving their original triangle surfaces.
 It accepts convex cages in the exact chart of its planar base, including qualified

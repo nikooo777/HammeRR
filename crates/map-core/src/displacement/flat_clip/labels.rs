@@ -20,6 +20,28 @@ struct Label {
     secondary: Option<bool>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct UniformLabel(Label);
+
+pub(super) fn uniform(
+    info: &DispInfo,
+    mesh: &DisplacementMesh,
+    has_secondary_surface: bool,
+    work: &mut Work,
+) -> Result<UniformLabel, EditError> {
+    let labels = read_labels(info, mesh, has_secondary_surface, work)?;
+    let first = labels
+        .first()
+        .copied()
+        .ok_or_else(|| invalid("Terrain LOD source has no triangle labels"))?;
+    if labels.iter().any(|&label| label != first) {
+        return Err(invalid(
+            "Retiled native LOD currently requires uniform raw and native flags and collision-material labels",
+        ));
+    }
+    Ok(UniformLabel(first))
+}
+
 fn power(mesh: &DisplacementMesh) -> Result<u32, EditError> {
     let power = (2..=4)
         .find(|&power| mesh.size == (1 << power) + 1)

@@ -128,6 +128,8 @@ keeps these fields, material, texture placement and smoothing. It does not flatt
 curved or nonlinearly painted surface. **Existing grid** never switches modes
 after a failed cut.
 
+This mode also accepts qualified sources that are already coarsened by native LOD.
+
 ![A diagonal cut retiles flat terrain into native quad patches](images/terrain-flat-cut.png)
 
 ![Repeated cuts preserve a sloped terrain sheet](images/terrain-sloped-cuts.png)
@@ -229,9 +231,13 @@ previous valid draft; no policy switches automatically after a failure.
 - **Retile flat terrain** requires a common planar base and orientation, including
   tilted bases. Joined planar surfaces can have different slopes when the component
   shares one exact coordinate projection and passes native arithmetic, orientation
-  and conditioning checks. Curved neighbors, overlaps,
-  unsupported partial joins and affected LOD coarsening reject. Paint must remain
-  affine; restricted masks and opaque metadata reject.
+  and conditioning checks. Curved neighbors, overlaps and unsupported partial joins reject.
+  Paint must remain affine. A selected source with native LOD before the cut needs
+  constant paint and uniform raw, native and physical triangle labels. It and all
+  its outputs must pass exact LOD geometry, UV and full-region coverage checks.
+  A source that was not coarsened before the cut cannot acquire output LOD.
+  Unchanged neighbors must keep their complete LOD state. Restricted masks,
+  nonzero offset normals and opaque metadata reject.
   Native positions, shared samples and texture fields must remain exact.
   Normal inputs must pass the native arithmetic and conditioning checks.
   Normal bits and final pixels can differ after retiling.

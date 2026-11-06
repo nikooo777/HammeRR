@@ -34,6 +34,12 @@ enum Mode {
     Cells,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    Original,
+    Child,
+}
+
 struct Raw<'a> {
     source: FaceId,
     side: &'a Side,
@@ -50,6 +56,7 @@ struct Surface<'a> {
     base_positions: Vec<DVec3>,
     positions: Vec<Vec<DVec3>>,
     sheet: Sheet,
+    projection: Option<super::NormalProjection>,
 }
 
 struct Sheet {
@@ -82,6 +89,12 @@ impl Surface<'_> {
             corners: self.corners,
             positions: self.positions.last().unwrap(),
         }
+    }
+
+    fn original_projection(&self) -> Result<&super::NormalProjection, EditError> {
+        self.projection.as_ref().ok_or_else(|| {
+            invalid("Original curved terrain lost its affine boundary projection proof")
+        })
     }
 }
 
@@ -247,7 +260,12 @@ fn collect<'a>(vmf: &'a Vmf, work: &mut Work) -> Result<Vec<Raw<'a>>, EditError>
     Ok(result)
 }
 
-fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>, EditError> {
+fn prepare<'a>(
+    raw: Raw<'a>,
+    mode: Mode,
+    phase: Phase,
+    work: &mut Work,
+) -> Result<Surface<'a>, EditError> {
     if !raw.supported {
         return Err(invalid(
             "Flat terrain neighbors must be world or func_detail terrain",
@@ -269,17 +287,24 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
     let positions = reconstructed(&data, base, work)?;
     super::native_base(&mut mesh, &data, base, work)?;
     let base_plane = BasePlane::new([corners[0], corners[1], corners[2]])?;
-    let field = match mode {
+    let (field, projection) = match mode {
         Mode::Flat => {
             work.consume(FIELD_WORK * 17).map_err(invalid)?;
-            Some(PlanarField::new(
-                corners,
-                corner_indices.map(|index| mesh.positions[index]),
-            )?)
+            (
+                Some(PlanarField::new(
+                    corners,
+                    corner_indices.map(|index| mesh.positions[index]),
+                )?),
+                None,
+            )
         }
         Mode::Cells => {
-            super::projected_sheet(&mesh, &positions, work)?;
-            None
+            let sheet = super::projected_sheet(&mesh, &positions, work)?;
+            let projection = match phase {
+                Phase::Original => Some(super::original_boundary_projection(&mesh, &sheet, work)?),
+                Phase::Child => None,
+            };
+            (None, projection)
         }
     };
     let axis = base_plane.axis();
@@ -358,10 +383,16 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
         base_positions: mesh.base_positions,
         positions,
         sheet,
+        projection,
     })
 }
 
-fn graph(surfaces: &[&Surface<'_>], work: &mut Work) -> Result<Graph, EditError> {
+fn graph(
+    surfaces: &[&Surface<'_>],
+    mode: Mode,
+    phase: Phase,
+    work: &mut Work,
+) -> Result<Graph, EditError> {
     let grids = surfaces
         .iter()
         .map(|surface| surface.grid())
@@ -511,7 +542,29 @@ fn graph(surfaces: &[&Surface<'_>], work: &mut Work) -> Result<Graph, EditError>
         }
     }
     certify_contact_normals(surfaces, &edges, &corners, &varying, work)?;
+    if mode == Mode::Cells && phase == Phase::Original {
+        certify_original_projections(surfaces, &edges, &corners, work)?;
+    }
     Ok(result)
+}
+
+fn certify_original_projections(
+    surfaces: &[&Surface<'_>],
+    edges: &BTreeSet<(usize, usize)>,
+    corners: &BTreeSet<(usize, usize)>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    for &(first, second) in edges.iter().chain(corners) {
+        work.consume(2 * FIELD_WORK).map_err(invalid)?;
+        let first = surfaces[first].original_projection()?;
+        let second = surfaces[second].original_projection()?;
+        if !first.matches(second)? {
+            return Err(invalid(
+                "Connected original curved terrain requires one exact common affine boundary projection",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn certify_contact_normals(
@@ -792,6 +845,7 @@ fn verify_source(
             cage,
         },
         mode,
+        Phase::Original,
         work,
     )?;
     work.consume(original.positions.iter().map(Vec::len).sum())
@@ -962,7 +1016,7 @@ fn certify_mode(
         .into_iter()
         .enumerate()
         .filter(|(index, _)| affected.contains(index))
-        .map(|(_, raw)| prepare(raw, mode, work))
+        .map(|(_, raw)| prepare(raw, mode, Phase::Original, work))
         .collect::<Result<Vec<_>, _>>()?;
     if context.vmf.is_some() {
         for surface in before
@@ -973,7 +1027,7 @@ fn certify_mode(
         }
     }
     let before_refs = before.iter().collect::<Vec<_>>();
-    let previous = graph(&before_refs, work)?;
+    let previous = graph(&before_refs, mode, Phase::Original, work)?;
     let mut children = Vec::new();
     for replacement in replacements
         .iter()
@@ -1014,6 +1068,7 @@ fn certify_mode(
                     cage,
                 },
                 mode,
+                Phase::Child,
                 work,
             )?);
         }
@@ -1035,7 +1090,7 @@ fn certify_mode(
             "Flat terrain output exceeds the native displacement limit",
         ));
     }
-    let current = graph(&after, work)?;
+    let current = graph(&after, mode, Phase::Child, work)?;
     coverage(&previous, &current, &after, work)?;
     let mut adjacency = BTreeMap::<FaceId, BTreeSet<FaceId>>::new();
     for contact in previous.edges.iter().chain(&previous.corners) {

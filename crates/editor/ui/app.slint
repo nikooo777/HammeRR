@@ -4225,7 +4225,7 @@ export component AppWindow inherits Window {
                                         checked <=> root.clip-partition-neighbors;
                                         toggled => { root.clip-neighbor-partition-changed(); }
                                         Tooltip {
-                                            text: @markdown("Authorize extra partitions of selected, noncrossing terrain neighbors only where the retained cut needs native full/half joins. Unselected and unrelated terrain stay unchanged. Inspect the extra partitions in the preview before Apply cut.");
+                                            text: @markdown("Authorize extra partitions of selected, noncrossing power-3/4 terrain only where the retained cut needs native full/half joins. Required regions can refine down to power 2 within the operation limits. Unselected and unrelated terrain stay unchanged. Inspect the extra partitions in the preview before Apply cut.");
                                         }
                                     }
                                     Rectangle { horizontal-stretch: 1; }

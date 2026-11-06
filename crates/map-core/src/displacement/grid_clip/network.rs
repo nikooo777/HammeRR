@@ -32,6 +32,12 @@ struct Interval {
     start: i32,
     end: i32,
     points: [DVec3; 2],
+    origin: Child,
+}
+
+struct RequiredPartition {
+    source: FaceId,
+    child: Child,
 }
 
 impl Interval {
@@ -86,6 +92,7 @@ fn intervals(
                 start: a * scale,
                 end: b * scale,
                 points,
+                origin: leaf.origin,
             })
         })
         .collect()
@@ -96,11 +103,25 @@ fn half_edges([a, b]: [DVec3; 2]) -> [[DVec3; 2]; 2] {
     [[a, middle], [middle, b]]
 }
 
-fn quarter_of(small: Interval, large: Interval) -> bool {
-    half_edges(large.points)
-        .into_iter()
-        .flat_map(half_edges)
-        .any(|points| points == small.points)
+fn dyadic_subedge(small: Interval, mut large: Interval) -> bool {
+    while large.end - large.start > small.end - small.start {
+        let middle = (large.start + large.end) / 2;
+        let halves = half_edges(large.points);
+        if small.end <= middle {
+            large.end = middle;
+            large.points = halves[0];
+        } else if small.start >= middle {
+            large.start = middle;
+            large.points = halves[1];
+        } else {
+            return false;
+        }
+    }
+    large.start == small.start && large.end == small.end && large.points == small.points
+}
+
+fn dyadic_ratio(large: i32, small: i32) -> bool {
+    large % small == 0 && large / small >= 4 && ((large / small) as u32).is_power_of_two()
 }
 
 fn child_leaves(
@@ -135,7 +156,7 @@ fn required_partition(
     pairs: &[neighbors::NeighborPair],
     leaves: &BTreeMap<FaceId, Vec<Leaf>>,
     work: &mut Work,
-) -> Result<Option<FaceId>, EditError> {
+) -> Result<Option<RequiredPartition>, EditError> {
     for pair in pairs {
         let first = &surfaces[pair.first];
         let second = &surfaces[pair.second];
@@ -170,24 +191,31 @@ fn required_partition(
                     continue;
                 }
                 let (small, large, source) = match spans {
-                    (Some(neighbors::Span::Full), None) if b.end - b.start == 4 * (end - start) => {
+                    (Some(neighbors::Span::Full), None)
+                        if dyadic_ratio(b.end - b.start, end - start) =>
+                    {
                         (a, b, second.raw.id)
                     }
-                    (None, Some(neighbors::Span::Full)) if a.end - a.start == 4 * (end - start) => {
+                    (None, Some(neighbors::Span::Full))
+                        if dyadic_ratio(a.end - a.start, end - start) =>
+                    {
                         (b, a, first.raw.id)
                     }
                     _ => {
                         return Err(invalid(
-                            "Terrain neighbor partitioning cannot close retained native spans within one subdivision",
+                            "Terrain neighbor partitioning requires retained full edges on an exact dyadic subdivision",
                         ));
                     }
                 };
-                if !quarter_of(small, large) {
+                if !dyadic_subedge(small, large) {
                     return Err(invalid(
-                        "Terrain neighbor partitioning requires exact native quarter-edge cage coordinates",
+                        "Terrain neighbor partitioning requires exact native dyadic edge coordinates",
                     ));
                 }
-                return Ok(Some(source));
+                return Ok(Some(RequiredPartition {
+                    source,
+                    child: large.origin,
+                }));
             }
         }
     }
@@ -231,6 +259,7 @@ pub(crate) fn partition_neighbors(
         }
     }
     let mut plans = BTreeMap::<FaceId, Plan>::new();
+    let mut prepared = BTreeMap::new();
     let mut patches = replacements
         .iter()
         .map(|replacement| replacement.parts.len())
@@ -245,14 +274,11 @@ pub(crate) fn partition_neighbors(
         .flat_map(|replacement| replacement.children)
         .map(|child| 2 * child.cells().pow(2))
         .sum::<usize>();
-    while let Some(face) = required_partition(&before, &original.pairs, &leaves, &mut context.work)?
+    while let Some(RequiredPartition {
+        source: face,
+        child,
+    }) = required_partition(&before, &original.pairs, &leaves, &mut context.work)?
     {
-        if plans.contains_key(&face) {
-            return Err(crate::clip::source_error(
-                face.solid,
-                invalid("Terrain neighbor partitioning needs more than one subdivision"),
-            ));
-        }
         if replacements
             .iter()
             .any(|replacement| replacement.source == face)
@@ -271,25 +297,22 @@ pub(crate) fn partition_neighbors(
                     invalid("Select this terrain neighbor to authorize native grid partitioning"),
                 )
             })?;
-        let power = source
-            .solid
-            .sides
-            .iter()
-            .find(|side| side.id == face.side)
-            .and_then(|side| side.displacement.as_ref())
-            .map(|info| info.power)
-            .filter(|power| (3..=4).contains(power))
-            .ok_or_else(|| {
-                crate::clip::source_error(
-                    face.solid,
-                    invalid("Terrain neighbor partitioning requires an original power 3 or 4 grid"),
-                )
-            })?;
-        let cells = 1usize << (power - 1);
-        patches += 4;
-        vertices += 4 * (cells + 1).pow(2);
-        triangles += 8 * cells.pow(2);
-        if replacements.len() + plans.len() + 1 > crate::clip::MAX_TERRAIN_SOURCES
+        if child.power <= 2 {
+            return Err(crate::clip::source_error(
+                face.solid,
+                invalid(
+                    "Terrain neighbor leaf is already power 2; its native join cannot be partitioned without resampling",
+                ),
+            ));
+        }
+        let existing = plans.contains_key(&face);
+        let removed = usize::from(existing);
+        let cells = child.cells() / 2;
+        patches = patches - removed + 4;
+        vertices = vertices - removed * (child.cells() + 1).pow(2) + 4 * (cells + 1).pow(2);
+        triangles = triangles - removed * 2 * child.cells().pow(2) + 8 * cells.pow(2);
+        if replacements.len() + plans.len() + usize::from(!existing)
+            > crate::clip::MAX_TERRAIN_SOURCES
             || patches > crate::clip::MAX_TERRAIN_PATCHES
             || vertices > crate::clip::MAX_TERRAIN_VERTICES
             || triangles > crate::clip::MAX_TERRAIN_TRIANGLES
@@ -298,23 +321,48 @@ pub(crate) fn partition_neighbors(
                 "Terrain clipping exceeds its source, patch, vertex or triangle limit",
             ));
         }
-        let geometry =
-            BrushGeometry::from_solid(source.solid).map_err(|error| invalid(error.to_string()))?;
         let material = material
             .map(str::trim)
             .unwrap_or(&source.solid.sides[0].material);
-        let plan = super::partition(document, source.solid, &geometry, plane, material, context)
+        let original = match prepared.entry(face) {
+            std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                let geometry = BrushGeometry::from_solid(source.solid)
+                    .map_err(|error| invalid(error.to_string()))?;
+                let original =
+                    super::prepare_partition(document, source.solid, &geometry, plane, context)
+                        .map_err(|error| crate::clip::source_error(face.solid, error))?;
+                entry.insert(original)
+            }
+        };
+        let plan = original
+            .materialize(
+                super::quadrants(child).to_vec(),
+                material,
+                Operation::Partition,
+                &mut context.work,
+            )
             .map_err(|error| crate::clip::source_error(face.solid, error))?;
         if plan.source != face || plan.operation != Operation::Partition {
             return Err(invalid(
                 "Terrain neighbor partitioning lost its authorized source face",
             ));
         }
-        leaves.insert(
-            face,
-            child_leaves(&plan.parts, &plan.children, &mut context.work)?,
-        );
-        plans.insert(face, plan);
+        let refined = child_leaves(&plan.parts, &plan.children, &mut context.work)?;
+        let current = leaves.get_mut(&face).unwrap();
+        let index = current
+            .iter()
+            .position(|leaf| leaf.origin == child)
+            .ok_or_else(|| invalid("Terrain neighbor partitioning lost its current coarse leaf"))?;
+        current.splice(index..=index, refined);
+        match plans.entry(face) {
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                entry.get_mut().replace(child, plan)?
+            }
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(plan);
+            }
+        }
     }
     Ok(plans.into_values().collect())
 }

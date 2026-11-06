@@ -85,7 +85,7 @@ impl CutLine {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Child {
     pub row: usize,
     pub column: usize,
@@ -113,6 +113,37 @@ pub(crate) struct Plan {
     pub vertices: usize,
     pub triangles: usize,
     pub children: Vec<Child>,
+}
+
+impl Plan {
+    fn replace(&mut self, child: Child, refined: Self) -> Result<(), EditError> {
+        if self.operation != Operation::Partition
+            || refined.operation != Operation::Partition
+            || self.source != refined.source
+            || self.source_power != refined.source_power
+            || self.parts.len() != self.children.len()
+        {
+            return Err(invalid(
+                "Terrain neighbor refinement lost its partition source identity",
+            ));
+        }
+        let index = self
+            .children
+            .iter()
+            .position(|current| *current == child)
+            .ok_or_else(|| invalid("Terrain neighbor refinement lost its current coarse leaf"))?;
+        self.vertices = self.vertices - (child.cells() + 1).pow(2) + refined.vertices;
+        self.triangles = self.triangles - 2 * child.cells().pow(2) + refined.triangles;
+        self.parts.splice(index..=index, refined.parts);
+        self.children.splice(index..=index, refined.children);
+        let power = self.children[0].power;
+        self.output_power = self
+            .children
+            .iter()
+            .all(|child| child.power == power)
+            .then_some(power);
+        Ok(())
+    }
 }
 
 fn invalid(message: impl Into<String>) -> EditError {
@@ -143,7 +174,7 @@ fn slice<T: Clone>(
     })
 }
 
-fn validate(info: &DispInfo, mesh: &DisplacementMesh) -> Result<(), EditError> {
+fn validate(info: &DispInfo, mesh: &DisplacementMesh) -> Result<Vec<u16>, EditError> {
     if !(3..=4).contains(&info.power) {
         return Err(invalid(
             "Terrain clipping requires a power 3 or 4 grid half-line, or a power 4 grid quarter-line",
@@ -183,8 +214,7 @@ fn validate(info: &DispInfo, mesh: &DisplacementMesh) -> Result<(), EditError> {
     }
     smoothing::angle(info).map_err(invalid)?;
     mesh.validate_edit_bounds()?;
-    triangles::native_tags(info, mesh)?;
-    Ok(())
+    triangles::native_tags(info, mesh)
 }
 
 fn point_segment_distance(point: DVec3, [a, b]: [DVec3; 2]) -> f64 {
@@ -429,15 +459,16 @@ fn child_carrier(
 struct Prepared<'a> {
     solid: &'a Solid,
     side: &'a Side,
-    face: &'a Face,
+    face: Face,
     mesh: DisplacementMesh,
     native: NativePositions,
+    tags: Vec<u16>,
 }
 
-fn source_face<'a>(
+fn source_face<'a, 'b>(
     solid: &'a Solid,
-    geometry: &'a BrushGeometry,
-) -> Result<(&'a Side, &'a Face), EditError> {
+    geometry: &'b BrushGeometry,
+) -> Result<(&'a Side, &'b Face), EditError> {
     let displaced = solid
         .sides
         .iter()
@@ -460,7 +491,7 @@ fn source_face<'a>(
 fn prepare<'a>(
     document: &Document,
     solid: &'a Solid,
-    geometry: &'a BrushGeometry,
+    geometry: &BrushGeometry,
     context: &mut Context<'_>,
 ) -> Result<Prepared<'a>, EditError> {
     let (side, face) = source_face(solid, geometry)?;
@@ -474,7 +505,7 @@ fn prepare<'a>(
             "Terrain clipping requires world or func_detail brushes",
         ));
     }
-    validate(info, &mesh)?;
+    let tags = validate(info, &mesh)?;
     crate::subobject::fragments::admit_source(solid)?;
     if native::terrain_source_is_visible(document.vmf(), solid.id) {
         resolved_instances(context.vmf.unwrap_or(document.vmf()))?;
@@ -483,9 +514,10 @@ fn prepare<'a>(
     Ok(Prepared {
         solid,
         side,
-        face,
+        face: face.clone(),
         mesh,
         native,
+        tags,
     })
 }
 
@@ -503,10 +535,27 @@ impl Prepared<'_> {
             face,
             mesh,
             native: original_native,
+            tags: original_tags,
         } = self;
         let info = side.displacement.as_ref().unwrap();
+        if children.is_empty()
+            || children.iter().any(|child| {
+                !(2..=info.power).contains(&child.power)
+                    || child
+                        .row
+                        .checked_add(child.cells())
+                        .is_none_or(|end| end >= mesh.size)
+                    || child
+                        .column
+                        .checked_add(child.cells())
+                        .is_none_or(|end| end >= mesh.size)
+            })
+        {
+            return Err(invalid(
+                "Terrain child origins must remain inside their original native source grid",
+            ));
+        }
         let last = mesh.size - 1;
-        let original_tags = triangles::native_tags(info, mesh)?;
         let mut parts = Vec::with_capacity(children.len());
         for &child in &children {
             let Child { row, column, .. } = child;
@@ -603,14 +652,13 @@ impl Prepared<'_> {
     }
 }
 
-pub(crate) fn partition(
+fn prepare_partition<'a>(
     document: &Document,
-    solid: &Solid,
+    solid: &'a Solid,
     geometry: &BrushGeometry,
     plane: Plane,
-    material: &str,
     context: &mut Context<'_>,
-) -> Result<Plan, EditError> {
+) -> Result<Prepared<'a>, EditError> {
     let source = prepare(document, solid, geometry, context)?;
     context
         .work
@@ -633,13 +681,7 @@ pub(crate) fn partition(
             "Terrain neighbor partitioning requires a noncrossing source in authored, native and compiler geometry",
         ));
     }
-    let children = quadrants(Child {
-        row: 0,
-        column: 0,
-        power: source.side.displacement.as_ref().unwrap().power,
-    })
-    .to_vec();
-    source.materialize(children, material, Operation::Partition, &mut context.work)
+    Ok(source)
 }
 
 pub(crate) fn plan(

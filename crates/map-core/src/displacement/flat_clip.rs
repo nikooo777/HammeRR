@@ -398,6 +398,23 @@ struct NormalProjection {
 }
 
 impl NormalProjection {
+    fn new(
+        base: [DVec3; 4],
+        visible: [DVec3; 4],
+        axis: usize,
+        sign: i128,
+    ) -> Result<Self, EditError> {
+        let axes = [(axis + 1) % 3, (axis + 2) % 3];
+        Ok(Self {
+            fields: [
+                ScalarField::new(base, visible.map(|point| point[axes[0]]))?,
+                ScalarField::new(base, visible.map(|point| point[axes[1]]))?,
+            ],
+            axis,
+            sign,
+        })
+    }
+
     fn matches(&self, other: &Self) -> Result<bool, EditError> {
         Ok(self.axis == other.axis
             && self.sign == other.sign
@@ -429,10 +446,7 @@ fn certify_projected_normals(
         .filter(|points| points.len() == size * size)
         .ok_or_else(|| invalid("Terrain normal projection requires a complete native grid"))?;
     let corners = [0, (size - 1) * size, size * size - 1, size - 1].map(|index| points[index]);
-    let fields = [
-        ScalarField::new(base, corners.map(|point| point[axes[0]]))?,
-        ScalarField::new(base, corners.map(|point| point[axes[1]]))?,
-    ];
+    let projection = NormalProjection::new(base, corners, axis, sign)?;
     if sign == 0 || orient(corners[0], corners[1], corners[2], axes)? != sign {
         return Err(invalid(
             "Noncoplanar flat terrain contacts require an orientation-preserving common projection",
@@ -447,7 +461,7 @@ fn certify_projected_normals(
         }
     }
     certify_normal_info(info, profiles, Some(axis), work)?;
-    Ok(NormalProjection { fields, axis, sign })
+    Ok(projection)
 }
 
 fn admit<'a>(
@@ -542,6 +556,7 @@ fn admit<'a>(
 
 fn height_sheet(source: &Admitted<'_>, work: &mut Work) -> Result<HeightSheet, EditError> {
     let sheet = projected_sheet(&source.mesh, &source.positions, work)?;
+    original_boundary_projection(&source.mesh, &sheet, work)?;
     let mesh = &source.mesh;
     let cells = mesh.size - 1;
     let corners = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells]
@@ -591,7 +606,7 @@ fn projected_sheet(
         stored(point)?;
     }
     work.consume(
-        FIELD_WORK * (8 + 2 * mesh.positions.len())
+        FIELD_WORK * (8 + 2 * mesh.positions.len() + 4 * mesh.size)
             + positions.len() * mesh.positions.len()
             + 2 * cells * cells,
     )
@@ -603,21 +618,15 @@ fn projected_sheet(
         ));
     }
     convex(&visible, axes, sign)?;
-    let projection = [
-        ScalarField::new(corners, visible.map(|point| point[axes[0]]))?,
-        ScalarField::new(corners, visible.map(|point| point[axes[1]]))?,
-    ];
     for (index, &point) in mesh.positions.iter().enumerate() {
         let base = mesh.base_positions[index];
         if base[axis] != corners[0][axis]
-            || point[axes[0]] != projection[0].value(base)?
-            || point[axes[1]] != projection[1].value(base)?
             || positions
                 .iter()
                 .any(|positions| !same(positions[index], point))
         {
             return Err(invalid(
-                "Curved terrain sheets require an exact base plane and affine tangential projection shared by authored, native and compiler positions",
+                "Curved terrain sheets require an exact base plane and matching authored, native and compiler positions",
             ));
         }
     }
@@ -629,7 +638,63 @@ fn projected_sheet(
             ));
         }
     }
+    for side in 0..4 {
+        let a = visible[side];
+        let b = visible[(side + 1) % 4];
+        let coordinate = axes
+            .into_iter()
+            .find(|&coordinate| a[coordinate] != b[coordinate])
+            .ok_or_else(|| invalid("Curved terrain projected boundary is collapsed"))?;
+        let increasing = a[coordinate] < b[coordinate];
+        let mut previous = None;
+        for index in neighbors::edge_indices(mesh.size, side).map_err(invalid)? {
+            let point = mesh.positions[index];
+            if !on_segment(point, a, b, axes)?
+                || previous.is_some_and(|previous| {
+                    if increasing {
+                        point[coordinate] <= previous
+                    } else {
+                        point[coordinate] >= previous
+                    }
+                })
+            {
+                return Err(invalid(
+                    "Curved terrain requires straight, strictly monotone projected boundary edges",
+                ));
+            }
+            previous = Some(point[coordinate]);
+        }
+    }
     Ok(HeightSheet { axis, axes, sign })
+}
+
+fn original_boundary_projection(
+    mesh: &DisplacementMesh,
+    sheet: &HeightSheet,
+    work: &mut Work,
+) -> Result<NormalProjection, EditError> {
+    work.consume(FIELD_WORK * (16 + 8 * mesh.size))
+        .map_err(invalid)?;
+    let cells = mesh.size - 1;
+    let indices = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells];
+    let projection = NormalProjection::new(
+        indices.map(|index| mesh.base_positions[index]),
+        indices.map(|index| mesh.positions[index]),
+        sheet.axis,
+        sheet.sign,
+    )?;
+    for side in 0..4 {
+        for index in neighbors::edge_indices(mesh.size, side).map_err(invalid)? {
+            for (field, coordinate) in projection.fields.iter().zip(sheet.axes) {
+                if field.value(mesh.base_positions[index])? != mesh.positions[index][coordinate] {
+                    return Err(invalid(
+                        "Original curved terrain boundaries must retain one exact affine tangential cage mapping",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(projection)
 }
 
 fn prepare<'a>(

@@ -214,15 +214,20 @@ entity. The cut retains the owner and unselected siblings.
 
 For quarter-grid joins, select the required noncrossing power-3/4 neighbors and
 enable **Partition selected neighbors** under **Existing grid**. The default-off
-option permits one subdivision per required selected neighbor. The preview
-counts cut brushes and partitioned neighbors separately. Unselected and
-unrelated terrain stay unchanged; missing selection or unsupported subdivision
-depth rejects the complete request.
+option refines only required regions down to native power 2 within the shared
+limits: one level for power 3 and up to two for power 4. The preview counts cut
+brushes and partitioned neighbors separately. Unselected and unrelated terrain
+stay unchanged; missing selection or insufficient native power rejects the
+complete request.
 
 Choose [**Retile grid cells**](brush-tools.md#retile-grid-cells) to cut curved
 terrain at any complete original row or column, including power 2. It refines
-whole cells and supports curved height with an exact, orientation-preserving
-affine tangential projection. Native geometry, piecewise raw/native paint fields
+whole cells and supports curved height and non-affine interior tangential warps.
+Original projected borders must remain straight and convex, with samples ordered
+along each edge. Every original boundary sample must follow one exact affine
+mapping from the base cages to those borders, shared by connected originals.
+Folded projections and nonlinear border mappings reject.
+Native geometry, piecewise raw/native paint fields
 and labels must remain exact. Unchanged terrain contacts reject; normals and runtime LOD are regenerated.
 [**Retile flat terrain**](brush-tools.md#retile-flat-terrain) supports non-grid
 cuts on eligible planar surfaces, including tilted base cages and affine

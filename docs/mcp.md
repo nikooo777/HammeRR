@@ -831,9 +831,14 @@ prefix. Patch materials, other blend shaders, base transforms, animated/runtime 
 and unsupported providers refuse.
 
 Cells mode accepts curved power-2/3/4 world or `func_detail` terrain with world-axis
-rectangular bases and curved height with an exact, orientation-preserving affine
-tangential projection. Non-affine or folded projections refuse. The requested
-plane must follow a complete internal original row or column. Each retained
+rectangular bases. Curved height and non-affine interior tangential warps are
+supported when the original projected boundary stays straight, strictly monotone
+and convex. Every original boundary sample must follow one exact affine
+boundary/cage mapping shared by its original native contact component.
+Original and output triangles must preserve orientation
+and pass exact native/compiler position and fixed-diagonal native normal checks.
+Folded projections and nonlinear boundary mappings refuse. The requested plane
+must follow a complete internal original row or column. Each retained
 whole original cell becomes one power-2 patch. It certifies authored, compiler
 and all four native positions, the original piecewise surface planes, exact UVs,
 piecewise paint and spatial triangle labels. Nonlinear source paint is
@@ -843,8 +848,9 @@ insufficient. Unrepresentable inserted alpha or changed physical regions reject.
 It never approximates a crease.
 
 `terrain_mode:"fragments"` / **Retile surface triangles** also cuts through
-original cells. It clips each crossing cell's original triangles into exact quad
-fans and quarters whole retained cells. Surface, UVs and spatial labels stay
+original cells, using the same interior-warp and original-boundary rules as Cells
+on world-axis convex original cages. It clips each crossing cell's original
+triangles into exact quad fans and quarters whole retained cells. Surface, UVs and spatial labels stay
 exact; raw/packed paint also stays exact by default. Native contacts must fit without LOD coarsening. There is
 no automatic switch from another mode. Output is bounded at 128 patches, 5,184
 vertices and 8,192 triangles per operation.
@@ -892,8 +898,8 @@ and no-LOD rules remain. Normals and runtime LOD are regenerated. Retained cells
 must fit the shared 128-patch and checked-work limits; no automatic mode change.
 
 Grid mode lets world and `func_detail` terrain at power 3 or 4 split along a
-complete existing middle row or column. `keep:"both"` produces four native patches;
-`"front"` or `"back"` produces two. Grid spacing, alpha samples, UV placement
+complete existing middle row or column. Per crossing source, `keep:"both"` produces
+four native patches; `"front"` or `"back"` produces two. Grid spacing, alpha samples, UV placement
 and physical triangle tags remain unchanged. Child power is one lower.
 Power 4 also permits complete quarter-grid lines: row or column 4 or 12.
 Both sides produces ten patches; the short side has four power-2 patches,
@@ -904,8 +910,11 @@ and the long side has six power-2/3 patches.
 select the required noncrossing power-3/4 neighbors alongside the crossing terrain,
 then call `set_clip_neighbor_partition({"enabled":true})`, or pass
 `partition_neighbors:true` to `clip_brushes`. Only neighbors required by the cut
-are partitioned, at most one quadrant level per source. Unselected blockers or
-insufficient depth refuse; unrelated selected terrain stays unchanged.
+are partitioned. Only required leaf regions refine, down to native power 2:
+power-3 originals allow one level and power-4 originals allow two. Propagation
+follows original native contacts within the shared source, patch, sample and work
+limits. Unselected blockers, insufficient native power or failed source/LOD
+proofs refuse atomically; unrelated selected terrain stays unchanged.
 
 Omitted `partition_neighbors` uses the current choice, or false when changing
 `terrain_mode`. Success adopts an override; failure preserves the previous
@@ -923,7 +932,7 @@ max-allowed triangles. Selected and output coarsened patches must preserve mappe
 allowed/active masks, alpha, ordered fine collision triangles/tags, native positions
 in all four rounding modes and the retained maximal render triangles. A maximal
 triangle crossing the cut, inactive output roots or any changed mapped state refuses.
-Quarter links, changed neighbor LOD, overlapping or
+Unresolved quarter links, changed neighbor LOD, overlapping or
 unmatched contacts, arbitrary cuts and unsupported bindings or metadata refuse
 before changing the map. Carrier-face material does not create
 a physical wall beneath the cut.

@@ -78,19 +78,21 @@ resulting child brushes. Selecting a whole entity clips all crossing children.
 7. Inspect the native patches and separate counts of cut brushes and partitioned
    neighbors, then click **Apply cut**.
 
-A middle cut produces two patches per retained half, at one lower power.
-A quarter cut produces four power-2 patches on the short side and six power-2/3
-patches on the long side. **Both sides** produces ten patches.
+Each crossing source produces two patches per retained half for a middle cut,
+at one lower power. A quarter cut produces four power-2 patches on its short
+side and six power-2/3 patches on its long side. **Both sides** produces ten.
+Partitioned neighbors add their own patches.
 Grid spacing, paint samples and triangle flags stay the same.
 The cut follows the displaced surface, not its backing brush.
 It does not create a wall beneath the cut.
 Matching neighbor borders are checked before Apply.
-**Partition selected neighbors** permits one subdivision of each required,
-selected noncrossing power-3/4 neighbor to retain native full/half joins.
-The operation can propagate through required selected neighbors within the
-shared limits. Unselected and unrelated selected terrain stay unchanged.
-Missing selection, a required deeper subdivision or an unrepresentable native
-result rejects the complete request. The option never enables itself after a
+**Partition selected neighbors** refines only required regions of selected
+noncrossing power-3/4 neighbors to retain native full/half joins. Regions can
+reach native power 2: at most one level for power 3 and two for power 4.
+The operation propagates through required selected neighbors within the shared
+limits. Unselected and unrelated selected terrain stay unchanged.
+Missing selection, insufficient native power or an unrepresentable result
+rejects the complete request. The option never enables itself after a
 failed cut. Changing it discards the preview; changing **Terrain cut** turns it off.
 The preview also checks retained points at native game precision. A cut that
 cannot keep those points and their side of the plane rejects.
@@ -198,9 +200,9 @@ previous valid draft; no policy switches automatically after a failure.
   keep their complete native state.
 - **Existing grid** rejects other cut lines, power-2 splitting, quarter-edge
   links that cannot be resolved by **Partition selected neighbors**, changed LOD
-  geometry and overlapping or unmatched borders. Neighbor partitioning permits
-  at most one subdivision per selected original power-3/4 patch; it cannot
-  partition unselected terrain or satisfy a deeper subdivision.
+  geometry and overlapping or unmatched borders. Neighbor partitioning refines
+  required regions down to power 2 within the shared limits; it cannot partition
+  unselected terrain or refine below native power 2.
   Missing or unsupported child sources stop the preview. Saved-hidden references
   are omitted; display filters do not remove compiler neighbors.
 - **Retile flat terrain** requires a common base plane and orientation. Joined
@@ -231,13 +233,18 @@ previous valid draft; no policy switches automatically after a failure.
   Patch materials, other blend shaders, base transforms, animated or runtime textures
   and unsupported resources reject. Changed source images or materials require
   another preview before Apply.
-- **Retile grid cells** requires world-axis rectangular bases. Displacement
-  supports curved height with an exact affine tangential projection that preserves
-  orientation. Paint samples must preserve each original
-  triangle's raw and packed blend fields exactly. Native texture
+- **Retile grid cells** requires world-axis rectangular bases. Curved height and
+  non-affine interior tangential warps are supported. Original projected borders
+  must stay straight and convex, with boundary samples progressing without
+  reversals. Every boundary sample must follow one exact affine mapping from the
+  base cages to those borders, shared by connected originals. Every original
+  and output triangle must preserve orientation and pass the exact native geometry
+  and normal checks. Paint samples must preserve each original triangle's raw and
+  packed blend fields exactly. Native texture
   rules match **Retile flat terrain**. Every touching original patch
   must also be cut in the operation; unchanged contacts reject. No affected LOD
-  coarsening, non-affine tangential fields or uncertain native normal inputs.
+  coarsening, folded projections, nonlinear boundary mappings or uncertain native
+  normal inputs.
   Each retained cell adds 32 native triangles. Powers 2–4 are subject to the
   shared output and work limits.
 - **Retile surface triangles** uses the same projected-sheet, texture, normal and

@@ -491,13 +491,13 @@ pub struct ClipArgs {
     pub keep: Option<String>,
     /// New cap/carrier-face material; omitted inherits the source's first material. Native terrain has no sealed cut wall.
     pub material: Option<String>,
-    /// grid preserves samples; flat retiles planar fields; cells refines whole cells; fragments cuts original surface triangles. Omitted uses the shared form choice.
+    /// grid preserves samples; flat retiles planar fields; cells refines whole cells; fragments cuts original surface triangles. Cells/Fragments admit certified non-affine interior tangential warps with exact affine maps at every original boundary sample, shared per original native contact component. Omitted uses the shared form choice.
     pub terrain_mode: Option<ClipTerrainMode>,
     /// exact (default), native_float, or nearest_byte. Non-exact modes require fragments. Omitted uses the shared choice.
     pub blend_mode: Option<ClipBlendMode>,
     /// Compatibility alias: true selects nearest_byte; false selects exact. Cannot be supplied with blend_mode.
     pub round_blend: Option<bool>,
-    /// Grid only: allow required selected noncrossing neighbors to be partitioned once to retain native contacts. Omitted uses the shared choice.
+    /// Grid only: refine required leaf regions of selected noncrossing neighbors down to native power2 to retain contacts; power3 allows one level, power4 two. Omitted uses the shared choice.
     pub partition_neighbors: Option<bool>,
     #[serde(default)]
     pub preview: bool,

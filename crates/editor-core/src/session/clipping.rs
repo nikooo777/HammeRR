@@ -164,8 +164,10 @@ impl Session {
         actor: Actor,
         enabled: bool,
     ) -> Result<(), String> {
-        if enabled && self.clip_terrain_mode != TerrainMode::Grid {
-            return Err("Partition selected neighbors requires Existing grid".into());
+        if enabled && !self.clip_terrain_mode.allows_neighbor_partition() {
+            return Err(
+                "Partition selected neighbors is unavailable for Retile flat terrain".into(),
+            );
         }
         if self.clip_partition_neighbors == enabled {
             return Ok(());
@@ -354,8 +356,10 @@ impl Session {
         let partition_neighbors = request
             .partition_neighbors
             .unwrap_or(terrain_mode == self.clip_terrain_mode && self.clip_partition_neighbors);
-        if partition_neighbors && terrain_mode != TerrainMode::Grid {
-            return Err("Partition selected neighbors requires Existing grid".into());
+        if partition_neighbors && !terrain_mode.allows_neighbor_partition() {
+            return Err(
+                "Partition selected neighbors is unavailable for Retile flat terrain".into(),
+            );
         }
         if request.preview
             && let Some(previous) = &self.geometry.clip_preview
@@ -428,7 +432,7 @@ impl Session {
         if has_terrain {
             components::admit_fragment_snapshot(self.document.vmf())?;
         }
-        let retile_faces = if terrain_mode != TerrainMode::Grid {
+        let mut retile_faces = if terrain_mode != TerrainMode::Grid {
             clip::terrain_texture_faces(&self.document, ids, plane, terrain_mode)
                 .map_err(|error| error.to_string())?
         } else {
@@ -445,6 +449,22 @@ impl Session {
         } else {
             None
         };
+        if partition_neighbors
+            && matches!(terrain_mode, TerrainMode::Cells | TerrainMode::Fragments)
+        {
+            let partition_faces = clip::terrain_partition_faces(
+                &self.document,
+                ids,
+                plane,
+                keep,
+                terrain_mode,
+                terrain_context.as_ref().map(|context| context.vmf()),
+            )
+            .map_err(|error| error.to_string())?;
+            retile_faces.extend(partition_faces);
+            retile_faces.sort_unstable();
+            retile_faces.dedup();
+        }
         let terrain_materials = materials::Prepared::prepare(self, &retile_faces)?;
         let mut document = self.document.preview_snapshot();
         let result = document

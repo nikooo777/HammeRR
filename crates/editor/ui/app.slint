@@ -4218,14 +4218,16 @@ export component AppWindow inherits Window {
                                         selected => { root.clip-terrain-mode-changed(); }
                                     }
                                 }
-                                if root.clip-terrain-mode-index == 0: HorizontalLayout {
+                                if root.clip-terrain-mode-index == 0 || root.clip-terrain-mode-index == 2 || root.clip-terrain-mode-index == 3: HorizontalLayout {
                                     spacing: Theme.space;
                                     CheckBox {
                                         text: "Partition selected neighbors";
                                         checked <=> root.clip-partition-neighbors;
                                         toggled => { root.clip-neighbor-partition-changed(); }
                                         Tooltip {
-                                            text: @markdown("Authorize extra partitions of selected, noncrossing power-3/4 terrain only where the retained cut needs native full/half joins. Required regions can refine down to power 2 within the operation limits. Unselected and unrelated terrain stay unchanged. Inspect the extra partitions in the preview before Apply cut.");
+                                            text: root.clip-terrain-mode-index == 0
+                                                ? @markdown("Authorize native leaf partitions of selected, noncrossing power-3/4 terrain only where the retained cut needs full/half joins. Required regions can refine down to power 2 within the operation limits. Inspect the extra partitions before Apply cut.")
+                                                : @markdown("Authorize retiling the whole selected, noncrossing curved neighbor only where a retained matched full original edge requires it. Corner-only, severed and unrelated neighbors stay unchanged. Native density and output limits may still refuse. Inspect all extra patches before Apply cut.");
                                         }
                                     }
                                     Rectangle { horizontal-stretch: 1; }

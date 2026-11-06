@@ -52,6 +52,12 @@ pub enum TerrainMode {
     Fragments,
 }
 
+impl TerrainMode {
+    pub fn allows_neighbor_partition(self) -> bool {
+        matches!(self, Self::Grid | Self::Cells | Self::Fragments)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TerrainBlendMode {
     #[default]
@@ -194,6 +200,15 @@ pub struct Source<'a> {
 
 fn invalid(message: impl Into<String>) -> EditError {
     EditError::Invalid(message.into())
+}
+
+fn validate_terrain_context(context: Option<&Vmf>) -> Result<(), EditError> {
+    if let Some(context) = context {
+        context
+            .validate_ids()
+            .map_err(|error| invalid(error.to_string()))?;
+    }
+    Ok(())
 }
 
 pub(crate) fn source_error(id: u32, error: EditError) -> EditError {
@@ -424,6 +439,28 @@ struct TerrainBudget {
 }
 
 impl TerrainBudget {
+    fn ensure_capacity(
+        &self,
+        sources: usize,
+        patches: usize,
+        vertices: usize,
+        triangles: usize,
+    ) -> Result<(), EditError> {
+        for (current, added, limit) in [
+            (self.sources, sources, MAX_TERRAIN_SOURCES),
+            (self.patches, patches, MAX_TERRAIN_PATCHES),
+            (self.vertices, vertices, MAX_TERRAIN_VERTICES),
+            (self.triangles, triangles, MAX_TERRAIN_TRIANGLES),
+        ] {
+            if current.checked_add(added).is_none_or(|count| count > limit) {
+                return Err(invalid(
+                    "Terrain clipping exceeds its source, patch, vertex or triangle limit",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn add(
         &mut self,
         document: &Document,
@@ -431,6 +468,7 @@ impl TerrainBudget {
         solid: &Solid,
         plan: &TerrainPlan,
     ) -> Result<(), EditError> {
+        self.ensure_capacity(1, plan.parts.len(), plan.vertices, plan.triangles)?;
         let visible =
             crate::displacement::native::terrain_source_is_visible(document.vmf(), solid.id);
         if visible && let Some(context) = context {
@@ -464,15 +502,6 @@ impl TerrainBudget {
         }
         self.vertices += plan.vertices;
         self.triangles += plan.triangles;
-        if self.sources > MAX_TERRAIN_SOURCES
-            || self.patches > MAX_TERRAIN_PATCHES
-            || self.vertices > MAX_TERRAIN_VERTICES
-            || self.triangles > MAX_TERRAIN_TRIANGLES
-        {
-            return Err(invalid(
-                "Terrain clipping exceeds its source, patch, vertex or triangle limit",
-            ));
-        }
         Ok(())
     }
 }
@@ -506,6 +535,25 @@ impl PlannedCut {
             }),
         }
     }
+}
+
+fn partition_source<'a, 's>(
+    sources: &'s [Source<'a>],
+    face: FaceId,
+) -> Result<(&'s Source<'a>, u32), EditError> {
+    let source = sources
+        .iter()
+        .find(|source| source.solid.id == face.solid)
+        .ok_or_else(|| invalid("Terrain neighbor partitioning lost its selected source"))?;
+    let power = source
+        .solid
+        .sides
+        .iter()
+        .find(|side| side.id == face.side)
+        .and_then(|side| side.displacement.as_ref())
+        .ok_or_else(|| invalid("Required terrain neighbor lost its source face"))?
+        .power;
+    Ok((source, power))
 }
 
 fn grid_replacements(
@@ -543,6 +591,18 @@ pub(crate) struct TerrainPlan {
     pub triangles: usize,
     pub children: Option<Vec<crate::displacement::grid_clip::Child>>,
     pub blend_error: Option<TerrainBlendError>,
+}
+
+impl TerrainPlan {
+    fn validate_blend(&self, mode: TerrainBlendMode) -> Result<(), EditError> {
+        match (mode, self.blend_error) {
+            (TerrainBlendMode::Exact, None) => Ok(()),
+            (mode, Some(error)) if mode != TerrainBlendMode::Exact => error.validate(mode),
+            _ => Err(invalid(
+                "Terrain blend error certificate is missing or unexpected",
+            )),
+        }
+    }
 }
 
 impl From<crate::displacement::grid_clip::Plan> for TerrainPlan {
@@ -595,6 +655,40 @@ pub fn terrain_texture_faces(
         return Err(invalid("Terrain clipping exceeds its source limit"));
     }
     Ok(result)
+}
+
+pub fn terrain_partition_faces(
+    document: &Document,
+    ids: &[ObjectId],
+    plane: Plane,
+    keep: Keep,
+    mode: TerrainMode,
+    context: Option<&Vmf>,
+) -> Result<Vec<FaceId>, EditError> {
+    if mode == TerrainMode::Grid {
+        return Ok(Vec::new());
+    }
+    if !mode.allows_neighbor_partition() {
+        return Err(invalid(
+            "Partition selected neighbors is unavailable for Retile flat terrain",
+        ));
+    }
+    let plane = normalized_plane(plane)?;
+    validate_terrain_context(context)?;
+    let crossing = terrain_texture_faces(document, ids, plane, mode)?;
+    if crossing.is_empty() {
+        return Ok(Vec::new());
+    }
+    let authorized = sources(document, ids)?;
+    let mut context = crate::displacement::grid_clip::Context::new(context);
+    crate::displacement::flat_clip::network::required_partitions(
+        document,
+        &authorized,
+        &crossing,
+        plane,
+        keep,
+        &mut context,
+    )
 }
 
 pub fn requires_terrain_context(
@@ -689,9 +783,9 @@ pub fn clip_with_options(
     material: Option<&str>,
     options: ClipOptions<'_>,
 ) -> std::result::Result<ClipResult, EditError> {
-    if options.partition_neighbors && options.terrain_mode != TerrainMode::Grid {
+    if options.partition_neighbors && !options.terrain_mode.allows_neighbor_partition() {
         return Err(invalid(
-            "Partition selected neighbors requires Existing grid",
+            "Partition selected neighbors is unavailable for Retile flat terrain",
         ));
     }
     if options.blend_mode != TerrainBlendMode::Exact
@@ -702,11 +796,7 @@ pub fn clip_with_options(
         ));
     }
     let context = options.terrain_context;
-    if let Some(context) = context {
-        context
-            .validate_ids()
-            .map_err(|error| invalid(error.to_string()))?;
-    }
+    validate_terrain_context(context)?;
     let plane = normalized_plane(plane)?;
     if ids.is_empty() {
         return Err(invalid("Select at least one brush or brush entity to clip"));
@@ -768,15 +858,7 @@ pub fn clip_with_options(
                 unchanged.push(solid.id);
                 continue;
             };
-            match (options.blend_mode, plan.blend_error) {
-                (TerrainBlendMode::Exact, None) => {}
-                (mode, Some(error)) if mode != TerrainBlendMode::Exact => error.validate(mode)?,
-                _ => {
-                    return Err(invalid(
-                        "Terrain blend error certificate is missing or unexpected",
-                    ));
-                }
-            }
+            plan.validate_blend(options.blend_mode)?;
             terrain_budget.add(tx.document(), context, solid, &plan)?;
             planned.push(PlannedCut::terrain(source, plan, false));
             continue;
@@ -817,26 +899,89 @@ pub fn clip_with_options(
         });
     }
     if options.partition_neighbors && terrain_budget.sources != 0 {
-        let replacements = grid_replacements(&planned);
-        let partitions = crate::displacement::grid_clip::partition_neighbors(
-            tx.document(),
-            &sources,
-            &replacements,
-            plane,
-            material,
-            &mut terrain_context,
-        )?;
-        for plan in partitions {
-            if plan.operation != crate::displacement::grid_clip::Operation::Partition {
-                return Err(invalid(
-                    "Terrain neighbor partitioning returned an unexpected operation",
-                ));
-            }
-            let source = sources
+        let partitions = if options.terrain_mode == TerrainMode::Grid {
+            let replacements = grid_replacements(&planned);
+            crate::displacement::grid_clip::partition_neighbors(
+                tx.document(),
+                &sources,
+                &replacements,
+                plane,
+                material,
+                &mut terrain_context,
+            )?
+            .into_iter()
+            .map(|plan| {
+                if plan.operation != crate::displacement::grid_clip::Operation::Partition {
+                    return Err(invalid(
+                        "Terrain neighbor partitioning returned an unexpected operation",
+                    ));
+                }
+                Ok(TerrainPlan::from(plan))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+        } else {
+            let crossing = planned
                 .iter()
-                .find(|source| source.solid.id == plan.source.solid)
-                .ok_or_else(|| invalid("Terrain neighbor partitioning lost its selected source"))?;
-            let plan = TerrainPlan::from(plan);
+                .filter_map(|cut| cut.terrain.as_ref().map(|terrain| terrain.source))
+                .collect::<Vec<_>>();
+            let required = crate::displacement::flat_clip::network::required_partitions(
+                tx.document(),
+                &sources,
+                &crossing,
+                plane,
+                keep,
+                &mut terrain_context,
+            )?;
+            let mut totals = [0usize; 3];
+            for face in &required {
+                let (_, power) = partition_source(&sources, *face)?;
+                let (patches, vertices, triangles) =
+                    crate::displacement::flat_clip::partition_counts(power, options.terrain_mode)
+                        .map_err(|error| source_error(face.solid, error))?;
+                for (total, added) in totals.iter_mut().zip([patches, vertices, triangles]) {
+                    *total = total
+                        .checked_add(added)
+                        .ok_or_else(|| invalid("Terrain neighbor output accounting overflow"))?;
+                }
+            }
+            terrain_budget.ensure_capacity(required.len(), totals[0], totals[1], totals[2])?;
+            let partition = if options.terrain_mode == TerrainMode::Cells {
+                crate::displacement::flat_clip::cells::partition
+            } else {
+                crate::displacement::flat_clip::fragments::partition
+            };
+            required
+                .into_iter()
+                .map(|face| {
+                    let (source, _) = partition_source(&sources, face)?;
+                    let shape =
+                        geometry(source.solid).map_err(|error| source_error(face.solid, error))?;
+                    let plan = partition(
+                        tx.document(),
+                        source.solid,
+                        &shape,
+                        crate::displacement::flat_clip::PartitionRequest {
+                            material: material
+                                .map(str::trim)
+                                .unwrap_or(&source.solid.sides[0].material),
+                            textures: options.textures,
+                            blend_mode: options.blend_mode,
+                        },
+                        &mut terrain_context,
+                    )
+                    .map_err(|error| source_error(face.solid, error))?;
+                    if plan.source != face {
+                        return Err(invalid(
+                            "Terrain neighbor partitioning lost its authorized source face",
+                        ));
+                    }
+                    Ok(plan)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        for plan in partitions {
+            let (source, _) = partition_source(&sources, plan.source)?;
+            plan.validate_blend(options.blend_mode)?;
             terrain_budget.add(tx.document(), context, source.solid, &plan)?;
             unchanged.retain(|id| *id != source.solid.id);
             planned.push(PlannedCut::terrain(source, plan, true));

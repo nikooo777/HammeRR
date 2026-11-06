@@ -7,16 +7,17 @@ use source_formats::{
 };
 
 use super::{
-    Exact, FIELD_WORK, data,
+    CUT_EPSILON, Exact, FIELD_WORK, data,
     field::{BasePlane, PlanarField},
     invalid, orient, reconstructed, same, weighted,
 };
+use crate::clip::Keep;
 use crate::displacement::{
     grid_clip::{self, Context, Work},
     lod, native, neighbors, triangles,
 };
 use crate::surface::FaceId;
-use crate::{BrushGeometry, Document, EditError, Face, ObjectId};
+use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
 pub(crate) struct Replacement<'a> {
     pub source: FaceId,
@@ -112,6 +113,7 @@ impl Contact {
 
 #[derive(Default)]
 struct Graph {
+    pairs: Vec<neighbors::NeighborPair>,
     edges: Vec<Contact>,
     corners: Vec<Contact>,
 }
@@ -224,6 +226,16 @@ fn contact_rank(
 }
 
 fn collect<'a>(vmf: &'a Vmf, work: &mut Work) -> Result<Vec<Raw<'a>>, EditError> {
+    if vmf.entities.iter().any(|entity| {
+        !entity.hidden
+            && entity
+                .classname()
+                .is_some_and(|name| name.eq_ignore_ascii_case("func_instance"))
+    }) {
+        return Err(invalid(
+            "Connected flat terrain requires complete resolved visible-instance context",
+        ));
+    }
     let mut result = Vec::new();
     for (solid, supported) in native::visible_terrain_sources(vmf) {
         work.consume(solid.sides.len()).map_err(invalid)?;
@@ -258,6 +270,66 @@ fn collect<'a>(vmf: &'a Vmf, work: &mut Work) -> Result<Vec<Raw<'a>>, EditError>
         }
     }
     Ok(result)
+}
+
+fn affected_sources<'a>(
+    raw: Vec<Raw<'a>>,
+    selected: &BTreeSet<FaceId>,
+    work: &mut Work,
+) -> Result<Vec<Raw<'a>>, EditError> {
+    let mut affected = BTreeSet::new();
+    for source in selected {
+        let found = raw
+            .iter()
+            .enumerate()
+            .filter(|(_, raw)| raw.source == *source)
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let [index] = found.as_slice() else {
+            return Err(invalid(
+                "Flat terrain context lost a unique selected source identity",
+            ));
+        };
+        affected.insert(*index);
+    }
+    let mut queue = affected.iter().copied().collect::<Vec<_>>();
+    let mut cursor = 0;
+    while cursor < queue.len() {
+        let first = queue[cursor];
+        cursor += 1;
+        for second in 0..raw.len() {
+            if affected.contains(&second) {
+                continue;
+            }
+            work.consume(1).map_err(invalid)?;
+            if apart(&raw[first].cage, &raw[second].cage) {
+                continue;
+            }
+            let comparisons = raw[first]
+                .cage
+                .len()
+                .checked_mul(raw[second].cage.len())
+                .ok_or_else(|| invalid("Flat terrain contact work overflow"))?;
+            work.consume(comparisons).map_err(invalid)?;
+            if grid_clip::related(&raw[first].cage, &raw[second].cage)
+                || contact_rank(&raw[first].cage, &raw[second].cage, work)?.is_some()
+            {
+                if affected.len() >= selected.len() + grid_clip::MAX_NEIGHBORS {
+                    return Err(invalid(
+                        "Flat terrain context exceeds its affected-neighbor limit",
+                    ));
+                }
+                affected.insert(second);
+                queue.push(second);
+            }
+        }
+    }
+    Ok(raw
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| affected.contains(index))
+        .map(|(_, raw)| raw)
+        .collect())
 }
 
 fn prepare<'a>(
@@ -545,6 +617,7 @@ fn graph(
     if mode == Mode::Cells && phase == Phase::Original {
         certify_original_projections(surfaces, &edges, &corners, work)?;
     }
+    result.pairs = found.pairs;
     Ok(result)
 }
 
@@ -865,6 +938,237 @@ fn verify_source(
     Ok(())
 }
 
+fn crosses(surface: &Surface<'_>, plane: Plane, work: &mut Work) -> Result<bool, EditError> {
+    work.consume(surface.positions.iter().map(Vec::len).sum())
+        .map_err(invalid)?;
+    Ok(surface.positions.iter().any(|positions| {
+        positions
+            .iter()
+            .any(|point| plane.distance_to(*point) > CUT_EPSILON)
+            && positions
+                .iter()
+                .any(|point| plane.distance_to(*point) < -CUT_EPSILON)
+    }))
+}
+
+fn retained_span(
+    surface: &Surface<'_>,
+    edge: usize,
+    span: neighbors::Span,
+    plane: Plane,
+    keep: Keep,
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    if keep == Keep::Both {
+        work.consume(1).map_err(invalid)?;
+        return Ok(true);
+    }
+    let indices = span.indices(surface.power, edge).map_err(invalid)?;
+    work.consume(surface.positions.len() * indices.len())
+        .map_err(invalid)?;
+    let sign = if keep == Keep::Front { 1.0 } else { -1.0 };
+    let mut triangles = None;
+    for positions in &surface.positions {
+        if indices
+            .iter()
+            .any(|&index| sign * plane.distance_to(positions[index]) < -CUT_EPSILON)
+        {
+            return Ok(false);
+        }
+        for pair in indices.windows(2) {
+            if pair
+                .iter()
+                .any(|&index| plane.distance_to(positions[index]).abs() > CUT_EPSILON)
+            {
+                continue;
+            }
+            if triangles.is_none() {
+                triangles = Some(
+                    surface
+                        .info
+                        .triangle_indices()
+                        .map_err(|error| invalid(error.to_string()))?,
+                );
+            }
+            let triangles = triangles.as_ref().unwrap();
+            work.consume(triangles.len()).map_err(invalid)?;
+            let triangle = triangles
+                .iter()
+                .find(|triangle| pair.iter().all(|index| triangle.contains(index)))
+                .ok_or_else(|| {
+                    invalid("Terrain edge closure lost its original boundary triangle")
+                })?;
+            let third = triangle.iter().find(|index| !pair.contains(index)).unwrap();
+            let distance = sign * plane.distance_to(positions[*third]);
+            if distance < -CUT_EPSILON {
+                return Ok(false);
+            }
+            if distance <= CUT_EPSILON {
+                return Err(invalid(
+                    "Terrain retained edge closure is ambiguous within cut-plane precision",
+                ));
+            }
+        }
+    }
+    Ok(true)
+}
+
+pub(crate) fn required_partitions(
+    document: &Document,
+    authorized: &[crate::clip::Source<'_>],
+    crossing: &[FaceId],
+    plane: Plane,
+    keep: Keep,
+    context: &mut Context<'_>,
+) -> Result<Vec<FaceId>, EditError> {
+    if crossing.len() > crate::clip::MAX_TERRAIN_SOURCES
+        || crossing.iter().collect::<BTreeSet<_>>().len() != crossing.len()
+    {
+        return Err(invalid(
+            "Terrain edge closure requires bounded unique crossing source faces",
+        ));
+    }
+    let selected = crossing
+        .iter()
+        .filter(|face| native::terrain_source_is_visible(document.vmf(), face.solid))
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if selected.is_empty() {
+        return Ok(Vec::new());
+    }
+    let vmf = context.vmf.unwrap_or(document.vmf());
+    vmf.validate_ids()
+        .map_err(|error| invalid(error.to_string()))?;
+    if context.vmf.is_some() {
+        document
+            .vmf()
+            .validate_ids()
+            .map_err(|error| invalid(error.to_string()))?;
+    }
+    let work = &mut context.work;
+    let raw = collect(vmf, work)?;
+    let before = affected_sources(raw, &selected, work)?
+        .into_iter()
+        .map(|raw| prepare(raw, Mode::Cells, Phase::Original, work))
+        .collect::<Result<Vec<_>, _>>()?;
+    let references = before.iter().collect::<Vec<_>>();
+    let original = graph(&references, Mode::Cells, Phase::Original, work)?;
+    let mut queue = Vec::new();
+    for &face in &selected {
+        let index = before
+            .iter()
+            .position(|surface| surface.raw.source == face)
+            .ok_or_else(|| invalid("Terrain edge closure lost its selected crossing source"))?;
+        authorize(document, authorized, face)?;
+        if context.vmf.is_some() {
+            verify_source(document, vmf, &before[index], Mode::Cells, work)?;
+        }
+        if !crosses(&before[index], plane, work)? {
+            return Err(crate::clip::source_error(
+                face.solid,
+                invalid("Terrain edge closure requires a genuine crossing source"),
+            ));
+        }
+        queue.push(index);
+    }
+    let mut required = BTreeSet::new();
+    let mut cursor = 0;
+    while cursor < queue.len() {
+        let current = queue[cursor];
+        cursor += 1;
+        for pair in &original.pairs {
+            work.consume(1).map_err(invalid)?;
+            let (peer, edge, span) = if pair.first == current {
+                (pair.second, pair.first_edge, pair.first_span)
+            } else if pair.second == current {
+                (pair.first, pair.second_edge, pair.second_span)
+            } else {
+                continue;
+            };
+            let face = before[peer].raw.source;
+            if selected.contains(&face) || required.contains(&face) {
+                continue;
+            }
+            if selected.contains(&before[current].raw.source)
+                && !retained_span(&before[current], edge, span, plane, keep, work)?
+            {
+                continue;
+            }
+            authorize(document, authorized, face)?;
+            if context.vmf.is_some() {
+                verify_source(document, vmf, &before[peer], Mode::Cells, work)?;
+            }
+            if crosses(&before[peer], plane, work)? {
+                return Err(crate::clip::source_error(
+                    face.solid,
+                    invalid(
+                        "Terrain edge closure cannot partition a crossing neighbor; include it as a crossing replacement",
+                    ),
+                ));
+            }
+            if crossing.len() + required.len() + 1 > crate::clip::MAX_TERRAIN_SOURCES {
+                return Err(invalid(
+                    "Terrain edge closure exceeds the terrain source limit",
+                ));
+            }
+            required.insert(face);
+            queue.push(peer);
+        }
+    }
+    Ok(required.into_iter().collect())
+}
+
+fn authorize(
+    document: &Document,
+    sources: &[crate::clip::Source<'_>],
+    face: FaceId,
+) -> Result<(), EditError> {
+    let matching = sources
+        .iter()
+        .filter(|source| source.solid.id == face.solid)
+        .collect::<Vec<_>>();
+    let source = match matching.as_slice() {
+        [source] => source,
+        [] => {
+            return Err(crate::clip::source_error(
+                face.solid,
+                invalid(format!(
+                    "Select original terrain side {} to authorize retained-edge neighbor partitioning",
+                    face.side,
+                )),
+            ));
+        }
+        _ => {
+            return Err(crate::clip::source_error(
+                face.solid,
+                invalid("Terrain edge closure has an ambiguous selected source identity"),
+            ));
+        }
+    };
+    if !native::terrain_source_is_visible(document.vmf(), face.solid)
+        || source
+            .solid
+            .sides
+            .iter()
+            .filter(|side| side.displacement.is_some())
+            .count()
+            != 1
+        || !source
+            .solid
+            .sides
+            .iter()
+            .any(|side| side.id == face.side && side.displacement.is_some())
+    {
+        return Err(crate::clip::source_error(
+            face.solid,
+            invalid(
+                "Terrain edge closure requires one selected original parent terrain face with an unambiguous identity",
+            ),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn certify(
     document: &Document,
     replacements: &[Replacement<'_>],
@@ -932,16 +1236,6 @@ fn certify_mode(
         ));
     }
     let vmf = context.vmf.unwrap_or(document.vmf());
-    if vmf.entities.iter().any(|entity| {
-        !entity.hidden
-            && entity
-                .classname()
-                .is_some_and(|name| name.eq_ignore_ascii_case("func_instance"))
-    }) {
-        return Err(invalid(
-            "Connected flat terrain requires complete resolved visible-instance context",
-        ));
-    }
     let work = &mut context.work;
     let raw = collect(vmf, work)?;
     let retained_count = raw
@@ -960,58 +1254,9 @@ fn certify_mode(
             "Flat terrain output exceeds the native displacement limit",
         ));
     }
-    let mut affected = BTreeSet::new();
-    for source in &selected {
-        let found = raw
-            .iter()
-            .enumerate()
-            .filter(|(_, raw)| raw.source == *source)
-            .map(|(index, _)| index)
-            .collect::<Vec<_>>();
-        let [index] = found.as_slice() else {
-            return Err(invalid(
-                "Flat terrain context lost a unique selected source identity",
-            ));
-        };
-        affected.insert(*index);
-    }
-    let mut queue = affected.iter().copied().collect::<Vec<_>>();
-    let mut cursor = 0;
-    while cursor < queue.len() {
-        let first = queue[cursor];
-        cursor += 1;
-        for second in 0..raw.len() {
-            if affected.contains(&second) {
-                continue;
-            }
-            work.consume(1).map_err(invalid)?;
-            if apart(&raw[first].cage, &raw[second].cage) {
-                continue;
-            }
-            let comparisons = raw[first]
-                .cage
-                .len()
-                .checked_mul(raw[second].cage.len())
-                .ok_or_else(|| invalid("Flat terrain contact work overflow"))?;
-            work.consume(comparisons).map_err(invalid)?;
-            if grid_clip::related(&raw[first].cage, &raw[second].cage)
-                || contact_rank(&raw[first].cage, &raw[second].cage, work)?.is_some()
-            {
-                if affected.len() >= selected.len() + grid_clip::MAX_NEIGHBORS {
-                    return Err(invalid(
-                        "Flat terrain context exceeds its affected-neighbor limit",
-                    ));
-                }
-                affected.insert(second);
-                queue.push(second);
-            }
-        }
-    }
-    let before = raw
+    let before = affected_sources(raw, &selected, work)?
         .into_iter()
-        .enumerate()
-        .filter(|(index, _)| affected.contains(index))
-        .map(|(_, raw)| prepare(raw, mode, Phase::Original, work))
+        .map(|raw| prepare(raw, mode, Phase::Original, work))
         .collect::<Result<Vec<_>, _>>()?;
     if context.vmf.is_some() {
         for surface in before

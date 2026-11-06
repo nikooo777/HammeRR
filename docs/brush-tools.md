@@ -140,12 +140,15 @@ after a failed cut.
 Cut curved terrain along a complete existing row or column, including qualified
 tilted bases.
 
-1. Select the world or `func_detail` terrain to cut.
+1. Select the world or `func_detail` terrain to cut. Include noncrossing neighbors
+   you authorize for whole-neighbor retiling.
 2. Click **Clip selected brushes**.
 3. Under **Terrain cut**, choose **Retile grid cells**.
-4. Set a plane through one complete internal row or column of the visible surface.
-5. Choose **Arrow side**, **Opposite side** or **Both sides**.
-6. Inspect the patches, then click **Apply cut**.
+4. Enable **Partition selected neighbors** if a retained full original edge needs
+   a selected neighbor retiled.
+5. Set a plane through one complete internal row or column of the visible surface.
+6. Choose **Arrow side**, **Opposite side** or **Both sides**.
+7. Inspect the cut and neighbor patches, then click **Apply cut**.
 
 Each retained original cell becomes one power-2 patch. The original piecewise
 surface, UVs, paint and triangle labels must stay exact. Nonlinear paint is
@@ -153,6 +156,9 @@ allowed when each new triangle retains its original raw and packed blend fields.
 Normals and runtime LOD are regenerated. This mode does not cut through part of an original cell.
 Qualified unchanged neighbors may remain at a corner, or lose an old edge contact
 when the cut removes that entire join. Their authored grids stay unchanged.
+With **Partition selected neighbors**, each required selected noncrossing
+neighbor is retiled in full, with one power-2 patch per original cell. Corner-only,
+severed and unrelated selected neighbors stay unchanged.
 
 ![Painted curved terrain retains its blend through grid-cell cuts](images/terrain-cell-cut.png)
 
@@ -160,17 +166,27 @@ when the cut removes that entire join. Their authored grids stay unchanged.
 
 Cut the original terrain triangles with a free plane.
 
-1. Select world or `func_detail` terrain brushes.
+1. Select world or `func_detail` terrain brushes. Include noncrossing neighbors
+   you authorize for whole-neighbor retiling.
 2. Click **Clip selected brushes**.
 3. Under **Terrain cut**, choose **Retile surface triangles**.
 4. Under **Blend samples**, choose **Exact fields**, **Native float** or
    **Nearest byte**.
-5. Draw or enter the cut plane.
-6. Choose **Arrow side**, **Opposite side** or **Both sides**.
-7. Inspect the patches and blend-error bounds, then click **Apply cut**.
+5. Enable **Partition selected neighbors** if a retained full original edge needs
+   a selected neighbor retiled.
+6. Draw or enter the cut plane.
+7. Choose **Arrow side**, **Opposite side** or **Both sides**.
+8. Inspect the cut and neighbor patches and blend-error bounds, then click **Apply cut**.
 
 Cut cells become quad fans. Whole retained cells become quarter-cell patches.
 Geometry, UVs, triangle flags and collision-material regions stay exact.
+**Partition selected neighbors** retiles each required selected noncrossing
+neighbor in full, with four power-2 patches per original cell. Partial retained
+edges or incompatible fan density can still reject. All output shares the
+128-patch limit; **Both sides** may exceed it even when one retained side fits.
+The option is off by default. Changing it discards the preview; changing
+**Terrain cut** turns it off. A failed request preserves the previous settings
+and valid draft.
 **Blend samples** chooses how inserted paint samples are stored:
 
 | Choice | Inserted samples | Raw error limit | Native packed error limit |
@@ -251,8 +267,12 @@ previous valid draft; no policy switches automatically after a failure.
   Unchanged curved neighbors may retain a certified corner or have an old edge
   contact fully severed. They must share the exact base, orientation and original
   affine boundary projection, with matching native contact samples and certified
-  normals. Their authored grids and metadata stay unchanged. Retained edges to
-  unchanged curved neighbors, affected LOD coarsening, contact mismatches, corner
+  normals. Their authored grids and metadata stay unchanged.
+  **Partition selected neighbors** explicitly permits whole retiling of selected
+  noncrossing neighbors required by a retained matched full original edge.
+  Every neighbor must pass complete source, field, material and metadata checks.
+  Missing selection, unsupported partial edges, incompatible native density,
+  affected LOD coarsening, contact mismatches, corner
   capacity overflow, folded projections, nonlinear boundary mappings and uncertain
   native normal inputs reject.
   Each retained cell adds 32 native triangles. Powers 2–4 are subject to the

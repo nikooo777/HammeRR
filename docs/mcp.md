@@ -910,8 +910,9 @@ an old edge contact. Original neighbors retain their authored data verbatim.
 They must share the exact base plane, orientation and original affine boundary
 projection, with matching contact samples across authored, compiler and all four
 native profiles. Complete before/after contact graphs and same-chart-axis native
-normal proofs still apply. Retained edges to unchanged curved neighbors, affected
-LOD, sample mismatches and native corner-capacity overflow refuse. Existing
+normal proofs still apply. Retained edges can request explicit selected-neighbor
+retiling as described below. Incompatible final density/contacts, affected LOD,
+sample mismatches and native corner-capacity overflow refuse. Existing
 guarded instance, native connection, capacity and no-LOD rules remain. Normals and
 runtime LOD are regenerated for new patches. Retained cells must fit the shared
 128-patch and checked-work limits; no automatic mode change.
@@ -924,20 +925,33 @@ Power 4 also permits complete quarter-grid lines: row or column 4 or 12.
 Both sides produces ten patches; the short side has four power-2 patches,
 and the long side has six power-2/3 patches.
 
-**Partition selected neighbors** is off by default and available only with
-**Existing grid**. To retain full/half native contacts during a quarter-grid cut,
-select the required noncrossing power-3/4 neighbors alongside the crossing terrain,
-then call `set_clip_neighbor_partition({"enabled":true})`, or pass
-`partition_neighbors:true` to `clip_brushes`. Only neighbors required by the cut
-are partitioned. Only required leaf regions refine, down to native power 2:
-power-3 originals allow one level and power-4 originals allow two. Propagation
-follows original native contacts within the shared source, patch, sample and work
-limits. Unselected blockers, insufficient native power or failed source/LOD
-proofs refuse atomically; unrelated selected terrain stays unchanged.
+**Partition selected neighbors** is off by default and available with Grid,
+Cells and Fragments. Select the required noncrossing neighbors alongside the
+crossing terrain, then call `set_clip_neighbor_partition({"enabled":true})`, or
+pass `partition_neighbors:true` to `clip_brushes`.
+
+| Mode | Neighbor operation |
+| --- | --- |
+| Grid | Refine only required leaf regions down to native power 2; power-3 originals allow one level and power-4 originals allow two. |
+| Cells | Retile the whole required neighbor, with one power-2 patch per original cell. |
+| Fragments | Retile the whole required neighbor, with four power-2 patches per original cell. |
+
+Curved neighbor retiling closes only required retained, matched full original
+edges. Each source must be explicitly selected, noncrossing and admitted in full
+through the same geometry, UV, paint, physics-label, normal, LOD, material and
+metadata guards as crossing terrain. Corner-only neighbors, fully severed old
+edges and unrelated selected sources stay unchanged. Partial retained edges or
+incompatible fan density can still refuse in the final native contact graph.
+
+Grid propagation follows original native contacts. All modes share the existing
+source/work limits and the 128-patch, 5,184-vertex and 8,192-triangle caps. **Both
+sides** can exceed the patch cap even when one retained side fits. Missing source
+authorization identifies the required source and refuses atomically; failed
+geometry, fields, metadata, contacts, LOD or material guards also refuse.
 
 Omitted `partition_neighbors` uses the current choice, or false when changing
 `terrain_mode`. Success adopts an override; failure preserves the previous
-setting and valid draft. Explicit true outside Grid refuses. Changing the shared
+setting and valid draft. Explicit true in Flat refuses. Changing the shared
 setting cancels the old draft; changing terrain mode resets it to false.
 
 Retained positions and complete plane separation must also agree at native f32

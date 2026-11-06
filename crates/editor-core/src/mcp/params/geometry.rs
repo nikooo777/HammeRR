@@ -491,13 +491,13 @@ pub struct ClipArgs {
     pub keep: Option<String>,
     /// New cap/carrier-face material; omitted inherits the source's first material. Native terrain has no sealed cut wall.
     pub material: Option<String>,
-    /// grid preserves samples; flat retiles planar fields and qualified joined slopes on a common planar base and exact coordinate projection; cells refines whole cells; fragments cuts original surface triangles. Cells/Fragments admit certified non-affine interior tangential warps on exact planar base charts, including qualified tilted cages, with exact affine maps at every original boundary sample shared per original native contact component. Cells requires rectangular chart cages; Fragments permits convex chart cages. Certified unchanged corner neighbors and severed old edge contacts are admitted; retained edges to unchanged curved neighbors and affected LOD refuse. Omitted uses the shared form choice.
+    /// grid preserves samples; flat retiles planar fields and qualified joined slopes on a common planar base and exact coordinate projection; cells refines whole cells; fragments cuts original surface triangles. Cells/Fragments admit certified non-affine interior tangential warps on exact planar base charts, including qualified tilted cages, with exact affine maps at every original boundary sample shared per original native contact component. Cells requires rectangular chart cages; Fragments permits convex chart cages. Certified unchanged corners and severed old edges are admitted; retained full edges can request selected-neighbor retiling through partition_neighbors. Omitted uses the shared form choice.
     pub terrain_mode: Option<ClipTerrainMode>,
     /// exact (default), native_float, or nearest_byte. Non-exact modes require fragments. Omitted uses the shared choice.
     pub blend_mode: Option<ClipBlendMode>,
     /// Compatibility alias: true selects nearest_byte; false selects exact. Cannot be supplied with blend_mode.
     pub round_blend: Option<bool>,
-    /// Grid only: refine required leaf regions of selected noncrossing neighbors down to native power2 to retain contacts; power3 allows one level, power4 two. Omitted uses the shared choice.
+    /// Grid refines required selected noncrossing neighbor leaves to native power2. Cells/Fragments retile whole selected noncrossing neighbors required by retained matched full original edges, using one/four power2 patches per old cell. Flat refuses true. Final density, source/metadata/field/LOD guards and shared output limits still apply. Omitted uses the shared choice.
     pub partition_neighbors: Option<bool>,
     #[serde(default)]
     pub preview: bool,

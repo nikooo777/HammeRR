@@ -2,11 +2,12 @@ use glam::DVec3;
 use source_formats::vmf::Solid;
 
 use super::{
-    Admitted, CUT_EPSILON, Child, Context, Exact, FIELD_WORK, Keep, Request, SIZE, TRIANGLES,
-    TerrainPlan, TriangleField, VERTICES, Work, admit, carrier_base, certify_height_normals,
-    connections, data, height_sheet, invalid, native, paint, reconstructed, region, same, stored,
-    uv, weighted,
+    Admitted, CUT_EPSILON, Child, Context, Exact, FIELD_WORK, HeightSheet, Keep, PartitionRequest,
+    Request, SIZE, TRIANGLES, TerrainPlan, TriangleField, VERTICES, Work, admit, admit_source,
+    carrier_base, certify_height_normals, connections, data, height_sheet, invalid, native, paint,
+    partition_counts, reconstructed, region, region_unclipped, same, stored, uv, weighted,
 };
+use crate::clip::{TerrainBlendMode, TerrainMode};
 use crate::displacement::{grid_clip::grid_line, resample};
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Plane};
@@ -35,10 +36,14 @@ impl Cut {
 
 struct Prepared<'a> {
     source: Admitted<'a>,
-    axis: usize,
-    axes: [usize; 2],
-    sign: i128,
+    sheet: HeightSheet,
     cut: Cut,
+}
+
+struct Retained<'a> {
+    cut: &'a Cut,
+    plane: Plane,
+    keep: Keep,
 }
 
 fn cut(source: &Admitted<'_>, plane: Plane, work: &mut Work) -> Result<Cut, EditError> {
@@ -77,7 +82,13 @@ fn prepare<'a>(
     let Some(source) = admit(document, solid, geometry, plane, work)? else {
         return Ok(None);
     };
-    let sheet = height_sheet(&source, work)?;
+    let sheet = cell_sheet(&source, work)?;
+    let cut = cut(&source, plane, work)?;
+    Ok(Some(Prepared { source, sheet, cut }))
+}
+
+fn cell_sheet(source: &Admitted<'_>, work: &mut Work) -> Result<HeightSheet, EditError> {
+    let sheet = height_sheet(source, work)?;
     let mesh = &source.mesh;
     let cells = mesh.size - 1;
     let indices = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells];
@@ -96,14 +107,7 @@ fn prepare<'a>(
             ));
         }
     }
-    let cut = cut(&source, plane, work)?;
-    Ok(Some(Prepared {
-        source,
-        axis: sheet.axis,
-        axes: sheet.axes,
-        sign: sheet.sign,
-        cut,
-    }))
+    Ok(sheet)
 }
 
 pub(crate) fn texture_face(
@@ -225,12 +229,61 @@ pub(crate) fn plan(
     let Some(prepared) = prepare(document, solid, geometry, request.plane, work)? else {
         return Ok(None);
     };
-    let source = &prepared.source;
+    materialize(
+        solid,
+        &prepared.source,
+        &prepared.sheet,
+        Some(Retained {
+            cut: &prepared.cut,
+            plane: request.plane,
+            keep: request.keep,
+        }),
+        PartitionRequest {
+            material: request.material,
+            textures: request.textures,
+            blend_mode: request.blend_mode,
+        },
+        work,
+    )
+    .map(Some)
+}
+
+pub(crate) fn partition(
+    document: &Document,
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    request: PartitionRequest<'_>,
+    context: &mut Context<'_>,
+) -> Result<TerrainPlan, EditError> {
+    if request.blend_mode != TerrainBlendMode::Exact {
+        return Err(invalid(
+            "Whole-cell terrain retiling requires exact blend fields",
+        ));
+    }
+    let work = &mut context.work;
+    let source = admit_source(document, solid, geometry, work)?;
+    partition_counts(source.info.power, TerrainMode::Cells)?;
+    let sheet = cell_sheet(&source, work)?;
+    materialize(solid, &source, &sheet, None, request, work)
+}
+
+fn materialize(
+    solid: &Solid,
+    source: &Admitted<'_>,
+    sheet: &HeightSheet,
+    clipping: Option<Retained<'_>>,
+    request: PartitionRequest<'_>,
+    work: &mut Work,
+) -> Result<TerrainPlan, EditError> {
     let cells = source.mesh.size - 1;
     work.consume(cells * cells).map_err(invalid)?;
     let count = (0..cells)
         .flat_map(|row| (0..cells).map(move |column| (row, column)))
-        .filter(|&(row, column)| retained(request.keep, prepared.cut.back(row, column)))
+        .filter(|&(row, column)| {
+            clipping
+                .as_ref()
+                .is_none_or(|cut| retained(cut.keep, cut.cut.back(row, column)))
+        })
         .count();
     if count > crate::clip::MAX_TERRAIN_PATCHES {
         return Err(invalid(format!(
@@ -261,8 +314,13 @@ pub(crate) fn plan(
     let mut children = Vec::with_capacity(count);
     for row in 0..cells {
         for column in 0..cells {
-            let back = prepared.cut.back(row, column);
-            if !retained(request.keep, back) {
+            let back = clipping
+                .as_ref()
+                .is_some_and(|cut| cut.cut.back(row, column));
+            if clipping
+                .as_ref()
+                .is_some_and(|cut| !retained(cut.keep, back))
+            {
                 continue;
             }
             let indices = [
@@ -309,22 +367,27 @@ pub(crate) fn plan(
             let (_, mesh) = native::checked_mesh(face, info).map_err(invalid)?;
             let (data, stored_base) = data(face, &mesh, super::POWER)?;
             let profiles = reconstructed(&data, stored_base, work)?;
-            let plane = if back {
-                request.plane
-            } else {
-                Plane {
-                    normal: -request.plane.normal,
-                    dist: -request.plane.dist,
+            let plane = clipping.as_ref().map(|cut| {
+                if back {
+                    cut.plane
+                } else {
+                    Plane {
+                        normal: -cut.plane.normal,
+                        dist: -cut.plane.dist,
+                    }
                 }
-            };
+            });
             work.consume((profiles.len() + 1) * VERTICES)
                 .map_err(invalid)?;
             for positions in profiles.iter().chain(std::iter::once(&mesh.positions)) {
                 for (index, (&point, sample)) in positions.iter().zip(&samples).enumerate() {
                     if !same(point, sample.point)
-                        || plane.distance_to(point) > CUT_EPSILON
-                        || prepared.cut.boundary(row, column, index)
-                            && plane.distance_to(point).abs() > CUT_EPSILON
+                        || plane.is_some_and(|plane| plane.distance_to(point) > CUT_EPSILON)
+                        || clipping
+                            .as_ref()
+                            .is_some_and(|cut| cut.cut.boundary(row, column, index))
+                            && plane
+                                .is_some_and(|plane| plane.distance_to(point).abs() > CUT_EPSILON)
                     {
                         return Err(invalid(
                             "Cell terrain must preserve exact source samples and native retained-half separation",
@@ -337,27 +400,38 @@ pub(crate) fn plan(
             let info = part.sides[side_index].displacement.as_mut().unwrap();
             info.triangle_tags = mapped.tags.clone();
             mapped.verify(info, &mesh, work)?;
-            certify_height_normals(&data, &profiles, prepared.axis, work)?;
+            certify_height_normals(&data, &profiles, sheet.axis, work)?;
             uv(&data, face, mesh.positions.len(), texture, work)?;
             let child = Child {
                 base,
                 positions: mesh.positions,
             };
-            region(
-                &indices.map(|index| source.mesh.positions[index]),
-                std::slice::from_ref(&child),
-                prepared.axes,
-                prepared.sign,
-                plane,
-                None,
-                work,
-            )?;
+            let ring = indices.map(|index| source.mesh.positions[index]);
+            if let Some(plane) = plane {
+                region(
+                    &ring,
+                    std::slice::from_ref(&child),
+                    sheet.axes,
+                    sheet.sign,
+                    plane,
+                    None,
+                    work,
+                )?;
+            } else {
+                region_unclipped(
+                    &ring,
+                    std::slice::from_ref(&child),
+                    sheet.axes,
+                    sheet.sign,
+                    work,
+                )?;
+            }
             children.push(child);
             parts.push(part);
         }
     }
     connections(&children, work)?;
-    Ok(Some(TerrainPlan {
+    Ok(TerrainPlan {
         vertices: parts.len() * VERTICES,
         triangles: parts.len() * TRIANGLES,
         parts,
@@ -366,5 +440,5 @@ pub(crate) fn plan(
         output_power: Some(super::POWER),
         children: None,
         blend_error: None,
-    }))
+    })
 }

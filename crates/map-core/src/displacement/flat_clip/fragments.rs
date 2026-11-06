@@ -3,12 +3,13 @@ use source_formats::vmf::Solid;
 
 use super::cells::{Sample, sample_window};
 use super::{
-    Admitted, CUT_EPSILON, Child, Context, FIELD_WORK, HeightSheet, Keep, PaintField, PlanarField,
-    Request, SIZE, TRIANGLES, TerrainPlan, TerrainTexture, TriangleField, VERTICES, Work, admit,
-    carrier_base, carrier_field, certify_height_normals, connections, data, height_sheet, invalid,
-    native, paint, quads, reconstructed, region, same, split_ring, stored, uv,
+    Admitted, CUT_EPSILON, Child, Context, FIELD_WORK, HeightSheet, Keep, PaintField,
+    PartitionRequest, PlanarField, Request, SIZE, TRIANGLES, TerrainPlan, TerrainTexture,
+    TriangleField, VERTICES, Work, admit, admit_source, carrier_base, carrier_field,
+    certify_height_normals, connections, data, height_sheet, invalid, native, paint,
+    partition_counts, quads, reconstructed, region, region_unclipped, same, split_ring, stored, uv,
 };
-use crate::clip::{TerrainBlendError, TerrainBlendMode};
+use crate::clip::{TerrainBlendError, TerrainBlendMode, TerrainMode};
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Plane};
 
@@ -75,7 +76,7 @@ enum Group {
     Cell {
         row: usize,
         column: usize,
-        back: bool,
+        plane: Option<Plane>,
         ring: [DVec3; 4],
     },
     Triangle {
@@ -113,13 +114,7 @@ fn groups(
     let mut count = 0;
     for row in 0..cells {
         for column in 0..cells {
-            let indices = [
-                row * source.mesh.size + column,
-                (row + 1) * source.mesh.size + column,
-                (row + 1) * source.mesh.size + column + 1,
-                row * source.mesh.size + column + 1,
-            ];
-            let ring = indices.map(|index| source.mesh.positions[index]);
+            let ring = cell_ring(source, row, column);
             let classification = sides(&ring, plane);
             match classification {
                 [false, false] => {
@@ -134,7 +129,7 @@ fn groups(
                         groups.push(Group::Cell {
                             row,
                             column,
-                            back,
+                            plane: Some(half_plane(plane, back)),
                             ring,
                         });
                     }
@@ -195,6 +190,16 @@ fn groups(
     Ok((groups, count))
 }
 
+fn cell_ring(source: &Admitted<'_>, row: usize, column: usize) -> [DVec3; 4] {
+    [
+        row * source.mesh.size + column,
+        (row + 1) * source.mesh.size + column,
+        (row + 1) * source.mesh.size + column + 1,
+        row * source.mesh.size + column + 1,
+    ]
+    .map(|index| source.mesh.positions[index])
+}
+
 enum Expected<'a> {
     Triangle(&'a PlanarField, &'a PaintField),
     Window(&'a [Sample]),
@@ -213,7 +218,7 @@ impl Certificate<'_> {
         &self,
         mut part: Solid,
         base: [DVec3; 4],
-        plane: Plane,
+        plane: Option<Plane>,
         expected: Expected<'_>,
         work: &mut Work,
     ) -> Result<(Solid, Child, TerrainBlendError), EditError> {
@@ -254,7 +259,7 @@ impl Certificate<'_> {
                 }
             };
             if !matches
-                || plane.distance_to(point) > CUT_EPSILON
+                || plane.is_some_and(|plane| plane.distance_to(point) > CUT_EPSILON)
                 || profiles
                     .iter()
                     .any(|positions| !same(positions[index], point))
@@ -357,8 +362,61 @@ pub(crate) fn plan(
     let Some(prepared) = prepare(document, solid, geometry, request.plane, work)? else {
         return Ok(None);
     };
-    let source = &prepared.source;
     let (groups, count) = groups(&prepared, request.plane, request.keep, work)?;
+    materialize(
+        solid,
+        &prepared,
+        groups,
+        count,
+        Some(request.plane),
+        PartitionRequest {
+            material: request.material,
+            textures: request.textures,
+            blend_mode: request.blend_mode,
+        },
+        work,
+    )
+    .map(Some)
+}
+
+pub(crate) fn partition(
+    document: &Document,
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    request: PartitionRequest<'_>,
+    context: &mut Context<'_>,
+) -> Result<TerrainPlan, EditError> {
+    let work = &mut context.work;
+    let source = admit_source(document, solid, geometry, work)?;
+    let (count, _, _) = partition_counts(source.info.power, TerrainMode::Fragments)?;
+    let sheet = height_sheet(&source, work)?;
+    let cells = source.mesh.size - 1;
+    work.consume(cells * cells).map_err(invalid)?;
+    let mut groups = Vec::with_capacity(cells * cells);
+    for row in 0..cells {
+        for column in 0..cells {
+            groups.push(Group::Cell {
+                row,
+                column,
+                plane: None,
+                ring: cell_ring(&source, row, column),
+            });
+        }
+    }
+    let prepared = Prepared { source, sheet };
+    materialize(solid, &prepared, groups, count, None, request, work)
+}
+
+fn materialize(
+    solid: &Solid,
+    prepared: &Prepared<'_>,
+    groups: Vec<Group>,
+    count: usize,
+    cut_plane: Option<Plane>,
+    request: PartitionRequest<'_>,
+    work: &mut Work,
+) -> Result<TerrainPlan, EditError> {
+    let source = &prepared.source;
     let identity = FaceId {
         solid: solid.id,
         side: source.side.id,
@@ -394,11 +452,10 @@ pub(crate) fn plan(
             Group::Cell {
                 row,
                 column,
-                back,
+                plane,
                 ring,
             } => {
                 let first = children.len();
-                let plane = half_plane(request.plane, back);
                 for child_row in 0..2 {
                     for child_column in 0..2 {
                         let (part, base, samples) = quarter(
@@ -421,28 +478,41 @@ pub(crate) fn plan(
                         children.push(child);
                     }
                 }
-                region(
-                    &ring,
-                    &children[first..],
-                    prepared.sheet.axes,
-                    prepared.sheet.sign,
-                    plane,
-                    None,
-                    work,
-                )?;
+                if let Some(plane) = plane {
+                    region(
+                        &ring,
+                        &children[first..],
+                        prepared.sheet.axes,
+                        prepared.sheet.sign,
+                        plane,
+                        None,
+                        work,
+                    )?;
+                } else {
+                    region_unclipped(
+                        &ring,
+                        &children[first..],
+                        prepared.sheet.axes,
+                        prepared.sheet.sign,
+                        work,
+                    )?;
+                }
             }
             Group::Triangle {
                 field,
                 paint,
                 rings,
             } => {
+                let cut_plane = cut_plane.ok_or_else(|| {
+                    invalid("Terrain triangle fragments lost their cut-plane proof")
+                })?;
                 for back in [true, false] {
                     let ring = &rings[usize::from(!back)];
                     if ring.is_empty() {
                         continue;
                     }
                     let first = children.len();
-                    let plane = half_plane(request.plane, back);
+                    let plane = half_plane(cut_plane, back);
                     for quad in quads(ring, prepared.sheet.axes, prepared.sheet.sign, true)? {
                         work.consume(FIELD_WORK * quad.len()).map_err(invalid)?;
                         let mut base = [DVec3::ZERO; 4];
@@ -463,7 +533,7 @@ pub(crate) fn plan(
                         let (part, child, error) = certificate.child(
                             part,
                             base,
-                            plane,
+                            Some(plane),
                             Expected::Triangle(&field, &paint),
                             work,
                         )?;
@@ -485,7 +555,7 @@ pub(crate) fn plan(
         }
     }
     connections(&children, work)?;
-    Ok(Some(TerrainPlan {
+    Ok(TerrainPlan {
         vertices: parts.len() * VERTICES,
         triangles: parts.len() * TRIANGLES,
         parts,
@@ -494,5 +564,5 @@ pub(crate) fn plan(
         output_power: Some(super::POWER),
         children: None,
         blend_error: (request.blend_mode != TerrainBlendMode::Exact).then_some(blend_error),
-    }))
+    })
 }

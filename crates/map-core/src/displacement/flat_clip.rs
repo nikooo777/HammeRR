@@ -11,7 +11,7 @@ use super::{
     grid_clip::{CUT_EPSILON, Context, Work},
     native, neighbors, smoothing, triangles,
 };
-use crate::clip::{Keep, TerrainBlendMode, TerrainPlan, TerrainTexture};
+use crate::clip::{Keep, TerrainBlendMode, TerrainMode, TerrainPlan, TerrainTexture};
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
@@ -48,6 +48,42 @@ pub(crate) struct Request<'a> {
     pub material: &'a str,
     pub textures: Option<&'a BTreeMap<FaceId, TerrainTexture>>,
     pub blend_mode: TerrainBlendMode,
+}
+
+pub(crate) struct PartitionRequest<'a> {
+    pub material: &'a str,
+    pub textures: Option<&'a BTreeMap<FaceId, TerrainTexture>>,
+    pub blend_mode: TerrainBlendMode,
+}
+
+pub(crate) fn partition_counts(
+    power: u32,
+    mode: TerrainMode,
+) -> Result<(usize, usize, usize), EditError> {
+    if !(2..=4).contains(&power) {
+        return Err(invalid(
+            "Terrain neighbor retiling requires power 2, 3 or 4",
+        ));
+    }
+    let multiplier = match mode {
+        TerrainMode::Cells => 1,
+        TerrainMode::Fragments => 4,
+        _ => return Err(invalid("Whole-source retiling requires Cells or Fragments")),
+    };
+    let count = (1usize << power).pow(2) * multiplier;
+    if count > crate::clip::MAX_TERRAIN_PATCHES
+        || count
+            .checked_mul(VERTICES)
+            .is_none_or(|vertices| vertices > crate::clip::MAX_TERRAIN_VERTICES)
+        || count
+            .checked_mul(TRIANGLES)
+            .is_none_or(|triangles| triangles > crate::clip::MAX_TERRAIN_TRIANGLES)
+    {
+        return Err(invalid(
+            "Terrain neighbor retiling exceeds its patch, vertex or triangle limit",
+        ));
+    }
+    Ok((count, count * VERTICES, count * TRIANGLES))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -467,6 +503,43 @@ fn admit<'a>(
     plane: Plane,
     work: &mut Work,
 ) -> Result<Option<Admitted<'a>>, EditError> {
+    let (source, base) = read_source(solid, geometry, work)?;
+    let mut crossing = false;
+    for positions in source
+        .positions
+        .iter()
+        .chain(std::iter::once(&source.mesh.positions))
+    {
+        let mut front = false;
+        let mut back = false;
+        for &point in positions {
+            let value = plane.distance_to(point);
+            front |= value > CUT_EPSILON;
+            back |= value < -CUT_EPSILON;
+        }
+        crossing |= front && back;
+    }
+    if !crossing {
+        return Ok(None);
+    }
+    Ok(Some(check_source(document, solid, source, base, work)?))
+}
+
+fn admit_source<'a>(
+    document: &Document,
+    solid: &'a Solid,
+    geometry: &'a BrushGeometry,
+    work: &mut Work,
+) -> Result<Admitted<'a>, EditError> {
+    let (source, base) = read_source(solid, geometry, work)?;
+    check_source(document, solid, source, base, work)
+}
+
+fn read_source<'a>(
+    solid: &'a Solid,
+    geometry: &'a BrushGeometry,
+    work: &mut Work,
+) -> Result<(Admitted<'a>, [[f32; 3]; 4]), EditError> {
     let displaced = solid
         .sides
         .iter()
@@ -484,24 +557,30 @@ fn admit<'a>(
         .find(|face| face.side == *index)
         .ok_or_else(|| invalid("Terrain has no effective base face"))?;
     let info = side.displacement.as_ref().unwrap();
-    let mut mesh =
-        DisplacementMesh::build(face, info).map_err(|error| invalid(error.to_string()))?;
+    let mesh = DisplacementMesh::build(face, info).map_err(|error| invalid(error.to_string()))?;
     let (data, base) = data(face, &mesh, info.power)?;
     let positions = reconstructed(&data, base, work)?;
-    let mut crossing = false;
-    for positions in positions.iter().chain(std::iter::once(&mesh.positions)) {
-        let mut front = false;
-        let mut back = false;
-        for &point in positions {
-            let value = plane.distance_to(point);
-            front |= value > CUT_EPSILON;
-            back |= value < -CUT_EPSILON;
-        }
-        crossing |= front && back;
-    }
-    if !crossing {
-        return Ok(None);
-    }
+    Ok((
+        Admitted {
+            side,
+            info,
+            face,
+            mesh,
+            data,
+            positions,
+        },
+        base,
+    ))
+}
+
+fn check_source<'a>(
+    document: &Document,
+    solid: &Solid,
+    mut source: Admitted<'a>,
+    base: [[f32; 3]; 4],
+    work: &mut Work,
+) -> Result<Admitted<'a>, EditError> {
+    let info = source.info;
     let (owner, _) = crate::subobject::solid(document, solid.id)?;
     if let ObjectId::Entity(id) = owner
         && document.entity(id).and_then(|entity| entity.classname()) != Some("func_detail")
@@ -510,7 +589,7 @@ fn admit<'a>(
             "Terrain retiling requires world or func_detail brushes",
         ));
     }
-    native::checked_mesh(face, info).map_err(invalid)?;
+    native::checked_mesh(source.face, info).map_err(invalid)?;
     crate::subobject::fragments::admit_source(solid)?;
     smoothing::angle(info).map_err(invalid)?;
     if !info.extra.is_empty()
@@ -527,7 +606,7 @@ fn admit<'a>(
             "Terrain retiling cannot remap opaque payloads or restricted vertex masks",
         ));
     }
-    rows(&info.offset_normals, mesh.size)?;
+    rows(&info.offset_normals, source.mesh.size)?;
     if info
         .offset_normals
         .as_ref()
@@ -537,17 +616,10 @@ fn admit<'a>(
             "Terrain retiling requires absent or zero offset normals",
         ));
     }
-    let tags = triangles::native_tags(info, &mesh)?;
+    let tags = triangles::native_tags(info, &source.mesh)?;
     work.consume(tags.len()).map_err(invalid)?;
-    native_base(&mut mesh, &data, base, work)?;
-    Ok(Some(Admitted {
-        side,
-        info,
-        face,
-        mesh,
-        data,
-        positions,
-    }))
+    native_base(&mut source.mesh, &source.data, base, work)?;
+    Ok(source)
 }
 
 fn height_sheet(source: &Admitted<'_>, work: &mut Work) -> Result<HeightSheet, EditError> {
@@ -1227,6 +1299,28 @@ fn region(
     field: Option<&PlanarField>,
     work: &mut Work,
 ) -> Result<(), EditError> {
+    region_checked(ring, children, axes, sign, Some(plane), field, work)
+}
+
+fn region_unclipped(
+    ring: &[DVec3],
+    children: &[Child],
+    axes: [usize; 2],
+    sign: i128,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    region_checked(ring, children, axes, sign, None, None, work)
+}
+
+fn region_checked(
+    ring: &[DVec3],
+    children: &[Child],
+    axes: [usize; 2],
+    sign: i128,
+    plane: Option<Plane>,
+    field: Option<&PlanarField>,
+    work: &mut Work,
+) -> Result<(), EditError> {
     let indices = bsp::DisplacementInfo {
         power: POWER as i32,
         ..Default::default()
@@ -1239,7 +1333,7 @@ fn region(
         work.consume(indices.len() + child.positions.len() * (ring.len() + FIELD_WORK))
             .map_err(invalid)?;
         for &point in &child.positions {
-            if plane.distance_to(point) > CUT_EPSILON {
+            if plane.is_some_and(|plane| plane.distance_to(point) > CUT_EPSILON) {
                 return Err(invalid(
                     "Flat terrain native triangles cross the retained cut-plane precision",
                 ));

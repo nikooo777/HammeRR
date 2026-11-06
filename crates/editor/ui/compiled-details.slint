@@ -76,11 +76,11 @@ export component CompiledDetailsWindow inherits Window {
             if root.lighting-index == 2: VerticalLayout {
                 spacing: 8px;
                 FieldRow {
-                    inset: false; label: "Lighting channel"; label-width: 100px;
+                    inset: false; label: "Lighting channel"; label-width: 132px;
                     ComboBox { model: ["LDR", "HDR"]; current-index <=> root.lighting-channel-index; enabled: root.has-token && !root.worker-active; }
                 }
                 FieldRow {
-                    inset: false; label: "Exposure (EV)"; label-width: 100px;
+                    inset: false; label: root.legacy-exposure-enabled ? "Exposure (EV)" : "Legacy EV (inactive)"; label-width: 132px;
                     Slider { minimum: -8; maximum: 8; value <=> root.exposure-ev; enabled: root.has-token && !root.worker-active && root.legacy-exposure-enabled; accessible-label: "Compiled details legacy exposure EV"; horizontal-stretch: 1; }
                     Text { text: "\{round(root.exposure-ev * 100) / 100}"; width: 55px; vertical-alignment: center; }
                 }

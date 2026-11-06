@@ -421,7 +421,7 @@ impl Session {
             captured.as_ref().map_err(Clone::clone)
         };
         let controllers=catalog.as_ref().map(|catalog|catalog.controllers.iter().map(|(&id,controller)| {
-            json!({"id":format!("entity:{id}"),"label":controller.targetname.as_deref().filter(|name|!name.is_empty()).map_or_else(||format!("entity:{id}"),|name|format!("{name} · entity:{id}")),
+            json!({"id":format!("entity:{id}"),"label":controller.label(id),
                 "targetname":controller.targetname,"ready":controller.parsed.is_ok(),"settings":controller.parsed.as_ref().ok().map(|parsed|profile_report(parsed.profile)),
                 "initial_settings":controller.parsed.as_ref().ok().map(|parsed|profile_report(self.fog_preview.settings.initial_radial_context.initial_profile(parsed.profile))),
                 "issue":controller.parsed.as_ref().err(),"detail":controller.parsed.as_ref().err(),
@@ -434,26 +434,43 @@ impl Session {
         let pass_choices = self.fog_pass_choices();
         let can_record_render_pass = pass_choices.iter().any(|choice| choice["ready"] == true);
         let player_candidate = self.player_timeline_for_switch();
-        let input_targets=catalog.as_ref().map(|catalog|catalog.controllers.iter().map(|(&id,controller)| {
-            let admission=controller.parsed.as_ref().map_err(Clone::clone)
-                .and_then(|_|self.controller_input_target_admission(id));
-            json!({"id":format!("entity:{id}"),
-                "label":controller.targetname.as_deref().filter(|name|!name.is_empty()).map_or_else(||format!("entity:{id}"),|name|format!("{name} · entity:{id}")),
+        let input_targets = catalog
+            .as_ref()
+            .map(|catalog| {
+                catalog
+                    .controllers
+                    .iter()
+                    .map(|(&id, controller)| {
+                        let admission = controller
+                            .parsed
+                            .as_ref()
+                            .map_err(Clone::clone)
+                            .and_then(|_| self.controller_input_target_admission(id));
+                        json!({"id":format!("entity:{id}"),
+                "label":controller.label(id),
                 "ready":admission.is_ok(),"issue":admission.err()})
-        }).collect::<Vec<_>>()).unwrap_or_default();
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let input_issue = self.controller_input_admission().err()
             .or_else(||catalog.as_ref().err().cloned())
             .or_else(||(!input_targets.iter().any(|target|target["ready"]==true))
                 .then(||"No eligible controller input destination; inspect input_targets for each controller's refusal reason".to_owned()));
-        let switch_targets=catalog.as_ref().map(|catalog|catalog.controllers.iter().map(|(&id,controller)| {
+        let switch_targets = catalog
+            .as_ref()
+            .map(|catalog| {
+                catalog.controllers.iter().map(|(&id,controller)| {
             let admission=controller.switch_target.as_ref().map_err(Clone::clone)
                 .and_then(|_|controller.parsed.as_ref().map_err(Clone::clone))
                 .and_then(|_|player_candidate.as_ref().map_err(Clone::clone))
                 .and_then(|(_,frame)|frame.can_switch(id));
             json!({"id":format!("entity:{id}"),"name":controller.switch_target.as_ref().ok(),
-                "label":controller.switch_target.as_ref().ok().map_or_else(||format!("entity:{id}"),|name|format!("{name} · entity:{id}")),
+                "label":catalog::entity_label(id, controller.switch_target.as_deref().ok()),
                 "ready":admission.is_ok(),"issue":admission.err()})
-        }).collect::<Vec<_>>()).unwrap_or_default();
+        }).collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         let player_switch_issue = player_candidate
             .as_ref()
             .err()

@@ -19,6 +19,19 @@ pub(super) struct Controller {
     pub switch_target: Result<String, String>,
 }
 
+pub(super) fn entity_label(id: u32, name: Option<&str>) -> String {
+    name.filter(|name| !name.is_empty()).map_or_else(
+        || format!("entity:{id}"),
+        |name| format!("{name} · entity:{id}"),
+    )
+}
+
+impl Controller {
+    pub(super) fn label(&self, id: u32) -> String {
+        entity_label(id, self.targetname.as_deref())
+    }
+}
+
 pub(super) struct Catalog {
     pub controllers: BTreeMap<u32, Controller>,
     pub triggers: Result<BTreeMap<u32, super::triggers::Trigger>, String>,

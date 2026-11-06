@@ -289,7 +289,7 @@ fn summary(doc: &Document, id: ObjectId) -> Value {
             let materials = resolved
                 .map(|(_, solid)| materials_of([solid]))
                 .unwrap_or_default();
-            json!({ "id": id_string(id), "kind": "solid", "owner":resolved.map(|(owner,_)|id_string(owner)), "bounds": bounds, "materials": materials })
+            json!({ "id": id_string(id), "kind": "solid", "owner":resolved.map(|(owner,_)|id_string(owner)), "bounds": bounds, "bounds_kind":"authored_geometry", "authored_bounds":bounds, "materials": materials })
         }
         ObjectId::Entity(n) => {
             let Some(e) = doc.entity(n) else {
@@ -303,6 +303,8 @@ fn summary(doc: &Document, id: ObjectId) -> Value {
                 "origin": e.origin().map(point),
                 "brushes": e.solids.len(),
                 "bounds": bounds,
+                "bounds_kind":if e.solids.is_empty() {"point_helper"} else {"authored_geometry"},
+                "authored_bounds":bounds,
             })
         }
     }
@@ -629,6 +631,7 @@ impl EditorServer {
             "job_token":job_token,
             "success": output.bsp.is_some(),
             "bsp": output.bsp.as_ref().map(|_| result.path.display().to_string()),
+            "diagnostic_groups":crate::session::compilation::diagnostic_groups(&diagnostics),
             "diagnostics": diagnostics,
             "leak": output.leak.as_ref().map(|leak| json!({ "entity": format!("entity:{}", leak.entity), "points": leak.points.iter().copied().map(point).collect::<Vec<_>>(), "pointfile": result.path.with_extension("lin").display().to_string() })),
             "stats": crate::session::compilation::stats_json(&output.stats),

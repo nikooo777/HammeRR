@@ -52,10 +52,7 @@ pub(super) fn capture_catalog(
             .properties
             .get("targetname")
             .filter(|name| !name.is_empty());
-        let label = name.map_or_else(
-            || format!("entity:{}", entity.id),
-            |name| format!("{name} · entity:{}", entity.id),
-        );
+        let label = super::catalog::entity_label(entity.id, name);
         if result
             .insert(entity.id, Trigger { label, definition })
             .is_some()
@@ -256,7 +253,7 @@ impl Session {
             let inside = frame.as_ref().ok().and_then(Option::as_ref).is_some_and(|frame|frame.touches.iter().any(|state|state.trigger==id&&state.inside));
             let enter = self.trigger_touch_admission(id,TriggerTouchKind::Enter);
             let leave = self.trigger_touch_admission(id,TriggerTouchKind::Leave);
-            let actions = source.definition.as_ref().ok().map(|definition|definition.actions.iter().map(|action|json!({"connection_index":action.connection_index,"output":action.output.name(),"controller":format!("entity:{}",action.controller),"delay_seconds":action.delay,"times_to_fire":action.times_to_fire})).collect::<Vec<_>>());
+            let actions = source.definition.as_ref().ok().map(|definition|definition.actions.iter().map(|action|json!({"connection_index":action.connection_index,"output":action.output.name(),"controller":format!("entity:{}",action.controller),"controller_label":self.fog_controller_label(action.controller),"delay_seconds":action.delay,"times_to_fire":action.times_to_fire})).collect::<Vec<_>>());
             let detail = source.definition.as_ref().map(|definition|format!("entity:{id} · {} · {} supported actions · {}",if inside {"Inside"}else{"Outside"},definition.actions.len(),if inside {"Leave records the boundary; queued actions remain scheduled"}else{"Enter records one alive virtual player; no camera or physics contact is inferred"})).unwrap_or_else(Clone::clone);
             let detail = if enter.is_err() && leave.is_err() {
                 format!("{detail} · {}",enter.as_ref().err().map(String::as_str).unwrap_or("Touch unavailable"))
@@ -283,6 +280,17 @@ impl Session {
             .map(|action| action.delay)
     }
 
+    fn fog_controller_label(&self, id: u32) -> String {
+        self.fog_preview
+            .catalog
+            .as_ref()
+            .and_then(|catalog| catalog.controllers.get(&id))
+            .map_or_else(
+                || super::catalog::entity_label(id, None),
+                |controller| controller.label(id),
+            )
+    }
+
     pub(super) fn trigger_history_report(&self) -> Value {
         let Some(expansion) = &self.fog_preview.trigger_expansion else {
             return json!({"active":false,"actor":"one_alive_virtual_player","generated_event_count":0,"total_generated_event_count":0,"generated_event_limit":MAX_GENERATED_ACTIONS,"pending_count":0,"fired_count":0,"detail":"One alive virtual player starts outside every trigger; Enter and Leave are explicit declarations."});
@@ -295,7 +303,7 @@ impl Session {
             "trigger":format!("entity:{}",action.trigger),"connection_index":action.connection_index,"output":action.output.name(),
             "source_order":action.source_order,"delay_seconds":self.trigger_action_delay(action.trigger,action.connection_index),"enqueue_order":action.enqueue_order,"enqueue_time_seconds":action.enqueue_time_seconds,
             "native_due_time_seconds":action.native_due_time_seconds,"due_time_seconds":action.due_time_seconds,
-            "controller":format!("entity:{}",action.controller),"switched":if action.due_time_seconds<=self.fog_preview.time {Some(action.switched)}else{None},
+            "controller":format!("entity:{}",action.controller),"controller_label":self.fog_controller_label(action.controller),"switched":if action.due_time_seconds<=self.fog_preview.time {Some(action.switched)}else{None},
             "delivered":action.due_time_seconds<=self.fog_preview.time,"remaining_after_enqueue":action.remaining_after_enqueue})).collect::<Vec<_>>();
         let last = expansion
             .generated_actions
@@ -309,11 +317,11 @@ impl Session {
         let detail = last
             .map(|action| {
                 format!(
-                    "entity:{} · {} at {:.3} s → entity:{} · {}",
+                    "Last: entity:{} · {} at {:.3} s → {} · {}",
                     action.trigger,
                     action.output.name(),
                     action.due_time_seconds,
-                    action.controller,
+                    self.fog_controller_label(action.controller),
                     if action.switched {
                         "controller switched"
                     } else {
@@ -348,10 +356,10 @@ impl Session {
                 .map(|delay| format!(" · delay {delay:.3} s"))
                 .unwrap_or_default();
             format!(
-                "{detail} · Next entity:{}/{} → entity:{} at {:.3} s{delay} · remaining {remaining}",
+                "{detail}\nNext: entity:{}/{} → {} at {:.3} s{delay} · remaining {remaining}",
                 action.trigger,
                 action.output.name(),
-                action.controller,
+                self.fog_controller_label(action.controller),
                 action.due_time_seconds
             )
         } else {

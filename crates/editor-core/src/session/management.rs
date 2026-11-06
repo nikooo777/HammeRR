@@ -36,6 +36,7 @@ pub struct ObjectReport {
     pub hidden_brushes: usize,
     pub materials: Vec<String>,
     pub bounds: Option<[[f64; 3]; 2]>,
+    pub bounds_kind: &'static str,
 }
 
 impl ObjectFilter {
@@ -133,6 +134,7 @@ impl ObjectReport {
     pub(super) fn from_solid(solid: &Solid, bounds: Option<(DVec3, DVec3)>) -> Self {
         Self {
             object: ObjectId::Solid(solid.id),
+            bounds_kind: "authored_geometry",
             id: format!("solid:{}", solid.id),
             kind: "solid".into(),
             classname: String::new(),
@@ -147,6 +149,11 @@ impl ObjectReport {
     pub(super) fn from_entity(entity: &Entity, bounds: Option<(DVec3, DVec3)>) -> Self {
         Self {
             object: ObjectId::Entity(entity.id),
+            bounds_kind: if entity.solids.is_empty() {
+                "point_helper"
+            } else {
+                "authored_geometry"
+            },
             id: format!("entity:{}", entity.id),
             kind: if entity.solids.is_empty() {
                 "point_entity"
@@ -289,7 +296,7 @@ impl Session {
                 .get(&id)
                 .copied()
                 .or_else(|| query::bounds(&self.document, id));
-            let row = match id {
+            let mut row = match id {
                 ObjectId::Solid(id) => {
                     ObjectReport::from_solid(self.document.solid(id).unwrap(), bounds)
                 }
@@ -297,6 +304,9 @@ impl Session {
                     ObjectReport::from_entity(self.document.entity(id).unwrap(), bounds)
                 }
             };
+            if model_bounds.contains_key(&id) {
+                row.bounds_kind = "editor_presentation";
+            }
             if filter.matches(&row) {
                 rows.push(row);
             }

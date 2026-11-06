@@ -640,6 +640,8 @@ pub(crate) fn diagnostic_json(index: usize, diagnostic: &compiler::Diagnostic) -
     };
     let mut row = json!({
         "index":index,
+        "code":diagnostic.code.map(compiler::DiagnosticCode::name),
+        "group_title":diagnostic.code.map(compiler::DiagnosticCode::group_title),
         "level":match diagnostic.level { compiler::Level::Info=>"info",compiler::Level::Warning=>"warning",compiler::Level::Error=>"error" },
         "message":diagnostic.message,
         "object":diagnostic.object,
@@ -656,8 +658,41 @@ pub(crate) fn diagnostic_json(index: usize, diagnostic: &compiler::Diagnostic) -
     row
 }
 
+pub(crate) fn diagnostic_groups(diagnostics: &[Value]) -> Vec<Value> {
+    let mut keyed = std::collections::BTreeMap::new();
+    let mut groups: Vec<(Option<&str>, Vec<usize>)> = Vec::new();
+    for (index, diagnostic) in diagnostics.iter().enumerate() {
+        let group = diagnostic["code"]
+            .as_str()
+            .zip(diagnostic["level"].as_str())
+            .zip(diagnostic["group_title"].as_str());
+        if let Some((key, title)) = group {
+            let group_index = *keyed.entry(key).or_insert_with(|| {
+                groups.push((Some(title), Vec::new()));
+                groups.len() - 1
+            });
+            groups[group_index].1.push(index);
+        } else {
+            groups.push((None, vec![index]));
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(title, indices)| json!({"title":title,"count":indices.len(),"indices":indices}))
+        .collect()
+}
+
 fn result_json(result: &CompileResult) -> Value {
     let output = &result.output;
+    let diagnostics = output
+        .report
+        .diagnostics
+        .iter()
+        .take(MAX_RETAINED_DIAGNOSTICS)
+        .enumerate()
+        .map(|(index, diagnostic)| diagnostic_json(index, diagnostic))
+        .collect::<Vec<_>>();
+    let groups = diagnostic_groups(&diagnostics);
     json!({
         "success":result.published(),
         "published":result.published(),
@@ -665,7 +700,8 @@ fn result_json(result: &CompileResult) -> Value {
         "warning":result.publication_warning(),
         "bsp":result.published().then(||result.path.display().to_string()),
         "diagnostic_count":output.report.diagnostics.len(),
-        "diagnostics":output.report.diagnostics.iter().take(MAX_RETAINED_DIAGNOSTICS).enumerate().map(|(index,diagnostic)|diagnostic_json(index,diagnostic)).collect::<Vec<_>>(),
+        "diagnostics":diagnostics,
+        "diagnostic_groups":groups,
         "leak":output.leak.as_ref().map(|leak|json!({"entity":format!("entity:{}",leak.entity),"points":leak.points.iter().map(|p|p.to_array()).collect::<Vec<_>>(),"pointfile":result.path.with_extension("lin").display().to_string()})),
         "stats":stats_json(&output.stats),
     })

@@ -364,8 +364,13 @@ pub(crate) fn scene_exposure_context(session: &Session) -> (bool, String) {
         )
     } else if hdr {
         display["effective_exposure_ev"].as_f64().map_or_else(
-            || "Scene exposure unavailable · Fog → Scene display".to_owned(),
-            |ev| format!("Scene exposure EV {} · Fog → Scene display", ev as f32),
+            || "HDR scene exposure unavailable · View → Fog preview… → Scene display".to_owned(),
+            |ev| {
+                format!(
+                    "Legacy EV inactive · HDR scene: {} EV\nView → Fog preview… → Scene display",
+                    ev as f32
+                )
+            },
         )
     } else {
         "Legacy exposure · active pane".to_owned()

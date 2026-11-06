@@ -22,7 +22,7 @@ Plane clipping is **17/21 workflows complete (80.95%)**. Each completed workflow
 
 | Area | Works | Not yet / limits |
 | --- | --- | --- |
-| [MCP](mcp.md) | Live desktop and private headless sessions; shared editing, rendering and builds. Explicit empty edit targets and unknown compile/run argument names reject. | Select a document explicitly when two maps are open. |
+| [MCP](mcp.md) | Live desktop and private headless sessions; shared editing, rendering and builds. Explicit empty edit targets and unknown compile/run argument names reject. Object bounds identify their source; repeated reflection warnings share a group. | Select a document explicitly when two maps are open. |
 | [Documents](open-documents.md) | Two persistent tabs, silent selection, explicit saved workspace restoration, reviewed Quit all, named Close blockers and per-map Save results. | Two live maps; workspace saving needs clean named sources and valid content. Restoration opens current files at saved paths. |
 | [Content profiles](content-profiles.md) | Up to 32 named game/mod profiles; checked mounts, FGD, build and game paths; background validation and atomic per-document Apply. Detached mods use the selected CS:S root for native physics. | Installed CS:S client required. Profiles do not relocate external assets. |
 | [Changed content](textures.md#reload-mounted-content-and-definitions) | Explicit current-mount and FGD refresh with dependent cache invalidation, atomic failure retention and optional native change watching. | Changes require explicit Reload content. Watch coverage/errors remain visible; running games require stop/restart. |

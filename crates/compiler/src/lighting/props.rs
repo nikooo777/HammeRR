@@ -977,7 +977,7 @@ pub(super) fn build(
                             format!("{path}: material {} declares $envmap env_cubemap, but Generate reflections is disabled. Review or place env_cubemap samples and enable Generate reflections in Build settings to capture map-local reflections", model.materials[material]),
                             Some(format!("entity:{}", entity.id)),
                             entity.origin(),
-                        ));
+                        ).with_code(crate::DiagnosticCode::ReflectionsDisabled));
                     }
                     let before = triangles.len();
                     let degenerate = append(

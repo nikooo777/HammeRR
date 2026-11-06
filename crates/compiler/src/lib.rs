@@ -448,10 +448,30 @@ pub enum DiagnosticPositionSpace {
     World,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticCode {
+    ReflectionsDisabled,
+}
+
+impl DiagnosticCode {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::ReflectionsDisabled => "reflections_disabled",
+        }
+    }
+
+    pub fn group_title(self) -> &'static str {
+        match self {
+            Self::ReflectionsDisabled => "Map reflections are not generated",
+        }
+    }
+}
+
 /// A compile message tied to a map object (`solid:<id>` / `entity:<id>`)
 /// and position where possible, so the editor and agents can act on it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagnostic {
+    pub code: Option<DiagnosticCode>,
     pub level: Level,
     pub message: String,
     pub object: Option<String>,
@@ -466,6 +486,7 @@ impl Diagnostic {
         position: Option<DVec3>,
     ) -> Self {
         Self {
+            code: None,
             level: Level::Info,
             message: message.into(),
             object,
@@ -494,6 +515,11 @@ impl Diagnostic {
             level: Level::Error,
             ..Self::info(message, object, position)
         }
+    }
+
+    pub fn with_code(mut self, code: DiagnosticCode) -> Self {
+        self.code = Some(code);
+        self
     }
 
     pub fn with_world_position(mut self) -> Self {

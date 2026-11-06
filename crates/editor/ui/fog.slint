@@ -79,6 +79,7 @@ export component FogWindow inherits Window {
     in property <bool> input-has-value;
     in property <bool> can-send-input;
     in-out property <bool> input-dirty;
+    in-out property <bool> scene-display-expanded;
     in-out property <bool> environment-expanded;
     in-out property <bool> input-expanded: true;
     in-out property <bool> limits-expanded;
@@ -183,7 +184,9 @@ export component FogWindow inherits Window {
                     spacing: Theme.space-lg;
                     VerticalLayout {
                         spacing: Theme.space;
-                        SectionHeader { text: "Scene display"; inset: false; collapsible: false; detail: root.scene-display-dirty ? "Unapplied display" : ""; }
+                        SectionHeader { text: "Scene display"; inset: false; expanded <=> root.scene-display-expanded; detail: root.scene-display-dirty ? "Unapplied display" : root.scene-display-requested; }
+                        if root.scene-display-expanded: VerticalLayout {
+                            spacing: Theme.space;
                         FieldRow {
                             inset: false; label: "Display mode"; label-width: 128px;
                             ComboBox {
@@ -215,8 +218,10 @@ export component FogWindow inherits Window {
                         FieldRow { inset: false; label: "Active pane"; label-width: 128px; Text { text: root.scene-display-effective; wrap: word-wrap; color: Theme.text-muted; } }
                         FieldRow { inset: false; label: "Exposure owner"; label-width: 128px; Text { text: root.scene-display-owner; wrap: word-wrap; color: Theme.text-muted; } }
                         FieldRow { inset: false; label: "Availability"; label-width: 128px; Text { text: root.scene-display-availability; wrap: word-wrap; color: root.scene-display-issue ? Theme.warning : Theme.text-muted; } }
-                        if root.scene-display-message != "": Text { text: root.scene-display-message; wrap: word-wrap; color: Theme.warning; }
                         Text { text: "HDR applies to Perspective, Textured panes. Scene exposure affects the complete scene, including sky and fog. Legacy panes retain their component exposures."; wrap: word-wrap; color: Theme.text-faint; font-size: Theme.font-small; }
+                        }
+                        if root.scene-display-issue && !root.scene-display-expanded: Text { text: root.scene-display-availability; wrap: word-wrap; color: Theme.warning; }
+                        if root.scene-display-message != "": Text { text: root.scene-display-message; wrap: word-wrap; color: Theme.warning; }
                     }
                     SectionHeader { text: "Playback"; inset: false; collapsible: false; detail: root.transitioning ? "Transition inputs" : ""; }
                     HorizontalLayout {

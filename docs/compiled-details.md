@@ -39,6 +39,8 @@ For HDR scene display, use **Fog preview… → Scene display → Scene exposure
 then click **Apply scene display**. This exposure controls details with the other
 enabled scene contributors after linear fog and translucency. The stored
 **Exposure (EV)** remains in use in Legacy, orthographic and diagnostic panes.
+In HDR panes, the disabled field is labelled **Legacy EV (inactive)**. The note
+shows the active Scene exposure.
 Channel and style updates do not change scene exposure.
 
 A new dual build retains separate static colours when LDR and HDR differ.

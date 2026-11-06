@@ -2225,6 +2225,8 @@ export component AppWindow inherits Window {
     in property <bool> clipping;
     in property <bool> has-clip-preview;
     in property <string> clip-summary;
+    in property <string> clip-toolbar-summary;
+    in property <bool> clip-issue;
     in property <bool> clip-positioning;
     in-out property <int> clip-handles-mode: 1;
     in-out property <bool> clip-handles-snap: true;
@@ -3258,7 +3260,7 @@ export component AppWindow inherits Window {
                     if root.drawing-block && root.projection-index == 0: Text { text: "Switch to a planar view to drag a footprint, or Add brush places one at the view centre."; color: Theme.text-faint; vertical-alignment: center; overflow: elide; }
                     if root.clipping: HorizontalLayout {
                         spacing: Theme.space;
-                        Text { text: root.clip-summary == "" ? "Set the cut in the Tool panel or drag the plane handles" : root.clip-summary; color: Theme.info; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                        Text { text: root.clip-toolbar-summary; color: root.clip-issue ? Theme.warning : Theme.info; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                         Button { y: 5px; height: 26px; text: "Cancel cut"; clicked => { root.cancel-clip(); } }
                         Button { y: 5px; height: 26px; primary: true; text: "Apply cut"; enabled: root.has-clip-preview && !root.clip-positioning; clicked => { root.apply-clip(); } }
                     }
@@ -3661,7 +3663,7 @@ export component AppWindow inherits Window {
                                             ComboBox { model: ["Fast · vertex", "Detail · per-fragment"]; current-index <=> root.lighting-quality; selected => { root.options-changed(); } }
                                         }
                                         if root.lighting-preview: FieldRow {
-                                            label: "Exposure EV";
+                                            label: root.legacy-exposure-enabled ? "Exposure EV" : "Legacy EV";
                                             LineEdit { text <=> root.lighting-exposure-ev; enabled: root.legacy-exposure-enabled; input-type: decimal; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
                                         }
                                         if root.lighting-preview && root.scene-exposure-context != "": OverlayNote { text: root.scene-exposure-context; }
@@ -3674,7 +3676,7 @@ export component AppWindow inherits Window {
                                             ComboBox { model: ["LDR", "HDR · editor preview"]; current-index <=> root.sky-channel; selected => { root.options-changed(); } }
                                         }
                                         if root.sky-preview && root.sky-channel == 1: FieldRow {
-                                            label: "Sky EV";
+                                            label: root.legacy-exposure-enabled ? "Sky EV" : "Legacy EV";
                                             LineEdit { text <=> root.sky-exposure-ev; enabled: root.legacy-exposure-enabled; placeholder-text: "−8 to 8"; accepted => { root.options-changed(); } }
                                         }
                                         if root.sky-preview && root.sky-channel == 1 && root.scene-exposure-context != "": OverlayNote { text: root.scene-exposure-context; }
@@ -4301,7 +4303,7 @@ export component AppWindow inherits Window {
                                     LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.clip-material; placeholder-text: "Inherit each brush's material"; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
                                     Button { text: "Browse…"; clicked => { root.browse-material("@clip"); } }
                                 }
-                                if root.clip-summary != "": Text { text: root.clip-summary; color: Theme.info; font-size: Theme.font-small; wrap: word-wrap; }
+                                if root.clip-summary != "": Text { text: root.clip-summary; color: root.clip-issue ? Theme.warning : Theme.info; font-size: Theme.font-small; wrap: word-wrap; }
                                 HorizontalLayout {
                                     spacing: Theme.space-sm;
                                     alignment: end;

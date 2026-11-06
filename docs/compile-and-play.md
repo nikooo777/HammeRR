@@ -50,7 +50,7 @@ Unused runtime assets are outside this guard.
 
 1. Click **Compile** and wait for the build to finish.
 2. Open **Build details…** below the toolbar.
-3. Find a diagnostic with a recorded world position.
+3. Expand a grouped warning if shown. Find a diagnostic with a recorded world position.
 4. Click **Frame recorded position** to move the viewport camera there.
 5. Enable **Full report** to copy the complete retained report.
 
@@ -64,6 +64,10 @@ cell references, entity inside-solid warnings, and point/spot source diagnostics
 with valid world origins. Invalid or absent
 origins, unclassified positions and model-local positions remain unavailable.
 This action does not select or resolve an authored object.
+
+Repeated reflection warnings share **Map reflections are not generated**. Expand
+the heading to see each object and its **Frame recorded position** action.
+**Full report** keeps every individual message.
 
 ## Build settings
 

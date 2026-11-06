@@ -377,6 +377,7 @@ impl EditorServer {
                     let mut value = summary(session.document(), row.object);
                     value["bounds"] =
                         bounds_json(row.bounds.map(|[low, high]| (vec3(low), vec3(high))));
+                    value["bounds_kind"] = json!(row.bounds_kind);
                     value["hidden"] = json!(row.hidden);
                     value["hidden_brushes"] = json!(row.hidden_brushes);
                     value
@@ -409,6 +410,7 @@ impl EditorServer {
                     let mut value = detail(session.document(), id)?;
                     if let Some(&bounds) = model_bounds.get(&id) {
                         value["bounds"] = bounds_json(Some(bounds));
+                        value["bounds_kind"] = json!("editor_presentation");
                     }
                     let context = session.object_context_summary(id);
                     if !context.is_null() {

@@ -29,7 +29,8 @@ The two layers keep separate channel and style controls. In an active HDR pane,
 use **Fog preview… → Scene display → Scene exposure EV**, then click
 **Apply scene display**. One scene exposure controls both layers and the other
 enabled scene contributors. Stored **Exposure (EV)** values remain in use in
-Legacy, orthographic and diagnostic panes.
+Legacy, orthographic and diagnostic panes. In HDR panes, the disabled field is
+labelled **Legacy EV (inactive)**; the note shows the active Scene exposure.
 
 ## Locate a baked prop sample
 

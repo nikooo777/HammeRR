@@ -2,7 +2,7 @@ use serde_json::Value;
 use slint::{ComponentHandle, Model};
 
 use super::{Actor, CompileWindow, DocumentAccess};
-use crate::BuildDiagnosticRow;
+use crate::{BuildDiagnosticGroupRow, BuildDiagnosticRow};
 
 pub(super) fn bind(window: &CompileWindow, access: &DocumentAccess) {
     let (callback_window, target) = (window.as_weak(), access.downgrade());
@@ -125,6 +125,32 @@ pub(super) fn refresh(window: &CompileWindow, job: &Value) {
     window.set_diagnostic_error(error.into());
     if !previous.iter().eq(rows.iter().cloned()) {
         window.set_diagnostic_rows(slint::ModelRc::new(slint::VecModel::from(rows)));
+    }
+    let groups = result["diagnostic_groups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|group| {
+            let indices = group["indices"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|index| index.as_u64().and_then(|index| i32::try_from(index).ok()))
+                .collect::<Vec<_>>();
+            BuildDiagnosticGroupRow {
+                title: group["title"].as_str().unwrap_or_default().into(),
+                indices: slint::ModelRc::new(slint::VecModel::from(indices)),
+                expanded: false,
+            }
+        })
+        .collect::<Vec<_>>();
+    let previous_groups = window.get_diagnostic_groups();
+    if previous_groups.row_count() != groups.len()
+        || !previous_groups.iter().zip(&groups).all(|(before, after)| {
+            before.title == after.title && before.indices.iter().eq(after.indices.iter())
+        })
+    {
+        window.set_diagnostic_groups(slint::ModelRc::new(slint::VecModel::from(groups)));
     }
     window.set_diagnostics(messages.join("\n\n").into());
 }

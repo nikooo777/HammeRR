@@ -32,7 +32,7 @@ baseline and clear the event sequence; prepare the environment again when used.
 ## Use HDR scene display
 
 1. Choose **Perspective** and **Textured** in the intended pane.
-2. Open **View → Fog preview…** and find **Scene display**.
+2. Open **View → Fog preview…** and expand **Scene display**.
 3. Set **Display mode → HDR**.
 4. Set **Scene exposure EV** from −8 to +8.
 5. Click **Apply scene display**.
@@ -175,7 +175,8 @@ resets time and pauses. Source edits also clear the sequence.
    controller.
 4. Expand **Trigger touches**, choose **Source**, then click **Enter**.
 5. Read **Inside** or **Outside**, **Generated actions** and the pending/fired
-   counts. Use **Play**, **Pause** and **Seek** to inspect delayed actions.
+   counts. **Last** and **Next** show controller names with stable entity IDs.
+   Use **Play**, **Pause** and **Seek** to inspect delayed actions.
 6. Click **Leave** to declare the player outside that trigger again.
 
 The preview uses one alive virtual player, initially outside every trigger.

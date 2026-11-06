@@ -52,7 +52,8 @@ the complete preview; use cutter or named material mode for oblique cuts.
 3. For terrain, choose a mode under **Terrain cut**.
 4. Draw a line in a planar view, enter a plane, or choose **Pick three points**.
 5. Choose **Arrow side**, **Opposite side** or **Both sides**.
-6. Inspect the preview.
+6. Inspect the one-line toolbar status. Read the full preview and precision
+   details in **Clip**.
 7. Click **Apply cut**.
 
 ![A diagonal cut creates a sloping brush](images/clipped-brush.png)

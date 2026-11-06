@@ -88,7 +88,7 @@ export component BakedSurfacesWindow inherits Window {
             }
             HorizontalLayout {
                 spacing: 8px;
-                Text { text: "Exposure (EV)"; vertical-alignment: center; width: 100px; }
+                Text { text: root.legacy-exposure-enabled ? "Exposure (EV)" : "Legacy EV (inactive)"; vertical-alignment: center; width: 132px; }
                 Slider { minimum: -8; maximum: 8; value <=> root.exposure-ev; enabled: root.has-token && !root.worker-active && root.legacy-exposure-enabled; accessible-label: "Baked surfaces legacy exposure EV"; horizontal-stretch: 1; }
                 Text { text: "\{round(root.exposure-ev * 100) / 100}"; width: 50px; vertical-alignment: center; }
             }

@@ -73,7 +73,7 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
             .into(),
         );
     }
-    if let Some(preview) = session.clip_preview() {
+    let summary = if let Some(preview) = session.clip_preview() {
         app.set_clip_normal_x(preview.plane.normal.x.to_string().into());
         app.set_clip_normal_y(preview.plane.normal.y.to_string().into());
         app.set_clip_normal_z(preview.plane.normal.z.to_string().into());
@@ -148,18 +148,18 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
                 ));
             }
         }
-        app.set_clip_summary(summary.into());
-        if let Some(error) = session.clip_drag().and_then(|drag| drag.error.as_ref()) {
-            app.set_clip_summary(error.clone().into());
-        }
-        if let Some(error) = session.clip_preview_error() {
-            app.set_clip_summary(error.into());
-        }
+        summary
     } else {
-        app.set_clip_summary(
-            "Draw a cut or preview a plane · the map stays unchanged until Apply cut".into(),
-        );
-    }
+        "Draw a cut or preview a plane · the map stays unchanged until Apply cut".to_owned()
+    };
+    let preview_error = session.clip_preview_error();
+    let error = preview_error
+        .as_deref()
+        .or_else(|| session.clip_drag().and_then(|drag| drag.error.as_deref()));
+    let summary = error.unwrap_or(&summary);
+    app.set_clip_issue(error.is_some());
+    app.set_clip_toolbar_summary(summary.lines().next().unwrap_or_default().into());
+    app.set_clip_summary(summary.into());
 }
 
 pub(super) fn clip_keep(app: &AppWindow) -> map_core::clip::Keep {

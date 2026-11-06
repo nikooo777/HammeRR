@@ -29,8 +29,10 @@ In Legacy display, **Exposure EV** scales linear lighting before the editor's
 Reinhard tone map; **Sky EV** controls the sky separately.
 In an active HDR pane, **Scene exposure EV** controls all enabled scene
 contributors after linear fog and translucency. The component exposure controls
-retain their values for Legacy panes. Orthographic and diagnostic panes keep
-their component exposures, even when another pane uses HDR.
+show **Legacy EV** and retain their inactive values for Legacy panes.
+The note gives the active HDR exposure and its **Scene display** controls.
+Orthographic and diagnostic panes keep their component exposures, even when
+another pane uses HDR.
 **Channel** and **Sky channel** still select their content independently.
 These preview settings are temporary and do not edit the map or saved preview defaults.
 Use **Reload material assets** after changing materials.

@@ -282,6 +282,12 @@ For an exact brush selection, call `select_solids` with numeric `solids` and
 optional `mode:"replace"`, `"add"`, `"remove"` or `"toggle"`. Entity reports from
 `get_objects` list child solid IDs; selected brush reports include `owner` and
 bounds. `get_objects` can also inspect a child directly as `solid:<n>`.
+
+Object responses identify `bounds_kind`: `point_helper`, `authored_geometry` or
+`editor_presentation`. `authored_bounds` retains the raw source box. Creation and
+edit replies use authored/helper bounds; they do not load models for placement.
+Use `get_objects` for current editor presentation bounds, or `inspect_entity_model`
+for resolved model geometry. These bounds do not certify native collision.
 `frame_selection`, move, transform, material editing, clipping, duplicate and delete use
 the shared selected brush IDs when `ids` is omitted and preserve owning entities through Undo.
 Child duplicates stay in their original entity. Root-only operations such as
@@ -1827,7 +1833,8 @@ alive virtual player, initially outside every admitted trigger.
 Camera movement and physics contacts do not create touches. Duplicate Enter
 and Leave while outside refuse. Each `trigger_choices` row reports `ready`,
 `issue`, `inside`, `can_enter`, `enter_issue`, `can_leave`, `leave_issue` and
-source `detail`.
+source `detail`. Action rows include `controller_label`; canonical controller IDs
+remain unchanged.
 
 Admitted sources are static, initially enabled, unparented brush
 `trigger_multiple` entities with exactly `spawnflags:1`, empty `filtername` and
@@ -1868,7 +1875,8 @@ Canonical `events` entries use `kind:"trigger_touch"`, `trigger`, `touch`,
 `trigger_history.generated_actions` includes only actions enqueued by the
 requested time. Each entry retains `trigger`, `connection_index`, `output`,
 `source_order`, `enqueue_order`, `enqueue_time_seconds`, `delay_seconds`,
-`native_due_time_seconds`, logical `due_time_seconds`, destination `controller`,
+`native_due_time_seconds`, logical `due_time_seconds`, destination `controller`
+and its human-readable `controller_label`,
 `delivered`, `switched` and `remaining_after_enqueue`. Pending actions have
 `switched:null`; delivered actions report `true` for a controller change or
 `false` for a no-change. A null remaining count means unlimited.
@@ -2118,6 +2126,10 @@ before publication. No empty record substitutes for invalid geometry.
 `compile_map` returns its captured `job_token`; async builds expose it as
 `get_compile_status.job.token`. Diagnostic rows have a stable `index`,
 `position_space`, `frame_available` and `frame_unavailable_reason`.
+Results also expose `diagnostic_groups`: a shared cause `title`, `count` and
+`indices` into the returned diagnostic rows. Known repeated causes have a stable
+`code`; individual object IDs, positions, messages and frame indices stay intact.
+Async groups cover the retained first 100 rows; `diagnostic_count` remains the total.
 When framing is available, call `frame_build_diagnostic` with that exact
 `job_token` and `index`; optional `aspect` defaults to 1 and accepts 0.01–100.
 The result gives `recorded_position`, `captured_snapshot` and `framed_bounds`.

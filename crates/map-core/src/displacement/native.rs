@@ -95,6 +95,14 @@ pub fn validate_material(draws: bool, material_contents: i32, surface: i32) -> R
     Ok(())
 }
 
+pub(super) fn offset_vertex(direction: [f32; 3], alpha: f32) -> bsp::DisplacementVertex {
+    bsp::DisplacementVertex {
+        direction,
+        distance: 1.0,
+        alpha,
+    }
+}
+
 pub fn vertices(mesh: &DisplacementMesh) -> Vec<bsp::DisplacementVertex> {
     mesh.positions
         .iter()
@@ -102,6 +110,15 @@ pub fn vertices(mesh: &DisplacementMesh) -> Vec<bsp::DisplacementVertex> {
         .zip(&mesh.alphas)
         .map(|((&point, &base), &alpha)| {
             let offset = point - base;
+            if offset
+                .to_array()
+                .iter()
+                .filter(|value| **value != 0.0)
+                .count()
+                > 1
+            {
+                return offset_vertex(offset.as_vec3().to_array(), alpha as f32);
+            }
             let distance = offset.length();
             bsp::DisplacementVertex {
                 direction: if distance == 0.0 {

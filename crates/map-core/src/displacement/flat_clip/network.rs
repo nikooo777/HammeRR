@@ -7,7 +7,9 @@ use source_formats::{
 };
 
 use super::{
-    Exact, FIELD_WORK, data, field::PlanarField, invalid, orient, reconstructed, same, weighted,
+    Exact, FIELD_WORK, data,
+    field::{BasePlane, PlanarField},
+    invalid, orient, reconstructed, same, weighted,
 };
 use crate::displacement::{
     grid_clip::{self, Context, Work},
@@ -50,16 +52,14 @@ struct Surface<'a> {
 }
 
 struct Sheet {
-    axis: usize,
-    coordinate: f64,
+    base: BasePlane,
     field: Option<PlanarField>,
     sign: i128,
 }
 
 impl Sheet {
     fn matches(&self, other: &Self) -> Result<bool, EditError> {
-        if self.axis != other.axis || self.coordinate != other.coordinate || self.sign != other.sign
-        {
+        if self.sign != other.sign || !self.base.matches(&other.base)? {
             return Ok(false);
         }
         match (&self.field, &other.field) {
@@ -115,14 +115,14 @@ fn apart(first: &[DVec3], second: &[DVec3]) -> bool {
     })
 }
 
-fn dot(point: DVec3, axis: DVec3) -> Result<Exact, EditError> {
+fn dot(point: DVec3, axis: [Exact; 3]) -> Result<Exact, EditError> {
     Exact::float(point.x)?
-        .mul(Exact::float(axis.x)?)?
-        .add(Exact::float(point.y)?.mul(Exact::float(axis.y)?)?)?
-        .add(Exact::float(point.z)?.mul(Exact::float(axis.z)?)?)
+        .mul(axis[0])?
+        .add(Exact::float(point.y)?.mul(axis[1])?)?
+        .add(Exact::float(point.z)?.mul(axis[2])?)
 }
 
-fn range(points: &[DVec3], axis: DVec3) -> Result<[Exact; 2], EditError> {
+fn range(points: &[DVec3], axis: [Exact; 3]) -> Result<[Exact; 2], EditError> {
     let mut result = [dot(points[0], axis)?; 2];
     for &point in &points[1..] {
         let value = dot(point, axis)?;
@@ -145,14 +145,23 @@ fn contact_rank(
     if apart(first, second) {
         return Ok(None);
     }
-    let Some(axis) = (0..3).find(|&axis| {
-        first
-            .iter()
-            .chain(second)
-            .all(|point| point[axis] == first[0][axis])
-    }) else {
+    if first.len() < 3 || second.len() < 3 {
         return Ok(Some(0));
-    };
+    }
+    let plane_work = first
+        .len()
+        .checked_add(second.len())
+        .and_then(|count| count.checked_add(1))
+        .and_then(|count| count.checked_mul(FIELD_WORK))
+        .ok_or_else(|| invalid("Flat terrain contact work overflow"))?;
+    work.consume(plane_work).map_err(invalid)?;
+    let base = BasePlane::new([first[0], first[1], first[2]])?;
+    for &point in first.iter().chain(second) {
+        if !base.contains(point)? {
+            return Ok(Some(0));
+        }
+    }
+    let axis = base.axis();
     let axes = [(axis + 1) % 3, (axis + 2) % 3];
     let projection_work = first
         .len()
@@ -162,11 +171,12 @@ fn contact_rank(
     let mut touching = Vec::new();
     for points in [first, second] {
         for edge in 0..points.len() {
-            let delta = points[(edge + 1) % points.len()] - points[edge];
-            let mut normal = DVec3::ZERO;
-            normal[axes[0]] = -delta[axes[1]];
-            normal[axes[1]] = delta[axes[0]];
-            work.consume(projection_work).map_err(invalid)?;
+            work.consume(projection_work + 8).map_err(invalid)?;
+            let a = points[edge];
+            let b = points[(edge + 1) % points.len()];
+            let mut normal = [Exact::new(0, 0); 3];
+            normal[axes[0]] = Exact::float(a[axes[1]])?.sub(Exact::float(b[axes[1]])?)?;
+            normal[axes[1]] = Exact::float(b[axes[0]])?.sub(Exact::float(a[axes[0]])?)?;
             let a = range(first, normal)?;
             let b = range(second, normal)?;
             if a[1].sub(b[0])?.value < 0 || b[1].sub(a[0])?.value < 0 {
@@ -181,7 +191,13 @@ fn contact_rank(
         return Ok(Some(0));
     };
     for &second in &touching[1..] {
-        if orient(DVec3::ZERO, first, second, axes)? != 0 {
+        work.consume(4).map_err(invalid)?;
+        if first[axes[0]]
+            .mul(second[axes[1]])?
+            .sub(first[axes[1]].mul(second[axes[0]])?)?
+            .value
+            != 0
+        {
             // Independent support lines confine the intersection to one corner.
             return Ok(Some(2));
         }
@@ -233,7 +249,7 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
         ));
     }
     let info = raw.side.displacement.as_ref().unwrap();
-    let (_, mesh) = native::checked_mesh(&raw.face, info).map_err(invalid)?;
+    let (_, mut mesh) = native::checked_mesh(&raw.face, info).map_err(invalid)?;
     work.consume(mesh.positions.len() + (mesh.size - 1).pow(2) * 2)
         .map_err(invalid)?;
     triangles::native_tags(info, &mesh)?;
@@ -246,8 +262,16 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
     let corners = corner_indices.map(|index| native::stored_vertex(mesh.base_positions[index]));
     let (data, base) = data(&raw.face, &mesh, info.power)?;
     let positions = reconstructed(&data, base, work)?;
-    work.consume(FIELD_WORK * corner_indices.len())
-        .map_err(invalid)?;
+    super::native_base(&mut mesh, &data, base, work)?;
+    work.consume(
+        FIELD_WORK
+            * match mode {
+                Mode::Flat => 17,
+                Mode::Cells => 5,
+            },
+    )
+    .map_err(invalid)?;
+    let base_plane = BasePlane::new([corners[0], corners[1], corners[2]])?;
     let field = match mode {
         Mode::Flat => Some(PlanarField::new(
             corners,
@@ -255,14 +279,12 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
         )?),
         Mode::Cells => None,
     };
-    let axis = if let Some(field) = &field {
-        field.axis()
-    } else {
-        (0..3)
-            .find(|&axis| corners.iter().all(|point| point[axis] == corners[0][axis]))
-            .ok_or_else(|| invalid("Terrain cell contacts require a world-axis base plane"))?
-    };
-    let coordinate = corners[0][axis];
+    let axis = base_plane.axis();
+    if mode == Mode::Cells && corners.iter().any(|point| point[axis] != corners[0][axis]) {
+        return Err(invalid(
+            "Terrain cell contacts require a world-axis base plane",
+        ));
+    }
     let axes = [(axis + 1) % 3, (axis + 2) % 3];
     let sign = orient(corners[0], corners[1], corners[2], axes)?;
     if sign == 0 {
@@ -271,10 +293,28 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
         ));
     }
     super::convex(&corners, axes, sign)?;
-    work.consume(mesh.positions.len() * (positions.len() + FIELD_WORK * 2))
+    let visible_axis = field.as_ref().map_or(axis, PlanarField::world_axis);
+    let visible_axes = [(visible_axis + 1) % 3, (visible_axis + 2) % 3];
+    let visible_sign = orient(
+        mesh.positions[corner_indices[0]],
+        mesh.positions[corner_indices[1]],
+        mesh.positions[corner_indices[2]],
+        visible_axes,
+    )?;
+    if visible_sign == 0 {
+        return Err(invalid(
+            "Connected terrain contacts require noncollapsed visible native sheets",
+        ));
+    }
+    work.consume(mesh.positions.len() * (positions.len() + FIELD_WORK * 3))
         .map_err(invalid)?;
     for (index, &point) in mesh.positions.iter().enumerate() {
         let base = mesh.base_positions[index];
+        if !base_plane.contains(base)? {
+            return Err(invalid(
+                "Connected terrain base samples must share one exact native plane",
+            ));
+        }
         if let Some(field) = &field {
             let expected = field.position(base)?;
             if !same(base, field.base_position(point)?)
@@ -287,7 +327,7 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
                     "Connected flat terrain requires authored, native and compiler positions on one exact planar field",
                 ));
             }
-        } else if base[axis] != coordinate
+        } else if base[axis] != corners[0][axis]
             || axes.iter().any(|&axis| point[axis] != base[axis])
             || positions
                 .iter()
@@ -304,7 +344,7 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
     work.consume(indices.len()).map_err(invalid)?;
     for triangle in indices {
         let points = triangle.map(|index| positions.last().unwrap()[index]);
-        if orient(points[0], points[1], points[2], axes)? != sign {
+        if orient(points[0], points[1], points[2], visible_axes)? != visible_sign {
             return Err(invalid(
                 "Connected flat terrain currently requires consistently oriented positive native triangles",
             ));
@@ -315,8 +355,7 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
         Mode::Cells => super::certify_height_normals(&data, &positions, axis, work)?,
     }
     let sheet = Sheet {
-        axis,
-        coordinate,
+        base: base_plane,
         field,
         sign,
     };
@@ -452,7 +491,7 @@ fn graph(surfaces: &[&Surface<'_>], work: &mut Work) -> Result<Graph, EditError>
                 }
                 continue;
             };
-            work.consume(FIELD_WORK).map_err(invalid)?;
+            work.consume(2 * FIELD_WORK).map_err(invalid)?;
             if !surfaces[first].sheet.matches(&surfaces[second].sheet)? {
                 return Err(invalid(if surfaces[first].sheet.field.is_some() {
                     "Connected flat terrain currently requires compatible coplanar native fields and orientation"
@@ -488,8 +527,8 @@ fn on_segment(point: DVec3, segment: [DVec3; 2]) -> Result<bool, EditError> {
 
 fn contains(surface: &Surface<'_>, point: DVec3) -> Result<bool, EditError> {
     let points = surface.corners;
-    let axis = surface.sheet.axis;
-    if point[axis] != points[0][axis] {
+    let axis = surface.sheet.base.axis();
+    if !surface.sheet.base.contains(point)? {
         return Ok(false);
     }
     let axes = [(axis + 1) % 3, (axis + 2) % 3];
@@ -510,7 +549,7 @@ fn retained(
     work: &mut Work,
 ) -> Result<bool, EditError> {
     for surface in after.iter().filter(|surface| surface.raw.source == source) {
-        work.consume(16).map_err(invalid)?;
+        work.consume(16 + FIELD_WORK).map_err(invalid)?;
         if contains(surface, point)? {
             return Ok(true);
         }
@@ -704,19 +743,12 @@ fn verify_source(
     )?;
     work.consume(original.positions.iter().map(Vec::len).sum())
         .map_err(invalid)?;
-    work.consume(
-        FIELD_WORK
-            + if mode == Mode::Cells {
-                original.base_positions.len()
-            } else {
-                0
-            },
-    )
-    .map_err(invalid)?;
+    work.consume(2 * FIELD_WORK + original.base_positions.len())
+        .map_err(invalid)?;
     if original.power != assembled.power
         || original.corners != assembled.corners
         || original.positions != assembled.positions
-        || mode == Mode::Cells && original.base_positions != assembled.base_positions
+        || original.base_positions != assembled.base_positions
         || !original.sheet.matches(&assembled.sheet)?
     {
         return Err(invalid(

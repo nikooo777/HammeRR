@@ -1,7 +1,8 @@
 use glam::DVec3;
 use source_formats::bsp;
 
-use super::{Exact, FIELD_WORK, PlanarField, Work, invalid};
+use super::field::ScalarField;
+use super::{Exact, FIELD_WORK, Work, invalid};
 use crate::clip::TerrainBlendError;
 use crate::{EditError, displacement::DisplacementMesh};
 
@@ -10,31 +11,11 @@ const ALPHA_WORK: usize = 8;
 const DIFFERENCE_WORK: usize = 8;
 const MATERIAL_ALPHA_THRESHOLD: f32 = 382.5;
 
-#[derive(Clone, Copy)]
-struct ScalarField(PlanarField);
-
-impl ScalarField {
-    fn new(base: [DVec3; 4], values: [f64; 4]) -> Result<Self, EditError> {
-        let axis = (0..3)
-            .find(|&axis| base.iter().all(|point| point[axis] == base[0][axis]))
-            .ok_or_else(|| invalid("Terrain paint requires a world-axis base plane"))?;
-        let mut world = base;
-        for (point, value) in world.iter_mut().zip(values) {
-            point[axis] = value;
-        }
-        Ok(Self(PlanarField::new(base, world)?))
-    }
-
-    fn value(&self, base: DVec3) -> Result<f64, EditError> {
-        Ok(self.0.position(base)?[self.0.axis()])
-    }
-
-    fn error(&self, base: DVec3, actual: f64) -> Result<f64, EditError> {
-        Ok(Exact::float(self.value(base)?)?
-            .sub(Exact::float(actual)?)?
-            .value()?
-            .abs())
-    }
+fn scalar_error(field: &ScalarField, base: DVec3, actual: f64) -> Result<f64, EditError> {
+    Ok(Exact::float(field.value(base)?)?
+        .sub(Exact::float(actual)?)?
+        .value()?
+        .abs())
 }
 
 fn alpha(value: f64) -> Result<f32, EditError> {
@@ -120,7 +101,7 @@ impl PaintField {
             .chain(&self.packed)
             .zip(std::iter::once(&other.raw).chain(&other.packed))
         {
-            if !first.0.matches(&second.0)? {
+            if !first.matches(second)? {
                 return Ok(false);
             }
         }
@@ -148,14 +129,14 @@ impl PaintField {
         let mut error = TerrainBlendError::default();
         for (base, value) in base.into_iter().zip(values) {
             let encoded = alpha(value)?;
-            error.raw = error.raw.max(self.raw.error(base, value)?);
+            error.raw = error.raw.max(scalar_error(&self.raw, base, value)?);
             for ((field, bound), rounding) in self
                 .packed
                 .iter()
                 .zip(&mut error.packed)
                 .zip(bsp::NativeDisplacementRounding::ALL)
             {
-                *bound = (*bound).max(field.error(base, packed_alpha(encoded, rounding)?)?);
+                *bound = (*bound).max(scalar_error(field, base, packed_alpha(encoded, rounding)?)?);
             }
         }
         error.validate()?;

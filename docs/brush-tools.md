@@ -94,7 +94,7 @@ child edits or a parent save.
 Use this mode to cut an eligible planar surface across its existing grid.
 
 1. Select planar power-2/3/4 world or `func_detail` terrain. Its base cage
-   must lie on a world-axis plane; the visible surface can be sloped.
+   must be planar; tilted cages and affine tangential offsets are supported.
    Select all patches that the cut must split.
 2. Click **Clip selected brushes**.
 3. Under **Terrain cut**, choose **Retile flat terrain**.
@@ -105,8 +105,8 @@ Use this mode to cut an eligible planar surface across its existing grid.
 Each retained three-to-five-corner region becomes power-2 quadrilateral patches.
 Four-corner regions stay one patch when their joins permit. Select the results
 to cut them again. Compatible joined patches are checked as one component.
-Each surface must remain on one exact plane. Height can vary linearly along
-the base normal. Paint must vary linearly across the surface, with exact integer
+Each surface must follow one exact affine mapping from its base cage to a
+visible plane. Paint must vary linearly across the surface, with exact integer
 alpha from 0 to 255. Triangle flags and collision materials retain their original
 regions. Retiling keeps
 these fields, material, texture placement and smoothing. It does not flatten a

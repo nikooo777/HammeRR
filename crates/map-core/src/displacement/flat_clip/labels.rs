@@ -1,6 +1,7 @@
 use glam::DVec3;
 use source_formats::vmf::DispInfo;
 
+use super::field::BasePlane;
 use super::paint::PaintField;
 use super::{FIELD_WORK, PlanarField, Work, invalid, orient, paint, same, triangles};
 use crate::clip::TerrainBlendError;
@@ -146,8 +147,7 @@ struct SourceTriangle {
 }
 
 pub(super) struct TriangleField {
-    axis: usize,
-    coordinate: f64,
+    base: BasePlane,
     axes: [usize; 2],
     source: Vec<SourceTriangle>,
     has_raw_tags: bool,
@@ -200,14 +200,19 @@ impl TriangleField {
         if mesh.base_positions.iter().any(|point| !point.is_finite()) {
             return Err(invalid("Terrain triangle label coordinates must be finite"));
         }
-        let axis = (0..3)
-            .find(|&axis| {
-                mesh.base_positions
-                    .iter()
-                    .all(|point| point[axis] == mesh.base_positions[0][axis])
-            })
-            .ok_or_else(|| invalid("Terrain triangle labels require a world-axis base plane"))?;
-        let coordinate = mesh.base_positions[0][axis];
+        let base = BasePlane::new([
+            mesh.base_positions[0],
+            mesh.base_positions[(mesh.size - 1) * mesh.size],
+            mesh.base_positions[mesh.size * mesh.size - 1],
+        ])?;
+        for &point in &mesh.base_positions {
+            if !base.contains(point)? {
+                return Err(invalid(
+                    "Terrain triangle labels require one exact base plane",
+                ));
+            }
+        }
+        let axis = base.axis();
         let axes = [(axis + 1) % 3, (axis + 2) % 3];
         let uniform_alpha = if certify_surface {
             work.consume(BASE_WORK * mesh.alphas.len())
@@ -228,7 +233,7 @@ impl TriangleField {
         };
         let labels = read_labels(info, mesh, has_secondary_surface, work)?;
         work.consume(
-            (TRIANGLE_WORK + usize::from(certify_surface) * 8 * FIELD_WORK) * labels.len(),
+            (TRIANGLE_WORK + usize::from(certify_surface) * 16 * FIELD_WORK) * labels.len(),
         )
         .map_err(invalid)?;
         let source = mesh
@@ -262,8 +267,7 @@ impl TriangleField {
             })
             .collect::<Result<_, EditError>>()?;
         Ok(Self {
-            axis,
-            coordinate,
+            base,
             axes,
             source,
             has_raw_tags: info.triangle_tags.is_some(),
@@ -283,18 +287,16 @@ impl TriangleField {
         let count = 2 * (child.size - 1).pow(2);
         work.consume(
             BASE_WORK * child.base_positions.len()
-                + (TRIANGLE_WORK + usize::from(self.certify_surface) * 8 * FIELD_WORK) * count
+                + (TRIANGLE_WORK + usize::from(self.certify_surface) * 16 * FIELD_WORK) * count
                 + AABB_WORK * self.source.len(),
         )
         .map_err(invalid)?;
-        if child
-            .base_positions
-            .iter()
-            .any(|point| !point.is_finite() || point[self.axis] != self.coordinate)
-        {
-            return Err(invalid(
-                "Terrain triangle labels must remain on their original base plane",
-            ));
+        for &point in &child.base_positions {
+            if !self.base.contains(point)? {
+                return Err(invalid(
+                    "Terrain triangle labels must remain on their original base plane",
+                ));
+            }
         }
         if let Some(alpha) = self.uniform_alpha {
             work.consume(BASE_WORK * child.alphas.len())

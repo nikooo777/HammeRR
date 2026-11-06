@@ -298,6 +298,31 @@ fn reconstructed(
     Ok(result)
 }
 
+fn native_base(
+    mesh: &mut DisplacementMesh,
+    data: &bsp::Displacements,
+    base: [[f32; 3]; 4],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let mut base_data = data.clone();
+    for vertex in &mut base_data.vertices {
+        vertex.direction = [0.0; 3];
+        vertex.distance = 0.0;
+    }
+    let profiles = reconstructed(&base_data, base, work)?;
+    let count = mesh.base_positions.len();
+    work.consume(profiles.len() * count).map_err(invalid)?;
+    if profiles.iter().any(|points| {
+        points.len() != count || points.iter().zip(&profiles[0]).any(|(&a, &b)| !same(a, b))
+    }) {
+        return Err(invalid(
+            "Terrain retiling requires one exact native base grid across reconstruction profiles",
+        ));
+    }
+    mesh.base_positions = profiles.into_iter().next().unwrap();
+    Ok(())
+}
+
 fn certify_normals(
     data: &bsp::Displacements,
     profiles: &[Vec<DVec3>],
@@ -381,7 +406,8 @@ fn admit<'a>(
         .find(|face| face.side == *index)
         .ok_or_else(|| invalid("Terrain has no effective base face"))?;
     let info = side.displacement.as_ref().unwrap();
-    let mesh = DisplacementMesh::build(face, info).map_err(|error| invalid(error.to_string()))?;
+    let mut mesh =
+        DisplacementMesh::build(face, info).map_err(|error| invalid(error.to_string()))?;
     let (data, base) = data(face, &mesh, info.power)?;
     let positions = reconstructed(&data, base, work)?;
     let mut crossing = false;
@@ -435,6 +461,7 @@ fn admit<'a>(
     }
     let tags = triangles::native_tags(info, &mesh)?;
     work.consume(tags.len()).map_err(invalid)?;
+    native_base(&mut mesh, &data, base, work)?;
     Ok(Some(Admitted {
         side,
         info,
@@ -518,17 +545,17 @@ fn prepare<'a>(
         mesh.size * mesh.size - 1,
         mesh.size - 1,
     ];
-    work.consume(FIELD_WORK * (2 * mesh.positions.len() + 8))
+    work.consume(FIELD_WORK * (2 * mesh.positions.len() + 16))
         .map_err(invalid)?;
     let corners = indices.map(|index| mesh.base_positions[index]);
     let field = PlanarField::new(corners, indices.map(|index| mesh.positions[index]))?;
-    let axis = field.axis();
-    let axes = [(axis + 1) % 3, (axis + 2) % 3];
-    let sign = orient(corners[0], corners[1], corners[2], axes)?;
-    if sign == 0 {
+    let base_axis = field.axis();
+    let base_axes = [(base_axis + 1) % 3, (base_axis + 2) % 3];
+    let base_sign = orient(corners[0], corners[1], corners[2], base_axes)?;
+    if base_sign == 0 {
         return Err(invalid("Flat terrain cage is collapsed"));
     }
-    convex(&corners, axes, sign)?;
+    convex(&corners, base_axes, base_sign)?;
     for point in corners {
         stored(point)?;
     }
@@ -541,12 +568,19 @@ fn prepare<'a>(
                 .any(|positions| !same(positions[index], expected))
         {
             return Err(invalid(
-                "Flat terrain native, compiler and authored positions must agree exactly on one planar height field",
+                "Flat terrain native, compiler and authored positions must agree exactly on one affine planar sheet",
             ));
         }
     }
     let paint = PaintField::new(corners, indices.map(|index| mesh.alphas[index]), work)?;
     paint.certify(&mesh, &data, work)?;
+    let world_axis = field.world_axis();
+    let axes = [(world_axis + 1) % 3, (world_axis + 2) % 3];
+    let world = indices.map(|index| mesh.positions[index]);
+    let sign = orient(world[0], world[1], world[2], axes)?;
+    if sign == 0 {
+        return Err(invalid("Flat terrain visible sheet is collapsed"));
+    }
     for [a, b, c] in mesh.triangles() {
         if orient(
             mesh.positions[a],

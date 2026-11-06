@@ -786,12 +786,13 @@ original target faces. Results keep geometric source IDs and add
 Grid is the default. The choice is shared with drawn lines, picked points and
 plane handles. Changing it cancels the current cut draft without changing the
 map or Undo history. Optional `clip_brushes.terrain_mode` accepts `"grid"`,
-`"flat"` or `"cells"` for that request; success adopts the choice, while failure keeps the
+`"flat"`, `"cells"` or `"fragments"` for that request; success adopts the choice, while failure keeps the
 previous choice and valid draft. A failed request never switches modes.
 
 Flat mode accepts convex world or `func_detail` quad terrain at powers 2–4.
-Base cages stay on world-axis planes. The visible sheet can be sloped, with
-one exact affine height field along its base normal. Integral alpha must form
+Base cages must be planar. Tilted cages and affine tangential offsets are
+supported. Each visible sheet must follow one exact affine mapping from its
+base cage to a plane. Integral alpha must form
 one exact affine field; vertex masks stay unrestricted. Four-corner retained regions stay
 one power-2 patch when joins permit; triangle/pentagon regions use quad fans.
 Compatible coplanar flat components support repeated cuts. The full affected

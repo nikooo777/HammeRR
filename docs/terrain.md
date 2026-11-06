@@ -217,7 +217,8 @@ terrain at any complete original row or column, including power 2. It refines
 whole cells and requires exact native geometry, piecewise integer paint and labels. Unchanged
 terrain contacts reject; normals and runtime LOD are regenerated.
 [**Retile flat terrain**](brush-tools.md#retile-flat-terrain) supports non-grid
-cuts on eligible flat or sloped planar surfaces.
+cuts on eligible planar surfaces, including tilted base cages and affine
+tangential offsets.
 Choose [**Retile surface triangles**](brush-tools.md#cut-through-curved-cells)
 to cut through curved cells while preserving their original triangle surfaces.
 The optional **Round new blend samples** choice reports per-cut raw and native

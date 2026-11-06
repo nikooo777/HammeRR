@@ -35,9 +35,10 @@ pub fn encoded_vertices(
         }
         let delta = (patch.positions[vertex] - original_positions[vertex]).as_vec3();
         let old = vertices[vertex];
-        vertices[vertex].direction =
-            (glam::Vec3::from_array(old.direction) * old.distance + delta).to_array();
-        vertices[vertex].distance = 1.0;
+        vertices[vertex] = super::native::offset_vertex(
+            (glam::Vec3::from_array(old.direction) * old.distance + delta).to_array(),
+            old.alpha,
+        );
     }
     Ok(vertices)
 }

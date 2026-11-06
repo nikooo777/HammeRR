@@ -80,7 +80,7 @@ enum Group {
         ring: [DVec3; 4],
     },
     Triangle {
-        field: PlanarField,
+        field: Box<PlanarField>,
         paint: Box<PaintField>,
         rings: [Vec<DVec3>; 2],
     },
@@ -153,11 +153,11 @@ fn groups(
                         if classification != [true, true] && !retained(keep, classification[0]) {
                             continue;
                         }
-                        work.consume(8 * FIELD_WORK).map_err(invalid)?;
-                        let field = PlanarField::triangle(
+                        work.consume(16 * FIELD_WORK).map_err(invalid)?;
+                        let field = Box::new(PlanarField::triangle(
                             triangle.map(|index| source.mesh.base_positions[index]),
                             ring,
-                        )?;
+                        )?);
                         let paint = Box::new(PaintField::triangle(
                             triangle.map(|index| source.mesh.base_positions[index]),
                             triangle.map(|index| source.mesh.alphas[index]),

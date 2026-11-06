@@ -829,7 +829,11 @@ rectangular bases and displacement only along the base normal. The requested
 plane must follow a complete internal original row or column. Each retained
 whole original cell becomes one power-2 patch. It certifies authored, compiler
 and all four native positions, the original piecewise surface planes, exact UVs,
-affine integer paint and spatial triangle labels. It never approximates a crease.
+piecewise integer paint and spatial triangle labels. Nonlinear source paint is
+allowed only when every overlapping original and output triangle has the same
+raw alpha and four native packed-alpha functions; vertex equality alone is
+insufficient. Unrepresentable inserted alpha or changed physical regions reject.
+It never approximates a crease.
 Every affected original must be a crossing replacement; unchanged external
 terrain contacts reject. Existing guarded instance, native connection, capacity
 and no-LOD rules remain. Normals and runtime LOD are regenerated. Retained cells

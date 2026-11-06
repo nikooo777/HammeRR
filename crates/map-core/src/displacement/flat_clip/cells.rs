@@ -2,10 +2,10 @@ use glam::DVec3;
 use source_formats::vmf::Solid;
 
 use super::{
-    Admitted, CUT_EPSILON, Child, Context, Exact, FIELD_WORK, Keep, PaintField, Request, SIZE,
-    TRIANGLES, TerrainPlan, TriangleField, VERTICES, Work, admit, carrier_base,
-    certify_height_normals, connections, convex, data, invalid, native, orient, reconstructed,
-    region, same, stored, uv, weighted,
+    Admitted, CUT_EPSILON, Child, Context, Exact, FIELD_WORK, Keep, Request, SIZE, TRIANGLES,
+    TerrainPlan, TriangleField, VERTICES, Work, admit, carrier_base, certify_height_normals,
+    connections, convex, data, invalid, native, orient, paint, reconstructed, region, same, stored,
+    uv, weighted,
 };
 use crate::displacement::{grid_clip::grid_line, resample};
 use crate::surface::FaceId;
@@ -35,7 +35,6 @@ impl Cut {
 
 struct Prepared<'a> {
     source: Admitted<'a>,
-    paint: PaintField,
     axis: usize,
     axes: [usize; 2],
     sign: i128,
@@ -132,13 +131,11 @@ fn prepare<'a>(
             }
         }
     }
-    let paint = PaintField::new(corners, indices.map(|index| mesh.alphas[index]), work)?;
-    paint.certify(mesh, &source.data, work)?;
+    paint::validate_data(mesh, &source.data, work)?;
     let cut = cut(&source, plane, work)?;
     certify_height_normals(&source.data, &source.positions, axis, work)?;
     Ok(Some(Prepared {
         source,
-        paint,
         axis,
         axes,
         sign,
@@ -346,7 +343,7 @@ pub(crate) fn plan(
                     }
                 }
             }
-            prepared.paint.certify(&mesh, &data, work)?;
+            paint::validate_data(&mesh, &data, work)?;
             let mapped = labels.map(&mesh, work)?;
             let info = part.sides[side_index].displacement.as_mut().unwrap();
             info.triangle_tags = mapped.tags.clone();

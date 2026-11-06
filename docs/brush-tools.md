@@ -132,10 +132,11 @@ Cut curved terrain along a complete existing row or column.
 6. Inspect the patches, then click **Apply cut**.
 
 Each retained original cell becomes one power-2 patch. The original piecewise
-surface, UVs, paint and triangle labels must stay exact. Normals and runtime LOD
-are regenerated. This mode does not cut through part of an original cell.
+surface, UVs, paint and triangle labels must stay exact. Nonlinear paint is
+allowed when each new triangle retains its original raw and packed blend fields.
+Normals and runtime LOD are regenerated. This mode does not cut through part of an original cell.
 
-![A curved terrain sheet retiles into native grid-cell patches](images/terrain-cell-cut.png)
+![Painted curved terrain retains its blend through grid-cell cuts](images/terrain-cell-cut.png)
 
 ## Limits
 
@@ -179,8 +180,9 @@ are regenerated. This mode does not cut through part of an original cell.
   and unsupported resources reject. Changed source images or materials require
   another preview before Apply.
 - **Retile grid cells** requires world-axis rectangular bases. Displacement
-  can vary only along the base normal. Paint uses the same affine integer and
-  native texture rules as **Retile flat terrain**. Every touching original patch
+  can vary only along the base normal. Paint samples must stay integral and
+  preserve each original triangle's raw and packed blend fields. Native texture
+  rules match **Retile flat terrain**. Every touching original patch
   must also be cut in the operation; unchanged contacts reject. No affected LOD
   coarsening, tangential fields or uncertain native normal inputs.
   Each retained cell adds 32 native triangles. Powers 2–4 are subject to the

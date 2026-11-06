@@ -214,7 +214,7 @@ entity. The cut retains the owner and unselected siblings.
 
 Choose [**Retile grid cells**](brush-tools.md#retile-grid-cells) to cut curved
 terrain at any complete original row or column, including power 2. It refines
-whole cells and requires exact native geometry, paint and labels. Unchanged
+whole cells and requires exact native geometry, piecewise integer paint and labels. Unchanged
 terrain contacts reject; normals and runtime LOD are regenerated.
 [**Retile flat terrain**](brush-tools.md#retile-flat-terrain) supports non-grid
 cuts on eligible flat or sloped planar surfaces.

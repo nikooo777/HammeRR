@@ -1,6 +1,7 @@
 use glam::DVec3;
 use source_formats::vmf::DispInfo;
 
+use super::paint::PaintField;
 use super::{FIELD_WORK, PlanarField, Work, invalid, orient, paint, same, triangles};
 use crate::{EditError, displacement::DisplacementMesh};
 
@@ -140,6 +141,7 @@ struct SourceTriangle {
     projected: Projected,
     label: Label,
     surface: Option<PlanarField>,
+    paint: Option<PaintField>,
 }
 
 pub(super) struct TriangleField {
@@ -150,6 +152,7 @@ pub(super) struct TriangleField {
     has_raw_tags: bool,
     has_secondary_surface: bool,
     certify_surface: bool,
+    uniform_alpha: Option<f64>,
 }
 
 impl TriangleField {
@@ -193,6 +196,23 @@ impl TriangleField {
             .ok_or_else(|| invalid("Terrain triangle labels require a world-axis base plane"))?;
         let coordinate = mesh.base_positions[0][axis];
         let axes = [(axis + 1) % 3, (axis + 2) % 3];
+        let uniform_alpha = if certify_surface {
+            work.consume(BASE_WORK * mesh.alphas.len())
+                .map_err(invalid)?;
+            let first = mesh.alphas[0];
+            if mesh.alphas.iter().all(|&alpha| alpha == first) {
+                if !(0.0..=255.0).contains(&first) || first.fract() != 0.0 {
+                    return Err(invalid(
+                        "Terrain paint requires integral alpha values from 0 to 255",
+                    ));
+                }
+                Some(first)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let labels = read_labels(info, mesh, has_secondary_surface, work)?;
         work.consume(
             (TRIANGLE_WORK + usize::from(certify_surface) * 8 * FIELD_WORK) * labels.len(),
@@ -216,6 +236,15 @@ impl TriangleField {
                             )
                         })
                         .transpose()?,
+                    paint: (certify_surface && uniform_alpha.is_none())
+                        .then(|| {
+                            PaintField::triangle(
+                                triangle.map(|index| mesh.base_positions[index]),
+                                triangle.map(|index| mesh.alphas[index]),
+                                work,
+                            )
+                        })
+                        .transpose()?,
                 })
             })
             .collect::<Result<_, EditError>>()?;
@@ -227,6 +256,7 @@ impl TriangleField {
             has_raw_tags: info.triangle_tags.is_some(),
             has_secondary_surface,
             certify_surface,
+            uniform_alpha,
         })
     }
 
@@ -252,6 +282,15 @@ impl TriangleField {
                 "Terrain triangle labels must remain on their original base plane",
             ));
         }
+        if let Some(alpha) = self.uniform_alpha {
+            work.consume(BASE_WORK * child.alphas.len())
+                .map_err(invalid)?;
+            if child.alphas.iter().any(|&value| value != alpha) {
+                return Err(invalid(
+                    "Terrain output changed its constant source paint field",
+                ));
+            }
+        }
         let bounds = projected_bounds(&child.base_positions, self.axes);
         let candidates = self
             .source
@@ -274,6 +313,15 @@ impl TriangleField {
                     )
                 })
                 .transpose()?;
+            let paint = (self.certify_surface && self.uniform_alpha.is_none())
+                .then(|| {
+                    PaintField::triangle(
+                        triangle.map(|index| child.base_positions[index]),
+                        triangle.map(|index| child.alphas[index]),
+                        work,
+                    )
+                })
+                .transpose()?;
             let mut label = None;
             for source in &candidates {
                 if !projected.overlaps(&source.projected, self.axes, work)? {
@@ -287,6 +335,16 @@ impl TriangleField {
                     if !source_surface.matches(surface)? {
                         return Err(invalid(
                             "Terrain output triangle crosses an original surface crease",
+                        ));
+                    }
+                }
+                if let Some(source_paint) = &source.paint {
+                    let paint = paint
+                        .as_ref()
+                        .ok_or_else(|| invalid("Terrain triangle mapping lost its paint field"))?;
+                    if !source_paint.matches(paint, work)? {
+                        return Err(invalid(
+                            "Terrain output triangle changed an original raw or native packed paint field",
                         ));
                     }
                 }
@@ -323,6 +381,7 @@ impl TriangleField {
             power,
             base: child.base_positions.clone(),
             positions: self.certify_surface.then(|| child.positions.clone()),
+            alphas: self.certify_surface.then(|| child.alphas.clone()),
             labels,
             has_secondary_surface: self.has_secondary_surface,
         })
@@ -334,6 +393,7 @@ pub(super) struct Mapped {
     power: u32,
     base: Vec<DVec3>,
     positions: Option<Vec<DVec3>>,
+    alphas: Option<Vec<f64>>,
     labels: Vec<Label>,
     has_secondary_surface: bool,
 }
@@ -368,6 +428,18 @@ impl Mapped {
                     .any(|(&actual, &expected)| !same(actual, expected))
             {
                 return Err(invalid("Terrain mapped triangle surface changed"));
+            }
+        }
+        if let Some(alphas) = &self.alphas {
+            work.consume(BASE_WORK * alphas.len()).map_err(invalid)?;
+            if child.alphas.len() != alphas.len()
+                || child
+                    .alphas
+                    .iter()
+                    .zip(alphas)
+                    .any(|(actual, expected)| actual.to_bits() != expected.to_bits())
+            {
+                return Err(invalid("Terrain mapped triangle paint changed"));
             }
         }
         let actual = read_labels(info, child, self.has_secondary_surface, work)?;

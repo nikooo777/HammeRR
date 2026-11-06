@@ -58,7 +58,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Carved openings](docs/brush-tools.md#carve) | [Clip planes](docs/brush-tools.md#clip) |
 | --- | --- |
-| ![An arch cut through a brick wall](docs/images/carved-doorway.png) | ![A curved terrain cut into native cell patches](docs/images/terrain-cell-cut.png) |
+| ![An arch cut through a brick wall](docs/images/carved-doorway.png) | ![Painted curved terrain cut into native cell patches](docs/images/terrain-cell-cut.png) |
 | Subtract shapes to form doors and passages. | Cut brushes, planar surfaces and curved terrain. |
 
 | [Component editing](docs/components.md) | [Arrays and surface scatter](docs/repeated-placement.md) |

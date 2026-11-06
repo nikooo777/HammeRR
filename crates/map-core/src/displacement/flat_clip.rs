@@ -729,20 +729,10 @@ fn polygonal_boundary(
             "Terrain projected boundaries require power 2, 3 or 4",
         ));
     }
-    let cells = mesh.size - 1;
-    let count = 4 * cells;
+    let count = 4 * (mesh.size - 1);
     work.consume((FIELD_WORK + 1) * count * count + count)
         .map_err(invalid)?;
-    let mut ring = Vec::with_capacity(count);
-    for side in 0..4 {
-        for index in neighbors::edge_indices(mesh.size, side)
-            .map_err(invalid)?
-            .into_iter()
-            .take(cells)
-        {
-            ring.push(mesh.positions[index]);
-        }
-    }
+    let ring = ordered_boundary(&mesh.positions, mesh.size, work)?;
     for first in 0..ring.len() {
         let a = ring[first];
         let b = ring[(first + 1) % ring.len()];
@@ -768,6 +758,32 @@ fn polygonal_boundary(
         }
     }
     Ok(())
+}
+
+fn ordered_boundary(
+    positions: &[DVec3],
+    size: usize,
+    work: &mut Work,
+) -> Result<Vec<DVec3>, EditError> {
+    if !matches!(size, 5 | 9 | 17) || positions.len() != size * size {
+        return Err(invalid(
+            "Terrain projected boundaries require a complete power 2, 3 or 4 grid",
+        ));
+    }
+    let cells = size - 1;
+    let count = 4 * cells;
+    work.consume(count + 4).map_err(invalid)?;
+    let mut ring = Vec::with_capacity(count);
+    for side in 0..4 {
+        for index in neighbors::edge_indices(size, side)
+            .map_err(invalid)?
+            .into_iter()
+            .take(cells)
+        {
+            ring.push(positions[index]);
+        }
+    }
+    Ok(ring)
 }
 
 fn straight_boundary(
@@ -803,39 +819,6 @@ fn straight_boundary(
         }
     }
     Ok(())
-}
-
-fn original_boundary_projection(
-    base_positions: &[DVec3],
-    positions: &[DVec3],
-    size: usize,
-    axis: usize,
-    sign: i128,
-    work: &mut Work,
-) -> Result<NormalProjection, EditError> {
-    work.consume(FIELD_WORK * (16 + 8 * size))
-        .map_err(invalid)?;
-    let cells = size - 1;
-    let indices = [0, cells * size, size * size - 1, cells];
-    let projection = NormalProjection::new(
-        indices.map(|index| base_positions[index]),
-        indices.map(|index| positions[index]),
-        axis,
-        sign,
-    )?;
-    let axes = [(axis + 1) % 3, (axis + 2) % 3];
-    for side in 0..4 {
-        for index in neighbors::edge_indices(size, side).map_err(invalid)? {
-            for (field, coordinate) in projection.fields.iter().zip(axes) {
-                if field.value(base_positions[index])? != positions[index][coordinate] {
-                    return Err(invalid(
-                        "Original curved terrain boundaries must retain one exact affine tangential cage mapping",
-                    ));
-                }
-            }
-        }
-    }
-    Ok(projection)
 }
 
 fn prepare<'a>(

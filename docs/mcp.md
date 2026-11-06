@@ -838,19 +838,23 @@ and unsupported providers refuse.
 Cells mode accepts curved power-2/3/4 world or `func_detail` terrain with exact
 planar bases, including qualified tilted bases. The cage must be rectangular
 in the coordinate chart chosen by the exact base plane. Curved height and
-non-affine interior tangential warps are supported. An isolated original, with no
-original native edge or corner contacts, may have bowed borders when its exact
-projected native perimeter forms one simple convex polygon. Boundary vertices
-must be distinct and segments noncollapsed. Each directed segment must keep all
+non-affine interior tangential warps are supported. Each original may have bowed
+borders when its exact projected native perimeter forms one simple convex polygon.
+Boundary vertices must be distinct and segments noncollapsed. Each directed segment must keep all
 other boundary vertices in its exact closed interior half-plane with the source
 winding; collinear forward samples are allowed. The four visible corner
 projections remain strictly convex and every original render triangle remains
 strictly positive. No approximate hull or boundary is substituted.
 
-Any component with an original native edge or corner contact still requires one
-common exact affine boundary/cage mapping at every sample on every original border, including
-untouched sides, using the coordinate pair chosen by the base-plane chart.
-Whole-neighbor retiling remains subject to this connected-boundary rule.
+Connected originals must share the exact base plane, chart axis and orientation.
+Every pair in each original native edge/corner component passes exact
+two-dimensional separating-axis checks over its complete projected native borders.
+Positive-area overlap and extra unsewn contact refuse. A native edge contact must have a support-line
+intersection interval exactly equal to its verified native visible seam span;
+matching contact dimension alone is insufficient. Corner-only contacts need two
+independent exact support directions. Degenerate collinear corner/edge tangencies
+can conservatively refuse. Whole-neighbor retiling can retain bowed outer borders
+when this complete contact certificate passes.
 Original and output triangles must preserve orientation
 and pass exact native/compiler position and fixed-diagonal native normal checks.
 Every base-grid sample must lie on the exact base plane after all native profiles
@@ -858,7 +862,7 @@ and the compiler agree on one base grid. Native normals retain the fixed-stencil
 sign and conditioning bound of 256 along the chosen chart axis. Children need
 local geometry, boundary and normal proofs, with straight strictly monotone
 convex quad projections; their interiors need not be affine. Folded projections,
-concave or self-intersecting source borders and non-affine connected boundaries
+concave or self-intersecting source borders, overlap and extra unsewn contacts
 refuse. The requested plane
 must follow a complete internal original row or column. Each retained
 whole original cell becomes one power-2 patch. It certifies authored, compiler
@@ -917,9 +921,9 @@ changing the prior draft.
 
 Cells and Fragments can retain unchanged curved corner neighbors or fully sever
 an old edge contact. Original neighbors retain their authored data verbatim.
-They must share the exact base plane, orientation and original affine boundary
-projection, with matching contact samples across authored, compiler and all four
-native profiles. Complete before/after contact graphs and same-chart-axis native
+They must share the exact base plane, chart axis and orientation, with exact
+native seam extents and matching contact samples across authored, compiler and
+all four native profiles. Complete before/after contact graphs and same-chart-axis native
 normal proofs still apply. Retained edges can request explicit selected-neighbor
 retiling as described below. Incompatible final density/contacts, affected LOD,
 sample mismatches and native corner-capacity overflow refuse. Existing

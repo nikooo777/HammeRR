@@ -84,21 +84,6 @@ impl Surface<'_> {
             positions: self.positions.last().unwrap(),
         }
     }
-
-    fn original_projection(&self, work: &mut Work) -> Result<super::NormalProjection, EditError> {
-        let size = self
-            .info
-            .grid_size()
-            .map_err(|error| invalid(error.to_string()))?;
-        super::original_boundary_projection(
-            &self.base_positions,
-            self.positions.last().unwrap(),
-            size,
-            self.sheet.base.axis(),
-            self.sheet.sign,
-            work,
-        )
-    }
 }
 
 struct Contact {
@@ -185,6 +170,20 @@ fn contact_rank(
     }
     let axis = base.axis();
     let axes = [(axis + 1) % 3, (axis + 2) % 3];
+    projected_contact_rank(first, second, axes, work)
+}
+
+fn projected_contact_rank(
+    first: &[DVec3],
+    second: &[DVec3],
+    axes: [usize; 2],
+    work: &mut Work,
+) -> Result<Option<usize>, EditError> {
+    if first.len() < 3 || second.len() < 3 {
+        return Err(invalid(
+            "Terrain projected footprints require complete polygons",
+        ));
+    }
     let projection_work = first
         .len()
         .checked_add(second.len())
@@ -482,6 +481,7 @@ fn graph(
     }
     let mut edges = BTreeSet::new();
     let mut corners = BTreeSet::new();
+    let mut visible_spans = BTreeMap::new();
     let mut varying = BTreeSet::new();
     let mut result = Graph::default();
     for pair in &found.pairs {
@@ -505,7 +505,34 @@ fn graph(
                 ));
             }
         }
-        edges.insert((pair.first.min(pair.second), pair.first.max(pair.second)));
+        let key = (pair.first.min(pair.second), pair.first.max(pair.second));
+        edges.insert(key);
+        if mode == Mode::Cells && phase == Phase::Original {
+            work.consume(1).map_err(invalid)?;
+            let first = common
+                .first()
+                .ok_or_else(|| invalid("Native terrain edge span has no shared endpoints"))?
+                .0;
+            let last = common
+                .last()
+                .ok_or_else(|| invalid("Native terrain edge span has no shared endpoints"))?
+                .0;
+            if first == last
+                || visible_spans
+                    .insert(
+                        key,
+                        [
+                            a.positions.last().unwrap()[first],
+                            a.positions.last().unwrap()[last],
+                        ],
+                    )
+                    .is_some()
+            {
+                return Err(invalid(
+                    "Terrain source pair has multiple or ambiguous native edge spans",
+                ));
+            }
+        }
         if a.raw.source != b.raw.source {
             let base = &a.corners;
             let middle = ((base[pair.first_edge] + base[(pair.first_edge + 1) % 4]) * 0.5)
@@ -609,33 +636,148 @@ fn graph(
     }
     certify_contact_normals(surfaces, &edges, &corners, &varying, work)?;
     if mode == Mode::Cells && phase == Phase::Original {
-        certify_original_projections(surfaces, &edges, &corners, work)?;
+        certify_original_footprints(surfaces, &edges, &corners, &visible_spans, work)?;
     }
     result.pairs = found.pairs;
     Ok(result)
 }
 
-fn certify_original_projections(
-    surfaces: &[&Surface<'_>],
+fn contact_component(
+    seed: usize,
     edges: &BTreeSet<(usize, usize)>,
     corners: &BTreeSet<(usize, usize)>,
     work: &mut Work,
-) -> Result<(), EditError> {
-    let mut projections = BTreeMap::new();
-    for &(first, second) in edges.iter().chain(corners) {
-        work.consume(2 * FIELD_WORK).map_err(invalid)?;
-        for index in [first, second] {
-            if let std::collections::btree_map::Entry::Vacant(entry) = projections.entry(index) {
-                entry.insert(surfaces[index].original_projection(work)?);
+) -> Result<BTreeSet<usize>, EditError> {
+    let mut component = BTreeSet::from([seed]);
+    let mut pending = vec![seed];
+    while let Some(current) = pending.pop() {
+        for &(a, b) in edges.iter().chain(corners) {
+            work.consume(1).map_err(invalid)?;
+            let peer = if a == current {
+                b
+            } else if b == current {
+                a
+            } else {
+                continue;
+            };
+            if component.insert(peer) {
+                pending.push(peer);
             }
         }
-        if !projections[&first].matches(&projections[&second])? {
-            return Err(invalid(
-                "Connected original curved terrain requires one exact common affine boundary projection",
-            ));
+    }
+    Ok(component)
+}
+
+fn certify_original_footprints(
+    surfaces: &[&Surface<'_>],
+    edges: &BTreeSet<(usize, usize)>,
+    corners: &BTreeSet<(usize, usize)>,
+    spans: &BTreeMap<(usize, usize), [DVec3; 2]>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let mut verified = BTreeSet::new();
+    for &(seed, _) in edges.iter().chain(corners) {
+        if verified.contains(&seed) {
+            continue;
         }
+        let component = contact_component(seed, edges, corners, work)?;
+        let axis = surfaces[seed].sheet.base.axis();
+        let axes = [(axis + 1) % 3, (axis + 2) % 3];
+        let mut rings = BTreeMap::new();
+        for &index in &component {
+            let surface = surfaces[index];
+            let size = surface
+                .info
+                .grid_size()
+                .map_err(|error| invalid(error.to_string()))?;
+            rings.insert(
+                index,
+                super::ordered_boundary(surface.positions.last().unwrap(), size, work)?,
+            );
+        }
+        for &first in &component {
+            for &second in component.range(first + 1..) {
+                work.consume(2 * FIELD_WORK).map_err(invalid)?;
+                if !surfaces[first].sheet.same_base(&surfaces[second].sheet)? {
+                    return Err(invalid(
+                        "Connected curved terrain footprints require one exact base chart and orientation",
+                    ));
+                }
+                let rank = projected_contact_rank(&rings[&first], &rings[&second], axes, work)?;
+                let key = (first, second);
+                if edges.contains(&key) {
+                    let span = spans.get(&key).ok_or_else(|| {
+                        invalid("Terrain footprint lost its verified native edge span")
+                    })?;
+                    if rank != Some(1) {
+                        return Err(invalid(
+                            "Curved terrain projected edge contact differs from its native seam",
+                        ));
+                    }
+                    certify_span_overlap(&rings[&first], &rings[&second], *span, axes, work)?;
+                } else if corners.contains(&key) {
+                    if rank != Some(2) {
+                        return Err(invalid(
+                            "Curved terrain projected corner contact is ambiguous or overlaps",
+                        ));
+                    }
+                } else if rank.is_some() {
+                    return Err(invalid(
+                        "Curved terrain projected footprints overlap or introduce an unsewn contact",
+                    ));
+                }
+            }
+        }
+        verified.extend(component);
     }
     Ok(())
+}
+
+fn certify_span_overlap(
+    first: &[DVec3],
+    second: &[DVec3],
+    span: [DVec3; 2],
+    axes: [usize; 2],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let coordinate = axes
+        .into_iter()
+        .find(|&axis| span[0][axis] != span[1][axis])
+        .ok_or_else(|| invalid("Native terrain visible edge span is projected to a point"))?;
+    let first = support_interval(first, span, axes, coordinate, work)?;
+    let second = support_interval(second, span, axes, coordinate, work)?;
+    let actual = [first[0].max(second[0]), first[1].min(second[1])];
+    let expected = [
+        span[0][coordinate].min(span[1][coordinate]),
+        span[0][coordinate].max(span[1][coordinate]),
+    ];
+    if actual != expected {
+        return Err(invalid(
+            "Curved terrain projected seam extends beyond or omits its exact native span",
+        ));
+    }
+    Ok(())
+}
+
+fn support_interval(
+    ring: &[DVec3],
+    span: [DVec3; 2],
+    axes: [usize; 2],
+    coordinate: usize,
+    work: &mut Work,
+) -> Result<[f64; 2], EditError> {
+    work.consume((FIELD_WORK + 2) * ring.len())
+        .map_err(invalid)?;
+    let mut interval: Option<[f64; 2]> = None;
+    for &point in ring {
+        if orient(span[0], span[1], point, axes)? == 0 {
+            let value = point[coordinate];
+            interval = Some(interval.map_or([value; 2], |range| {
+                [range[0].min(value), range[1].max(value)]
+            }));
+        }
+    }
+    interval.ok_or_else(|| invalid("Terrain projected footprint lost its native support line"))
 }
 
 fn certify_contact_normals(
@@ -650,23 +792,7 @@ fn certify_contact_normals(
         if verified.contains(&first) {
             continue;
         }
-        let mut component = BTreeSet::from([first]);
-        let mut pending = vec![first];
-        while let Some(current) = pending.pop() {
-            for &(a, b) in edges.iter().chain(corners) {
-                work.consume(1).map_err(invalid)?;
-                let peer = if a == current {
-                    b
-                } else if b == current {
-                    a
-                } else {
-                    continue;
-                };
-                if component.insert(peer) {
-                    pending.push(peer);
-                }
-            }
-        }
+        let component = contact_component(first, edges, corners, work)?;
         let mut projection: Option<super::NormalProjection> = None;
         for &index in &component {
             let surface = surfaces[index];

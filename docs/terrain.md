@@ -229,8 +229,12 @@ Original projected borders must remain straight and convex, with samples ordered
 along each edge. Every original boundary sample must follow one exact affine
 mapping from the base cages to those borders, shared by connected originals.
 Folded projections and nonlinear border mappings reject.
-Native geometry, piecewise raw/native paint fields
-and labels must remain exact. Unchanged terrain contacts reject; normals and runtime LOD are regenerated.
+Native geometry, piecewise raw/native paint fields and labels must remain exact.
+Unchanged curved neighbors can retain a certified corner, or an old edge contact
+can be fully severed. They must share the exact base, orientation and original
+boundary mapping and pass native contact and normal checks. Their authored grids
+stay unchanged; retained edges to unchanged curved neighbors and affected LOD still
+reject. Normals and runtime LOD are regenerated for the new patches.
 [**Retile flat terrain**](brush-tools.md#retile-flat-terrain) supports non-grid
 cuts on eligible planar surfaces, including tilted base cages and affine
 tangential offsets. Joined planar patches can have different slopes on a common

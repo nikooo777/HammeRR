@@ -997,11 +997,6 @@ fn certify_mode(
             if grid_clip::related(&raw[first].cage, &raw[second].cage)
                 || contact_rank(&raw[first].cage, &raw[second].cage, work)?.is_some()
             {
-                if mode == Mode::Cells && !selected.contains(&raw[second].source) {
-                    return Err(invalid(
-                        "Terrain cell cuts require every affected original patch to be a crossing replacement; unchanged neighbor normal custody is unproved",
-                    ));
-                }
                 if affected.len() >= selected.len() + grid_clip::MAX_NEIGHBORS {
                     return Err(invalid(
                         "Flat terrain context exceeds its affected-neighbor limit",

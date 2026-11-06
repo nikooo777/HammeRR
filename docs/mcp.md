@@ -905,10 +905,16 @@ history or final pixels. Geometry, UVs, triangle flags and secondary-contact
 classifications stay exact; unsupported inputs and excess bounds reject without
 changing the prior draft.
 
-Every affected original must be a crossing replacement; unchanged external
-terrain contacts reject. Existing guarded instance, native connection, capacity
-and no-LOD rules remain. Normals and runtime LOD are regenerated. Retained cells
-must fit the shared 128-patch and checked-work limits; no automatic mode change.
+Cells and Fragments can retain unchanged curved corner neighbors or fully sever
+an old edge contact. Original neighbors retain their authored data verbatim.
+They must share the exact base plane, orientation and original affine boundary
+projection, with matching contact samples across authored, compiler and all four
+native profiles. Complete before/after contact graphs and same-chart-axis native
+normal proofs still apply. Retained edges to unchanged curved neighbors, affected
+LOD, sample mismatches and native corner-capacity overflow refuse. Existing
+guarded instance, native connection, capacity and no-LOD rules remain. Normals and
+runtime LOD are regenerated for new patches. Retained cells must fit the shared
+128-patch and checked-work limits; no automatic mode change.
 
 Grid mode lets world and `func_detail` terrain at power 3 or 4 split along a
 complete existing middle row or column. Per crossing source, `keep:"both"` produces

@@ -151,6 +151,8 @@ Each retained original cell becomes one power-2 patch. The original piecewise
 surface, UVs, paint and triangle labels must stay exact. Nonlinear paint is
 allowed when each new triangle retains its original raw and packed blend fields.
 Normals and runtime LOD are regenerated. This mode does not cut through part of an original cell.
+Qualified unchanged neighbors may remain at a corner, or lose an old edge contact
+when the cut removes that entire join. Their authored grids stay unchanged.
 
 ![Painted curved terrain retains its blend through grid-cell cuts](images/terrain-cell-cut.png)
 
@@ -245,16 +247,19 @@ previous valid draft; no policy switches automatically after a failure.
   base cages to those borders, shared by connected originals. Every original
   and output triangle must preserve orientation and pass the exact native geometry
   and normal checks. Paint samples must preserve each original triangle's raw and
-  packed blend fields exactly. Native texture
-  rules match **Retile flat terrain**. Every touching original patch
-  must also be cut in the operation; unchanged contacts reject. No affected LOD
-  coarsening, folded projections, nonlinear boundary mappings or uncertain native
-  normal inputs.
+  packed blend fields exactly. Native texture rules match **Retile flat terrain**.
+  Unchanged curved neighbors may retain a certified corner or have an old edge
+  contact fully severed. They must share the exact base, orientation and original
+  affine boundary projection, with matching native contact samples and certified
+  normals. Their authored grids and metadata stay unchanged. Retained edges to
+  unchanged curved neighbors, affected LOD coarsening, contact mismatches, corner
+  capacity overflow, folded projections, nonlinear boundary mappings and uncertain
+  native normal inputs reject.
   Each retained cell adds 32 native triangles. Powers 2–4 are subject to the
   shared output and work limits.
 - **Retile surface triangles** requires a planar base with a convex cage in its
   exact coordinate chart. It shares the geometry, paint, texture, normal and
-  selected-contact checks of **Retile grid cells**. Output must fit native edge
+  contact checks of **Retile grid cells**. Output must fit native edge
   and corner limits without LOD coarsening. Skew quarter grids, high-valence
   corners, unrepresentable raw paint and changed native packed fields in
   **Exact fields** can refuse. The error names the unrepresentable field.

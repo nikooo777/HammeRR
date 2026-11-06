@@ -40,7 +40,6 @@ pub(crate) mod occluders;
 pub(crate) mod terrain;
 pub use terrain::Terrain;
 
-pub const DEFAULT_LIGHTMAP_SCALE: f64 = 16.0;
 const MAX_UNSUPPORTED_MATERIAL_EXAMPLES: usize = 4;
 pub use map_core::checks::SOURCE_COORDINATE_LIMIT as MAX_COMPILE_COORD;
 
@@ -175,14 +174,15 @@ fn bytemuck_bits(info: &bsp::TexInfo) -> [u32; 18] {
 
 /// Native texture rows followed by lightmap rows, using the map loader's brush-model origin.
 pub fn native_side_projections(side: &Side, origin: DVec3) -> Result<[[[f32; 4]; 2]; 2], String> {
-    let lightmap_scale = if side.lightmap_scale == 0 {
-        DEFAULT_LIGHTMAP_SCALE
-    } else {
-        side.lightmap_scale as f64
-    };
+    let normal = Plane::from_points(side.plane.0)
+        .ok_or_else(|| format!("side:{}: texture projection needs a valid plane", side.id))?
+        .normal;
+    map_core::surface::validate_projection(side, normal, &side.plane.0)
+        .and_then(|()| map_core::surface::validate_lightmap_scale(side.lightmap_scale))
+        .map_err(|error| format!("side:{}: {error}", side.id))?;
+    let lightmap_scale = f64::from(side.lightmap_scale);
     let vec = |axis: &source_formats::vmf::UvAxis| {
-        let scale = if axis.scale == 0.0 { 1.0 } else { axis.scale };
-        let a = axis.axis / scale;
+        let a = axis.axis / axis.scale;
         [
             a.x as f32,
             a.y as f32,

@@ -1618,6 +1618,7 @@ impl Session {
 
     fn adopt_document(&mut self, document: Document, path: Option<PathBuf>, camera: Camera) {
         self.reset_rope_preview();
+        self.retire_terrain_stroke();
         self.retire_terrain_move_handles();
         self.reset_transform_pivot_attachment();
         self.reference_images = reference_images::State::default();

@@ -12,6 +12,8 @@ Keep two maps in one window. Each tab has its own selection, views, drafts and U
 Use **Select silently** to select a tab without requesting desktop focus. The workspace window must already be visible.
 MCP-created and restored maps stay hidden until selected.
 The ordinary **New map** and **Open…** controls replace only the current tab's map.
+Successful replacement clears pending terrain strokes. A failed Open keeps the
+current map and stroke.
 
 ![Two persistent document tabs and four views of the selected map](images/document-tabs.png)
 

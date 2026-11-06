@@ -326,11 +326,14 @@ pub(crate) fn update(
     validate_projection(side, normal, points)
 }
 
-pub(crate) fn validate_projection(
-    side: &Side,
-    normal: DVec3,
-    points: &[DVec3],
-) -> Result<(), EditError> {
+pub fn validate_lightmap_scale(scale: u32) -> Result<(), EditError> {
+    if scale == 0 {
+        return Err(invalid("lightmap scale must be nonzero"));
+    }
+    Ok(())
+}
+
+pub fn validate_projection(side: &Side, normal: DVec3, points: &[DVec3]) -> Result<(), EditError> {
     if !side.u_axis.axis.is_finite()
         || !side.v_axis.axis.is_finite()
         || !side.u_axis.offset.is_finite()

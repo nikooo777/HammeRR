@@ -488,7 +488,7 @@ impl Session {
         self.cancel_geometry_drags();
         self.cancel_selection_previews();
         self.working_region_cancel_terrain_drag();
-        self.working_region_end_terrain_stroke();
+        self.retire_terrain_stroke();
         self.cancel_block_preview();
         self.clip_epoch += 1;
         self.interaction_epoch += 1;

@@ -135,9 +135,7 @@ fn dedup_ring(mut points: Vec<DVec3>) -> Vec<DVec3> {
 /// Texture coordinates of `point` on `side`, in texels. Divide by the
 /// texture's width and height to get normalized UVs.
 pub fn texel_uv(side: &Side, point: DVec3) -> DVec2 {
-    let project = |axis: &source_formats::vmf::UvAxis| {
-        let scale = if axis.scale == 0.0 { 1.0 } else { axis.scale };
-        point.dot(axis.axis) / scale + axis.offset
-    };
+    let project =
+        |axis: &source_formats::vmf::UvAxis| point.dot(axis.axis) / axis.scale + axis.offset;
     DVec2::new(project(&side.u_axis), project(&side.v_axis))
 }

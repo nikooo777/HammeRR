@@ -295,8 +295,9 @@ For a spatial child-brush query, choose Solids and call `select_volume` with
 `preview:true`; `get_volume_selection` pages the exact brush IDs without changing
 the selection. Resolve those IDs through `get_objects` for owners and bounds.
 
-`render_view.preview_issues` identifies omitted brushes and invalid terrain
-for owners included in the frame. Editor-excluded owners do not consume details;
+`render_view.preview_issues` identifies omitted brushes, invalid terrain and
+invalid texture/lightmap mappings. Invalid mappings retain selectable outlines.
+Editor-excluded owners do not consume details;
 whole-map checks still inspect them.
 Each issue includes `brush`, optional `face`, and `message`.
 At most 64 details are returned; `preview_issues_omitted` counts the rest.

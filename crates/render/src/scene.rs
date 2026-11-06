@@ -143,6 +143,7 @@ pub struct TerrainIssue {
 #[derive(Debug, Clone)]
 pub enum SceneIssue {
     Brush { solid: u32, message: String },
+    Surface { face: FaceId, message: String },
     Terrain(TerrainIssue),
 }
 
@@ -150,6 +151,7 @@ impl SceneIssue {
     pub fn solid(&self) -> u32 {
         match self {
             Self::Brush { solid, .. } => *solid,
+            Self::Surface { face, .. } => face.solid,
             Self::Terrain(issue) => issue.face.solid,
         }
     }
@@ -157,6 +159,7 @@ impl SceneIssue {
     pub fn face(&self) -> Option<FaceId> {
         match self {
             Self::Brush { .. } => None,
+            Self::Surface { face, .. } => Some(*face),
             Self::Terrain(issue) => Some(issue.face),
         }
     }
@@ -164,6 +167,7 @@ impl SceneIssue {
     pub fn message(&self) -> &str {
         match self {
             Self::Brush { message, .. } => message,
+            Self::Surface { message, .. } => message,
             Self::Terrain(issue) => &issue.message,
         }
     }
@@ -171,6 +175,9 @@ impl SceneIssue {
     pub fn description(&self) -> String {
         match self {
             Self::Brush { solid, message } => format!("Brush {solid}: {message}"),
+            Self::Surface { face, message } => {
+                format!("Face {} on brush {}: {message}", face.side, face.solid)
+            }
             Self::Terrain(issue) => format!(
                 "Terrain face {} on brush {}: {}",
                 issue.face.side, issue.face.solid, issue.message
@@ -352,11 +359,11 @@ impl Builder<'_> {
         let has_displacement = solid.sides.iter().any(|s| s.displacement.is_some());
         for face in &brush.faces {
             let side = &solid.sides[face.side];
-            let selected = selected
-                || self.selected_faces.contains(&FaceId {
-                    solid: solid.id,
-                    side: side.id,
-                });
+            let id = FaceId {
+                solid: solid.id,
+                side: side.id,
+            };
+            let selected = selected || self.selected_faces.contains(&id);
             let material = self.material(&side.material);
             if !self.authored_surfaces && !self.library.get(material).sky {
                 if selected {
@@ -390,10 +397,9 @@ impl Builder<'_> {
 
             match (&side.displacement, has_displacement) {
                 (Some(_), _) => {
-                    let id = FaceId {
-                        solid: solid.id,
-                        side: side.id,
-                    };
+                    if !self.admit_surface(id, side, face.plane.normal, &face.vertices) {
+                        continue;
+                    }
                     let displacement = self.displacements.remove(&id);
                     let Some(Displacement { mesh, normals }) = displacement else {
                         self.exclude_terrain(
@@ -402,11 +408,7 @@ impl Builder<'_> {
                             0,
                             "No prepared shaded terrain surface; ordinary outline retained (see terrain issues)",
                         );
-                        if let Some(mesh) = self.unshaded_terrain.remove(&id) {
-                            self.lines.extend(displacement_lines(&mesh, SELECTED_EDGE));
-                        } else {
-                            self.push_loop(face.vertices.iter().map(|point| point.as_vec3()));
-                        }
+                        self.surface_outline(id, &face.vertices);
                         continue;
                     };
                     self.stats.displacements += 1;
@@ -442,7 +444,7 @@ impl Builder<'_> {
                         .collect::<Vec<_>>();
                     if overlays.is_empty() {
                         self.add_polygon(
-                            side,
+                            (id, side),
                             &face.vertices,
                             face.plane.normal,
                             &side.material,
@@ -458,7 +460,7 @@ impl Builder<'_> {
                                 projected.rotation = projection.rotation;
                             }
                             self.add_polygon(
-                                &projected,
+                                (id, &projected),
                                 &overlay.points,
                                 face.plane.normal,
                                 &overlay.material,
@@ -472,15 +474,51 @@ impl Builder<'_> {
         }
     }
 
+    fn surface_outline(&mut self, face: FaceId, points: &[DVec3]) {
+        let mesh = self
+            .displacements
+            .get(&face)
+            .map(|displacement| &displacement.mesh)
+            .or_else(|| self.unshaded_terrain.get(&face));
+        if let Some(mesh) = mesh {
+            self.lines.extend(displacement_lines(mesh, SELECTED_EDGE));
+        } else {
+            self.push_loop(points.iter().map(|point| point.as_vec3()));
+        }
+    }
+
+    fn admit_surface(
+        &mut self,
+        face: FaceId,
+        side: &source_formats::vmf::Side,
+        normal: DVec3,
+        points: &[DVec3],
+    ) -> bool {
+        let result = map_core::surface::validate_projection(side, normal, points)
+            .and_then(|()| map_core::surface::validate_lightmap_scale(side.lightmap_scale));
+        if let Err(error) = result {
+            self.issues.push(SceneIssue::Surface {
+                face,
+                message: error.to_string(),
+            });
+            self.surface_outline(face, points);
+            return false;
+        }
+        true
+    }
+
     fn add_polygon(
         &mut self,
-        side: &source_formats::vmf::Side,
+        (face, side): (FaceId, &source_formats::vmf::Side),
         points: &[DVec3],
         normal: DVec3,
         name: &str,
         tint: [u8; 3],
         selected: bool,
     ) {
+        if !self.admit_surface(face, side, normal, points) {
+            return;
+        }
         let material = self.material(name);
         let info = self.library.get(material);
         let tool = info.tool;

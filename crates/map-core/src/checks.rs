@@ -293,7 +293,7 @@ fn check_brush(
                 .then_some(Fix::ResetProjection(id));
             report.add(Severity::Error, "invalid_projection", &face_location, "Texture projection has invalid values or collapses on this face. Resetting uses world-aligned axes, 0.25 scale and zero shift/rotation.", fix);
         }
-        if side.lightmap_scale == 0 {
+        if crate::surface::validate_lightmap_scale(side.lightmap_scale).is_err() {
             let fix = (!face_location.ambiguous).then_some(Fix::ResetLightmapScale(id));
             report.add(
                 Severity::Error,

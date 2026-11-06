@@ -35,7 +35,7 @@ impl Session {
         self.terrain_strokes.stroke.is_some()
     }
 
-    pub(super) fn working_region_end_terrain_stroke(&mut self) {
+    pub(super) fn retire_terrain_stroke(&mut self) {
         self.terrain_strokes.stroke = None;
     }
     pub fn check_terrain_stroke_token(&self, token: u64) -> Result<(), String> {

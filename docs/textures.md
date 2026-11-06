@@ -80,6 +80,10 @@ Blank mixed fields preserve each face's value. Fit uses the material's actual im
 For direct projection control, enable **Advanced U/V world vectors** under **Edit texture settings**.
 See [atlas-region texturing](atlas-texturing.md) for padded pixel rectangles fitted independently or continuously across coplanar faces.
 
+Zero scales and collapsed mappings stop compilation. Invalid imported faces
+remain selectable as outlines; preview messages identify the face and error.
+Use **Check map… → Review repair…** to repair supported mapping errors.
+
 ## Sample and wrap
 
 1. Select one face and click **Sample face texture**.

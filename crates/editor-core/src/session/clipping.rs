@@ -437,7 +437,7 @@ impl Session {
 
     fn retire_clipped_terrain_state(&mut self) {
         self.retire_terrain_move_handles();
-        self.working_region_end_terrain_stroke();
+        self.retire_terrain_stroke();
         let _ = self.clear_terrain_triangle_highlight(None);
     }
 

@@ -31,9 +31,9 @@ impl ScalarField {
 fn alpha(value: f64) -> Result<f32, EditError> {
     let encoded = value as f32;
     if !(0.0..=255.0).contains(&value) || value.fract() != 0.0 || f64::from(encoded) != value {
-        return Err(invalid(
-            "Flat terrain paint must retain exact integral native alpha values from 0 to 255",
-        ));
+        return Err(invalid(format!(
+            "Terrain paint sample {value} must be an exact integral native alpha from 0 to 255"
+        )));
     }
     Ok(encoded)
 }

@@ -8,6 +8,7 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
         map_core::clip::TerrainMode::Grid => 0,
         map_core::clip::TerrainMode::Flat => 1,
         map_core::clip::TerrainMode::Cells => 2,
+        map_core::clip::TerrainMode::Fragments => 3,
     });
     let options = session.clip_handle_options();
     app.set_clip_handles_mode(match options.mode {
@@ -190,6 +191,7 @@ pub(super) fn bind_clip_controls_with_access(app: &AppWindow, access: &runtime::
                     0 => map_core::clip::TerrainMode::Grid,
                     1 => map_core::clip::TerrainMode::Flat,
                     2 => map_core::clip::TerrainMode::Cells,
+                    3 => map_core::clip::TerrainMode::Fragments,
                     _ => {
                         app.set_message("Invalid terrain cut mode".into());
                         refresh_clip(&app, session);

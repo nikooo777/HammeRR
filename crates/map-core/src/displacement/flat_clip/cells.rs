@@ -4,7 +4,7 @@ use source_formats::vmf::Solid;
 use super::{
     Admitted, CUT_EPSILON, Child, Context, Exact, FIELD_WORK, Keep, Request, SIZE, TRIANGLES,
     TerrainPlan, TriangleField, VERTICES, Work, admit, carrier_base, certify_height_normals,
-    connections, convex, data, invalid, native, orient, paint, reconstructed, region, same, stored,
+    connections, data, height_sheet, invalid, native, paint, reconstructed, region, same, stored,
     uv, weighted,
 };
 use crate::displacement::{grid_clip::grid_line, resample};
@@ -77,23 +77,15 @@ fn prepare<'a>(
     let Some(source) = admit(document, solid, geometry, plane, work)? else {
         return Ok(None);
     };
+    let sheet = height_sheet(&source, work)?;
     let mesh = &source.mesh;
     let cells = mesh.size - 1;
     let indices = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells];
     let corners = indices.map(|index| mesh.base_positions[index]);
-    let axis = (0..3)
-        .find(|&axis| corners.iter().all(|point| point[axis] == corners[0][axis]))
-        .ok_or_else(|| invalid("Cell terrain requires a world-axis rectangular base cage"))?;
-    let axes = [(axis + 1) % 3, (axis + 2) % 3];
-    let sign = orient(corners[0], corners[1], corners[2], axes)?;
-    if sign == 0 {
-        return Err(invalid("Cell terrain base cage is collapsed"));
-    }
-    convex(&corners, axes, sign)?;
     for index in 0..4 {
-        stored(corners[index])?;
         let next = corners[(index + 1) % 4];
-        if axes
+        if sheet
+            .axes
             .iter()
             .filter(|&&axis| corners[index][axis] != next[axis])
             .count()
@@ -104,41 +96,12 @@ fn prepare<'a>(
             ));
         }
     }
-    work.consume(3 * FIELD_WORK * mesh.positions.len())
-        .map_err(invalid)?;
-    for row in 0..mesh.size {
-        for column in 0..mesh.size {
-            let index = row * mesh.size + column;
-            let weights = [
-                (cells - row) * (cells - column),
-                row * (cells - column),
-                row * column,
-                (cells - row) * column,
-            ]
-            .map(|weight| weight as i128);
-            let base = weighted(&corners, &weights, (cells * cells) as i128)?;
-            let point = mesh.positions[index];
-            if !same(base, mesh.base_positions[index])
-                || axes.iter().any(|&axis| point[axis] != base[axis])
-                || source
-                    .positions
-                    .iter()
-                    .any(|positions| !same(positions[index], point))
-            {
-                return Err(invalid(
-                    "Cell terrain requires an exact rectangular height grid shared by authored, native and compiler positions",
-                ));
-            }
-        }
-    }
-    paint::validate_data(mesh, &source.data, work)?;
     let cut = cut(&source, plane, work)?;
-    certify_height_normals(&source.data, &source.positions, axis, work)?;
     Ok(Some(Prepared {
         source,
-        axis,
-        axes,
-        sign,
+        axis: sheet.axis,
+        axes: sheet.axes,
+        sign: sheet.sign,
         cut,
     }))
 }
@@ -162,10 +125,10 @@ fn retained(keep: Keep, back: bool) -> bool {
     !matches!((keep, back), (Keep::Back, false) | (Keep::Front, true))
 }
 
-struct Sample {
-    base: DVec3,
-    point: DVec3,
-    alpha: f64,
+pub(super) struct Sample {
+    pub(super) base: DVec3,
+    pub(super) point: DVec3,
+    pub(super) alpha: f64,
 }
 
 fn sample(
@@ -174,11 +137,34 @@ fn sample(
     column: usize,
     index: usize,
 ) -> Result<Sample, EditError> {
-    let denominator = (SIZE - 1) as f64;
+    sample_window(source, row, column, index, 0, 0, 1)
+}
+
+pub(super) fn sample_window(
+    source: &Admitted<'_>,
+    row: usize,
+    column: usize,
+    index: usize,
+    child_row: usize,
+    child_column: usize,
+    divisions: usize,
+) -> Result<Sample, EditError> {
+    if !matches!(divisions, 1 | 2)
+        || child_row >= divisions
+        || child_column >= divisions
+        || index >= VERTICES
+        || row >= source.mesh.size - 1
+        || column >= source.mesh.size - 1
+    {
+        return Err(invalid(
+            "Terrain sampling requires a valid whole-cell or quarter-cell window",
+        ));
+    }
+    let denominator = ((SIZE - 1) * divisions) as f64;
     let (indices, weights) = resample::weights(
         source.mesh.size,
-        row as f64 + (index / SIZE) as f64 / denominator,
-        column as f64 + (index % SIZE) as f64 / denominator,
+        row as f64 + (child_row * (SIZE - 1) + index / SIZE) as f64 / denominator,
+        column as f64 + (child_column * (SIZE - 1) + index % SIZE) as f64 / denominator,
     );
     let mut exact = [0; 3];
     for (output, weight) in exact.iter_mut().zip(weights) {
@@ -190,7 +176,7 @@ fn sample(
         }
         *output = value as i128;
     }
-    let denominator = (SIZE - 1) as i128;
+    let denominator = ((SIZE - 1) * divisions) as i128;
     Ok(Sample {
         base: weighted(
             &indices.map(|index| source.mesh.base_positions[index]),

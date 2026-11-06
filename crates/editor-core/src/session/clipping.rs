@@ -113,6 +113,7 @@ impl Session {
                 TerrainMode::Grid => "Terrain cut: Existing grid",
                 TerrainMode::Flat => "Terrain cut: Retile flat terrain",
                 TerrainMode::Cells => "Terrain cut: Retile grid cells",
+                TerrainMode::Fragments => "Terrain cut: Retile surface triangles",
             },
         );
         Ok(())

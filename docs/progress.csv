@@ -15,7 +15,7 @@ G03,Full numeric transforms,100
 G04,Transform handles (++),100
 G05,Transform pivots (++),100
 G06,"Vertex, edge and face geometry editing",100
-G07,Plane clipping,95
+G07,Plane clipping,97
 G08,Hollowing and carving,80
 G09,Polygon-based brush drawing (++),100
 G10,Convex brush merging (++),100

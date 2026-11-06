@@ -13,9 +13,9 @@ const MAX_COORDINATE: f64 = 65_536.0;
 const MIN_VOLUME: f64 = 1e-6;
 
 pub const MAX_TERRAIN_SOURCES: usize = 16;
-pub const MAX_TERRAIN_PATCHES: usize = MAX_TERRAIN_SOURCES * 4;
-pub const MAX_TERRAIN_VERTICES: usize = MAX_TERRAIN_PATCHES * 81;
-pub const MAX_TERRAIN_TRIANGLES: usize = MAX_TERRAIN_PATCHES * 128;
+pub const MAX_TERRAIN_PATCHES: usize = 128;
+pub const MAX_TERRAIN_VERTICES: usize = 5_184;
+pub const MAX_TERRAIN_TRIANGLES: usize = 8_192;
 pub const MAX_TERRAIN_NEIGHBOR_FACES: usize = crate::displacement::grid_clip::MAX_NEIGHBORS;
 
 #[derive(Debug)]
@@ -48,6 +48,7 @@ pub enum TerrainMode {
     Grid,
     Flat,
     Cells,
+    Fragments,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -341,6 +342,7 @@ pub fn terrain_texture_faces(
         TerrainMode::Grid => return Ok(Vec::new()),
         TerrainMode::Flat => crate::displacement::flat_clip::texture_face,
         TerrainMode::Cells => crate::displacement::flat_clip::cells::texture_face,
+        TerrainMode::Fragments => crate::displacement::flat_clip::fragments::texture_face,
     };
     let mut work = crate::displacement::grid_clip::Work::default();
     let mut result = Vec::new();
@@ -509,9 +511,11 @@ pub fn clip_with_options(
                     triangles: plan.triangles,
                     children: Some(plan.children),
                 }),
-                TerrainMode::Flat | TerrainMode::Cells => {
+                TerrainMode::Flat | TerrainMode::Cells | TerrainMode::Fragments => {
                     let plan = if options.terrain_mode == TerrainMode::Cells {
                         crate::displacement::flat_clip::cells::plan
+                    } else if options.terrain_mode == TerrainMode::Fragments {
+                        crate::displacement::flat_clip::fragments::plan
                     } else {
                         crate::displacement::flat_clip::plan
                     };
@@ -677,7 +681,7 @@ pub fn clip_with_options(
                 .map(|verified| (verified.neighbors, verified.links))
                 .collect::<Vec<_>>()
             }
-            TerrainMode::Flat | TerrainMode::Cells => {
+            TerrainMode::Flat | TerrainMode::Cells | TerrainMode::Fragments => {
                 let replacements = planned
                     .iter()
                     .filter_map(|cut| {
@@ -689,7 +693,10 @@ pub fn clip_with_options(
                         })
                     })
                     .collect::<Vec<_>>();
-                let certify = if options.terrain_mode == TerrainMode::Cells {
+                let certify = if matches!(
+                    options.terrain_mode,
+                    TerrainMode::Cells | TerrainMode::Fragments
+                ) {
                     crate::displacement::flat_clip::network::certify_cells
                 } else {
                     crate::displacement::flat_clip::network::certify

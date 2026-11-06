@@ -218,6 +218,8 @@ whole cells and requires exact native geometry, piecewise integer paint and labe
 terrain contacts reject; normals and runtime LOD are regenerated.
 [**Retile flat terrain**](brush-tools.md#retile-flat-terrain) supports non-grid
 cuts on eligible flat or sloped planar surfaces.
+Choose [**Retile surface triangles**](brush-tools.md#cut-through-curved-cells)
+to cut through curved cells while preserving their original triangle surfaces.
 
 ## Remove terrain
 

@@ -44,7 +44,7 @@ impl Context {
         let needed = match terrain_mode {
             TerrainMode::Grid => clip::requires_terrain_context(&session.document, ids, plane)
                 .map_err(|error| error.to_string())?,
-            TerrainMode::Flat | TerrainMode::Cells => {
+            TerrainMode::Flat | TerrainMode::Cells | TerrainMode::Fragments => {
                 retile_crossing
                     && vmf.entities.iter().any(|entity| {
                         !entity.hidden

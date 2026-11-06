@@ -834,10 +834,18 @@ allowed only when every overlapping original and output triangle has the same
 raw alpha and four native packed-alpha functions; vertex equality alone is
 insufficient. Unrepresentable inserted alpha or changed physical regions reject.
 It never approximates a crease.
+
+`terrain_mode:"fragments"` / **Retile surface triangles** also cuts through
+original cells. It clips each crossing cell's original triangles into exact quad
+fans and quarters whole retained cells. Surface, raw/packed paint, UVs and spatial
+labels must stay exact. Native contacts must fit without LOD coarsening. There is
+no automatic switch from another mode. Output is bounded at128 patches,5184
+vertices and8192 triangles per operation.
+
 Every affected original must be a crossing replacement; unchanged external
 terrain contacts reject. Existing guarded instance, native connection, capacity
 and no-LOD rules remain. Normals and runtime LOD are regenerated. Retained cells
-must fit the shared 64-patch and checked-work limits; no automatic mode change.
+must fit the shared 128-patch and checked-work limits; no automatic mode change.
 
 Grid mode lets world and `func_detail` terrain at power 3 or 4 split along a
 complete existing middle row or column. `keep:"both"` produces four native patches;

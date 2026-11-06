@@ -17,6 +17,7 @@ use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
 pub(crate) mod cells;
 mod field;
+pub(crate) mod fragments;
 mod labels;
 pub(crate) mod network;
 mod paint;
@@ -234,6 +235,12 @@ struct Admitted<'a> {
     positions: Vec<Vec<DVec3>>,
 }
 
+struct HeightSheet {
+    axis: usize,
+    axes: [usize; 2],
+    sign: i128,
+}
+
 fn data(
     face: &Face,
     mesh: &DisplacementMesh,
@@ -437,6 +444,55 @@ fn admit<'a>(
     }))
 }
 
+fn height_sheet(source: &Admitted<'_>, work: &mut Work) -> Result<HeightSheet, EditError> {
+    let mesh = &source.mesh;
+    let cells = mesh.size - 1;
+    let indices = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells];
+    let corners = indices.map(|index| mesh.base_positions[index]);
+    let axis = (0..3)
+        .find(|&axis| corners.iter().all(|point| point[axis] == corners[0][axis]))
+        .ok_or_else(|| invalid("Terrain height sheets require a world-axis base cage"))?;
+    let axes = [(axis + 1) % 3, (axis + 2) % 3];
+    let sign = orient(corners[0], corners[1], corners[2], axes)?;
+    if sign == 0 {
+        return Err(invalid("Terrain height-sheet base cage is collapsed"));
+    }
+    convex(&corners, axes, sign)?;
+    for point in corners {
+        stored(point)?;
+    }
+    work.consume(3 * FIELD_WORK * mesh.positions.len())
+        .map_err(invalid)?;
+    for row in 0..mesh.size {
+        for column in 0..mesh.size {
+            let index = row * mesh.size + column;
+            let weights = [
+                (cells - row) * (cells - column),
+                row * (cells - column),
+                row * column,
+                (cells - row) * column,
+            ]
+            .map(|weight| weight as i128);
+            let base = weighted(&corners, &weights, (cells * cells) as i128)?;
+            let point = mesh.positions[index];
+            if !same(base, mesh.base_positions[index])
+                || axes.iter().any(|&axis| point[axis] != base[axis])
+                || source
+                    .positions
+                    .iter()
+                    .any(|positions| !same(positions[index], point))
+            {
+                return Err(invalid(
+                    "Terrain height sheets require an exact bilinear base and height-only grid shared by authored, native and compiler positions",
+                ));
+            }
+        }
+    }
+    paint::validate_data(mesh, &source.data, work)?;
+    certify_height_normals(&source.data, &source.positions, axis, work)?;
+    Ok(HeightSheet { axis, axes, sign })
+}
+
 fn prepare<'a>(
     document: &Document,
     solid: &'a Solid,
@@ -580,7 +636,22 @@ fn split(
     plane: Plane,
     work: &mut Work,
 ) -> Result<[Vec<DVec3>; 2], EditError> {
-    work.consume(12 * FIELD_WORK).map_err(invalid)?;
+    split_ring(&source.ring, &source.field, source.axes, plane, work)
+}
+
+fn split_ring(
+    ring: &[DVec3],
+    field: &PlanarField,
+    axes: [usize; 2],
+    plane: Plane,
+    work: &mut Work,
+) -> Result<[Vec<DVec3>; 2], EditError> {
+    if !(3..=5).contains(&ring.len()) {
+        return Err(invalid(
+            "Terrain cuts require a three-to-five-corner source ring",
+        ));
+    }
+    work.consume(3 * ring.len() * FIELD_WORK).map_err(invalid)?;
     let classify = |point| {
         let distance = plane.distance_to(point);
         if distance > CUT_EPSILON {
@@ -593,9 +664,9 @@ fn split(
     };
     let mut result: [Vec<DVec3>; 2] = std::array::from_fn(|_| Vec::new());
     let mut cut = Vec::new();
-    for index in 0..source.ring.len() {
-        let a = source.ring[index];
-        let b = source.ring[(index + 1) % source.ring.len()];
+    for index in 0..ring.len() {
+        let a = ring[index];
+        let b = ring[(index + 1) % ring.len()];
         let first = classify(a);
         let second = classify(b);
         if first <= 0 {
@@ -608,19 +679,18 @@ fn split(
             cut.push(a);
         }
         if first * second == -1 {
+            let (a, b) = if key(a) <= key(b) { (a, b) } else { (b, a) };
             let da = plane.distance_to(a);
             let db = plane.distance_to(b);
             let parameter = da / (da - db);
             if !parameter.is_finite() || !(0.0..1.0).contains(&parameter) || parameter == 0.0 {
                 return Err(numeric());
             }
-            let base_a = source.field.base_position(a)?;
-            let base_b = source.field.base_position(b)?;
+            let base_a = field.base_position(a)?;
+            let base_b = field.base_position(b)?;
             let base = stored(native::stored_vertex(base_a.lerp(base_b, parameter)))?;
-            let point = source.field.position(base)?;
-            if !on_segment(point, a, b, source.axes)?
-                || plane.distance_to(point).abs() > CUT_EPSILON
-            {
+            let point = field.position(base)?;
+            if !on_segment(point, a, b, axes)? || plane.distance_to(point).abs() > CUT_EPSILON {
                 return Err(invalid(
                     "Flat terrain cut endpoints must survive native storage on their original edges within Source cut-plane precision",
                 ));
@@ -638,8 +708,8 @@ fn split(
         ));
     };
     let mut back_side = None;
-    for &point in &source.ring {
-        let side = orient(*a, *b, point, source.axes)?;
+    for &point in ring {
+        let side = orient(*a, *b, point, axes)?;
         match classify(point) {
             0 if side != 0 => {
                 return Err(invalid(
@@ -658,8 +728,8 @@ fn split(
         }
     }
     let back_side = back_side.ok_or_else(numeric)?;
-    for &point in &source.ring {
-        let side = orient(*a, *b, point, source.axes)?;
+    for &point in ring {
+        let side = orient(*a, *b, point, axes)?;
         let classification = classify(point);
         if classification < 0 && side != back_side || classification > 0 && side != -back_side {
             return Err(invalid(
@@ -668,7 +738,7 @@ fn split(
         }
     }
     let [back, front] = result;
-    Ok([polygon(back, source.axes)?, polygon(front, source.axes)?])
+    Ok([polygon(back, axes)?, polygon(front, axes)?])
 }
 
 fn weighted(points: &[DVec3], weights: &[i128], denominator: i128) -> Result<DVec3, EditError> {
@@ -852,33 +922,56 @@ fn carrier(
     material: &str,
     work: &mut Work,
 ) -> Result<Solid, EditError> {
-    let (mut part, mesh) = carrier_base(solid, source.side, source.face, quad, material)?;
+    carrier_field(
+        solid,
+        source.side,
+        source.face,
+        quad,
+        &source.field,
+        &source.paint,
+        material,
+        work,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn carrier_field(
+    solid: &Solid,
+    side: &Side,
+    face: &Face,
+    quad: [DVec3; 4],
+    field: &PlanarField,
+    paint: &PaintField,
+    material: &str,
+    work: &mut Work,
+) -> Result<Solid, EditError> {
+    let (mut part, mesh) = carrier_base(solid, side, face, quad, material)?;
+    let source_info = side.displacement.as_ref().unwrap();
     let info = part
         .sides
         .iter_mut()
-        .find(|side| side.id == source.side.id)
+        .find(|candidate| candidate.id == side.id)
         .unwrap()
         .displacement
         .as_mut()
         .unwrap();
     work.consume(
-        FIELD_WORK * mesh.base_positions.len() * (1 + usize::from(source.info.alphas.is_some())),
+        FIELD_WORK * mesh.base_positions.len() * (1 + usize::from(source_info.alphas.is_some())),
     )
     .map_err(invalid)?;
     info.offsets = Some(
         mesh.base_positions
             .chunks(SIZE)
-            .map(|row| row.iter().map(|&base| source.field.offset(base)).collect())
+            .map(|row| row.iter().map(|&base| field.offset(base)).collect())
             .collect::<Result<_, _>>()?,
     );
-    info.alphas = source
-        .info
+    info.alphas = source_info
         .alphas
         .as_ref()
         .map(|_| {
             mesh.base_positions
                 .chunks(SIZE)
-                .map(|row| row.iter().map(|&base| source.paint.alpha(base)).collect())
+                .map(|row| row.iter().map(|&base| paint.alpha(base)).collect())
                 .collect::<Result<_, _>>()
         })
         .transpose()?;

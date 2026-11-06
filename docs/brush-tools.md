@@ -49,7 +49,7 @@ the complete preview; use cutter or named material mode for oblique cuts.
 1. Select brushes. Use **Select → Object selection → Solids** to choose a child
    brush inside an entity.
 2. Click **Clip selected brushes**.
-3. For terrain, choose **Existing grid** or **Retile flat terrain** under **Terrain cut**.
+3. For terrain, choose a mode under **Terrain cut**.
 4. Draw a line in a planar view, enter a plane, or choose **Pick three points**.
 5. Choose **Arrow side**, **Opposite side** or **Both sides**.
 6. Inspect the preview.
@@ -138,6 +138,23 @@ Normals and runtime LOD are regenerated. This mode does not cut through part of 
 
 ![Painted curved terrain retains its blend through grid-cell cuts](images/terrain-cell-cut.png)
 
+### Cut through curved cells
+
+Cut the original terrain triangles with a free plane.
+
+1. Select world or `func_detail` terrain brushes.
+2. Click **Clip selected brushes**.
+3. Under **Terrain cut**, choose **Retile surface triangles**.
+4. Draw or enter the cut plane.
+5. Choose **Arrow side**, **Opposite side** or **Both sides**.
+6. Inspect the patches, then click **Apply cut**.
+
+Cut cells become quad fans. Whole retained cells become quarter-cell patches.
+The result must retain the original surface, blend fields, UVs and triangle labels.
+This mode does not smooth a crease or round an inserted paint value.
+
+![Both curved-terrain halves moved apart after a cut through original cells](images/terrain-surface-cut.png)
+
 ## Limits
 
 - Hollow: 16 brushes, 64 faces per brush, 256 walls; thickness 0.125–4096 units.
@@ -187,7 +204,12 @@ Normals and runtime LOD are regenerated. This mode does not cut through part of 
   coarsening, tangential fields or uncertain native normal inputs.
   Each retained cell adds 32 native triangles. Powers 2–4 are subject to the
   shared output and work limits.
-- Terrain cuts accept 16 sources and 64 output patches. Unsupported bindings,
+- **Retile surface triangles** uses the same height-field, texture, normal and
+  selected-contact rules as **Retile grid cells**. Output must fit native edge
+  and corner limits without LOD coarsening. Skew quarter grids, high-valence
+  corners and fractional inserted paint can refuse. The error gives the paint
+  value when it cannot be stored.
+- Terrain cuts accept 16 sources and 128 output patches. Unsupported bindings,
   notes, masks and opaque payloads reject before the map changes.
 - Numerically uncertain cuts reject. They do not move retained points to fit
   the new patch cages.

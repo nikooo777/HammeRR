@@ -9,6 +9,9 @@ const MAX_SIGNIFICAND: u128 = (1 << 24) - 1;
 const MAX_EXACT_ADD_EXPONENT_DIFFERENCE: i32 = u128::BITS as i32 - 24;
 const FIND_START_DISTANCE_BOUND: f32 = 1_000_000_000.0;
 const MAX_MAPPING_DIMENSION: u32 = 1 << 15;
+const MIN_NORMAL_CROSS_COMPONENT: u32 = (127 - 50) << 23;
+const MAX_NORMAL_CROSS_COMPONENT: u32 = (127 + 50) << 23;
+const MIN_NORMAL_CROSS_MAXIMUM: u32 = (127 - 6) << 23;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeDisplacementRounding {
@@ -318,7 +321,7 @@ impl Arithmetic {
         .add(left, right)?;
         if !same_coordinate(lower, upper) {
             return Err(invalid(
-                "native displacement texture projection requires exact arithmetic",
+                "native displacement certificate requires exact arithmetic",
             ));
         }
         self.add(left, right)
@@ -335,10 +338,34 @@ impl Arithmetic {
         .multiply(left, right)?;
         if !same_coordinate(lower, upper) {
             return Err(invalid(
-                "native displacement texture projection requires exact arithmetic",
+                "native displacement certificate requires exact arithmetic",
             ));
         }
         self.multiply(left, right)
+    }
+
+    fn exact_cross(
+        self,
+        origin: [f32; 3],
+        first: [f32; 3],
+        second: [f32; 3],
+    ) -> io::Result<[f32; 3]> {
+        let mut first_edge = [0.0; 3];
+        let mut second_edge = [0.0; 3];
+        for axis in 0..3 {
+            let negative_origin = f32::from_bits(origin[axis].to_bits() ^ SIGN);
+            first_edge[axis] = self.exact_add(first[axis], negative_origin)?;
+            second_edge[axis] = self.exact_add(second[axis], negative_origin)?;
+        }
+        let mut cross = [0.0; 3];
+        for (axis, value) in cross.iter_mut().enumerate() {
+            let next = (axis + 1) % 3;
+            let last = (axis + 2) % 3;
+            let first = self.exact_multiply(first_edge[next], second_edge[last])?;
+            let second = self.exact_multiply(first_edge[last], second_edge[next])?;
+            *value = self.exact_add(first, f32::from_bits(second.to_bits() ^ SIGN))?;
+        }
+        Ok(cross)
     }
 
     fn exact_texture_coordinate(
@@ -397,6 +424,72 @@ impl Arithmetic {
             }
         }
         first.ok_or_else(|| invalid("native displacement start exceeds its corner distance bound"))
+    }
+}
+
+fn conditioned_normal_signs(cross: [f32; 3]) -> io::Result<[i8; 3]> {
+    let mut signs = [0; 3];
+    let mut maximum = 0;
+    for (axis, component) in cross.into_iter().enumerate() {
+        let bits = component.to_bits();
+        let magnitude = bits & !SIGN;
+        if magnitude != 0 {
+            if !(MIN_NORMAL_CROSS_COMPONENT..=MAX_NORMAL_CROSS_COMPONENT).contains(&magnitude) {
+                return Err(invalid(
+                    "native displacement normal components exceed the supported conditioning range",
+                ));
+            }
+            signs[axis] = if bits & SIGN == 0 { 1 } else { -1 };
+            maximum = maximum.max(magnitude);
+        }
+    }
+    if maximum < MIN_NORMAL_CROSS_MAXIMUM {
+        return Err(invalid(
+            "native displacement normal triangles are collapsed or poorly conditioned",
+        ));
+    }
+    Ok(signs)
+}
+
+impl DisplacementInfo {
+    /// Certifies exact edge/cross arithmetic and conditioned inputs for the native
+    /// cell-normal stencil, independently of rounding mode. Nonzero cross components
+    /// must lie in [2^-50, 2^50], with at least one magnitude of 2^-6 or greater.
+    /// The caller must prove a common exact plane and positive orientation to infer
+    /// a preserved normal direction. This does not certify native normal bits or pixels.
+    pub fn certify_native_normal_inputs(
+        self,
+        positions: &[[f32; 3]],
+        profile: NativeDisplacementProfile,
+    ) -> io::Result<()> {
+        let NativeDisplacementProfile::CssLinux64Build25338318 { rounding } = profile;
+        let arithmetic = Arithmetic { rounding };
+        let size = self.grid_size()?;
+        if positions.len() != size * size {
+            return Err(invalid(
+                "native displacement normal input grid dimensions are invalid",
+            ));
+        }
+        let mut expected_signs = None;
+        for row in 0..size - 1 {
+            for column in 0..size - 1 {
+                let a = positions[row * size + column];
+                let b = positions[row * size + column + 1];
+                let c = positions[(row + 1) * size + column];
+                let d = positions[(row + 1) * size + column + 1];
+                for [origin, first, second] in [[a, b, c], [b, d, c]] {
+                    let cross = arithmetic.exact_cross(origin, first, second)?;
+                    let signs = conditioned_normal_signs(cross)?;
+                    if expected_signs.is_some_and(|expected| expected != signs) {
+                        return Err(invalid(
+                            "native displacement normal stencil changes orientation",
+                        ));
+                    }
+                    expected_signs = Some(signs);
+                }
+            }
+        }
+        Ok(())
     }
 }
 

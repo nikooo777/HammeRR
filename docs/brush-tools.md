@@ -91,10 +91,11 @@ child edits or a parent save.
 
 ### Retile flat terrain
 
-Use this mode to cut an eligible flat surface across its existing grid.
+Use this mode to cut an eligible planar surface across its existing grid.
 
-1. Select flat power-2/3/4 world or `func_detail` terrain on a world-axis
-   plane. Select all patches that the cut must split.
+1. Select planar power-2/3/4 world or `func_detail` terrain. Its base cage
+   must lie on a world-axis plane; the visible surface can be sloped.
+   Select all patches that the cut must split.
 2. Click **Clip selected brushes**.
 3. Under **Terrain cut**, choose **Retile flat terrain**.
 4. Draw a line, enter a plane, or choose **Pick three points**.
@@ -104,13 +105,16 @@ Use this mode to cut an eligible flat surface across its existing grid.
 Each retained three-to-five-corner region becomes power-2 quadrilateral patches.
 Four-corner regions stay one patch when their joins permit. Select the results
 to cut them again. Compatible joined patches are checked as one component.
-The surface must have one constant displacement normal to its base, uniform
-integral blend alpha and uniform native physical triangle flags. Retiling keeps
+Each surface must remain on one exact plane. Height can vary linearly along
+the base normal. Blend alpha and native physical triangle flags must be uniform.
+Retiling keeps
 that field, material, texture placement and smoothing. It does not flatten a
-curved or painted surface, and **Existing grid** never switches modes after a
+curved or variably painted surface, and **Existing grid** never switches modes after a
 failed cut.
 
 ![A diagonal cut retiles flat terrain into native quad patches](images/terrain-flat-cut.png)
+
+![Repeated cuts preserve a sloped terrain sheet](images/terrain-sloped-cuts.png)
 
 ## Limits
 
@@ -133,6 +137,8 @@ failed cut.
   unsupported partial joins and affected LOD coarsening reject. Source paint and
   physical tags must be uniform; restricted masks and opaque metadata reject.
   Native positions, shared samples and texture fields must remain exact.
+  Normal inputs must pass the native arithmetic and conditioning checks.
+  Normal bits and final pixels can differ after retiling.
 - Retiling requires a direct static `LightmappedGeneric` material with an
   untransformed `$basetexture` and an ordinary single-frame VTF with positive
   power-of-two dimensions no larger than 32768. Material and texture references

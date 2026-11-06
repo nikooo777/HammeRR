@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec3;
 use source_formats::{
@@ -15,16 +15,22 @@ use crate::clip::{Keep, TerrainPlan, TerrainTexture};
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
+mod field;
 pub(crate) mod network;
+
+use field::PlanarField;
 
 const POWER: u32 = 2;
 const SIZE: usize = (1 << POWER) + 1;
 const VERTICES: usize = SIZE * SIZE;
 const TRIANGLES: usize = (SIZE - 1) * (SIZE - 1) * 2;
 const POSITION_WORK: usize = 256;
+const NORMAL_SETUP_WORK: usize = 256;
+const NORMAL_CELL_WORK: usize = 256;
 const UV_WORK: usize = 1024;
 const UV_VERTEX_WORK: usize = 128;
 const DETAIL_UV_VERTEX_WORK: usize = 8;
+const FIELD_WORK: usize = 64;
 const CARRIER_EPSILON: f64 = 1e-8;
 
 type Point = [u64; 3];
@@ -159,16 +165,6 @@ fn stored(point: DVec3) -> Result<DVec3, EditError> {
     Ok(point)
 }
 
-fn translate(point: DVec3, offset: DVec3) -> Result<DVec3, EditError> {
-    let mut result = DVec3::ZERO;
-    for axis in 0..3 {
-        result[axis] = Exact::float(point[axis])?
-            .add(Exact::float(offset[axis])?)?
-            .value()?;
-    }
-    Ok(result)
-}
-
 fn orient(a: DVec3, b: DVec3, c: DVec3, axes: [usize; 2]) -> Result<i128, EditError> {
     let [u, v] = axes;
     let x = Exact::float(b[u])?.sub(Exact::float(a[u])?)?;
@@ -216,8 +212,7 @@ struct Prepared<'a> {
     info: &'a DispInfo,
     face: &'a Face,
     mesh: DisplacementMesh,
-    offset: DVec3,
-    axis: usize,
+    field: PlanarField,
     axes: [usize; 2],
     sign: i128,
     tag: u16,
@@ -279,6 +274,46 @@ fn reconstructed(
             .collect(),
     );
     Ok(result)
+}
+
+fn certify_normals(
+    data: &bsp::Displacements,
+    profiles: &[Vec<DVec3>],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let mut normal_inputs = BTreeSet::new();
+    let cells = data.infos[0]
+        .grid_size()
+        .map_err(|error| invalid(error.to_string()))?
+        - 1;
+    for (rounding, points) in bsp::NativeDisplacementRounding::ALL
+        .into_iter()
+        .zip(profiles)
+    {
+        let positions = points
+            .iter()
+            .map(|point| point.as_vec3().to_array())
+            .collect::<Vec<_>>();
+        let identity = positions
+            .iter()
+            .map(|point| point.map(|value| if value == 0.0 { 0 } else { value.to_bits() }))
+            .collect::<Vec<_>>();
+        if normal_inputs.insert(identity) {
+            work.consume(NORMAL_SETUP_WORK + NORMAL_CELL_WORK * cells * cells)
+                .map_err(invalid)?;
+            data.infos[0]
+                .certify_native_normal_inputs(
+                    &positions,
+                    bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding },
+                )
+                .map_err(|error| {
+                    invalid(format!(
+                        "Terrain native normal inputs cannot be certified: {error}"
+                    ))
+                })?;
+        }
+    }
+    Ok(())
 }
 
 fn prepare<'a>(
@@ -347,9 +382,6 @@ fn prepare<'a>(
             "Flat terrain cannot remap opaque payloads or restricted vertex masks",
         ));
     }
-    rows(&info.normals, mesh.size)?;
-    rows(&info.distances, mesh.size)?;
-    rows(&info.offsets, mesh.size)?;
     rows(&info.offset_normals, mesh.size)?;
     rows(&info.alphas, mesh.size)?;
     if info
@@ -378,10 +410,17 @@ fn prepare<'a>(
             "Flat terrain requires uniform native physical triangle tags",
         ));
     }
-    let corners: [DVec3; 4] = face.vertices.as_slice().try_into().unwrap();
-    let axis = (0..3)
-        .find(|&axis| corners.iter().all(|point| point[axis] == corners[0][axis]))
-        .ok_or_else(|| invalid("Flat terrain requires a quad cage on an axis-aligned plane"))?;
+    let indices = [
+        0,
+        (mesh.size - 1) * mesh.size,
+        mesh.size * mesh.size - 1,
+        mesh.size - 1,
+    ];
+    work.consume(FIELD_WORK * (2 * mesh.positions.len() + 8))
+        .map_err(invalid)?;
+    let corners = indices.map(|index| mesh.base_positions[index]);
+    let field = PlanarField::new(corners, indices.map(|index| mesh.positions[index]))?;
+    let axis = field.axis();
     let axes = [(axis + 1) % 3, (axis + 2) % 3];
     let sign = orient(corners[0], corners[1], corners[2], axes)?;
     if sign == 0 {
@@ -391,19 +430,16 @@ fn prepare<'a>(
     for point in corners {
         stored(point)?;
     }
-    let offset = mesh.positions[0] - mesh.base_positions[0];
-    if offset[axes[0]] != 0.0 || offset[axes[1]] != 0.0 || !offset.is_finite() {
-        return Err(invalid("Flat terrain requires a constant normal offset"));
-    }
     for (index, &point) in mesh.positions.iter().enumerate() {
-        let expected = translate(mesh.base_positions[index], offset)?;
-        if !same(point, expected)
+        let expected = field.position(mesh.base_positions[index])?;
+        if !same(field.base_position(point)?, mesh.base_positions[index])
+            || !same(point, expected)
             || positions
                 .iter()
                 .any(|positions| !same(positions[index], expected))
         {
             return Err(invalid(
-                "Flat terrain native, compiler and authored positions must agree exactly on one constant-offset sheet",
+                "Flat terrain native, compiler and authored positions must agree exactly on one planar height field",
             ));
         }
     }
@@ -421,14 +457,17 @@ fn prepare<'a>(
             ));
         }
     }
-    let ring = corners.map(|point| point + offset);
+    certify_normals(&data, &positions, work)?;
+    let mut ring = [DVec3::ZERO; 4];
+    for (point, base) in ring.iter_mut().zip(corners) {
+        *point = field.position(base)?;
+    }
     Ok(Some(Prepared {
         side,
         info,
         face,
         mesh,
-        offset,
-        axis,
+        field,
         axes,
         sign,
         tag: tags[0],
@@ -490,7 +529,12 @@ fn polygon(mut result: Vec<DVec3>, axes: [usize; 2]) -> Result<Vec<DVec3>, EditE
     Ok(result)
 }
 
-fn split(source: &Prepared<'_>, plane: Plane) -> Result<[Vec<DVec3>; 2], EditError> {
+fn split(
+    source: &Prepared<'_>,
+    plane: Plane,
+    work: &mut Work,
+) -> Result<[Vec<DVec3>; 2], EditError> {
+    work.consume(12 * FIELD_WORK).map_err(invalid)?;
     let classify = |point| {
         let distance = plane.distance_to(point);
         if distance > CUT_EPSILON {
@@ -524,12 +568,11 @@ fn split(source: &Prepared<'_>, plane: Plane) -> Result<[Vec<DVec3>; 2], EditErr
             if !parameter.is_finite() || !(0.0..1.0).contains(&parameter) || parameter == 0.0 {
                 return Err(numeric());
             }
-            let base_a = translate(a, -source.offset)?;
-            let base_b = translate(b, -source.offset)?;
-            let base = native::stored_vertex(base_a.lerp(base_b, parameter));
-            let point = translate(base, source.offset)?;
+            let base_a = source.field.base_position(a)?;
+            let base_b = source.field.base_position(b)?;
+            let base = stored(native::stored_vertex(base_a.lerp(base_b, parameter)))?;
+            let point = source.field.position(base)?;
             if !on_segment(point, a, b, source.axes)?
-                || point[source.axis] != a[source.axis]
                 || plane.distance_to(point).abs() > CUT_EPSILON
             {
                 return Err(invalid(
@@ -679,6 +722,7 @@ fn carrier(
     source: &Prepared<'_>,
     quad: [DVec3; 4],
     material: &str,
+    work: &mut Work,
 ) -> Result<Solid, EditError> {
     let center = weighted(&quad, &[1, 1, 1, 1], 4)?;
     let mut part = solid.clone();
@@ -740,7 +784,7 @@ fn carrier(
     info.elevation = 0.0;
     info.normals = None;
     info.distances = None;
-    info.offsets = Some(vec![vec![source.offset; SIZE]; SIZE]);
+    info.offsets = None;
     info.offset_normals = None;
     info.alphas = source
         .info
@@ -750,6 +794,21 @@ fn carrier(
     if let Some(tags) = &source.info.triangle_tags {
         info.triangle_tags = Some(vec![vec![tags[0][0]; 2 * (SIZE - 1)]; SIZE - 1]);
     }
+    let geometry = BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
+    let face = geometry
+        .faces
+        .iter()
+        .find(|face| face.side == index)
+        .ok_or_else(numeric)?;
+    let mesh = DisplacementMesh::build(face, &info).map_err(|error| invalid(error.to_string()))?;
+    work.consume(FIELD_WORK * mesh.base_positions.len())
+        .map_err(invalid)?;
+    info.offsets = Some(
+        mesh.base_positions
+            .chunks(SIZE)
+            .map(|row| row.iter().map(|&base| source.field.offset(base)).collect())
+            .collect::<Result<_, _>>()?,
+    );
     part.sides[index].displacement = Some(info);
     Ok(part)
 }
@@ -798,7 +857,7 @@ fn region(
     let mut actual = Edges::new();
     let mut boundary = Edges::new();
     for child in children {
-        work.consume(indices.len() + child.positions.len() * ring.len())
+        work.consume(indices.len() + child.positions.len() * (ring.len() + FIELD_WORK))
             .map_err(invalid)?;
         for &point in &child.positions {
             if plane.distance_to(point) > CUT_EPSILON {
@@ -806,9 +865,7 @@ fn region(
                     "Flat terrain native triangles cross the retained cut-plane precision",
                 ));
             }
-            if point[source.axis] != ring[0][source.axis] {
-                return Err(invalid("Flat terrain left its exact sheet plane"));
-            }
+            let _ = source.field.base_position(point)?;
             for index in 0..ring.len() {
                 let value = orient(
                     ring[index],
@@ -940,7 +997,7 @@ pub(crate) fn plan(
     )?;
     let mut parts = Vec::new();
     let mut children = Vec::new();
-    let polygons = split(&source, request.plane)?;
+    let polygons = split(&source, request.plane, work)?;
     let fan_quad = request.keep == Keep::Both
         && matches!([polygons[0].len(), polygons[1].len()], [3, 4] | [4, 3]);
     for back in [true, false] {
@@ -961,11 +1018,12 @@ pub(crate) fn plan(
         let ring = &polygons[usize::from(!back)];
         let first = children.len();
         for quad in quads(ring, source.axes, source.sign, fan_quad)? {
+            work.consume(FIELD_WORK * quad.len()).map_err(invalid)?;
             let mut base = [DVec3::ZERO; 4];
             for (output, point) in base.iter_mut().zip(quad) {
-                *output = stored(translate(point, -source.offset)?)?;
+                *output = stored(source.field.base_position(point)?)?;
             }
-            let part = carrier(solid, &source, base, request.material)?;
+            let part = carrier(solid, &source, base, request.material, work)?;
             let shape =
                 BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
             let side_index = part
@@ -988,15 +1046,21 @@ pub(crate) fn plan(
                 ));
             }
             let (data, stored_base) = data(face, &mesh, POWER)?;
-            for positions in reconstructed(&data, stored_base, work)? {
-                for (index, &point) in positions.iter().enumerate() {
-                    if !same(point, mesh.positions[index])
-                        || !same(point, translate(mesh.base_positions[index], source.offset)?)
-                    {
-                        return Err(invalid(
-                            "Flat terrain child native, compiler and analytic positions differ",
-                        ));
-                    }
+            let positions = reconstructed(&data, stored_base, work)?;
+            work.consume(2 * FIELD_WORK * mesh.positions.len())
+                .map_err(invalid)?;
+            for (index, &point) in mesh.positions.iter().enumerate() {
+                if !same(
+                    source.field.base_position(point)?,
+                    mesh.base_positions[index],
+                ) || !same(point, source.field.position(mesh.base_positions[index])?)
+                    || positions
+                        .iter()
+                        .any(|positions| !same(positions[index], point))
+                {
+                    return Err(invalid(
+                        "Flat terrain child native, compiler and analytic positions differ",
+                    ));
                 }
             }
             if mesh
@@ -1011,6 +1075,7 @@ pub(crate) fn plan(
                     "Flat terrain child changed its uniform alpha or physical tags",
                 ));
             }
+            certify_normals(&data, &positions, work)?;
             uv(&data, face, mesh.positions.len(), texture, work)?;
             children.push(Child {
                 base,

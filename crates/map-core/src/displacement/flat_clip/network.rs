@@ -6,7 +6,9 @@ use source_formats::{
     vmf::{Side, Solid, Vmf},
 };
 
-use super::{Exact, data, invalid, key, orient, reconstructed, same, weighted};
+use super::{
+    Exact, FIELD_WORK, data, field::PlanarField, invalid, orient, reconstructed, same, weighted,
+};
 use crate::displacement::{
     grid_clip::{self, Context, Work},
     lod, native, neighbors, triangles,
@@ -40,11 +42,8 @@ struct Surface<'a> {
     sheet: Sheet,
 }
 
-#[derive(PartialEq, Eq)]
 struct Sheet {
-    axis: usize,
-    base: u64,
-    height: u64,
+    field: PlanarField,
     sign: i128,
 }
 
@@ -215,20 +214,19 @@ fn prepare<'a>(raw: Raw<'a>, work: &mut Work) -> Result<Surface<'a>, EditError> 
     work.consume(mesh.positions.len() + (mesh.size - 1).pow(2) * 2)
         .map_err(invalid)?;
     triangles::native_tags(info, &mesh)?;
-    let corners = [
+    let corner_indices = [
         0,
         (mesh.size - 1) * mesh.size,
         mesh.size * mesh.size - 1,
         mesh.size - 1,
-    ]
-    .map(|index| native::stored_vertex(mesh.base_positions[index]));
+    ];
+    let corners = corner_indices.map(|index| native::stored_vertex(mesh.base_positions[index]));
     let (data, base) = data(&raw.face, &mesh, info.power)?;
     let positions = reconstructed(&data, base, work)?;
-    let axis = (0..3)
-        .find(|&axis| corners.iter().all(|point| point[axis] == corners[0][axis]))
-        .ok_or_else(|| {
-            invalid("Connected flat terrain currently requires axis-aligned coplanar native fields")
-        })?;
+    work.consume(FIELD_WORK * corner_indices.len())
+        .map_err(invalid)?;
+    let field = PlanarField::new(corners, corner_indices.map(|index| mesh.positions[index]))?;
+    let axis = field.axis();
     let axes = [(axis + 1) % 3, (axis + 2) % 3];
     let sign = orient(corners[0], corners[1], corners[2], axes)?;
     if sign == 0 {
@@ -237,22 +235,19 @@ fn prepare<'a>(raw: Raw<'a>, work: &mut Work) -> Result<Surface<'a>, EditError> 
         ));
     }
     super::convex(&corners, axes, sign)?;
-    let offset = mesh.positions[0] - mesh.base_positions[0];
-    if (0..3).any(|other| other != axis && offset[other] != 0.0) {
-        return Err(invalid(
-            "Connected flat terrain currently requires constant normal-offset fields",
-        ));
-    }
-    work.consume(mesh.positions.len() * (positions.len() + 1))
+    work.consume(mesh.positions.len() * (positions.len() + FIELD_WORK * 2))
         .map_err(invalid)?;
     for (index, &point) in mesh.positions.iter().enumerate() {
-        if !same(point, super::translate(mesh.base_positions[index], offset)?)
+        let base = mesh.base_positions[index];
+        let expected = field.position(base)?;
+        if !same(base, field.base_position(point)?)
+            || !same(point, expected)
             || positions
                 .iter()
-                .any(|positions| !same(point, positions[index]))
+                .any(|positions| !same(expected, positions[index]))
         {
             return Err(invalid(
-                "Connected flat terrain currently requires exact constant native fields",
+                "Connected flat terrain requires authored, native and compiler positions on one exact planar field",
             ));
         }
     }
@@ -268,12 +263,8 @@ fn prepare<'a>(raw: Raw<'a>, work: &mut Work) -> Result<Surface<'a>, EditError> 
             ));
         }
     }
-    let sheet = Sheet {
-        axis,
-        base: key(corners[0])[axis],
-        height: key(mesh.positions[0])[axis],
-        sign,
-    };
+    super::certify_normals(&data, &positions, work)?;
+    let sheet = Sheet { field, sign };
     Ok(Surface {
         power: info.power,
         raw,
@@ -405,7 +396,13 @@ fn graph(surfaces: &[&Surface<'_>], work: &mut Work) -> Result<Graph, EditError>
                 }
                 continue;
             };
-            if surfaces[first].sheet != surfaces[second].sheet {
+            work.consume(FIELD_WORK).map_err(invalid)?;
+            if surfaces[first].sheet.sign != surfaces[second].sheet.sign
+                || !surfaces[first]
+                    .sheet
+                    .field
+                    .matches(&surfaces[second].sheet.field)?
+            {
                 return Err(invalid(
                     "Connected flat terrain currently requires compatible coplanar native fields and orientation",
                 ));
@@ -438,7 +435,7 @@ fn on_segment(point: DVec3, segment: [DVec3; 2]) -> Result<bool, EditError> {
 
 fn contains(surface: &Surface<'_>, point: DVec3) -> Result<bool, EditError> {
     let points = surface.corners;
-    let axis = surface.sheet.axis;
+    let axis = surface.sheet.field.axis();
     if point[axis] != points[0][axis] {
         return Ok(false);
     }
@@ -652,9 +649,12 @@ fn verify_source(
     )?;
     work.consume(original.positions.iter().map(Vec::len).sum())
         .map_err(invalid)?;
+    work.consume(FIELD_WORK).map_err(invalid)?;
     if original.power != assembled.power
         || original.corners != assembled.corners
         || original.positions != assembled.positions
+        || original.sheet.sign != assembled.sheet.sign
+        || !original.sheet.field.matches(&assembled.sheet.field)?
     {
         return Err(invalid(
             "Flat terrain context changed original native or compiler geometry",

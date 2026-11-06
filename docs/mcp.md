@@ -788,15 +788,19 @@ map or Undo history. Optional `clip_brushes.terrain_mode` accepts `"grid"` or
 `"flat"` for that request; success adopts the choice, while failure keeps the
 previous choice and valid draft. A failed grid cut never falls back to flat.
 
-Flat mode accepts convex world or `func_detail` quad terrain on world-axis
-planes, at powers 2–4, with constant normal displacement, uniform integral alpha,
-uniform physical tags and unrestricted masks. Four-corner retained regions stay
+Flat mode accepts convex world or `func_detail` quad terrain at powers 2–4.
+Base cages stay on world-axis planes. The visible sheet can be sloped, with
+one exact affine height field along its base normal. Integral alpha and physical
+tags must be uniform; vertex masks stay unrestricted. Four-corner retained regions stay
 one power-2 patch when joins permit; triangle/pentagon regions use quad fans.
 Compatible coplanar flat components support repeated cuts. The full affected
 component, including unchanged and resolved child neighbors, must share its base
 plane, surface plane and orientation. Native edge/corner samples must match;
 partial/uncertain joins, overlaps, affected LOD coarsening and nonflat neighbors
-refuse. Geometry and texture fields remain exact.
+refuse. Geometry and texture fields remain exact. Native cell-normal edge/cross
+arithmetic must be exact and conditioned; this does not promise identical
+normal bits or pixels. Non-crossing terrain stays unchanged and does not require
+planar/normal admission for an unrelated cut.
 
 Materials require guarded direct static `LightmappedGeneric` base textures with
 ordinary single-frame power-of-two VTF dimensions no larger than 32768. Optional

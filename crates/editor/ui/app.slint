@@ -2235,6 +2235,7 @@ export component AppWindow inherits Window {
     in property <int> clip-point-count;
     in property <string> clip-points-summary;
     in-out property <int> clip-keep-index: 2;
+    in-out property <int> clip-terrain-mode-index: 0;
     in-out property <string> clip-normal-x: "1";
     in-out property <string> clip-normal-y: "0";
     in-out property <string> clip-normal-z: "0";
@@ -2454,6 +2455,7 @@ export component AppWindow inherits Window {
     callback clip-points-action(int);
     callback preview-clip-plane();
     callback clip-settings-changed();
+    callback clip-terrain-mode-changed();
     callback clip-inputs-changed();
     callback apply-clip();
     callback cancel-clip();
@@ -4186,6 +4188,7 @@ export component AppWindow inherits Window {
                         }
 
                         if root.dock-tab == 1: ScrollView {
+                            content-width: self.width;
                             vertical-stretch: 1;
                             min-height: Theme.workspace-inspector-reserve;
                             preferred-height: Theme.workspace-inspector-reserve;
@@ -4201,7 +4204,18 @@ export component AppWindow inherits Window {
                                 }
                                 if root.clip-point-mode: Text { text: root.clip-points-summary; color: Theme.warning; font-size: Theme.font-small; wrap: word-wrap; }
                                 FieldRow {
-                                    padding-left: 0; padding-right: 0; label-width: 64px;
+                                    inset: false;
+                                    label: "Terrain cut";
+                                    ComboBox {
+                                        horizontal-stretch: 1;
+                                        accessible-label: "Terrain cut";
+                                        model: ["Existing grid", "Retile flat terrain"];
+                                        current-index <=> root.clip-terrain-mode-index;
+                                        selected => { root.clip-terrain-mode-changed(); }
+                                    }
+                                }
+                                FieldRow {
+                                    inset: false;
                                     label: "Keep";
                                     ComboBox {
                                         horizontal-stretch: 1;
@@ -4212,7 +4226,7 @@ export component AppWindow inherits Window {
                                 }
                                 MutedText { text: "The cyan arrow points to the front side."; font-size: Theme.font-small; }
                                 FieldRow {
-                                    padding-left: 0; padding-right: 0; label-width: 64px;
+                                    inset: false;
                                     label: "Handles";
                                     ComboBox {
                                         horizontal-stretch: 1;
@@ -4243,7 +4257,7 @@ export component AppWindow inherits Window {
                                         LineEdit { min-width: 0px; horizontal-stretch: 1; text <=> root.clip-normal-z; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
                                     }
                                     FieldRow {
-                                        padding-left: 0; padding-right: 0; label-width: 64px;
+                                        inset: false;
                                         label: "Distance";
                                         LineEdit { horizontal-stretch: 1; text <=> root.clip-distance; input-type: decimal; edited => { root.clip-inputs-changed(); } accepted => { root.preview-clip-plane(); } }
                                     }

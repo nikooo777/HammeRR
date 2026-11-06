@@ -1,0 +1,1059 @@
+use std::collections::BTreeMap;
+
+use glam::DVec3;
+use source_formats::{
+    bsp,
+    vmf::{DispInfo, Side, Solid, Vmf},
+};
+
+use super::{
+    DisplacementMesh,
+    grid_clip::{CUT_EPSILON, Context, Work},
+    native, neighbors, smoothing, triangles,
+};
+use crate::clip::{Keep, TerrainPlan, TerrainTexture};
+use crate::surface::FaceId;
+use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
+
+const POWER: u32 = 2;
+const SIZE: usize = (1 << POWER) + 1;
+const VERTICES: usize = SIZE * SIZE;
+const TRIANGLES: usize = (SIZE - 1) * (SIZE - 1) * 2;
+const POSITION_WORK: usize = 256;
+const UV_WORK: usize = 1024;
+const UV_VERTEX_WORK: usize = 128;
+const CARRIER_EPSILON: f64 = 1e-8;
+
+type Point = [u64; 3];
+type Edges = BTreeMap<(Point, Point), usize>;
+
+pub(crate) struct Request<'a> {
+    pub plane: Plane,
+    pub keep: Keep,
+    pub material: &'a str,
+    pub textures: Option<&'a BTreeMap<FaceId, TerrainTexture>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Exact {
+    value: i128,
+    exponent: i32,
+}
+
+fn invalid(message: impl Into<String>) -> EditError {
+    EditError::Invalid(message.into())
+}
+
+fn numeric() -> EditError {
+    invalid("Flat terrain cut exceeds the exact numeric domain")
+}
+
+impl Exact {
+    fn new(value: i128, exponent: i32) -> Self {
+        if value == 0 {
+            return Self {
+                value: 0,
+                exponent: 0,
+            };
+        }
+        let shift = value.unsigned_abs().trailing_zeros();
+        Self {
+            value: value >> shift,
+            exponent: exponent + shift as i32,
+        }
+    }
+
+    fn float(value: f64) -> Result<Self, EditError> {
+        if !value.is_finite() {
+            return Err(numeric());
+        }
+        let bits = value.to_bits();
+        let exponent = ((bits >> 52) & 0x7ff) as i32;
+        let significand = bits & ((1 << 52) - 1);
+        let significand = if exponent == 0 {
+            significand
+        } else {
+            significand | (1 << 52)
+        };
+        let value = i128::from(significand) * if bits >> 63 == 0 { 1 } else { -1 };
+        Ok(Self::new(
+            value,
+            if exponent == 0 {
+                -1074
+            } else {
+                exponent - 1075
+            },
+        ))
+    }
+
+    fn add(self, other: Self) -> Result<Self, EditError> {
+        if self.value == 0 {
+            return Ok(other);
+        }
+        if other.value == 0 {
+            return Ok(self);
+        }
+        let exponent = self.exponent.min(other.exponent);
+        let scale = |value: Self| {
+            let shift = u32::try_from(value.exponent - exponent).ok()?;
+            let factor = 1i128.checked_shl(shift).filter(|factor| *factor > 0)?;
+            value.value.checked_mul(factor)
+        };
+        let a = scale(self).ok_or_else(numeric)?;
+        let b = scale(other).ok_or_else(numeric)?;
+        Ok(Self::new(a.checked_add(b).ok_or_else(numeric)?, exponent))
+    }
+
+    fn sub(self, other: Self) -> Result<Self, EditError> {
+        self.add(Self {
+            value: other.value.checked_neg().ok_or_else(numeric)?,
+            ..other
+        })
+    }
+
+    fn mul(self, other: Self) -> Result<Self, EditError> {
+        Ok(Self::new(
+            self.value.checked_mul(other.value).ok_or_else(numeric)?,
+            self.exponent + other.exponent,
+        ))
+    }
+
+    fn div(self, other: Self) -> Result<Self, EditError> {
+        if other.value == 0 || self.value.checked_rem(other.value) != Some(0) {
+            return Err(numeric());
+        }
+        Ok(Self::new(
+            self.value.checked_div(other.value).ok_or_else(numeric)?,
+            self.exponent - other.exponent,
+        ))
+    }
+
+    fn value(self) -> Result<f64, EditError> {
+        let result = self.value as f64 * 2.0f64.powi(self.exponent);
+        if Self::float(result)? != self {
+            return Err(numeric());
+        }
+        Ok(result)
+    }
+}
+
+fn key(point: DVec3) -> Point {
+    point
+        .to_array()
+        .map(|value| if value == 0.0 { 0 } else { value.to_bits() })
+}
+
+fn same(a: DVec3, b: DVec3) -> bool {
+    key(a) == key(b)
+}
+
+fn stored(point: DVec3) -> Result<DVec3, EditError> {
+    if !point.is_finite() || !same(point, native::stored_vertex(point)) {
+        return Err(invalid(
+            "Flat terrain cage points must survive native compiler storage exactly",
+        ));
+    }
+    Ok(point)
+}
+
+fn translate(point: DVec3, offset: DVec3) -> Result<DVec3, EditError> {
+    let mut result = DVec3::ZERO;
+    for axis in 0..3 {
+        result[axis] = Exact::float(point[axis])?
+            .add(Exact::float(offset[axis])?)?
+            .value()?;
+    }
+    Ok(result)
+}
+
+fn orient(a: DVec3, b: DVec3, c: DVec3, axes: [usize; 2]) -> Result<i128, EditError> {
+    let [u, v] = axes;
+    let x = Exact::float(b[u])?.sub(Exact::float(a[u])?)?;
+    let y = Exact::float(b[v])?.sub(Exact::float(a[v])?)?;
+    let z = Exact::float(c[u])?.sub(Exact::float(a[u])?)?;
+    let w = Exact::float(c[v])?.sub(Exact::float(a[v])?)?;
+    Ok(x.mul(w)?.sub(y.mul(z)?)?.value.signum())
+}
+
+fn convex(points: &[DVec3], axes: [usize; 2], sign: i128) -> Result<(), EditError> {
+    for index in 0..points.len() {
+        for other in 0..points.len() {
+            if other == index || other == (index + 1) % points.len() {
+                continue;
+            }
+            if orient(
+                points[index],
+                points[(index + 1) % points.len()],
+                points[other],
+                axes,
+            )? != sign
+            {
+                return Err(invalid("Flat terrain polygons must remain strictly convex"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rows<T: PartialEq>(rows: &Option<Vec<Vec<T>>>, size: usize) -> Result<(), EditError> {
+    if let Some(rows) = rows
+        && (rows.len() != size
+            || rows.iter().any(|row| row.len() != size)
+            || rows.iter().flatten().any(|value| value != &rows[0][0]))
+    {
+        return Err(invalid(
+            "Flat terrain requires uniform, correctly sized source fields",
+        ));
+    }
+    Ok(())
+}
+
+struct Prepared<'a> {
+    side: &'a Side,
+    info: &'a DispInfo,
+    face: &'a Face,
+    mesh: DisplacementMesh,
+    offset: DVec3,
+    axis: usize,
+    axes: [usize; 2],
+    sign: i128,
+    tag: u16,
+    ring: [DVec3; 4],
+    data: bsp::Displacements,
+}
+
+fn data(
+    face: &Face,
+    mesh: &DisplacementMesh,
+    power: u32,
+) -> Result<(bsp::Displacements, [[f32; 3]; 4]), EditError> {
+    let base: [DVec3; 4] = face
+        .vertices
+        .as_slice()
+        .try_into()
+        .map_err(|_| invalid("Flat terrain requires a rectangular quad cage"))?;
+    Ok((
+        bsp::Displacements {
+            infos: vec![bsp::DisplacementInfo {
+                start: native::stored_vertex(mesh.base_positions[0])
+                    .as_vec3()
+                    .to_array(),
+                power: power as i32,
+                ..Default::default()
+            }],
+            vertices: native::vertices(mesh),
+            triangles: Vec::new(),
+        },
+        base.map(|point| native::stored_vertex(point).as_vec3().to_array()),
+    ))
+}
+
+fn reconstructed(
+    data: &bsp::Displacements,
+    base: [[f32; 3]; 4],
+    work: &mut Work,
+) -> Result<Vec<Vec<DVec3>>, EditError> {
+    work.consume(5 * (POSITION_WORK + 32 * data.vertices.len()))
+        .map_err(invalid)?;
+    let mut result = Vec::with_capacity(5);
+    for rounding in bsp::NativeDisplacementRounding::ALL {
+        let profile = bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding };
+        let positions = data
+            .native_positions(0, base, profile)
+            .map_err(|error| invalid(error.to_string()))?;
+        result.push(
+            positions
+                .into_iter()
+                .map(|point| DVec3::from_array(point.map(f64::from)))
+                .collect(),
+        );
+    }
+    result.push(
+        data.positions(0, base)
+            .map_err(|error| invalid(error.to_string()))?
+            .into_iter()
+            .map(|point| DVec3::from_array(point.map(f64::from)))
+            .collect(),
+    );
+    Ok(result)
+}
+
+fn prepare<'a>(
+    document: &Document,
+    solid: &'a Solid,
+    geometry: &'a BrushGeometry,
+    plane: Plane,
+    work: &mut Work,
+) -> Result<Option<Prepared<'a>>, EditError> {
+    let displaced = solid
+        .sides
+        .iter()
+        .enumerate()
+        .filter(|(_, side)| side.displacement.is_some())
+        .collect::<Vec<_>>();
+    let [(index, side)] = displaced.as_slice() else {
+        return Err(invalid(
+            "Flat terrain clipping requires one displaced face per brush",
+        ));
+    };
+    let face = geometry
+        .faces
+        .iter()
+        .find(|face| face.side == *index)
+        .ok_or_else(|| invalid("Terrain has no effective base face"))?;
+    let info = side.displacement.as_ref().unwrap();
+    let mesh = DisplacementMesh::build(face, info).map_err(|error| invalid(error.to_string()))?;
+    let (data, base) = data(face, &mesh, info.power)?;
+    let positions = reconstructed(&data, base, work)?;
+    let mut crossing = false;
+    for positions in positions.iter().chain(std::iter::once(&mesh.positions)) {
+        let mut front = false;
+        let mut back = false;
+        for &point in positions {
+            let value = plane.distance_to(point);
+            front |= value > CUT_EPSILON;
+            back |= value < -CUT_EPSILON;
+        }
+        crossing |= front && back;
+    }
+    if !crossing {
+        return Ok(None);
+    }
+    let (owner, _) = crate::subobject::solid(document, solid.id)?;
+    if let ObjectId::Entity(id) = owner
+        && document.entity(id).and_then(|entity| entity.classname()) != Some("func_detail")
+    {
+        return Err(invalid(
+            "Flat terrain clipping requires world or func_detail brushes",
+        ));
+    }
+    native::checked_mesh(face, info).map_err(invalid)?;
+    crate::subobject::fragments::admit_source(solid)?;
+    smoothing::angle(info).map_err(invalid)?;
+    if !info.extra.is_empty()
+        || info.extra_properties.iter().any(|(key, _)| {
+            !["smooth", "mintess", "uaxis", "vaxis"]
+                .iter()
+                .any(|known| key.eq_ignore_ascii_case(known))
+        })
+        || info.allowed_verts.as_ref().is_some_and(|mask| {
+            mask.len() != super::ALLOWED_VERTEX_MASK_WORDS || mask.iter().any(|word| *word != -1)
+        })
+    {
+        return Err(invalid(
+            "Flat terrain cannot remap opaque payloads or restricted vertex masks",
+        ));
+    }
+    rows(&info.normals, mesh.size)?;
+    rows(&info.distances, mesh.size)?;
+    rows(&info.offsets, mesh.size)?;
+    rows(&info.offset_normals, mesh.size)?;
+    rows(&info.alphas, mesh.size)?;
+    if info
+        .offset_normals
+        .as_ref()
+        .is_some_and(|rows| rows.iter().flatten().any(|normal| *normal != DVec3::ZERO))
+    {
+        return Err(invalid(
+            "Flat terrain requires absent or zero offset normals",
+        ));
+    }
+    let alpha = mesh.alphas[0];
+    if !(0.0..=255.0).contains(&alpha) || alpha.fract() != 0.0 {
+        return Err(invalid(
+            "Flat terrain requires uniform integral 8-bit alpha",
+        ));
+    }
+    if let Some(tags) = triangles::source_tags(info)?
+        && tags.iter().any(|tag| *tag != tags[0])
+    {
+        return Err(invalid("Flat terrain requires uniform triangle tags"));
+    }
+    let tags = triangles::native_tags(info, &mesh)?;
+    if tags.iter().any(|tag| *tag != tags[0]) {
+        return Err(invalid(
+            "Flat terrain requires uniform native physical triangle tags",
+        ));
+    }
+    let corners: [DVec3; 4] = face.vertices.as_slice().try_into().unwrap();
+    let axis = (0..3)
+        .find(|&axis| corners.iter().all(|point| point[axis] == corners[0][axis]))
+        .ok_or_else(|| invalid("Flat terrain requires an axis-aligned rectangular base"))?;
+    let axes = [(axis + 1) % 3, (axis + 2) % 3];
+    let sign = orient(corners[0], corners[1], corners[2], axes)?;
+    if sign == 0 {
+        return Err(invalid("Flat terrain cage is collapsed"));
+    }
+    convex(&corners, axes, sign)?;
+    for edge in 0..4 {
+        let delta = corners[(edge + 1) % 4] - corners[edge];
+        if (delta[axes[0]] == 0.0) == (delta[axes[1]] == 0.0) {
+            return Err(invalid(
+                "Flat terrain requires an axis-aligned rectangular base",
+            ));
+        }
+    }
+    for point in corners {
+        stored(point)?;
+    }
+    let offset = mesh.positions[0] - mesh.base_positions[0];
+    if offset[axes[0]] != 0.0 || offset[axes[1]] != 0.0 || !offset.is_finite() {
+        return Err(invalid("Flat terrain requires a constant normal offset"));
+    }
+    for (index, &point) in mesh.positions.iter().enumerate() {
+        let expected = translate(mesh.base_positions[index], offset)?;
+        if !same(point, expected)
+            || positions
+                .iter()
+                .any(|positions| !same(positions[index], expected))
+        {
+            return Err(invalid(
+                "Flat terrain native, compiler and authored positions must agree exactly on one constant-offset sheet",
+            ));
+        }
+    }
+    let ring = corners.map(|point| point + offset);
+    Ok(Some(Prepared {
+        side,
+        info,
+        face,
+        mesh,
+        offset,
+        axis,
+        axes,
+        sign,
+        tag: tags[0],
+        ring,
+        data,
+    }))
+}
+
+pub(crate) fn texture_face(
+    document: &Document,
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    plane: Plane,
+    work: &mut Work,
+) -> Result<Option<FaceId>, EditError> {
+    Ok(
+        prepare(document, solid, geometry, plane, work)?.map(|source| FaceId {
+            solid: solid.id,
+            side: source.side.id,
+        }),
+    )
+}
+
+fn polygon(mut result: Vec<DVec3>, axes: [usize; 2]) -> Result<Vec<DVec3>, EditError> {
+    loop {
+        let remove = (0..result.len())
+            .find(|&index| same(result[index], result[(index + 1) % result.len()]));
+        if let Some(index) = remove {
+            result.remove(index);
+        } else {
+            break;
+        }
+    }
+    loop {
+        let mut remove = None;
+        for index in 0..result.len() {
+            if orient(
+                result[(index + result.len() - 1) % result.len()],
+                result[index],
+                result[(index + 1) % result.len()],
+                axes,
+            )? == 0
+            {
+                remove = Some(index);
+                break;
+            }
+        }
+        if let Some(index) = remove {
+            result.remove(index);
+        } else {
+            break;
+        }
+    }
+    if !(3..=5).contains(&result.len()) {
+        return Err(invalid(
+            "Flat terrain cut requires a convex three-to-five-corner retained polygon",
+        ));
+    }
+    Ok(result)
+}
+
+fn split(source: &Prepared<'_>, plane: Plane) -> Result<[Vec<DVec3>; 2], EditError> {
+    let classify = |point| {
+        let distance = plane.distance_to(point);
+        if distance > CUT_EPSILON {
+            1
+        } else if distance < -CUT_EPSILON {
+            -1
+        } else {
+            0
+        }
+    };
+    let mut result: [Vec<DVec3>; 2] = std::array::from_fn(|_| Vec::new());
+    let mut cut = Vec::new();
+    for index in 0..source.ring.len() {
+        let a = source.ring[index];
+        let b = source.ring[(index + 1) % source.ring.len()];
+        let first = classify(a);
+        let second = classify(b);
+        if first <= 0 {
+            result[0].push(a);
+        }
+        if first >= 0 {
+            result[1].push(a);
+        }
+        if first == 0 {
+            cut.push(a);
+        }
+        if first * second == -1 {
+            let da = plane.distance_to(a);
+            let db = plane.distance_to(b);
+            let parameter = da / (da - db);
+            if !parameter.is_finite() || !(0.0..1.0).contains(&parameter) || parameter == 0.0 {
+                return Err(numeric());
+            }
+            let base_a = translate(a, -source.offset)?;
+            let base_b = translate(b, -source.offset)?;
+            let base = native::stored_vertex(base_a.lerp(base_b, parameter));
+            let point = translate(base, source.offset)?;
+            if !on_segment(point, a, b, source.axes)?
+                || point[source.axis] != a[source.axis]
+                || plane.distance_to(point).abs() > CUT_EPSILON
+            {
+                return Err(invalid(
+                    "Flat terrain cut endpoints must survive native storage on their original edges within Source cut-plane precision",
+                ));
+            }
+            result[0].push(point);
+            result[1].push(point);
+            cut.push(point);
+        }
+    }
+    cut.sort_by_key(|&point| key(point));
+    cut.dedup_by(|a, b| same(*a, *b));
+    let [a, b] = cut.as_slice() else {
+        return Err(invalid(
+            "Flat terrain cut requires one shared segment at Source cut-plane precision",
+        ));
+    };
+    let mut back_side = None;
+    for &point in &source.ring {
+        let side = orient(*a, *b, point, source.axes)?;
+        match classify(point) {
+            0 if side != 0 => {
+                return Err(invalid(
+                    "Flat terrain cut cannot preserve one exact shared cut segment",
+                ));
+            }
+            -1 if side != 0 => {
+                back_side = Some(side);
+            }
+            -1 => {
+                return Err(invalid(
+                    "Flat terrain cut moved a retained source corner onto its boundary",
+                ));
+            }
+            _ => {}
+        }
+    }
+    let back_side = back_side.ok_or_else(numeric)?;
+    for &point in &source.ring {
+        let side = orient(*a, *b, point, source.axes)?;
+        let classification = classify(point);
+        if classification < 0 && side != back_side || classification > 0 && side != -back_side {
+            return Err(invalid(
+                "Flat terrain stored cut segment does not preserve the requested source-side separation",
+            ));
+        }
+    }
+    let [back, front] = result;
+    Ok([polygon(back, source.axes)?, polygon(front, source.axes)?])
+}
+
+fn weighted(points: &[DVec3], weights: &[i128], denominator: i128) -> Result<DVec3, EditError> {
+    let mut result = DVec3::ZERO;
+    for axis in 0..3 {
+        let mut value = Exact::new(0, 0);
+        for (&point, &weight) in points.iter().zip(weights) {
+            value = value.add(Exact::float(point[axis])?.mul(Exact::new(weight, 0))?)?;
+        }
+        result[axis] = value.div(Exact::new(denominator, 0))?.value()?;
+    }
+    Ok(result)
+}
+
+fn fan(ring: &[DVec3], axes: [usize; 2], sign: i128) -> Result<Vec<[DVec3; 4]>, EditError> {
+    convex(ring, axes, sign)?;
+    let (weights, denominator): (&[i128], i128) = match ring.len() {
+        3 => (&[3, 3, 2], 8),
+        4 => (&[1, 1, 1, 1], 4),
+        5 => (&[2, 2, 2, 1, 1], 8),
+        _ => unreachable!(),
+    };
+    let center = weighted(ring, weights, denominator)?;
+    let mut result = Vec::new();
+    for index in 0..ring.len() {
+        let next = weighted(&[ring[index], ring[(index + 1) % ring.len()]], &[1, 1], 2)?;
+        let previous = weighted(
+            &[ring[(index + ring.len() - 1) % ring.len()], ring[index]],
+            &[1, 1],
+            2,
+        )?;
+        let quad = [ring[index], next, center, previous];
+        convex(&quad, axes, sign)?;
+        result.push(quad);
+    }
+    Ok(result)
+}
+
+fn overlap(a: &[DVec3], b: &[DVec3]) -> bool {
+    let bounds = |points: &[DVec3]| {
+        points
+            .iter()
+            .fold((DVec3::MAX, DVec3::MIN), |(low, high), &point| {
+                (low.min(point), high.max(point))
+            })
+    };
+    let (a0, a1) = bounds(a);
+    let (b0, b1) = bounds(b);
+    a0.cmple(b1 + DVec3::splat(neighbors::EDGE_TOLERANCE)).all()
+        && b0.cmple(a1 + DVec3::splat(neighbors::EDGE_TOLERANCE)).all()
+}
+
+fn isolated(
+    solid: &Solid,
+    source: &Prepared<'_>,
+    vmf: &Vmf,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    if vmf.entities.iter().any(|entity| {
+        !entity.hidden
+            && entity
+                .classname()
+                .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+    }) {
+        return Err(invalid(
+            "Flat terrain clipping requires complete resolved visible-instance context",
+        ));
+    }
+    for (other, _) in native::visible_terrain_sources(vmf) {
+        if other.id == solid.id {
+            continue;
+        }
+        work.consume(1).map_err(invalid)?;
+        let geometry =
+            BrushGeometry::from_solid(other).map_err(|error| invalid(error.to_string()))?;
+        for face in &geometry.faces {
+            if other.sides[face.side].displacement.is_none() {
+                continue;
+            }
+            work.consume(face.vertices.len()).map_err(invalid)?;
+            if face.vertices.iter().any(|point| !point.is_finite()) {
+                return Err(invalid(
+                    "Flat terrain isolation requires finite native base cages",
+                ));
+            }
+            let base = face
+                .vertices
+                .iter()
+                .copied()
+                .map(native::stored_vertex)
+                .collect::<Vec<_>>();
+            if overlap(&source.face.vertices, &base) {
+                return Err(invalid(
+                    "Flat terrain retiling requires isolated native base cages without overlapping bounds or contacts",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn uv(
+    data: &bsp::Displacements,
+    face: &Face,
+    vertices: usize,
+    texture: TerrainTexture,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let base: [DVec3; 4] = face.vertices.as_slice().try_into().unwrap();
+    let base = base.map(|point| native::stored_vertex(point).as_vec3().to_array());
+    for rounding in bsp::NativeDisplacementRounding::ALL {
+        work.consume(UV_WORK + UV_VERTEX_WORK * vertices)
+            .map_err(invalid)?;
+        data.native_affine_texture_coordinates(
+            0,
+            base,
+            texture.texture_vecs,
+            texture.mapping_size,
+            bsp::NativeDisplacementProfile::CssLinux64Build25338318 { rounding },
+        )
+        .map_err(|error| {
+            invalid(format!(
+                "Flat terrain native affine UV cannot be certified: {error}"
+            ))
+        })?;
+    }
+    Ok(())
+}
+
+fn carrier(
+    solid: &Solid,
+    source: &Prepared<'_>,
+    quad: [DVec3; 4],
+    material: &str,
+) -> Result<Solid, EditError> {
+    let center = weighted(&quad, &[1, 1, 1, 1], 4)?;
+    let mut part = solid.clone();
+    for edge in 0..4 {
+        let a = quad[edge];
+        let b = quad[(edge + 1) % 4];
+        let normal = (b - a)
+            .cross(source.face.plane.normal)
+            .try_normalize()
+            .ok_or_else(numeric)?;
+        let mut plane = Plane {
+            normal,
+            dist: normal.dot(a),
+        };
+        if plane.distance_to(center) > 0.0 {
+            plane.normal = -plane.normal;
+            plane.dist = -plane.dist;
+        }
+        let shape = BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
+        if shape
+            .faces
+            .iter()
+            .flat_map(|face| &face.vertices)
+            .any(|&point| plane.distance_to(point) > CARRIER_EPSILON)
+        {
+            part = crate::clip::half(&part, plane, material)?;
+        }
+    }
+    let index = part
+        .sides
+        .iter()
+        .position(|side| side.id == source.side.id)
+        .ok_or_else(|| invalid("Flat terrain carrier lost its source surface"))?;
+    let geometry = BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
+    let face = geometry
+        .faces
+        .iter()
+        .find(|face| face.side == index)
+        .ok_or_else(numeric)?;
+    if face.vertices.len() != 4
+        || face.vertices.iter().any(|&point| {
+            !quad
+                .iter()
+                .any(|&target| same(native::stored_vertex(point), target))
+        })
+    {
+        return Err(invalid(
+            "Flat terrain carrier cannot preserve its exact planned quad",
+        ));
+    }
+    crate::brush::refresh_precise(&mut part, true)?;
+    part.sides[index]
+        .set_precise_vertices(&quad)
+        .map_err(|error| invalid(error.to_string()))?;
+    crate::brush::canonicalize_precise(&mut part)?;
+    let mut info = source.info.clone();
+    info.power = POWER;
+    info.start_position = quad[0];
+    info.elevation = 0.0;
+    info.normals = None;
+    info.distances = None;
+    info.offsets = Some(vec![vec![source.offset; SIZE]; SIZE]);
+    info.offset_normals = None;
+    info.alphas = source
+        .info
+        .alphas
+        .as_ref()
+        .map(|_| vec![vec![source.mesh.alphas[0]; SIZE]; SIZE]);
+    if let Some(tags) = &source.info.triangle_tags {
+        info.triangle_tags = Some(vec![vec![tags[0][0]; 2 * (SIZE - 1)]; SIZE - 1]);
+    }
+    part.sides[index].displacement = Some(info);
+    Ok(part)
+}
+
+fn edge(edges: &mut Edges, a: DVec3, b: DVec3) -> Result<(), EditError> {
+    let (a, b) = (key(a), key(b));
+    if a == b {
+        return Err(invalid("Flat terrain certificate found a collapsed edge"));
+    }
+    if let Some(count) = edges.get_mut(&(b, a)) {
+        *count -= 1;
+        if *count == 0 {
+            edges.remove(&(b, a));
+        }
+    } else {
+        *edges.entry((a, b)).or_default() += 1;
+    }
+    Ok(())
+}
+
+struct Child {
+    base: [DVec3; 4],
+    positions: Vec<DVec3>,
+}
+
+fn on_segment(point: DVec3, a: DVec3, b: DVec3, axes: [usize; 2]) -> Result<bool, EditError> {
+    Ok(orient(a, b, point, axes)? == 0
+        && axes
+            .into_iter()
+            .all(|axis| point[axis] >= a[axis].min(b[axis]) && point[axis] <= a[axis].max(b[axis])))
+}
+
+fn region(
+    ring: &[DVec3],
+    children: &[Child],
+    source: &Prepared<'_>,
+    plane: Plane,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let indices = bsp::DisplacementInfo {
+        power: POWER as i32,
+        ..Default::default()
+    }
+    .triangle_indices()
+    .map_err(|error| invalid(error.to_string()))?;
+    let mut actual = Edges::new();
+    let mut boundary = Edges::new();
+    for child in children {
+        work.consume(indices.len() + child.positions.len() * ring.len())
+            .map_err(invalid)?;
+        for &point in &child.positions {
+            if plane.distance_to(point) > CUT_EPSILON {
+                return Err(invalid(
+                    "Flat terrain native triangles cross the retained cut-plane precision",
+                ));
+            }
+            if point[source.axis] != ring[0][source.axis] {
+                return Err(invalid("Flat terrain left its exact sheet plane"));
+            }
+            for index in 0..ring.len() {
+                let value = orient(
+                    ring[index],
+                    ring[(index + 1) % ring.len()],
+                    point,
+                    source.axes,
+                )?;
+                if value != 0 && value != source.sign {
+                    return Err(invalid(
+                        "Flat terrain triangle lies outside its retained polygon",
+                    ));
+                }
+            }
+        }
+        for triangle in &indices {
+            let points = triangle.map(|index| child.positions[index]);
+            if orient(points[0], points[1], points[2], source.axes)? != source.sign {
+                return Err(invalid(
+                    "Flat terrain native triangles must have positive orientation",
+                ));
+            }
+            for index in 0..3 {
+                edge(&mut actual, points[index], points[(index + 1) % 3])?;
+            }
+        }
+        for side in [0, 3] {
+            let positions = neighbors::edge_indices(SIZE, side).map_err(invalid)?;
+            let points = positions
+                .iter()
+                .map(|&index| child.positions[index])
+                .collect::<Vec<_>>();
+            let mut matched = false;
+            for index in 0..ring.len() {
+                let a = ring[index];
+                let b = ring[(index + 1) % ring.len()];
+                if points
+                    .iter()
+                    .map(|&point| on_segment(point, a, b, source.axes))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .all(|value| value)
+                {
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                return Err(invalid(
+                    "Flat terrain retained boundary does not lie on its exact polygon edges",
+                ));
+            }
+            for pair in points.windows(2) {
+                edge(&mut boundary, pair[0], pair[1])?;
+            }
+        }
+    }
+    if actual != boundary || boundary.values().any(|count| *count != 1) {
+        return Err(invalid(
+            "Flat terrain triangles do not have the exact oriented retained boundary and internal seams",
+        ));
+    }
+    Ok(())
+}
+
+fn connections(children: &[Child], work: &mut Work) -> Result<(), EditError> {
+    let grids = children
+        .iter()
+        .map(|child| neighbors::SurfaceGrid {
+            power: POWER,
+            corners: child.base,
+            positions: &child.positions,
+        })
+        .collect::<Vec<_>>();
+    let found = neighbors::find(&grids, &mut |amount| work.consume(amount)).map_err(invalid)?;
+    if found.ambiguous != 0 || found.mismatched != 0 || found.unequal_power != 0 {
+        return Err(invalid(
+            "Flat terrain output has ambiguous or mismatched native full edges",
+        ));
+    }
+    for pair in &found.pairs {
+        for (a, b) in
+            neighbors::common_edge_indices(POWER, pair.first_edge, POWER, pair.second_edge)
+                .map_err(invalid)?
+        {
+            if !same(
+                children[pair.first].positions[a],
+                children[pair.second].positions[b],
+            ) {
+                return Err(invalid("Flat terrain native shared-edge samples differ"));
+            }
+        }
+    }
+    let _ = neighbors::native_connections(&grids, &found.pairs, &mut |amount| work.consume(amount))
+        .map_err(invalid)?;
+    let (lod, _) = super::lod::prepare(&grids, &found.pairs, &mut |amount| work.consume(amount))
+        .map_err(invalid)?;
+    if lod.iter().any(Option::is_some) {
+        return Err(invalid(
+            "Flat terrain output cannot require native LOD coarsening",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn plan(
+    document: &Document,
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    request: Request<'_>,
+    context: &mut Context<'_>,
+) -> Result<Option<TerrainPlan>, EditError> {
+    let work = &mut context.work;
+    let Some(source) = prepare(document, solid, geometry, request.plane, work)? else {
+        return Ok(None);
+    };
+    let identity = FaceId {
+        solid: solid.id,
+        side: source.side.id,
+    };
+    let texture = request.textures.and_then(|textures| textures.get(&identity)).copied()
+        .ok_or_else(|| invalid("Flat terrain clipping requires guarded native texture projection and mapping dimensions"))?;
+    if native::terrain_source_is_visible(document.vmf(), solid.id) {
+        isolated(solid, &source, context.vmf.unwrap_or(document.vmf()), work)?;
+    }
+    uv(
+        &source.data,
+        source.face,
+        source.mesh.positions.len(),
+        texture,
+        work,
+    )?;
+    let mut parts = Vec::new();
+    let mut children = Vec::new();
+    let polygons = split(&source, request.plane)?;
+    for back in [true, false] {
+        if matches!(
+            (request.keep, back),
+            (Keep::Back, false) | (Keep::Front, true)
+        ) {
+            continue;
+        }
+        let plane = if back {
+            request.plane
+        } else {
+            Plane {
+                normal: -request.plane.normal,
+                dist: -request.plane.dist,
+            }
+        };
+        let ring = &polygons[usize::from(!back)];
+        let first = children.len();
+        for quad in fan(ring, source.axes, source.sign)? {
+            let mut base = [DVec3::ZERO; 4];
+            for (output, point) in base.iter_mut().zip(quad) {
+                *output = stored(translate(point, -source.offset)?)?;
+            }
+            let part = carrier(solid, &source, base, request.material)?;
+            let shape =
+                BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
+            let side_index = part
+                .sides
+                .iter()
+                .position(|side| side.id == source.side.id)
+                .unwrap();
+            let face = shape
+                .faces
+                .iter()
+                .find(|face| face.side == side_index)
+                .ok_or_else(numeric)?;
+            let info = part.sides[side_index].displacement.as_ref().unwrap();
+            let (_, mesh) = native::checked_mesh(face, info).map_err(invalid)?;
+            let corners = [0, (SIZE - 1) * SIZE, VERTICES - 1, SIZE - 1]
+                .map(|index| mesh.base_positions[index]);
+            if corners.iter().zip(base).any(|(&a, b)| !same(a, b)) {
+                return Err(invalid(
+                    "Flat terrain child orientation differs from its planned quad",
+                ));
+            }
+            let (data, stored_base) = data(face, &mesh, POWER)?;
+            for positions in reconstructed(&data, stored_base, work)? {
+                for (index, &point) in positions.iter().enumerate() {
+                    if !same(point, mesh.positions[index])
+                        || !same(point, translate(mesh.base_positions[index], source.offset)?)
+                    {
+                        return Err(invalid(
+                            "Flat terrain child native, compiler and analytic positions differ",
+                        ));
+                    }
+                }
+            }
+            if mesh
+                .alphas
+                .iter()
+                .any(|alpha| *alpha != source.mesh.alphas[0])
+                || triangles::native_tags(info, &mesh)?
+                    .iter()
+                    .any(|tag| *tag != source.tag)
+            {
+                return Err(invalid(
+                    "Flat terrain child changed its uniform alpha or physical tags",
+                ));
+            }
+            uv(&data, face, mesh.positions.len(), texture, work)?;
+            children.push(Child {
+                base,
+                positions: mesh.positions,
+            });
+            parts.push(part);
+        }
+        region(ring, &children[first..], &source, plane, work)?;
+    }
+    connections(&children, work)?;
+    Ok(Some(TerrainPlan {
+        vertices: parts.len() * VERTICES,
+        triangles: parts.len() * TRIANGLES,
+        parts,
+        source: identity,
+        source_power: source.info.power,
+        output_power: Some(POWER),
+        children: None,
+    }))
+}

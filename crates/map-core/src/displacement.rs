@@ -6,6 +6,7 @@ use crate::brush::Face;
 pub mod brush;
 pub mod collision;
 pub mod edit;
+pub(crate) mod flat_clip;
 pub(crate) mod grid_clip;
 pub mod lod;
 pub mod native;

@@ -59,7 +59,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | [Carved openings](docs/brush-tools.md#carve) | [Clip planes](docs/brush-tools.md#clip) |
 | --- | --- |
 | ![An arch cut through a brick wall](docs/images/carved-doorway.png) | ![A diagonally clipped brush](docs/images/clipped-brush.png) |
-| Subtract shapes to form doors and passages. | Cut brushes with a line, plane or three points. |
+| Subtract shapes to form doors and passages. | Preview plane cuts on brushes and terrain. |
 
 | [Component editing](docs/components.md) | [Arrays and surface scatter](docs/repeated-placement.md) |
 | --- | --- |

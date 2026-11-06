@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use compiler::instances::{self, DependencyGuard, InstanceStats, OccurrencePath, SourceContext};
-use map_core::clip::{self, ClipResult, Keep};
-use map_core::{EditError, ObjectId, Plane, Transaction};
+use map_core::clip::{self, TerrainMode};
+use map_core::{ObjectId, Plane};
 use serde_json::{Value, json};
 use source_formats::vmf::Vmf;
 
@@ -37,11 +37,24 @@ impl Context {
         session: &Session,
         ids: &[ObjectId],
         plane: Plane,
+        terrain_mode: TerrainMode,
+        flat_crossing: bool,
     ) -> Result<Option<Arc<Self>>, String> {
         let vmf = session.document.vmf();
-        if !clip::requires_terrain_context(&session.document, ids, plane)
-            .map_err(|error| error.to_string())?
-        {
+        let needed = match terrain_mode {
+            TerrainMode::Grid => clip::requires_terrain_context(&session.document, ids, plane)
+                .map_err(|error| error.to_string())?,
+            TerrainMode::Flat => {
+                flat_crossing
+                    && vmf.entities.iter().any(|entity| {
+                        !entity.hidden
+                            && entity
+                                .classname()
+                                .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+                    })
+            }
+        };
+        if !needed {
             return Ok(None);
         }
         let control = compiler::Control::default();
@@ -66,12 +79,7 @@ impl Context {
             MAX_CONTEXT_BYTES,
             &mut || control.checkpoint(),
         )?;
-        if prepared
-            .vmf()
-            .solids()
-            .flat_map(|solid| &solid.sides)
-            .filter(|side| side.displacement.is_some())
-            .count()
+        if map_core::displacement::native::visible_terrain_sources(prepared.vmf()).count()
             > source_formats::bsp::MAX_DISPLACEMENTS
         {
             return Err(
@@ -152,15 +160,8 @@ impl Context {
             .map_err(|error| format!("Terrain instance sources changed: {error}"))
     }
 
-    pub(super) fn clip(
-        &self,
-        tx: &mut Transaction,
-        ids: &[ObjectId],
-        plane: Plane,
-        keep: Keep,
-        material: Option<&str>,
-    ) -> Result<ClipResult, EditError> {
-        clip::clip_with_terrain_context(tx, ids, plane, keep, material, &self.vmf)
+    pub(super) fn vmf(&self) -> &Vmf {
+        &self.vmf
     }
 
     pub(super) fn report(&self) -> Value {

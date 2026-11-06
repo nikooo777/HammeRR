@@ -12,7 +12,7 @@ use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
 const SAMPLE_EPSILON: f64 = 1e-5;
-const CUT_EPSILON: f64 = 1e-7;
+pub(super) const CUT_EPSILON: f64 = 1e-7;
 const NATIVE_SETUP_WORK: usize = 256;
 const NATIVE_VERTEX_WORK: usize = 32;
 const NATIVE_ROUNDINGS: [bsp::NativeDisplacementRounding; 4] = bsp::NativeDisplacementRounding::ALL;
@@ -21,12 +21,12 @@ const POSITION_PROFILES: usize = NATIVE_ROUNDINGS.len() + 1;
 type NativePositions = [Vec<[u32; 3]>; POSITION_PROFILES];
 
 mod network;
-use network::Work;
+pub(crate) use network::Work;
 pub(crate) use network::{MAX_NEIGHBORS, Replacement, certify};
 
 pub(crate) struct Context<'a> {
-    vmf: Option<&'a Vmf>,
-    work: Work,
+    pub(super) vmf: Option<&'a Vmf>,
+    pub(super) work: Work,
     cuts: BTreeMap<FaceId, CutLine>,
 }
 
@@ -461,7 +461,9 @@ pub(crate) fn plan(
     }
     validate(info, &mesh)?;
     crate::subobject::fragments::admit_source(solid)?;
-    resolved_instances(vmf.unwrap_or(document.vmf()))?;
+    if native::terrain_source_is_visible(document.vmf(), solid.id) {
+        resolved_instances(vmf.unwrap_or(document.vmf()))?;
+    }
     let middle = mesh.size / 2;
     let cuts = if info.power == 4 {
         vec![middle, middle / 2, middle + middle / 2]

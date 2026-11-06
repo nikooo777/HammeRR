@@ -8,8 +8,10 @@ use source_formats::gamefs::GameFs;
 use source_formats::vmt::{self, Material};
 use source_formats::vtf::Vtf;
 
+mod flat_terrain;
 pub(crate) mod metrics;
 mod read_budget;
+pub use flat_terrain::{FlatTerrainMaterialCapture, capture_flat_terrain_materials};
 use metrics::{
     DimensionProvider, MetricPlan, NATIVE_NO_PREVIEW_DIMENSION, ReflectivityProvider, TextureHeader,
 };

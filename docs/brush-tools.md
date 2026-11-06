@@ -49,15 +49,18 @@ the complete preview; use cutter or named material mode for oblique cuts.
 1. Select brushes. Use **Select → Object selection → Solids** to choose a child
    brush inside an entity.
 2. Click **Clip selected brushes**.
-3. Draw a line in a planar view, enter a plane, or choose **Pick three points**.
-4. Choose **Arrow side**, **Opposite side** or **Both sides**.
-5. Inspect the preview.
-6. Click **Apply cut**.
+3. For terrain, choose **Existing grid** or **Retile flat terrain** under **Terrain cut**.
+4. Draw a line in a planar view, enter a plane, or choose **Pick three points**.
+5. Choose **Arrow side**, **Opposite side** or **Both sides**.
+6. Inspect the preview.
+7. Click **Apply cut**.
 
 ![A diagonal cut creates a sloping brush](images/clipped-brush.png)
 
 Use **Move plane** or **Rotate plane** to adjust the cut with handles.
-**Cancel cut** or Escape discards the preview.
+**Cancel cut** or <kbd>Escape</kbd> discards the preview.
+Changing **Terrain cut** discards the current preview, picked points and plane
+positioning without changing the map or Undo history.
 A child-brush cut keeps its entity and unselected siblings. Apply selects the
 resulting child brushes. Selecting a whole entity clips all crossing children.
 
@@ -65,10 +68,11 @@ resulting child brushes. Selecting a whole entity clips all crossing children.
 
 1. Select power-3/4 world or `func_detail` terrain brushes.
 2. Click **Clip selected brushes**.
-3. Set a plane through a complete middle row or column. Power 4 also permits
+3. Under **Terrain cut**, choose **Existing grid**.
+4. Set a plane through a complete middle row or column. Power 4 also permits
    quarter-grid lines: row or column 4 or 12 of its 16 cells.
-4. Choose **Arrow side**, **Opposite side** or **Both sides**.
-5. Inspect the native terrain patches, then click **Apply cut**.
+5. Choose **Arrow side**, **Opposite side** or **Both sides**.
+6. Inspect the native terrain patches, then click **Apply cut**.
 
 A middle cut produces two patches per retained half, at one lower power.
 A quarter cut produces four power-2 patches on the short side and six power-2/3
@@ -85,22 +89,54 @@ child edits or a parent save.
 
 ![A painted terrain cut preserves its joined neighboring patches](images/terrain-grid-cut.png)
 
+### Retile flat terrain
+
+Use this mode to cut an eligible flat surface across its existing grid.
+
+1. Select isolated power-2/3/4 world or `func_detail` terrain with an
+   axis-aligned rectangular base.
+2. Click **Clip selected brushes**.
+3. Under **Terrain cut**, choose **Retile flat terrain**.
+4. Draw a line, enter a plane, or choose **Pick three points**.
+5. Choose **Arrow side**, **Opposite side** or **Both sides**.
+6. Inspect the new native patches, then click **Apply cut**.
+
+Each retained three-to-five-corner region becomes power-2 quadrilateral patches.
+The surface must have one constant displacement normal to its base, uniform
+integral blend alpha and uniform native physical triangle flags. Retiling keeps
+that field, material, texture placement and smoothing. It does not flatten a
+curved or painted surface, and **Existing grid** never switches modes after a
+failed cut.
+
+![A diagonal cut retiles flat terrain into native quad patches](images/terrain-flat-cut.png)
+
 ## Limits
 
 - Hollow: 16 brushes, 64 faces per brush, 256 walls; thickness 0.125–4096 units.
 - Carve: 1–8 cutters, 16 targets, 256 pieces, 64 faces per piece.
 - Carving away every child brush of an entity rejects.
-- Terrain cannot be hollowed or carved. Terrain clipping requires a power-3/4
+- Terrain cannot be hollowed or carved. **Existing grid** requires a power-3/4
   world or `func_detail` patch and a complete middle grid line, or a power-4
   quarter line.
   Matching full/half borders must retain their sample spacing and LOD state.
   Coarsened source and output patches must retain their native masks, positions,
   collision triangles and maximal render triangles. Unselected neighbors must
   keep their complete native state.
-- Arbitrary cuts, power-2 splitting, quarter-edge links, changed LOD geometry and
-  overlapping or unmatched borders reject. Missing or unsupported child sources
-  stop the preview. Saved-hidden references are omitted; display filters do not
-  remove compiler neighbors.
+- **Existing grid** rejects other cut lines, power-2 splitting, quarter-edge
+  links, changed LOD geometry and overlapping or unmatched borders.
+  Missing or unsupported child sources stop the preview. Saved-hidden references
+  are omitted; display filters do not remove compiler neighbors.
+- **Retile flat terrain** rejects touching or overlapping terrain base bounds,
+  curved or varying displacement, varying paint or tags, restricted vertex masks
+  and unsupported metadata. Native positions, shared edges and affine UVs must
+  remain exactly representable.
+- Retiling requires a direct static `LightmappedGeneric` material with an
+  untransformed `$basetexture` and an ordinary single-frame VTF with positive
+  power-of-two dimensions no larger than 32768. Material and texture references
+  use case-insensitive lookup.
+  Use relative names without extensions or a `materials/` prefix.
+  Patch materials, blend shaders, animated or runtime textures and unsupported
+  resources reject. Changed material sources require another preview before Apply.
 - Terrain cuts accept 16 sources and 64 output patches. Unsupported bindings,
   notes, masks and opaque payloads reject before the map changes.
 - Numerically uncertain cuts reject. They do not move retained points to fit

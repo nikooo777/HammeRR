@@ -4,6 +4,10 @@ pub(super) fn refresh_clip(app: &AppWindow, session: &Session) {
     app.set_can_clip(session.can_clip_selection());
     app.set_clipping(session.clip_tool());
     app.set_clip_positioning(session.clip_drag().is_some());
+    app.set_clip_terrain_mode_index(match session.clip_terrain_mode() {
+        map_core::clip::TerrainMode::Grid => 0,
+        map_core::clip::TerrainMode::Flat => 1,
+    });
     let options = session.clip_handle_options();
     app.set_clip_handles_mode(match options.mode {
         Some(render::handles::Mode::Move) => 1,
@@ -177,6 +181,25 @@ pub(super) fn change_clip_points(
 }
 
 pub(super) fn bind_clip_controls_with_access(app: &AppWindow, access: &runtime::DocumentAccess) {
+    app.on_clip_terrain_mode_changed({
+        let callback = admission::SessionCallback::new(app, access);
+        move || {
+            callback.input(|app, session| {
+                let mode = match app.get_clip_terrain_mode_index() {
+                    0 => map_core::clip::TerrainMode::Grid,
+                    1 => map_core::clip::TerrainMode::Flat,
+                    _ => {
+                        app.set_message("Invalid terrain cut mode".into());
+                        refresh_clip(&app, session);
+                        return;
+                    }
+                };
+                let result = session.set_clip_terrain_mode(Actor::User, mode);
+                app.set_message(result.err().unwrap_or_default().into());
+                refresh_clip(&app, session);
+            })
+        }
+    });
     app.on_clip_handles_changed({
         let callback = admission::SessionCallback::new(app, access);
         move || {

@@ -42,6 +42,26 @@ pub enum Keep {
     Both,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TerrainMode {
+    #[default]
+    Grid,
+    Flat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerrainTexture {
+    pub texture_vecs: [[f32; 4]; 2],
+    pub mapping_size: [u32; 2],
+}
+
+#[derive(Default)]
+pub struct ClipOptions<'a> {
+    pub terrain_mode: TerrainMode,
+    pub textures: Option<&'a BTreeMap<FaceId, TerrainTexture>>,
+    pub terrain_context: Option<&'a Vmf>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cut {
     pub source: u32,
@@ -78,6 +98,13 @@ pub struct Source<'a> {
 
 fn invalid(message: impl Into<String>) -> EditError {
     EditError::Invalid(message.into())
+}
+
+pub(crate) fn source_error(id: u32, error: EditError) -> EditError {
+    match error {
+        EditError::Invalid(message) => invalid(format!("solid:{id}: {message}")),
+        error => error,
+    }
 }
 
 pub fn sources<'a>(
@@ -287,7 +314,53 @@ struct PlannedCut {
     parts: Vec<Solid>,
     source_sides: Vec<u32>,
     terrain: Option<TerrainCut>,
-    children: Vec<crate::displacement::grid_clip::Child>,
+    children: Option<Vec<crate::displacement::grid_clip::Child>>,
+}
+
+pub(crate) struct TerrainPlan {
+    pub parts: Vec<Solid>,
+    pub source: FaceId,
+    pub source_power: u32,
+    pub output_power: Option<u32>,
+    pub vertices: usize,
+    pub triangles: usize,
+    pub children: Option<Vec<crate::displacement::grid_clip::Child>>,
+}
+
+pub fn flat_texture_faces(
+    document: &Document,
+    ids: &[ObjectId],
+    plane: Plane,
+) -> Result<Vec<FaceId>, EditError> {
+    let plane = normalized_plane(plane)?;
+    let mut work = crate::displacement::grid_clip::Work::default();
+    let mut result = Vec::new();
+    for source in sources(document, ids)? {
+        if source
+            .solid
+            .sides
+            .iter()
+            .any(|side| side.displacement.is_some())
+        {
+            let shape =
+                geometry(source.solid).map_err(|error| source_error(source.solid.id, error))?;
+            if let Some(face) = crate::displacement::flat_clip::texture_face(
+                document,
+                source.solid,
+                &shape,
+                plane,
+                &mut work,
+            )
+            .map_err(|error| source_error(source.solid.id, error))?
+            {
+                result.push(face);
+            }
+        }
+    }
+    if result.len() > MAX_TERRAIN_SOURCES {
+        return Err(invalid("Terrain clipping exceeds its source limit"));
+    }
+    Ok(result)
 }
 
 pub fn requires_terrain_context(
@@ -305,6 +378,10 @@ pub fn requires_terrain_context(
     }
     let plane = normalized_plane(plane)?;
     for source in sources(document, ids)? {
+        if !crate::displacement::native::terrain_source_is_visible(document.vmf(), source.solid.id)
+        {
+            continue;
+        }
         if !source
             .solid
             .sides
@@ -313,7 +390,8 @@ pub fn requires_terrain_context(
         {
             continue;
         }
-        let geometry = geometry(source.solid)?;
+        let geometry =
+            geometry(source.solid).map_err(|error| source_error(source.solid.id, error))?;
         for (index, side) in source.solid.sides.iter().enumerate() {
             let Some(info) = &side.displacement else {
                 continue;
@@ -322,9 +400,14 @@ pub fn requires_terrain_context(
                 .faces
                 .iter()
                 .find(|face| face.side == index)
-                .ok_or_else(|| invalid("Terrain has no effective base face"))?;
+                .ok_or_else(|| {
+                    source_error(
+                        source.solid.id,
+                        invalid("Terrain has no effective base face"),
+                    )
+                })?;
             let mesh = crate::DisplacementMesh::build(face, info)
-                .map_err(|error| invalid(error.to_string()))?;
+                .map_err(|error| source_error(source.solid.id, invalid(error.to_string())))?;
             if crate::displacement::grid_clip::crosses(&mesh, plane) {
                 return Ok(true);
             }
@@ -340,7 +423,7 @@ pub fn clip(
     keep: Keep,
     material: Option<&str>,
 ) -> std::result::Result<ClipResult, EditError> {
-    clip_in_context(tx, ids, plane, keep, material, None)
+    clip_with_options(tx, ids, plane, keep, material, ClipOptions::default())
 }
 
 pub fn clip_with_terrain_context(
@@ -351,20 +434,33 @@ pub fn clip_with_terrain_context(
     material: Option<&str>,
     context: &Vmf,
 ) -> std::result::Result<ClipResult, EditError> {
-    context
-        .validate_ids()
-        .map_err(|error| invalid(error.to_string()))?;
-    clip_in_context(tx, ids, plane, keep, material, Some(context))
+    clip_with_options(
+        tx,
+        ids,
+        plane,
+        keep,
+        material,
+        ClipOptions {
+            terrain_context: Some(context),
+            ..Default::default()
+        },
+    )
 }
 
-fn clip_in_context(
+pub fn clip_with_options(
     tx: &mut Transaction,
     ids: &[ObjectId],
     plane: Plane,
     keep: Keep,
     material: Option<&str>,
-    context: Option<&Vmf>,
+    options: ClipOptions<'_>,
 ) -> std::result::Result<ClipResult, EditError> {
+    let context = options.terrain_context;
+    if let Some(context) = context {
+        context
+            .validate_ids()
+            .map_err(|error| invalid(error.to_string()))?;
+    }
     let plane = normalized_plane(plane)?;
     if ids.is_empty() {
         return Err(invalid("Select at least one brush or brush entity to clip"));
@@ -376,6 +472,8 @@ fn clip_in_context(
     let mut unchanged = Vec::new();
     let mut terrain_sources = 0;
     let mut terrain_patches = 0;
+    let mut visible_sources = 0;
+    let mut visible_patches = 0;
     let mut terrain_vertices = 0;
     let mut terrain_triangles = 0;
     let mut terrain_context = crate::displacement::grid_clip::Context::new(context);
@@ -385,24 +483,78 @@ fn clip_in_context(
         target,
     } in sources(tx.document(), ids)?
     {
-        let shape = geometry(solid)?;
+        let shape = geometry(solid).map_err(|error| source_error(solid.id, error))?;
         let material = material.map(str::trim).unwrap_or(&solid.sides[0].material);
         if solid.sides.iter().any(|side| side.displacement.is_some()) {
-            let plan = crate::displacement::grid_clip::plan(
-                tx.document(),
-                solid,
-                &shape,
-                plane,
-                keep,
-                material,
-                &mut terrain_context,
-            )?;
+            let plan = match options.terrain_mode {
+                TerrainMode::Grid => crate::displacement::grid_clip::plan(
+                    tx.document(),
+                    solid,
+                    &shape,
+                    plane,
+                    keep,
+                    material,
+                    &mut terrain_context,
+                )
+                .map_err(|error| source_error(solid.id, error))?
+                .map(|plan| TerrainPlan {
+                    parts: plan.parts,
+                    source: plan.source,
+                    source_power: plan.source_power,
+                    output_power: plan.output_power,
+                    vertices: plan.vertices,
+                    triangles: plan.triangles,
+                    children: Some(plan.children),
+                }),
+                TerrainMode::Flat => crate::displacement::flat_clip::plan(
+                    tx.document(),
+                    solid,
+                    &shape,
+                    crate::displacement::flat_clip::Request {
+                        plane,
+                        keep,
+                        material,
+                        textures: options.textures,
+                    },
+                    &mut terrain_context,
+                )
+                .map_err(|error| source_error(solid.id, error))?,
+            };
             let Some(plan) = plan else {
                 unchanged.push(solid.id);
                 continue;
             };
+            let visible =
+                crate::displacement::native::terrain_source_is_visible(tx.vmf(), solid.id);
+            if visible && let Some(context) = context {
+                let matches = crate::displacement::native::visible_terrain_sources(context)
+                    .filter(|(candidate, _)| candidate.id == solid.id)
+                    .collect::<Vec<_>>();
+                if !matches!(matches.as_slice(), [(_, true)]) {
+                    return Err(source_error(
+                        solid.id,
+                        invalid(
+                            "Resolved terrain context lost a visible selected terrain source or supported owner",
+                        ),
+                    ));
+                }
+            }
             terrain_sources += 1;
             terrain_patches += plan.parts.len();
+            if visible {
+                visible_sources += solid
+                    .sides
+                    .iter()
+                    .filter(|side| side.displacement.is_some())
+                    .count();
+                visible_patches += plan
+                    .parts
+                    .iter()
+                    .filter(|part| !part.hidden)
+                    .flat_map(|part| &part.sides)
+                    .filter(|side| side.displacement.is_some())
+                    .count();
+            }
             terrain_vertices += plan.vertices;
             terrain_triangles += plan.triangles;
             if terrain_sources > MAX_TERRAIN_SOURCES
@@ -467,7 +619,7 @@ fn clip_in_context(
             parts,
             source_sides: solid.sides.iter().map(|side| side.id).collect(),
             terrain: None,
-            children: Vec::new(),
+            children: None,
         });
     }
     if planned.is_empty() {
@@ -477,17 +629,14 @@ fn clip_in_context(
     }
     if terrain_sources != 0 {
         let vmf = context.unwrap_or(tx.vmf());
-        let existing = vmf
-            .world
-            .solids
-            .iter()
-            .chain(vmf.entities.iter().flat_map(|entity| &entity.solids))
+        let existing = crate::displacement::native::visible_terrain_sources(vmf)
+            .map(|(solid, _)| solid)
             .flat_map(|solid| &solid.sides)
             .filter(|side| side.displacement.is_some())
             .count();
         let final_count = existing
-            .checked_sub(terrain_sources)
-            .and_then(|count| count.checked_add(terrain_patches))
+            .checked_sub(visible_sources)
+            .and_then(|count| count.checked_add(visible_patches))
             .ok_or_else(|| invalid("Terrain clipping patch count overflow"))?;
         if final_count > source_formats::bsp::MAX_DISPLACEMENTS {
             return Err(invalid(
@@ -499,22 +648,29 @@ fn clip_in_context(
             .filter_map(|cut| {
                 cut.terrain
                     .as_ref()
-                    .map(|terrain| crate::displacement::grid_clip::Replacement {
-                        source: terrain.source,
-                        source_power: terrain.source_power,
-                        parts: &cut.parts,
-                        children: &cut.children,
-                    })
+                    .zip(cut.children.as_ref())
+                    .map(
+                        |(terrain, children)| crate::displacement::grid_clip::Replacement {
+                            source: terrain.source,
+                            source_power: terrain.source_power,
+                            parts: &cut.parts,
+                            children,
+                        },
+                    )
             })
             .collect::<Vec<_>>();
-        let verified = crate::displacement::grid_clip::certify(
-            tx.document(),
-            &replacements,
-            &mut terrain_context,
-        )?;
+        let verified = if replacements.is_empty() {
+            Vec::new()
+        } else {
+            crate::displacement::grid_clip::certify(
+                tx.document(),
+                &replacements,
+                &mut terrain_context,
+            )?
+        };
         for (cut, verified) in planned
             .iter_mut()
-            .filter(|cut| cut.terrain.is_some())
+            .filter(|cut| cut.terrain.is_some() && cut.children.is_some())
             .zip(verified)
         {
             let terrain = cut.terrain.as_mut().unwrap();

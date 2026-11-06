@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{components, components::ridge_bindings, previews};
 use glam::{DVec2, DVec3};
-use map_core::clip::{self, ClipResult, Keep};
+use map_core::clip::{self, ClipResult, Keep, TerrainMode};
 use map_core::{Document, EditError, ObjectId, Plane};
 use render::Projection;
 use serde_json::Value;
@@ -10,6 +10,16 @@ use serde_json::Value;
 use super::{Actor, SelectMode, Session};
 
 mod context;
+mod materials;
+
+pub struct ClipRequest<'a> {
+    pub ids: &'a [ObjectId],
+    pub plane: Plane,
+    pub keep: Keep,
+    pub material: Option<String>,
+    pub preview: bool,
+    pub terrain_mode: Option<TerrainMode>,
+}
 
 #[derive(Clone)]
 pub struct ClipPreview {
@@ -18,6 +28,7 @@ pub struct ClipPreview {
     pub plane: Plane,
     pub keep: Keep,
     pub material: Option<String>,
+    pub terrain_mode: TerrainMode,
     pub bounds: [DVec3; 2],
     pub result: ClipResult,
     generation: u64,
@@ -26,6 +37,7 @@ pub struct ClipPreview {
     terrain_mapping: BTreeMap<u32, Vec<u32>>,
     cubemap_bindings: ridge_bindings::Plan,
     terrain_context: Option<std::sync::Arc<context::Context>>,
+    terrain_materials: Option<std::sync::Arc<materials::Prepared>>,
 }
 
 impl ClipPreview {
@@ -39,7 +51,20 @@ impl ClipPreview {
             .map(|context| context.report())
     }
 
+    pub fn terrain_materials_report(&self) -> Option<Value> {
+        self.terrain_materials
+            .as_ref()
+            .map(|materials| materials.report())
+    }
+
     fn stale_error(&self, session: &Session) -> Option<String> {
+        if self.terrain_mode != session.clip_terrain_mode {
+            return Some("Terrain cut mode changed; preview the cut again".into());
+        }
+        self.source_error(session)
+    }
+
+    fn source_error(&self, session: &Session) -> Option<String> {
         if self.generation != session.document_generation
             || self.revision != session.document.revision()
         {
@@ -50,6 +75,11 @@ impl ClipPreview {
         }
         if let Some(context) = &self.terrain_context
             && let Err(error) = context.current(session)
+        {
+            return Some(error);
+        }
+        if let Some(materials) = &self.terrain_materials
+            && let Err(error) = materials.current(session)
         {
             return Some(error);
         }
@@ -64,6 +94,27 @@ impl Session {
 
     pub fn clip_tool(&self) -> bool {
         self.clip_tool
+    }
+
+    pub fn clip_terrain_mode(&self) -> TerrainMode {
+        self.clip_terrain_mode
+    }
+
+    pub fn set_clip_terrain_mode(&mut self, actor: Actor, mode: TerrainMode) -> Result<(), String> {
+        if self.clip_terrain_mode == mode {
+            return Ok(());
+        }
+        self.cancel_clip_preview();
+        self.clip_terrain_mode = mode;
+        self.view_serial += 1;
+        self.log(
+            actor,
+            match mode {
+                TerrainMode::Grid => "Terrain cut: Existing grid",
+                TerrainMode::Flat => "Terrain cut: Retile flat terrain",
+            },
+        );
+        Ok(())
     }
 
     pub fn set_clip_tool(&mut self, actor: Actor, enabled: bool) -> Result<(), String> {
@@ -167,23 +218,43 @@ impl Session {
         material: Option<String>,
         preview: bool,
     ) -> Result<ClipResult, String> {
-        let plane = clip::normalized_plane(plane).map_err(|error| error.to_string())?;
-        if preview
+        self.clip_brushes_request(
+            actor,
+            ClipRequest {
+                ids,
+                plane,
+                keep,
+                material,
+                preview,
+                terrain_mode: None,
+            },
+        )
+    }
+
+    pub fn clip_brushes_request(
+        &mut self,
+        actor: Actor,
+        mut request: ClipRequest<'_>,
+    ) -> Result<ClipResult, String> {
+        request.plane = clip::normalized_plane(request.plane).map_err(|error| error.to_string())?;
+        let terrain_mode = request.terrain_mode.unwrap_or(self.clip_terrain_mode);
+        if request.preview
             && let Some(previous) = &self.geometry.clip_preview
-            && previous.ids == ids
-            && previous.plane == plane
-            && previous.keep == keep
-            && previous.material == material
+            && previous.ids == request.ids
+            && previous.plane == request.plane
+            && previous.keep == request.keep
+            && previous.material == request.material
+            && previous.terrain_mode == terrain_mode
         {
             if let Some(error) = previous.stale_error(self) {
                 return Err(error);
             }
             return Ok(previous.result.clone());
         }
-        let mut prepared = self.prepare_clip(ids, plane, keep, material)?;
-        if preview {
+        let mut prepared = self.prepare_clip(&request, terrain_mode)?;
+        if request.preview {
             let result = prepared.result.clone();
-            self.select(ids, SelectMode::Replace)?;
+            self.select(request.ids, SelectMode::Replace)?;
             prepared.cubemap_bindings.retain_after_selection(self);
             if !result.terrain.is_empty() {
                 self.retire_clipped_terrain_state();
@@ -198,6 +269,7 @@ impl Session {
             self.spatial.draw_block = false;
 
             self.cancel_block_preview();
+            self.clip_terrain_mode = terrain_mode;
             self.geometry.clip_preview = Some(prepared);
             self.clip_epoch += 1;
             self.scene_serial += 1;
@@ -210,11 +282,13 @@ impl Session {
 
     fn prepare_clip(
         &self,
-        ids: &[ObjectId],
-        plane: Plane,
-        keep: Keep,
-        material: Option<String>,
+        request: &ClipRequest<'_>,
+        terrain_mode: TerrainMode,
     ) -> Result<ClipPreview, String> {
+        let ids = request.ids;
+        let plane = request.plane;
+        let keep = request.keep;
+        let material = request.material.clone();
         let has_terrain = clip::sources(&self.document, ids)
             .map_err(|error| error.to_string())?
             .iter()
@@ -228,16 +302,41 @@ impl Session {
         if has_terrain {
             components::admit_fragment_snapshot(self.document.vmf())?;
         }
+        let flat_faces = if terrain_mode == TerrainMode::Flat {
+            clip::flat_texture_faces(&self.document, ids, plane)
+                .map_err(|error| error.to_string())?
+        } else {
+            Vec::new()
+        };
         let terrain_context = if has_terrain {
-            context::Context::prepare(self, ids, plane)?
+            let visible_flat_crossing = flat_faces.iter().any(|face| {
+                map_core::displacement::native::terrain_source_is_visible(
+                    self.document.vmf(),
+                    face.solid,
+                )
+            });
+            context::Context::prepare(self, ids, plane, terrain_mode, visible_flat_crossing)?
         } else {
             None
         };
+        let terrain_materials = materials::Prepared::prepare(self, &flat_faces)?;
         let mut document = self.document.preview_snapshot();
         let result = document
-            .edit("preview clip", |tx| match &terrain_context {
-                Some(context) => context.clip(tx, ids, plane, keep, material.as_deref()),
-                None => clip::clip(tx, ids, plane, keep, material.as_deref()),
+            .edit("preview clip", |tx| {
+                clip::clip_with_options(
+                    tx,
+                    ids,
+                    plane,
+                    keep,
+                    material.as_deref(),
+                    clip::ClipOptions {
+                        terrain_mode,
+                        textures: terrain_materials
+                            .as_ref()
+                            .map(|materials| &materials.textures),
+                        terrain_context: terrain_context.as_ref().map(|context| context.vmf()),
+                    },
+                )
             })
             .map_err(|error| error.to_string())?;
         let terrain_sources = result
@@ -267,12 +366,16 @@ impl Session {
         if let Some(context) = &terrain_context {
             context.verify()?;
         }
+        if let Some(materials) = &terrain_materials {
+            materials.verify(&self.game)?;
+        }
         Ok(ClipPreview {
             document,
             ids: ids.to_vec(),
             plane,
             keep,
             material,
+            terrain_mode,
             bounds: [mins, maxs],
             result,
             generation: self.document_generation,
@@ -281,6 +384,7 @@ impl Session {
             terrain_mapping,
             cubemap_bindings,
             terrain_context,
+            terrain_materials,
         })
     }
 
@@ -295,7 +399,7 @@ impl Session {
         actor: Actor,
         preview: ClipPreview,
     ) -> Result<ClipResult, String> {
-        if let Some(error) = preview.stale_error(self) {
+        if let Some(error) = preview.source_error(self) {
             return Err(error);
         }
         if !preview.result.terrain.is_empty() {
@@ -319,22 +423,24 @@ impl Session {
                     "Cubemap bindings changed; preview the terrain cut again".into(),
                 ));
             }
-            let result = match &preview.terrain_context {
-                Some(context) => context.clip(
-                    tx,
-                    &preview.ids,
-                    preview.plane,
-                    preview.keep,
-                    preview.material.as_deref(),
-                ),
-                None => clip::clip(
-                    tx,
-                    &preview.ids,
-                    preview.plane,
-                    preview.keep,
-                    preview.material.as_deref(),
-                ),
-            }?;
+            let result = clip::clip_with_options(
+                tx,
+                &preview.ids,
+                preview.plane,
+                preview.keep,
+                preview.material.as_deref(),
+                clip::ClipOptions {
+                    terrain_mode: preview.terrain_mode,
+                    textures: preview
+                        .terrain_materials
+                        .as_ref()
+                        .map(|materials| &materials.textures),
+                    terrain_context: preview
+                        .terrain_context
+                        .as_ref()
+                        .map(|context| context.vmf()),
+                },
+            )?;
             if result != preview.result {
                 return Err(EditError::Invalid(
                     "Cut geometry or allocation changed; preview the cut again".into(),
@@ -349,6 +455,9 @@ impl Session {
             if let Some(context) = &preview.terrain_context {
                 context.verify().map_err(EditError::Invalid)?;
             }
+            if let Some(materials) = &preview.terrain_materials {
+                materials.verify(&game).map_err(EditError::Invalid)?;
+            }
             Ok(result)
         })?;
         if !result.terrain.is_empty() {
@@ -357,6 +466,8 @@ impl Session {
         let mut selection = preview.ids;
         selection.extend(&result.objects);
         self.select(&selection, SelectMode::Replace)?;
+        self.clip_terrain_mode = preview.terrain_mode;
+        self.clip_epoch += 1;
         self.clip_tool = false;
         self.view_serial += 1;
         Ok(result)
@@ -376,9 +487,7 @@ impl Session {
         if let Some(error) = preview.stale_error(self) {
             return Err(error);
         }
-        let preview = self.geometry.clip_preview.take().unwrap();
-        self.scene_serial += 1;
-        self.view_serial += 1;
+        let preview = preview.clone();
         self.apply_prepared_clip(actor, preview)
     }
 }

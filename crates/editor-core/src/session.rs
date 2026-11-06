@@ -141,7 +141,7 @@ pub mod volume;
 pub mod working_region;
 pub mod workplane;
 pub mod workspace_preferences;
-pub use clipping::ClipPreview;
+pub use clipping::{ClipPreview, ClipRequest};
 
 pub use management::{ObjectFilter, ObjectReport, PropertyChange, PropertyDraft, PropertyTarget};
 pub(crate) use recovery::RecoveryCompletion;
@@ -343,6 +343,7 @@ pub struct Session {
     context: context::State,
     measurements: measurements::State,
     clip_tool: bool,
+    clip_terrain_mode: map_core::clip::TerrainMode,
     clip_epoch: u64,
     clip_points: Option<clip_points::Draft>,
     clip_handles: clip_drag::Options,
@@ -686,6 +687,7 @@ impl Session {
             context: context::State::default(),
             measurements: measurements::State::default(),
             clip_tool: false,
+            clip_terrain_mode: map_core::clip::TerrainMode::default(),
             clip_epoch: 0,
             clip_points: None,
             clip_handles: clip_drag::Options::default(),

@@ -34,10 +34,10 @@ pub(crate) struct Verification {
 }
 
 #[derive(Default)]
-pub(super) struct Work(usize);
+pub(crate) struct Work(usize);
 
 impl Work {
-    pub(super) fn consume(&mut self, amount: usize) -> Result<(), String> {
+    pub(crate) fn consume(&mut self, amount: usize) -> Result<(), String> {
         self.0 = self
             .0
             .checked_add(amount)
@@ -246,19 +246,7 @@ fn lod_state(
 
 fn collect(vmf: &Vmf) -> Result<Vec<Raw<'_>>, EditError> {
     let mut raw = Vec::new();
-    for (solid, supported_owner) in vmf
-        .world
-        .solids
-        .iter()
-        .map(|solid| (solid, true))
-        .chain(vmf.entities.iter().flat_map(|entity| {
-            entity
-                .solids
-                .iter()
-                .map(move |solid| (solid, entity.classname() == Some("func_detail")))
-        }))
-        .filter(|(solid, _)| solid.sides.iter().any(|side| side.displacement.is_some()))
-    {
+    for (solid, supported_owner) in native::visible_terrain_sources(vmf) {
         let geometry =
             BrushGeometry::from_solid(solid).map_err(|error| invalid(error.to_string()))?;
         for face in geometry.faces {
@@ -578,124 +566,136 @@ fn verify_selected(
     work: &mut Work,
 ) -> Result<(), EditError> {
     for replacement in replacements {
-        let (owner, solid) = crate::subobject::solid(document, replacement.source.solid)?;
-        let owned = match owner {
-            crate::ObjectId::Solid(_) => context
-                .world
-                .solids
-                .iter()
-                .any(|solid| solid.id == replacement.source.solid),
-            crate::ObjectId::Entity(id) => context.entities.iter().any(|entity| {
-                entity.id == id
-                    && entity.classname()
-                        == document.entity(id).and_then(|entity| entity.classname())
-                    && entity
-                        .solids
-                        .iter()
-                        .any(|solid| solid.id == replacement.source.solid)
-            }),
-        };
-        let matches = raw
+        verify_selected_source(document, context, raw, replacement, work)
+            .map_err(|error| crate::clip::source_error(replacement.source.solid, error))?;
+    }
+    Ok(())
+}
+
+fn verify_selected_source(
+    document: &Document,
+    context: &Vmf,
+    raw: &[Raw<'_>],
+    replacement: &Replacement<'_>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let (owner, solid) = crate::subobject::solid(document, replacement.source.solid)?;
+    if !native::terrain_source_is_visible(document.vmf(), solid.id) {
+        return Ok(());
+    }
+    let owned = match owner {
+        crate::ObjectId::Solid(_) => context
+            .world
+            .solids
             .iter()
-            .filter(|face| face.id == replacement.source)
-            .collect::<Vec<_>>();
-        let [assembled] = matches.as_slice() else {
-            return Err(invalid(
-                "Resolved terrain context lost a selected source face identity",
-            ));
-        };
-        let side_index = solid
-            .sides
-            .iter()
-            .position(|side| side.id == replacement.source.side)
-            .ok_or_else(|| invalid("Selected terrain source face is missing"))?;
-        let side = &solid.sides[side_index];
-        let mut canonical = solid.clone();
-        crate::brush::canonicalize_precise(&mut canonical)?;
-        if assembled.side.plane != side.plane
-            && assembled.side.plane != canonical.sides[side_index].plane
+            .any(|solid| solid.id == replacement.source.solid),
+        crate::ObjectId::Entity(id) => context.entities.iter().any(|entity| {
+            entity.id == id
+                && entity.classname() == document.entity(id).and_then(|entity| entity.classname())
+                && entity
+                    .solids
+                    .iter()
+                    .any(|solid| solid.id == replacement.source.solid)
+        }),
+    };
+    let matches = raw
+        .iter()
+        .filter(|face| face.id == replacement.source)
+        .collect::<Vec<_>>();
+    let [assembled] = matches.as_slice() else {
+        return Err(invalid(
+            "Resolved terrain context lost a selected source face identity",
+        ));
+    };
+    let side_index = solid
+        .sides
+        .iter()
+        .position(|side| side.id == replacement.source.side)
+        .ok_or_else(|| invalid("Selected terrain source face is missing"))?;
+    let side = &solid.sides[side_index];
+    let mut canonical = solid.clone();
+    crate::brush::canonicalize_precise(&mut canonical)?;
+    if assembled.side.plane != side.plane
+        && assembled.side.plane != canonical.sides[side_index].plane
+    {
+        return Err(invalid(
+            "Resolved terrain context changed a selected source plane beyond precise canonicalization",
+        ));
+    }
+    let mut normalized = side.clone();
+    normalized.plane = assembled.side.plane;
+    if !owned || normalized != *assembled.side {
+        return Err(invalid(
+            "Resolved terrain context changed selected source ownership, UV or terrain fields",
+        ));
+    }
+    let geometry = BrushGeometry::from_solid(solid).map_err(|error| invalid(error.to_string()))?;
+    let face = geometry
+        .faces
+        .into_iter()
+        .find(|face| face.side == side_index)
+        .ok_or_else(|| invalid("Selected terrain source has no effective face"))?;
+    let power = replacement.source_power;
+    let size = (1 << power) + 1;
+    let origin = Child {
+        row: 0,
+        column: 0,
+        power,
+    };
+    let original = prepare(
+        Raw {
+            id: replacement.source,
+            side,
+            face,
+            supported_owner: true,
+        },
+        origin,
+        size,
+    )?;
+    let assembled = prepare(
+        Raw {
+            id: assembled.id,
+            side: assembled.side,
+            face: assembled.face.clone(),
+            supported_owner: assembled.supported_owner,
+        },
+        origin,
+        size,
+    )?;
+    if original.indices != assembled.indices
+        || original.tags != assembled.tags
+        || original.vertices != assembled.vertices
+        || original.mesh.size != assembled.mesh.size
+    {
+        return Err(invalid(
+            "Resolved terrain context changed selected native vertices, triangle identities or tags",
+        ));
+    }
+    let original_native =
+        certified_native_positions(&original.raw.face, &original.mesh, power, work)?;
+    let assembled_native =
+        certified_native_positions(&assembled.raw.face, &assembled.mesh, power, work)?;
+    work.consume(POSITION_PROFILES * original.vertices.len())
+        .map_err(invalid)?;
+    if original_native != assembled_native {
+        return Err(invalid(
+            "Resolved terrain context changed selected native or compiler vertex bits",
+        ));
+    }
+    for index in 0..original.vertices.len() {
+        if original.positions[index].distance(assembled.positions[index]) > SAMPLE_EPSILON
+            || original.mesh.positions[index].distance(assembled.mesh.positions[index])
+                > SAMPLE_EPSILON
+            || original.mesh.base_positions[index].distance(assembled.mesh.base_positions[index])
+                > SAMPLE_EPSILON
+            || (original.uv[index] - assembled.uv[index])
+                .abs()
+                .max_element()
+                > crate::texture_deform::TEXEL_EPSILON
         {
             return Err(invalid(
-                "Resolved terrain context changed a selected source plane beyond precise canonicalization",
+                "Resolved terrain context cannot preserve selected source geometry and base UV",
             ));
-        }
-        let mut normalized = side.clone();
-        normalized.plane = assembled.side.plane;
-        if !owned || normalized != *assembled.side {
-            return Err(invalid(
-                "Resolved terrain context changed selected source ownership, UV or terrain fields",
-            ));
-        }
-        let geometry =
-            BrushGeometry::from_solid(solid).map_err(|error| invalid(error.to_string()))?;
-        let face = geometry
-            .faces
-            .into_iter()
-            .find(|face| face.side == side_index)
-            .ok_or_else(|| invalid("Selected terrain source has no effective face"))?;
-        let power = replacement.source_power;
-        let size = (1 << power) + 1;
-        let origin = Child {
-            row: 0,
-            column: 0,
-            power,
-        };
-        let original = prepare(
-            Raw {
-                id: replacement.source,
-                side,
-                face,
-                supported_owner: true,
-            },
-            origin,
-            size,
-        )?;
-        let assembled = prepare(
-            Raw {
-                id: assembled.id,
-                side: assembled.side,
-                face: assembled.face.clone(),
-                supported_owner: assembled.supported_owner,
-            },
-            origin,
-            size,
-        )?;
-        if original.indices != assembled.indices
-            || original.tags != assembled.tags
-            || original.vertices != assembled.vertices
-            || original.mesh.size != assembled.mesh.size
-        {
-            return Err(invalid(
-                "Resolved terrain context changed selected native vertices, triangle identities or tags",
-            ));
-        }
-        let original_native =
-            certified_native_positions(&original.raw.face, &original.mesh, power, work)?;
-        let assembled_native =
-            certified_native_positions(&assembled.raw.face, &assembled.mesh, power, work)?;
-        work.consume(POSITION_PROFILES * original.vertices.len())
-            .map_err(invalid)?;
-        if original_native != assembled_native {
-            return Err(invalid(
-                "Resolved terrain context changed selected native or compiler vertex bits",
-            ));
-        }
-        for index in 0..original.vertices.len() {
-            if original.positions[index].distance(assembled.positions[index]) > SAMPLE_EPSILON
-                || original.mesh.positions[index].distance(assembled.mesh.positions[index])
-                    > SAMPLE_EPSILON
-                || original.mesh.base_positions[index]
-                    .distance(assembled.mesh.base_positions[index])
-                    > SAMPLE_EPSILON
-                || (original.uv[index] - assembled.uv[index])
-                    .abs()
-                    .max_element()
-                    > crate::texture_deform::TEXEL_EPSILON
-            {
-                return Err(invalid(
-                    "Resolved terrain context cannot preserve selected source geometry and base UV",
-                ));
-            }
         }
     }
     Ok(())
@@ -708,21 +708,48 @@ pub(crate) fn certify(
 ) -> Result<Vec<Verification>, EditError> {
     let work = &mut context.work;
     let cuts = &context.cuts;
-    let raw = collect(context.vmf.unwrap_or(document.vmf()))?;
+    let selected = replacements
+        .iter()
+        .filter(|replacement| {
+            native::terrain_source_is_visible(document.vmf(), replacement.source.solid)
+        })
+        .map(|replacement| replacement.source)
+        .collect::<BTreeSet<_>>();
+    if selected.is_empty() {
+        return Ok(replacements
+            .iter()
+            .map(|_| Verification {
+                neighbors: 0,
+                links: 0,
+            })
+            .collect());
+    }
+    let hidden = replacements
+        .iter()
+        .map(|replacement| replacement.source)
+        .filter(|face| !selected.contains(face))
+        .collect::<BTreeSet<_>>();
+    let mut raw = collect(context.vmf.unwrap_or(document.vmf()))?;
+    raw.retain(|face| !hidden.contains(&face.id));
+    for face in &selected {
+        if raw.iter().filter(|raw| raw.id == *face).count() != 1 {
+            return Err(crate::clip::source_error(
+                face.solid,
+                invalid("Resolved terrain context lost a selected source face identity"),
+            ));
+        }
+    }
     if let Some(context) = context.vmf {
         verify_selected(document, context, &raw, replacements, work)?;
     }
-    let selected = replacements
-        .iter()
-        .map(|replacement| replacement.source)
-        .collect::<BTreeSet<_>>();
     let internal = replacements
         .iter()
         .filter(|replacement| {
-            replacement
-                .children
-                .iter()
-                .any(|child| child.power + 1 < replacement.source_power)
+            selected.contains(&replacement.source)
+                && replacement
+                    .children
+                    .iter()
+                    .any(|child| child.power + 1 < replacement.source_power)
         })
         .map(|replacement| replacement.source)
         .collect::<BTreeSet<_>>();
@@ -961,6 +988,12 @@ pub(crate) fn certify(
     Ok(replacements
         .iter()
         .map(|replacement| {
+            if !selected.contains(&replacement.source) {
+                return Verification {
+                    neighbors: 0,
+                    links: 0,
+                };
+            }
             let mut component = BTreeSet::from([replacement.source]);
             let mut queue = vec![replacement.source];
             while let Some(face) = queue.pop() {

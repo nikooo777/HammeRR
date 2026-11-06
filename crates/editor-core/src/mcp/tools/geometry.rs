@@ -466,6 +466,20 @@ impl EditorServer {
     }
 
     #[tool(
+        description = "Set the shared Terrain cut choice: grid (Existing grid, the default) or flat (Retile flat terrain). Changing it cancels the owned cut preview, points and plane drag while preserving map and Undo history. All drawn lines, three-point picks and handles use this same choice. Flat is an explicit eligible-flat-terrain operation; failed grid cuts never switch modes."
+    )]
+    pub(in crate::mcp) fn set_clip_terrain_mode(
+        &self,
+        Parameters(args): Parameters<ClipTerrainModeArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.set_clip_terrain_mode(Actor::Agent, args.mode.mode())?;
+            Ok(clip_state(&session))
+        })
+    }
+
+    #[tool(
         description = "Start or revise shared three-point clipping. Pass zero to three world points and the latest get_clip_preview snapshot. Zero starts over; removing the last point discards only the preview. Three distinct, noncollinear points create the same guarded cut preview as human viewport picking. Grid snapping is optional; keep/material choices persist. Invalid inputs preserve the last valid draft. Use commit_clip_preview or cancel_clip_preview to finish; set_clip_tool enabled=false exits."
     )]
     pub(in crate::mcp) fn set_clip_points(
@@ -529,7 +543,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Clip selected world or entity-child brushes, or whole brush entities, by normal/distance, three VMF-wound points, or a snapped planar line. Keep front (positive-normal arrow side), back or both. Non-crossing brushes and terrain sheets stay unchanged; point entities reject. Individual solid:n child targets preserve their entity and unselected siblings; whole entity:n targets include all children. A whole owner wins over its redundant child targets. Power-3/4 terrain on world or func_detail brushes supports original grid half-line cuts into two/four native power-2/3 patches without resampling. Power-4 row/column quarter-lines retain native power-2 leaves in crossed quadrants and power-3 leaves elsewhere, producing four, six or ten patches. Mixed outputs report output_power=null and ordered face_powers. Full/full and whole/half native joins are certified. Selected/output coarsened grids must preserve mapped masks, active vertices, alpha, fine collision/tag geometry and maximal render triangles, with exact native positions and plane separation in all four rounding modes. Unselected coarsened neighbors retain bitwise-identical complete native LOD state. Unsupported quarter-edge links, straddling native triangles, changed neighbor LOD, overlaps and incompatible bindings/metadata reject atomically. Visible instance references require a saved parent and fresh complete guarded assembly; child source changes or unsupported contents reject, while saved hidden references are omitted. Existing UVs/metadata survive; caps use material or inherit the first source material. Terrain carrier faces do not create sealed terrain walls. preview=true leaves document and undo untouched; inspect native face outputs, verified neighbors, side mappings and work with get_clip_preview and render_view, then commit or cancel."
+        description = "Clip selected world or entity-child brushes, or whole brush entities, by normal/distance, three VMF-wound points, or a snapped planar line. Keep front (positive-normal arrow side), back or both. Non-crossing brushes and terrain sheets stay unchanged; point entities reject. Individual solid:n child targets preserve their entity and unselected siblings; whole entity:n targets include all children. A whole owner wins over its redundant child targets. terrain_mode uses the shared grid/flat choice when omitted; an explicit override updates that choice only after success. Grid is the default and never falls back to Flat. Flat retiles eligible isolated axis-aligned rectangular power-2/3/4 terrain with constant normal displacement, uniform integral alpha and uniform native tags into native power-2 quad fans. It requires guarded plain static material mapping dimensions and native affine UVs; neighboring, curved, varying-painted/tagged or unsupported sources refuse. In Grid mode, power-3/4 terrain on world or func_detail brushes supports original grid half-line cuts into two/four native power-2/3 patches without resampling. Power-4 row/column quarter-lines retain native power-2 leaves in crossed quadrants and power-3 leaves elsewhere, producing four, six or ten patches. Mixed outputs report output_power=null and ordered face_powers. Full/full and whole/half native joins are certified. Selected/output coarsened grids must preserve mapped masks, active vertices, alpha, fine collision/tag geometry and maximal render triangles, with exact native positions and plane separation in all four rounding modes. Unselected coarsened neighbors retain bitwise-identical complete native LOD state. Unsupported quarter-edge links, straddling native triangles, changed neighbor LOD, overlaps and incompatible bindings/metadata reject atomically. Visible instance references require a saved parent and fresh complete guarded assembly; child source changes or unsupported contents reject, while saved hidden references are omitted. Existing UVs/metadata survive; caps use material or inherit the first source material. Terrain carrier faces do not create sealed terrain walls. preview=true leaves document and undo untouched; inspect native face outputs, verified neighbors, side mappings and work with get_clip_preview and render_view, then commit or cancel."
     )]
     pub(in crate::mcp) fn clip_brushes(
         &self,
@@ -545,20 +559,23 @@ impl EditorServer {
                 "both" => map_core::clip::Keep::Both,
                 _ => return Err("keep must be front, back or both".into()),
             };
-            let result = session.clip_brushes(
+            let result = session.clip_brushes_request(
                 Actor::Agent,
-                &ids,
-                plane,
-                keep,
-                args.material,
-                args.preview,
+                crate::session::ClipRequest {
+                    ids: &ids,
+                    plane,
+                    keep,
+                    material: args.material,
+                    preview: args.preview,
+                    terrain_mode: args.terrain_mode.map(ClipTerrainMode::mode),
+                },
             )?;
             Ok(json!({"result": clip_result(&result), "state": clip_state(&session)}))
         })
     }
 
     #[tool(
-        description = "Inspect the shared clipping tool and cut preview, including normalized plane, keep side, material, result IDs, piece bounds and face projections. Native terrain results include source/output faces, grid powers, verified neighbors and retained links, side mappings, bounded patch/sample work and manual cubemap rebindings. Referenced terrain contexts additionally expose instance/dependency counts, source-qualified child faces and guard_error; full dependency bytes are checked during preparation and Apply.",
+        description = "Inspect the shared clipping tool and cut preview, including the shared and frozen terrain_mode, normalized plane, keep side, material, result IDs, piece bounds and face projections. Native terrain results include source/output faces, grid powers, verified neighbors and retained links, side mappings, bounded patch/sample work and manual cubemap rebindings. Flat previews retain guarded runtime material mapping dimensions and expose their guard_error without accepting fresh assets. Referenced terrain contexts additionally expose instance/dependency counts, source-qualified child faces and guard_error; full dependency bytes are checked during preparation and Apply.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_clip_preview(&self) -> ToolResult {

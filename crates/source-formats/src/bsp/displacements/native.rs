@@ -8,6 +8,7 @@ const HIDDEN_BIT: u128 = 1 << 23;
 const MAX_SIGNIFICAND: u128 = (1 << 24) - 1;
 const MAX_EXACT_ADD_EXPONENT_DIFFERENCE: i32 = u128::BITS as i32 - 24;
 const FIND_START_DISTANCE_BOUND: f32 = 1_000_000_000.0;
+const MAX_MAPPING_DIMENSION: u32 = 1 << 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NativeDisplacementRounding {
@@ -46,6 +47,96 @@ struct Operand {
     negative: bool,
     significand: u128,
     exponent: i32,
+}
+
+struct BilinearGrid<const AXES: usize> {
+    first: [f32; AXES],
+    last: [f32; AXES],
+    first_edge: [f32; AXES],
+    second_edge: [f32; AXES],
+    reciprocal: f32,
+}
+
+struct BilinearRow<const AXES: usize> {
+    left: [f32; AXES],
+    step: [f32; AXES],
+}
+
+fn same_coordinate(first: f32, second: f32) -> bool {
+    let first = first.to_bits();
+    let second = second.to_bits();
+    first == second || (first | second) & !SIGN == 0
+}
+
+fn same_coordinates<const AXES: usize>(first: [f32; AXES], second: [f32; AXES]) -> bool {
+    first
+        .into_iter()
+        .zip(second)
+        .all(|(first, second)| same_coordinate(first, second))
+}
+
+impl<const AXES: usize> BilinearGrid<AXES> {
+    fn new(arithmetic: Arithmetic, quad: [[f32; AXES]; 4], power: i32) -> io::Result<Self> {
+        let [first, next, opposite, last] = quad;
+        let reciprocal = f32::from_bits(((127 - power) as u32) << 23);
+        let mut first_edge = [0.0; AXES];
+        let mut second_edge = [0.0; AXES];
+        for axis in 0..AXES {
+            first_edge[axis] =
+                arithmetic.multiply(arithmetic.subtract(next[axis], first[axis])?, reciprocal)?;
+            second_edge[axis] = arithmetic
+                .multiply(arithmetic.subtract(opposite[axis], last[axis])?, reciprocal)?;
+        }
+        Ok(Self {
+            first,
+            last,
+            first_edge,
+            second_edge,
+            reciprocal,
+        })
+    }
+
+    fn row(&self, arithmetic: Arithmetic, row: usize) -> io::Result<BilinearRow<AXES>> {
+        let mut left = [0.0; AXES];
+        let mut step = [0.0; AXES];
+        for axis in 0..AXES {
+            left[axis] = arithmetic.add(
+                arithmetic.multiply(self.first_edge[axis], row as f32)?,
+                self.first[axis],
+            )?;
+            let right = arithmetic.add(
+                arithmetic.multiply(self.second_edge[axis], row as f32)?,
+                self.last[axis],
+            )?;
+            step[axis] =
+                arithmetic.multiply(arithmetic.subtract(right, left[axis])?, self.reciprocal)?;
+        }
+        Ok(BilinearRow { left, step })
+    }
+
+    fn samples(&self, arithmetic: Arithmetic, size: usize) -> io::Result<Vec<[f32; AXES]>> {
+        let mut samples = Vec::with_capacity(size * size);
+        for row in 0..size {
+            let row = self.row(arithmetic, row)?;
+            for column in 0..size {
+                samples.push(row.point(arithmetic, column)?);
+            }
+        }
+        Ok(samples)
+    }
+}
+
+impl<const AXES: usize> BilinearRow<AXES> {
+    fn point(&self, arithmetic: Arithmetic, column: usize) -> io::Result<[f32; AXES]> {
+        let mut point = [0.0; AXES];
+        for (axis, value) in point.iter_mut().enumerate() {
+            *value = arithmetic.add(
+                arithmetic.multiply(self.step[axis], column as f32)?,
+                self.left[axis],
+            )?;
+        }
+        Ok(point)
+    }
 }
 
 impl Operand {
@@ -216,6 +307,78 @@ impl Arithmetic {
         )
     }
 
+    fn exact_add(self, left: f32, right: f32) -> io::Result<f32> {
+        let lower = Arithmetic {
+            rounding: NativeDisplacementRounding::TowardNegative,
+        }
+        .add(left, right)?;
+        let upper = Arithmetic {
+            rounding: NativeDisplacementRounding::TowardPositive,
+        }
+        .add(left, right)?;
+        if !same_coordinate(lower, upper) {
+            return Err(invalid(
+                "native displacement texture projection requires exact arithmetic",
+            ));
+        }
+        self.add(left, right)
+    }
+
+    fn exact_multiply(self, left: f32, right: f32) -> io::Result<f32> {
+        let lower = Arithmetic {
+            rounding: NativeDisplacementRounding::TowardNegative,
+        }
+        .multiply(left, right)?;
+        let upper = Arithmetic {
+            rounding: NativeDisplacementRounding::TowardPositive,
+        }
+        .multiply(left, right)?;
+        if !same_coordinate(lower, upper) {
+            return Err(invalid(
+                "native displacement texture projection requires exact arithmetic",
+            ));
+        }
+        self.multiply(left, right)
+    }
+
+    fn exact_texture_coordinate(
+        self,
+        point: [f32; 3],
+        texture_vectors: [[f32; 4]; 2],
+        reciprocal_mapping: [f32; 2],
+    ) -> io::Result<[f32; 2]> {
+        let mut result = [0.0; 2];
+        for axis in 0..2 {
+            let vector = texture_vectors[axis];
+            let x = self.exact_multiply(point[0], vector[0])?;
+            let y = self.exact_multiply(point[1], vector[1])?;
+            let z = self.exact_multiply(point[2], vector[2])?;
+            let xy = if axis == 0 {
+                self.exact_add(x, y)?
+            } else {
+                self.exact_add(y, x)?
+            };
+            let zw = self.exact_add(z, vector[3])?;
+            let numerator = self.exact_add(xy, zw)?;
+            result[axis] = self.exact_multiply(numerator, reciprocal_mapping[axis])?;
+        }
+        Ok(result)
+    }
+
+    fn stable_start_corner(self, info: DisplacementInfo, quad: [[f32; 3]; 4]) -> io::Result<usize> {
+        let first = self.start_corner(info, quad)?;
+        for rounding in NativeDisplacementRounding::ALL {
+            if rounding != self.rounding
+                && (Arithmetic { rounding }).start_corner(info, quad)? != first
+            {
+                return Err(invalid(
+                    "native displacement start corner depends on rounding mode",
+                ));
+            }
+        }
+        Ok(first)
+    }
+
     fn start_corner(self, info: DisplacementInfo, quad: [[f32; 3]; 4]) -> io::Result<usize> {
         let mut minimum = FIND_START_DISTANCE_BOUND.to_bits();
         let mut first = None;
@@ -255,53 +418,107 @@ impl Displacements {
             .ok_or_else(|| invalid("displacement index is invalid"))?;
         let size = info.grid_size()?;
         let vertices = &self.vertices[range(info.vertex_start, size * size, self.vertices.len())?];
-        let first = arithmetic.start_corner(info, quad)?;
-        for rounding in NativeDisplacementRounding::ALL {
-            if rounding != arithmetic.rounding
-                && (Arithmetic { rounding }).start_corner(info, quad)? != first
-            {
-                return Err(invalid(
-                    "native displacement start corner depends on rounding mode",
-                ));
-            }
-        }
-        let [a, b, c, d] = std::array::from_fn(|offset| quad[(first + offset) % 4]);
-        let reciprocal = f32::from_bits(((127 - info.power) as u32) << 23);
-        let mut first_edge = [0.0; 3];
-        let mut second_edge = [0.0; 3];
-        for axis in 0..3 {
-            first_edge[axis] =
-                arithmetic.multiply(arithmetic.subtract(b[axis], a[axis])?, reciprocal)?;
-            second_edge[axis] =
-                arithmetic.multiply(arithmetic.subtract(c[axis], d[axis])?, reciprocal)?;
-        }
+        let first = arithmetic.stable_start_corner(info, quad)?;
+        let quad = std::array::from_fn(|offset| quad[(first + offset) % 4]);
+        let grid = BilinearGrid::new(arithmetic, quad, info.power)?;
         let mut result = Vec::with_capacity(size * size);
         for row in 0..size {
-            let mut left = [0.0; 3];
-            let mut step = [0.0; 3];
-            for axis in 0..3 {
-                left[axis] =
-                    arithmetic.add(arithmetic.multiply(first_edge[axis], row as f32)?, a[axis])?;
-                let right =
-                    arithmetic.add(arithmetic.multiply(second_edge[axis], row as f32)?, d[axis])?;
-                step[axis] =
-                    arithmetic.multiply(arithmetic.subtract(right, left[axis])?, reciprocal)?;
-            }
+            let interpolated_row = grid.row(arithmetic, row)?;
             for col in 0..size {
                 let vertex = vertices[row * size + col];
-                let mut point = [0.0; 3];
-                for axis in 0..3 {
-                    let base =
-                        arithmetic.add(arithmetic.multiply(step[axis], col as f32)?, left[axis])?;
+                let mut point = interpolated_row.point(arithmetic, col)?;
+                for (axis, value) in point.iter_mut().enumerate() {
                     let distance = arithmetic.multiply(vertex.direction[axis], vertex.distance)?;
                     let offset = arithmetic.add(distance, 0.0)?;
-                    point[axis] = if axis == 0 {
-                        arithmetic.add(offset, base)?
+                    *value = if axis == 0 {
+                        arithmetic.add(offset, *value)?
                     } else {
-                        arithmetic.add(base, offset)?
+                        arithmetic.add(*value, offset)?
                     };
                 }
                 result.push(point);
+            }
+        }
+        Ok(result)
+    }
+
+    /// Certifies normalized native UV coordinates against one exact affine field.
+    /// Mapping dimensions must come from the qualified runtime material provider.
+    /// Base and corner UV values must be stable across rounding modes; final zero
+    /// signs compare as the same coordinate. Returned values retain the selected
+    /// profile's arithmetic signs.
+    /// Call for every rounding mode to certify an unknown UV-kernel mode. This is
+    /// a coordinate-value contract, not a pixel or radiance guarantee.
+    pub fn native_affine_texture_coordinates(
+        &self,
+        index: usize,
+        quad: [[f32; 3]; 4],
+        texture_vectors: [[f32; 4]; 2],
+        mapping_dimensions: [u32; 2],
+        profile: NativeDisplacementProfile,
+    ) -> io::Result<Vec<[f32; 2]>> {
+        let NativeDisplacementProfile::CssLinux64Build25338318 { rounding } = profile;
+        let arithmetic = Arithmetic { rounding };
+        let info = *self
+            .infos
+            .get(index)
+            .ok_or_else(|| invalid("displacement index is invalid"))?;
+        let size = info.grid_size()?;
+        let first = arithmetic.stable_start_corner(info, quad)?;
+        let quad = std::array::from_fn(|offset| quad[(first + offset) % 4]);
+        let mut reciprocal_mapping = [0.0; 2];
+        for (axis, dimension) in mapping_dimensions.into_iter().enumerate() {
+            if !dimension.is_power_of_two() || dimension > MAX_MAPPING_DIMENSION {
+                return Err(invalid(
+                    "native displacement mapping dimensions must be powers of two from 1 through 32768",
+                ));
+            }
+            reciprocal_mapping[axis] = f32::from_bits((127 - dimension.ilog2()) << 23);
+        }
+        let base = BilinearGrid::new(arithmetic, quad, info.power)?.samples(arithmetic, size)?;
+        let mut corner_uv = [[0.0; 2]; 4];
+        for (output, point) in corner_uv.iter_mut().zip(quad) {
+            *output =
+                arithmetic.exact_texture_coordinate(point, texture_vectors, reciprocal_mapping)?;
+        }
+        for rounding in NativeDisplacementRounding::ALL {
+            if rounding == arithmetic.rounding {
+                continue;
+            }
+            let candidate = Arithmetic { rounding };
+            let candidate_base =
+                BilinearGrid::new(candidate, quad, info.power)?.samples(candidate, size)?;
+            if base
+                .iter()
+                .zip(candidate_base)
+                .any(|(&original, candidate)| !same_coordinates(original, candidate))
+            {
+                return Err(invalid(
+                    "native displacement base coordinates depend on rounding mode",
+                ));
+            }
+            for (point, original) in quad.into_iter().zip(corner_uv) {
+                let candidate_uv = candidate.exact_texture_coordinate(
+                    point,
+                    texture_vectors,
+                    reciprocal_mapping,
+                )?;
+                if !same_coordinates(original, candidate_uv) {
+                    return Err(invalid(
+                        "native displacement corner UV coordinates depend on rounding mode",
+                    ));
+                }
+            }
+        }
+        let result =
+            BilinearGrid::new(arithmetic, corner_uv, info.power)?.samples(arithmetic, size)?;
+        for (&base, &uv) in base.iter().zip(&result) {
+            let projected =
+                arithmetic.exact_texture_coordinate(base, texture_vectors, reciprocal_mapping)?;
+            if !same_coordinates(projected, uv) {
+                return Err(invalid(
+                    "native displacement UV coordinates do not preserve the exact affine field",
+                ));
             }
         }
         Ok(result)

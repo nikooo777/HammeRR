@@ -1,11 +1,39 @@
 use glam::DVec3;
-use source_formats::{bsp, vmf::DispInfo};
+use source_formats::{
+    bsp,
+    vmf::{DispInfo, Solid, Vmf},
+};
 
 use super::DisplacementMesh;
 use crate::{brush::Face, checks::SOURCE_COORDINATE_LIMIT};
 
 const VERTEX_PRECISION: f64 = 10_000.0;
 pub const GEOMETRY_EPSILON: f64 = 0.02;
+
+pub fn visible_terrain_sources(vmf: &Vmf) -> impl Iterator<Item = (&Solid, bool)> {
+    vmf.world
+        .solids
+        .iter()
+        .filter(|solid| !solid.hidden)
+        .map(|solid| (solid, true))
+        .chain(
+            vmf.entities
+                .iter()
+                .filter(|entity| !entity.hidden)
+                .flat_map(|entity| {
+                    entity
+                        .solids
+                        .iter()
+                        .filter(|solid| !solid.hidden)
+                        .map(move |solid| (solid, entity.classname() == Some("func_detail")))
+                }),
+        )
+        .filter(|(solid, _)| solid.sides.iter().any(|side| side.displacement.is_some()))
+}
+
+pub fn terrain_source_is_visible(vmf: &Vmf, id: u32) -> bool {
+    visible_terrain_sources(vmf).any(|(solid, _)| solid.id == id)
+}
 
 pub fn vertex_key(point: DVec3) -> [i64; 3] {
     (point * VERTEX_PRECISION).round().as_i64vec3().to_array()

@@ -774,14 +774,35 @@ The default is cutter settings. Target mode requires unique corresponding
 original target faces. Results keep geometric source IDs and add
 `surface_source_solid`/`surface_source_side` for inherited settings.
 
-### Clip an existing terrain grid
+### Clip terrain
 
-1. Call `clip_brushes` with the brush `ids`, `plane`, `keep` and `preview:true`.
-2. Inspect `get_clip_preview` and `render_view`.
-3. Call `commit_clip_preview` or `cancel_clip_preview`.
+1. Call `set_clip_terrain_mode {"mode":"grid"}` for **Existing grid**, or
+   `{"mode":"flat"}` for **Retile flat terrain**.
+2. Call `clip_brushes` with the brush `ids`, `plane`, `keep` and `preview:true`.
+3. Inspect `get_clip_preview` and `render_view`.
+4. Call `commit_clip_preview` or `cancel_clip_preview`.
 
-World and `func_detail` terrain at power 3 or 4 can split along a complete
-existing middle row or column. `keep:"both"` produces four native patches;
+Grid is the default. The choice is shared with drawn lines, picked points and
+plane handles. Changing it cancels the current cut draft without changing the
+map or Undo history. Optional `clip_brushes.terrain_mode` accepts `"grid"` or
+`"flat"` for that request; success adopts the choice, while failure keeps the
+previous choice and valid draft. A failed grid cut never falls back to flat.
+
+Flat mode accepts isolated axis-aligned rectangular world or `func_detail`
+terrain at powers 2–4 with constant normal displacement, uniform integral alpha,
+uniform native physical triangle tags and unrestricted vertex masks. Retained
+convex three-to-five-corner regions become native power-2 quadrilateral patches.
+Native positions, shared edges and affine UVs must remain exactly representable.
+Touching or overlapping terrain base bounds, curved or varying fields, varying
+paint/tags and unsupported metadata refuse. Materials must be direct static
+`LightmappedGeneric` with an untransformed ordinary single-frame `$basetexture`
+VTF and positive power-of-two dimensions no larger than 32768. Material and
+texture references use case-insensitive lookup.
+Use relative names without extensions or a `materials/` prefix. Patch materials,
+blend shaders, animated/runtime textures and unsupported resources refuse.
+
+Grid mode lets world and `func_detail` terrain at power 3 or 4 split along a
+complete existing middle row or column. `keep:"both"` produces four native patches;
 `"front"` or `"back"` produces two. Grid spacing, alpha samples, UV placement
 and physical triangle tags remain unchanged. Child power is one lower.
 Power 4 also permits complete quarter-grid lines: row or column 4 or 12.
@@ -805,6 +826,11 @@ a physical wall beneath the cut.
 
 Results include `terrain` source/output faces and powers, `side_mapping` and
 `terrain_work` counts and limits. The preview also reports `cubemap_bindings`.
+The `get_clip_preview` response reports the shared `terrain_mode` and frozen
+`preview.terrain_mode`. Flat previews add
+`terrain_materials` with material names and captured runtime `mapping_size`.
+`preview.guard_error` reports stale map, content, material or context guards.
+Changed sources require a new preview; Apply checks the retained sources again.
 Each terrain result includes `verified_neighbors` and `preserved_links`.
 `output_power` is the common child power, or `null` for mixed output.
 Only mixed output adds `face_powers:[{solid,side,power}]`, in `faces` order.
@@ -2582,7 +2608,7 @@ These groups locate the available operations.
 | [Magnetic movement](placement.md#magnetic-translation) | `cancel_magnetic_translation`, `commit_magnetic_translation`, `get_magnetic_snap_sources`, `get_magnetic_snapping`, `preview_magnetic_translation`, `set_magnetic_snapping` |
 | [Helpers and selection](selection-presentation.md) | `get_helper_presentation`, `get_selection_presentation` |
 | [External map comparison](map-comparison.md) | `external_map_comparison`, `get_external_map_comparison` |
-| [Brush geometry and transforms](brushes.md) | `begin_clip_drag`, `cancel_block_preview`, `cancel_carve`, `cancel_clip_drag`, `cancel_clip_preview`, `cancel_hollow`, `cancel_merge`, `cancel_primitive_preview`, `clip_brushes`, `commit_carve`, `commit_clip_preview`, `commit_hollow`, `commit_merge`, `commit_primitive_preview`, `create_block`, `create_blocks`, `create_polygon_brush`, `create_primitive`, `draw_block`, `finish_clip_drag`, `frame_primitive_preview`, `get_carve_preview`, `get_clip_handles`, `get_clip_preview`, `get_hollow_preview`, `get_merge_preview`, `get_primitive_preview`, `look_inside_hollow`, `pick_clip_point`, `preview_carve`, `preview_carve_many`, `preview_hollow`, `preview_merge`, `set_clip_handle_options`, `set_clip_points`, `set_clip_tool`, `set_spatial_settings`, `update_clip_drag` |
+| [Brush geometry and transforms](brushes.md) | `begin_clip_drag`, `cancel_block_preview`, `cancel_carve`, `cancel_clip_drag`, `cancel_clip_preview`, `cancel_hollow`, `cancel_merge`, `cancel_primitive_preview`, `clip_brushes`, `commit_carve`, `commit_clip_preview`, `commit_hollow`, `commit_merge`, `commit_primitive_preview`, `create_block`, `create_blocks`, `create_polygon_brush`, `create_primitive`, `draw_block`, `finish_clip_drag`, `frame_primitive_preview`, `get_carve_preview`, `get_clip_handles`, `get_clip_preview`, `get_hollow_preview`, `get_merge_preview`, `get_primitive_preview`, `look_inside_hollow`, `pick_clip_point`, `preview_carve`, `preview_carve_many`, `preview_hollow`, `preview_merge`, `set_clip_handle_options`, `set_clip_points`, `set_clip_terrain_mode`, `set_clip_tool`, `set_spatial_settings`, `update_clip_drag` |
 | [Grid defaults](basics.md) | `get_grid_defaults`, `set_grid_defaults` |
 | [Groups and layers](groups.md) | `add_object_group_selection`, `apply_layer_edit`, `apply_object_group_edit`, `begin_layer_edit`, `begin_object_group_edit`, `cancel_layer_edit`, `cancel_object_group_edit`, `get_layers`, `get_object_groups`, `select_layer_members`, `select_object_group`, `select_object_group_member`, `set_group_selection_bypass`, `set_layer_visibility`, `update_layer_edit`, `update_object_group_edit` |
 | [History](history.md) | `get_history`, `navigate_history` |

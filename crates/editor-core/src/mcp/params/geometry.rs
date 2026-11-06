@@ -491,6 +491,8 @@ pub struct ClipArgs {
     pub keep: Option<String>,
     /// New cap/carrier-face material; omitted inherits the source's first material. Native terrain has no sealed cut wall.
     pub material: Option<String>,
+    /// grid preserves existing samples; flat explicitly retiles eligible flat terrain. Omitted uses the shared form choice.
+    pub terrain_mode: Option<ClipTerrainMode>,
     #[serde(default)]
     pub preview: bool,
 }
@@ -498,6 +500,34 @@ pub struct ClipArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ClipToolArgs {
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipTerrainMode {
+    Grid,
+    Flat,
+}
+
+impl ClipTerrainMode {
+    pub(in crate::mcp) fn mode(self) -> map_core::clip::TerrainMode {
+        match self {
+            Self::Grid => map_core::clip::TerrainMode::Grid,
+            Self::Flat => map_core::clip::TerrainMode::Flat,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct ClipTerrainModeArgs {
+    pub mode: ClipTerrainMode,
+}
+
+fn clip_terrain_mode_name(mode: map_core::clip::TerrainMode) -> &'static str {
+    match mode {
+        map_core::clip::TerrainMode::Grid => "grid",
+        map_core::clip::TerrainMode::Flat => "flat",
+    }
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -565,6 +595,8 @@ pub(in crate::mcp) fn clip_state(session: &Session) -> Value {
             "plane": {"normal": preview.plane.normal.to_array(), "distance": preview.plane.dist},
             "keep": match preview.keep { map_core::clip::Keep::Front => "front", map_core::clip::Keep::Back => "back", map_core::clip::Keep::Both => "both" },
             "material": preview.material, "ids": preview.ids.iter().copied().map(id_string).collect::<Vec<_>>(),
+            "terrain_mode": clip_terrain_mode_name(preview.terrain_mode),
+            "guard_error": session.clip_preview_error(),
             "result": clip_result(&preview.result),
             "cubemap_bindings":preview.cubemap_bindings_report(),
             "pieces": preview.result.cuts.iter().flat_map(|cut| &cut.solids)
@@ -575,9 +607,12 @@ pub(in crate::mcp) fn clip_state(session: &Session) -> Value {
             context["guard_error"] = json!(session.clip_preview_error());
             value["terrain_context"] = context;
         }
+        if let Some(materials) = preview.terrain_materials_report() {
+            value["terrain_materials"] = materials;
+        }
         value
     });
-    json!({"enabled": session.clip_tool(), "snapshot":session.clip_point_stamp(), "point_draft":session.clip_points_report(), "handle_options":session.clip_handles_report(), "drag":session.clip_drag_report(), "preview":preview})
+    json!({"enabled": session.clip_tool(), "terrain_mode":clip_terrain_mode_name(session.clip_terrain_mode()), "snapshot":session.clip_point_stamp(), "point_draft":session.clip_points_report(), "handle_options":session.clip_handles_report(), "drag":session.clip_drag_report(), "preview":preview})
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

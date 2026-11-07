@@ -26,6 +26,16 @@ pub use static_props::{
 };
 pub const MAX_CAMERA_PROPERTIES: usize = 256;
 pub const MAX_CAMERA_BYTES: usize = 64 * 1024;
+pub const MAX_SKY_SOURCE_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_SKY_SOURCE_METADATA_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_SKY_LOGICAL_PATHS: usize = 128;
+pub const MAX_SKY_PHYSICAL_PATHS: usize = 192;
+pub const MAX_SKY_LOOKUP_ROWS: usize = 384;
+pub const MAX_SKY_SOURCE_PATH_BYTES: usize = 4_096;
+pub const MAX_SKY_SOURCE_TRACE_BYTES: usize =
+    MAX_SKY_LOOKUP_ROWS * (MAX_SKY_SOURCE_PATH_BYTES + size_of::<std::path::PathBuf>() + 64);
+pub const SKY_SOURCE_CPU_RESERVATION_BYTES: usize =
+    MAX_SKY_SOURCE_BYTES + MAX_SKY_SOURCE_METADATA_BYTES;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
@@ -135,6 +145,7 @@ pub struct Region {
     pub stats: Stats,
     pub surfaces: Vec<Surface>,
     pub source_models: Vec<SourceModel>,
+    pub material_sources: crate::asset_sources::BuildMaterialSources,
     pub source_guard: Option<crate::asset_sources::AssetSourceGuard>,
 }
 
@@ -239,8 +250,20 @@ pub fn resolve_limited(
     let mut stats = preflight(vmf, limits, control)?;
     let camera = camera(vmf, camera_id)?;
     let mut report = Report::default();
-    let prepared = Map::prepare_world_geometry_controlled(vmf, fs, &mut report, control)
-        .map_err(|error| preparation_error(error, &report))?;
+    let material_sources = crate::asset_sources::BuildMaterialSources::bounded_with_trace(
+        MAX_SKY_SOURCE_BYTES,
+        MAX_SKY_LOGICAL_PATHS,
+        MAX_SKY_PHYSICAL_PATHS,
+        MAX_SKY_LOOKUP_ROWS,
+        Some(source_formats::gamefs::SourceTraceLimits {
+            rows: MAX_SKY_LOOKUP_ROWS,
+            bytes: MAX_SKY_SOURCE_TRACE_BYTES,
+            path_bytes: MAX_SKY_SOURCE_PATH_BYTES,
+        }),
+    );
+    let prepared =
+        Map::prepare_sky_geometry_controlled(vmf, fs, &material_sources, &mut report, control)
+            .map_err(|error| preparation_error(error, &report))?;
     require_report(&report)?;
     let PreparedWorld {
         mut map,
@@ -403,6 +426,7 @@ pub fn resolve_limited(
         stats,
         surfaces,
         source_models,
+        material_sources,
         source_guard,
     })
 }
@@ -872,6 +896,7 @@ fn preflight(vmf: &Vmf, limits: Limits, control: &Control) -> Result<Stats, Stri
         }
     }
     let reservations = [
+        (1, SKY_SOURCE_CPU_RESERVATION_BYTES),
         (
             usize::from(
                 vmf.entities

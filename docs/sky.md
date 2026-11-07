@@ -43,7 +43,9 @@ These controls do not change game tone mapping.
 9. Check readiness, then enable **Enable 3D sky preview**.
 
 Use **Cancel preparation** to stop the owned preparation.
-Use **Refresh status** after source changes. Preparation errors remain explicit.
+Use **Refresh status** after source changes. Changed consumed material, texture
+or model sources retire readiness; prepare again. For changed VPK indexes or
+mounts, use **Reload content** first. Preparation errors remain explicit.
 Use **2D sky preview** to fill space behind the miniature.
 
 | 2D sky only | 3D sky preview enabled |
@@ -158,6 +160,9 @@ The game must enable full HDR to display its HDR channel.
 - Supported static six-face families only. Missing or malformed required faces report errors.
 - Required sky textures must meet the [native texture limits](textures.md#native-texture-files).
 - 3D sky preparation is explicit; enabling the switch does not silently load or repair sources.
+- Source checks cover consumed topology, material, texture and model inputs.
+  Catalogue refresh remains explicit. Preparation allows 128 material/texture
+  source paths and 16 MiB of original asset data.
 - World and detail terrain can remain outside the miniature when checked
   source and native-LOD bounds prove separation. Whole patches inside the
   selected component can render. Partial, uncertain or boundary contact stops

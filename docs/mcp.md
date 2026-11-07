@@ -1653,8 +1653,15 @@ Flat world/detail surfaces also support plain single-base cutouts. Only
 reference parser uses native float32 settings and an 8-bit cutoff; missing or
 received-zero references use 0.7. Invalid and positive subnormal references
 report errors. Terrain/model alpha and alpha Patch materials remain unavailable.
-Cutouts do not seal the component. Changed flat assets use
-the existing explicit material/content reload and Prepare workflow.
+Cutouts do not seal the component. Changed consumed VMT/VTF sources and winning
+lookup paths retire readiness, including topology-only material inputs.
+Preparation uses one original capture from Map semantics through all renderer
+reads; model inputs retain their separate guard. `stats.asset_source_guards`
+reports the retained guard count. `limits.asset_sources` exposes original-byte,
+logical/physical path, lookup-row, path-length and trace-memory caps.
+Use a fresh Prepare after loose-file changes. Changed VPK indexes or mounts need
+`reload_content` first; asset-catalogue refresh remains explicit. Requested stale
+3D sky rendering fails instead of returning its cached miniature.
 
 Flat world/detail also accepts plain single-base `$translucent 1` materials,
 using texture alpha. Alpha testing, additive coverage, modulation and proxies

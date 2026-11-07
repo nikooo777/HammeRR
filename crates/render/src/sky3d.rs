@@ -11,6 +11,8 @@ use source_formats::vtf::{ImageFormat, Vtf};
 use crate::materials::MaterialInfo;
 use crate::scene::{Batch, Vertex};
 
+type AssetReader<'a> = dyn FnMut(&str, usize) -> Result<Option<Vec<u8>>, String> + 'a;
+
 pub const MAX_VERTICES: usize = 65_536;
 pub const MAX_INDICES: usize = 196_608;
 pub const MAX_SURFACES: usize = 16_384;
@@ -34,7 +36,7 @@ const LEGACY_TARGET_PIXEL_BYTES: usize = 8;
 const HDR_TARGET_PIXEL_BYTES: usize = 12;
 static NEXT_SCENE: AtomicU64 = AtomicU64::new(1);
 
-pub const POLICY: &str = "Editor 3D sky preview: explicitly selected sealed world/func_detail miniature with flat surfaces, admitted whole authored fine terrain patches and whole fixed prop_static LOD0 meshes; perspective Textured views only. Camera origin + main eye / integer scale 1..128; unchanged direction/FOV, no entity-angle rotation. Editor near plane 4/scale miniature units preserves main-equivalent clipping; native Source uses a different near policy. Static single-base LightmappedGeneric/UnlitGeneric world/terrain materials and opaque qualified VertexLitGeneric fixed-model materials, with checked axis-aligned static base-texture transforms; finite center/scale/translation values within ±1024, last duplicate operation wins, nonzero rotation rejected; flat world/func_detail surfaces may use plain alpha-tested cutouts with validated received-float defaults and native byte-quantized references, or static $translucent 1 with texture alpha; terrain and models remain opaque. Alpha testing and translucency are mutually exclusive. No additive/modulated coverage, proxies, normal maps, detail/blend layers, authored lighting or runtime effects. Alpha brushes do not seal the selected component; opaque brushes must enclose it. Translucent batches draw after opaque/cutout batches, with depth testing, no depth writes and stable back-to-front sorting by actual batch AABB center depth in miniature coordinates. Intersecting or cyclic translucent surfaces can blend in the wrong order; no native BSP transparency ordering is claimed. Straight fogged RGB and texture alpha accumulate into the existing premultiplied miniature target; its main composite preserves the remaining 2D background contribution. HDR exposure follows linear composition. Terrain uses BASE texture coordinates and shared vertex normals. Fixed models retain authored normalized UVs and transformed source normals through the shared static-prop pose. Partial-patch/model clipping, native model/terrain LOD appearance and baked model lighting are unsupported. The selected sky_camera supplies independent static LDR fog, evaluated in miniature coordinates after one reciprocal range scaling and the current initial radial context; no world controller/water/timeline/far-Z inheritance. Direction uses the checked received 1/32 coordinate grid before biased normalization. Standard Sky 2D backgrounds remain unchanged; combined fog with UnlitGeneric 2D backgrounds requires explicit $nofog 1. HDR scenes compose miniature fog before the shared manual exposure; no native clipping, repeated client draw-history normalization or pixel parity. Missing/unsupported requested assets fail eligibility. SKY receives the miniature; SKY2D retains only the existing 2D sky path. Empty miniature pixels retain the chosen 2D sky when its independent preview is enabled and ready, otherwise the regular authored sky tool surface. Mixed SKY/SKY2D is an editor policy, not native mixed-sky parity. No helpers, selection, guides, projected picking or editing. Limits: 65536 vertices,196608 indices,16384 surfaces,64 materials,64 MiB conservative CPU builder allocation,32 MiB retained GPU geometry/material payload shared across scenes,64 MiB separately charged transient uploads and one 32 MiB legacy or48 MiB HDR color/depth target. The 144 MiB explicit payload/upload/target budget excludes driver allocation overhead and is not a total VRAM ceiling. Retired identities flush pending uploads and wait at most one second for GPU completion before replacement admission. Uploads conservatively charge RGBA rows padded to256 bytes for every mip plus geometry/uniform bytes; live matching identities reuse bindings. Targets/textures are at most2048 pixels per axis. Targets downsample larger viewports preserving aspect; texture assets never downsample or substitute.";
+pub const POLICY: &str = "Editor 3D sky preview: explicitly selected sealed world/func_detail miniature with flat surfaces, admitted whole authored fine terrain patches and whole fixed prop_static LOD0 meshes; perspective Textured views only. Camera origin + main eye / integer scale 1..128; unchanged direction/FOV, no entity-angle rotation. Editor near plane 4/scale miniature units preserves main-equivalent clipping; native Source uses a different near policy. Static single-base LightmappedGeneric/UnlitGeneric world/terrain materials and opaque qualified VertexLitGeneric fixed-model materials, with checked axis-aligned static base-texture transforms; finite center/scale/translation values within ±1024, last duplicate operation wins, nonzero rotation rejected; flat world/func_detail surfaces may use plain alpha-tested cutouts with validated received-float defaults and native byte-quantized references, or static $translucent 1 with texture alpha; terrain and models remain opaque. Alpha testing and translucency are mutually exclusive. No additive/modulated coverage, proxies, normal maps, detail/blend layers, authored lighting or runtime effects. Alpha brushes do not seal the selected component; opaque brushes must enclose it. Translucent batches draw after opaque/cutout batches, with depth testing, no depth writes and stable back-to-front sorting by actual batch AABB center depth in miniature coordinates. Intersecting or cyclic translucent surfaces can blend in the wrong order; no native BSP transparency ordering is claimed. Straight fogged RGB and texture alpha accumulate into the existing premultiplied miniature target; its main composite preserves the remaining 2D background contribution. HDR exposure follows linear composition. Terrain uses BASE texture coordinates and shared vertex normals. Fixed models retain authored normalized UVs and transformed source normals through the shared static-prop pose. Partial-patch/model clipping, native model/terrain LOD appearance and baked model lighting are unsupported. The selected sky_camera supplies independent static LDR fog, evaluated in miniature coordinates after one reciprocal range scaling and the current initial radial context; no world controller/water/timeline/far-Z inheritance. Direction uses the checked received 1/32 coordinate grid before biased normalization. Standard Sky 2D backgrounds remain unchanged; combined fog with UnlitGeneric 2D backgrounds requires explicit $nofog 1. HDR scenes compose miniature fog before the shared manual exposure; no native clipping, repeated client draw-history normalization or pixel parity. Missing/unsupported requested assets fail eligibility. Shared Session preparation captures consumed material/texture sources and retires readiness when their original files or winning lookup paths change; content-catalogue refresh remains explicit. SKY receives the miniature; SKY2D retains only the existing 2D sky path. Empty miniature pixels retain the chosen 2D sky when its independent preview is enabled and ready, otherwise the regular authored sky tool surface. Mixed SKY/SKY2D is an editor policy, not native mixed-sky parity. No helpers, selection, guides, projected picking or editing. Limits: 65536 vertices,196608 indices,16384 surfaces,64 materials,64 MiB conservative CPU builder allocation,32 MiB retained GPU geometry/material payload shared across scenes,64 MiB separately charged transient uploads and one 32 MiB legacy or48 MiB HDR color/depth target. The 144 MiB explicit payload/upload/target budget excludes driver allocation overhead and is not a total VRAM ceiling. Retired identities flush pending uploads and wait at most one second for GPU completion before replacement admission. Uploads conservatively charge RGBA rows padded to256 bytes for every mip plus geometry/uniform bytes; live matching identities reuse bindings. Targets/textures are at most2048 pixels per axis. Targets downsample larger viewports preserving aspect; texture assets never downsample or substitute.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
@@ -213,7 +215,12 @@ impl Budget {
         Ok(())
     }
 
-    fn read(&mut self, fs: &GameFs, path: &str, vmt: bool) -> Result<Option<Vec<u8>>, String> {
+    fn read(
+        &mut self,
+        read: &mut AssetReader<'_>,
+        path: &str,
+        vmt: bool,
+    ) -> Result<Option<Vec<u8>>, String> {
         self.reads = checked_sum(self.reads, 1, MAX_ASSET_READS, "asset reads")?;
         let factor = if vmt { VMT_ALLOCATION_FACTOR } else { 1 };
         let maximum = ((MAX_CPU_BYTES - self.cpu) / factor).min(if vmt {
@@ -224,13 +231,17 @@ impl Budget {
         if maximum == 0 {
             return Err("3D sky CPU allocation budget exhausted before asset read".into());
         }
-        let bytes = fs
-            .read_limited(
-                &asset_relative(path).map_err(|error| error.to_string())?,
-                maximum,
-            )
-            .map_err(|error| format!("3D sky asset {path}: {error}"))?;
+        let bytes = read(
+            &asset_relative(path).map_err(|error| error.to_string())?,
+            maximum,
+        )
+        .map_err(|error| format!("3D sky asset {path}: {error}"))?;
         if let Some(bytes) = &bytes {
+            if bytes.len() > maximum {
+                return Err(format!(
+                    "3D sky asset {path} exceeded its source read limit {maximum}"
+                ));
+            }
             self.cpu(bytes.len() * factor)?;
         }
         Ok(bytes)
@@ -405,7 +416,7 @@ fn plain_alpha_material(bytes: &[u8]) -> Result<Material, String> {
 }
 
 fn load_material(
-    fs: &GameFs,
+    read: &mut AssetReader<'_>,
     name: &str,
     usage: MaterialUse,
     budget: &mut Budget,
@@ -416,7 +427,9 @@ fn load_material(
     let mut alpha_source = None;
     let material = Material::load_with_reader(&material_path(name), &mut |path| {
         checkpoint().map_err(std::io::Error::other)?;
-        let bytes = budget.read(fs, path, true).map_err(std::io::Error::other)?;
+        let bytes = budget
+            .read(read, path, true)
+            .map_err(std::io::Error::other)?;
         if first_source {
             first_source = false;
             alpha_source = bytes.as_ref().map(|bytes| plain_alpha_material(bytes));
@@ -542,7 +555,7 @@ fn load_material(
     let path = texture_path(texture);
     checkpoint()?;
     let bytes = budget
-        .read(fs, &path, false)?
+        .read(read, &path, false)?
         .ok_or_else(|| format!("3D sky base texture {path} is missing"))?;
     let texture =
         Vtf::parse(bytes).map_err(|error| format!("3D sky base texture {path}: {error}"))?;
@@ -619,6 +632,25 @@ impl Scene {
         fog: crate::fog::Profile,
         surfaces: &[Surface],
         fs: &GameFs,
+        checkpoint: impl FnMut() -> Result<(), String>,
+    ) -> Result<Self, String> {
+        Self::build_controlled_with_reader(
+            camera,
+            fog,
+            surfaces,
+            |path, maximum| {
+                fs.read_limited(path, maximum)
+                    .map_err(|error| error.to_string())
+            },
+            checkpoint,
+        )
+    }
+
+    pub fn build_controlled_with_reader(
+        camera: Camera,
+        fog: crate::fog::Profile,
+        surfaces: &[Surface],
+        mut read: impl FnMut(&str, usize) -> Result<Option<Vec<u8>>, String>,
         mut checkpoint: impl FnMut() -> Result<(), String>,
     ) -> Result<Self, String> {
         checkpoint()?;
@@ -638,7 +670,7 @@ impl Scene {
             if names.len() >= MAX_MATERIALS {
                 return Err(format!("3D sky materials exceed budget {MAX_MATERIALS}"));
             }
-            let material = load_material(fs, &name, usage, &mut budget, &mut checkpoint)?;
+            let material = load_material(&mut read, &name, usage, &mut budget, &mut checkpoint)?;
             let index = material.map(|material| {
                 let index = materials.len();
                 materials.push(material);

@@ -46,11 +46,19 @@ impl<'a> Capture<'a> {
         Self {
             game,
             control,
-            sources: BuildMaterialSources::bounded(
+            sources: BuildMaterialSources::bounded_with_trace(
                 MAX_SOURCE_BYTES,
                 MAX_LOGICAL_PATHS,
                 MAX_PHYSICAL_PATHS,
                 MAX_LOOKUP_ROWS,
+                Some(source_formats::gamefs::SourceTraceLimits {
+                    rows: MAX_LOOKUP_ROWS,
+                    bytes: MAX_LOOKUP_ROWS
+                        * (super::MAX_SKY_SOURCE_PATH_BYTES
+                            + std::mem::size_of::<std::path::PathBuf>()
+                            + 64),
+                    path_bytes: super::MAX_SKY_SOURCE_PATH_BYTES,
+                }),
             ),
             parsed: HardwareCharge::default(),
             models: BTreeMap::new(),

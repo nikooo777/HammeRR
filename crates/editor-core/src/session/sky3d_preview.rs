@@ -19,6 +19,7 @@ mod snapshot;
 const MAX_CAMERAS: usize = 64;
 const MAX_DIAGNOSTIC_BYTES: usize = 1024;
 const MAX_PROVENANCE_ROWS: usize = 64;
+const MAX_SOURCE_GUARDS: usize = 2;
 const AUXILIARY_BYTES: usize = 8 * 1024 * 1024;
 const MODEL_PROVENANCE_BYTES: usize = sky3d::MAX_SURFACES * 512;
 const MAX_CPU_BYTES: usize = 640 * 1024 * 1024;
@@ -89,7 +90,18 @@ struct Ready {
     snapshot_bytes: usize,
     fog_defaults: Vec<&'static str>,
     fog_inert_keys: Vec<String>,
-    source_guard: Option<compiler::asset_sources::AssetSourceGuard>,
+    source_guards: Vec<compiler::asset_sources::AssetSourceGuard>,
+}
+
+impl Ready {
+    fn verify_source_metadata(&self, control: &compiler::Control) -> Result<(), String> {
+        for guard in &self.source_guards {
+            guard
+                .verify_original_metadata(control, sky_region::MAX_SKY_SOURCE_METADATA_BYTES)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
 }
 
 pub struct Request {
@@ -302,7 +314,9 @@ impl Request {
             origin: received_origin(region.origin),
             scale: f64::from(region.scale),
         };
-        let source_guard = region.source_guard;
+        let mut source_guards = Vec::with_capacity(MAX_SOURCE_GUARDS);
+        source_guards.extend(region.source_guard);
+        let material_sources = region.material_sources;
         let surfaces = region
             .surfaces
             .into_iter()
@@ -319,22 +333,40 @@ impl Request {
                 texture_v: surface.texture_vectors[1].map(f64::from),
             })
             .collect::<Vec<_>>();
-        let scene =
-            sky3d::Scene::build_controlled(camera, fog.profile, &surfaces, &self.game, || {
-                self.control.checkpoint()
-            })?;
+        let scene = sky3d::Scene::build_controlled_with_reader(
+            camera,
+            fog.profile,
+            &surfaces,
+            |path, maximum| {
+                material_sources
+                    .read_asset(&self.game, path, maximum)
+                    .map(|asset| asset.map(|asset| asset.bytes().to_vec()))
+                    .map_err(|error| error.to_string())
+            },
+            || self.control.checkpoint(),
+        )?;
         self.control.checkpoint()?;
-        if let Some(guard) = &source_guard {
+        for guard in &source_guards {
             guard
                 .verify_sources(&self.game, &self.control)
-                .map_err(|error| format!("3D sky model source changed: {error}"))?;
+                .map_err(|error| format!("3D sky asset source changed: {error}"))?;
+        }
+        let material_guard = material_sources
+            .source_guard(&self.game, &self.control)
+            .map_err(|error| format!("3D sky asset source changed: {error}"))?;
+        drop(material_sources);
+        source_guards.push(material_guard);
+        for guard in &source_guards {
+            guard
+                .verify_original_metadata(&self.control, sky_region::MAX_SKY_SOURCE_METADATA_BYTES)
+                .map_err(|error| format!("3D sky source metadata: {error}"))?;
         }
         let stats = json!({"region":stats,"geometry":scene.stats,"cpu_reservation_bytes":cpu_reservation,
             "source_owners":owners,"source_sides":provenance,"source_sides_total":sources.len(),
             "source_sides_truncated":sources.len()>MAX_PROVENANCE_ROWS,
             "source_models":model_provenance,"source_models_total":source_models_total,
             "source_models_truncated":source_models_total>MAX_PROVENANCE_ROWS,
-            "model_provenance_reservation_bytes":model_provenance_bytes});
+            "model_provenance_reservation_bytes":model_provenance_bytes,"asset_source_guards":source_guards.len()});
         Ok(Ready {
             key: self.key.clone(),
             scene: Arc::new(scene),
@@ -342,7 +374,7 @@ impl Request {
             snapshot_bytes: self.snapshot_bytes,
             fog_defaults: fog.defaults,
             fog_inert_keys: fog.inert_keys,
-            source_guard,
+            source_guards,
         })
     }
 }
@@ -500,21 +532,12 @@ impl Session {
         }
         match completed.result {
             Ok(ready) if !completed.control.cancelled() => {
-                let source_check = ready
-                    .source_guard
-                    .as_ref()
-                    .map(|guard| {
-                        guard.verify_original_metadata(
-                            &completed.control,
-                            sky_region::MAX_PROP_SOURCE_METADATA_BYTES,
-                        )
-                    })
-                    .transpose();
+                let source_check = ready.verify_source_metadata(&completed.control);
                 if let Err(error) = source_check {
                     self.retire_sky3d_preview(
                         "stale",
                         Some(bounded(&format!(
-                            "Model source changed: {error}; prepare again"
+                            "3D sky asset source changed: {error}; prepare again"
                         ))),
                     );
                 } else {
@@ -593,24 +616,16 @@ impl Session {
             );
             return true;
         }
-        let source_issue = self
-            .sky3d_preview
-            .ready
-            .as_ref()
-            .and_then(|ready| ready.source_guard.as_ref())
-            .and_then(|guard| {
-                guard
-                    .verify_original_metadata(
-                        &compiler::Control::default(),
-                        sky_region::MAX_PROP_SOURCE_METADATA_BYTES,
-                    )
-                    .err()
-            });
+        let source_issue = self.sky3d_preview.ready.as_ref().and_then(|ready| {
+            ready
+                .verify_source_metadata(&compiler::Control::default())
+                .err()
+        });
         if let Some(error) = source_issue {
             self.retire_sky3d_preview(
                 "stale",
                 Some(bounded(&format!(
-                    "Model source changed: {error}; prepare again"
+                    "3D sky asset source changed: {error}; prepare again"
                 ))),
             );
             return true;
@@ -781,7 +796,7 @@ impl Session {
             "snapshot_bytes":ready.map(|ready|ready.snapshot_bytes),"issue":issue,"summary":summary,
             "fog":fog.unwrap_or_else(|error|json!({"ready":false,"applied":false,"issue":bounded(&error)})),
             "diagnostics":issue.as_ref().map(|issue|vec![json!({"level":"error","message":bounded(issue)})]).unwrap_or_default(),
-            "limits":{"region":sky_region::Limits::default(),"flat_translucent":{"scope":"Flat world/func_detail only; terrain and models remain opaque","profile":"Same strict plain single-base LightmappedGeneric/UnlitGeneric alpha-material validation; $translucent 1 with texture alpha, no alpha test, modulation or additive coverage","patches":false,"sort":"Stable back-to-front batch AABB center depth in miniature coordinates; intersecting or cyclic surfaces can blend in the wrong order","passes":"Opaque/cutout first; translucent depth test without depth writes; existing premultiplied target and main composite","fog_exposure":"Fog before blending; HDR exposure after linear composition","source_policy":"Existing flat content/material reload and fresh Prepare; no automatic VMT/VTF disk retirement"},"flat_cutout":{"scope":"Flat world/func_detail only; terrain and models remain opaque","profile":"Plain single-base LightmappedGeneric or UnlitGeneric with unique scalar parameters and $alphatest 1","patches":false,"translucency":false,"reference_policy":"Shared received-float defaults and native byte quantization; shader threshold is reference byte divided by255","source_policy":"Prepared flat materials/textures follow content/material reload and fresh Prepare; no general automatic VMT/VTF disk retirement"},"static_prop_exclusion":{
+            "limits":{"region":sky_region::Limits::default(),"asset_sources":{"raw_bytes":sky_region::MAX_SKY_SOURCE_BYTES,"logical_paths":sky_region::MAX_SKY_LOGICAL_PATHS,"physical_paths":sky_region::MAX_SKY_PHYSICAL_PATHS,"lookup_rows":sky_region::MAX_SKY_LOOKUP_ROWS,"path_bytes":sky_region::MAX_SKY_SOURCE_PATH_BYTES,"trace_bytes":sky_region::MAX_SKY_SOURCE_TRACE_BYTES,"metadata_bytes":sky_region::MAX_SKY_SOURCE_METADATA_BYTES,"cpu_reservation_bytes":sky_region::SKY_SOURCE_CPU_RESERVATION_BYTES,"guards":MAX_SOURCE_GUARDS,"policy":"One original capture for Map material semantics and renderer VMT/Patch/VTF reads; original file and lookup changes retire readiness. Model sources retain their own guard. Content catalogue refresh remains explicit."},"flat_translucent":{"scope":"Flat world/func_detail only; terrain and models remain opaque","profile":"Same strict plain single-base LightmappedGeneric/UnlitGeneric alpha-material validation; $translucent 1 with texture alpha, no alpha test, modulation or additive coverage","patches":false,"sort":"Stable back-to-front batch AABB center depth in miniature coordinates; intersecting or cyclic surfaces can blend in the wrong order","passes":"Opaque/cutout first; translucent depth test without depth writes; existing premultiplied target and main composite","fog_exposure":"Fog before blending; HDR exposure after linear composition","source_policy":"Original consumed VMT/VTF and lookup changes retire readiness; content catalogue refresh remains explicit"},"flat_cutout":{"scope":"Flat world/func_detail only; terrain and models remain opaque","profile":"Plain single-base LightmappedGeneric or UnlitGeneric with unique scalar parameters and $alphatest 1","patches":false,"translucency":false,"reference_policy":"Shared received-float defaults and native byte quantization; shader threshold is reference byte divided by255","source_policy":"Consumed original material/texture and lookup changes retire readiness; content catalogue refresh remains explicit"},"static_prop_exclusion":{
                 "profile":"Fixed unit-scale root prop_static; fixed rest model with one bone and plain VertexLitGeneric/Patch materials; all draw LODs.",
                 "bounds":"Rotation-independent conservative native transform envelope from every validated model vertex; potential component contact refuses exclusion.",
                 "source_bytes":sky_region::MAX_PROP_SOURCE_BYTES,"parse_bytes":sky_region::MAX_PROP_PARSE_BYTES,
@@ -790,7 +805,7 @@ impl Session {
                 "logical_paths":sky_region::MAX_PROP_LOGICAL_PATHS,"physical_paths":sky_region::MAX_PROP_PHYSICAL_PATHS,
                 "lookup_rows":sky_region::MAX_PROP_LOOKUP_ROWS,"cpu_reservation_bytes":sky_region::PROP_CPU_RESERVATION_BYTES
             },"material_semantics":{"file_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_BYTES,"total_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_TOTAL_BYTES,"reads":compiler::materials::MAX_GEOMETRY_MATERIAL_READS,"allocation_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_ALLOCATION_BYTES},"render":{"vertices":sky3d::MAX_VERTICES,"indices":sky3d::MAX_INDICES,"surfaces":sky3d::MAX_SURFACES,"materials":sky3d::MAX_MATERIALS,"cpu_bytes":sky3d::MAX_CPU_BYTES,"gpu_bytes":sky3d::MAX_GPU_BYTES,"gpu_asset_bytes":sky3d::MAX_GPU_ASSET_BYTES,"gpu_upload_bytes":sky3d::MAX_GPU_UPLOAD_BYTES,"target_bytes":sky3d::MAX_TARGET_BYTES,"target_dimension":sky3d::MAX_TARGET_DIMENSION},"cpu_bytes":MAX_CPU_BYTES,"auxiliary_bytes":AUXILIARY_BYTES,"snapshot_bytes":snapshot::MAX_BYTES,"snapshot_items":snapshot::MAX_ITEMS,"snapshot_depth":snapshot::MAX_DEPTH,"camera_rows":MAX_CAMERAS,"provenance_rows":MAX_PROVENANCE_ROWS,"model_provenance_rows":MAX_PROVENANCE_ROWS,"model_provenance_records":sky3d::MAX_SURFACES,"model_provenance_bytes":MODEL_PROVENANCE_BYTES,"active_workers":1,"cached_snapshots":1},
-            "policy":"Explicit root sky_camera; sealed committed world/detail component with flat surfaces, admitted whole authored fine terrain patches and whole fixed prop_static LOD0 meshes; editor visibility filters display geometry after topology. Terrain uses BASE texture coordinates and shared vertex normals; models use normalized authored UVs and transformed source normals. Whole conservative membership is required, with no patch/model clipping or native LOD appearance matching. Static single-base textured miniature with its independent static camera fog. Flat world/func_detail supports plain alpha-tested cutouts with shared received-float defaults and native byte-quantized references, or static single-base texture-alpha translucency. Opaque brushes must seal the component. Translucent batches draw after opaque/cutout batches and sort by batch-center depth in miniature coordinates; intersecting or cyclic surfaces can blend in the wrong order. Fog applies before blending and HDR exposure after linear composition; the existing premultiplied composite retains the 2D background contribution. Terrain and fixed models remain opaque. Portals, water, instances and runtime effects are unsupported inside it. Distant terrain and fixed static props require certified conservative separation; guarded model-source changes require preparation again. Main picking, source, selection, history and camera remain ordinary editor state. 2D sky preview is independent, with combined fog material compatibility required. No native framebuffer parity claim."})
+            "policy":"Explicit root sky_camera; sealed committed world/detail component with flat surfaces, admitted whole authored fine terrain patches and whole fixed prop_static LOD0 meshes; editor visibility filters display geometry after topology. Terrain uses BASE texture coordinates and shared vertex normals; models use normalized authored UVs and transformed source normals. Whole conservative membership is required, with no patch/model clipping or native LOD appearance matching. Static single-base textured miniature with its independent static camera fog. Flat world/func_detail supports plain alpha-tested cutouts with shared received-float defaults and native byte-quantized references, or static single-base texture-alpha translucency. Opaque brushes must seal the component. Translucent batches draw after opaque/cutout batches and sort by batch-center depth in miniature coordinates; intersecting or cyclic surfaces can blend in the wrong order. Fog applies before blending and HDR exposure after linear composition; the existing premultiplied composite retains the 2D background contribution. Terrain and fixed models remain opaque. Portals, water, instances and runtime effects are unsupported inside it. Distant terrain and fixed static props require certified conservative separation; changes to consumed original VMT/VTF/model sources or winning lookup paths retire readiness and require preparation again. Content catalogue refresh remains explicit. Main picking, source, selection, history and camera remain ordinary editor state. 2D sky preview is independent, with combined fog material compatibility required. No native framebuffer parity claim."})
     }
 
     fn retire_sky3d_preview(&mut self, status: &'static str, issue: Option<String>) {

@@ -180,7 +180,7 @@ fn find_case_insensitive(root: &Path, relative: &str) -> io::Result<Option<PathB
 fn find_case_insensitive_traced(
     root: &Path,
     relative: &str,
-    mut trace: Option<&mut AssetSourcePaths>,
+    mut trace: Option<&mut SourceTrace>,
 ) -> io::Result<Option<PathBuf>> {
     if let Some(trace) = trace.as_deref_mut() {
         trace.directory(root)?;
@@ -256,27 +256,105 @@ pub struct AssetSourcePaths {
     pub lookup_symlinks: Vec<PathBuf>,
 }
 
-impl AssetSourcePaths {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceTraceLimits {
+    pub rows: usize,
+    pub bytes: usize,
+    pub path_bytes: usize,
+}
+
+#[derive(Default)]
+struct SourceTrace {
+    paths: AssetSourcePaths,
+    limits: Option<SourceTraceLimits>,
+    rows: usize,
+    bytes: usize,
+}
+
+enum SourcePathKind {
+    File,
+    Directory,
+    Symlink,
+}
+
+impl SourceTrace {
+    fn new(limits: Option<SourceTraceLimits>) -> Self {
+        Self {
+            limits,
+            ..Self::default()
+        }
+    }
+
+    fn check_path(&self, path: &Path) -> io::Result<()> {
+        if self
+            .limits
+            .is_some_and(|limits| path.as_os_str().as_encoded_bytes().len() > limits.path_bytes)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Asset source trace path exceeds its byte budget",
+            ));
+        }
+        Ok(())
+    }
+
+    fn push(&mut self, path: PathBuf, kind: SourcePathKind) -> io::Result<()> {
+        self.check_path(&path)?;
+        let paths = match kind {
+            SourcePathKind::File => &mut self.paths.files,
+            SourcePathKind::Directory => &mut self.paths.lookup_directories,
+            SourcePathKind::Symlink => &mut self.paths.lookup_symlinks,
+        };
+        if let Some(limits) = self.limits {
+            if paths.contains(&path) {
+                return Ok(());
+            }
+            let bytes = path
+                .capacity()
+                .checked_add(std::mem::size_of::<PathBuf>() + 64)
+                .and_then(|bytes| self.bytes.checked_add(bytes))
+                .filter(|bytes| *bytes <= limits.bytes)
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Asset source trace exceeds its metadata byte budget",
+                    )
+                })?;
+            if self.rows >= limits.rows {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Asset source trace exceeds its row budget",
+                ));
+            }
+            self.rows += 1;
+            self.bytes = bytes;
+        }
+        paths.push(path);
+        Ok(())
+    }
+
     fn file(&mut self, path: &Path) -> io::Result<()> {
         self.symlinks(path, 0)?;
         if let Some(parent) = path.parent() {
             self.directory(parent)?;
         }
-        self.files.push(std::path::absolute(path)?);
-        self.files.push(path.canonicalize()?);
+        self.push(std::path::absolute(path)?, SourcePathKind::File)?;
+        self.push(path.canonicalize()?, SourcePathKind::File)?;
         Ok(())
     }
 
     fn directory(&mut self, path: &Path) -> io::Result<()> {
+        self.check_path(path)?;
         self.symlinks(path, 0)?;
         if existing(path, fs::metadata(path))?.is_some_and(|metadata| metadata.is_dir()) {
-            self.lookup_directories.push(std::path::absolute(path)?);
-            self.lookup_directories.push(path.canonicalize()?);
+            self.push(std::path::absolute(path)?, SourcePathKind::Directory)?;
+            self.push(path.canonicalize()?, SourcePathKind::Directory)?;
         }
         Ok(())
     }
 
     fn symlinks(&mut self, path: &Path, depth: usize) -> io::Result<()> {
+        self.check_path(path)?;
         if depth > 40 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -286,19 +364,20 @@ impl AssetSourcePaths {
         let mut current = PathBuf::new();
         for component in std::path::absolute(path)?.components() {
             current.push(component);
+            self.check_path(&current)?;
             if matches!(component, std::path::Component::Prefix(_)) {
                 continue;
             }
             let Some(metadata) = existing(&current, fs::symlink_metadata(&current))? else {
                 if let Some(parent) = current.parent() {
-                    self.lookup_directories.push(parent.to_path_buf());
-                    self.lookup_directories.push(parent.canonicalize()?);
+                    self.push(parent.to_path_buf(), SourcePathKind::Directory)?;
+                    self.push(parent.canonicalize()?, SourcePathKind::Directory)?;
                 }
                 return Ok(());
             };
             if metadata.file_type().is_symlink() {
-                if !self.lookup_symlinks.contains(&current) {
-                    self.lookup_symlinks.push(current.clone());
+                if !self.paths.lookup_symlinks.contains(&current) {
+                    self.push(current.clone(), SourcePathKind::Symlink)?;
                     let target = fs::read_link(&current)?;
                     let target = if target.is_absolute() {
                         target
@@ -315,9 +394,9 @@ impl AssetSourcePaths {
                 };
                 let metadata = fs::metadata(&canonical)?;
                 if metadata.is_file() {
-                    self.files.push(canonical);
+                    self.push(canonical, SourcePathKind::File)?;
                 } else if metadata.is_dir() {
-                    self.lookup_directories.push(canonical);
+                    self.push(canonical, SourcePathKind::Directory)?;
                 } else {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -331,9 +410,9 @@ impl AssetSourcePaths {
 
     fn finish(&mut self) {
         for paths in [
-            &mut self.files,
-            &mut self.lookup_directories,
-            &mut self.lookup_symlinks,
+            &mut self.paths.files,
+            &mut self.paths.lookup_directories,
+            &mut self.paths.lookup_symlinks,
         ] {
             paths.sort();
             paths.dedup();
@@ -696,7 +775,7 @@ impl GameFs {
     }
 
     pub fn asset_origin(&self, path: &str) -> io::Result<Option<AssetOrigin>> {
-        self.asset_lookup(path, usize::MAX)
+        self.asset_lookup(path, usize::MAX, None)
             .map(|(origin, _)| origin)
     }
 
@@ -705,6 +784,17 @@ impl GameFs {
         path: &str,
         maximum: usize,
     ) -> io::Result<Option<MountedAsset>> {
+        self.read_asset_limited_with_trace(path, maximum, None)
+    }
+
+    pub fn read_asset_limited_with_trace(
+        &self,
+        path: &str,
+        maximum: usize,
+        trace_limits: Option<SourceTraceLimits>,
+    ) -> io::Result<Option<MountedAsset>> {
+        let mut trace = SourceTrace::new(trace_limits);
+        trace.check_path(Path::new(path))?;
         let path = asset_relative(path)?;
         if path.is_empty() {
             return Ok(None);
@@ -714,31 +804,44 @@ impl GameFs {
             .iter()
             .filter(|mount| mount.ids.iter().any(|id| id == "game"))
         {
+            if trace_limits.is_none() {
+                trace = SourceTrace::default();
+            }
             let asset = match &mounted.mount {
-                Mount::Directory(root) => match find_case_insensitive_traced(
-                    root,
-                    &path,
-                    Some(&mut AssetSourcePaths::default()),
-                )? {
-                    Some(file) if fs::metadata(&file)?.is_file() => Some(MountedAsset {
-                        data: read_file_limited(&file, maximum)?,
-                        origin: AssetOrigin::Directory {
-                            mount: root.clone(),
-                            file,
-                        },
-                    }),
-                    _ => None,
-                },
-                Mount::Pak(pak) => match pak.asset_source_paths_limited(&path, maximum)? {
-                    Some(files) => pak.read_limited(&path, maximum)?.map(|data| MountedAsset {
-                        data,
-                        origin: AssetOrigin::Vpk {
-                            index: pak.path().to_owned(),
-                            files,
-                        },
-                    }),
-                    None => None,
-                },
+                Mount::Directory(root) => {
+                    match find_case_insensitive_traced(root, &path, Some(&mut trace))? {
+                        Some(file) if fs::metadata(&file)?.is_file() => Some(MountedAsset {
+                            data: read_file_limited(&file, maximum)?,
+                            origin: AssetOrigin::Directory {
+                                mount: root.clone(),
+                                file,
+                            },
+                        }),
+                        _ => None,
+                    }
+                }
+                Mount::Pak(pak) => {
+                    if trace_limits.is_some() {
+                        trace.file(pak.path())?;
+                    }
+                    match pak.asset_source_paths_limited(&path, maximum)? {
+                        Some(files) => {
+                            if trace_limits.is_some() {
+                                for file in &files {
+                                    trace.file(file)?;
+                                }
+                            }
+                            pak.read_limited(&path, maximum)?.map(|data| MountedAsset {
+                                data,
+                                origin: AssetOrigin::Vpk {
+                                    index: pak.path().to_owned(),
+                                    files,
+                                },
+                            })
+                        }
+                        None => None,
+                    }
+                }
             };
             if asset.is_some() {
                 return Ok(asset);
@@ -758,13 +861,30 @@ impl GameFs {
         path: &str,
         maximum: usize,
     ) -> io::Result<Option<AssetSourcePaths>> {
-        let (found, sources) = self.asset_lookup(path, maximum)?;
+        self.asset_source_paths_limited_with_trace(path, maximum, None)
+    }
+
+    pub fn asset_source_paths_limited_with_trace(
+        &self,
+        path: &str,
+        maximum: usize,
+        trace_limits: Option<SourceTraceLimits>,
+    ) -> io::Result<Option<AssetSourcePaths>> {
+        let (found, sources) = self.asset_lookup(path, maximum, trace_limits)?;
         Ok(found.map(|_| sources))
     }
 
     /// Returns lookup dependencies even when the asset is absent.
     pub fn asset_lookup_paths(&self, path: &str) -> io::Result<AssetSourcePaths> {
-        self.asset_lookup(path, usize::MAX)
+        self.asset_lookup_paths_with_trace(path, None)
+    }
+
+    pub fn asset_lookup_paths_with_trace(
+        &self,
+        path: &str,
+        trace_limits: Option<SourceTraceLimits>,
+    ) -> io::Result<AssetSourcePaths> {
+        self.asset_lookup(path, usize::MAX, trace_limits)
             .map(|(_, sources)| sources)
     }
 
@@ -772,12 +892,14 @@ impl GameFs {
         &self,
         path: &str,
         maximum: usize,
+        trace_limits: Option<SourceTraceLimits>,
     ) -> io::Result<(Option<AssetOrigin>, AssetSourcePaths)> {
+        let mut sources = SourceTrace::new(trace_limits);
+        sources.check_path(Path::new(path))?;
         let path = asset_relative(path)?;
         if path.is_empty() {
             return Ok((None, AssetSourcePaths::default()));
         }
-        let mut sources = AssetSourcePaths::default();
         for mounted in self
             .mounts
             .iter()
@@ -819,11 +941,11 @@ impl GameFs {
             };
             if found.is_some() {
                 sources.finish();
-                return Ok((found, sources));
+                return Ok((found, sources.paths));
             }
         }
         sources.finish();
-        Ok((None, sources))
+        Ok((None, sources.paths))
     }
 
     pub fn read_from_limited(

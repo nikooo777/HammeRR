@@ -346,7 +346,17 @@ impl<'a> Map<'a> {
         report: &mut Report,
         control: &Control,
     ) -> Result<PreparedWorld<'a>, String> {
-        Self::prepare_geometry_controlled(vmf, fs, report, control, None)
+        Self::prepare_geometry_controlled(vmf, fs, report, control, false, None)
+    }
+
+    pub fn prepare_sky_geometry_controlled(
+        vmf: &Vmf,
+        fs: &'a GameFs,
+        sources: &crate::asset_sources::BuildMaterialSources,
+        report: &mut Report,
+        control: &Control,
+    ) -> Result<PreparedWorld<'a>, String> {
+        Self::prepare_geometry_controlled(vmf, fs, report, control, false, Some(sources))
     }
 
     /// Converts static world/detail collision, including native terrain.
@@ -357,7 +367,7 @@ impl<'a> Map<'a> {
         report: &mut Report,
         control: &Control,
     ) -> Result<PreparedWorld<'a>, String> {
-        Self::prepare_geometry_controlled(vmf, fs, report, control, Some(sources))
+        Self::prepare_geometry_controlled(vmf, fs, report, control, true, Some(sources))
     }
 
     fn prepare_geometry_controlled(
@@ -365,12 +375,13 @@ impl<'a> Map<'a> {
         fs: &'a GameFs,
         report: &mut Report,
         control: &Control,
-        collision_sources: Option<&crate::asset_sources::BuildMaterialSources>,
+        collision: bool,
+        material_sources: Option<&crate::asset_sources::BuildMaterialSources>,
     ) -> Result<PreparedWorld<'a>, String> {
         control.checkpoint()?;
         vmf.validate_ids().map_err(|error| error.to_string())?;
         let mut map = Self::empty(fs, Requirements::GeometrySemantics);
-        if let Some(sources) = collision_sources {
+        if let Some(sources) = material_sources {
             map.materials =
                 Materials::with_build_sources(fs, Requirements::GeometrySemantics, sources);
         }
@@ -400,9 +411,7 @@ impl<'a> Map<'a> {
             );
         for (owner, solid, extra_contents) in sources.filter(|(_, solid, _)| !solid.hidden) {
             control.checkpoint()?;
-            if collision_sources.is_none()
-                && solid.sides.iter().any(|side| side.displacement.is_some())
-            {
+            if !collision && solid.sides.iter().any(|side| side.displacement.is_some()) {
                 if let Some(geometry) = origins::checked_geometry(solid, report) {
                     terrain_bounds.add(owner, solid, &geometry, control)?;
                     displacements.push(UnsupportedBrush {
@@ -430,7 +439,7 @@ impl<'a> Map<'a> {
                 );
             }
         }
-        if collision_sources.is_some() {
+        if collision {
             map.connect_terrain(report, control)?;
         } else {
             let prepared = terrain_bounds.finish(control)?;

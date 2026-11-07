@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use source_formats::gamefs::{AssetOrigin, MountedAsset, asset_relative};
+use source_formats::gamefs::{AssetOrigin, MountedAsset, SourceTraceLimits, asset_relative};
 
 use super::*;
 
@@ -50,28 +50,40 @@ impl CapturedBuildAsset {
 pub(super) struct BuildMaterialLookup {
     present: bool,
     paths: AssetSourcePaths,
+    trace_limits: Option<SourceTraceLimits>,
 }
 
 impl BuildMaterialLookup {
-    fn capture(game: &GameFs, path: &str) -> io::Result<Self> {
-        Self::capture_limited(game, path, usize::MAX)
+    fn capture(
+        game: &GameFs,
+        path: &str,
+        trace_limits: Option<SourceTraceLimits>,
+    ) -> io::Result<Self> {
+        Self::capture_limited(game, path, usize::MAX, trace_limits)
     }
 
-    fn capture_limited(game: &GameFs, path: &str, maximum: usize) -> io::Result<Self> {
-        match game.asset_source_paths_limited(path, maximum)? {
+    fn capture_limited(
+        game: &GameFs,
+        path: &str,
+        maximum: usize,
+        trace_limits: Option<SourceTraceLimits>,
+    ) -> io::Result<Self> {
+        match game.asset_source_paths_limited_with_trace(path, maximum, trace_limits)? {
             Some(paths) => Ok(Self {
                 present: true,
                 paths,
+                trace_limits,
             }),
             None => Ok(Self {
                 present: false,
-                paths: game.asset_lookup_paths(path)?,
+                paths: game.asset_lookup_paths_with_trace(path, trace_limits)?,
+                trace_limits,
             }),
         }
     }
 
     pub(super) fn verify(&self, game: &GameFs, path: &str) -> io::Result<()> {
-        if Self::capture(game, path)? != *self {
+        if Self::capture(game, path, self.trace_limits)? != *self {
             return Err(changed(path));
         }
         Ok(())
@@ -124,6 +136,7 @@ struct Limits {
     logical_paths: usize,
     physical_paths: usize,
     lookup_rows: usize,
+    trace: Option<SourceTraceLimits>,
 }
 
 impl Default for Limits {
@@ -133,6 +146,7 @@ impl Default for Limits {
             logical_paths: MAX_BUILD_MATERIAL_LOGICAL_PATHS,
             physical_paths: MAX_BUILD_MATERIAL_PHYSICAL_PATHS,
             lookup_rows: MAX_BUILD_MATERIAL_LOOKUP_ROWS,
+            trace: None,
         }
     }
 }
@@ -179,6 +193,22 @@ impl BuildMaterialSources {
         physical_paths: usize,
         lookup_rows: usize,
     ) -> Self {
+        Self::bounded_with_trace(
+            payload_bytes,
+            logical_paths,
+            physical_paths,
+            lookup_rows,
+            None,
+        )
+    }
+
+    pub fn bounded_with_trace(
+        payload_bytes: usize,
+        logical_paths: usize,
+        physical_paths: usize,
+        lookup_rows: usize,
+        trace: Option<SourceTraceLimits>,
+    ) -> Self {
         Self {
             state: Arc::new(Mutex::new(State {
                 limits: Limits {
@@ -186,6 +216,7 @@ impl BuildMaterialSources {
                     logical_paths,
                     physical_paths,
                     lookup_rows,
+                    trace,
                 },
                 ..State::default()
             })),
@@ -238,6 +269,18 @@ impl BuildMaterialSources {
         path: &str,
         maximum: usize,
     ) -> io::Result<Option<CapturedBuildAsset>> {
+        {
+            let state = self.lock()?;
+            if state
+                .limits
+                .trace
+                .is_some_and(|limits| path.len() > limits.path_bytes)
+            {
+                return Err(invalid(
+                    "Build material logical source path exceeds its byte budget",
+                ));
+            }
+        }
         let path = asset_relative(path)?;
         let mut state = self.lock()?;
         let result = state.read_asset(game, &path, maximum);
@@ -318,9 +361,10 @@ impl State {
             )
         };
         let before = if first_read {
-            BuildMaterialLookup::capture_limited(game, path, limit).map_err(read_error)?
+            BuildMaterialLookup::capture_limited(game, path, limit, self.limits.trace)
+                .map_err(read_error)?
         } else {
-            BuildMaterialLookup::capture(game, path)?
+            BuildMaterialLookup::capture(game, path, self.limits.trace)?
         };
         if let Some(original) = original {
             if original.lookup != before {
@@ -358,13 +402,16 @@ impl State {
             asset_bytes: maximum,
             physical_paths: self.limits.physical_paths,
         };
-        capture_paths(&before.paths, &mut self.stamps, policy)?;
-        let asset = game.read_asset_limited(path, limit).map_err(read_error)?;
-        let after = BuildMaterialLookup::capture(game, path)?;
+        let path_limit = self.limits.trace.map(|limits| limits.path_bytes);
+        capture_paths_bounded(&before.paths, &mut self.stamps, policy, path_limit)?;
+        let asset = game
+            .read_asset_limited_with_trace(path, limit, self.limits.trace)
+            .map_err(read_error)?;
+        let after = BuildMaterialLookup::capture(game, path, self.limits.trace)?;
         if before != after || before.present != asset.is_some() {
             return Err(changed(path));
         }
-        capture_paths(&after.paths, &mut self.stamps, policy)?;
+        capture_paths_bounded(&after.paths, &mut self.stamps, policy, path_limit)?;
         let identity = if retained {
             None
         } else {

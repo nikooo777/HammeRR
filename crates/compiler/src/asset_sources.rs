@@ -294,13 +294,32 @@ fn capture_paths(
     stamps: &mut BTreeMap<PathBuf, FileStamp>,
     policy: SourceGuardPolicy,
 ) -> io::Result<()> {
+    capture_paths_bounded(paths, stamps, policy, None)
+}
+
+fn capture_paths_bounded(
+    paths: &AssetSourcePaths,
+    stamps: &mut BTreeMap<PathBuf, FileStamp>,
+    policy: SourceGuardPolicy,
+    maximum_path_bytes: Option<usize>,
+) -> io::Result<()> {
     for path in paths
         .files
         .iter()
         .chain(&paths.lookup_directories)
         .chain(&paths.lookup_symlinks)
     {
+        if maximum_path_bytes
+            .is_some_and(|maximum| path.as_os_str().as_encoded_bytes().len() > maximum)
+        {
+            return Err(invalid(
+                "Build material physical source path exceeds its byte budget",
+            ));
+        }
         let stamp = FileStamp::capture_container(path)?;
+        if maximum_path_bytes.is_some() {
+            stamp.original_metadata_bytes()?;
+        }
         if let Some(old) = stamps.get(path) {
             if old != &stamp {
                 return Err(invalid(format!(

@@ -114,11 +114,11 @@ fn read_labels(
 
 pub(super) struct Projected {
     points: [DVec3; 3],
-    bounds: [[f64; 2]; 2],
+    pub(super) bounds: [[f64; 2]; 2],
     sign: i128,
 }
 
-fn projected_bounds(points: &[DVec3], axes: [usize; 2]) -> [[f64; 2]; 2] {
+pub(super) fn projected_bounds(points: &[DVec3], axes: [usize; 2]) -> [[f64; 2]; 2] {
     axes.map(|axis| {
         let mut bounds = [points[0][axis]; 2];
         for point in &points[1..] {
@@ -129,7 +129,7 @@ fn projected_bounds(points: &[DVec3], axes: [usize; 2]) -> [[f64; 2]; 2] {
     })
 }
 
-fn bounds_overlap(first: [[f64; 2]; 2], second: [[f64; 2]; 2]) -> bool {
+pub(super) fn bounds_overlap(first: [[f64; 2]; 2], second: [[f64; 2]; 2]) -> bool {
     first
         .iter()
         .zip(second)

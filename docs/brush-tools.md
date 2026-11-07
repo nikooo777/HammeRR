@@ -153,14 +153,21 @@ tilted bases.
 6. Choose **Arrow side**, **Opposite side** or **Both sides**.
 7. Inspect the cut and neighbor patches, then click **Apply cut**.
 
-Each retained original cell becomes one power-2 patch. The original piecewise
+Each retained original cell normally becomes one power-2 patch. The original piecewise
 surface, UVs, paint and triangle labels must stay exact. Nonlinear paint is
 allowed when each new triangle retains its original raw and packed blend fields.
 Normals and runtime LOD are regenerated. This mode does not cut through part of an original cell.
+
+A power-3 midpoint cut or power-4 midpoint/quarter cut can retain larger patches
+at the source power when native LOD moves retained samples. New samples preserve the
+authored surface. Separate checks preserve the native surface and material
+fields. The preview reports the actual patch powers. Other cuts use the normal
+cell layout; a failed proof does not switch layouts.
 Qualified unchanged neighbors may remain at a corner, or lose an old edge contact
 when the cut removes that entire join. Their authored grids stay unchanged.
 With **Partition selected neighbors**, each required selected noncrossing
-neighbor is retiled in full, with one power-2 patch per original cell. Corner-only,
+neighbor is retiled in full. It normally uses one power-2 patch per original
+cell; qualified moved samples use four larger patches at the source power. Corner-only,
 severed and unrelated selected neighbors stay unchanged.
 
 ![Painted curved terrain retains its blend through grid-cell cuts](images/terrain-cell-cut.png)
@@ -282,7 +289,7 @@ previous valid draft; no policy switches automatically after a failure.
   limits.
 - **Retile grid cells** and **Retile surface triangles** can use exact equivalent
   source/output LOD. Fine sample positions stay fixed, except for the discarded
-  source case below. All patches must preserve full base coverage. Changed maximal LOD triangles must match every fine
+  source case and certified dyadic windows below. All patches must preserve full base coverage. Changed maximal LOD triangles must match every fine
   triangle field with positive base-area overlap. Different local maps can qualify
   when all overlapping fields agree exactly; other triangles may stay curved.
   Nonuniform paint and triangle labels must retain their original fields. Actual
@@ -292,7 +299,8 @@ previous valid draft; no policy switches automatically after a failure.
   use strictly discarded coarsening or movement: every affected triangle must
   stay fully beyond the cut tolerance in authored and all native profiles. This
   case also requires a shared positive projection and unchanged native seams.
-  Retained or output movement still rejects. Unchanged coarsened neighbors need
+  Retained/output movement requires certified dyadic windows. Other layouts
+  still reject it. Unchanged coarsened neighbors need
   whole geometric equivalence and must keep their complete LOD state.
 - **Retile surface triangles** requires a planar base with a convex cage in its
   exact coordinate chart. It shares the geometry, paint, texture, normal and

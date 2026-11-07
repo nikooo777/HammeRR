@@ -576,6 +576,7 @@ fn materialize(
         source_power: source.info.power,
         output_power: Some(super::POWER),
         children: None,
+        window_fields: None,
         blend_error: (request.blend_mode != TerrainBlendMode::Exact).then_some(blend_error),
     })
 }

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 mod normals;
+mod windows;
 
 use glam::DVec3;
 use source_formats::{
@@ -27,6 +28,8 @@ pub(crate) struct Replacement<'a> {
     pub parts: &'a [Solid],
     pub texture: Option<crate::clip::TerrainTexture>,
     pub cut: Option<(Plane, Keep)>,
+    pub windows: Option<&'a [grid_clip::Child]>,
+    pub window_fields: Option<&'a super::WindowFields>,
 }
 
 pub(crate) struct Verification {
@@ -187,10 +190,9 @@ fn vertex_bits(vertex: &bsp::DisplacementVertex) -> [u32; 5] {
     ]
 }
 
-fn lod_state(
+fn raw_lod_state(
     surface: &Surface<'_>,
     patch: Option<lod::Patch>,
-    cut: Option<(Plane, Keep)>,
     work: &mut Work,
 ) -> Result<LodState, EditError> {
     work.consume(
@@ -233,7 +235,7 @@ fn lod_state(
                 .map_err(|error| invalid(error.to_string()))?,
         ),
     };
-    let state = LodState {
+    Ok(LodState {
         coarsened,
         mask,
         active,
@@ -241,22 +243,34 @@ fn lod_state(
         data,
         positions,
         indices,
-    };
+    })
+}
+
+fn lod_state(
+    surface: &Surface<'_>,
+    patch: Option<lod::Patch>,
+    cut: Option<(Plane, Keep)>,
+    provisional: bool,
+    work: &mut Work,
+) -> Result<LodState, EditError> {
+    let state = raw_lod_state(surface, patch, work)?;
     work.consume(
         surface.mesh.positions.len() + surface.positions.iter().map(Vec::len).sum::<usize>(),
     )
     .map_err(invalid)?;
     if state.ideal_positions != surface.mesh.positions || state.positions != surface.positions {
-        let cut = cut.ok_or_else(|| {
-            invalid("Terrain LOD requires unchanged complete native and compiler geometry")
-        })?;
-        lod_proof::certify_geometry(
-            surface.raw.side.displacement.as_ref().unwrap(),
-            &surface.mesh,
-            state.proof(surface),
-            Some(cut),
-            work,
-        )?;
+        if !provisional {
+            let cut = cut.ok_or_else(|| {
+                invalid("Terrain LOD requires unchanged complete native and compiler geometry")
+            })?;
+            lod_proof::certify_geometry(
+                surface.raw.side.displacement.as_ref().unwrap(),
+                &surface.mesh,
+                state.proof(surface),
+                Some(cut),
+                work,
+            )?;
+        }
         certify_lod_profiles(surface, &state, work)?;
     }
     Ok(state)
@@ -708,13 +722,17 @@ fn prepare<'a>(raw: Raw<'a>, mode: Mode, work: &mut Work) -> Result<Surface<'a>,
     })
 }
 
-fn graph(
+fn original_lod(
     surfaces: &[&Surface<'_>],
-    mode: Mode,
-    phase: Phase,
-    cuts: &BTreeMap<FaceId, (Plane, Keep)>,
     work: &mut Work,
-) -> Result<Graph, EditError> {
+) -> Result<
+    (
+        neighbors::Neighbors,
+        neighbors::NativeConnections,
+        Vec<Option<lod::Patch>>,
+    ),
+    EditError,
+> {
     let grids = surfaces
         .iter()
         .map(|surface| surface.grid())
@@ -731,6 +749,27 @@ fn graph(
             .map_err(invalid)?;
     let (patches, _) =
         lod::prepare(&grids, &found.pairs, &mut |amount| work.consume(amount)).map_err(invalid)?;
+    Ok((found, connections, patches))
+}
+
+pub(crate) fn native_window_movement(
+    document: &Document,
+    source: FaceId,
+    cut: Option<(Plane, Keep)>,
+    context: &mut Context<'_>,
+) -> Result<bool, EditError> {
+    windows::native_movement(document, source, cut, context)
+}
+
+fn graph(
+    surfaces: &[&Surface<'_>],
+    mode: Mode,
+    phase: Phase,
+    cuts: &BTreeMap<FaceId, (Plane, Keep)>,
+    provisional: &BTreeSet<FaceId>,
+    work: &mut Work,
+) -> Result<Graph, EditError> {
+    let (found, connections, patches) = original_lod(surfaces, work)?;
     work.consume(surfaces.len()).map_err(invalid)?;
     let states = surfaces
         .iter()
@@ -741,7 +780,13 @@ fn graph(
             } else {
                 None
             };
-            lod_state(surface, patch, cut, work)
+            lod_state(
+                surface,
+                patch,
+                cut,
+                provisional.contains(&surface.raw.source),
+                work,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     work.consume(
@@ -1086,6 +1131,12 @@ fn certify_lod(
     work.consume(2 * before.len() + after.len())
         .map_err(invalid)?;
     let mut coarsened = BTreeSet::new();
+    coarsened.extend(
+        replacements
+            .iter()
+            .filter(|replacement| replacement.windows.is_some())
+            .map(|replacement| replacement.source),
+    );
     for (index, surface) in before.iter().enumerate() {
         if selected.contains(&surface.raw.source) {
             if previous.lod[index].coarsened {
@@ -1135,6 +1186,35 @@ fn certify_lod(
         let texture = replacement.texture.ok_or_else(|| {
             invalid("Terrain LOD requires guarded native texture mapping dimensions")
         })?;
+        if replacement.windows.is_some() {
+            windows::certify_source(surface, state, replacement.cut, work)?;
+            let source = lod_proof::NativePatch {
+                face: &surface.raw.face,
+                info: surface.raw.side.displacement.as_ref().unwrap(),
+                mesh: &surface.mesh,
+                state: state.proof(surface),
+            };
+            let children = after
+                .iter()
+                .zip(&current.lod)
+                .filter(|(child, _)| child.raw.source == surface.raw.source)
+                .map(|(child, state)| {
+                    if child.raw.side.material != surface.raw.side.material {
+                        return Err(invalid(
+                            "Native midpoint windows must preserve original material identities",
+                        ));
+                    }
+                    Ok(lod_proof::NativePatch {
+                        face: &child.raw.face,
+                        info: child.raw.side.displacement.as_ref().unwrap(),
+                        mesh: &child.mesh,
+                        state: state.proof(child),
+                    })
+                })
+                .collect::<Result<Vec<_>, EditError>>()?;
+            lod_proof::certify_dual_native(source, &children, texture, work)?;
+            continue;
+        }
         let flat_fields;
         let curved_fields;
         let expected = match mode {
@@ -1631,22 +1711,53 @@ pub(crate) fn required_partitions(
         .iter()
         .map(|&source| (source, (plane, keep)))
         .collect::<BTreeMap<_, _>>();
-    let original = graph(&references, Mode::Cells, Phase::Original, &cuts, work)?;
+    let mut provisional = BTreeSet::new();
+    for surface in &before {
+        work.consume(authorized.len() + 1).map_err(invalid)?;
+        let crossing = selected.contains(&surface.raw.source);
+        if !crossing
+            && !authorized
+                .iter()
+                .any(|source| source.solid.id == surface.raw.source.solid)
+        {
+            continue;
+        }
+        if windows::candidate(surface, crossing.then_some((plane, keep)), work)? {
+            authorize(document, authorized, surface.raw.source)?;
+            provisional.insert(surface.raw.source);
+        }
+    }
+    let original = graph(
+        &references,
+        Mode::Cells,
+        Phase::Original,
+        &cuts,
+        &provisional,
+        work,
+    )?;
     work.consume(before.len()).map_err(invalid)?;
     if original.lod.len() != before.len() {
         return Err(invalid(
             "Terrain edge closure lost its original native LOD states",
         ));
     }
+    let mut window_sources = BTreeSet::new();
     for (surface, state) in before.iter().zip(&original.lod) {
         if state.coarsened {
+            let cut = selected
+                .contains(&surface.raw.source)
+                .then_some((plane, keep));
+            if provisional.contains(&surface.raw.source)
+                && windows::movement_candidate(surface, state, cut, work)?
+            {
+                window_sources.insert(surface.raw.source);
+                continue;
+            }
             lod_proof::certify_geometry(
                 surface.raw.side.displacement.as_ref().unwrap(),
                 &surface.mesh,
                 state.proof(surface),
-                selected
-                    .contains(&surface.raw.source)
-                    .then_some((plane, keep)),
+                cut,
                 work,
             )?;
         }
@@ -1676,10 +1787,22 @@ pub(crate) fn required_partitions(
         cursor += 1;
         for pair in &original.pairs {
             work.consume(1).map_err(invalid)?;
-            let (peer, edge, span) = if pair.first == current {
-                (pair.second, pair.first_edge, pair.first_span)
+            let (peer, edge, span, peer_edge, peer_span) = if pair.first == current {
+                (
+                    pair.second,
+                    pair.first_edge,
+                    pair.first_span,
+                    pair.second_edge,
+                    pair.second_span,
+                )
             } else if pair.second == current {
-                (pair.first, pair.second_edge, pair.second_span)
+                (
+                    pair.first,
+                    pair.second_edge,
+                    pair.second_span,
+                    pair.first_edge,
+                    pair.first_span,
+                )
             } else {
                 continue;
             };
@@ -1687,7 +1810,21 @@ pub(crate) fn required_partitions(
             if selected.contains(&face) || required.contains(&face) {
                 continue;
             }
-            if selected.contains(&before[current].raw.source)
+            if window_sources.contains(&before[current].raw.source) {
+                let cut = selected
+                    .contains(&before[current].raw.source)
+                    .then_some((plane, keep));
+                if !windows::requires_partition(
+                    &before[current],
+                    cut,
+                    (edge, span),
+                    &before[peer],
+                    (peer_edge, peer_span),
+                    work,
+                )? {
+                    continue;
+                }
+            } else if selected.contains(&before[current].raw.source)
                 && !retained_span(&before[current], edge, span, plane, keep, work)?
             {
                 continue;
@@ -1870,7 +2007,6 @@ fn certify_mode(
         .filter(|replacement| selected.contains(&replacement.source))
         .filter_map(|replacement| replacement.cut.map(|cut| (replacement.source, cut)))
         .collect::<BTreeMap<_, _>>();
-    let previous = graph(&before_refs, mode, Phase::Original, &cuts, work)?;
     let mut children = Vec::new();
     for replacement in replacements
         .iter()
@@ -1930,7 +2066,23 @@ fn certify_mode(
             "Terrain output exceeds the native displacement limit",
         ));
     }
-    let current = graph(&after, mode, Phase::Child, &BTreeMap::new(), work)?;
+    let provisional = windows::validate(&before, &children, replacements, mode, work)?;
+    let previous = graph(
+        &before_refs,
+        mode,
+        Phase::Original,
+        &cuts,
+        &provisional,
+        work,
+    )?;
+    let current = graph(
+        &after,
+        mode,
+        Phase::Child,
+        &BTreeMap::new(),
+        &provisional,
+        work,
+    )?;
     certify_lod(
         (&before, &previous),
         (&after, &current),

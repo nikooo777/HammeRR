@@ -339,7 +339,7 @@ pub(super) fn source(mesh: &DisplacementMesh, work: &mut Work) -> Result<Prepare
         return Ok(prepared);
     }
     let triangles = &prepared.triangles;
-    work.consume(PAIR_WORK * triangles.len() * triangles.len())
+    work.consume(PAIR_WORK * triangles.len() * (triangles.len() - 1) / 2)
         .map_err(invalid)?;
     for (index, first) in triangles.iter().enumerate() {
         for second in &triangles[index + 1..] {

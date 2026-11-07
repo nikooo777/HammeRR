@@ -426,6 +426,7 @@ struct PlannedCut {
     source_sides: Vec<u32>,
     terrain: Option<TerrainCut>,
     children: Option<Vec<crate::displacement::grid_clip::Child>>,
+    window_fields: Option<crate::displacement::flat_clip::WindowFields>,
 }
 
 #[derive(Default)]
@@ -520,6 +521,7 @@ impl PlannedCut {
             parts: plan.parts,
             source_sides: solid.sides.iter().map(|side| side.id).collect(),
             children: plan.children,
+            window_fields: plan.window_fields,
             terrain: Some(TerrainCut {
                 partitioned,
                 source: plan.source,
@@ -590,6 +592,7 @@ pub(crate) struct TerrainPlan {
     pub vertices: usize,
     pub triangles: usize,
     pub children: Option<Vec<crate::displacement::grid_clip::Child>>,
+    pub window_fields: Option<crate::displacement::flat_clip::WindowFields>,
     pub blend_error: Option<TerrainBlendError>,
 }
 
@@ -615,6 +618,7 @@ impl From<crate::displacement::grid_clip::Plan> for TerrainPlan {
             vertices: plan.vertices,
             triangles: plan.triangles,
             children: Some(plan.children),
+            window_fields: None,
             blend_error: None,
         }
     }
@@ -896,6 +900,7 @@ pub fn clip_with_options(
             source_sides: solid.sides.iter().map(|side| side.id).collect(),
             terrain: None,
             children: None,
+            window_fields: None,
         });
     }
     if options.partition_neighbors && terrain_budget.sources != 0 {
@@ -932,19 +937,26 @@ pub fn clip_with_options(
                 keep,
                 &mut terrain_context,
             )?;
-            let mut totals = [0usize; 3];
-            for face in &required {
-                let (_, power) = partition_source(&sources, *face)?;
-                let (patches, vertices, triangles) =
-                    crate::displacement::flat_clip::partition_counts(power, options.terrain_mode)
+            if options.terrain_mode == TerrainMode::Cells {
+                terrain_budget.ensure_capacity(required.len(), 0, 0, 0)?;
+            } else {
+                let mut totals = [0usize; 3];
+                for face in &required {
+                    let (_, power) = partition_source(&sources, *face)?;
+                    let (patches, vertices, triangles) =
+                        crate::displacement::flat_clip::partition_counts(
+                            power,
+                            options.terrain_mode,
+                        )
                         .map_err(|error| source_error(face.solid, error))?;
-                for (total, added) in totals.iter_mut().zip([patches, vertices, triangles]) {
-                    *total = total
-                        .checked_add(added)
-                        .ok_or_else(|| invalid("Terrain neighbor output accounting overflow"))?;
+                    for (total, added) in totals.iter_mut().zip([patches, vertices, triangles]) {
+                        *total = total.checked_add(added).ok_or_else(|| {
+                            invalid("Terrain neighbor output accounting overflow")
+                        })?;
+                    }
                 }
+                terrain_budget.ensure_capacity(required.len(), totals[0], totals[1], totals[2])?;
             }
-            terrain_budget.ensure_capacity(required.len(), totals[0], totals[1], totals[2])?;
             let partition = if options.terrain_mode == TerrainMode::Cells {
                 crate::displacement::flat_clip::cells::partition
             } else {
@@ -1028,6 +1040,8 @@ pub fn clip_with_options(
                             crate::displacement::flat_clip::network::Replacement {
                                 source: terrain.source,
                                 parts: &cut.parts,
+                                windows: cut.children.as_deref(),
+                                window_fields: cut.window_fields.as_ref(),
                                 cut: (!terrain.partitioned).then_some((plane, keep)),
                                 texture: options
                                     .textures

@@ -93,7 +93,7 @@ pub(crate) struct Child {
 }
 
 impl Child {
-    fn cells(self) -> usize {
+    pub(crate) fn cells(self) -> usize {
         1 << self.power
     }
 }
@@ -410,7 +410,7 @@ fn child_info(
     Ok(result)
 }
 
-fn quadrants(child: Child) -> [Child; 4] {
+pub(crate) fn quadrants(child: Child) -> [Child; 4] {
     let power = child.power - 1;
     let cells = 1 << power;
     [(0, 0), (0, cells), (cells, 0), (cells, cells)].map(|(row, column)| Child {
@@ -418,6 +418,48 @@ fn quadrants(child: Child) -> [Child; 4] {
         column: child.column + column,
         power,
     })
+}
+
+pub(crate) fn cut_indices(power: u32) -> &'static [usize] {
+    match power {
+        3 => &[4],
+        4 => &[8, 4, 12],
+        _ => &[],
+    }
+}
+
+pub(crate) fn cut_children(
+    power: u32,
+    rows: bool,
+    cut: usize,
+    first_back: bool,
+    keep: Keep,
+) -> Option<Vec<Child>> {
+    if !cut_indices(power).contains(&cut) {
+        return None;
+    }
+    Some(
+        quadrants(Child {
+            row: 0,
+            column: 0,
+            power,
+        })
+        .into_iter()
+        .flat_map(|child| {
+            let origin = if rows { child.row } else { child.column };
+            if origin < cut && cut < origin + child.cells() {
+                quadrants(child).to_vec()
+            } else {
+                vec![child]
+            }
+        })
+        .filter(|child| {
+            let coordinate = if rows { child.row } else { child.column };
+            let back = (coordinate < cut) == first_back;
+            !matches!((keep, back), (Keep::Back, false) | (Keep::Front, true))
+        })
+        .collect(),
+    )
 }
 
 fn child_carrier(
@@ -700,14 +742,9 @@ pub(crate) fn plan(
     }
     let source = prepare(document, solid, geometry, context)?;
     let mesh = &source.mesh;
-    let middle = mesh.size / 2;
-    let cuts = if info.power == 4 {
-        vec![middle, middle / 2, middle + middle / 2]
-    } else {
-        vec![middle]
-    };
-    let (rows, cut, first_back) = cuts
-        .into_iter()
+    let (rows, cut, first_back) = cut_indices(info.power)
+        .iter()
+        .copied()
         .find_map(|cut| {
             grid_line(&mesh.positions, mesh.size, plane, true, cut)
                 .map(|first_back| (true, cut, first_back))
@@ -726,32 +763,16 @@ pub(crate) fn plan(
         first_back,
     };
     cut_line.certify(&source.native, mesh.size, &mut context.work)?;
-    let leaves = quadrants(Child {
-        row: 0,
-        column: 0,
-        power: info.power,
-    })
-    .into_iter()
-    .flat_map(|child| {
-        let origin = if rows { child.row } else { child.column };
-        if origin < cut && cut < origin + child.cells() {
-            quadrants(child).to_vec()
-        } else {
-            vec![child]
-        }
-    })
-    .collect::<Vec<_>>();
     let mut children = Vec::new();
     for back in [true, false] {
         if matches!((keep, back), (Keep::Back, false) | (Keep::Front, true)) {
             continue;
         }
-        for &child in &leaves {
-            let coordinate = if rows { child.row } else { child.column };
-            if (first_back != (coordinate >= cut)) == back {
-                children.push(child);
-            }
-        }
+        let retained = if back { Keep::Back } else { Keep::Front };
+        children.extend(
+            cut_children(info.power, rows, cut, first_back, retained)
+                .ok_or_else(|| invalid("Terrain cut lost its qualified grid layout"))?,
+        );
     }
     let plan = source.materialize(children, material, Operation::Cut, &mut context.work)?;
     context.cuts.insert(plan.source, cut_line);

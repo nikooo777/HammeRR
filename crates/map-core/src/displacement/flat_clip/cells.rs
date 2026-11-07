@@ -2,13 +2,14 @@ use glam::DVec3;
 use source_formats::vmf::Solid;
 
 use super::{
-    Admitted, BaseChart, CUT_EPSILON, Child, Context, Exact, FIELD_WORK, Keep, PartitionRequest,
-    Request, SIZE, TRIANGLES, TerrainPlan, TriangleField, VERTICES, Work, admit, admit_source,
-    carrier_base, certify_local_normals, connections, data, intrinsic_source, invalid, native,
-    paint, partition_counts, reconstructed, region_base, same, stored, uv, weighted,
+    Admitted, BaseChart, CUT_EPSILON, CarrierGrid, Child, Context, Exact, FIELD_WORK, Keep,
+    PartitionRequest, Request, SIZE, TerrainPlan, TriangleField, VERTICES, WindowFields, Work,
+    admit, admit_source, carrier_grid, certify_local_normals, connections, data, intrinsic_source,
+    invalid, native, network, paint, partition_counts, reconstructed, region_base, same, stored,
+    uv, weighted,
 };
 use crate::clip::{TerrainBlendMode, TerrainMode};
-use crate::displacement::{grid_clip::grid_line, resample};
+use crate::displacement::{grid_clip, grid_clip::grid_line, resample};
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Plane};
 
@@ -24,13 +25,13 @@ impl Cut {
         (coordinate < self.index) == self.first_back
     }
 
-    fn boundary(&self, row: usize, column: usize, sample: usize) -> bool {
+    fn boundary(&self, window: grid_clip::Child, size: usize, sample: usize) -> bool {
         let coordinate = if self.rows {
-            row * (SIZE - 1) + sample / SIZE
+            window.row * (size - 1) + window.cells() * (sample / size)
         } else {
-            column * (SIZE - 1) + sample % SIZE
+            window.column * (size - 1) + window.cells() * (sample % size)
         };
-        coordinate == self.index * (SIZE - 1)
+        coordinate == self.index * (size - 1)
     }
 }
 
@@ -152,13 +153,33 @@ impl Sample {
     }
 }
 
-fn sample(
+fn sample_grid(
     source: &Admitted<'_>,
-    row: usize,
-    column: usize,
+    window: grid_clip::Child,
+    power: u32,
     index: usize,
 ) -> Result<Sample, EditError> {
-    sample_window(source, row, column, index, 0, 0, 1)
+    if !(2..=4).contains(&power) || window.power > source.info.power {
+        return Err(invalid(
+            "Terrain samples require a bounded native grid window",
+        ));
+    }
+    let cells = 1usize << power;
+    let size = cells + 1;
+    if index >= size * size
+        || window.row + window.cells() >= source.mesh.size
+        || window.column + window.cells() >= source.mesh.size
+    {
+        return Err(invalid(
+            "Terrain samples lie outside their source grid window",
+        ));
+    }
+    sample_at(
+        source,
+        window.row as f64 + (window.cells() * (index / size)) as f64 / cells as f64,
+        window.column as f64 + (window.cells() * (index % size)) as f64 / cells as f64,
+        cells,
+    )
 }
 
 pub(super) fn sample_window(
@@ -181,23 +202,33 @@ pub(super) fn sample_window(
             "Terrain sampling requires a valid whole-cell or quarter-cell window",
         ));
     }
-    let denominator = ((SIZE - 1) * divisions) as f64;
-    let (indices, weights) = resample::weights(
-        source.mesh.size,
-        row as f64 + (child_row * (SIZE - 1) + index / SIZE) as f64 / denominator,
-        column as f64 + (child_column * (SIZE - 1) + index % SIZE) as f64 / denominator,
-    );
+    let denominator = (SIZE - 1) * divisions;
+    sample_at(
+        source,
+        row as f64 + (child_row * (SIZE - 1) + index / SIZE) as f64 / denominator as f64,
+        column as f64 + (child_column * (SIZE - 1) + index % SIZE) as f64 / denominator as f64,
+        denominator,
+    )
+}
+
+fn sample_at(
+    source: &Admitted<'_>,
+    row: f64,
+    column: f64,
+    denominator: usize,
+) -> Result<Sample, EditError> {
+    let (indices, weights) = resample::weights(source.mesh.size, row, column);
     let mut exact = [0; 3];
     for (output, weight) in exact.iter_mut().zip(weights) {
-        let value = weight * denominator;
-        if !(0.0..=denominator).contains(&value) || value.fract() != 0.0 {
+        let value = weight * denominator as f64;
+        if !(0.0..=denominator as f64).contains(&value) || value.fract() != 0.0 {
             return Err(invalid(
                 "Cell terrain sampling requires exact dyadic triangle weights",
             ));
         }
         *output = value as i128;
     }
-    let denominator = ((SIZE - 1) * divisions) as i128;
+    let denominator = denominator as i128;
     Ok(Sample {
         base: weighted(
             &indices.map(|index| source.mesh.base_positions[index]),
@@ -225,9 +256,31 @@ pub(crate) fn plan(
     request: Request<'_>,
     context: &mut Context<'_>,
 ) -> Result<Option<TerrainPlan>, EditError> {
-    let work = &mut context.work;
-    let Some(prepared) = prepare(document, solid, geometry, request.plane, work)? else {
+    let Some(prepared) = prepare(document, solid, geometry, request.plane, &mut context.work)?
+    else {
         return Ok(None);
+    };
+    let windows = grid_clip::cut_children(
+        prepared.source.info.power,
+        prepared.cut.rows,
+        prepared.cut.index,
+        prepared.cut.first_back,
+        request.keep,
+    );
+    let windows = if windows.is_some()
+        && native::terrain_source_is_visible(document.vmf(), solid.id)
+        && network::native_window_movement(
+            document,
+            FaceId {
+                solid: solid.id,
+                side: prepared.source.side.id,
+            },
+            Some((request.plane, request.keep)),
+            context,
+        )? {
+        windows
+    } else {
+        None
     };
     materialize(
         solid,
@@ -238,12 +291,13 @@ pub(crate) fn plan(
             plane: request.plane,
             keep: request.keep,
         }),
+        windows,
         PartitionRequest {
             material: request.material,
             textures: request.textures,
             blend_mode: request.blend_mode,
         },
-        work,
+        &mut context.work,
     )
     .map(Some)
 }
@@ -260,11 +314,42 @@ pub(crate) fn partition(
             "Whole-cell terrain retiling requires exact blend fields",
         ));
     }
-    let work = &mut context.work;
-    let source = admit_source(document, solid, geometry, work)?;
-    partition_counts(source.info.power, TerrainMode::Cells)?;
-    let sheet = cell_sheet(&source, work)?;
-    materialize(solid, &source, &sheet, None, request, work)
+    let source = admit_source(document, solid, geometry, &mut context.work)?;
+    let windows = if matches!(source.info.power, 3 | 4)
+        && native::terrain_source_is_visible(document.vmf(), solid.id)
+        && network::native_window_movement(
+            document,
+            FaceId {
+                solid: solid.id,
+                side: source.side.id,
+            },
+            None,
+            context,
+        )? {
+        Some(
+            grid_clip::quadrants(grid_clip::Child {
+                row: 0,
+                column: 0,
+                power: source.info.power,
+            })
+            .to_vec(),
+        )
+    } else {
+        None
+    };
+    if windows.is_none() {
+        partition_counts(source.info.power, TerrainMode::Cells)?;
+    }
+    let sheet = cell_sheet(&source, &mut context.work)?;
+    materialize(
+        solid,
+        &source,
+        &sheet,
+        None,
+        windows,
+        request,
+        &mut context.work,
+    )
 }
 
 fn materialize(
@@ -272,19 +357,37 @@ fn materialize(
     source: &Admitted<'_>,
     sheet: &BaseChart,
     clipping: Option<Retained<'_>>,
+    windows: Option<Vec<grid_clip::Child>>,
     request: PartitionRequest<'_>,
     work: &mut Work,
 ) -> Result<TerrainPlan, EditError> {
     let cells = source.mesh.size - 1;
     work.consume(cells * cells).map_err(invalid)?;
-    let count = (0..cells)
-        .flat_map(|row| (0..cells).map(move |column| (row, column)))
-        .filter(|&(row, column)| {
+    let output_power = windows.as_ref().map_or(super::POWER, |_| source.info.power);
+    let size = (1usize << output_power) + 1;
+    let vertices = size * size;
+    let triangles = 2 * (size - 1).pow(2);
+    let native_windows = windows.is_some();
+    let layout = windows
+        .unwrap_or_else(|| {
+            (0..cells)
+                .flat_map(|row| {
+                    (0..cells).map(move |column| grid_clip::Child {
+                        row,
+                        column,
+                        power: 0,
+                    })
+                })
+                .collect()
+        })
+        .into_iter()
+        .filter(|window| {
             clipping
                 .as_ref()
-                .is_none_or(|cut| retained(cut.keep, cut.cut.back(row, column)))
+                .is_none_or(|cut| retained(cut.keep, cut.cut.back(window.row, window.column)))
         })
-        .count();
+        .collect::<Vec<_>>();
+    let count = layout.len();
     if count > crate::clip::MAX_TERRAIN_PATCHES {
         return Err(invalid(format!(
             "Cell terrain cut exceeds {} output patches",
@@ -312,131 +415,136 @@ fn materialize(
     )?;
     let mut parts = Vec::with_capacity(count);
     let mut children = Vec::with_capacity(count);
-    for row in 0..cells {
-        for column in 0..cells {
-            let back = clipping
-                .as_ref()
-                .is_some_and(|cut| cut.cut.back(row, column));
-            if clipping
-                .as_ref()
-                .is_some_and(|cut| !retained(cut.keep, back))
-            {
-                continue;
-            }
-            let indices = [
-                row * source.mesh.size + column,
-                (row + 1) * source.mesh.size + column,
-                (row + 1) * source.mesh.size + column + 1,
-                row * source.mesh.size + column + 1,
-            ];
-            let mut base = [DVec3::ZERO; 4];
-            for (point, index) in base.iter_mut().zip(indices) {
-                *point = stored(source.mesh.base_positions[index])?;
-            }
-            let (mut part, base_mesh) = carrier_base(
-                solid,
-                source.side,
-                source.face,
-                base,
-                request.material,
-                &source.editing,
-                work,
-            )?;
-            let side_index = part
-                .sides
-                .iter()
-                .position(|side| side.id == source.side.id)
-                .unwrap();
-            work.consume(4 * FIELD_WORK * VERTICES).map_err(invalid)?;
-            let samples = (0..VERTICES)
-                .map(|index| sample(source, row, column, index))
-                .collect::<Result<Vec<_>, _>>()?;
-            let mut offsets = Vec::with_capacity(VERTICES);
-            for (sample, &point) in samples.iter().zip(&base_mesh.base_positions) {
-                offsets.push(sample.offset(point)?);
-            }
-            let info = part.sides[side_index].displacement.as_mut().unwrap();
-            if !source.editing.enabled() {
-                info.offsets = Some(offsets.chunks(SIZE).map(<[_]>::to_vec).collect());
-            }
-            info.alphas = source.info.alphas.as_ref().map(|_| {
-                samples
-                    .chunks(SIZE)
-                    .map(|row| row.iter().map(|sample| sample.alpha).collect())
-                    .collect()
-            });
-            let shape =
-                BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
-            let face = shape
-                .faces
-                .iter()
-                .find(|face| face.side == side_index)
-                .ok_or_else(|| invalid("Cell terrain carrier lost its source face"))?;
-            let info = part.sides[side_index].displacement.as_ref().unwrap();
-            let (_, mesh) = native::checked_mesh(face, info).map_err(invalid)?;
-            let (data, stored_base) = data(face, &mesh, super::POWER)?;
-            let profiles = reconstructed(&data, stored_base, work)?;
-            let plane = clipping.as_ref().map(|cut| {
-                if back {
-                    cut.plane
-                } else {
-                    Plane {
-                        normal: -cut.plane.normal,
-                        dist: -cut.plane.dist,
-                    }
-                }
-            });
-            work.consume((profiles.len() + 1) * VERTICES)
-                .map_err(invalid)?;
-            for positions in profiles.iter().chain(std::iter::once(&mesh.positions)) {
-                for (index, (&point, sample)) in positions.iter().zip(&samples).enumerate() {
-                    if !same(point, sample.point)
-                        || plane.is_some_and(|plane| plane.distance_to(point) > CUT_EPSILON)
-                        || clipping
-                            .as_ref()
-                            .is_some_and(|cut| cut.cut.boundary(row, column, index))
-                            && plane
-                                .is_some_and(|plane| plane.distance_to(point).abs() > CUT_EPSILON)
-                    {
-                        return Err(invalid(
-                            "Cell terrain must preserve exact source samples and native retained-half separation",
-                        ));
-                    }
-                }
-            }
-            paint::validate_data(&mesh, &data, work)?;
-            let mapped = labels.map(&mesh, work)?;
-            let info = part.sides[side_index].displacement.as_mut().unwrap();
-            info.triangle_tags = mapped.tags.clone();
-            mapped.verify(info, &mesh, work)?;
-            certify_local_normals(&data, &profiles, work)?;
-            uv(&data, face, mesh.positions.len(), texture, work)?;
-            let child = Child {
-                base,
-                base_positions: mesh.base_positions,
-                positions: mesh.positions,
-            };
-            let ring = indices.map(|index| source.mesh.base_positions[index]);
-            region_base(
-                &ring,
-                std::slice::from_ref(&child),
-                sheet.axes,
-                sheet.sign,
-                work,
-            )?;
-            children.push(child);
-            parts.push(part);
+    let mut window_fields = native_windows.then(|| WindowFields {
+        source: identity,
+        mapped: Vec::with_capacity(count),
+    });
+    for &window in &layout {
+        let row = window.row;
+        let column = window.column;
+        let extent = window.cells();
+        let back = clipping
+            .as_ref()
+            .is_some_and(|cut| cut.cut.back(row, column));
+        let indices = [
+            row * source.mesh.size + column,
+            (row + extent) * source.mesh.size + column,
+            (row + extent) * source.mesh.size + column + extent,
+            row * source.mesh.size + column + extent,
+        ];
+        let mut base = [DVec3::ZERO; 4];
+        for (point, index) in base.iter_mut().zip(indices) {
+            *point = stored(source.mesh.base_positions[index])?;
         }
+        let (mut part, base_mesh) = carrier_grid(
+            solid,
+            source.side,
+            source.face,
+            CarrierGrid {
+                corners: base,
+                power: output_power,
+            },
+            request.material,
+            &source.editing,
+            work,
+        )?;
+        let side_index = part
+            .sides
+            .iter()
+            .position(|side| side.id == source.side.id)
+            .unwrap();
+        work.consume(4 * FIELD_WORK * vertices).map_err(invalid)?;
+        let samples = (0..vertices)
+            .map(|index| sample_grid(source, window, output_power, index))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut offsets = Vec::with_capacity(vertices);
+        for (sample, &point) in samples.iter().zip(&base_mesh.base_positions) {
+            offsets.push(sample.offset(point)?);
+        }
+        let info = part.sides[side_index].displacement.as_mut().unwrap();
+        if !source.editing.enabled() {
+            info.offsets = Some(offsets.chunks(size).map(<[_]>::to_vec).collect());
+        }
+        info.alphas = source.info.alphas.as_ref().map(|_| {
+            samples
+                .chunks(size)
+                .map(|row| row.iter().map(|sample| sample.alpha).collect())
+                .collect()
+        });
+        let shape = BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
+        let face = shape
+            .faces
+            .iter()
+            .find(|face| face.side == side_index)
+            .ok_or_else(|| invalid("Cell terrain carrier lost its source face"))?;
+        let info = part.sides[side_index].displacement.as_ref().unwrap();
+        let (_, mesh) = native::checked_mesh(face, info).map_err(invalid)?;
+        let (data, stored_base) = data(face, &mesh, output_power)?;
+        let profiles = reconstructed(&data, stored_base, work)?;
+        let plane = clipping.as_ref().map(|cut| {
+            if back {
+                cut.plane
+            } else {
+                Plane {
+                    normal: -cut.plane.normal,
+                    dist: -cut.plane.dist,
+                }
+            }
+        });
+        work.consume((profiles.len() + 1) * vertices)
+            .map_err(invalid)?;
+        for positions in profiles.iter().chain(std::iter::once(&mesh.positions)) {
+            for (index, (&point, sample)) in positions.iter().zip(&samples).enumerate() {
+                if !same(point, sample.point)
+                    || plane.is_some_and(|plane| plane.distance_to(point) > CUT_EPSILON)
+                    || clipping
+                        .as_ref()
+                        .is_some_and(|cut| cut.cut.boundary(window, size, index))
+                        && plane.is_some_and(|plane| plane.distance_to(point).abs() > CUT_EPSILON)
+                {
+                    return Err(invalid(
+                        "Cell terrain must preserve exact source samples and native retained-half separation",
+                    ));
+                }
+            }
+        }
+        paint::validate_data(&mesh, &data, work)?;
+        let mapped = labels.map(&mesh, work)?;
+        let info = part.sides[side_index].displacement.as_mut().unwrap();
+        info.triangle_tags = mapped.tags.clone();
+        if let Some(fields) = &mut window_fields {
+            fields.mapped.push(mapped);
+        } else {
+            mapped.verify(info, &mesh, work)?;
+        }
+        certify_local_normals(&data, &profiles, work)?;
+        uv(&data, face, mesh.positions.len(), texture, work)?;
+        let child = Child {
+            base,
+            base_positions: mesh.base_positions,
+            positions: mesh.positions,
+        };
+        let ring = indices.map(|index| source.mesh.base_positions[index]);
+        region_base(
+            &ring,
+            std::slice::from_ref(&child),
+            sheet.axes,
+            sheet.sign,
+            work,
+        )?;
+        children.push(child);
+        parts.push(part);
     }
     connections(&children, work)?;
     Ok(TerrainPlan {
-        vertices: parts.len() * VERTICES,
-        triangles: parts.len() * TRIANGLES,
+        vertices: parts.len() * vertices,
+        triangles: parts.len() * triangles,
         parts,
         source: identity,
         source_power: source.info.power,
-        output_power: Some(super::POWER),
-        children: None,
+        output_power: Some(output_power),
+        children: native_windows.then_some(layout),
+        window_fields,
         blend_error: None,
     })
 }

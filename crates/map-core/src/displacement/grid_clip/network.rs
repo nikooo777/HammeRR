@@ -18,7 +18,7 @@ use crate::displacement::{
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Face, Plane};
 
-const MAX_WORK: usize = 32_000_000;
+const MAX_WORK: usize = 128_000_000;
 pub const MAX_NEIGHBORS: usize = 128;
 const SPAN_STEPS: i32 = 16;
 

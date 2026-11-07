@@ -872,7 +872,7 @@ Their complete native seam polylines and corner positions must agree. Seams can
 bend; extra unsewn contacts reject. Source and output base domains must retain
 complete, disjoint coverage. Whole-neighbor retiling uses the same rules.
 
-Authored, compiler and four native position profiles must agree. Local normal
+Authored, compiler and four native position profiles must agree before runtime LOD. Local normal
 checks use the installed fixed-diagonal stencil and bounded component ratios.
 Shared corner and edge checks cover native averaging, nearest-corner lookup and
 unequal-density interpolation. Uncertain, cancelling or unrepresentable normal
@@ -880,11 +880,20 @@ inputs reject. These checks preserve finite usable normals, not identical final
 normal bits or game pixels.
 
 The requested plane must follow a complete internal original row or column.
-Each retained original cell becomes one power-2 patch. It preserves the original
+Each retained original cell normally becomes one power-2 patch. It preserves the original
 piecewise surface, exact UVs, piecewise paint and spatial triangle labels.
 Nonlinear paint requires matching raw alpha and all four native packed-alpha
 fields over every overlapping source/output triangle. Vertex equality alone is
 insufficient. Unrepresentable inserted alpha or changed physical regions reject.
+
+When retained native samples move, a power-3 midpoint or power-4 midpoint/quarter cut can use
+larger patches at the source power. The layout is chosen before
+materialization. It inserts exact dyadic samples and preserves the authored field
+separately from every ideal/compiler/native LOD field. Source and children must
+have equivalent fine/maximal native geometry, exact native field correspondence,
+paint, labels, physical regions and UVs. `output_power` (or `face_powers` for mixed layouts), `vertices` and `triangles`
+report the actual layout. Required selected whole neighbors can use four larger
+patches through the same proof. Already compatible neighbors stay unchanged.
 
 `terrain_mode:"fragments"` / **Retile surface triangles** also cuts through
 original cells, using the same embedding and native-contact rules as Cells
@@ -895,8 +904,8 @@ exact; raw/packed paint also stays exact by default. Native output contacts must
 no automatic switch from another mode. Output is bounded at 128 patches, 5,184
 vertices and 8,192 triangles per operation.
 
-Cells/Fragments have two exact LOD certificates. Fine sample positions remain
-fixed, except for source movement covered by the strictly discarded certificate.
+Cells/Fragments use exact LOD certificates. Fine sample positions remain fixed,
+except for strictly discarded source movement or certified dyadic windows.
 Fine and maximal LOD triangulations must positively cover the same complete base cage.
 Triangle identities use cyclic vertex rotations without reversing orientation.
 
@@ -925,9 +934,8 @@ Unchanged neighbors need geometry-only equivalence and identical complete LOD
 state; no new paint restriction or material lookup is imposed on them.
 Existing normal, metadata, contact and capacity checks apply. Whole geometric
 equivalence rejects crease-crossing surface changes or mismatched overlap fields.
-Moved retained samples, output samples, whole-neighbor samples and unselected
-neighbor samples remain invalid. The discarded-source permission does not apply
-to **Both sides**.
+Retained/output movement requires the window certificate. Uncertified layouts and changed unselected native state refuse. The discarded-
+source permission does not apply to **Both sides**; dyadic windows can retain both.
 
 `blend_mode` selects the shared **Blend samples** choice. Use
 `set_clip_blend_mode({"mode":"native_float"})` after choosing Fragments,

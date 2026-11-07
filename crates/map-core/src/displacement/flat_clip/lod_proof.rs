@@ -21,6 +21,13 @@ pub(super) struct State<'a> {
     pub(super) mask: &'a [u32; 10],
 }
 
+pub(super) struct NativePatch<'a> {
+    pub(super) face: &'a Face,
+    pub(super) info: &'a DispInfo,
+    pub(super) mesh: &'a DisplacementMesh,
+    pub(super) state: State<'a>,
+}
+
 pub(super) struct Fields {
     field: PlanarField,
     samples: SampleFields,
@@ -300,6 +307,176 @@ pub(super) fn certify_geometry(
     validate_state(info, mesh, &state, work)?;
     preserve_positions(mesh, &state, cut, work)?;
     geometry(mesh, state, cut, work)
+}
+
+pub(super) fn retained_movement(
+    info: &DispInfo,
+    mesh: &DisplacementMesh,
+    state: State<'_>,
+    cut: (Plane, Keep),
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    validate_state(info, mesh, &state, work)?;
+    work.consume((state.positions.len() + 1) * mesh.positions.len())
+        .map_err(invalid)?;
+    let moved =
+        state.ideal_positions != mesh.positions || state.positions != state.original_positions;
+    if !moved {
+        return Ok(false);
+    }
+    let fine = triangle_set(
+        &state.data.infos[0]
+            .triangle_indices()
+            .map_err(|error| invalid(error.to_string()))?,
+    )?;
+    let maximal = triangle_set(state.indices)?;
+    Ok(!all_discarded(
+        mesh,
+        &fine,
+        &maximal,
+        state,
+        Some(cut),
+        work,
+    )?)
+}
+
+fn native_positions(state: State<'_>, profile: usize) -> &[DVec3] {
+    if profile == 0 {
+        state.ideal_positions
+    } else {
+        &state.positions[profile - 1]
+    }
+}
+
+fn native_equivalent(
+    patch: &NativePatch<'_>,
+    positions: &[DVec3],
+    work: &mut Work,
+) -> Result<DisplacementMesh, EditError> {
+    work.consume(4 * patch.mesh.positions.len())
+        .map_err(invalid)?;
+    let mut mesh = patch.mesh.clone();
+    mesh.positions = positions.to_vec();
+    let fine = patch.state.data.infos[0]
+        .triangle_indices()
+        .map_err(|error| invalid(error.to_string()))?;
+    let fine_set = triangle_set(&fine)?;
+    let maximal = triangle_set(patch.state.indices)?;
+    equivalent(&mesh, patch.state, &fine, &fine_set, &maximal, work)?;
+    Ok(mesh)
+}
+
+fn native_fields(
+    mesh: &DisplacementMesh,
+    axes: [usize; 2],
+    work: &mut Work,
+) -> Result<Vec<(labels::Projected, PlanarField)>, EditError> {
+    work.consume(17 * FIELD_WORK * mesh.triangles().count())
+        .map_err(invalid)?;
+    mesh.triangles()
+        .map(|triangle| {
+            let base = triangle.map(|index| mesh.base_positions[index]);
+            Ok((
+                labels::Projected::new(base, axes)?,
+                PlanarField::triangle(base, triangle.map(|index| mesh.positions[index]))?,
+            ))
+        })
+        .collect()
+}
+
+pub(super) fn certify_dual_native(
+    source: NativePatch<'_>,
+    children: &[NativePatch<'_>],
+    texture: TerrainTexture,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    // WindowFields must verify authored geometry, paint and labels before graph admission.
+    validate_state(source.info, source.mesh, &source.state, work)?;
+    let source_fields = sample_fields(source.mesh, &source.state, None, texture, work)?;
+    uv(
+        source.state.data,
+        source.face,
+        source.mesh.positions.len(),
+        texture,
+        work,
+    )?;
+    for child in children {
+        validate_state(child.info, child.mesh, &child.state, work)?;
+        uv(
+            child.state.data,
+            child.face,
+            child.mesh.positions.len(),
+            texture,
+            work,
+        )?;
+        if !source_fields.matches(
+            &sample_fields(child.mesh, &child.state, None, texture, work)?,
+            work,
+        )? {
+            return Err(invalid(
+                "Retiled native windows changed emitted physical-material regions",
+            ));
+        }
+    }
+    let (_, axes) = labels::projection(source.mesh, work)?;
+    let mut verified = Vec::new();
+    for profile in 0..bsp::NativeDisplacementRounding::ALL.len() + 2 {
+        work.consume(
+            (verified.len() + 1)
+                * (source.mesh.positions.len()
+                    + children
+                        .iter()
+                        .map(|child| child.mesh.positions.len())
+                        .sum::<usize>()),
+        )
+        .map_err(invalid)?;
+        if verified.iter().any(|&previous| {
+            native_positions(source.state, previous) == native_positions(source.state, profile)
+                && children.iter().all(|child| {
+                    native_positions(child.state, previous)
+                        == native_positions(child.state, profile)
+                })
+        }) {
+            continue;
+        }
+        let source_mesh =
+            native_equivalent(&source, native_positions(source.state, profile), work)?;
+        let source_native = native_fields(&source_mesh, axes, work)?;
+        for child in children {
+            let mesh = native_equivalent(child, native_positions(child.state, profile), work)?;
+            work.consume(labels::AABB_WORK * (mesh.base_positions.len() + source_native.len()))
+                .map_err(invalid)?;
+            let bounds = labels::projected_bounds(&mesh.base_positions, axes);
+            let candidates = source_native
+                .iter()
+                .filter(|(projected, _)| labels::bounds_overlap(bounds, projected.bounds))
+                .collect::<Vec<_>>();
+            let fields = native_fields(&mesh, axes, work)?;
+            work.consume(labels::AABB_WORK * candidates.len() * fields.len())
+                .map_err(invalid)?;
+            for (projected, field) in fields {
+                let mut covered = false;
+                for (original, expected) in &candidates {
+                    if projected.overlaps(original, axes, work)? {
+                        work.consume(FIELD_WORK).map_err(invalid)?;
+                        if !field.matches(expected)? {
+                            return Err(invalid(
+                                "Retiled source and child native fine surfaces differ on an exact BASE overlap",
+                            ));
+                        }
+                        covered = true;
+                    }
+                }
+                if !covered {
+                    return Err(invalid(
+                        "Retiled native child triangle has no positive-area source coverage",
+                    ));
+                }
+            }
+        }
+        verified.push(profile);
+    }
+    Ok(())
 }
 
 fn geometry(

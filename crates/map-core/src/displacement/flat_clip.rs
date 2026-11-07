@@ -60,6 +60,31 @@ pub(crate) struct PartitionRequest<'a> {
     pub blend_mode: TerrainBlendMode,
 }
 
+pub(crate) struct WindowFields {
+    source: FaceId,
+    mapped: Vec<labels::Mapped>,
+}
+
+impl WindowFields {
+    pub(super) fn verify(
+        &self,
+        source: FaceId,
+        children: &[(&DispInfo, &DisplacementMesh)],
+        work: &mut Work,
+    ) -> Result<(), EditError> {
+        work.consume(1 + children.len()).map_err(invalid)?;
+        if self.source != source || self.mapped.is_empty() || self.mapped.len() != children.len() {
+            return Err(invalid(
+                "Native window field certificate lost its source or child count",
+            ));
+        }
+        for (mapped, &(info, mesh)) in self.mapped.iter().zip(children) {
+            mapped.verify(info, mesh, work)?;
+        }
+        Ok(())
+    }
+}
+
 pub(crate) fn partition_counts(
     power: u32,
     mode: TerrainMode,
@@ -825,7 +850,7 @@ fn simple_boundary(
         ));
     }
     let count = 4 * (mesh.size - 1);
-    work.consume(polygon::SIMPLE_WORK * count * count + count)
+    work.consume(polygon::SIMPLE_WORK * count * (count - 1) / 2 + count)
         .map_err(invalid)?;
     let ring = ordered_boundary(&mesh.positions, mesh.size, work)?;
     polygon::simple(&ring, axes)
@@ -1215,6 +1240,41 @@ fn carrier_base(
     editing: &editing::Editing,
     work: &mut Work,
 ) -> Result<(Solid, DisplacementMesh), EditError> {
+    carrier_grid(
+        solid,
+        side,
+        face,
+        CarrierGrid {
+            corners: quad,
+            power: POWER,
+        },
+        material,
+        editing,
+        work,
+    )
+}
+
+struct CarrierGrid {
+    corners: [DVec3; 4],
+    power: u32,
+}
+
+fn carrier_grid(
+    solid: &Solid,
+    side: &Side,
+    face: &Face,
+    grid: CarrierGrid,
+    material: &str,
+    editing: &editing::Editing,
+    work: &mut Work,
+) -> Result<(Solid, DisplacementMesh), EditError> {
+    let CarrierGrid {
+        corners: quad,
+        power,
+    } = grid;
+    if !(2..=4).contains(&power) {
+        return Err(invalid("Terrain carrier power must be 2, 3 or 4"));
+    }
     let center = weighted(&quad, &[1, 1, 1, 1], 4)?;
     let mut part = solid.clone();
     for edge in 0..4 {
@@ -1271,7 +1331,7 @@ fn carrier_base(
     crate::brush::canonicalize_precise(&mut part)?;
     let mut info = side.displacement.as_ref().unwrap().clone();
     native::reset_allowed_vertex_cache(&mut info).map_err(invalid)?;
-    info.power = POWER;
+    info.power = power;
     info.start_position = quad[0];
     info.elevation = 0.0;
     info.normals = None;
@@ -1289,7 +1349,7 @@ fn carrier_base(
     let mut base_mesh =
         DisplacementMesh::build(face, &info).map_err(|error| invalid(error.to_string()))?;
     if editing.enabled() {
-        let (base_data, base) = data(face, &base_mesh, POWER)?;
+        let (base_data, base) = data(face, &base_mesh, power)?;
         let authored = base_mesh.base_positions.clone();
         native_base(&mut base_mesh, &base_data, base, work)?;
         if authored
@@ -1413,6 +1473,23 @@ struct Child {
     positions: Vec<DVec3>,
 }
 
+impl Child {
+    fn info(&self) -> Result<bsp::DisplacementInfo, EditError> {
+        let power = (2..=4)
+            .find(|&power| self.base_positions.len() == ((1usize << power) + 1).pow(2))
+            .ok_or_else(|| invalid("Terrain child requires a complete power 2, 3 or 4 grid"))?;
+        if self.positions.len() != self.base_positions.len() {
+            return Err(invalid(
+                "Terrain child base and visible grids differ in size",
+            ));
+        }
+        Ok(bsp::DisplacementInfo {
+            power,
+            ..Default::default()
+        })
+    }
+}
+
 fn on_segment(point: DVec3, a: DVec3, b: DVec3, axes: [usize; 2]) -> Result<bool, EditError> {
     polygon::on_segment(point, [a, b], axes)
 }
@@ -1436,15 +1513,16 @@ fn region_base(
     sign: i128,
     work: &mut Work,
 ) -> Result<(), EditError> {
-    let indices = bsp::DisplacementInfo {
-        power: POWER as i32,
-        ..Default::default()
-    }
-    .triangle_indices()
-    .map_err(|error| invalid(error.to_string()))?;
     let mut proof = Region::new(ring, axes, sign, None, None);
     for child in children {
-        proof.add(&child.base_positions, &indices, SIZE, None, work)?;
+        let info = child.info()?;
+        let indices = info
+            .triangle_indices()
+            .map_err(|error| invalid(error.to_string()))?;
+        let size = info
+            .grid_size()
+            .map_err(|error| invalid(error.to_string()))?;
+        proof.add(&child.base_positions, &indices, size, None, work)?;
     }
     proof.finish()
 }
@@ -1608,14 +1686,17 @@ impl<'a> Region<'a> {
 }
 
 fn connections(children: &[Child], work: &mut Work) -> Result<(), EditError> {
+    work.consume(4 * children.len()).map_err(invalid)?;
     let grids = children
         .iter()
-        .map(|child| neighbors::SurfaceGrid {
-            power: POWER,
-            corners: child.base,
-            positions: &child.positions,
+        .map(|child| {
+            Ok(neighbors::SurfaceGrid {
+                power: child.info()?.power as u32,
+                corners: child.base,
+                positions: &child.positions,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, EditError>>()?;
     let found = neighbors::find(&grids, &mut |amount| work.consume(amount)).map_err(invalid)?;
     if found.ambiguous != 0 || found.mismatched != 0 || found.unequal_power != 0 {
         return Err(invalid(
@@ -1623,9 +1704,13 @@ fn connections(children: &[Child], work: &mut Work) -> Result<(), EditError> {
         ));
     }
     for pair in &found.pairs {
-        for (a, b) in
-            neighbors::common_edge_indices(POWER, pair.first_edge, POWER, pair.second_edge)
-                .map_err(invalid)?
+        for (a, b) in neighbors::common_edge_indices(
+            grids[pair.first].power,
+            pair.first_edge,
+            grids[pair.second].power,
+            pair.second_edge,
+        )
+        .map_err(invalid)?
         {
             if !same(
                 children[pair.first].positions[a],
@@ -1778,6 +1863,7 @@ pub(crate) fn plan(
         source_power: source.info.power,
         output_power: Some(POWER),
         children: None,
+        window_fields: None,
         blend_error: None,
     }))
 }

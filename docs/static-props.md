@@ -155,7 +155,7 @@ Inspect **Instance contents…** before building. Child source files must remain
 - Packing does not change vertex lighting or shadow settings.
 - Packed chains must end at `VertexLitGeneric` with one canonical `$basetexture`. Opaque terminals can add valid `$reflectivity`; strict cutouts can add only `$alphatest 1`.
 - Other packing terminal parameters, authored alpha references for packing and proxies remain unsupported.
-- Cutout vertex-lighting receivers require one canonical basetexture and literal `$alphatest 1` at the default cutoff, with the same bounded Patch grammar as packing.
+- Cutout vertex-lighting receivers require one canonical basetexture and literal `$alphatest 1`, with the same bounded Patch grammar as packing. The native default reference is 0.7, received as an 8-bit cutoff of 178/255.
 - Cutout vertex lighting is experimental.
 - Missing or unsupported required data fails rather than substituting another asset.
 - Sampled textures must meet the [native texture limits](textures.md#native-texture-files).

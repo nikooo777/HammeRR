@@ -1,11 +1,12 @@
+use super::super::window;
 use super::*;
 use crate::displacement::resample;
 
-const SOURCE_POWERS: std::ops::RangeInclusive<u32> = 3..=4;
+const SOURCE_POWERS: std::ops::RangeInclusive<u32> = 2..=4;
 
 struct Layout {
     cut: Option<Cut>,
-    windows: Vec<grid_clip::Child>,
+    windows: Vec<window::Window>,
 }
 
 struct Cut {
@@ -23,19 +24,14 @@ fn layout(
         return Ok(None);
     }
     let Some((plane, keep)) = cut else {
-        work.consume(4).map_err(invalid)?;
-        return Ok(Some(Layout {
-            cut: None,
-            windows: grid_clip::quadrants(grid_clip::Child {
-                row: 0,
-                column: 0,
-                power: surface.power,
-            })
-            .to_vec(),
-        }));
+        let Some(windows) = window::whole(surface.power) else {
+            return Ok(None);
+        };
+        work.consume(windows.len()).map_err(invalid)?;
+        return Ok(Some(Layout { cut: None, windows }));
     };
     for rows in [true, false] {
-        for &index in grid_clip::cut_indices(surface.power) {
+        for index in 1..surface.mesh.size - 1 {
             work.consume((surface.positions.len() + 1) * surface.mesh.positions.len())
                 .map_err(invalid)?;
             let Some(first_back) = grid_clip::grid_line(
@@ -53,8 +49,10 @@ fn layout(
             }) {
                 continue;
             }
-            let windows = grid_clip::cut_children(surface.power, rows, index, first_back, keep)
-                .ok_or_else(|| invalid("Native terrain windows lost their dyadic cut layout"))?;
+            let Some(windows) = window::cut_children(surface.power, rows, index, first_back, keep)
+            else {
+                continue;
+            };
             work.consume(windows.len()).map_err(invalid)?;
             return Ok(Some(Layout {
                 cut: Some(Cut {
@@ -124,14 +122,26 @@ pub(super) fn requires_partition(
     let peer_steps = peer_range[1] - peer_range[0];
     work.consume(32 * layout.windows.len()).map_err(invalid)?;
     for window in layout.windows {
-        let cells = window.cells();
-        let interval = match edge {
-            0 if window.column == 0 => [window.row, window.row + cells],
-            1 if window.row + cells == extent => [window.column, window.column + cells],
-            2 if window.column + cells == extent => {
-                [extent - window.row - cells, extent - window.row]
-            }
-            3 if window.row == 0 => [extent - window.column - cells, extent - window.column],
+        let (interval, edge_cells) = match edge {
+            0 if window.column == 0 => (
+                [window.row, window.row + window.row_cells],
+                window.row_cells,
+            ),
+            1 if window.row + window.row_cells == extent => (
+                [window.column, window.column + window.column_cells],
+                window.column_cells,
+            ),
+            2 if window.column + window.column_cells == extent => (
+                [extent - window.row - window.row_cells, extent - window.row],
+                window.row_cells,
+            ),
+            3 if window.row == 0 => (
+                [
+                    extent - window.column - window.column_cells,
+                    extent - window.column,
+                ],
+                window.column_cells,
+            ),
             _ => continue,
         };
         let overlap = [
@@ -155,7 +165,7 @@ pub(super) fn requires_partition(
             }
             continue;
         }
-        let child_span = native_span(overlap.map(|point| point - interval[0]), cells);
+        let child_span = native_span(overlap.map(|point| point - interval[0]), edge_cells);
         let peer_span = native_span([mapped[1], mapped[0]], peer_extent);
         if !matches!(
             (child_span, peer_span),
@@ -263,20 +273,10 @@ pub(super) fn validate(
 ) -> Result<BTreeSet<FaceId>, EditError> {
     let mut scoped = BTreeSet::new();
     for replacement in replacements {
-        let (windows, fields) = match (replacement.windows, replacement.window_fields) {
-            (None, None) => continue,
-            (Some(windows), Some(fields)) => (windows, fields),
-            (Some(_), None) => {
-                return Err(invalid(
-                    "Native terrain windows require their authored source field proof",
-                ));
-            }
-            (None, Some(_)) => {
-                return Err(invalid(
-                    "Terrain window field proofs require their source-window metadata",
-                ));
-            }
+        let Some(fields) = replacement.window_fields else {
+            continue;
         };
+        let windows = fields.layout();
         if mode != Mode::Cells {
             return Err(invalid("Native terrain windows require Cells mode"));
         }
@@ -285,7 +285,7 @@ pub(super) fn validate(
             .find(|surface| surface.raw.source == replacement.source)
             .ok_or_else(|| invalid("Native terrain windows lost their source"))?;
         let expected = layout(source, replacement.cut, work)?.ok_or_else(|| {
-            invalid("Native terrain windows require a power3/4 whole or exact dyadic cut layout")
+            invalid("Native terrain windows require a supported whole or exact original grid-line layout")
         })?;
         let parts = children
             .iter()
@@ -306,9 +306,11 @@ pub(super) fn validate(
             .collect::<Vec<_>>();
         fields.verify(replacement.source, &proof_children, work)?;
         for (window, child) in windows.iter().zip(parts) {
-            if child.power != source.power || child.mesh.size != source.mesh.size {
+            if child.power != window.output_power
+                || child.mesh.size != (1 << window.output_power) + 1
+            {
                 return Err(invalid(
-                    "Native terrain windows require the original source grid power",
+                    "Native terrain window power differs from its canonical source layout",
                 ));
             }
             work.consume(4 * FIELD_WORK * child.mesh.positions.len())
@@ -318,9 +320,10 @@ pub(super) fn validate(
                 for column in 0..child.mesh.size {
                     let (indices, weights) = resample::weights(
                         source.mesh.size,
-                        window.row as f64 + window.cells() as f64 * row as f64 / denominator as f64,
+                        window.row as f64
+                            + window.row_cells as f64 * row as f64 / denominator as f64,
                         window.column as f64
-                            + window.cells() as f64 * column as f64 / denominator as f64,
+                            + window.column_cells as f64 * column as f64 / denominator as f64,
                     );
                     let mut exact_weights = [0; 3];
                     for (output, weight) in exact_weights.iter_mut().zip(weights) {
@@ -394,7 +397,7 @@ pub(super) fn movement_candidate(
         ) != Some(expected.first_back)
         {
             return Err(invalid(
-                "Native dyadic geometry changed its retained cut separation",
+                "Native window geometry changed its retained cut separation",
             ));
         }
     }

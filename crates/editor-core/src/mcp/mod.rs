@@ -140,7 +140,7 @@ preview_hollow builds inward/outward wall shells with shared geometry and cavity
 clip_brushes cuts brushes by a normal/distance, three points, or a snapped planar line. \
 Use preview: true, inspect get_clip_preview and render_view, then commit_clip_preview or cancel_clip_preview. \
 Keep front (arrow side), back, or both. set_clip_terrain_mode selects grid (Existing grid), flat (Retile flat terrain), cells (Retile grid cells), or fragments (Retile surface triangles). \
-The clip_brushes tool describes their geometry and native-state contracts. Cells can retain larger same-power dyadic windows when native LOD moves retained samples, preserving authored and native surfaces separately. \
+The clip_brushes tool describes their geometry and native-state contracts. \
 set_clip_blend_mode selects exact, native_float or nearest_byte; non-exact modes require fragments. get_clip_preview reports certified raw/four-profile packed blend bounds. \
 Legacy set_clip_blend_rounding and round_blend map true to nearest_byte and false to exact; supplying both blend fields refuses. \
 set_clip_neighbor_partition shares Partition selected neighbors for Grid, Cells and Fragments; true in Flat refuses. Required selected neighbors may be retiled; unselected native state stays unchanged. \

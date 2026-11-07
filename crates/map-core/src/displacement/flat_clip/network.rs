@@ -28,7 +28,6 @@ pub(crate) struct Replacement<'a> {
     pub parts: &'a [Solid],
     pub texture: Option<crate::clip::TerrainTexture>,
     pub cut: Option<(Plane, Keep)>,
-    pub windows: Option<&'a [grid_clip::Child]>,
     pub window_fields: Option<&'a super::WindowFields>,
 }
 
@@ -258,19 +257,19 @@ fn lod_state(
         surface.mesh.positions.len() + surface.positions.iter().map(Vec::len).sum::<usize>(),
     )
     .map_err(invalid)?;
-    if state.ideal_positions != surface.mesh.positions || state.positions != surface.positions {
-        if !provisional {
-            let cut = cut.ok_or_else(|| {
-                invalid("Terrain LOD requires unchanged complete native and compiler geometry")
-            })?;
-            lod_proof::certify_geometry(
-                surface.raw.side.displacement.as_ref().unwrap(),
-                &surface.mesh,
-                state.proof(surface),
-                Some(cut),
-                work,
-            )?;
-        }
+    if !provisional
+        && (state.ideal_positions != surface.mesh.positions || state.positions != surface.positions)
+    {
+        let cut = cut.ok_or_else(|| {
+            invalid("Terrain LOD requires unchanged complete native and compiler geometry")
+        })?;
+        lod_proof::certify_geometry(
+            surface.raw.side.displacement.as_ref().unwrap(),
+            &surface.mesh,
+            state.proof(surface),
+            Some(cut),
+            work,
+        )?;
         certify_lod_profiles(surface, &state, work)?;
     }
     Ok(state)
@@ -986,9 +985,27 @@ fn graph(
     }
     certify_contact_normals(surfaces, &edges, &corners, &varying, work)?;
     if mode == Mode::Cells {
-        certify_moved_footprints(surfaces, &moved, &contacts, work)?;
+        work.consume(moved.len()).map_err(invalid)?;
+        if !moved.is_empty()
+            && moved
+                .iter()
+                .all(|&index| provisional.contains(&surfaces[index].raw.source))
+        {
+            work.consume(surfaces.len()).map_err(invalid)?;
+            let prepared = surfaces
+                .iter()
+                .map(|surface| {
+                    surface.embedded.as_ref().ok_or_else(|| {
+                        invalid("Terrain window contact proof lost its authored geometry")
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            certify_prepared_contacts(&prepared, &contacts, ContactPolicy::Authored, work)?;
+        } else {
+            certify_moved_footprints(surfaces, &moved, &contacts, work)?;
+        }
         normals::certify(surfaces, &states, &found.pairs, &connections, work)?;
-        certify_native_contacts(surfaces, &states, &contacts, work)?;
+        certify_native_contacts(surfaces, &states, &contacts, provisional, work)?;
     }
     result.pairs = found.pairs;
     result.lod = states;
@@ -1003,10 +1020,16 @@ fn profile_positions(state: &LodState, profile: usize) -> &[DVec3] {
     }
 }
 
+enum ContactPolicy {
+    Native,
+    Authored,
+}
+
 fn certify_native_contacts(
     surfaces: &[&Surface<'_>],
     states: &[LodState],
     contacts: &BTreeMap<(usize, usize), [DVec3; 2]>,
+    provisional: &BTreeSet<FaceId>,
     work: &mut Work,
 ) -> Result<(), EditError> {
     if surfaces.len() != states.len() {
@@ -1041,7 +1064,11 @@ fn certify_native_contacts(
                 }
                 let mut mesh = surface.mesh.clone();
                 mesh.positions = positions.to_vec();
-                super::embedded::prepare(&mesh, work).map(Some)
+                if provisional.contains(&surface.raw.source) {
+                    super::embedded::source(&mesh, work).map(Some)
+                } else {
+                    super::embedded::prepare(&mesh, work).map(Some)
+                }
             })
             .collect::<Result<Vec<_>, _>>()?;
         let prepared = prepared
@@ -1056,7 +1083,7 @@ fn certify_native_contacts(
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        certify_prepared_contacts(&prepared, contacts, work)?;
+        certify_prepared_contacts(&prepared, contacts, ContactPolicy::Native, work)?;
         verified.push(profile);
     }
     Ok(())
@@ -1065,16 +1092,26 @@ fn certify_native_contacts(
 fn certify_prepared_contacts(
     surfaces: &[&super::embedded::Prepared],
     contacts: &BTreeMap<(usize, usize), [DVec3; 2]>,
+    policy: ContactPolicy,
     work: &mut Work,
 ) -> Result<(), EditError> {
     for first in 0..surfaces.len() {
         for second in first + 1..surfaces.len() {
-            super::embedded::between_prepared(
-                surfaces[first],
-                surfaces[second],
-                contacts.get(&(first, second)).copied(),
-                work,
-            )?;
+            let allowed = contacts.get(&(first, second)).copied();
+            match policy {
+                ContactPolicy::Native => super::embedded::between_prepared(
+                    surfaces[first],
+                    surfaces[second],
+                    allowed,
+                    work,
+                )?,
+                ContactPolicy::Authored => super::embedded::between_authored_prepared(
+                    surfaces[first],
+                    surfaces[second],
+                    allowed,
+                    work,
+                )?,
+            }
         }
     }
     Ok(())
@@ -1106,7 +1143,12 @@ fn certify_moved_footprints(
         }
         projected.push(super::embedded::prepare(&mesh, work)?);
     }
-    certify_prepared_contacts(&projected.iter().collect::<Vec<_>>(), contacts, work)?;
+    certify_prepared_contacts(
+        &projected.iter().collect::<Vec<_>>(),
+        contacts,
+        ContactPolicy::Native,
+        work,
+    )?;
     Ok(())
 }
 
@@ -1134,7 +1176,7 @@ fn certify_lod(
     coarsened.extend(
         replacements
             .iter()
-            .filter(|replacement| replacement.windows.is_some())
+            .filter(|replacement| replacement.window_fields.is_some())
             .map(|replacement| replacement.source),
     );
     for (index, surface) in before.iter().enumerate() {
@@ -1186,7 +1228,7 @@ fn certify_lod(
         let texture = replacement.texture.ok_or_else(|| {
             invalid("Terrain LOD requires guarded native texture mapping dimensions")
         })?;
-        if replacement.windows.is_some() {
+        if replacement.window_fields.is_some() {
             windows::certify_source(surface, state, replacement.cut, work)?;
             let source = lod_proof::NativePatch {
                 face: &surface.raw.face,
@@ -1201,7 +1243,7 @@ fn certify_lod(
                 .map(|(child, state)| {
                     if child.raw.side.material != surface.raw.side.material {
                         return Err(invalid(
-                            "Native midpoint windows must preserve original material identities",
+                            "Native terrain windows must preserve original material identities",
                         ));
                     }
                     Ok(lod_proof::NativePatch {

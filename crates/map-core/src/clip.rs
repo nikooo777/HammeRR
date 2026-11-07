@@ -1040,7 +1040,6 @@ pub fn clip_with_options(
                             crate::displacement::flat_clip::network::Replacement {
                                 source: terrain.source,
                                 parts: &cut.parts,
-                                windows: cut.children.as_deref(),
                                 window_fields: cut.window_fields.as_ref(),
                                 cut: (!terrain.partitioned).then_some((plane, keep)),
                                 texture: options

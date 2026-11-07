@@ -886,14 +886,21 @@ Nonlinear paint requires matching raw alpha and all four native packed-alpha
 fields over every overlapping source/output triangle. Vertex equality alone is
 insufficient. Unrepresentable inserted alpha or changed physical regions reject.
 
-When retained native samples move, a power-3 midpoint or power-4 midpoint/quarter cut can use
-larger patches at the source power. The layout is chosen before
-materialization. It inserts exact dyadic samples and preserves the authored field
-separately from every ideal/compiler/native LOD field. Source and children must
-have equivalent fine/maximal native geometry, exact native field correspondence,
-paint, labels, physical regions and UVs. `output_power` (or `face_powers` for mixed layouts), `vertices` and `triangles`
-report the actual layout. Required selected whole neighbors can use four larger
-patches through the same proof. Already compatible neighbors stay unchanged.
+When retained native samples move, powers 3 and 4 can use larger rectangular windows
+along complete original grid lines. Existing dyadic layouts keep their powers;
+other qualified layouts can mix powers. The layout is chosen before construction.
+New samples preserve the authored field separately from every
+ideal/compiler/native LOD field. Source and children need equivalent fine/maximal
+native geometry, exact source-to-child native fields, paint, labels, physical
+regions and UVs. Unrepresentable fields reject the cut.
+
+`output_power` (or `face_powers` for mixed layouts), `vertices` and `triangles`
+report the actual layout. Required selected whole neighbors use four windows for
+powers 3 and 4, or one full-cage power-3 window for a moved power-2 source. Folded and
+overhanging windows can qualify. Authored seam gaps are allowed; extra contacts
+are not. Every native profile requires exact contacts and embedded surfaces.
+A component with nonwindow movement still requires a shared positive projection.
+Already compatible neighbors stay unchanged.
 
 `terrain_mode:"fragments"` / **Retile surface triangles** also cuts through
 original cells, using the same embedding and native-contact rules as Cells
@@ -905,7 +912,7 @@ no automatic switch from another mode. Output is bounded at 128 patches, 5,184
 vertices and 8,192 triangles per operation.
 
 Cells/Fragments use exact LOD certificates. Fine sample positions remain fixed,
-except for strictly discarded source movement or certified dyadic windows.
+except for strictly discarded source movement or certified windows.
 Fine and maximal LOD triangulations must positively cover the same complete base cage.
 Triangle identities use cyclic vertex rotations without reversing orientation.
 
@@ -935,7 +942,7 @@ state; no new paint restriction or material lookup is imposed on them.
 Existing normal, metadata, contact and capacity checks apply. Whole geometric
 equivalence rejects crease-crossing surface changes or mismatched overlap fields.
 Retained/output movement requires the window certificate. Uncertified layouts and changed unselected native state refuse. The discarded-
-source permission does not apply to **Both sides**; dyadic windows can retain both.
+source permission does not apply to **Both sides**; certified windows can retain both.
 
 `blend_mode` selects the shared **Blend samples** choice. Use
 `set_clip_blend_mode({"mode":"native_float"})` after choosing Fragments,
@@ -1008,7 +1015,7 @@ pass `partition_neighbors:true` to `clip_brushes`.
 | Mode | Neighbor operation |
 | --- | --- |
 | Grid | Refine only required leaf regions down to native power 2; power-3 originals allow one level and power-4 originals allow two. |
-| Cells | Retile the whole required neighbor, with one power-2 patch per original cell. |
+| Cells | Retile the whole required neighbor, normally with one power-2 patch per original cell. Qualified moved sources use certified windows. |
 | Fragments | Retile the whole required neighbor, with four power-2 patches per original cell. |
 
 Curved neighbor retiling closes only required retained, matched full original

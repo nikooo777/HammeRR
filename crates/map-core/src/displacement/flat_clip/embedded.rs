@@ -60,6 +60,7 @@ impl Triangle {
 pub(super) struct Prepared {
     triangles: Vec<Triangle>,
     base: BasePlane,
+    base_bounds: [DVec3; 2],
     bounds: [DVec3; 2],
     affine: Option<PlanarField>,
 }
@@ -73,7 +74,7 @@ pub(super) fn prepare(mesh: &DisplacementMesh, work: &mut Work) -> Result<Prepar
             "Terrain embedded preparation requires complete native grids",
         ));
     }
-    work.consume(FIELD_WORK + mesh.positions.len())
+    work.consume(FIELD_WORK + 2 * mesh.positions.len())
         .map_err(invalid)?;
     let base = BasePlane::new([
         mesh.base_positions[0],
@@ -131,6 +132,7 @@ pub(super) fn prepare(mesh: &DisplacementMesh, work: &mut Work) -> Result<Prepar
     Ok(Prepared {
         triangles,
         base,
+        base_bounds: bounds(&mesh.base_positions),
         bounds: bounds(&mesh.positions),
         affine,
     })
@@ -195,6 +197,96 @@ fn apart(a: [DVec3; 2], b: [DVec3; 2]) -> bool {
     (0..3).any(|axis| a[1][axis] < b[0][axis] || b[1][axis] < a[0][axis])
 }
 
+fn widest(bounds: [DVec3; 2]) -> usize {
+    let span = bounds[1] - bounds[0];
+    let mut axis = 0;
+    for candidate in 1..3 {
+        if span[candidate] > span[axis] {
+            axis = candidate;
+        }
+    }
+    axis
+}
+
+struct OrderedTriangle {
+    index: usize,
+    low: f64,
+    high: f64,
+}
+
+struct TriangleOrder {
+    triangles: Vec<OrderedTriangle>,
+    prefix_high: Vec<f64>,
+    axis: usize,
+}
+
+impl TriangleOrder {
+    fn new(
+        triangles: &[Triangle],
+        bounds: [DVec3; 2],
+        base: bool,
+        work: &mut Work,
+    ) -> Result<Self, EditError> {
+        work.consume(2 * PAIR_WORK * triangles.len())
+            .map_err(invalid)?;
+        let axis = widest(bounds);
+        let mut triangles = triangles
+            .iter()
+            .enumerate()
+            .map(|(index, triangle)| {
+                let bounds = if base {
+                    triangle.base_bounds
+                } else {
+                    triangle.bounds
+                };
+                OrderedTriangle {
+                    index,
+                    low: bounds[0][axis],
+                    high: bounds[1][axis],
+                }
+            })
+            .collect::<Vec<_>>();
+        let mut comparisons = 0;
+        triangles.sort_unstable_by(|a, b| {
+            comparisons += 1;
+            a.low.total_cmp(&b.low)
+        });
+        work.consume(PAIR_WORK * comparisons).map_err(invalid)?;
+        let mut high = f64::NEG_INFINITY;
+        let prefix_high = triangles
+            .iter()
+            .map(|triangle| {
+                high = high.max(triangle.high);
+                high
+            })
+            .collect();
+        Ok(Self {
+            triangles,
+            prefix_high,
+            axis,
+        })
+    }
+
+    fn range(
+        &self,
+        bounds: [DVec3; 2],
+        work: &mut Work,
+    ) -> Result<std::ops::Range<usize>, EditError> {
+        let mut comparisons = 0;
+        let start = self.prefix_high.partition_point(|&high| {
+            comparisons += 1;
+            high < bounds[0][self.axis]
+        });
+        let end = start
+            + self.triangles[start..].partition_point(|triangle| {
+                comparisons += 1;
+                triangle.low <= bounds[1][self.axis]
+            });
+        work.consume(PAIR_WORK * comparisons).map_err(invalid)?;
+        Ok(start..end)
+    }
+}
+
 fn basis_add(basis: &mut Vec<Vector>, axis: Vector) -> Result<(), EditError> {
     match basis.as_slice() {
         [] => basis.push(axis),
@@ -248,6 +340,76 @@ fn supported_contact(
     Ok(())
 }
 
+fn support_feature(
+    triangle: [DVec3; 3],
+    point: DVec3,
+    normal: Vector,
+    work: &mut Work,
+) -> Result<Vec<DVec3>, EditError> {
+    work.consume(3 * FIELD_WORK).map_err(invalid)?;
+    let mut result = Vec::with_capacity(3);
+    for vertex in triangle {
+        if dot(difference(vertex, point)?, normal)?.value == 0 {
+            result.push(vertex);
+        }
+    }
+    Ok(result)
+}
+
+fn feature_contains(
+    feature: &[DVec3],
+    point: DVec3,
+    axes: [usize; 2],
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    match feature {
+        [vertex] => Ok(same(*vertex, point)),
+        [a, b] => {
+            work.consume(polygon::ON_SEGMENT_WORK).map_err(invalid)?;
+            polygon::on_segment(point, [*a, *b], axes)
+        }
+        [a, b, c] => {
+            work.consume(3 * FIELD_WORK).map_err(invalid)?;
+            let signs = [
+                orient(*a, *b, point, axes)?,
+                orient(*b, *c, point, axes)?,
+                orient(*c, *a, point, axes)?,
+            ];
+            Ok(signs.iter().all(|&sign| sign >= 0) || signs.iter().all(|&sign| sign <= 0))
+        }
+        _ => Ok(false),
+    }
+}
+
+fn supported_point(
+    first: [DVec3; 3],
+    second: [DVec3; 3],
+    point: DVec3,
+    normal: Vector,
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    let axis = (0..3).find(|&axis| normal[axis].value != 0).unwrap();
+    let axes = [(axis + 1) % 3, (axis + 2) % 3];
+    let first = support_feature(first, point, normal, work)?;
+    let second = support_feature(second, point, normal, work)?;
+    if !feature_contains(&first, point, axes, work)?
+        || !feature_contains(&second, point, axes, work)?
+    {
+        return Ok(false);
+    }
+    if first.len() == 1 || second.len() == 1 {
+        return Ok(true);
+    }
+    if first.len() == 2 && second.len() == 2 {
+        work.consume(FIELD_WORK).map_err(invalid)?;
+        return Ok(nonzero(cross(
+            difference(first[1], first[0])?,
+            difference(second[1], second[0])?,
+        )?));
+    }
+    Ok(false)
+}
+
 enum Axis {
     Normal(Vector),
     Cross(Vector, Vector),
@@ -294,6 +456,7 @@ fn certify_pair(
     first: &Triangle,
     second: &Triangle,
     expected: &[DVec3],
+    kind: ContactKind,
     work: &mut Work,
 ) -> Result<(), EditError> {
     if expected.len() > 2 {
@@ -326,6 +489,13 @@ fn certify_pair(
             }
         }
     }
+    if matches!(kind, ContactKind::Authored)
+        && expected.len() == 1
+        && pair.basis.len() == 1
+        && supported_point(first.world, second.world, expected[0], pair.basis[0], work)?
+    {
+        return Ok(());
+    }
     Err(invalid(
         "Terrain sheets cross, overlap or intersect outside their native contacts",
     ))
@@ -338,11 +508,15 @@ pub(super) fn source(mesh: &DisplacementMesh, work: &mut Work) -> Result<Prepare
     if prepared.affine.is_some() {
         return Ok(prepared);
     }
-    let triangles = &prepared.triangles;
-    work.consume(PAIR_WORK * triangles.len() * (triangles.len() - 1) / 2)
-        .map_err(invalid)?;
-    for (index, first) in triangles.iter().enumerate() {
-        for second in &triangles[index + 1..] {
+    let order = TriangleOrder::new(&prepared.triangles, prepared.bounds, false, work)?;
+    for (index, first) in order.triangles.iter().enumerate() {
+        for second in &order.triangles[index + 1..] {
+            work.consume(PAIR_WORK).map_err(invalid)?;
+            if second.low > first.high {
+                break;
+            }
+            let first = &prepared.triangles[first.index];
+            let second = &prepared.triangles[second.index];
             if apart(first.bounds, second.bounds) {
                 continue;
             }
@@ -356,7 +530,7 @@ pub(super) fn source(mesh: &DisplacementMesh, work: &mut Work) -> Result<Prepare
                 .filter(|index| second.indices.contains(index))
                 .map(|&index| mesh.positions[index])
                 .collect::<Vec<_>>();
-            certify_pair(first, second, &expected, work)?;
+            certify_pair(first, second, &expected, ContactKind::Native, work)?;
         }
     }
     Ok(prepared)
@@ -411,6 +585,57 @@ struct Contact {
     axis: usize,
 }
 
+#[derive(Clone, Copy)]
+enum ContactKind {
+    Native,
+    Authored,
+}
+
+fn common_positions(
+    first: [DVec3; 2],
+    second: [DVec3; 2],
+    count: usize,
+    kind: ContactKind,
+    work: &mut Work,
+) -> Result<Vec<DVec3>, EditError> {
+    let mut result = Vec::with_capacity(count);
+    for index in 0..count {
+        if same(first[index], second[index]) {
+            result.push(first[index]);
+        } else if matches!(kind, ContactKind::Native) {
+            return Err(invalid(
+                "Terrain native seam has different exact embedded positions",
+            ));
+        }
+    }
+    if count != 2 || !result.is_empty() {
+        return Ok(result);
+    }
+    work.consume(4 * FIELD_WORK).map_err(invalid)?;
+    let start = difference(first[0], second[0])?;
+    let end = difference(first[1], second[1])?;
+    let axis = (0..3).find(|&axis| start[axis].value != 0).unwrap();
+    if start[axis].value.signum() == end[axis].value.signum()
+        || end[axis].value == 0
+        || nonzero(cross(start, end)?)
+    {
+        return Ok(result);
+    }
+    let numerator = start[axis];
+    let denominator = numerator.sub(end[axis])?;
+    let mut point = DVec3::ZERO;
+    for axis in 0..3 {
+        let origin = Exact::float(first[0][axis])?;
+        point[axis] = origin
+            .mul(denominator)?
+            .add(Exact::float(first[1][axis])?.sub(origin)?.mul(numerator)?)?
+            .div(denominator)?
+            .value()?;
+    }
+    result.push(point);
+    Ok(result)
+}
+
 impl Contact {
     fn new(
         first: &Prepared,
@@ -449,6 +674,7 @@ impl Contact {
         first_index: usize,
         second: &Triangle,
         second_index: usize,
+        kind: ContactKind,
         work: &mut Work,
     ) -> Result<Vec<DVec3>, EditError> {
         work.consume(2 * PAIR_WORK).map_err(invalid)?;
@@ -477,18 +703,13 @@ impl Contact {
         }
         let points = [low, high];
         let count = if same(low, high) { 1 } else { 2 };
-        let mut result = Vec::with_capacity(count);
-        for point in points.into_iter().take(count) {
-            let a = first.position(point, work)?;
-            let b = second.position(point, work)?;
-            if !same(a, b) {
-                return Err(invalid(
-                    "Terrain native seam has different exact embedded positions",
-                ));
-            }
-            result.push(a);
+        let mut a = [first.position(points[0], work)?; 2];
+        let mut b = [second.position(points[0], work)?; 2];
+        if count == 2 {
+            a[1] = first.position(points[1], work)?;
+            b[1] = second.position(points[1], work)?;
         }
-        Ok(result)
+        common_positions(a, b, count, kind, work)
     }
 }
 
@@ -497,6 +718,25 @@ pub(super) fn between_prepared(
     first: &Prepared,
     second: &Prepared,
     allowed: Option<[DVec3; 2]>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    between(first, second, allowed, ContactKind::Native, work)
+}
+
+pub(super) fn between_authored_prepared(
+    first: &Prepared,
+    second: &Prepared,
+    allowed: Option<[DVec3; 2]>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    between(first, second, allowed, ContactKind::Authored, work)
+}
+
+fn between(
+    first: &Prepared,
+    second: &Prepared,
+    allowed: Option<[DVec3; 2]>,
+    kind: ContactKind,
     work: &mut Work,
 ) -> Result<(), EditError> {
     work.consume(PAIR_WORK).map_err(invalid)?;
@@ -535,29 +775,64 @@ pub(super) fn between_prepared(
         .transpose()?;
     let first_triangles = &first.triangles;
     let second_triangles = &second.triangles;
-    work.consume(PAIR_WORK * first_triangles.len() * second_triangles.len())
-        .map_err(invalid)?;
+    let world_order = TriangleOrder::new(
+        second_triangles,
+        [
+            first.bounds[0].min(second.bounds[0]),
+            first.bounds[1].max(second.bounds[1]),
+        ],
+        false,
+        work,
+    )?;
+    let base_order = if allowed.is_some() {
+        Some(TriangleOrder::new(
+            second_triangles,
+            [
+                first.base_bounds[0].min(second.base_bounds[0]),
+                first.base_bounds[1].max(second.base_bounds[1]),
+            ],
+            true,
+            work,
+        )?)
+    } else {
+        None
+    };
+    work.consume(second_triangles.len()).map_err(invalid)?;
+    let mut visited = vec![0; second_triangles.len()];
     for (first_index, a) in first_triangles.iter().enumerate() {
-        for (second_index, b) in second_triangles.iter().enumerate() {
-            let separated = apart(a.bounds, b.bounds);
-            if separated && (allowed.is_none() || apart(a.base_bounds, b.base_bounds)) {
-                continue;
-            }
-            let expected = match &contact {
-                Some(contact) => contact.expected(a, first_index, b, second_index, work)?,
-                None => Vec::new(),
-            };
-            if separated {
-                if !expected.is_empty() {
-                    return Err(invalid("Terrain lost an expected embedded native contact"));
+        for (order, bounds) in std::iter::once((&world_order, a.bounds))
+            .chain(base_order.as_ref().map(|order| (order, a.base_bounds)))
+        {
+            for candidate in &order.triangles[order.range(bounds, work)?] {
+                work.consume(PAIR_WORK).map_err(invalid)?;
+                let second_index = candidate.index;
+                if visited[second_index] == first_index + 1 {
+                    continue;
                 }
-                continue;
+                visited[second_index] = first_index + 1;
+                let b = &second_triangles[second_index];
+                let separated = apart(a.bounds, b.bounds);
+                if separated && (allowed.is_none() || apart(a.base_bounds, b.base_bounds)) {
+                    continue;
+                }
+                let expected = match &contact {
+                    Some(contact) => {
+                        contact.expected(a, first_index, b, second_index, kind, work)?
+                    }
+                    None => Vec::new(),
+                };
+                if separated {
+                    if !expected.is_empty() {
+                        return Err(invalid("Terrain lost an expected embedded native contact"));
+                    }
+                    continue;
+                }
+                work.consume(FIELD_WORK).map_err(invalid)?;
+                if a.field.matches(&b.field)? {
+                    continue;
+                }
+                certify_pair(a, b, &expected, kind, work)?;
             }
-            work.consume(FIELD_WORK).map_err(invalid)?;
-            if a.field.matches(&b.field)? {
-                continue;
-            }
-            certify_pair(a, b, &expected, work)?;
         }
     }
     Ok(())

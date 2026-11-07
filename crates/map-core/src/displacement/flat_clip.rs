@@ -25,6 +25,7 @@ mod lod_proof;
 pub(crate) mod network;
 mod paint;
 mod polygon;
+mod window;
 
 use field::{BasePlane, PlanarField, ScalarField};
 use labels::TriangleField;
@@ -62,10 +63,15 @@ pub(crate) struct PartitionRequest<'a> {
 
 pub(crate) struct WindowFields {
     source: FaceId,
+    layout: Vec<window::Window>,
     mapped: Vec<labels::Mapped>,
 }
 
 impl WindowFields {
+    fn layout(&self) -> &[window::Window] {
+        &self.layout
+    }
+
     pub(super) fn verify(
         &self,
         source: FaceId,
@@ -73,7 +79,11 @@ impl WindowFields {
         work: &mut Work,
     ) -> Result<(), EditError> {
         work.consume(1 + children.len()).map_err(invalid)?;
-        if self.source != source || self.mapped.is_empty() || self.mapped.len() != children.len() {
+        if self.source != source
+            || self.mapped.is_empty()
+            || self.mapped.len() != children.len()
+            || self.layout.len() != children.len()
+        {
             return Err(invalid(
                 "Native window field certificate lost its source or child count",
             ));
@@ -1729,6 +1739,47 @@ fn connections(children: &[Child], work: &mut Work) -> Result<(), EditError> {
             "Flat terrain output cannot require native LOD coarsening",
         ));
     }
+    Ok(())
+}
+
+fn window_connections(children: &[Child], work: &mut Work) -> Result<(), EditError> {
+    work.consume(4 * children.len()).map_err(invalid)?;
+    let grids = children
+        .iter()
+        .map(|child| {
+            Ok(neighbors::SurfaceGrid {
+                power: child.info()?.power as u32,
+                corners: child.base,
+                positions: &child.positions,
+            })
+        })
+        .collect::<Result<Vec<_>, EditError>>()?;
+    let found =
+        neighbors::find_spans(&grids, &mut |amount| work.consume(amount)).map_err(invalid)?;
+    if found.ambiguous != 0 || found.mismatched != 0 {
+        return Err(invalid(
+            "Terrain windows have ambiguous or mismatched native full/half edges",
+        ));
+    }
+    for pair in &found.pairs {
+        let first = &grids[pair.first];
+        let second = &grids[pair.second];
+        for (a, b) in neighbors::common_span_indices(
+            (first.power, pair.first_edge, pair.first_span),
+            (second.power, pair.second_edge, pair.second_span),
+        )
+        .map_err(invalid)?
+        {
+            work.consume(1).map_err(invalid)?;
+            if !same(first.positions[a], second.positions[b]) {
+                return Err(invalid(
+                    "Terrain window authored shared-span samples differ",
+                ));
+            }
+        }
+    }
+    let _ = neighbors::native_connections(&grids, &found.pairs, &mut |amount| work.consume(amount))
+        .map_err(invalid)?;
     Ok(())
 }
 

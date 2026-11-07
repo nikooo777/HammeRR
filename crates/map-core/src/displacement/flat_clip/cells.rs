@@ -6,10 +6,10 @@ use super::{
     PartitionRequest, Request, SIZE, TerrainPlan, TriangleField, VERTICES, WindowFields, Work,
     admit, admit_source, carrier_grid, certify_local_normals, connections, data, intrinsic_source,
     invalid, native, network, paint, partition_counts, reconstructed, region_base, same, stored,
-    uv, weighted,
+    uv, weighted, window, window::Window, window_connections,
 };
 use crate::clip::{TerrainBlendMode, TerrainMode};
-use crate::displacement::{grid_clip, grid_clip::grid_line, resample};
+use crate::displacement::{grid_clip::grid_line, resample};
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Plane};
 
@@ -25,11 +25,11 @@ impl Cut {
         (coordinate < self.index) == self.first_back
     }
 
-    fn boundary(&self, window: grid_clip::Child, size: usize, sample: usize) -> bool {
+    fn boundary(&self, window: Window, size: usize, sample: usize) -> bool {
         let coordinate = if self.rows {
-            window.row * (size - 1) + window.cells() * (sample / size)
+            window.row * (size - 1) + window.row_cells * (sample / size)
         } else {
-            window.column * (size - 1) + window.cells() * (sample % size)
+            window.column * (size - 1) + window.column_cells * (sample % size)
         };
         coordinate == self.index * (size - 1)
     }
@@ -153,22 +153,18 @@ impl Sample {
     }
 }
 
-fn sample_grid(
-    source: &Admitted<'_>,
-    window: grid_clip::Child,
-    power: u32,
-    index: usize,
-) -> Result<Sample, EditError> {
-    if !(2..=4).contains(&power) || window.power > source.info.power {
+fn sample_grid(source: &Admitted<'_>, window: Window, index: usize) -> Result<Sample, EditError> {
+    if !(2..=4).contains(&window.output_power) || window.row_cells == 0 || window.column_cells == 0
+    {
         return Err(invalid(
             "Terrain samples require a bounded native grid window",
         ));
     }
-    let cells = 1usize << power;
+    let cells = 1usize << window.output_power;
     let size = cells + 1;
     if index >= size * size
-        || window.row + window.cells() >= source.mesh.size
-        || window.column + window.cells() >= source.mesh.size
+        || window.row + window.row_cells >= source.mesh.size
+        || window.column + window.column_cells >= source.mesh.size
     {
         return Err(invalid(
             "Terrain samples lie outside their source grid window",
@@ -176,8 +172,8 @@ fn sample_grid(
     }
     sample_at(
         source,
-        window.row as f64 + (window.cells() * (index / size)) as f64 / cells as f64,
-        window.column as f64 + (window.cells() * (index % size)) as f64 / cells as f64,
+        window.row as f64 + (window.row_cells * (index / size)) as f64 / cells as f64,
+        window.column as f64 + (window.column_cells * (index % size)) as f64 / cells as f64,
         cells,
     )
 }
@@ -260,7 +256,7 @@ pub(crate) fn plan(
     else {
         return Ok(None);
     };
-    let windows = grid_clip::cut_children(
+    let windows = window::cut_children(
         prepared.source.info.power,
         prepared.cut.rows,
         prepared.cut.index,
@@ -315,7 +311,8 @@ pub(crate) fn partition(
         ));
     }
     let source = admit_source(document, solid, geometry, &mut context.work)?;
-    let windows = if matches!(source.info.power, 3 | 4)
+    let windows = window::whole(source.info.power);
+    let windows = if windows.is_some()
         && native::terrain_source_is_visible(document.vmf(), solid.id)
         && network::native_window_movement(
             document,
@@ -326,14 +323,7 @@ pub(crate) fn partition(
             None,
             context,
         )? {
-        Some(
-            grid_clip::quadrants(grid_clip::Child {
-                row: 0,
-                column: 0,
-                power: source.info.power,
-            })
-            .to_vec(),
-        )
+        windows
     } else {
         None
     };
@@ -357,25 +347,23 @@ fn materialize(
     source: &Admitted<'_>,
     sheet: &BaseChart,
     clipping: Option<Retained<'_>>,
-    windows: Option<Vec<grid_clip::Child>>,
+    windows: Option<Vec<Window>>,
     request: PartitionRequest<'_>,
     work: &mut Work,
 ) -> Result<TerrainPlan, EditError> {
     let cells = source.mesh.size - 1;
     work.consume(cells * cells).map_err(invalid)?;
-    let output_power = windows.as_ref().map_or(super::POWER, |_| source.info.power);
-    let size = (1usize << output_power) + 1;
-    let vertices = size * size;
-    let triangles = 2 * (size - 1).pow(2);
     let native_windows = windows.is_some();
     let layout = windows
         .unwrap_or_else(|| {
             (0..cells)
                 .flat_map(|row| {
-                    (0..cells).map(move |column| grid_clip::Child {
+                    (0..cells).map(move |column| Window {
                         row,
                         column,
-                        power: 0,
+                        row_cells: 1,
+                        column_cells: 1,
+                        output_power: super::POWER,
                     })
                 })
                 .collect()
@@ -394,6 +382,25 @@ fn materialize(
             crate::clip::MAX_TERRAIN_PATCHES
         )));
     }
+    let vertices = layout
+        .iter()
+        .map(|window| ((1usize << window.output_power) + 1).pow(2))
+        .sum::<usize>();
+    let triangles = layout
+        .iter()
+        .map(|window| 2 * (1usize << window.output_power).pow(2))
+        .sum::<usize>();
+    if vertices > crate::clip::MAX_TERRAIN_VERTICES
+        || triangles > crate::clip::MAX_TERRAIN_TRIANGLES
+    {
+        return Err(invalid(
+            "Cell terrain cut exceeds its vertex or triangle limit",
+        ));
+    }
+    let output_power = layout
+        .first()
+        .map(|window| window.output_power)
+        .filter(|power| layout.iter().all(|window| window.output_power == *power));
     let identity = FaceId {
         solid: solid.id,
         side: source.side.id,
@@ -417,20 +424,23 @@ fn materialize(
     let mut children = Vec::with_capacity(count);
     let mut window_fields = native_windows.then(|| WindowFields {
         source: identity,
+        layout: layout.clone(),
         mapped: Vec::with_capacity(count),
     });
     for &window in &layout {
         let row = window.row;
         let column = window.column;
-        let extent = window.cells();
+        let output_power = window.output_power;
+        let size = (1usize << output_power) + 1;
+        let vertices = size * size;
         let back = clipping
             .as_ref()
             .is_some_and(|cut| cut.cut.back(row, column));
         let indices = [
             row * source.mesh.size + column,
-            (row + extent) * source.mesh.size + column,
-            (row + extent) * source.mesh.size + column + extent,
-            row * source.mesh.size + column + extent,
+            (row + window.row_cells) * source.mesh.size + column,
+            (row + window.row_cells) * source.mesh.size + column + window.column_cells,
+            row * source.mesh.size + column + window.column_cells,
         ];
         let mut base = [DVec3::ZERO; 4];
         for (point, index) in base.iter_mut().zip(indices) {
@@ -455,7 +465,7 @@ fn materialize(
             .unwrap();
         work.consume(4 * FIELD_WORK * vertices).map_err(invalid)?;
         let samples = (0..vertices)
-            .map(|index| sample_grid(source, window, output_power, index))
+            .map(|index| sample_grid(source, window, index))
             .collect::<Result<Vec<_>, _>>()?;
         let mut offsets = Vec::with_capacity(vertices);
         for (sample, &point) in samples.iter().zip(&base_mesh.base_positions) {
@@ -535,15 +545,19 @@ fn materialize(
         children.push(child);
         parts.push(part);
     }
-    connections(&children, work)?;
+    if native_windows {
+        window_connections(&children, work)?;
+    } else {
+        connections(&children, work)?;
+    }
     Ok(TerrainPlan {
-        vertices: parts.len() * vertices,
-        triangles: parts.len() * triangles,
+        vertices,
+        triangles,
         parts,
         source: identity,
         source_power: source.info.power,
-        output_power: Some(output_power),
-        children: native_windows.then_some(layout),
+        output_power,
+        children: None,
         window_fields,
         blend_error: None,
     })

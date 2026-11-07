@@ -1,6 +1,14 @@
 use super::*;
 
 pub(super) fn admit(entity: &Entity) -> Result<(), String> {
+    admit_profile(entity, false)
+}
+
+pub(super) fn admit_root(entity: &Entity) -> Result<(), String> {
+    admit_profile(entity, true)
+}
+
+fn admit_profile(entity: &Entity, root_name: bool) -> Result<(), String> {
     if !entity.solids.is_empty()
         || !entity.extra.is_empty()
         || entity
@@ -62,6 +70,11 @@ pub(super) fn admit(entity: &Entity) -> Result<(), String> {
                 }
             }
             "lightingorigin" if !value.is_empty() => names::component(value)?,
+            "targetname" if root_name => {
+                if !value.is_empty() {
+                    names::component(value)?;
+                }
+            }
             "targetname" | "target" | "parentname" | "name" | "globalname" | "killtarget"
             | "lightingorigin" => {
                 if !value.is_empty() {

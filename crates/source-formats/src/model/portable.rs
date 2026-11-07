@@ -16,6 +16,12 @@ const SEQUENCE_BYTES: usize = 212;
 const ALL_ZEROS: i32 = 0x20;
 const EMPTY_ANIMATION: [u8; 4] = [u8::MAX, 0, 0, 0];
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StaticProfile {
+    Portable,
+    Geometry,
+}
+
 pub fn validate_portable_static(
     model_path: &str,
     mdl: &[u8],
@@ -24,12 +30,56 @@ pub fn validate_portable_static(
     limits: HardwareLimits,
     charge: &mut impl FnMut(HardwareCharge) -> io::Result<()>,
 ) -> io::Result<Model> {
+    validate_static(
+        model_path,
+        mdl,
+        vvd,
+        vtx,
+        limits,
+        charge,
+        StaticProfile::Portable,
+    )
+}
+
+pub fn validate_fixed_static_geometry(
+    model_path: &str,
+    mdl: &[u8],
+    vvd: &[u8],
+    vtx: &[u8],
+    limits: HardwareLimits,
+    charge: &mut impl FnMut(HardwareCharge) -> io::Result<()>,
+) -> io::Result<Model> {
+    validate_static(
+        model_path,
+        mdl,
+        vvd,
+        vtx,
+        limits,
+        charge,
+        StaticProfile::Geometry,
+    )
+}
+
+fn validate_static(
+    model_path: &str,
+    mdl: &[u8],
+    vvd: &[u8],
+    vtx: &[u8],
+    limits: HardwareLimits,
+    charge: &mut impl FnMut(HardwareCharge) -> io::Result<()>,
+    profile: StaticProfile,
+) -> io::Result<Model> {
     let mut budget = Budget::hardware(limits, charge)?;
     let header = crate::mdl::ModelHeader::parse(mdl)?;
     if !header.is_static_prop() {
         return Err(invalid("portable model packing requires a static-prop MDL"));
     }
     let reader = Reader::new(mdl, HEADER_BYTES)?;
+    if profile == StaticProfile::Geometry && reader.count(156, super::bones::MAX_BONES)? != 1 {
+        return Err(invalid(
+            "fixed static geometry requires exactly one model bone",
+        ));
+    }
     canonical_path(model_path, false)?;
     let name = model_path
         .strip_prefix("models/")
@@ -108,11 +158,14 @@ pub fn validate_portable_static(
     }
     let surface = reader.count(308, mdl.len())?;
     if surface != 0 {
-        surface_property(string(&reader, surface)?)?;
+        let surface = string(&reader, surface)?;
+        if profile == StaticProfile::Portable {
+            surface_property(surface)?;
+        }
     }
-    metadata(&reader, &mut budget)?;
+    metadata(&reader, &mut budget, profile)?;
     animations(&reader, &mut budget)?;
-    bones(&reader, &mut budget)?;
+    bones(&reader, &mut budget, profile)?;
     tangents(vvd, &mut budget)?;
     let (model, _) = Model::parse_inner(mdl, vvd, vtx, &mut budget)?;
     Ok(model)
@@ -172,7 +225,11 @@ fn surface_property(value: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn metadata(reader: &Reader<'_>, budget: &mut Budget<'_>) -> io::Result<()> {
+fn metadata(
+    reader: &Reader<'_>,
+    budget: &mut Budget<'_>,
+    profile: StaticProfile,
+) -> io::Result<()> {
     let length = reader.count(316, MAX_METADATA_BYTES)?;
     if length == 0 {
         return Ok(());
@@ -189,12 +246,23 @@ fn metadata(reader: &Reader<'_>, budget: &mut Budget<'_>) -> io::Result<()> {
     )?;
     let nodes = keyvalues::parse_static_material_bounded(text, 3, MAX_METADATA_NODES)
         .map_err(|_| invalid("portable MDL metadata syntax is unsupported"))?;
+    if profile == StaticProfile::Geometry && nodes.is_empty() {
+        return Ok(());
+    }
     let root = only_node(&nodes, "mdlkeyvalue")?;
-    let prop = only_node(
-        root.children()
-            .ok_or_else(|| invalid("MDL metadata must be a block"))?,
-        "prop_data",
-    )?;
+    let children = root
+        .children()
+        .ok_or_else(|| invalid("MDL metadata must be a block"))?;
+    if profile == StaticProfile::Geometry && children.is_empty() {
+        return Ok(());
+    }
+    let prop = only_node(children, "prop_data")?;
+    if profile == StaticProfile::Geometry {
+        if prop.children().is_none() {
+            return Err(invalid("MDL prop_data must be a block"));
+        }
+        return Ok(());
+    }
     let base = only_node(
         prop.children()
             .ok_or_else(|| invalid("MDL prop_data must be a block"))?,
@@ -331,7 +399,7 @@ fn tangents(vvd: &[u8], budget: &mut Budget<'_>) -> io::Result<()> {
     Ok(())
 }
 
-fn bones(reader: &Reader<'_>, budget: &mut Budget<'_>) -> io::Result<()> {
+fn bones(reader: &Reader<'_>, budget: &mut Budget<'_>, profile: StaticProfile) -> io::Result<()> {
     let bones = reader.table(0, 156, 160, 216, super::bones::MAX_BONES)?;
     budget.charge(0, bones.len * (40 + bones.len))?;
     for index in 0..bones.len {
@@ -367,7 +435,10 @@ fn bones(reader: &Reader<'_>, budget: &mut Budget<'_>) -> io::Result<()> {
             ));
         }
         if reader.int(base + 176)? != 0 {
-            surface_property(string(reader, reader.relative(base, 176)?)?)?;
+            let surface = string(reader, reader.relative(base, 176)?)?;
+            if profile == StaticProfile::Portable {
+                surface_property(surface)?;
+            }
         }
         let mut current = index;
         let mut steps = 0;

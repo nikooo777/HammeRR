@@ -487,6 +487,7 @@ fn prepare_scene_refresh(
     options: &mut render::ViewOptions,
 ) -> Option<render::SceneKey> {
     session.preflight_instance_contents();
+    session.preflight_sky3d_preview();
     session.poll_color_correction();
     session.poll_reference_images();
     session.preflight_compiled_visibility();

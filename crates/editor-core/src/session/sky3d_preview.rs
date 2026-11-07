@@ -88,6 +88,7 @@ struct Ready {
     snapshot_bytes: usize,
     fog_defaults: Vec<&'static str>,
     fog_inert_keys: Vec<String>,
+    source_guard: Option<compiler::asset_sources::AssetSourceGuard>,
 }
 
 pub struct Request {
@@ -251,6 +252,7 @@ impl Request {
             origin: received_origin(region.origin),
             scale: f64::from(region.scale),
         };
+        let source_guard = region.source_guard;
         let surfaces = region
             .surfaces
             .into_iter()
@@ -268,6 +270,11 @@ impl Request {
                 self.control.checkpoint()
             })?;
         self.control.checkpoint()?;
+        if let Some(guard) = &source_guard {
+            guard
+                .verify_sources(&self.game, &self.control)
+                .map_err(|error| format!("3D sky excluded model source changed: {error}"))?;
+        }
         let stats = json!({"region":stats,"geometry":scene.stats,"cpu_reservation_bytes":cpu_reservation,
             "source_owners":owners,"source_sides":provenance,"source_sides_total":sources.len(),
             "source_sides_truncated":sources.len()>MAX_PROVENANCE_ROWS});
@@ -278,6 +285,7 @@ impl Request {
             snapshot_bytes: self.snapshot_bytes,
             fog_defaults: fog.defaults,
             fog_inert_keys: fog.inert_keys,
+            source_guard,
         })
     }
 }
@@ -435,9 +443,28 @@ impl Session {
         }
         match completed.result {
             Ok(ready) if !completed.control.cancelled() => {
-                self.sky3d_preview.ready = Some(ready);
-                self.sky3d_preview.status = "ready";
-                self.sky3d_preview.issue = None;
+                let source_check = ready
+                    .source_guard
+                    .as_ref()
+                    .map(|guard| {
+                        guard.verify_original_metadata(
+                            &completed.control,
+                            sky_region::MAX_PROP_SOURCE_METADATA_BYTES,
+                        )
+                    })
+                    .transpose();
+                if let Err(error) = source_check {
+                    self.retire_sky3d_preview(
+                        "stale",
+                        Some(bounded(&format!(
+                            "Excluded model source changed: {error}; prepare again"
+                        ))),
+                    );
+                } else {
+                    self.sky3d_preview.ready = Some(ready);
+                    self.sky3d_preview.status = "ready";
+                    self.sky3d_preview.issue = None;
+                }
             }
             result => {
                 self.sky3d_preview.ready = None;
@@ -506,6 +533,28 @@ impl Session {
             self.retire_sky3d_preview(
                 "stale",
                 Some("Map, camera, materials or editor visibility changed; prepare again".into()),
+            );
+            return true;
+        }
+        let source_issue = self
+            .sky3d_preview
+            .ready
+            .as_ref()
+            .and_then(|ready| ready.source_guard.as_ref())
+            .and_then(|guard| {
+                guard
+                    .verify_original_metadata(
+                        &compiler::Control::default(),
+                        sky_region::MAX_PROP_SOURCE_METADATA_BYTES,
+                    )
+                    .err()
+            });
+        if let Some(error) = source_issue {
+            self.retire_sky3d_preview(
+                "stale",
+                Some(bounded(&format!(
+                    "Excluded model source changed: {error}; prepare again"
+                ))),
             );
             return true;
         }
@@ -675,8 +724,16 @@ impl Session {
             "snapshot_bytes":ready.map(|ready|ready.snapshot_bytes),"issue":issue,"summary":summary,
             "fog":fog.unwrap_or_else(|error|json!({"ready":false,"applied":false,"issue":bounded(&error)})),
             "diagnostics":issue.as_ref().map(|issue|vec![json!({"level":"error","message":bounded(issue)})]).unwrap_or_default(),
-            "limits":{"region":sky_region::Limits::default(),"material_semantics":{"file_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_BYTES,"total_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_TOTAL_BYTES,"reads":compiler::materials::MAX_GEOMETRY_MATERIAL_READS,"allocation_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_ALLOCATION_BYTES},"render":{"vertices":sky3d::MAX_VERTICES,"indices":sky3d::MAX_INDICES,"surfaces":sky3d::MAX_SURFACES,"materials":sky3d::MAX_MATERIALS,"cpu_bytes":sky3d::MAX_CPU_BYTES,"gpu_bytes":sky3d::MAX_GPU_BYTES,"gpu_asset_bytes":sky3d::MAX_GPU_ASSET_BYTES,"gpu_upload_bytes":sky3d::MAX_GPU_UPLOAD_BYTES,"target_bytes":sky3d::MAX_TARGET_BYTES,"target_dimension":sky3d::MAX_TARGET_DIMENSION},"cpu_bytes":MAX_CPU_BYTES,"auxiliary_bytes":AUXILIARY_BYTES,"snapshot_bytes":snapshot::MAX_BYTES,"snapshot_items":snapshot::MAX_ITEMS,"snapshot_depth":snapshot::MAX_DEPTH,"camera_rows":MAX_CAMERAS,"provenance_rows":MAX_PROVENANCE_ROWS,"active_workers":1,"cached_snapshots":1},
-            "policy":"Explicit root sky_camera; sealed committed flat world/detail component; editor visibility filters display fragments after topology. Static opaque textured miniature with its independent static camera fog; no models, terrain, portals, water, instances or runtime effects. Main picking, source, selection, history and camera remain ordinary editor state. 2D sky preview is independent, with combined fog material compatibility required. No native framebuffer parity claim."})
+            "limits":{"region":sky_region::Limits::default(),"static_prop_exclusion":{
+                "profile":"Fixed unit-scale root prop_static; fixed rest model with one bone and plain VertexLitGeneric/Patch materials; all draw LODs.",
+                "bounds":"Rotation-independent conservative native transform envelope from every validated model vertex; potential component contact refuses exclusion.",
+                "source_bytes":sky_region::MAX_PROP_SOURCE_BYTES,"parse_bytes":sky_region::MAX_PROP_PARSE_BYTES,
+                "metadata_bytes":sky_region::MAX_PROP_SOURCE_METADATA_BYTES,"vertices":sky_region::MAX_PROP_VERTICES,
+                "work":sky_region::MAX_PROP_WORK,"material_file_bytes":sky_region::MAX_PROP_MATERIAL_BYTES,
+                "logical_paths":sky_region::MAX_PROP_LOGICAL_PATHS,"physical_paths":sky_region::MAX_PROP_PHYSICAL_PATHS,
+                "lookup_rows":sky_region::MAX_PROP_LOOKUP_ROWS,"cpu_reservation_bytes":sky_region::PROP_CPU_RESERVATION_BYTES
+            },"material_semantics":{"file_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_BYTES,"total_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_TOTAL_BYTES,"reads":compiler::materials::MAX_GEOMETRY_MATERIAL_READS,"allocation_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_ALLOCATION_BYTES},"render":{"vertices":sky3d::MAX_VERTICES,"indices":sky3d::MAX_INDICES,"surfaces":sky3d::MAX_SURFACES,"materials":sky3d::MAX_MATERIALS,"cpu_bytes":sky3d::MAX_CPU_BYTES,"gpu_bytes":sky3d::MAX_GPU_BYTES,"gpu_asset_bytes":sky3d::MAX_GPU_ASSET_BYTES,"gpu_upload_bytes":sky3d::MAX_GPU_UPLOAD_BYTES,"target_bytes":sky3d::MAX_TARGET_BYTES,"target_dimension":sky3d::MAX_TARGET_DIMENSION},"cpu_bytes":MAX_CPU_BYTES,"auxiliary_bytes":AUXILIARY_BYTES,"snapshot_bytes":snapshot::MAX_BYTES,"snapshot_items":snapshot::MAX_ITEMS,"snapshot_depth":snapshot::MAX_DEPTH,"camera_rows":MAX_CAMERAS,"provenance_rows":MAX_PROVENANCE_ROWS,"active_workers":1,"cached_snapshots":1},
+            "policy":"Explicit root sky_camera; sealed committed flat world/detail component; editor visibility filters display fragments after topology. Static opaque textured miniature with its independent static camera fog; models, terrain, portals, water, instances and runtime effects are unsupported inside it. Distant terrain and admitted fixed static props require certified conservative separation; prepared model-source changes require preparation again. Main picking, source, selection, history and camera remain ordinary editor state. 2D sky preview is independent, with combined fog material compatibility required. No native framebuffer parity claim."})
     }
 
     fn retire_sky3d_preview(&mut self, status: &'static str, issue: Option<String>) {

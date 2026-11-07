@@ -12,7 +12,17 @@ use crate::tree::Tree;
 use crate::winding::ON_EPSILON;
 use crate::{Control, Report, faces, portals, tree};
 
+mod static_props;
+
 pub use map_core::fog::MAX_SKY_SCALE as MAX_SCALE;
+pub use static_props::{
+    CPU_RESERVATION_BYTES as PROP_CPU_RESERVATION_BYTES,
+    MAX_LOGICAL_PATHS as MAX_PROP_LOGICAL_PATHS, MAX_LOOKUP_ROWS as MAX_PROP_LOOKUP_ROWS,
+    MAX_MATERIAL_BYTES as MAX_PROP_MATERIAL_BYTES,
+    MAX_METADATA_BYTES as MAX_PROP_SOURCE_METADATA_BYTES, MAX_PARSE_BYTES as MAX_PROP_PARSE_BYTES,
+    MAX_PHYSICAL_PATHS as MAX_PROP_PHYSICAL_PATHS, MAX_SOURCE_BYTES as MAX_PROP_SOURCE_BYTES,
+    MAX_VERTICES as MAX_PROP_VERTICES, MAX_WORK as MAX_PROP_WORK,
+};
 pub const MAX_CAMERA_PROPERTIES: usize = 256;
 pub const MAX_CAMERA_BYTES: usize = 64 * 1024;
 
@@ -84,6 +94,9 @@ pub struct Stats {
     pub surfaces: usize,
     pub vertices: usize,
     pub cpu_reservation_bytes: usize,
+    pub excluded_static_props: usize,
+    pub static_prop_models: usize,
+    pub static_prop_vertices: usize,
 }
 
 #[derive(Debug)]
@@ -103,6 +116,7 @@ pub struct Region {
     pub scale: u32,
     pub stats: Stats,
     pub surfaces: Vec<Surface>,
+    pub source_guard: Option<crate::asset_sources::AssetSourceGuard>,
 }
 
 pub fn camera(vmf: &Vmf, id: u32) -> Result<Camera, String> {
@@ -283,7 +297,8 @@ pub fn resolve_limited(
             displacement.bounds,
         )?;
     }
-    admit_original(vmf, &mut map.materials, &mut admission)?;
+    let mut prop_sources = static_props::Capture::new(fs, control);
+    admit_original(vmf, &mut map.materials, &mut admission, &mut prop_sources)?;
     let filtered = |side| {
         source_sides
             .get(&side)
@@ -325,12 +340,14 @@ pub fn resolve_limited(
         });
     }
     control.checkpoint()?;
+    let source_guard = prop_sources.finish(&mut stats)?;
     Ok(Region {
         camera: camera.id,
         origin: camera.origin,
         scale: camera.scale,
         stats,
         surfaces,
+        source_guard,
     })
 }
 
@@ -484,6 +501,7 @@ fn admit_original(
     vmf: &Vmf,
     materials: &mut crate::materials::Materials<'_>,
     admission: &mut Admission<'_>,
+    props: &mut static_props::Capture<'_>,
 ) -> Result<(), String> {
     for (owner, solid) in vmf
         .world
@@ -566,11 +584,21 @@ fn admit_original(
             admission.source(kind, ObjectId::Entity(entity.id), Some(solid.id), bounds)?;
         }
         if entity.solids.is_empty() && omitted_point_geometry(entity) {
+            let bounds = if classname == "prop_static" {
+                Some(props.bounds(entity).map_err(|error| {
+                    format!(
+                        "entity:{}: unsupported static-prop membership: {error}",
+                        entity.id
+                    )
+                })?)
+            } else {
+                None
+            };
             admission.source(
                 "model or projected geometry",
                 ObjectId::Entity(entity.id),
                 None,
-                None,
+                bounds,
             )?;
         }
     }
@@ -697,6 +725,14 @@ fn preflight(vmf: &Vmf, limits: Limits, control: &Control) -> Result<Stats, Stri
         }
     }
     let reservations = [
+        (
+            usize::from(
+                vmf.entities
+                    .iter()
+                    .any(|entity| !entity.hidden && entity.classname() == Some("prop_static")),
+            ),
+            static_props::CPU_RESERVATION_BYTES,
+        ),
         (1, crate::materials::MAX_GEOMETRY_MATERIAL_ALLOCATION_BYTES),
         (
             source_points,

@@ -28,6 +28,10 @@ mod targets;
 mod terrain;
 mod visclusters;
 
+pub(crate) fn admit_static_prop(entity: &Entity) -> Result<(), String> {
+    props::admit_root(entity)
+}
+
 pub(crate) use collapse::custodied_origin as validate_origin_custody;
 pub use collapse::{CollapseEntityKind, collapse_entity_kind, remap_collapsed_entity_sides};
 pub use cubemaps::remap_collapsed_cubemap_sides;

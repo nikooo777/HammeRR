@@ -106,6 +106,10 @@ The game must enable full HDR to display its HDR channel.
   source and native-LOD bounds prove separation. Overlapping terrain or an
   unavailable bound stops preparation. Terrain-generated detail geometry also
   needs known bounds.
+- Fixed, unit-scale `prop_static` models with one bone and supported static
+  materials can remain outside the miniature. Preparation checks all draw
+  LODs. Potential overlap still stops preparation. Changed model or material
+  sources clear readiness; prepare again.
 - 3D sky uses opaque materials with one base texture. Cutouts, transparency, normal maps and detail layers are unsupported.
 - Miniature scale is an integer from 1 to 128. Camera angles do not rotate the miniature preview.
 - Miniature fog is static. Authored lighting, models, terrain and water are

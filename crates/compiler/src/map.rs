@@ -368,6 +368,7 @@ impl<'a> Map<'a> {
         map.add_world(vmf);
         let mut source_sides = std::collections::BTreeMap::new();
         let mut displacements = Vec::new();
+        let mut terrain_bounds = terrain::Bounds::default();
         let sources = vmf
             .world
             .solids
@@ -392,7 +393,8 @@ impl<'a> Map<'a> {
             if collision_sources.is_none()
                 && solid.sides.iter().any(|side| side.displacement.is_some())
             {
-                if origins::checked_geometry(solid, report).is_some() {
+                if let Some(geometry) = origins::checked_geometry(solid, report) {
+                    terrain_bounds.add(solid, &geometry, control)?;
                     displacements.push(UnsupportedBrush {
                         owner,
                         solid: solid.id,
@@ -420,6 +422,11 @@ impl<'a> Map<'a> {
         }
         if collision_sources.is_some() {
             map.connect_terrain(report, control)?;
+        } else {
+            let bounds = terrain_bounds.finish(control)?;
+            for displacement in &mut displacements {
+                displacement.bounds = bounds.get(&displacement.solid).copied();
+            }
         }
         if report.has_errors() {
             return Err("World geometry preparation reported invalid structural geometry".into());

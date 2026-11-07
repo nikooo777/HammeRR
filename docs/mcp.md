@@ -1626,6 +1626,11 @@ See [Linked paths](path-authoring.md) for supported paths and trains.
 4. Inspect again for readiness and issues. Use `action:"cancel"` to cancel
    preparation. Source, material or visibility changes require preparation again.
 
+World/detail terrain can remain outside the chosen component when checked
+source and native-LOD bounds prove separation. Terrain in or near that component
+still refuses; it is not rendered as miniature geometry. Unknown bounds and
+unbounded material-generated detail geometry remain explicit errors.
+
 In Perspective Textured views, an enabled ready miniature automatically uses
 its camera's static fog when `fogenable` is true. World fog enable,
 controller selection, channel, input events, time and `farz` remain independent.

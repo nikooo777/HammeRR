@@ -4,7 +4,7 @@ use map_core::displacement::DisplacementMesh;
 use source_formats::bsp::{
     self, DisplacementInfo, DisplacementTriangle, DisplacementVertex, contents, surf,
 };
-use source_formats::vmf::Solid;
+use source_formats::vmf::{DispInfo, Solid};
 
 use super::{Map, support};
 use crate::emit::stored_vertex;
@@ -17,8 +17,11 @@ use crate::{Control, Diagnostic, Report};
 const MAX_LEAF_WORK: usize = 16_000_000;
 use map_core::displacement::native::GEOMETRY_EPSILON;
 pub(crate) use map_core::displacement::native::checked_mesh;
+#[path = "terrain/bounds.rs"]
+mod bounds;
 #[path = "terrain/lod.rs"]
 mod lod;
+pub(super) use bounds::Bounds;
 
 pub(crate) struct NeighborStats {
     pub pairs: usize,
@@ -86,6 +89,36 @@ pub struct Terrain {
     pub indices: Vec<[usize; 3]>,
 }
 
+struct Geometry {
+    base: [DVec3; 4],
+    mesh: DisplacementMesh,
+    info: DisplacementInfo,
+    vertices: Vec<DisplacementVertex>,
+    smoothing_angle: Option<f64>,
+}
+
+impl Geometry {
+    fn new(face: &map_core::brush::Face, disp: &DispInfo) -> Result<Self, String> {
+        let (base, mesh) = checked_mesh(face, disp)?;
+        let smoothing_angle = map_core::displacement::smoothing::angle(disp)?;
+        let info = DisplacementInfo {
+            start: stored_vertex(mesh.base_positions[0]).as_vec3().to_array(),
+            power: disp.power as i32,
+            min_tessellation: i32::MIN | disp.flags.unwrap_or(0) as i32,
+            smoothing_angle: smoothing_angle.unwrap_or(0.0) as f32,
+            ..Default::default()
+        };
+        let vertices = map_core::displacement::native::vertices(&mesh);
+        Ok(Self {
+            base,
+            mesh,
+            info,
+            vertices,
+            smoothing_angle,
+        })
+    }
+}
+
 impl Terrain {
     pub(crate) fn native_positions(&self) -> Result<Vec<[f32; 3]>, String> {
         map_core::displacement::native::positions(self.base, self.info, self.vertices.clone())
@@ -145,7 +178,13 @@ impl Map<'_> {
             if self.terrains.len() + terrains.len() >= bsp::MAX_DISPLACEMENTS {
                 return Err("Native displacement patch limit exceeded".into());
             }
-            let (base, mesh) = checked_mesh(face, disp)?;
+            let Geometry {
+                base,
+                mesh,
+                info: mut displacement_info,
+                vertices,
+                smoothing_angle,
+            } = Geometry::new(face, disp)?;
             let material = self.materials.load(&side.material)?;
             let material_info = self.materials.get(material);
             let material_validation = map_core::displacement::native::validate_material(
@@ -168,18 +207,10 @@ impl Map<'_> {
             let mut info = self.texinfos.infos[source_texinfo];
             info.flags = (info.flags | surf::NOLIGHT) & !surf::BUMPLIGHT;
             let texinfo = self.texinfos.add(info);
-            let first = mesh.base_positions[0];
-            let smoothing_angle = map_core::displacement::smoothing::angle(disp)?;
-            let info = DisplacementInfo {
-                start: stored_vertex(first).as_vec3().to_array(),
-                power: disp.power as i32,
-                min_tessellation: i32::MIN | disp.flags.unwrap_or(0) as i32,
-                smoothing_angle: smoothing_angle.unwrap_or(0.0) as f32,
-                contents: terrain_contents,
-                ..Default::default()
-            };
-            let vertices = map_core::displacement::native::vertices(&mesh);
-            let indices = info.triangle_indices().map_err(|error| error.to_string())?;
+            displacement_info.contents = terrain_contents;
+            let indices = displacement_info
+                .triangle_indices()
+                .map_err(|error| error.to_string())?;
             let triangles = map_core::displacement::triangles::native_tags(disp, &mesh)
                 .map_err(|error| error.to_string())?
                 .into_iter()
@@ -195,7 +226,7 @@ impl Map<'_> {
                 smoothing_angle,
                 base,
                 mesh,
-                info,
+                info: displacement_info,
                 vertices,
                 triangles,
                 indices,

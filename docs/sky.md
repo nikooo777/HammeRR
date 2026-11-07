@@ -102,8 +102,10 @@ The game must enable full HDR to display its HDR channel.
 - Supported static six-face families only. Missing or malformed required faces report errors.
 - Required sky textures must meet the [native texture limits](textures.md#native-texture-files).
 - 3D sky preparation is explicit; enabling the switch does not silently load or repair sources.
-- Visible terrain currently blocks 3D sky preparation when its conservative
-  membership bounds are unavailable, even outside the miniature.
+- World and detail terrain can remain outside the miniature when checked
+  source and native-LOD bounds prove separation. Overlapping terrain or an
+  unavailable bound stops preparation. Terrain-generated detail geometry also
+  needs known bounds.
 - 3D sky uses opaque materials with one base texture. Cutouts, transparency, normal maps and detail layers are unsupported.
 - Miniature scale is an integer from 1 to 128. Camera angles do not rotate the miniature preview.
 - Miniature fog is static. Authored lighting, models, terrain and water are

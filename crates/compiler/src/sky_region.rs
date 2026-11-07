@@ -464,7 +464,7 @@ impl Admission<'_> {
             }
             if !disjoint {
                 return Err(format!(
-                    "{label}: unsupported {kind} intersects the selected sky_camera component"
+                    "{label}: unsupported {kind} cannot be certified outside the selected sky_camera component"
                 ));
             }
         }
@@ -504,10 +504,12 @@ fn admit_original(
                 }),
         )
     {
-        if solid.sides.iter().any(|side| side.displacement.is_some()) {
-            continue;
-        }
-        for side in &solid.sides {
+        let terrain = solid.sides.iter().any(|side| side.displacement.is_some());
+        for side in solid
+            .sides
+            .iter()
+            .filter(|side| !terrain || side.displacement.is_some())
+        {
             admission.control.checkpoint()?;
             let material = materials.load(&side.material)?;
             let info = materials.get(material);
@@ -603,6 +605,8 @@ fn preflight(vmf: &Vmf, limits: Limits, control: &Control) -> Result<Stats, Stri
     let mut bytes = 0usize;
     let mut work = 0usize;
     let mut source_points = 0usize;
+    let mut terrain_vertices = 0usize;
+    let mut terrain_patches = 0usize;
     let mut longest_material = 0usize;
     for properties in std::iter::once(&vmf.world.properties)
         .chain(vmf.entities.iter().map(|entity| &entity.properties))
@@ -664,6 +668,25 @@ fn preflight(vmf: &Vmf, limits: Limits, control: &Control) -> Result<Stats, Stri
             )
             .ok_or("Sky region source allocation count overflow")?;
         for side in &solid.sides {
+            if let Some(disp) = &side.displacement {
+                let vertices = if (2..=4).contains(&disp.power) {
+                    ((1usize << disp.power) + 1).pow(2)
+                } else {
+                    map_core::displacement::MAX_GRID_VERTICES
+                };
+                terrain_vertices = checked_total(
+                    terrain_vertices,
+                    vertices,
+                    source_formats::bsp::MAX_DISPLACEMENT_VERTICES,
+                    "terrain membership vertex",
+                )?;
+                terrain_patches = checked_total(
+                    terrain_patches,
+                    1,
+                    source_formats::bsp::MAX_DISPLACEMENTS,
+                    "terrain membership patch",
+                )?;
+            }
             bytes = checked_total(
                 bytes,
                 side.material.len(),
@@ -686,6 +709,14 @@ fn preflight(vmf: &Vmf, limits: Limits, control: &Control) -> Result<Stats, Stri
         (limits.source_entities, 256),
         (stats.source_brushes, 128),
         (bytes, 4),
+        (
+            terrain_vertices,
+            size_of::<DVec3>() * 6
+                + size_of::<source_formats::bsp::DisplacementVertex>() * 3
+                + size_of::<[usize; 3]>() * 4
+                + 32,
+        ),
+        (terrain_patches, 4096),
         (limits.tree.points, size_of::<DVec3>()),
         (limits.tree.nodes, size_of::<tree::Node>() * 2 + 256),
         (limits.portals.points, size_of::<DVec3>()),

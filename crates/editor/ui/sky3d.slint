@@ -65,7 +65,7 @@ export component Sky3dWindow inherits Window {
                     Text { text: root.detail; wrap: word-wrap; }
                     if root.diagnostics != "": Text { text: root.diagnostics; wrap: word-wrap; color: Theme.warning; }
                     Text {
-                        text: "Perspective · Textured. Choose a sky_camera and prepare its sealed world/func_detail region. Source, material or visibility changes require preparation again.\n\nThe selected camera's fogenable controls independent static LDR sky fog under the current Initial rule. World Fog preview, controllers and far-Z are not inherited.\n\nOnly 3D sky surfaces display the miniature; SKY2D keeps its 2D path. Picking and editing stay unchanged. Transparency, models, terrain, instances, water, portal boundaries and runtime effects are unavailable. Native area/PVS and mixed-sky fidelity are not reproduced.";
+                        text: "Perspective · Textured. Choose a sky_camera and prepare its sealed region.\n\nSupported profiles include whole terrain, fixed models, grates and glass. Changed consumed assets retire the preview; prepare again.\n\nThe selected camera supplies static fog. SKY2D keeps its 2D background. Intersecting glass can blend in the wrong order. Native clipping, PVS and pixel parity are unavailable.";
                         wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font;
                     }
                     Text { text: root.limits; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font; }

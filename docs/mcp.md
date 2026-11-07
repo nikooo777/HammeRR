@@ -899,7 +899,8 @@ report the actual layout. Required selected whole neighbors use four windows for
 powers 3 and 4, or one full-cage power-3 window for a moved power-2 source. Folded and
 overhanging windows can qualify. Authored seam gaps are allowed; extra contacts
 are not. Every native profile requires exact contacts and embedded surfaces.
-A component with nonwindow movement still requires a shared positive projection.
+All curved modes use exact 3D self-intersection, contact and normal checks.
+Mixed components do not require a shared world-height projection.
 Already compatible neighbors stay unchanged.
 
 `terrain_mode:"fragments"` / **Retile surface triangles** also cuts through
@@ -920,8 +921,8 @@ Triangle identities use cyclic vertex rotations without reversing orientation.
   in the fine/max triangle symmetric difference, and in every triangle incident
   to a moved sample, must lie strictly beyond the cut tolerance on the discarded
   side. This holds for authored, pre-LOD, ideal and post-LOD grids. Retained
-  triangles stay identical. Moved sources also require a shared positive
-  projection, fixed projected boundaries and complete native seam custody.
+  triangles stay identical. Moved surfaces require exact 3D self-embedding,
+  normal conditioning and complete native seam custody.
 - Whole geometric equivalence cancels common cyclic triangles. Each max-only
   triangle's exact affine base-to-world field must match every fine-only field
   with positive base-area overlap. Every changed triangle on both sides must have
@@ -930,15 +931,18 @@ Triangle identities use cyclic vertex rotations without reversing orientation.
   all overlapping fields agree exactly. Common triangles may stay curved.
 
 The source uses the discarded-side classification when applicable; otherwise it
-needs whole equivalence. Coarsened outputs and unchanged neighbors always need
-whole equivalence. **Both sides** and whole-neighbor partitions can qualify this way.
+needs whole equivalence. Coarsened outputs and unchanged neighbors need whole
+equivalence of their native fine/maximal geometry. **Both sides** and
+whole-neighbor partitions can qualify this way.
 Selected sources and outputs retain guarded UVs, full-fine raw/native triangle
 labels and matching raw/four-profile packed paint fields over every changed
 LOD region. Actual maximal collision triangles retain their original physical
 material classes. Nonuniform fields are allowed when these exact checks pass.
 
-Unchanged neighbors need geometry-only equivalence and identical complete LOD
-state; no new paint restriction or material lookup is imposed on them.
+Unchanged neighbors can keep distinct authored and native surfaces in Cells and
+Fragments, including ordinary cell cuts. Their native fine/maximal geometry must
+agree, and their complete native LOD state must remain identical. No new paint
+restriction or material lookup is imposed on them.
 Existing normal, metadata, contact and capacity checks apply. Whole geometric
 equivalence rejects crease-crossing surface changes or mismatched overlap fields.
 Retained/output movement requires the window certificate. Uncertified layouts and changed unselected native state refuse. The discarded-

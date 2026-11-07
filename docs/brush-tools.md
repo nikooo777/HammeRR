@@ -304,13 +304,13 @@ previous valid draft; no policy switches automatically after a failure.
   regions. **Both sides** and whole-neighbor partitions require whole equivalence
   when coarsened. A one-sided source can also
   use strictly discarded coarsening or movement: every affected triangle must
-  stay fully beyond the cut tolerance in authored and all native profiles. This
-  case also requires a shared positive projection and unchanged native seams.
-  Retained/output movement requires certified windows. These windows
-  do not need one shared world-height projection. A component that also has
-  nonwindow movement still needs the existing positive projection. Other layouts
-  reject retained movement. Unchanged coarsened neighbors need
-  whole geometric equivalence and must keep their complete LOD state.
+  stay fully beyond the cut tolerance in authored and all native profiles.
+  Exact 3D self-intersection, contact and normal checks apply to folded surfaces
+  and mixed components; no shared world-height projection is required.
+  Retained/output movement requires certified windows. Other layouts reject it.
+  Unchanged neighbors can retain distinct authored and native surfaces. Their
+  native fine/maximal geometry must agree, and their complete native LOD state
+  must stay identical.
 - **Retile surface triangles** requires a planar base with a convex cage in its
   exact coordinate chart. It shares the geometry, paint, texture, normal and
   contact checks of **Retile grid cells**. Output must fit native edge

@@ -400,15 +400,6 @@ fn certify_normals(
     certify_normal_profiles(data, profiles, None, work)
 }
 
-fn certify_height_normals(
-    data: &bsp::Displacements,
-    profiles: &[Vec<DVec3>],
-    axis: usize,
-    work: &mut Work,
-) -> Result<(), EditError> {
-    certify_normal_profiles(data, profiles, Some(axis), work)
-}
-
 fn certify_local_normals(
     data: &bsp::Displacements,
     profiles: &[Vec<DVec3>],
@@ -798,98 +789,6 @@ fn intrinsic_sheet(
     base_cover.finish()?;
     let embedded = embedded::source(mesh, work)?;
     Ok((BaseChart { axes, sign }, embedded))
-}
-
-fn projected_source(
-    mesh: &DisplacementMesh,
-    positions: &[Vec<DVec3>],
-    work: &mut Work,
-) -> Result<BaseChart, EditError> {
-    let cells = mesh.size - 1;
-    let indices = [0, cells * mesh.size, mesh.size * mesh.size - 1, cells];
-    let corners = indices.map(|index| mesh.base_positions[index]);
-    let plane = BasePlane::new([corners[0], corners[1], corners[2]])?;
-    let axis = plane.axis();
-    let axes = [(axis + 1) % 3, (axis + 2) % 3];
-    let sign = orient(corners[0], corners[1], corners[2], axes)?;
-    if sign == 0 {
-        return Err(invalid("Curved terrain-sheet base cage is collapsed"));
-    }
-    convex(&corners, axes, sign)?;
-    for point in corners {
-        stored(point)?;
-    }
-    work.consume(
-        FIELD_WORK * (8 + 2 * mesh.positions.len() + 4 * mesh.size)
-            + positions.len() * mesh.positions.len()
-            + 2 * cells * cells,
-    )
-    .map_err(invalid)?;
-    for (index, &point) in mesh.positions.iter().enumerate() {
-        let base = mesh.base_positions[index];
-        if !plane.contains(base)?
-            || positions
-                .iter()
-                .any(|positions| !same(positions[index], point))
-        {
-            return Err(invalid(
-                "Curved terrain sheets require an exact base plane and matching authored, native and compiler positions",
-            ));
-        }
-    }
-    for triangle in mesh.triangles() {
-        let [a, b, c] = triangle.map(|index| mesh.positions[index]);
-        if orient(a, b, c, axes)? != sign {
-            return Err(invalid(
-                "Curved terrain tangential projection must keep every original triangle positively oriented",
-            ));
-        }
-    }
-    simple_boundary(mesh, axes, work)?;
-    Ok(BaseChart { axes, sign })
-}
-
-fn simple_boundary(
-    mesh: &DisplacementMesh,
-    axes: [usize; 2],
-    work: &mut Work,
-) -> Result<(), EditError> {
-    if !matches!(mesh.size, 5 | 9 | 17) {
-        return Err(invalid(
-            "Terrain projected boundaries require power 2, 3 or 4",
-        ));
-    }
-    let count = 4 * (mesh.size - 1);
-    work.consume(polygon::SIMPLE_WORK * count * (count - 1) / 2 + count)
-        .map_err(invalid)?;
-    let ring = ordered_boundary(&mesh.positions, mesh.size, work)?;
-    polygon::simple(&ring, axes)
-}
-
-fn ordered_boundary(
-    positions: &[DVec3],
-    size: usize,
-    work: &mut Work,
-) -> Result<Vec<DVec3>, EditError> {
-    if !matches!(size, 5 | 9 | 17) || positions.len() != size * size {
-        return Err(invalid(
-            "Terrain projected boundaries require a complete power 2, 3 or 4 grid",
-        ));
-    }
-    let cells = size - 1;
-    let count = 4 * cells;
-    work.consume(count + 4).map_err(invalid)?;
-    let mut ring = Vec::with_capacity(count);
-    for side in 0..4 {
-        for index in neighbors::edge_indices(size, side)
-            .map_err(invalid)?
-            .into_iter()
-            .take(cells)
-        {
-            ring.push(positions[index]);
-        }
-    }
-    Ok(ring)
 }
 
 fn prepare<'a>(

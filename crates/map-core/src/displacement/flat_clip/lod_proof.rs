@@ -349,21 +349,46 @@ fn native_positions(state: State<'_>, profile: usize) -> &[DVec3] {
 }
 
 fn native_equivalent(
-    patch: &NativePatch<'_>,
+    original: &DisplacementMesh,
+    state: State<'_>,
     positions: &[DVec3],
     work: &mut Work,
 ) -> Result<DisplacementMesh, EditError> {
-    work.consume(4 * patch.mesh.positions.len())
+    work.consume(4 * original.positions.len())
         .map_err(invalid)?;
-    let mut mesh = patch.mesh.clone();
+    let mut mesh = original.clone();
     mesh.positions = positions.to_vec();
-    let fine = patch.state.data.infos[0]
+    let fine = state.data.infos[0]
         .triangle_indices()
         .map_err(|error| invalid(error.to_string()))?;
     let fine_set = triangle_set(&fine)?;
-    let maximal = triangle_set(patch.state.indices)?;
-    equivalent(&mesh, patch.state, &fine, &fine_set, &maximal, work)?;
+    let maximal = triangle_set(state.indices)?;
+    equivalent(&mesh, state, &fine, &fine_set, &maximal, work)?;
     Ok(mesh)
+}
+
+pub(super) fn certify_native_geometry(
+    info: &DispInfo,
+    mesh: &DisplacementMesh,
+    state: State<'_>,
+    work: &mut Work,
+) -> Result<(), EditError> {
+    validate_state(info, mesh, &state, work)?;
+    let mut verified = Vec::new();
+    for profile in 0..bsp::NativeDisplacementRounding::ALL.len() + 2 {
+        work.consume((verified.len() + 1) * mesh.positions.len())
+            .map_err(invalid)?;
+        let positions = native_positions(state, profile);
+        if verified
+            .iter()
+            .any(|&previous| native_positions(state, previous) == positions)
+        {
+            continue;
+        }
+        native_equivalent(mesh, state, positions, work)?;
+        verified.push(profile);
+    }
+    Ok(())
 }
 
 fn native_fields(
@@ -439,11 +464,20 @@ pub(super) fn certify_dual_native(
         }) {
             continue;
         }
-        let source_mesh =
-            native_equivalent(&source, native_positions(source.state, profile), work)?;
+        let source_mesh = native_equivalent(
+            source.mesh,
+            source.state,
+            native_positions(source.state, profile),
+            work,
+        )?;
         let source_native = native_fields(&source_mesh, axes, work)?;
         for child in children {
-            let mesh = native_equivalent(child, native_positions(child.state, profile), work)?;
+            let mesh = native_equivalent(
+                child.mesh,
+                child.state,
+                native_positions(child.state, profile),
+                work,
+            )?;
             work.consume(labels::AABB_WORK * (mesh.base_positions.len() + source_native.len()))
                 .map_err(invalid)?;
             let bounds = labels::projected_bounds(&mesh.base_positions, axes);

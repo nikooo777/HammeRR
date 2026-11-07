@@ -270,52 +270,8 @@ fn lod_state(
             Some(cut),
             work,
         )?;
-        certify_lod_profiles(surface, &state, work)?;
     }
     Ok(state)
-}
-
-fn certify_lod_profiles(
-    surface: &Surface<'_>,
-    state: &LodState,
-    work: &mut Work,
-) -> Result<(), EditError> {
-    super::projected_source(&surface.mesh, &surface.positions, work)?;
-    let axis = surface.sheet.base.axis();
-    let axes = [(axis + 1) % 3, (axis + 2) % 3];
-    let fine = surface
-        .info
-        .triangle_indices()
-        .map_err(|error| invalid(error.to_string()))?;
-    work.consume(
-        (state.positions.len() + 1)
-            * (FIELD_WORK * (fine.len() + state.indices.len()) + 4 * surface.mesh.size),
-    )
-    .map_err(invalid)?;
-    let original = super::ordered_boundary(&surface.mesh.positions, surface.mesh.size, work)?;
-    for positions in std::iter::once(state.ideal_positions.as_slice())
-        .chain(state.positions.iter().map(Vec::as_slice))
-    {
-        for triangle in fine.iter().chain(&state.indices) {
-            let [a, b, c] = triangle.map(|index| positions[index]);
-            if orient(a, b, c, axes)? != surface.sheet.sign {
-                return Err(invalid(
-                    "Discarded native LOD geometry must retain positive projected fine and maximal triangles",
-                ));
-            }
-        }
-        let ring = super::ordered_boundary(positions, surface.mesh.size, work)?;
-        if ring
-            .iter()
-            .zip(&original)
-            .any(|(&point, &expected)| !polygon::same_point(point, expected, axes))
-        {
-            return Err(invalid(
-                "Discarded native LOD movement must preserve every original projected boundary sample",
-            ));
-        }
-    }
-    super::certify_height_normals(&state.data, &state.positions, axis, work)
 }
 
 fn certify_lod_span(
@@ -760,12 +716,30 @@ pub(crate) fn native_window_movement(
     windows::native_movement(document, source, cut, context)
 }
 
+fn unchanged_scope(
+    surfaces: &[Surface<'_>],
+    selected: &BTreeSet<FaceId>,
+    mode: Mode,
+    work: &mut Work,
+) -> Result<BTreeSet<FaceId>, EditError> {
+    if mode != Mode::Cells {
+        return Ok(BTreeSet::new());
+    }
+    work.consume(surfaces.len()).map_err(invalid)?;
+    Ok(surfaces
+        .iter()
+        .map(|surface| surface.raw.source)
+        .filter(|source| !selected.contains(source))
+        .collect())
+}
+
 fn graph(
     surfaces: &[&Surface<'_>],
     mode: Mode,
     phase: Phase,
     cuts: &BTreeMap<FaceId, (Plane, Keep)>,
     provisional: &BTreeSet<FaceId>,
+    unchanged: &BTreeSet<FaceId>,
     work: &mut Work,
 ) -> Result<Graph, EditError> {
     let (found, connections, patches) = original_lod(surfaces, work)?;
@@ -783,7 +757,8 @@ fn graph(
                 surface,
                 patch,
                 cut,
-                provisional.contains(&surface.raw.source),
+                provisional.contains(&surface.raw.source)
+                    || unchanged.contains(&surface.raw.source),
                 work,
             )
         })
@@ -797,16 +772,9 @@ fn graph(
             .sum(),
     )
     .map_err(invalid)?;
-    let moved = surfaces
-        .iter()
-        .zip(&states)
-        .enumerate()
-        .filter_map(|(index, (surface, state))| {
-            (state.ideal_positions != surface.mesh.positions
-                || state.positions != surface.positions)
-                .then_some(index)
-        })
-        .collect::<BTreeSet<_>>();
+    let moved = surfaces.iter().zip(&states).any(|(surface, state)| {
+        state.ideal_positions != surface.mesh.positions || state.positions != surface.positions
+    });
     let mut edges = BTreeSet::new();
     let mut corners = BTreeSet::new();
     let mut contacts = BTreeMap::new();
@@ -833,7 +801,7 @@ fn graph(
                 ));
             }
         }
-        if !moved.is_empty() {
+        if moved {
             work.consume(2 * common.len()).map_err(invalid)?;
             let first = common.iter().map(|&(first, _)| first).collect::<Vec<_>>();
             let second = common.iter().map(|&(_, second)| second).collect::<Vec<_>>();
@@ -915,7 +883,7 @@ fn graph(
                 {
                     return Err(invalid("Terrain native corner samples differ"));
                 }
-                if !moved.is_empty() {
+                if moved {
                     work.consume(2 * (a.positions.len() + 1)).map_err(invalid)?;
                     for (surface, state, corner) in
                         [(a, &states[first], corner), (b, &states[second], other)]
@@ -985,27 +953,21 @@ fn graph(
     }
     certify_contact_normals(surfaces, &edges, &corners, &varying, work)?;
     if mode == Mode::Cells {
-        work.consume(moved.len()).map_err(invalid)?;
-        if !moved.is_empty()
-            && moved
-                .iter()
-                .all(|&index| provisional.contains(&surfaces[index].raw.source))
-        {
+        if moved {
             work.consume(surfaces.len()).map_err(invalid)?;
             let prepared = surfaces
                 .iter()
                 .map(|surface| {
-                    surface.embedded.as_ref().ok_or_else(|| {
-                        invalid("Terrain window contact proof lost its authored geometry")
-                    })
+                    surface
+                        .embedded
+                        .as_ref()
+                        .ok_or_else(|| invalid("Terrain contact proof lost its authored geometry"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             certify_prepared_contacts(&prepared, &contacts, ContactPolicy::Authored, work)?;
-        } else {
-            certify_moved_footprints(surfaces, &moved, &contacts, work)?;
         }
         normals::certify(surfaces, &states, &found.pairs, &connections, work)?;
-        certify_native_contacts(surfaces, &states, &contacts, provisional, work)?;
+        certify_native_contacts(surfaces, &states, &contacts, work)?;
     }
     result.pairs = found.pairs;
     result.lod = states;
@@ -1029,7 +991,6 @@ fn certify_native_contacts(
     surfaces: &[&Surface<'_>],
     states: &[LodState],
     contacts: &BTreeMap<(usize, usize), [DVec3; 2]>,
-    provisional: &BTreeSet<FaceId>,
     work: &mut Work,
 ) -> Result<(), EditError> {
     if surfaces.len() != states.len() {
@@ -1064,11 +1025,7 @@ fn certify_native_contacts(
                 }
                 let mut mesh = surface.mesh.clone();
                 mesh.positions = positions.to_vec();
-                if provisional.contains(&surface.raw.source) {
-                    super::embedded::source(&mesh, work).map(Some)
-                } else {
-                    super::embedded::prepare(&mesh, work).map(Some)
-                }
+                super::embedded::source(&mesh, work).map(Some)
             })
             .collect::<Result<Vec<_>, _>>()?;
         let prepared = prepared
@@ -1117,47 +1074,13 @@ fn certify_prepared_contacts(
     Ok(())
 }
 
-fn certify_moved_footprints(
-    surfaces: &[&Surface<'_>],
-    moved: &BTreeSet<usize>,
-    contacts: &BTreeMap<(usize, usize), [DVec3; 2]>,
-    work: &mut Work,
-) -> Result<(), EditError> {
-    let Some(&seed) = moved.first() else {
-        return Ok(());
-    };
-    let axis = surfaces[seed].sheet.base.axis();
-    let mut projected = Vec::with_capacity(surfaces.len());
-    for surface in surfaces {
-        super::projected_source(&surface.mesh, &surface.positions, work)?;
-        if !surfaces[seed].sheet.same_base(&surface.sheet)? {
-            return Err(invalid(
-                "Moved terrain requires one common base chart across all affected sources",
-            ));
-        }
-        work.consume(8 * surface.mesh.positions.len())
-            .map_err(invalid)?;
-        let mut mesh = surface.mesh.clone();
-        for point in &mut mesh.positions {
-            point[axis] = 0.0;
-        }
-        projected.push(super::embedded::prepare(&mesh, work)?);
-    }
-    certify_prepared_contacts(
-        &projected.iter().collect::<Vec<_>>(),
-        contacts,
-        ContactPolicy::Native,
-        work,
-    )?;
-    Ok(())
-}
-
 fn certify_lod(
     previous: (&[Surface<'_>], &Graph),
     current: (&[&Surface<'_>], &Graph),
     selected: &BTreeSet<FaceId>,
     replacements: &[Replacement<'_>],
     mode: Mode,
+    unchanged: &BTreeSet<FaceId>,
     work: &mut Work,
 ) -> Result<(), EditError> {
     enum Fields<'a> {
@@ -1201,13 +1124,22 @@ fn certify_lod(
             ));
         }
         if mode == Mode::Cells && previous.lod[index].coarsened {
-            lod_proof::certify_geometry(
-                surface.raw.side.displacement.as_ref().unwrap(),
-                &surface.mesh,
-                previous.lod[index].proof(surface),
-                None,
-                work,
-            )?;
+            if unchanged.contains(&surface.raw.source) {
+                lod_proof::certify_native_geometry(
+                    surface.raw.side.displacement.as_ref().unwrap(),
+                    &surface.mesh,
+                    previous.lod[index].proof(surface),
+                    work,
+                )?;
+            } else {
+                lod_proof::certify_geometry(
+                    surface.raw.side.displacement.as_ref().unwrap(),
+                    &surface.mesh,
+                    previous.lod[index].proof(surface),
+                    None,
+                    work,
+                )?;
+            }
         }
     }
     for (surface, state) in after.iter().zip(&current.lod) {
@@ -1769,12 +1701,14 @@ pub(crate) fn required_partitions(
             provisional.insert(surface.raw.source);
         }
     }
+    let unchanged = unchanged_scope(&before, &selected, Mode::Cells, work)?;
     let original = graph(
         &references,
         Mode::Cells,
         Phase::Original,
         &cuts,
         &provisional,
+        &unchanged,
         work,
     )?;
     work.consume(before.len()).map_err(invalid)?;
@@ -1785,16 +1719,32 @@ pub(crate) fn required_partitions(
     }
     let mut window_sources = BTreeSet::new();
     for (surface, state) in before.iter().zip(&original.lod) {
-        if state.coarsened {
+        if state.coarsened && provisional.contains(&surface.raw.source) {
             let cut = selected
                 .contains(&surface.raw.source)
                 .then_some((plane, keep));
-            if provisional.contains(&surface.raw.source)
-                && windows::movement_candidate(surface, state, cut, work)?
-            {
+            if windows::movement_candidate(surface, state, cut, work)? {
                 window_sources.insert(surface.raw.source);
+            }
+        }
+    }
+    for (surface, state) in before.iter().zip(&original.lod) {
+        if state.coarsened {
+            if window_sources.contains(&surface.raw.source) {
                 continue;
             }
+            if unchanged.contains(&surface.raw.source) {
+                lod_proof::certify_native_geometry(
+                    surface.raw.side.displacement.as_ref().unwrap(),
+                    &surface.mesh,
+                    state.proof(surface),
+                    work,
+                )?;
+                continue;
+            }
+            let cut = selected
+                .contains(&surface.raw.source)
+                .then_some((plane, keep));
             lod_proof::certify_geometry(
                 surface.raw.side.displacement.as_ref().unwrap(),
                 &surface.mesh,
@@ -2109,12 +2059,14 @@ fn certify_mode(
         ));
     }
     let provisional = windows::validate(&before, &children, replacements, mode, work)?;
+    let unchanged = unchanged_scope(&before, &selected, mode, work)?;
     let previous = graph(
         &before_refs,
         mode,
         Phase::Original,
         &cuts,
         &provisional,
+        &unchanged,
         work,
     )?;
     let current = graph(
@@ -2123,6 +2075,7 @@ fn certify_mode(
         Phase::Child,
         &BTreeMap::new(),
         &provisional,
+        &unchanged,
         work,
     )?;
     certify_lod(
@@ -2131,6 +2084,7 @@ fn certify_mode(
         &selected,
         replacements,
         mode,
+        &unchanged,
         work,
     )?;
     coverage(&previous, &current, &after, work)?;

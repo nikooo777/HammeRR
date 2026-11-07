@@ -2277,6 +2277,10 @@ brush-model casters and terrain-first hits do not certify cover. Existing cell,
 brush and prop-bound checks still apply; the optical query shares the checked
 lighting-work budget. This is automatic and adds no setting.
 
+`get_compile_settings` reports the shared native alpha default: reference 0.7,
+received cutoff 178/255. Brush shadow limits include `default_byte` and
+`quantization`; prop cutout limits include `alpha_test_reference_byte`.
+
 Set `bake_static_prop_vertices:true` with a lit mode to store the static style-0
 VHV base alongside supported runtime point/spot styles. Effective nonzero styles
 remain in native WorldLight records and are excluded from VHV.

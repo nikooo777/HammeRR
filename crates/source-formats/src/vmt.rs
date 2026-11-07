@@ -15,6 +15,9 @@ use crate::keyvalues::{self, Node, Value};
 
 /// Maximum number of Patch include edges followed from a root material.
 pub const MAX_PATCH_DEPTH: usize = 8;
+pub const DEFAULT_ALPHA_TEST_REFERENCE: f64 = 0.7;
+pub const DEFAULT_ALPHA_TEST_REFERENCE_BYTE: u8 =
+    (DEFAULT_ALPHA_TEST_REFERENCE as f32 * u8::MAX as f32) as u8;
 const MAX_MATERIAL_DEPTH: usize = 64;
 const MAX_MATERIAL_NODES: usize = 4096;
 
@@ -182,7 +185,11 @@ impl Material {
         if reference.is_subnormal() {
             return Err("Positive subnormal float32 $alphatestreference is unsupported".into());
         }
-        Ok(f64::from(if reference == 0.0 { 0.7 } else { reference }))
+        Ok(f64::from(if reference == 0.0 {
+            DEFAULT_ALPHA_TEST_REFERENCE as f32
+        } else {
+            reference
+        }))
     }
 
     pub fn alpha_test_reference_byte(&self) -> Result<u8, String> {

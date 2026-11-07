@@ -1096,7 +1096,7 @@ impl Session {
                 "material_lookups_max":compiler::MAX_BRUSH_SHADOW_MATERIAL_LOOKUPS,
                 "transform_absolute_max":compiler::MAX_BRUSH_SHADOW_TRANSFORM,
                 "frames":1,"faces":1,"depth":1,
-                "alpha_reference":{"default":0.5,"min":0,"max":1,"zero_uses_default":true},
+                "alpha_reference":{"default":source_formats::vmt::DEFAULT_ALPHA_TEST_REFERENCE,"default_byte":source_formats::vmt::DEFAULT_ALPHA_TEST_REFERENCE_BYTE,"quantization":"float32_times_255_truncate","min":0,"max":1,"zero_uses_default":true},
                 "colored_transmission_option":"colored_texture_shadows",
                 "unsupported":["alpha modulation","blend-shader terrain opacity","unadmitted model poses","unrequested cutout models without lit receivers","unadmitted moving parented unrequested or MDL model radiance sources","conditional or animated materials"]
             }
@@ -1114,7 +1114,7 @@ impl Session {
                 "lighting_modes":["direct_ldr","direct_ldr_hdr"],
                 "bounces":{"min":0,"max":compiler::MAX_LIGHT_BOUNCES},"indirect_sources":["world","terrain","requested_stationary_root_func_brush","requested_stationary_assembled_child_func_brush"],"indirect_reflectivity":"texture_header_or_authored_material","indirect_dimensions":"header_or_native_no_preview","indirect_dimension_sources":["diffuse_vtf_header","tool_vtf_header","native_no_preview_convention"],"receiver":{"body":0,"root_lod":0,"bodyparts":1,"models":1,"lods":{"min":1,"max":8,"all_required":true},"hardware_meshes_max":compiler::prop_lighting_assets::MAX_RECEIVER_MESHES,"scale":1,"sample_origin":"original_vertex","lighting_origin":{"property":"lightingorigin","baked_samples":"actual_vertices","embedded_recovery":false},"support_contacts":"opaque_world_brush","self_shadowing":{"default":true,"disable_property":"disableselfshadowing","disable_value":1,"disabled_scope":"receiver_owned_triangles","retained_blockers":["other_props","world","terrain"]},"ignore_normals":{"property":"ignorenormals","enabled_value":1,"bounces":{"min":0,"max":compiler::MAX_LIGHT_BOUNCES},"direct_factor":compiler::lighting::IGNORE_NORMALS_FACTOR,"sky_ambient":"full_sphere_visibility_mean","indirect":"spherical_sdk_normalization","keeps_shadows":true}},
                 "material":"plain opaque or strict default-alpha-test selected VertexLitGeneric",
-                "cutout_material":{"terminal_parameters":{"$basetexture":"canonical_path","$alphatest":"1"},"alpha_test_reference":0.5,"authored_reference":false,"include_edges_max":8,"patch_edit":"one_basetexture_insert_or_replace_per_patch","extra_parameters":false,"selected_skin_only":true,"all_hardware_vertices":true,"vhv_alpha":255,"receiver_texture_read":false,"texture_shadow_request":"original_mdl_flag","packing_required":false},
+                "cutout_material":{"terminal_parameters":{"$basetexture":"canonical_path","$alphatest":"1"},"alpha_test_reference":source_formats::vmt::DEFAULT_ALPHA_TEST_REFERENCE,"alpha_test_reference_byte":source_formats::vmt::DEFAULT_ALPHA_TEST_REFERENCE_BYTE,"authored_reference":false,"include_edges_max":8,"patch_edit":"one_basetexture_insert_or_replace_per_patch","extra_parameters":false,"selected_skin_only":true,"all_hardware_vertices":true,"vhv_alpha":255,"receiver_texture_read":false,"texture_shadow_request":"original_mdl_flag","packing_required":false},
                 "light_styles":[0],
                 "light_styles_scope":"stored_vhv_base",
                 "runtime_direct":{

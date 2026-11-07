@@ -50,6 +50,19 @@ Use **2D sky preview** to fill space behind the miniature.
 | --- | --- |
 | ![An arch with the six-face sky background](images/miniature-sky-off.png) | ![A prepared miniature skyline behind the same arch](images/miniature-sky-on.png) |
 
+## Add terrain to the miniature
+
+1. Create a displacement inside the sealed miniature region.
+2. Keep its complete surface clear of walls and component boundaries.
+3. Use an opaque material with one base texture.
+4. Open **3D sky preview…** and click **Prepare 3D sky** again.
+5. Enable **Enable 3D sky preview**.
+
+Whole patches use authored fine triangles, BASE texture coordinates and smooth
+vertex normals. Terrain does not seal the region.
+
+![A displaced hill behind foreground props and brushes](images/miniature-terrain.png)
+
 ## Preview miniature fog
 
 1. Select the preview's `sky_camera`. In **Inspector**, enable **Advanced properties**.
@@ -103,16 +116,18 @@ The game must enable full HDR to display its HDR channel.
 - Required sky textures must meet the [native texture limits](textures.md#native-texture-files).
 - 3D sky preparation is explicit; enabling the switch does not silently load or repair sources.
 - World and detail terrain can remain outside the miniature when checked
-  source and native-LOD bounds prove separation. Overlapping terrain or an
-  unavailable bound stops preparation. Terrain-generated detail geometry also
-  needs known bounds.
+  source and native-LOD bounds prove separation. Whole patches inside the
+  selected component can render. Partial, uncertain or boundary contact stops
+  preparation. Terrain-generated detail geometry also needs known bounds.
 - Fixed, unit-scale `prop_static` models with one bone and supported static
   materials can remain outside the miniature. Preparation checks all draw
   LODs. Potential overlap still stops preparation. Changed model or material
   sources clear readiness; prepare again.
 - 3D sky uses opaque materials with one base texture. Cutouts, transparency, normal maps and detail layers are unsupported.
 - Miniature scale is an integer from 1 to 128. Camera angles do not rotate the miniature preview.
-- Miniature fog is static. Authored lighting, models, terrain and water are
+- Terrain uses authored fine geometry. Native LOD appearance, blend materials
+  and partial-patch clipping are unavailable.
+- Miniature fog is static. Authored lighting, models and water are
   not previewed. Runtime sky-camera changes, native exposure adaptation and
   native clipping or pixel parity are unavailable.
 - A selected sky camera must be unparented, with no attachment binding.

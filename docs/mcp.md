@@ -1627,8 +1627,12 @@ See [Linked paths](path-authoring.md) for supported paths and trains.
    preparation. Source, material or visibility changes require preparation again.
 
 World/detail terrain can remain outside the chosen component when checked
-source and native-LOD bounds prove separation. Terrain in or near that component
-still refuses; it is not rendered as miniature geometry. Unknown bounds and
+source and native-LOD bounds prove separation. Whole patches certified inside
+the selected component render authored fine triangles with BASE texture
+coordinates and smooth vertex normals. Partial or uncertain contact refuses.
+`stats.region` reports `terrain_patches`, `terrain_triangles` and
+`terrain_grid_vertices`; render stats include `source_attribute_bytes`. Native
+LOD appearance and partial clipping are unavailable. Unknown bounds and
 unbounded material-generated detail geometry remain explicit errors.
 
 Fixed unit-scale, single-bone `prop_static` models can also be certified outside

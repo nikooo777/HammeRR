@@ -266,12 +266,21 @@ pub struct UnsupportedBrush {
     pub bounds: Option<(DVec3, DVec3)>,
 }
 
+#[derive(Debug)]
+pub struct PreparedTerrain {
+    pub source: RootSide,
+    pub bounds: (DVec3, DVec3),
+    pub mesh: map_core::displacement::DisplacementMesh,
+    pub smoothing_angle: Option<f64>,
+}
+
 /// Flat world/detail conversion, not a complete region or unsupported-content inventory.
 /// A resolver must classify omitted geometry from the original VMF before admitting this topology.
 pub struct PreparedWorld<'a> {
     pub map: Map<'a>,
     pub source_sides: std::collections::BTreeMap<u32, RootSide>,
     pub displacements: Vec<UnsupportedBrush>,
+    pub terrain_surfaces: Vec<PreparedTerrain>,
 }
 
 impl<'a> Map<'a> {
@@ -368,6 +377,7 @@ impl<'a> Map<'a> {
         map.add_world(vmf);
         let mut source_sides = std::collections::BTreeMap::new();
         let mut displacements = Vec::new();
+        let mut terrain_surfaces = Vec::new();
         let mut terrain_bounds = terrain::Bounds::default();
         let sources = vmf
             .world
@@ -394,7 +404,7 @@ impl<'a> Map<'a> {
                 && solid.sides.iter().any(|side| side.displacement.is_some())
             {
                 if let Some(geometry) = origins::checked_geometry(solid, report) {
-                    terrain_bounds.add(solid, &geometry, control)?;
+                    terrain_bounds.add(owner, solid, &geometry, control)?;
                     displacements.push(UnsupportedBrush {
                         owner,
                         solid: solid.id,
@@ -423,10 +433,11 @@ impl<'a> Map<'a> {
         if collision_sources.is_some() {
             map.connect_terrain(report, control)?;
         } else {
-            let bounds = terrain_bounds.finish(control)?;
+            let prepared = terrain_bounds.finish(control)?;
             for displacement in &mut displacements {
-                displacement.bounds = bounds.get(&displacement.solid).copied();
+                displacement.bounds = prepared.bounds.get(&displacement.solid).copied();
             }
+            terrain_surfaces = prepared.surfaces;
         }
         if report.has_errors() {
             return Err("World geometry preparation reported invalid structural geometry".into());
@@ -435,6 +446,7 @@ impl<'a> Map<'a> {
             map,
             source_sides,
             displacements,
+            terrain_surfaces,
         })
     }
 

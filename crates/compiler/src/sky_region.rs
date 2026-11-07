@@ -13,6 +13,7 @@ use crate::winding::ON_EPSILON;
 use crate::{Control, Report, faces, portals, tree};
 
 mod static_props;
+mod terrain;
 
 pub use map_core::fog::MAX_SKY_SCALE as MAX_SCALE;
 pub use static_props::{
@@ -60,7 +61,7 @@ impl Default for Limits {
             source_work: 4_000_000,
             membership_work: 4_000_000,
             vertices: 262_144,
-            cpu_bytes: 384 * 1024 * 1024,
+            cpu_bytes: 512 * 1024 * 1024,
             tree: tree::Limits {
                 nodes: 8_191,
                 pending: 4_096,
@@ -97,6 +98,10 @@ pub struct Stats {
     pub excluded_static_props: usize,
     pub static_prop_models: usize,
     pub static_prop_vertices: usize,
+    pub terrain_patches: usize,
+    pub terrain_triangles: usize,
+    pub terrain_grid_vertices: usize,
+    pub excluded_terrain_patches: usize,
 }
 
 #[derive(Debug)]
@@ -105,6 +110,8 @@ pub struct Surface {
     pub normal: DVec3,
     pub material: String,
     pub texture_vectors: [[f32; 4]; 2],
+    pub texture_points: Option<Vec<DVec3>>,
+    pub normals: Option<Vec<DVec3>>,
     pub flags: i32,
     pub source_sides: Vec<RootSide>,
 }
@@ -227,6 +234,7 @@ pub fn resolve_limited(
         mut map,
         source_sides,
         displacements,
+        terrain_surfaces,
     } = prepared;
     let indices = map.entities[0]
         .brushes
@@ -281,24 +289,44 @@ pub fn resolve_limited(
             (mins.min(lo), maxs.max(hi))
         });
     stats.component_bounds = [mins.to_array(), maxs.to_array()];
+    let selected_leaves = leaves.iter().copied().collect::<BTreeSet<_>>();
     let mut admission = Admission {
         tree: &tree,
         planes: &map.planes,
         leaves: &leaves,
+        selected_leaves: &selected_leaves,
         work: 0,
         limit: limits.membership_work,
         control,
+        pending_limit: limits.tree.pending,
     };
+    let captured_terrain = terrain_surfaces
+        .iter()
+        .map(|terrain| terrain.source.solid)
+        .collect::<BTreeSet<_>>();
     for displacement in displacements {
-        admission.source(
-            "displacement",
-            displacement.owner,
-            Some(displacement.solid),
-            displacement.bounds,
-        )?;
+        if !captured_terrain.contains(&displacement.solid) {
+            admission.source(
+                "displacement",
+                displacement.owner,
+                Some(displacement.solid),
+                displacement.bounds,
+            )?;
+        }
     }
+    let terrain = terrain::admit(terrain_surfaces, &mut admission, &mut stats)?;
+    let terrain_sides = terrain
+        .iter()
+        .map(|patch| patch.source.side)
+        .collect::<BTreeSet<_>>();
     let mut prop_sources = static_props::Capture::new(fs, control);
-    admit_original(vmf, &mut map.materials, &mut admission, &mut prop_sources)?;
+    admit_original(
+        vmf,
+        &mut map.materials,
+        &mut admission,
+        &mut prop_sources,
+        &terrain_sides,
+    )?;
     let filtered = |side| {
         source_sides
             .get(&side)
@@ -335,10 +363,21 @@ pub fn resolve_limited(
             normal: map.planes.get(face.plane).normal,
             material: material.name.clone(),
             texture_vectors: info.texture_vecs,
+            texture_points: None,
+            normals: None,
             flags: info.flags,
             source_sides: sources,
         });
     }
+    terrain::append(
+        terrain,
+        vmf,
+        &include,
+        &mut surfaces,
+        &mut stats,
+        limits,
+        &mut admission,
+    )?;
     control.checkpoint()?;
     let source_guard = prop_sources.finish(&mut stats)?;
     Ok(Region {
@@ -430,12 +469,86 @@ struct Admission<'a> {
     tree: &'a Tree,
     planes: &'a crate::planes::PlaneSet,
     leaves: &'a [usize],
+    selected_leaves: &'a BTreeSet<usize>,
     work: usize,
     limit: usize,
     control: &'a Control,
+    pending_limit: usize,
 }
 
 impl Admission<'_> {
+    fn consume(&mut self, amount: usize) -> Result<(), String> {
+        self.control.checkpoint()?;
+        self.work = self
+            .work
+            .checked_add(amount)
+            .filter(|&work| work <= self.limit)
+            .ok_or("Sky region exceeded its unsupported-membership work budget")?;
+        Ok(())
+    }
+
+    fn outside(&mut self, bounds: (DVec3, DVec3)) -> Result<bool, String> {
+        let tree = self.tree;
+        let planes = self.planes;
+        let leaves = self.leaves;
+        for &leaf in leaves {
+            let mut disjoint = false;
+            for side in &tree.nodes[leaf].volume.sides {
+                self.consume(1)?;
+                let plane = planes.get(side.plane);
+                if plane_bounds(plane, bounds).0 > ON_EPSILON {
+                    disjoint = true;
+                    break;
+                }
+            }
+            if !disjoint {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn contains(&mut self, bounds: (DVec3, DVec3)) -> Result<bool, String> {
+        let tree = self.tree;
+        let planes = self.planes;
+        for side in &tree.nodes[0].volume.sides {
+            self.consume(1)?;
+            if plane_bounds(planes.get(side.plane), bounds).1 >= 0.0 {
+                return Ok(false);
+            }
+        }
+        let capacity = self.pending_limit.min(tree.nodes.len());
+        if capacity == 0 {
+            return Err("Sky terrain exceeded its pending membership node budget".into());
+        }
+        let mut pending = Vec::new();
+        pending
+            .try_reserve_exact(capacity)
+            .map_err(|error| format!("Sky terrain membership allocation failed: {error}"))?;
+        pending.push(0);
+        while let Some(index) = pending.pop() {
+            self.consume(1)?;
+            let node = &tree.nodes[index];
+            if let Some((plane, children)) = node.split {
+                let (low, high) = plane_bounds(planes.get(plane), bounds);
+                let reached = if low > 0.0 {
+                    &children[..1]
+                } else if high < 0.0 {
+                    &children[1..]
+                } else {
+                    &children[..]
+                };
+                if pending.len() + reached.len() > capacity {
+                    return Err("Sky terrain exceeded its pending membership node budget".into());
+                }
+                pending.extend_from_slice(reached);
+            } else if node.solid() || !self.selected_leaves.contains(&index) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     fn source(
         &mut self,
         kind: &str,
@@ -459,34 +572,34 @@ impl Admission<'_> {
                 "{label}: unsupported {kind} membership; conservative world bounds are unavailable"
             ));
         };
-        for &leaf in self.leaves {
-            let mut disjoint = false;
-            for side in &self.tree.nodes[leaf].volume.sides {
-                self.control.checkpoint()?;
-                self.work = self
-                    .work
-                    .checked_add(1)
-                    .filter(|&n| n <= self.limit)
-                    .ok_or("Sky region exceeded its unsupported-membership work budget")?;
-                let plane = self.planes.get(side.plane);
-                let point = DVec3::new(
-                    if plane.normal.x < 0.0 { maxs.x } else { mins.x },
-                    if plane.normal.y < 0.0 { maxs.y } else { mins.y },
-                    if plane.normal.z < 0.0 { maxs.z } else { mins.z },
-                );
-                if plane.distance(point) > ON_EPSILON {
-                    disjoint = true;
-                    break;
-                }
-            }
-            if !disjoint {
-                return Err(format!(
-                    "{label}: unsupported {kind} cannot be certified outside the selected sky_camera component"
-                ));
-            }
+        if !self.outside((mins, maxs))? {
+            return Err(format!(
+                "{label}: unsupported {kind} cannot be certified outside the selected sky_camera component"
+            ));
         }
         Ok(())
     }
+}
+
+fn plane_bounds(plane: &crate::planes::Plane, bounds: (DVec3, DVec3)) -> (f64, f64) {
+    let mut low = -plane.dist;
+    let mut high = -plane.dist;
+    for axis in 0..3 {
+        let normal = plane.normal[axis];
+        if normal == 0.0 {
+            continue;
+        }
+        let (first, second) = if normal < 0.0 {
+            (bounds.1[axis], bounds.0[axis])
+        } else {
+            (bounds.0[axis], bounds.1[axis])
+        };
+        let first = normal * first;
+        let second = normal * second;
+        low = (low + first.next_down()).next_down();
+        high = (high + second.next_up()).next_up();
+    }
+    (low, high)
 }
 
 fn solid_bounds(solid: &Solid) -> Option<(DVec3, DVec3)> {
@@ -502,6 +615,7 @@ fn admit_original(
     materials: &mut crate::materials::Materials<'_>,
     admission: &mut Admission<'_>,
     props: &mut static_props::Capture<'_>,
+    terrain_sides: &BTreeSet<u32>,
 ) -> Result<(), String> {
     for (owner, solid) in vmf
         .world
@@ -531,6 +645,14 @@ fn admit_original(
             admission.control.checkpoint()?;
             let material = materials.load(&side.material)?;
             let info = materials.get(material);
+            if terrain_sides.contains(&side.id) {
+                map_core::displacement::native::validate_material(
+                    info.draws,
+                    info.contents,
+                    info.surface,
+                )
+                .map_err(|error| format!("solid:{} side:{}: {error}", solid.id, side.id))?;
+            }
             if info.detail_type.is_some() {
                 admission.source(
                     "material-generated detail geometry (parent brush bounds do not bound scattered models or sprites)",
@@ -635,6 +757,7 @@ fn preflight(vmf: &Vmf, limits: Limits, control: &Control) -> Result<Stats, Stri
     let mut source_points = 0usize;
     let mut terrain_vertices = 0usize;
     let mut terrain_patches = 0usize;
+    let mut terrain_triangles = 0usize;
     let mut longest_material = 0usize;
     for properties in std::iter::once(&vmf.world.properties)
         .chain(vmf.entities.iter().map(|entity| &entity.properties))
@@ -714,6 +837,17 @@ fn preflight(vmf: &Vmf, limits: Limits, control: &Control) -> Result<Stats, Stri
                     source_formats::bsp::MAX_DISPLACEMENTS,
                     "terrain membership patch",
                 )?;
+                let triangles = if (2..=4).contains(&disp.power) {
+                    2 * (1usize << disp.power).pow(2)
+                } else {
+                    512
+                };
+                terrain_triangles = checked_total(
+                    terrain_triangles,
+                    triangles,
+                    source_formats::bsp::MAX_DISPLACEMENT_TRIANGLES,
+                    "terrain input triangle",
+                )?;
             }
             bytes = checked_total(
                 bytes,
@@ -747,12 +881,21 @@ fn preflight(vmf: &Vmf, limits: Limits, control: &Control) -> Result<Stats, Stri
         (bytes, 4),
         (
             terrain_vertices,
-            size_of::<DVec3>() * 6
+            size_of::<DVec3>() * 12
                 + size_of::<source_formats::bsp::DisplacementVertex>() * 3
                 + size_of::<[usize; 3]>() * 4
-                + 32,
+                + 64,
         ),
         (terrain_patches, 4096),
+        (
+            terrain_triangles.min(limits.faces.faces),
+            size_of::<Surface>() * 2
+                + size_of::<DVec3>() * 9
+                + size_of::<RootSide>()
+                + longest_material
+                + 256,
+        ),
+        (limits.tree.pending, size_of::<usize>()),
         (limits.tree.points, size_of::<DVec3>()),
         (limits.tree.nodes, size_of::<tree::Node>() * 2 + 256),
         (limits.portals.points, size_of::<DVec3>()),

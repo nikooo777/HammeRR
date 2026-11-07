@@ -20,7 +20,7 @@ const MAX_CAMERAS: usize = 64;
 const MAX_DIAGNOSTIC_BYTES: usize = 1024;
 const MAX_PROVENANCE_ROWS: usize = 64;
 const AUXILIARY_BYTES: usize = 8 * 1024 * 1024;
-const MAX_CPU_BYTES: usize = 488 * 1024 * 1024;
+const MAX_CPU_BYTES: usize = 640 * 1024 * 1024;
 
 #[derive(Clone, PartialEq, Eq)]
 struct Key {
@@ -259,6 +259,8 @@ impl Request {
             .filter(|surface| surface.flags & (surf::SKY | surf::SKY2D | surf::NODRAW) == 0)
             .map(|surface| sky3d::Surface {
                 points: surface.vertices,
+                texture_points: surface.texture_points,
+                normals: surface.normals,
                 normal: surface.normal,
                 material: surface.material,
                 texture_u: surface.texture_vectors[0].map(f64::from),
@@ -733,7 +735,7 @@ impl Session {
                 "logical_paths":sky_region::MAX_PROP_LOGICAL_PATHS,"physical_paths":sky_region::MAX_PROP_PHYSICAL_PATHS,
                 "lookup_rows":sky_region::MAX_PROP_LOOKUP_ROWS,"cpu_reservation_bytes":sky_region::PROP_CPU_RESERVATION_BYTES
             },"material_semantics":{"file_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_BYTES,"total_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_TOTAL_BYTES,"reads":compiler::materials::MAX_GEOMETRY_MATERIAL_READS,"allocation_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_ALLOCATION_BYTES},"render":{"vertices":sky3d::MAX_VERTICES,"indices":sky3d::MAX_INDICES,"surfaces":sky3d::MAX_SURFACES,"materials":sky3d::MAX_MATERIALS,"cpu_bytes":sky3d::MAX_CPU_BYTES,"gpu_bytes":sky3d::MAX_GPU_BYTES,"gpu_asset_bytes":sky3d::MAX_GPU_ASSET_BYTES,"gpu_upload_bytes":sky3d::MAX_GPU_UPLOAD_BYTES,"target_bytes":sky3d::MAX_TARGET_BYTES,"target_dimension":sky3d::MAX_TARGET_DIMENSION},"cpu_bytes":MAX_CPU_BYTES,"auxiliary_bytes":AUXILIARY_BYTES,"snapshot_bytes":snapshot::MAX_BYTES,"snapshot_items":snapshot::MAX_ITEMS,"snapshot_depth":snapshot::MAX_DEPTH,"camera_rows":MAX_CAMERAS,"provenance_rows":MAX_PROVENANCE_ROWS,"active_workers":1,"cached_snapshots":1},
-            "policy":"Explicit root sky_camera; sealed committed flat world/detail component; editor visibility filters display fragments after topology. Static opaque textured miniature with its independent static camera fog; models, terrain, portals, water, instances and runtime effects are unsupported inside it. Distant terrain and admitted fixed static props require certified conservative separation; prepared model-source changes require preparation again. Main picking, source, selection, history and camera remain ordinary editor state. 2D sky preview is independent, with combined fog material compatibility required. No native framebuffer parity claim."})
+            "policy":"Explicit root sky_camera; sealed committed world/detail component with flat surfaces and admitted whole authored fine terrain patches; editor visibility filters display fragments after topology. Terrain uses BASE texture coordinates and shared vertex normals without patch clipping or native LOD appearance matching. Static opaque single-base textured miniature with its independent static camera fog; models, portals, water, instances and runtime effects are unsupported inside it. Distant terrain and admitted fixed static props require certified conservative separation; prepared model-source changes require preparation again. Main picking, source, selection, history and camera remain ordinary editor state. 2D sky preview is independent, with combined fog material compatibility required. No native framebuffer parity claim."})
     }
 
     fn retire_sky3d_preview(&mut self, status: &'static str, issue: Option<String>) {

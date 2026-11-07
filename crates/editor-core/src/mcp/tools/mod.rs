@@ -47,6 +47,7 @@ mod preview_preferences;
 mod prop_leaf_bounds;
 mod recovery;
 mod reference_images;
+mod rope_placement;
 mod ropes;
 mod scene_display;
 mod selection;

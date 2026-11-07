@@ -119,6 +119,7 @@ pub use view::ViewUpdate;
 pub mod editor_visibility;
 mod recovery;
 pub mod repeat;
+pub mod rope_placement;
 pub mod ropes;
 mod saved_defaults;
 pub mod saved_views;
@@ -2957,6 +2958,7 @@ impl Session {
         view: ViewOptions,
         allow_baked_surfaces: bool,
     ) -> SceneMesh {
+        self.preflight_rope_placement();
         self.preflight_rope_preview();
         self.preflight_compiled_visibility();
         self.preflight_compiled_details();
@@ -3028,6 +3030,7 @@ impl Session {
         {
             rope_error = Some(error);
         }
+        let rope_placement_error = self.append_rope_placement_preview(&mut mesh).err();
         mesh.normal_maps.requested = view.normal_maps;
         mesh.sky3d = sky3d;
         lighting.report.admitted_receivers = mesh.lighting.report.admitted_receivers;
@@ -3139,6 +3142,9 @@ impl Session {
         self.append_reference_images(&mut mesh);
         if let Some(error) = rope_error {
             self.fail_rope_preview_render(error);
+        }
+        if let Some(error) = rope_placement_error {
+            self.fail_rope_placement_render(error);
         }
         mesh
     }

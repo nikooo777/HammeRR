@@ -1,5 +1,10 @@
 use super::super::*;
 
+struct RopeRenderGuards {
+    preview: Option<crate::runtime::RopeRenderGuard>,
+    placement: Option<crate::session::rope_placement::RenderGuard>,
+}
+
 impl EditorServer {
     fn fog_render_context(
         &self,
@@ -36,23 +41,38 @@ impl EditorServer {
     fn rope_render_context(
         &self,
         requested: Option<bool>,
-    ) -> Result<(bool, Option<crate::runtime::RopeRenderGuard>), String> {
+    ) -> Result<(bool, RopeRenderGuards), String> {
         let enabled = requested.unwrap_or_else(|| self.session().view().rope_preview);
-        let guard = if enabled {
+        let preview = if enabled {
             Some(self.document_access().rope_render_guard()?)
         } else {
             None
         };
-        Ok((enabled, guard))
+        let placement = self.session().rope_placement_render_guard()?;
+        self.verify_rope_placement_frame(placement.as_ref())?;
+        Ok((enabled, RopeRenderGuards { preview, placement }))
     }
 
-    fn verify_rope_frame(
+    fn verify_rope_placement_frame(
         &self,
-        guard: Option<&crate::runtime::RopeRenderGuard>,
+        guard: Option<&crate::session::rope_placement::RenderGuard>,
     ) -> Result<(), String> {
         if let Some(guard) = guard {
+            let verified = guard.verify_original_sources();
+            self.session()
+                .verify_rope_placement_render_guard(guard, verified)
+        } else if self.session().rope_placement_render_guard()?.is_some() {
+            Err("Rope placement changed during the frame; render or pick again".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn verify_rope_frame(&self, guards: &RopeRenderGuards) -> Result<(), String> {
+        if let Some(guard) = &guards.preview {
             self.document_access().verify_rope_render_guard(guard)?;
         }
+        self.verify_rope_placement_frame(guards.placement.as_ref())?;
         Ok(())
     }
 }
@@ -613,7 +633,7 @@ impl EditorServer {
             Ok(rendered) => rendered,
             Err(error) => return fail(error),
         };
-        if let Err(error) = self.verify_rope_frame(rope_guard.as_ref()) {
+        if let Err(error) = self.verify_rope_frame(&rope_guard) {
             return fail(error);
         }
         if let Err(error) = self.verify_fog_frame(fog_guard.as_ref()) {
@@ -683,7 +703,7 @@ impl EditorServer {
                 hit_json(session.render_document(), &hit)
             });
             drop(session);
-            self.verify_rope_frame(rope_guard.as_ref())?;
+            self.verify_rope_frame(&rope_guard)?;
             self.verify_fog_frame(fog_guard.as_ref())?;
             Ok(result)
         })
@@ -709,7 +729,7 @@ impl EditorServer {
                 hit_json(session.render_document(), &hit)
             });
             drop(session);
-            self.verify_rope_frame(rope_guard.as_ref())?;
+            self.verify_rope_frame(&rope_guard)?;
             Ok(result)
         })
     }

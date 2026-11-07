@@ -88,4 +88,4 @@ their bytes and winning source origins before accepting a model choice.
 
 ---
 
-[← Rope preview](ropes.md) · [Manual](README.md) · [Sprite guides →](sprite-guides.md)
+[← Ropes](ropes.md) · [Manual](README.md) · [Sprite guides →](sprite-guides.md)

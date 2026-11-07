@@ -1974,6 +1974,51 @@ Preparation alone does not establish a radial value. The captures supply a
 declared setup schedule. Native render-pass execution and arbitrary automatic
 pass-order discovery are unavailable.
 
+## Rope placement
+
+1. Call `get_rope_placement` for the current `snapshot`, `pick_snapshot` and
+   shared draft.
+2. Call `begin_rope_placement` with that `snapshot` and a complete
+   `request:{material:"cable/rope",slack:180,width:6}`.
+3. Call `begin_rope_placement_pick` with the current `token`,
+   `endpoint:"start"`, the latest `pick_snapshot`, and viewport `width` and
+   `height`. Optional `camera` captures an explicit camera; omission uses the
+   shared camera.
+4. Call `pick_rope_placement_ray` with `token`, `ray_origin:[x,y,z]` and
+   `ray_direction:[x,y,z]`, or call `pick_rope_placement_pixel` with `token`
+   and `pointer:{position:[x,y],width,height}`.
+5. Arm and pick `endpoint:"end"` in the same way. Use a fresh `pick_snapshot`
+   for each arm and the latest returned draft `token` for every operation.
+6. Inspect the draft's `ready`, `error` and endpoint plan. To change settings,
+   call `update_rope_placement` with its current `token` and the complete
+   replacement `request`.
+7. Call `apply_rope_placement` with the current ready draft's `token`.
+   This creates a uniquely named `move_rope` and `keyframe_rope`, linked by
+   `NextKey`, in one Undo step.
+
+The pending draft displays a settled span without enabling committed rope
+preview. It uses gravity 1500, zero wind and no collision. After Apply, use
+[Rope preview](#rope-preview) to prepare the placed span.
+
+Both pick methods require an armed capture. Pixel dimensions must match the
+captured viewport. Picks use the first visible authored world or `func_detail`
+brush or terrain surface. The endpoints stay at fixed world positions;
+placement does not bind them to moving objects or model attachments. There is
+no direct endpoint-coordinate setter.
+
+`slack` is a signed native integer from −2048 through 2047. Its nominal extra
+length is `slack − 100` units; spring lengths also round per segment. It is not
+a tension percentage. `width` is 1–64 units. Materials must be mounted and
+supported by the rope preview; an unavailable material reports an error.
+
+Use `cancel_rope_placement_pick` with the current token to stop picking and
+keep the draft. Use `cancel_rope_placement` to discard it without editing the
+map or history. `review_rope_placement` takes ownership of a shared draft and
+returns a new token. Review preserves stale state: cancel a stale draft, then
+begin again with a fresh snapshot. Replaced or foreign tokens reject. Apply
+rechecks the map, picks and asset sources before creating either endpoint.
+See [Ropes](ropes.md) for the desktop steps and preview limits.
+
 ## Rope preview
 
 1. Call `set_view` with `rope_preview:true` to show the prepared pose.
@@ -2014,7 +2059,7 @@ Gravity is 0–3000 units/s²; wind components are finite within ±1000 units/s�
 Defaults are gravity 1500 and wind `[0,0,0]`. These preview settings do not edit
 entity fields or saved startup defaults, and do not evaluate `env_wind`.
 Preview controls preserve map bytes, selection, camera and Undo history.
-See [Rope preview](ropes.md) for supported anchors, materials, contact and limits.
+See [Ropes](ropes.md) for supported anchors, materials, contact and limits.
 
 With `rope_preview:true`, framing, `get_objects`, `get_selection` and area/volume
 selection use the published pose and width. Bounds are conservative
@@ -2847,6 +2892,7 @@ These groups locate the available operations.
 | [Entity properties and connections](entities.md) | `begin_connection_edit`, `begin_entity_rename`, `begin_property_edit`, `cancel_connection_edit`, `cancel_entity_rename`, `cancel_property_edit`, `commit_connection_edit`, `commit_entity_rename`, `commit_property_edit`, `convert_color`, `create_entity`, `delete_entity_connection`, `get_connection_choices`, `get_entity_class`, `get_entity_connections`, `inspect_entity_graph`, `inspect_entity_graph_diagram`, `layout_entity_graph`, `update_entity_graph_diagram`, `reset_entity_graph_diagram`, `select_entity_graph`, `frame_entity_graph`, `get_entity_definitions`, `get_entity_inspector`, `get_entity_references`, `get_property_edit`, `get_property_inspector`, `load_entity_definitions`, `move_to_world`, `search_entity_classes`, `set_entity_color`, `set_entity_color_space`, `set_entity_properties`, `tie_to_entity`, `update_connection_draft`, `update_entity_rename`, `update_property_edit` |
 | [Bulk entity workflows](bulk-entities.md) | `apply_bulk_entities`, `begin_connection_batch`, `begin_entity_rename_batch`, `cancel_bulk_entities`, `cancel_entity_rename_batch`, `commit_connection_batch`, `commit_entity_rename_batch`, `get_bulk_entities`, `get_connection_batch_state`, `get_entity_rename_batch`, `preview_entity_class_change`, `preview_move_entities_to_world`, `update_connection_batch`, `update_entity_rename_batch` |
 | [Entity placement](entities.md) | `apply_entity_placement`, `begin_entity_placement`, `cancel_entity_placement`, `get_entity_placement`, `pick_entity_placement`, `review_entity_placement` |
+| [Rope placement](ropes.md#place-a-rope-between-surfaces) | `apply_rope_placement`, `begin_rope_placement`, `begin_rope_placement_pick`, `cancel_rope_placement`, `cancel_rope_placement_pick`, `get_rope_placement`, `pick_rope_placement_pixel`, `pick_rope_placement_ray`, `review_rope_placement`, `update_rope_placement` |
 | [Map files](getting-started.md) | `clear_recent_maps`, `close_document`, `find_objects`, `get_map_info`, `get_map_statistics`, `get_objects`, `get_recent_maps`, `new_map`, `open_map`, `open_recent_map`, `relocate_recent_map`, `cancel_recent_map`, `redo`, `reload_recent_maps`, `remove_recent_map`, `save_map`, `undo` |
 | [Reference images](reference-images.md) | `add_reference_image`, `delete_reference_image`, `frame_reference_image`, `get_reference_images`, `reload_reference_image`, `update_reference_image` |
 | [Magnetic movement](placement.md#magnetic-translation) | `cancel_magnetic_translation`, `commit_magnetic_translation`, `get_magnetic_snap_sources`, `get_magnetic_snapping`, `preview_magnetic_translation`, `set_magnetic_snapping` |

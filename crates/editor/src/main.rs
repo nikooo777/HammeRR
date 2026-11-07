@@ -50,6 +50,7 @@ mod recovery_ui;
 mod reference_images_ui;
 mod rename_ui;
 mod repeat_ui;
+mod rope_placement_ui;
 mod saved_views_ui;
 mod selection_defaults_ui;
 mod shortcut_input;

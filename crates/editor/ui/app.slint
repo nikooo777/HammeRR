@@ -54,6 +54,7 @@ export {ModelBrowserWindow, ModelChoiceRow, ModelBodygroupRow} from "model-brows
 export {SoundBrowserWindow, SoundChoiceRow} from "sounds.slint";
 export {ParticleBrowserWindow, ParticleChoiceRow} from "particles.slint";
 export {RopePreviewWindow, RopePreviewRow} from "rope-preview.slint";
+export {RopePlacementWindow} from "rope-placement.slint";
 export {PlacementWindow} from "placement.slint";
 export {EntityPlacementWindow} from "entity-placement.slint";
 export {InstanceReferenceWindow} from "instance-reference.slint";
@@ -2543,6 +2544,7 @@ export component AppWindow inherits Window {
     callback property-removed(key: string);
     callback flag-toggled(key: string, flag: string, checked: bool);
     callback place-entity();
+    callback place-rope();
     callback entity-gallery();
     callback entity-graph();
     callback external-comparison();
@@ -2702,6 +2704,7 @@ export component AppWindow inherits Window {
         { id: "replace-materials", title: "Replace materials…", group: "Brush › Materials", enabled: true },
         { id: "overlay", title: "Overlay…", group: "Brush › Materials", enabled: true },
         { id: "place-entity", title: "Place entity…", group: "Entity", enabled: true },
+        { id: "place-rope", title: "Place rope…", group: "Entity", enabled: true },
         { id: "batch-properties", title: "Edit selected entity properties…", group: "Entity", enabled: true },
         { id: "change-entity-class", title: "Change entity classes…", group: "Entity", enabled: root.whole-entity-selection },
         { id: "browse-model", title: "Choose models…", group: "Entity", enabled: root.whole-entity-selection },
@@ -2841,6 +2844,7 @@ export component AppWindow inherits Window {
         else if id == "sky3d" { root.sky3d-preview(); }
         else if id == "fog" { root.fog-preview(); }
         else if id == "rope-preview" { root.inspect-rope-preview(); }
+        else if id == "place-rope" { root.place-rope(); }
         else if id == "color-correction" { root.color-correction-preview(); }
         else if id == "reference-images" { root.reference-images(); }
         else if id == "instance-contents" { root.inspect-instance-contents(); }
@@ -3066,6 +3070,7 @@ export component AppWindow inherits Window {
         Menu {
             title: "Entity";
             MenuItem { title: "Place entity…"; activated => { root.place-entity(); } }
+            MenuItem { title: "Place rope…"; activated => { root.place-rope(); } }
             MenuItem { title: "Edit selected entity properties…"; activated => { root.batch-properties(); } }
             MenuItem { title: "Change entity classes…"; enabled: root.whole-entity-selection; activated => { root.change-entity-class(); } }
             MenuItem { title: "Choose models…"; enabled: root.whole-entity-selection; activated => { root.browse-model(); } }

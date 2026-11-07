@@ -185,6 +185,7 @@ impl Session {
             || self.linked_path_picking()
             || self.transform_pivot_picking()
             || self.entity_surface_picking()
+            || self.rope_surface_picking()
             || self.surface_position_picking()
         {
             return Err(

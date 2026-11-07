@@ -46,6 +46,8 @@ mod recent_maps;
 pub(super) use recent_maps::*;
 mod ropes;
 pub(super) use ropes::*;
+mod rope_placement;
+pub(super) use rope_placement::*;
 mod terrain;
 pub(super) use terrain::*;
 mod view;

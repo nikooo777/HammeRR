@@ -1,10 +1,40 @@
 [← Manual](README.md)
 
-# Rope preview
+# Ropes
 
-Inspect linked rope materials, motion and supported contact with the world.
+Place a rope between surfaces. Preview its material, motion and supported
+contact with the world.
 
-## Prepare a rope
+## Place a rope between surfaces
+
+1. Choose **Textured**, then open **Entity → Place rope…**.
+2. Set **Material**, or click **Browse…** to choose a mounted material.
+   Set **Slack** and **Width**.
+3. Click **Pick start**, then click a visible world surface in a 3D viewport.
+4. Click **Pick end**, then click the second surface.
+5. Review both positions and the displayed span, then click **Apply rope**.
+
+![A textured rope placed between two surfaces](images/rope-placement.png)
+
+The operation creates a named `move_rope` and `keyframe_rope` with their
+**Next KeyFrame** link. One Undo removes the pair.
+To display the placed span, [prepare its preview](#preview-a-rope).
+
+Surface picks capture fixed world positions. They do not parent the endpoints
+to the picked objects. Use **Cancel** to discard the placement. Apply or cancel
+before saving, compiling or playing.
+
+The form starts with `cable/rope`, Slack 150 and Width 2. Use `cable/cable` or
+`cable/chain` when supplied by the mounted game. A shared placement keeps its
+reviewed settings; click **Review shared placement** when prompted. **Close**
+leaves that shared draft unchanged.
+
+**Slack** is the native length setting. Its nominal extra length is
+`Slack − 100` units. A value of 100 adds no nominal length; larger values allow
+more sag. The spring length also rounds to whole units per segment. Slack is
+not a force or a tension measurement.
+
+## Build a chain
 
 1. Use **Entity…** to place `move_rope` and `keyframe_rope` entities.
 2. Give each endpoint a unique **Name**.
@@ -14,9 +44,12 @@ Inspect linked rope materials, motion and supported contact with the world.
    **Subdivision**, **Rope Material** and **Texture Scale**.
    Set **Collide with world**, **Start Dangling** or **Disable Wind** to
    **Yes** when needed.
-5. Choose **Textured**, then open **View → Rope preview…** and enable
+
+## Preview a rope
+
+1. Choose **Textured**, then open **View → Rope preview…** and enable
    **Enable rope preview**.
-6. Click **Prepare preview**. Read **Spans**, **Material**, **Attachments**,
+2. Click **Prepare preview**. Read **Spans**, **Material**, **Attachments**,
    **Physics** and any **Needs attention** messages.
 
 ![Textured cable, rope and chain spans with a model attachment](images/rope-span.png)
@@ -90,6 +123,14 @@ ordinary endpoint-helper bounds.
 
 ## Limits
 
+- Surface placement accepts visible world and `func_detail` brushes and
+  terrain. Model props, brush-model entities, instance contents and moving
+  attachments are unavailable. **Apply rope** checks the map, surfaces and
+  material again and refuses stale placement. Cancel and start again when a
+  placement becomes stale; **Review shared placement** does not refresh it.
+- The placement span uses five seconds of settling with gravity 1500 units/s²,
+  zero wind and no collision. Set **Collide with world** to **Yes** in
+  **Inspector**, then prepare the placed rope when world contact is needed.
 - At most 512 source spans and 72 visual segments per span; coordinates within
   ±65536. Slack: −2048–2047. Width: 1–64. TextureScale: 0.1–10. Derived rope
   length: 0–16383.

@@ -83,7 +83,7 @@ More in this section:
 <tr>
 <td width="33%" valign="top"><a href="reference-images.md"><img src="images/thumbs/reference-images.jpg" width="260" alt=""></a><br><a href="reference-images.md"><b>Reference images</b></a><br>Place external PNG images as editor-only tracing planes.</td>
 <td width="33%" valign="top"><a href="sky.md"><img src="images/thumbs/miniature-sky-on.jpg" width="260" alt=""></a><br><a href="sky.md"><b>Sky previews and assets</b></a><br>Preview the map sky and inspect its mounted LDR and HDR assets.</td>
-<td width="33%" valign="top"><a href="ropes.md"><img src="images/thumbs/rope-span.jpg" width="260" alt=""></a><br><a href="ropes.md"><b>Rope preview</b></a><br>Inspect textured ropes, motion and world contact.</td>
+<td width="33%" valign="top"><a href="ropes.md"><img src="images/thumbs/rope-placement.jpg" width="260" alt=""></a><br><a href="ropes.md"><b>Ropes</b></a><br>Place ropes between surfaces and preview their motion and materials.</td>
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="models.md"><img src="images/thumbs/model-scales.jpg" width="260" alt=""></a><br><a href="models.md"><b>Models</b></a><br>Place Source model meshes with their materials, skins and reference poses.</td>

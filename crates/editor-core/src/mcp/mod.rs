@@ -86,6 +86,13 @@ inspect_compiled_visibility reads owned compiler world-leaf/cluster joins, origi
 HammeRR, a map editor for Counter-Strike: Source (Valve Source engine, Hammer-compatible VMF files). \
 The desktop HTTP server shares the live editor session; a stdio server owns a private \
 session. Edits use the session's shared undo history.\n\
+get_rope_placement reports the shared rope draft, preview and current snapshot/pick_snapshot. \
+Begin with begin_rope_placement and request {material,slack,width}; update_rope_placement changes those settings. \
+Arm start/end with begin_rope_placement_pick, the current pick_snapshot and a captured camera/viewport, \
+then use pick_rope_placement_ray or pick_rope_placement_pixel with the returned token. Picks resolve visible \
+world/func_detail brush or terrain surfaces, not arbitrary endpoint coordinates. Inspect/render before \
+apply_rope_placement; cancel_rope_placement changes no map data. Use the latest returned draft token and review a foreign draft explicitly. \
+Slack is a signed Source integer, not a tension percentage, and Slack 0 does not mean taut. Asset errors never substitute a material.\n\
 Coordinates: Z is up, units are Hammer units (about an inch). A player is 32x32x72 \
 (crouched 36), steps are up to 18 high, doors are typically 56x112, walls 8-16 thick. \
 Keep brush coordinates inside +-16384. set_spatial_settings configures the shared grid \
@@ -805,6 +812,7 @@ impl EditorServer {
             + Self::placement_tools()
             + Self::recovery_tools()
             + Self::rope_preview_tools()
+            + Self::rope_placement_tools()
             + Self::fog_preview_tools()
             + Self::selection_tools()
             + Self::terrain_tools()

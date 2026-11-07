@@ -1215,6 +1215,18 @@ fn bind_material_choice(window: &MaterialWindow, app: &AppWindow, ui: &SharedUi)
                         window.set_detail(error.into());
                         return;
                     }
+                } else if let Some(target) = ui.borrow().rope_material_target.clone() {
+                    let state = ui.borrow();
+                    let Some(controller) = &state.rope_placement else {
+                        window
+                            .set_detail("Open Place rope again before choosing a material.".into());
+                        return;
+                    };
+                    if let Err(error) = controller.choose_material(&mut session, &target, &material)
+                    {
+                        window.set_detail(error.into());
+                        return;
+                    }
                 } else if let Some(target) = ui.borrow().overlay_material_target.clone() {
                     if let Some(controller) = &ui.borrow().overlay
                         && let Err(error) =
@@ -1368,6 +1380,15 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         None
     };
     ui.borrow_mut().carve_material_target = carve_target;
+    let rope_target = if key == "@rope" {
+        ui.borrow()
+            .rope_placement
+            .as_ref()
+            .map(|controller| controller.material_target(&session))
+    } else {
+        None
+    };
+    ui.borrow_mut().rope_material_target = rope_target;
     ui.borrow_mut().material_for_replace = match key {
         "@replace-source" => Some(false),
         "@replace-target" => Some(true),
@@ -1400,6 +1421,7 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
         || key == "@faces"
         || key == "@overlay"
         || key == "@carve"
+        || key == "@rope"
         || key == "@clip"
         || key == "@primitive"
         || key == "@polygon"
@@ -1425,6 +1447,12 @@ pub(super) fn show_material_window(app: &AppWindow, ui: &SharedUi, key: &str) {
                     controller.window.get_source().to_string()
                 }
             })
+            .unwrap_or_default()
+    } else if key == "@rope" {
+        ui.borrow()
+            .rope_placement
+            .as_ref()
+            .map(|controller| controller.window.get_material().to_string())
             .unwrap_or_default()
     } else if key == "@carve" {
         ui.borrow()

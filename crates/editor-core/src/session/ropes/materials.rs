@@ -17,7 +17,7 @@ const MAX_METADATA_BYTES: usize = 8 * 1024 * 1024;
 const MAX_MOUNTS: usize = 128;
 
 #[derive(Debug)]
-pub(super) struct Assets {
+pub(in crate::session) struct Assets {
     by_material: BTreeMap<String, Asset>,
     by_source: BTreeMap<u32, String>,
     guard: AssetSourceGuard,
@@ -38,7 +38,7 @@ fn observe(
     Ok(asset.map(|asset| asset.bytes().to_vec()))
 }
 
-pub(super) fn prepare(
+pub(in crate::session) fn prepare(
     game: &GameFs,
     preview: &Preview,
     control: &Control,
@@ -99,7 +99,11 @@ pub(super) fn prepare(
 }
 
 impl Assets {
-    pub(super) fn verify_sources(&self, game: &GameFs, control: &Control) -> Result<(), String> {
+    pub(in crate::session) fn verify_sources(
+        &self,
+        game: &GameFs,
+        control: &Control,
+    ) -> Result<(), String> {
         self.guard
             .verify_original_metadata(control, MAX_METADATA_BYTES)
             .map_err(|error| format!("Rope material sources: {error}"))?;
@@ -108,7 +112,7 @@ impl Assets {
             .map_err(|error| format!("Rope material sources: {error}"))
     }
 
-    pub(super) fn bind(
+    pub(in crate::session) fn bind(
         self,
         library: &mut MaterialLibrary,
     ) -> Result<(Prepared, AssetSourceGuard), String> {

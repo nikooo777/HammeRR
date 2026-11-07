@@ -75,6 +75,10 @@ impl Context {
 
 impl Session {
     pub(super) fn viewport_pick_conflict(&self) -> bool {
+        self.rope_surface_picking() || self.viewport_pick_conflict_without_rope()
+    }
+
+    pub(super) fn viewport_pick_conflict_without_rope(&self) -> bool {
         self.transform_pivot_picking()
             || self.overlay_corner_handles_active()
             || self.entity_surface_picking()

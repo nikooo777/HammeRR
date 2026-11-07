@@ -233,7 +233,11 @@ impl Session {
         })
     }
 
-    fn linked_path_names(&self, prefix: &str, count: usize) -> Result<Vec<String>, String> {
+    pub(super) fn linked_path_names(
+        &self,
+        prefix: &str,
+        count: usize,
+    ) -> Result<Vec<String>, String> {
         if prefix.is_empty()
             || prefix.len() > MAX_PREFIX_BYTES
             || !prefix.bytes().enumerate().all(|(index, byte)| {

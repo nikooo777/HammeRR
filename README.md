@@ -108,8 +108,8 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 
 | [Water and slime](docs/water.md) | [Ropes](docs/ropes.md) |
 | --- | --- |
-| ![A compiled reflecting pool](docs/images/water-native.png) | ![Textured cable, rope and chain spans](docs/images/rope-span.png) |
-| Build water and opaque slime pools with captured reflections and fluid physics. | Preview linked rope motion, materials and supported world contact. |
+| ![A compiled reflecting pool](docs/images/water-native.png) | ![A textured rope placed between two surfaces](docs/images/rope-placement.png) |
+| Build water and opaque slime pools with captured reflections and fluid physics. | Place ropes between surfaces and preview their motion, materials and world contact. |
 
 | [Fog](docs/fog.md) | [Spatial guides](docs/measurements.md) |
 | --- | --- |

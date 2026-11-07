@@ -136,6 +136,9 @@ impl DocumentWindow {
                 .try_borrow_mut()
                 .map_err(|_| "The document view is busy; retry switching tabs")?;
             release_pane_input(app, &mut ui);
+            if let Some(controller) = &ui.rope_placement {
+                controller.suspend();
+            }
             if let Some(timer) = &self.frame_timer {
                 timer.stop();
             }
@@ -241,6 +244,9 @@ impl Drop for DocumentWindow {
 
 impl Ui {
     fn hide_children(&self, errors: &mut Vec<String>) {
+        if let Some(controller) = &self.rope_placement {
+            controller.suspend();
+        }
         if let Some(pickers) = &self.property_pickers {
             pickers.hide_windows(errors);
         }
@@ -302,6 +308,7 @@ impl Ui {
             particles,
             placement,
             entity_placement,
+            rope_placement,
             entity_gallery,
             repeat,
             clipboard,

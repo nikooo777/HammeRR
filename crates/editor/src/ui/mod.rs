@@ -124,6 +124,7 @@ struct Ui {
     particles: Option<particles_ui::Controller>,
     placement: Option<placement_ui::Controller>,
     entity_placement: Option<entity_placement_ui::Controller>,
+    rope_placement: Option<rope_placement_ui::Controller>,
     repeat: Option<repeat_ui::Controller>,
     clipboard: Option<clipboard_ui::Controller>,
     object_groups: Option<groups_ui::Controller>,
@@ -177,6 +178,7 @@ struct Ui {
     extrusion_material_target: Option<(Option<u64>, u64)>,
     primitive_material_target: Option<(Option<u64>, u64)>,
     carve_material_target: Option<String>,
+    rope_material_target: Option<String>,
     seen_definitions: u64,
     seen_definitions_status: u64,
     seen_materials: u64,
@@ -276,6 +278,7 @@ impl Ui {
             particles: None,
             placement: None,
             entity_placement: None,
+            rope_placement: None,
             repeat: None,
             clipboard: None,
             object_groups: None,
@@ -329,6 +332,7 @@ impl Ui {
             extrusion_material_target: None,
             primitive_material_target: None,
             carve_material_target: None,
+            rope_material_target: None,
             seen_definitions: 0,
             seen_definitions_status: 0,
             seen_materials: 0,
@@ -1139,6 +1143,41 @@ fn create_document_window(
             .show(&mut lock(&ui.session), aspect)
         {
             app.unwrap().set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_place_rope, |app| {
+        let app = app.unwrap();
+        if ui.borrow().rope_placement.is_none() {
+            match rope_placement_ui::Controller::new_with_access(&file_access(&ui)) {
+                Ok(controller) => {
+                    controller.window.on_browse_material({
+                        let browse = material_browser(app.as_weak(), Rc::downgrade(&ui));
+                        move || browse("@rope")
+                    });
+                    controller.window.on_applied({
+                        let app = app.as_weak();
+                        move || {
+                            if let Some(app) = app.upgrade() {
+                                app.set_message("Rope placed. View → Rope preview… → Enable rope preview, then Prepare preview shows the committed span.".into());
+                            }
+                        }
+                    });
+                    ui.borrow_mut().rope_placement = Some(controller);
+                }
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let state = ui.borrow();
+        let controller = state.rope_placement.as_ref().unwrap();
+        controller.set_viewport((
+            app.get_viewport_width().round().max(1.0) as u32,
+            app.get_viewport_height().round().max(1.0) as u32,
+        ));
+        if let Err(error) = controller.show(&lock(&state.session)) {
+            app.set_message(error.to_string().into());
         }
     });
     root_callback!(app, ui, on_inspect_rope_preview, |app| {
@@ -2505,6 +2544,43 @@ fn create_document_window(
                             app.set_message(error.into());
                             let _ = controller.show(&session);
                         }
+                    }
+                    refresh_interaction(&app, &session);
+                }
+                return;
+            }
+            let rope_report = lock(&ui.session).get_rope_placement();
+            let rope_picking = !rope_report["draft"]["picking_endpoint"].is_null();
+            if button == 0 && rope_picking {
+                if down {
+                    ui.pick_release = true;
+                    if rope_report["draft"]["owner"] != Actor::User.label() {
+                        app.set_message("Review shared placement in Place rope… before picking endpoints.".into());
+                        return;
+                    }
+                    let Some(controller) = &ui.rope_placement else {
+                        app.set_message("Open Place rope… and review shared placement before picking endpoints.".into());
+                        return;
+                    };
+                    let mut session = lock(&ui.session);
+                    let result = if session.camera() != ui.viewport.camera {
+                        Err("Viewport camera changed; choose Pick start or Pick end again".into())
+                    } else {
+                        controller.pick_at_pixel(
+                            &mut session,
+                            DVec2::new(f64::from(x), f64::from(y)),
+                            (
+                                viewport_size.0.round().max(1.0) as u32,
+                                viewport_size.1.round().max(1.0) as u32,
+                            ),
+                        )
+                    };
+                    if let Err(error) = result {
+                        controller.report_error(&session, &error);
+                        app.set_message(error.into());
+                        let _ = controller.window.show();
+                    } else {
+                        app.set_message("Rope endpoint picked. Review the pending span, then Apply rope.".into());
                     }
                     refresh_interaction(&app, &session);
                 }
@@ -3968,6 +4044,8 @@ fn create_document_window(
 
                 let entity_picking =
                     lock(&ui.session).get_entity_placement()["draft"]["picking"] == true;
+                let rope_picking =
+                    !lock(&ui.session).get_rope_placement()["draft"]["picking_endpoint"].is_null();
                 let measurement_picking = lock(&ui.session).measurement_picking();
                 if let Some(controller) = &ui.overlay {
                     controller.set_viewport((
@@ -3996,12 +4074,20 @@ fn create_document_window(
                 app.set_surface_picking(
                     lock(&ui.session).surface_placement()["picking"] == true
                         || entity_picking
+                        || rope_picking
                         || measurement_picking
                         || path_picking,
                 );
                 if let Some(controller) = &ui.entity_placement
                     && controller.window.window().is_visible()
                 {
+                    controller.refresh(&lock(&ui.session));
+                }
+                if let Some(controller) = &ui.rope_placement {
+                    controller.set_viewport((
+                        app.get_viewport_width().round().max(1.0) as u32,
+                        app.get_viewport_height().round().max(1.0) as u32,
+                    ));
                     controller.refresh(&lock(&ui.session));
                 }
                 app.set_terrain_triangle_picking(

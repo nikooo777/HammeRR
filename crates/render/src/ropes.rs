@@ -121,6 +121,10 @@ pub fn is_rope(entity: &Entity) -> bool {
     })
 }
 
+pub fn settings(entity: &Entity) -> Result<SpanSettings, String> {
+    settings::parse(entity)
+}
+
 impl Link {
     pub fn bounds(&self) -> (DVec3, DVec3) {
         let (mins, maxs) = self.points.iter().fold(

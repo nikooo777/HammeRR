@@ -48,6 +48,7 @@ impl Session {
         self.ensure_not_closing()?;
         self.inspection_viewport_ready("selecting a compiled source")?;
         if self.geometry.entity_placement.has_draft()
+            || self.geometry.rope_placement.has_draft()
             || self.geometry.instance_collapse.worker.busy()
             || !std::ptr::eq(self.render_document(), &self.document)
         {

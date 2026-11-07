@@ -88,6 +88,7 @@ impl Session {
                 "entity_placement",
                 self.geometry.entity_placement.close_draft(),
             ),
+            ("rope_placement", self.geometry.rope_placement.close_draft()),
             ("primitive", self.geometry.primitives.close_draft()),
             ("repeat", self.geometry.repeat.close_draft()),
             ("linked_path", self.geometry.linked_path.close_draft()),

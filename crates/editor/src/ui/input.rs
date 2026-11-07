@@ -554,6 +554,30 @@ pub(super) fn cancel_surface_pick(app: &AppWindow, ui: &SharedUi) -> bool {
         }
         return true;
     }
+    let rope_report = session.get_rope_placement();
+    if !rope_report["draft"]["picking_endpoint"].is_null() {
+        if rope_report["draft"]["owner"] != Actor::User.label() {
+            app.set_message(
+                "Review shared placement in Place rope… before cancelling endpoint picking.".into(),
+            );
+            return true;
+        }
+        let result = if let Some(controller) = &ui.borrow().rope_placement {
+            controller.cancel_pick(&mut session)
+        } else {
+            session
+                .cancel_rope_placement_pick(
+                    Actor::User,
+                    rope_report["draft"]["token"].as_u64().unwrap(),
+                )
+                .map(|_| ())
+        };
+        match result {
+            Ok(()) => app.set_surface_picking(false),
+            Err(error) => app.set_message(error.into()),
+        }
+        return true;
+    }
     let entity_report = session.get_entity_placement();
     if entity_report["draft"]["picking"] == true {
         if entity_report["draft"]["owner"] != Actor::User.label() {

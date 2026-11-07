@@ -5,6 +5,7 @@ pub(super) struct State {
     pub(super) instance_collapse: instance_collapse::State,
     pub(super) entity_gallery: entity_gallery::State,
     pub(super) entity_placement: entity_placement::State,
+    pub(super) rope_placement: rope_placement::State,
     pub(super) primitives: primitives::State,
     pub(super) repeat: repeat::State,
     pub(super) linked_path: linked_path::State,
@@ -23,6 +24,7 @@ impl State {
     pub(super) fn document<'a>(&'a self, committed: &'a Document) -> &'a Document {
         self.instance_collapse
             .document()
+            .or_else(|| self.rope_placement.document())
             .or_else(|| self.entity_placement.document())
             .or_else(|| self.entity_gallery.document())
             .or_else(|| {
@@ -95,6 +97,7 @@ impl State {
 pub(super) enum Kind {
     InstanceCollapse,
     EntityPlacement,
+    RopePlacement,
     EntityGallery,
     Paste,
     Repeat,
@@ -165,6 +168,9 @@ impl Session {
         }
         if !retained.contains(&Kind::EntityPlacement) {
             self.clear_entity_placement();
+        }
+        if !retained.contains(&Kind::RopePlacement) {
+            self.clear_rope_placement();
         }
         if !retained.contains(&Kind::Paste) {
             self.clear_paste_preview();

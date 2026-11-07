@@ -1,0 +1,131 @@
+import { Theme, FieldRow, SectionHeader } from "kit.slint";
+import { Button, LineEdit, ScrollView, Slider, SpinBox } from "widgets.slint";
+
+export component RopePlacementWindow inherits Window {
+    title: "Place rope - HammeRR";
+    background: Theme.panel;
+    preferred-width: 560px;
+    preferred-height: 470px;
+    min-width: 360px;
+    min-height: 390px;
+
+    in-out property <string> material: "cable/rope";
+    in-out property <string> slack: "150";
+    in-out property <string> rope-width: "2";
+    in property <string> start-position: "Not picked";
+    in property <string> end-position: "Not picked";
+    in property <string> summary;
+    in property <string> message;
+    in property <bool> message-error;
+    in property <bool> ready;
+    in property <bool> owned: true;
+    in property <bool> shared-draft;
+    callback settings-changed();
+    callback settings-edited();
+    callback browse-material();
+    callback pick-start();
+    callback pick-end();
+    callback review();
+    callback apply();
+    callback applied();
+    callback cancel();
+
+    forward-focus: keys;
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.cancel(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            HorizontalLayout {
+                spacing: Theme.space;
+                Text { text: "Place rope"; font-size: Theme.font-display; font-weight: 600; horizontal-stretch: 1; }
+                if root.shared-draft: Text { text: "Agent draft"; color: Theme.agent; vertical-alignment: center; }
+            }
+            ScrollView {
+                vertical-stretch: 1;
+                content-width: self.width;
+                VerticalLayout {
+                    alignment: start;
+                    spacing: Theme.space;
+                    padding-right: Theme.space-lg;
+                    FieldRow {
+                        inset: false;
+                        label: "Material";
+                        label-width: 76px;
+                        LineEdit {
+                            text <=> root.material;
+                            enabled: root.owned;
+                            placeholder-text: "Rope material";
+                            edited => { root.settings-edited(); }
+                            accepted => { root.settings-changed(); }
+                        }
+                        Button { text: "Browse…"; width: 88px; enabled: root.owned; clicked => { root.browse-material(); } }
+                    }
+                    FieldRow {
+                        inset: false;
+                        label: "Slack";
+                        label-width: 76px;
+                        SpinBox {
+                            value: round(root.slack.to-float());
+                            minimum: -2048;
+                            maximum: 2047;
+                            enabled: root.owned;
+                            accessible-label: "Slack in native units";
+                            edited(value) => { root.slack = "\{value}"; root.settings-changed(); }
+                        }
+                        Text { text: "units"; vertical-alignment: center; color: Theme.text-muted; }
+                    }
+                    Text { text: "100 gives no extra length. Higher values add slack."; wrap: word-wrap; color: Theme.text-muted; }
+                    FieldRow {
+                        inset: false;
+                        label: "Width";
+                        label-width: 76px;
+                        Slider {
+                            minimum: 1;
+                            maximum: 64;
+                            step: 0.25;
+                            value: root.rope-width.to-float();
+                            enabled: root.owned;
+                            accessible-label: "Rope width in units";
+                            changed(value) => { root.rope-width = "\{value}"; root.settings-edited(); }
+                            released(value) => { root.rope-width = "\{value}"; root.settings-changed(); }
+                        }
+                        LineEdit {
+                            width: 72px;
+                            text <=> root.rope-width;
+                            enabled: root.owned;
+                            input-type: decimal;
+                            accessible-label: "Precise rope width in units";
+                            edited => { root.settings-edited(); }
+                            accepted => { root.settings-changed(); }
+                        }
+                        Text { text: "units"; vertical-alignment: center; color: Theme.text-muted; }
+                    }
+                    SectionHeader { text: "Endpoints"; inset: false; collapsible: false; }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Pick start"; width: 108px; enabled: root.owned; clicked => { root.pick-start(); } }
+                        Text { text: root.start-position; wrap: word-wrap; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Pick end"; width: 108px; enabled: root.owned; clicked => { root.pick-end(); } }
+                        Text { text: root.end-position; wrap: word-wrap; color: Theme.text; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                    Text { text: "Pick visible surfaces in the main viewport. Endpoints stay at fixed world positions."; wrap: word-wrap; color: Theme.text-muted; }
+                    if root.summary != "": Text { text: root.summary; wrap: word-wrap; color: Theme.text; }
+                    if root.message != "": Text { text: root.message; wrap: word-wrap; color: root.message-error ? Theme.warning : Theme.text-muted; }
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space;
+                if root.shared-draft: Button { text: "Review shared placement"; primary: true; clicked => { root.review(); } }
+                if root.owned: Button { text: "Apply rope"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: root.shared-draft ? "Close" : "Cancel"; clicked => { root.cancel(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+    }
+}

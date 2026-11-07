@@ -93,6 +93,7 @@ impl Session {
             || self.block_preview.is_some()
             || self.clip_drag.is_some()
             || self.geometry.entity_placement.has_draft()
+            || self.geometry.rope_placement.has_draft()
             || self.geometry.instance_collapse.worker.busy()
             || !std::ptr::eq(self.render_document(), &self.document)
         {

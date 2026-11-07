@@ -439,6 +439,7 @@ impl Session {
     }
 
     pub fn ensure_entity_placement_resolved(&self) -> Result<(), String> {
+        self.ensure_rope_placement_resolved()?;
         if self.geometry.entity_placement.draft.is_some() {
             return Err(
                 "Apply or cancel entity placement before saving, compiling or playing".into(),

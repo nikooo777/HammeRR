@@ -16,6 +16,27 @@ impl SceneMesh {
         selected: &HashSet<ObjectId>,
         selection_tint: bool,
     ) -> Result<(), String> {
+        self.append_rope(preview, appearance, selected, selection_tint, false)
+    }
+
+    pub fn append_pending_rope_preview(
+        &mut self,
+        preview: &Preview,
+        appearance: &Prepared,
+        selected: &HashSet<ObjectId>,
+        selection_tint: bool,
+    ) -> Result<(), String> {
+        self.append_rope(preview, appearance, selected, selection_tint, true)
+    }
+
+    fn append_rope(
+        &mut self,
+        preview: &Preview,
+        appearance: &Prepared,
+        selected: &HashSet<ObjectId>,
+        selection_tint: bool,
+        pending: bool,
+    ) -> Result<(), String> {
         if preview.links.len() > crate::ropes::MAX_LINKS || !appearance.issues.is_empty() {
             return Err(
                 "Rope appearance snapshot exceeds its limits or has unavailable materials".into(),
@@ -76,13 +97,16 @@ impl SceneMesh {
         let wire_count = vertex_count
             .checked_mul(2)
             .ok_or("Rope wireframe line count overflow")?;
-        if self
-            .rope_wire_lines
+        let (wire_lines, selection_lines) = if pending {
+            (&mut self.wire_lines, &mut self.lines)
+        } else {
+            (&mut self.rope_wire_lines, &mut self.rope_lines)
+        };
+        if wire_lines
             .len()
             .checked_add(wire_count)
             .is_none_or(|count| count > u32::MAX as usize)
-            || self
-                .rope_lines
+            || selection_lines
                 .len()
                 .checked_add(line_count)
                 .is_none_or(|count| count > u32::MAX as usize)
@@ -98,10 +122,10 @@ impl SceneMesh {
         self.batches
             .try_reserve(preview.links.len())
             .map_err(|_| "Rope batch allocation failed")?;
-        self.rope_lines
+        selection_lines
             .try_reserve(line_count)
             .map_err(|_| "Rope selection allocation failed")?;
-        self.rope_wire_lines
+        wire_lines
             .try_reserve(wire_count)
             .map_err(|_| "Rope wireframe allocation failed")?;
         for link in &preview.links {
@@ -116,7 +140,7 @@ impl SceneMesh {
             let first_index = self.indices.len() as u32;
             for triangle in link.mesh_triangles() {
                 for [a, b] in [[0, 1], [1, 2], [2, 0]] {
-                    self.rope_wire_lines.extend([a, b].map(|index| LineVertex {
+                    wire_lines.extend([a, b].map(|index| LineVertex {
                         position: triangle[index].position.as_vec3().to_array(),
                         color: WIRE_EDGE,
                     }));
@@ -150,18 +174,17 @@ impl SceneMesh {
                     material: material.material,
                     first_index,
                     index_count,
-                    rope: true,
+                    rope: !pending,
                     model_translucent: material.report.translucent || material.report.opacity < 1.0,
                 });
             }
             if is_selected {
-                self.rope_lines
-                    .extend(link.points.windows(2).flat_map(|pair| {
-                        pair.iter().map(|point| LineVertex {
-                            position: point.as_vec3().to_array(),
-                            color: SELECTED_EDGE,
-                        })
-                    }));
+                selection_lines.extend(link.points.windows(2).flat_map(|pair| {
+                    pair.iter().map(|point| LineVertex {
+                        position: point.as_vec3().to_array(),
+                        color: SELECTED_EDGE,
+                    })
+                }));
             }
         }
         Ok(())

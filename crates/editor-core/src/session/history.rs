@@ -145,6 +145,7 @@ impl Session {
             );
         }
         if self.geometry.entity_placement.has_draft()
+            || self.geometry.rope_placement.has_draft()
             || self.measurements.has_draft()
             || !std::ptr::eq(self.render_document(), &self.document)
             || self.block_preview.is_some()

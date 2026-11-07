@@ -91,6 +91,21 @@ cutoff; an omitted or zero reference uses 0.7.
 
 ![Miniature crates and sky remain visible through a metal grate](images/miniature-cutout.png)
 
+## Add glass to the miniature
+
+1. Create a world or `func_detail` brush inside the sealed miniature.
+2. Click **Faces** and [apply](textures.md#apply-a-material)
+   `glass/glasswindow001b` to the front face. Use `tools/toolsnodraw` on the other
+   faces for a single glass layer.
+3. Click **Prepare 3D sky** again.
+4. Enable **Enable 3D sky preview**.
+
+The glass can show other miniature geometry and the 2D sky. It uses the texture's
+alpha, with miniature fog before blending and HDR exposure after composition.
+Glass does not seal the region.
+
+![Two glass panes over miniature crates, a grate and the background sky](images/miniature-glass.png)
+
 ## Preview miniature fog
 
 1. Select the preview's `sky_camera`. In **Inspector**, enable **Advanced properties**.
@@ -153,8 +168,11 @@ The game must enable full HDR to display its HDR channel.
   conservative bound can require more clearance than the visible mesh. Changed
   model or material sources clear readiness; prepare again.
 - 3D sky uses one base texture. Flat world/detail surfaces can use plain cutout
-  materials. Terrain and models remain opaque. Transparency, cutout Patch
-  materials, normal maps and detail layers are unsupported.
+  or translucent materials. Terrain and models remain opaque. Alpha Patch
+  materials, additive or modulated coverage, normal maps and detail layers
+  are unsupported.
+- Translucent batches sort by depth. Intersecting glass surfaces can blend in
+  the wrong order; native BSP transparency ordering is unavailable.
 - Miniature scale is an integer from 1 to 128. Camera angles do not rotate the miniature preview.
 - Terrain uses authored fine geometry. Native LOD appearance, blend materials
   and partial-patch clipping are unavailable.

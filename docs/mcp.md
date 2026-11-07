@@ -1652,9 +1652,20 @@ Flat world/detail surfaces also support plain single-base cutouts. Only
 `LightmappedGeneric` and `UnlitGeneric` with `$alphatest 1` qualify. The shared
 reference parser uses native float32 settings and an 8-bit cutoff; missing or
 received-zero references use 0.7. Invalid and positive subnormal references
-report errors. Terrain/model cutouts, cutout Patch materials and translucency
-remain unavailable. Cutouts do not seal the component. Changed flat assets use
+report errors. Terrain/model alpha and alpha Patch materials remain unavailable.
+Cutouts do not seal the component. Changed flat assets use
 the existing explicit material/content reload and Prepare workflow.
+
+Flat world/detail also accepts plain single-base `$translucent 1` materials,
+using texture alpha. Alpha testing, additive coverage, modulation and proxies
+cannot be combined with this profile. Opaque/cutout batches draw first; glass
+uses depth tests without depth writes, followed by the existing premultiplied
+composite. Fog precedes blending; HDR exposure follows linear composition.
+`stats.geometry.translucent_surfaces` counts emitted glass fragments;
+`draw_metadata_bytes` includes retained and temporary ordering storage.
+`limits.flat_translucent` reports the profile and ordering policy. Sorting uses
+stable batch-center depth in miniature coordinates; intersecting or cyclic
+surfaces can blend incorrectly. Glass does not seal the component.
 
 In Perspective Textured views, an enabled ready miniature automatically uses
 its camera's static fog when `fogenable` is true. World fog enable,

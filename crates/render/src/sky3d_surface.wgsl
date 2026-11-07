@@ -31,5 +31,6 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     let diffuse = 0.55 + 0.45 * clamp(dot(normalize(in.normal), globals.light_dir.xyz) * 0.5 + 0.5, 0.0, 1.0);
     let shade = select(diffuse, 1.0, material.helper.y > 0.5);
-    return vec4<f32>(apply_fog(in.world_position, texel.rgb * shade), 1.0);
+    let alpha = select(1.0, texel.a, material.flags.z > 0.5);
+    return vec4<f32>(apply_fog(in.world_position, texel.rgb * shade), alpha);
 }

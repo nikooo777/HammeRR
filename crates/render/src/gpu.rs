@@ -437,9 +437,15 @@ fn translucent_order<'a>(
         return std::borrow::Cow::Borrowed(batches);
     }
     let mut ordered = batches.to_vec();
-    let depth = |draw: &DrawBatch| (draw.center - camera.position).dot(camera.forward());
-    ordered.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+    sort_back_to_front(&mut ordered, camera, |draw| draw.center);
     std::borrow::Cow::Owned(ordered)
+}
+
+fn sort_back_to_front<T>(draws: &mut [T], camera: &Camera, center: impl Fn(&T) -> glam::Vec3) {
+    let position = camera.position;
+    let forward = camera.forward();
+    let depth = |draw: &T| (center(draw) - position).dot(forward);
+    draws.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
 }
 
 #[repr(C)]
@@ -498,6 +504,7 @@ pub struct GpuScene {
 struct ScenePipelines {
     sky3d_pipeline: wgpu::RenderPipeline,
     sky3d_surface_pipeline: wgpu::RenderPipeline,
+    sky3d_translucent_pipeline: wgpu::RenderPipeline,
     sky3d_error_pipeline: wgpu::RenderPipeline,
     opaque_pipeline: wgpu::RenderPipeline,
     translucent_pipeline: wgpu::RenderPipeline,
@@ -775,6 +782,14 @@ impl Renderer {
                 &sky3d_surface_shader,
                 format,
             );
+            let sky3d_translucent_pipeline = pipeline(
+                "translucent 3D sky surfaces",
+                Some(wgpu::BlendState::ALPHA_BLENDING),
+                false,
+                &layout,
+                &sky3d_surface_shader,
+                format,
+            );
             let sky_pipeline = pipeline(
                 "2D sky",
                 None,
@@ -904,6 +919,7 @@ impl Renderer {
             ScenePipelines {
                 sky3d_pipeline,
                 sky3d_surface_pipeline,
+                sky3d_translucent_pipeline,
                 sky3d_error_pipeline,
                 opaque_pipeline,
                 translucent_pipeline,

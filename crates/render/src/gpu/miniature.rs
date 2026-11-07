@@ -41,7 +41,7 @@ pub(super) struct Miniature {
     fog: crate::fog::Profile,
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
-    batches: Vec<crate::scene::Batch>,
+    batches: Vec<sky3d::Draw>,
     materials: Vec<wgpu::BindGroup>,
     globals: wgpu::Buffer,
     binding: wgpu::BindGroup,
@@ -494,15 +494,11 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(if hdr {
-            &self
-                .hdr_pipelines
-                .as_ref()
-                .map_err(Clone::clone)?
-                .sky3d_surface_pipeline
+        let pipelines = if hdr {
+            self.hdr_pipelines.as_ref().map_err(Clone::clone)?
         } else {
-            &self.legacy_pipelines.sky3d_surface_pipeline
-        });
+            &self.legacy_pipelines
+        };
         pass.set_viewport(
             0.0,
             0.0,
@@ -515,7 +511,26 @@ impl Renderer {
         pass.set_bind_group(0, &scene.binding, &[]);
         pass.set_vertex_buffer(0, scene.vertices.slice(..));
         pass.set_index_buffer(scene.indices.slice(..), wgpu::IndexFormat::Uint32);
-        for batch in &scene.batches {
+        let mut translucent = Vec::new();
+        for draw in scene.batches.iter().filter(|draw| draw.translucent) {
+            if translucent.is_empty() {
+                translucent.reserve_exact(scene.batches.len());
+            }
+            translucent.push(draw);
+        }
+        super::sort_back_to_front(&mut translucent, &miniature_camera, |draw| draw.center);
+        for draw in scene
+            .batches
+            .iter()
+            .filter(|draw| !draw.translucent)
+            .chain(translucent)
+        {
+            pass.set_pipeline(if draw.translucent {
+                &pipelines.sky3d_translucent_pipeline
+            } else {
+                &pipelines.sky3d_surface_pipeline
+            });
+            let batch = draw.batch;
             pass.set_bind_group(1, &scene.materials[batch.material], &[]);
             pass.draw_indexed(
                 batch.first_index..batch.first_index + batch.index_count,

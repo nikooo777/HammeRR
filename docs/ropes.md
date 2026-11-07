@@ -149,6 +149,7 @@ ordinary endpoint-helper bounds.
 - Mounted static `Cable` and `UnlitGeneric` base textures support cutout and
   translucent alpha on an editor tube. Cable bump mapping, native lighting,
   billboard antialiasing and optional `_back` materials are not rendered.
+  Cutout tube display requires a 0.5 reference; other cutoffs report unavailable.
   Unsupported or animated materials report unavailable.
 - No runtime inputs, breakage, animated parents, player interaction or native
   frame/lighting/pixel match. Preview controls preserve map bytes, selection,

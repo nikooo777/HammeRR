@@ -178,7 +178,11 @@ fn load_static_prop_inner(
         } else {
             Coverage::Opaque
         },
-        alpha_test_reference: 0.5,
+        alpha_test_reference: if material.get("$alphatest") == Some("1") {
+            f32::from(material.alpha_test_reference_byte()?) / f32::from(u8::MAX)
+        } else {
+            0.5
+        },
         nocull: material
             .get("$nocull")
             .and_then(|value| value.trim().parse::<f64>().ok())
@@ -560,10 +564,7 @@ fn alpha_parameters(material: &vmt::Material, kind: Kind) -> Result<(Coverage, f
     }
     match (alpha_test, translucent) {
         (1.0, 0.0) => {
-            let reference = material.alpha_test_reference()?;
-            let minimum = (0..=u8::MAX)
-                .find(|&alpha| f64::from(alpha) / f64::from(u8::MAX) >= reference)
-                .ok_or("Static alpha-test reference has no passing alpha byte")?;
+            let minimum = material.alpha_test_reference_byte()?;
             Ok((Coverage::AlphaTest, f32::from(minimum) / f32::from(u8::MAX)))
         }
         (0.0, 1.0) if material.get("$alphatestreference").is_none() => {

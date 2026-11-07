@@ -30,6 +30,8 @@ Use a static base texture with one of these material forms:
 
 Omitted `$translucent` and `$alphatest` default to zero; omitted `$alpha` defaults to one.
 The same checked base-texture transform and clamp/repeat addressing apply to both forms.
+Cutouts use the checked CS:S 8-bit alpha reference. An omitted or zero
+`$alphatestreference` uses 0.7; explicit values must be finite from 0 to 1.
 Terrain uses its base-grid texture coordinates. Painted terrain blend values do not control opacity.
 
 Coverage adds across brush, terrain, brush-model and requested prop casters, up to full blocking.

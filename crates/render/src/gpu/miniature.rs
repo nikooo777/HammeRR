@@ -381,6 +381,7 @@ impl Renderer {
                 material.unlit,
                 &self.sampler,
                 texture,
+                material.alpha_reference,
             ));
         }
         let buffer = |label, bytes: &[u8], usage| {

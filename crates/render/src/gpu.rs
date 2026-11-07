@@ -1326,6 +1326,7 @@ impl Renderer {
                     true,
                     &self.icon_sampler,
                     texture,
+                    None,
                 );
                 self.reference_image_bindings
                     .insert(identity.clone(), binding);
@@ -1573,7 +1574,7 @@ impl Renderer {
             None if untextured => white.clone(),
             None => missing.clone(),
         };
-        self.material_bind_group_with_base(ctx, info, editor, sampler, base)
+        self.material_bind_group_with_base(ctx, info, editor, sampler, base, None)
     }
 
     fn material_bind_group_with_base(
@@ -1583,6 +1584,7 @@ impl Renderer {
         editor: bool,
         sampler: &wgpu::Sampler,
         base: wgpu::Texture,
+        alpha_reference: Option<f32>,
     ) -> wgpu::BindGroup {
         let white = &self.white;
         let untextured = info.base.is_none() && !info.missing;
@@ -1599,7 +1601,7 @@ impl Renderer {
             flag(info.blend.is_some()),
             flag(info.translucent),
             flag(untextured),
-            0.0,
+            alpha_reference.unwrap_or(0.5),
             flag(editor || info.sky || info.reference),
             flag(normal_asset.is_some()),
             flag(surface_shading_material(info, editor)),

@@ -1648,6 +1648,14 @@ reports actual entity/model/skin rows, with total and truncation fields.
 `source_owners` includes model entities; `source_sides` retains brush/terrain sides. Repeated props share one model preparation. A changed
 excluded model/material or a new shadowing provider invalidates readiness.
 
+Flat world/detail surfaces also support plain single-base cutouts. Only
+`LightmappedGeneric` and `UnlitGeneric` with `$alphatest 1` qualify. The shared
+reference parser uses native float32 settings and an 8-bit cutoff; missing or
+received-zero references use 0.7. Invalid and positive subnormal references
+report errors. Terrain/model cutouts, cutout Patch materials and translucency
+remain unavailable. Cutouts do not seal the component. Changed flat assets use
+the existing explicit material/content reload and Prepare workflow.
+
 In Perspective Textured views, an enabled ready miniature automatically uses
 its camera's static fog when `fogenable` is true. World fog enable,
 controller selection, channel, input events, time and `farz` remain independent.

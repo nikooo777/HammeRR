@@ -655,7 +655,6 @@ fn validate_material(ctx: &GpuContext, source: &Material) -> Result<usize, Strin
                 || source.detail_alpha_mask)
         || !source.alpha_test_reference.is_finite()
         || !(0.0..=1.0).contains(&source.alpha_test_reference)
-        || source.lighting == MaterialLighting::Vertex && source.alpha_test_reference != 0.5
         || !face_alpha
             && source
                 .diffuse

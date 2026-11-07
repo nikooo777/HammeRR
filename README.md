@@ -111,10 +111,10 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | ![A compiled reflecting pool](docs/images/water-native.png) | ![A textured rope placed between two surfaces](docs/images/rope-placement.png) |
 | Build water and opaque slime pools with captured reflections and fluid physics. | Place ropes between surfaces and preview their motion, materials and world contact. |
 
-| [3D sky terrain](docs/sky.md#add-terrain-to-the-miniature) | [3D sky models](docs/sky.md#add-fixed-models-to-the-miniature) |
+| [3D sky terrain](docs/sky.md#add-terrain-to-the-miniature) | [3D sky models and cutouts](docs/sky.md#add-fixed-models-to-the-miniature) |
 | --- | --- |
-| ![A miniature hill fills the sky behind foreground props](docs/images/miniature-terrain.png) | ![Miniature crate columns appear behind the foreground courtyard](docs/images/miniature-props.png) |
-| Preview whole terrain patches with their authored mapping and smooth normals. | Preview whole fixed models with selected skins and miniature camera fog. |
+| ![A miniature hill fills the sky behind foreground props](docs/images/miniature-terrain.png) | ![Miniature crate columns and sky show through a grate](docs/images/miniature-cutout.png) |
+| Preview whole terrain patches with their authored mapping and smooth normals. | Preview fixed models and grates with selected skins and miniature camera fog. |
 
 | [Fog](docs/fog.md) | [Spatial guides](docs/measurements.md) |
 | --- | --- |

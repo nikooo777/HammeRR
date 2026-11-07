@@ -77,6 +77,20 @@ Their materials must be opaque, single-base `VertexLitGeneric`.
 
 ![Two miniature crate columns with different skins and a rotated top crate](images/miniature-props.png)
 
+## Add a cutout fence or grate
+
+1. Keep opaque brushes around the miniature to seal it.
+2. Create a world brush or `func_detail` brush for the fence.
+3. Apply a supported plain `LightmappedGeneric` or `UnlitGeneric` material with
+   `$alphatest 1`, such as `metal/metalgrate001a`.
+4. Click **Prepare 3D sky** again.
+
+Openings show other miniature geometry and the 2D sky behind it. A cutout brush
+does not seal the region. The checked alpha reference uses the native 8-bit
+cutoff; an omitted or zero reference uses 0.7.
+
+![Miniature crates and sky remain visible through a metal grate](images/miniature-cutout.png)
+
 ## Preview miniature fog
 
 1. Select the preview's `sky_camera`. In **Inspector**, enable **Advanced properties**.
@@ -138,7 +152,9 @@ The game must enable full HDR to display its HDR channel.
   checks all draw LODs. Uncertain or partial contact stops preparation. The
   conservative bound can require more clearance than the visible mesh. Changed
   model or material sources clear readiness; prepare again.
-- 3D sky uses opaque materials with one base texture. Cutouts, transparency, normal maps and detail layers are unsupported.
+- 3D sky uses one base texture. Flat world/detail surfaces can use plain cutout
+  materials. Terrain and models remain opaque. Transparency, cutout Patch
+  materials, normal maps and detail layers are unsupported.
 - Miniature scale is an integer from 1 to 128. Camera angles do not rotate the miniature preview.
 - Terrain uses authored fine geometry. Native LOD appearance, blend materials
   and partial-patch clipping are unavailable.

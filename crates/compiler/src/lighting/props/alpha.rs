@@ -452,7 +452,7 @@ fn parameters(material: &vmt::Material, brush: bool) -> Result<Option<Parameters
     if scalar(material, "$frame", 0.0)? != 0.0 {
         return Err("nonzero $frame is unsupported for texture shadows".into());
     }
-    let reference = material.alpha_test_reference()?;
+    let reference = f64::from(material.alpha_test_reference_byte()?) / f64::from(u8::MAX);
     let transform = transform(material.get("$basetexturetransform"))?;
     let path = material
         .get("$basetexture")

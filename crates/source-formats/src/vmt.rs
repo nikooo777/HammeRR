@@ -169,21 +169,24 @@ impl Material {
     }
 
     pub fn alpha_test_reference(&self) -> Result<f64, String> {
-        let Some(value) = self.get("$alphatestreference") else {
-            return Ok(if self.shader == "unlitgeneric" {
-                0.7
-            } else {
-                0.5
-            });
-        };
-        let reference = value
-            .trim()
-            .parse::<f64>()
-            .map_err(|_| "invalid $alphatestreference")?;
+        let reference = self.get("$alphatestreference").map_or(Ok(0.0), |value| {
+            value
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| "invalid $alphatestreference")
+        })?;
         if !reference.is_finite() || !(0.0..=1.0).contains(&reference) {
             return Err("$alphatestreference must be finite and between zero and one".into());
         }
-        Ok(if reference == 0.0 { 0.5 } else { reference })
+        let reference = reference as f32;
+        if reference.is_subnormal() {
+            return Err("Positive subnormal float32 $alphatestreference is unsupported".into());
+        }
+        Ok(f64::from(if reference == 0.0 { 0.7 } else { reference }))
+    }
+
+    pub fn alpha_test_reference_byte(&self) -> Result<u8, String> {
+        Ok((self.alpha_test_reference()? as f32 * f32::from(u8::MAX)).trunc() as u8)
     }
 
     fn flag(&self, key: &str) -> bool {

@@ -188,6 +188,8 @@ pub(super) fn append(
                         .map(|index| DVec3::from_array(normals[index]))
                         .to_vec(),
                 ),
+                normalized_uvs: None,
+                source_model: None,
                 flags: 0,
                 source_sides: vec![source],
             });

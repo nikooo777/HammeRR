@@ -98,6 +98,8 @@ pub struct Stats {
     pub excluded_static_props: usize,
     pub static_prop_models: usize,
     pub static_prop_vertices: usize,
+    pub inside_static_props: usize,
+    pub static_prop_triangles: usize,
     pub terrain_patches: usize,
     pub terrain_triangles: usize,
     pub terrain_grid_vertices: usize,
@@ -112,8 +114,17 @@ pub struct Surface {
     pub texture_vectors: [[f32; 4]; 2],
     pub texture_points: Option<Vec<DVec3>>,
     pub normals: Option<Vec<DVec3>>,
+    pub normalized_uvs: Option<Vec<[f32; 2]>>,
+    pub source_model: Option<u32>,
     pub flags: i32,
     pub source_sides: Vec<RootSide>,
+}
+
+#[derive(Debug)]
+pub struct SourceModel {
+    pub entity: u32,
+    pub model: String,
+    pub skin: usize,
 }
 
 #[derive(Debug)]
@@ -123,6 +134,7 @@ pub struct Region {
     pub scale: u32,
     pub stats: Stats,
     pub surfaces: Vec<Surface>,
+    pub source_models: Vec<SourceModel>,
     pub source_guard: Option<crate::asset_sources::AssetSourceGuard>,
 }
 
@@ -365,6 +377,8 @@ pub fn resolve_limited(
             texture_vectors: info.texture_vecs,
             texture_points: None,
             normals: None,
+            normalized_uvs: None,
+            source_model: None,
             flags: info.flags,
             source_sides: sources,
         });
@@ -378,6 +392,8 @@ pub fn resolve_limited(
         limits,
         &mut admission,
     )?;
+    let source_models =
+        prop_sources.append(&include, &mut surfaces, &mut stats, limits, &mut admission)?;
     control.checkpoint()?;
     let source_guard = prop_sources.finish(&mut stats)?;
     Ok(Region {
@@ -386,6 +402,7 @@ pub fn resolve_limited(
         scale: camera.scale,
         stats,
         surfaces,
+        source_models,
         source_guard,
     })
 }
@@ -519,12 +536,12 @@ impl Admission<'_> {
         }
         let capacity = self.pending_limit.min(tree.nodes.len());
         if capacity == 0 {
-            return Err("Sky terrain exceeded its pending membership node budget".into());
+            return Err("Sky region exceeded its pending membership node budget".into());
         }
         let mut pending = Vec::new();
         pending
             .try_reserve_exact(capacity)
-            .map_err(|error| format!("Sky terrain membership allocation failed: {error}"))?;
+            .map_err(|error| format!("Sky region membership allocation failed: {error}"))?;
         pending.push(0);
         while let Some(index) = pending.pop() {
             self.consume(1)?;
@@ -539,7 +556,7 @@ impl Admission<'_> {
                     &children[..]
                 };
                 if pending.len() + reached.len() > capacity {
-                    return Err("Sky terrain exceeded its pending membership node budget".into());
+                    return Err("Sky region exceeded its pending membership node budget".into());
                 }
                 pending.extend_from_slice(reached);
             } else if node.solid() || !self.selected_leaves.contains(&index) {
@@ -706,21 +723,17 @@ fn admit_original(
             admission.source(kind, ObjectId::Entity(entity.id), Some(solid.id), bounds)?;
         }
         if entity.solids.is_empty() && omitted_point_geometry(entity) {
-            let bounds = if classname == "prop_static" {
-                Some(props.bounds(entity).map_err(|error| {
-                    format!(
-                        "entity:{}: unsupported static-prop membership: {error}",
-                        entity.id
-                    )
-                })?)
-            } else {
-                None
-            };
+            if classname == "prop_static" {
+                props.admit(entity, admission).map_err(|error| {
+                    format!("entity:{}: static-prop sky membership: {error}", entity.id)
+                })?;
+                continue;
+            }
             admission.source(
                 "model or projected geometry",
                 ObjectId::Entity(entity.id),
                 None,
-                bounds,
+                None,
             )?;
         }
     }
@@ -866,6 +879,17 @@ fn preflight(vmf: &Vmf, limits: Limits, control: &Control) -> Result<Stats, Stri
                     .any(|entity| !entity.hidden && entity.classname() == Some("prop_static")),
             ),
             static_props::CPU_RESERVATION_BYTES,
+        ),
+        (
+            usize::from(
+                vmf.entities
+                    .iter()
+                    .any(|entity| !entity.hidden && entity.classname() == Some("prop_static")),
+            ) * limits.faces.faces,
+            size_of::<DVec3>() * 6
+                + size_of::<[f32; 2]>() * 3
+                + static_props::MAX_MATERIAL_PATH_BYTES
+                + 128,
         ),
         (1, crate::materials::MAX_GEOMETRY_MATERIAL_ALLOCATION_BYTES),
         (

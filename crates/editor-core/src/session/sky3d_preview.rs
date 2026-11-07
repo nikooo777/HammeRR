@@ -20,6 +20,7 @@ const MAX_CAMERAS: usize = 64;
 const MAX_DIAGNOSTIC_BYTES: usize = 1024;
 const MAX_PROVENANCE_ROWS: usize = 64;
 const AUXILIARY_BYTES: usize = 8 * 1024 * 1024;
+const MODEL_PROVENANCE_BYTES: usize = sky3d::MAX_SURFACES * 512;
 const MAX_CPU_BYTES: usize = 640 * 1024 * 1024;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -183,11 +184,22 @@ impl Request {
         let fog = map_core::fog::parse_sky_camera(entity)?;
         let reservation =
             sky_region::admit(&self.vmf, sky_region::Limits::default(), &self.control)?;
+        let model_provenance_bytes = if self
+            .vmf
+            .entities
+            .iter()
+            .any(|entity| !entity.hidden && entity.classname() == Some("prop_static"))
+        {
+            MODEL_PROVENANCE_BYTES
+        } else {
+            0
+        };
         let cpu_reservation = self
             .snapshot_bytes
             .checked_add(reservation.cpu_reservation_bytes)
             .and_then(|bytes| bytes.checked_add(sky3d::MAX_CPU_BYTES))
             .and_then(|bytes| bytes.checked_add(AUXILIARY_BYTES))
+            .and_then(|bytes| bytes.checked_add(model_provenance_bytes))
             .filter(|bytes| *bytes <= MAX_CPU_BYTES)
             .ok_or("3D sky preview exceeds its aggregate CPU allocation budget")?;
         let region = sky_region::resolve_controlled(
@@ -226,6 +238,39 @@ impl Request {
                 .filter(|surfaces| *surfaces <= sky3d::MAX_SURFACES)
                 .ok_or("3D sky preview exceeds its displayed surface budget")?;
         }
+        if region.source_models.len() > sky3d::MAX_SURFACES {
+            return Err("3D sky preview exceeds its model provenance budget".into());
+        }
+        let model_ids = region
+            .source_models
+            .iter()
+            .map(|source| source.entity)
+            .collect::<BTreeSet<_>>();
+        if model_ids.len() != region.source_models.len() {
+            return Err("3D sky preview repeats model source entities".into());
+        }
+        let mut used_models = BTreeSet::new();
+        for surface in region
+            .surfaces
+            .iter()
+            .filter(|surface| surface.flags & (surf::SKY | surf::SKY2D | surf::NODRAW) == 0)
+        {
+            match surface.source_model {
+                Some(entity) => {
+                    if !surface.source_sides.is_empty() || !model_ids.contains(&entity) {
+                        return Err("3D sky model surface has invalid entity provenance".into());
+                    }
+                    used_models.insert(entity);
+                }
+                None if surface.source_sides.is_empty() => {
+                    return Err("3D sky surface has no source side provenance".into());
+                }
+                None => {}
+            }
+        }
+        if used_models != model_ids {
+            return Err("3D sky model provenance does not match displayed geometry".into());
+        }
         let stats = serde_json::to_value(&region.stats).map_err(|error| error.to_string())?;
         let sources = region
             .surfaces
@@ -237,10 +282,15 @@ impl Request {
         let owners = sources
             .iter()
             .map(|(owner, _, _)| *owner)
+            .chain(model_ids.iter().copied().map(ObjectId::Entity))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .map(crate::identity::id_string)
             .collect::<Vec<_>>();
+        let model_provenance = region.source_models.iter().take(MAX_PROVENANCE_ROWS)
+            .map(|source| json!({"entity":crate::identity::id_string(ObjectId::Entity(source.entity)),"model":&source.model,"skin":source.skin}))
+            .collect::<Vec<_>>();
+        let source_models_total = region.source_models.len();
         let provenance = sources
             .iter()
             .take(MAX_PROVENANCE_ROWS)
@@ -260,7 +310,9 @@ impl Request {
             .map(|surface| sky3d::Surface {
                 points: surface.vertices,
                 texture_points: surface.texture_points,
+                normalized_uvs: surface.normalized_uvs,
                 normals: surface.normals,
+                model: surface.source_model.is_some(),
                 normal: surface.normal,
                 material: surface.material,
                 texture_u: surface.texture_vectors[0].map(f64::from),
@@ -275,11 +327,14 @@ impl Request {
         if let Some(guard) = &source_guard {
             guard
                 .verify_sources(&self.game, &self.control)
-                .map_err(|error| format!("3D sky excluded model source changed: {error}"))?;
+                .map_err(|error| format!("3D sky model source changed: {error}"))?;
         }
         let stats = json!({"region":stats,"geometry":scene.stats,"cpu_reservation_bytes":cpu_reservation,
             "source_owners":owners,"source_sides":provenance,"source_sides_total":sources.len(),
-            "source_sides_truncated":sources.len()>MAX_PROVENANCE_ROWS});
+            "source_sides_truncated":sources.len()>MAX_PROVENANCE_ROWS,
+            "source_models":model_provenance,"source_models_total":source_models_total,
+            "source_models_truncated":source_models_total>MAX_PROVENANCE_ROWS,
+            "model_provenance_reservation_bytes":model_provenance_bytes});
         Ok(Ready {
             key: self.key.clone(),
             scene: Arc::new(scene),
@@ -459,7 +514,7 @@ impl Session {
                     self.retire_sky3d_preview(
                         "stale",
                         Some(bounded(&format!(
-                            "Excluded model source changed: {error}; prepare again"
+                            "Model source changed: {error}; prepare again"
                         ))),
                     );
                 } else {
@@ -555,7 +610,7 @@ impl Session {
             self.retire_sky3d_preview(
                 "stale",
                 Some(bounded(&format!(
-                    "Excluded model source changed: {error}; prepare again"
+                    "Model source changed: {error}; prepare again"
                 ))),
             );
             return true;
@@ -734,8 +789,8 @@ impl Session {
                 "work":sky_region::MAX_PROP_WORK,"material_file_bytes":sky_region::MAX_PROP_MATERIAL_BYTES,
                 "logical_paths":sky_region::MAX_PROP_LOGICAL_PATHS,"physical_paths":sky_region::MAX_PROP_PHYSICAL_PATHS,
                 "lookup_rows":sky_region::MAX_PROP_LOOKUP_ROWS,"cpu_reservation_bytes":sky_region::PROP_CPU_RESERVATION_BYTES
-            },"material_semantics":{"file_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_BYTES,"total_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_TOTAL_BYTES,"reads":compiler::materials::MAX_GEOMETRY_MATERIAL_READS,"allocation_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_ALLOCATION_BYTES},"render":{"vertices":sky3d::MAX_VERTICES,"indices":sky3d::MAX_INDICES,"surfaces":sky3d::MAX_SURFACES,"materials":sky3d::MAX_MATERIALS,"cpu_bytes":sky3d::MAX_CPU_BYTES,"gpu_bytes":sky3d::MAX_GPU_BYTES,"gpu_asset_bytes":sky3d::MAX_GPU_ASSET_BYTES,"gpu_upload_bytes":sky3d::MAX_GPU_UPLOAD_BYTES,"target_bytes":sky3d::MAX_TARGET_BYTES,"target_dimension":sky3d::MAX_TARGET_DIMENSION},"cpu_bytes":MAX_CPU_BYTES,"auxiliary_bytes":AUXILIARY_BYTES,"snapshot_bytes":snapshot::MAX_BYTES,"snapshot_items":snapshot::MAX_ITEMS,"snapshot_depth":snapshot::MAX_DEPTH,"camera_rows":MAX_CAMERAS,"provenance_rows":MAX_PROVENANCE_ROWS,"active_workers":1,"cached_snapshots":1},
-            "policy":"Explicit root sky_camera; sealed committed world/detail component with flat surfaces and admitted whole authored fine terrain patches; editor visibility filters display fragments after topology. Terrain uses BASE texture coordinates and shared vertex normals without patch clipping or native LOD appearance matching. Static opaque single-base textured miniature with its independent static camera fog; models, portals, water, instances and runtime effects are unsupported inside it. Distant terrain and admitted fixed static props require certified conservative separation; prepared model-source changes require preparation again. Main picking, source, selection, history and camera remain ordinary editor state. 2D sky preview is independent, with combined fog material compatibility required. No native framebuffer parity claim."})
+            },"material_semantics":{"file_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_BYTES,"total_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_TOTAL_BYTES,"reads":compiler::materials::MAX_GEOMETRY_MATERIAL_READS,"allocation_bytes":compiler::materials::MAX_GEOMETRY_MATERIAL_ALLOCATION_BYTES},"render":{"vertices":sky3d::MAX_VERTICES,"indices":sky3d::MAX_INDICES,"surfaces":sky3d::MAX_SURFACES,"materials":sky3d::MAX_MATERIALS,"cpu_bytes":sky3d::MAX_CPU_BYTES,"gpu_bytes":sky3d::MAX_GPU_BYTES,"gpu_asset_bytes":sky3d::MAX_GPU_ASSET_BYTES,"gpu_upload_bytes":sky3d::MAX_GPU_UPLOAD_BYTES,"target_bytes":sky3d::MAX_TARGET_BYTES,"target_dimension":sky3d::MAX_TARGET_DIMENSION},"cpu_bytes":MAX_CPU_BYTES,"auxiliary_bytes":AUXILIARY_BYTES,"snapshot_bytes":snapshot::MAX_BYTES,"snapshot_items":snapshot::MAX_ITEMS,"snapshot_depth":snapshot::MAX_DEPTH,"camera_rows":MAX_CAMERAS,"provenance_rows":MAX_PROVENANCE_ROWS,"model_provenance_rows":MAX_PROVENANCE_ROWS,"model_provenance_records":sky3d::MAX_SURFACES,"model_provenance_bytes":MODEL_PROVENANCE_BYTES,"active_workers":1,"cached_snapshots":1},
+            "policy":"Explicit root sky_camera; sealed committed world/detail component with flat surfaces, admitted whole authored fine terrain patches and whole fixed prop_static LOD0 meshes; editor visibility filters display geometry after topology. Terrain uses BASE texture coordinates and shared vertex normals; models use normalized authored UVs and transformed source normals. Whole conservative membership is required, with no patch/model clipping or native LOD appearance matching. Static opaque single-base textured miniature with its independent static camera fog; portals, water, instances and runtime effects are unsupported inside it. Distant terrain and fixed static props require certified conservative separation; guarded model-source changes require preparation again. Main picking, source, selection, history and camera remain ordinary editor state. 2D sky preview is independent, with combined fog material compatibility required. No native framebuffer parity claim."})
     }
 
     fn retire_sky3d_preview(&mut self, status: &'static str, issue: Option<String>) {

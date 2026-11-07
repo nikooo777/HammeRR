@@ -34,7 +34,7 @@ const LEGACY_TARGET_PIXEL_BYTES: usize = 8;
 const HDR_TARGET_PIXEL_BYTES: usize = 12;
 static NEXT_SCENE: AtomicU64 = AtomicU64::new(1);
 
-pub const POLICY: &str = "Editor 3D sky preview: explicitly selected sealed world/func_detail miniature with flat surfaces and admitted whole authored fine terrain patches; perspective Textured views only. Camera origin + main eye / integer scale 1..128; unchanged direction/FOV, no entity-angle rotation. Editor near plane 4/scale miniature units preserves main-equivalent clipping; native Source uses a different near policy. Static opaque single-base LightmappedGeneric/UnlitGeneric LDR materials with checked axis-aligned static base-texture transforms; finite center/scale/translation values within ±1024, last duplicate operation wins, nonzero rotation rejected; no alpha test, translucency, proxies, normal maps, detail/blend layers, authored lighting or runtime effects. Terrain uses BASE texture coordinates and shared vertex normals; partial-patch clipping and native LOD appearance are unsupported. The selected sky_camera supplies independent static LDR fog, evaluated in miniature coordinates after one reciprocal range scaling and the current initial radial context; no world controller/water/timeline/far-Z inheritance. Direction uses the checked received 1/32 coordinate grid before biased normalization. Standard Sky 2D backgrounds remain unchanged; combined fog with UnlitGeneric 2D backgrounds requires explicit $nofog 1. HDR scenes compose miniature fog before the shared manual exposure; no native clipping, repeated client draw-history normalization or pixel parity. Missing/unsupported requested assets fail eligibility. SKY receives the miniature; SKY2D retains only the existing 2D sky path. Empty miniature pixels retain the chosen 2D sky when its independent preview is enabled and ready, otherwise the regular authored sky tool surface. Mixed SKY/SKY2D is an editor policy, not native mixed-sky parity. No helpers, selection, guides, projected picking or editing. Limits: 65536 vertices,196608 indices,16384 surfaces,64 materials,64 MiB conservative CPU builder allocation,32 MiB retained GPU geometry/material payload shared across scenes,64 MiB separately charged transient uploads and one 32 MiB legacy or48 MiB HDR color/depth target. The 144 MiB explicit payload/upload/target budget excludes driver allocation overhead and is not a total VRAM ceiling. Retired identities flush pending uploads and wait at most one second for GPU completion before replacement admission. Uploads conservatively charge RGBA rows padded to256 bytes for every mip plus geometry/uniform bytes; live matching identities reuse bindings. Targets/textures are at most2048 pixels per axis. Targets downsample larger viewports preserving aspect; texture assets never downsample or substitute.";
+pub const POLICY: &str = "Editor 3D sky preview: explicitly selected sealed world/func_detail miniature with flat surfaces, admitted whole authored fine terrain patches and whole fixed prop_static LOD0 meshes; perspective Textured views only. Camera origin + main eye / integer scale 1..128; unchanged direction/FOV, no entity-angle rotation. Editor near plane 4/scale miniature units preserves main-equivalent clipping; native Source uses a different near policy. Static opaque single-base LightmappedGeneric/UnlitGeneric world/terrain materials and qualified VertexLitGeneric fixed-model materials, with checked axis-aligned static base-texture transforms; finite center/scale/translation values within ±1024, last duplicate operation wins, nonzero rotation rejected; no alpha test, translucency, proxies, normal maps, detail/blend layers, authored lighting or runtime effects. Terrain uses BASE texture coordinates and shared vertex normals. Fixed models retain authored normalized UVs and transformed source normals through the shared static-prop pose. Partial-patch/model clipping, native model/terrain LOD appearance and baked model lighting are unsupported. The selected sky_camera supplies independent static LDR fog, evaluated in miniature coordinates after one reciprocal range scaling and the current initial radial context; no world controller/water/timeline/far-Z inheritance. Direction uses the checked received 1/32 coordinate grid before biased normalization. Standard Sky 2D backgrounds remain unchanged; combined fog with UnlitGeneric 2D backgrounds requires explicit $nofog 1. HDR scenes compose miniature fog before the shared manual exposure; no native clipping, repeated client draw-history normalization or pixel parity. Missing/unsupported requested assets fail eligibility. SKY receives the miniature; SKY2D retains only the existing 2D sky path. Empty miniature pixels retain the chosen 2D sky when its independent preview is enabled and ready, otherwise the regular authored sky tool surface. Mixed SKY/SKY2D is an editor policy, not native mixed-sky parity. No helpers, selection, guides, projected picking or editing. Limits: 65536 vertices,196608 indices,16384 surfaces,64 materials,64 MiB conservative CPU builder allocation,32 MiB retained GPU geometry/material payload shared across scenes,64 MiB separately charged transient uploads and one 32 MiB legacy or48 MiB HDR color/depth target. The 144 MiB explicit payload/upload/target budget excludes driver allocation overhead and is not a total VRAM ceiling. Retired identities flush pending uploads and wait at most one second for GPU completion before replacement admission. Uploads conservatively charge RGBA rows padded to256 bytes for every mip plus geometry/uniform bytes; live matching identities reuse bindings. Targets/textures are at most2048 pixels per axis. Targets downsample larger viewports preserving aspect; texture assets never downsample or substitute.";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Camera {
@@ -100,7 +100,9 @@ impl Camera {
 pub struct Surface {
     pub points: Vec<DVec3>,
     pub texture_points: Option<Vec<DVec3>>,
+    pub normalized_uvs: Option<Vec<[f32; 2]>>,
     pub normals: Option<Vec<DVec3>>,
+    pub model: bool,
     pub normal: DVec3,
     pub material: String,
     pub texture_u: [f64; 4],
@@ -239,14 +241,24 @@ fn geometry_budget(surfaces: &[Surface]) -> Result<(usize, usize, Budget), Strin
         }
         vertices = checked_sum(vertices, count, MAX_VERTICES, "vertices")?;
         indices = checked_sum(indices, (count - 2) * 3, MAX_INDICES, "indices")?;
-        if surface.texture_points.is_some() != surface.normals.is_some() {
+        let valid_shape = if surface.model {
+            surface.texture_points.is_none()
+                && surface.normalized_uvs.is_some()
+                && surface.normals.is_some()
+        } else {
+            surface.normalized_uvs.is_none()
+                && surface.texture_points.is_some() == surface.normals.is_some()
+        };
+        if !valid_shape {
             return Err(
-                "3D sky surface requires paired texture-point and vertex-normal arrays".into(),
+                "3D sky surface has inconsistent model, UV or vertex-normal attributes".into(),
             );
         }
         attributes = checked_sum(
             attributes,
-            2 * size_of::<Option<Vec<DVec3>>>(),
+            2 * size_of::<Option<Vec<DVec3>>>()
+                + size_of::<Option<Vec<[f32; 2]>>>()
+                + size_of::<usize>(),
             MAX_CPU_BYTES,
             "surface attribute allocation",
         )?;
@@ -269,6 +281,17 @@ fn geometry_budget(surfaces: &[Surface]) -> Result<(usize, usize, Budget), Strin
             attributes = checked_sum(
                 attributes,
                 normals.len() * size_of::<DVec3>(),
+                MAX_CPU_BYTES,
+                "surface attribute allocation",
+            )?;
+        }
+        if let Some(uvs) = &surface.normalized_uvs {
+            if uvs.len() != count || uvs.iter().flatten().any(|value| !value.is_finite()) {
+                return Err("3D sky model surface has invalid normalized UV attributes".into());
+            }
+            attributes = checked_sum(
+                attributes,
+                uvs.len() * size_of::<[f32; 2]>(),
                 MAX_CPU_BYTES,
                 "surface attribute allocation",
             )?;
@@ -313,6 +336,7 @@ fn valid_vertex_normal(normal: DVec3) -> bool {
 fn load_material(
     fs: &GameFs,
     name: &str,
+    model: bool,
     budget: &mut Budget,
     checkpoint: &mut impl FnMut() -> Result<(), String>,
 ) -> Result<Option<MaterialBinding>, String> {
@@ -331,6 +355,17 @@ fn load_material(
         ));
     }
     let semantics = material.compile_semantics();
+    if model
+        && semantics.surface
+            & (source_formats::bsp::surf::SKY
+                | source_formats::bsp::surf::SKY2D
+                | source_formats::bsp::surf::NODRAW)
+            != 0
+    {
+        return Err(format!(
+            "3D sky model material {name} has unsupported sky or invisible semantics"
+        ));
+    }
     if semantics.surface & source_formats::bsp::surf::SKY != 0 {
         return Ok(None);
     }
@@ -339,18 +374,29 @@ fn load_material(
             "3D sky material {name} is an unsupported tool surface"
         ));
     }
-    if !matches!(
-        material.shader.as_str(),
-        "lightmappedgeneric" | "unlitgeneric"
-    ) || !material.blocks.is_empty()
+    let supported_shader = if model {
+        material.shader == "vertexlitgeneric"
+    } else {
+        matches!(
+            material.shader.as_str(),
+            "lightmappedgeneric" | "unlitgeneric"
+        )
+    };
+    if !supported_shader
+        || !material.blocks.is_empty()
         || material.translucent()
         || material.alpha_test()
     {
+        let shaders = if model {
+            "VertexLitGeneric"
+        } else {
+            "LightmappedGeneric or UnlitGeneric"
+        };
         return Err(format!(
-            "3D sky material {name} requires static opaque LightmappedGeneric or UnlitGeneric"
+            "3D sky material {name} requires static opaque {shaders}"
         ));
     }
-    for (key, _) in &material.params {
+    for (key, value) in &material.params {
         if !matches!(
             key.as_str(),
             "$basetexture"
@@ -361,7 +407,8 @@ fn load_material(
                 | "%keywords"
                 | "%detailtype"
                 | "%compilepassbullets"
-        ) {
+        ) && !(model && key == "$model" && value.trim() == "1")
+        {
             return Err(format!(
                 "3D sky material {name} has unsupported parameter {key}"
             ));
@@ -463,26 +510,28 @@ impl Scene {
         for surface in surfaces {
             checkpoint()?;
             let name = surface.material.trim().to_ascii_lowercase();
-            if names.contains_key(&name) {
+            let key = (name.clone(), surface.model);
+            if names.contains_key(&key) {
                 continue;
             }
             if names.len() >= MAX_MATERIALS {
                 return Err(format!("3D sky materials exceed budget {MAX_MATERIALS}"));
             }
-            let material = load_material(fs, &name, &mut budget, &mut checkpoint)?;
+            let material = load_material(fs, &name, surface.model, &mut budget, &mut checkpoint)?;
             let index = material.map(|material| {
                 let index = materials.len();
                 materials.push(material);
                 index
             });
-            names.insert(name, index);
+            names.insert(key, index);
         }
         let mut vertices = Vec::with_capacity(vertex_count);
         let mut indices = Vec::with_capacity(index_count);
         let mut batches = Vec::with_capacity(surfaces.len());
         for surface in surfaces {
             checkpoint()?;
-            let Some(material) = names[&surface.material.trim().to_ascii_lowercase()] else {
+            let key = (surface.material.trim().to_ascii_lowercase(), surface.model);
+            let Some(material) = names[&key] else {
                 continue;
             };
             let info = &materials[material].info;
@@ -501,10 +550,15 @@ impl Scene {
                     ((texture_point.dot(DVec3::new(axis[0], axis[1], axis[2])) + axis[3])
                         / f64::from(size)) as f32
                 };
-                let uv = [
-                    project(surface.texture_u, info.width),
-                    project(surface.texture_v, info.height),
-                ];
+                let uv = surface.normalized_uvs.as_ref().map_or_else(
+                    || {
+                        [
+                            project(surface.texture_u, info.width),
+                            project(surface.texture_v, info.height),
+                        ]
+                    },
+                    |uvs| uvs[index],
+                );
                 let uv = [
                     uv[0] * transform[0] + transform[2],
                     uv[1] * transform[1] + transform[3],

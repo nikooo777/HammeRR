@@ -1637,11 +1637,15 @@ unbounded material-generated detail geometry remain explicit errors.
 
 Fixed unit-scale, single-bone `prop_static` models can also be certified outside
 the component. Preparation checks all declared draw LODs and fixed material
-sources. It does not use MDL header boxes or a single display LOD. Overlap and
-unsupported geometry or shader states refuse. Props are not drawn inside the
-miniature. `stats.region` reports `excluded_static_props`, `static_prop_models`
-and unique `static_prop_vertices`; `limits.static_prop_exclusion` gives the
-profile and budgets. Repeated props share one model preparation. A changed
+sources. It does not use MDL header boxes or a single display LOD. Certified
+whole models inside the component render LOD 0 meshes, selected skins, normalized
+model UVs and transformed source normals. Conservative bounds require clearance;
+partial or uncertain contact and unsupported geometry or shaders refuse.
+`stats.region` reports `inside_static_props`, `static_prop_triangles`,
+`excluded_static_props`, `static_prop_models` and unique `static_prop_vertices`;
+`limits.static_prop_exclusion` gives the profile and budgets. `stats.source_models`
+reports actual entity/model/skin rows, with total and truncation fields.
+`source_owners` includes model entities; `source_sides` retains brush/terrain sides. Repeated props share one model preparation. A changed
 excluded model/material or a new shadowing provider invalidates readiness.
 
 In Perspective Textured views, an enabled ready miniature automatically uses

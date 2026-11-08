@@ -63,6 +63,39 @@ fn preserve(fd: &std::os::fd::OwnedFd, guard: &mut ProcessGuard) -> Result<(), S
 }
 
 #[cfg(unix)]
+fn unix_stream(fd: std::os::fd::OwnedFd, name: &str) -> Result<tokio::net::UnixStream, String> {
+    use rustix::net::{AddressFamily, SocketType, getpeername, getsockname, sockopt};
+    let address = getsockname(&fd)
+        .map_err(|error| format!("Cannot inspect MCP {name} socket address: {error}"))?;
+    if address.address_family() != AddressFamily::UNIX {
+        return Err(format!(
+            "MCP {name} socket must use the Unix domain; network sockets are unsupported"
+        ));
+    }
+    let kind = sockopt::socket_type(&fd)
+        .map_err(|error| format!("Cannot inspect MCP {name} socket type: {error}"))?;
+    if kind != SocketType::STREAM {
+        return Err(format!(
+            "MCP {name} socket must be a Unix stream; datagram and other socket types are unsupported"
+        ));
+    }
+    let peer = getpeername(&fd)
+        .map_err(|error| format!("MCP {name} Unix stream must be connected; listening and unconnected sockets are unsupported: {error}"))?
+        .ok_or_else(|| format!("MCP {name} Unix stream must be connected; listening and unconnected sockets are unsupported"))?;
+    if peer.address_family() != AddressFamily::UNIX {
+        return Err(format!(
+            "MCP {name} Unix stream must have a Unix-domain peer"
+        ));
+    }
+    let stream = std::os::unix::net::UnixStream::from(fd);
+    stream
+        .set_nonblocking(true)
+        .map_err(|error| format!("Cannot make MCP {name} Unix stream nonblocking: {error}"))?;
+    tokio::net::UnixStream::from_std(stream)
+        .map_err(|error| format!("Cannot use MCP {name} Unix stream: {error}"))
+}
+
+#[cfg(unix)]
 fn from_owned_fds(
     read: std::os::fd::OwnedFd,
     write: std::os::fd::OwnedFd,
@@ -73,10 +106,10 @@ fn from_owned_fds(
         FileType::from_raw_mode(fstat(&read).map_err(|error| error.to_string())?.st_mode);
     let write_kind =
         FileType::from_raw_mode(fstat(&write).map_err(|error| error.to_string())?.st_mode);
-    if read_kind == FileType::Fifo {
+    if matches!(read_kind, FileType::Fifo | FileType::Socket) {
         preserve(&read, &mut guard)?;
     }
-    if write_kind == FileType::Fifo {
+    if matches!(write_kind, FileType::Fifo | FileType::Socket) {
         preserve(&write, &mut guard)?;
     }
     let read: ProcessRead = match read_kind {
@@ -85,7 +118,8 @@ fn from_owned_fds(
             Box::pin(tokio::net::unix::pipe::Receiver::from_owned_fd(read)
                 .map_err(|error| format!("Cannot use MCP stdin pipe: {error}"))?)
         }
-        _ => return Err("MCP stdin must be a readable pipe or regular file; terminals, sockets and devices are unsupported".into()),
+        FileType::Socket => Box::pin(unix_stream(read, "stdin")?),
+        _ => return Err("MCP stdin must be a readable pipe, connected Unix stream or regular file; terminals and devices are unsupported".into()),
     };
     let write: ProcessWrite = match write_kind {
         FileType::RegularFile => Box::pin(tokio::fs::File::from_std(std::fs::File::from(write))),
@@ -93,7 +127,8 @@ fn from_owned_fds(
             Box::pin(tokio::net::unix::pipe::Sender::from_owned_fd(write)
                 .map_err(|error| format!("Cannot use MCP stdout pipe: {error}"))?)
         }
-        _ => return Err("MCP stdout must be a writable pipe or regular file; terminals, sockets and devices are unsupported".into()),
+        FileType::Socket => Box::pin(unix_stream(write, "stdout")?),
+        _ => return Err("MCP stdout must be a writable pipe, connected Unix stream or regular file; terminals and devices are unsupported".into()),
     };
     Ok((read, write, guard))
 }

@@ -7,7 +7,7 @@ use super::{
     CUT_EPSILON, Exact, FIELD_WORK, PlanarField, Region, Work, certify_normals, convex,
     field::BasePlane, invalid, labels, orient, paint, same, uv,
 };
-use crate::clip::{Keep, TerrainTexture};
+use crate::clip::{Keep, TerrainRetention, TerrainTexture};
 use crate::{EditError, Face, Plane, displacement::DisplacementMesh};
 
 #[derive(Clone, Copy)]
@@ -136,7 +136,7 @@ fn validate_state(
 fn sample_fields(
     mesh: &DisplacementMesh,
     state: &State<'_>,
-    cut: Option<(Plane, Keep)>,
+    cut: Option<TerrainRetention<'_>>,
     texture: TerrainTexture,
     work: &mut Work,
 ) -> Result<SampleFields, EditError> {
@@ -168,7 +168,7 @@ fn sample_fields(
 fn preserve_positions(
     mesh: &DisplacementMesh,
     state: &State<'_>,
-    cut: Option<(Plane, Keep)>,
+    cut: Option<TerrainRetention<'_>>,
     work: &mut Work,
 ) -> Result<(), EditError> {
     work.consume(
@@ -259,7 +259,7 @@ fn samples(
     info: &DispInfo,
     mesh: &DisplacementMesh,
     state: State<'_>,
-    cut: Option<(Plane, Keep)>,
+    cut: Option<TerrainRetention<'_>>,
     texture: TerrainTexture,
     work: &mut Work,
 ) -> Result<SampleFields, EditError> {
@@ -288,7 +288,7 @@ pub(super) fn certify_curved(
     info: &DispInfo,
     mesh: &DisplacementMesh,
     state: State<'_>,
-    cut: Option<(Plane, Keep)>,
+    cut: Option<TerrainRetention<'_>>,
     texture: TerrainTexture,
     work: &mut Work,
 ) -> Result<SampleFields, EditError> {
@@ -301,7 +301,7 @@ pub(super) fn certify_geometry(
     info: &DispInfo,
     mesh: &DisplacementMesh,
     state: State<'_>,
-    cut: Option<(Plane, Keep)>,
+    cut: Option<TerrainRetention<'_>>,
     work: &mut Work,
 ) -> Result<(), EditError> {
     validate_state(info, mesh, &state, work)?;
@@ -314,6 +314,22 @@ pub(super) fn retained_movement(
     mesh: &DisplacementMesh,
     state: State<'_>,
     cut: (Plane, Keep),
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    retained_movement_region(
+        info,
+        mesh,
+        state,
+        TerrainRetention::Half(cut.0, cut.1),
+        work,
+    )
+}
+
+pub(super) fn retained_movement_region(
+    info: &DispInfo,
+    mesh: &DisplacementMesh,
+    state: State<'_>,
+    cut: TerrainRetention<'_>,
     work: &mut Work,
 ) -> Result<bool, EditError> {
     validate_state(info, mesh, &state, work)?;
@@ -338,6 +354,140 @@ pub(super) fn retained_movement(
         Some(cut),
         work,
     )?)
+}
+
+pub(super) fn certify_exclusion(
+    mesh: &DisplacementMesh,
+    state: State<'_>,
+    volumes: &[Vec<crate::clip::TerrainCutPlane>],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let mut triangles = triangle_set(
+        &state.data.infos[0]
+            .triangle_indices()
+            .map_err(|error| invalid(error.to_string()))?,
+    )?;
+    triangles.extend(triangle_set(state.indices)?);
+    let facets = crate::clip::terrain_union_facets(volumes, work)?;
+    let mut checked = Vec::<&[DVec3]>::new();
+    for positions in std::iter::once(mesh.positions.as_slice())
+        .chain(state.original_positions.iter().map(Vec::as_slice))
+        .chain(std::iter::once(state.ideal_positions))
+        .chain(state.positions.iter().map(Vec::as_slice))
+    {
+        work.consume((checked.len() + 1) * positions.len())
+            .map_err(invalid)?;
+        if checked.contains(&positions) {
+            continue;
+        }
+        for triangle in &triangles {
+            let points = triangle.map(|index| positions[index]);
+            if super::volume::intersects(points, volumes, &facets, work)? {
+                return Err(invalid(
+                    "Retained terrain enters the cutter union in authored, native fine or maximal geometry",
+                ));
+            }
+        }
+        checked.push(positions);
+    }
+    Ok(())
+}
+
+pub(super) fn certify_triangle_exclusion(
+    profiles: &[Vec<DVec3>],
+    triangles: &[[usize; 3]],
+    volumes: &[Vec<crate::clip::TerrainCutPlane>],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    if terrain_intersects(profiles, triangles, volumes, work)? {
+        return Err(invalid(
+            "Retained native terrain enters a subtraction cutter",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn terrain_intersects(
+    profiles: &[Vec<DVec3>],
+    triangles: &[[usize; 3]],
+    volumes: &[Vec<crate::clip::TerrainCutPlane>],
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    let facets = crate::clip::terrain_union_facets(volumes, work)?;
+    let mut checked = Vec::new();
+    for positions in profiles {
+        work.consume((checked.len() + 1) * positions.len())
+            .map_err(invalid)?;
+        if checked.contains(&positions) {
+            continue;
+        }
+        for triangle in triangles {
+            let points = triangle.map(|index| positions[index]);
+            if super::volume::intersects(points, volumes, &facets, work)? {
+                return Ok(true);
+            }
+        }
+        checked.push(positions);
+    }
+    Ok(false)
+}
+
+pub(super) fn certify_retained_coverage(
+    mesh: &DisplacementMesh,
+    state: State<'_>,
+    children: &[&DisplacementMesh],
+    volumes: &[Vec<crate::clip::TerrainCutPlane>],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let (_, axes) = labels::projection(mesh, work)?;
+    let facets = crate::clip::terrain_union_facets(volumes, work)?;
+    work.consume(children.len() * 4).map_err(invalid)?;
+    let cages = children
+        .iter()
+        .map(|child| {
+            let last = child.size - 1;
+            [0, last * child.size, child.size * child.size - 1, last]
+                .map(|index| child.base_positions[index])
+        })
+        .collect::<Vec<_>>();
+    let mut triangles = triangle_set(
+        &state.data.infos[0]
+            .triangle_indices()
+            .map_err(|error| invalid(error.to_string()))?,
+    )?;
+    triangles.extend(triangle_set(state.indices)?);
+    let mut checked = Vec::<&[DVec3]>::new();
+    for positions in std::iter::once(mesh.positions.as_slice())
+        .chain(state.original_positions.iter().map(Vec::as_slice))
+        .chain(std::iter::once(state.ideal_positions))
+        .chain(state.positions.iter().map(Vec::as_slice))
+    {
+        work.consume((checked.len() + 1) * positions.len())
+            .map_err(invalid)?;
+        if checked.contains(&positions) {
+            continue;
+        }
+        for triangle in &triangles {
+            if !super::volume::covered(
+                super::volume::Coverage {
+                    base: triangle.map(|index| mesh.base_positions[index]),
+                    points: triangle.map(|index| positions[index]),
+                    children: &cages,
+                    axes,
+                    volumes,
+                    facets: &facets,
+                    padding: 0.0,
+                },
+                work,
+            )? {
+                return Err(invalid(
+                    "Terrain subtraction lost original authored or native geometry outside the cutter union",
+                ));
+            }
+        }
+        checked.push(positions);
+    }
+    Ok(())
 }
 
 fn native_positions(state: State<'_>, profile: usize) -> &[DVec3] {
@@ -516,7 +666,7 @@ pub(super) fn certify_dual_native(
 fn geometry(
     mesh: &DisplacementMesh,
     state: State<'_>,
-    cut: Option<(Plane, Keep)>,
+    cut: Option<TerrainRetention<'_>>,
     work: &mut Work,
 ) -> Result<(), EditError> {
     let native_info = state.data.infos[0];
@@ -541,19 +691,21 @@ fn all_discarded(
     fine: &BTreeSet<[usize; 3]>,
     maximal: &BTreeSet<[usize; 3]>,
     state: State<'_>,
-    cut: Option<(Plane, Keep)>,
+    cut: Option<TerrainRetention<'_>>,
     work: &mut Work,
 ) -> Result<bool, EditError> {
-    let Some((plane, keep)) = cut else {
+    let Some(cut) = cut else {
         return Ok(false);
     };
-    if !plane.normal.is_finite() || plane.normal == DVec3::ZERO || !plane.dist.is_finite() {
-        return Err(invalid(
-            "Terrain LOD requires a finite noncollapsed cut plane",
-        ));
-    }
-    if keep == Keep::Both {
-        return Ok(false);
+    if let TerrainRetention::Half(plane, keep) = cut {
+        if keep == Keep::Both {
+            return Ok(false);
+        }
+        if !plane.normal.is_finite() || plane.normal == DVec3::ZERO || !plane.dist.is_finite() {
+            return Err(invalid(
+                "Terrain LOD requires finite noncollapsed removal planes",
+            ));
+        }
     }
     work.consume(
         FIELD_WORK * (fine.len() + maximal.len())
@@ -580,38 +732,87 @@ fn all_discarded(
                 || triangle.iter().any(|&index| moved[index])
         })
         .collect::<Vec<_>>();
-    work.consume(
-        FIELD_WORK
-            * affected.len()
-            * 3
-            * (state.original_positions.len() + state.positions.len() + 2),
-    )
-    .map_err(invalid)?;
-    let normal = [
-        Exact::float(plane.normal.x)?,
-        Exact::float(plane.normal.y)?,
-        Exact::float(plane.normal.z)?,
-    ];
-    let distance = Exact::float(plane.dist)?;
+    if matches!(cut, TerrainRetention::Half(_, _)) {
+        work.consume(
+            FIELD_WORK
+                * affected.len()
+                * 3
+                * (state.original_positions.len() + state.positions.len() + 2),
+        )
+        .map_err(invalid)?;
+    }
     let epsilon = Exact::float(CUT_EPSILON)?;
+    let profiles = std::iter::once(mesh.positions.as_slice())
+        .chain(state.original_positions.iter().map(Vec::as_slice))
+        .chain(std::iter::once(state.ideal_positions))
+        .chain(state.positions.iter().map(Vec::as_slice))
+        .collect::<Vec<_>>();
     for triangle in affected {
-        for positions in std::iter::once(mesh.positions.as_slice())
-            .chain(state.original_positions.iter().map(Vec::as_slice))
-            .chain(std::iter::once(state.ideal_positions))
-            .chain(state.positions.iter().map(Vec::as_slice))
-        {
-            for &index in triangle {
+        let removed = match cut {
+            TerrainRetention::Half(plane, keep) => {
+                let plane = if keep == Keep::Back {
+                    Plane {
+                        normal: -plane.normal,
+                        dist: -plane.dist,
+                    }
+                } else {
+                    plane
+                };
+                discarded_by(&profiles, *triangle, std::slice::from_ref(&plane), epsilon)?
+            }
+            TerrainRetention::Subtraction(volumes) => {
+                let facets = crate::clip::terrain_union_facets(volumes, work)?;
+                let (_, axes) = labels::projection(mesh, work)?;
+                let mut covered = true;
+                for positions in &profiles {
+                    let points = triangle.map(|index| positions[index]);
+                    let base = triangle.map(|index| mesh.base_positions[index]);
+                    if !super::volume::covered(
+                        super::volume::Coverage {
+                            base,
+                            points,
+                            children: &[],
+                            axes,
+                            volumes,
+                            facets: &facets,
+                            padding: 0.0,
+                        },
+                        work,
+                    )? {
+                        covered = false;
+                        break;
+                    }
+                }
+                covered
+            }
+        };
+        if !removed {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn discarded_by(
+    profiles: &[&[DVec3]],
+    triangle: [usize; 3],
+    planes: &[Plane],
+    epsilon: Exact,
+) -> Result<bool, EditError> {
+    for plane in planes {
+        let normal = [
+            Exact::float(plane.normal.x)?,
+            Exact::float(plane.normal.y)?,
+            Exact::float(plane.normal.z)?,
+        ];
+        let distance = Exact::float(plane.dist)?;
+        for positions in profiles {
+            for index in triangle {
                 let mut side = Exact::new(0, 0);
                 for (&coefficient, coordinate) in normal.iter().zip(positions[index].to_array()) {
                     side = side.add(coefficient.mul(Exact::float(coordinate)?)?)?;
                 }
-                let side = side.sub(distance)?;
-                let discarded = match keep {
-                    Keep::Front => side.add(epsilon)?.value < 0,
-                    Keep::Back => side.sub(epsilon)?.value > 0,
-                    Keep::Both => false,
-                };
-                if !discarded {
+                if side.sub(distance)?.add(epsilon)?.value >= 0 {
                     return Ok(false);
                 }
             }

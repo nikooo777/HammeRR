@@ -390,7 +390,10 @@ pub(crate) fn plan(
         &prepared,
         groups,
         count,
-        Some(request.plane),
+        Clipping {
+            plane: Some(request.plane),
+            native_spans: false,
+        },
         PartitionRequest {
             material: request.material,
             textures: request.textures,
@@ -426,7 +429,65 @@ pub(crate) fn partition(
         }
     }
     let prepared = Prepared { source, sheet };
-    materialize(solid, &prepared, groups, count, None, request, work)
+    materialize(
+        solid,
+        &prepared,
+        groups,
+        count,
+        Clipping {
+            plane: None,
+            native_spans: false,
+        },
+        request,
+        work,
+    )
+}
+
+pub(crate) fn partition_triangles(
+    document: &Document,
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    request: PartitionRequest<'_>,
+    context: &mut Context<'_>,
+) -> Result<TerrainPlan, EditError> {
+    let work = &mut context.work;
+    let source = admit_source(document, solid, geometry, work)?;
+    let sheet = intrinsic_source(&source, work)?;
+    let mut count = 0;
+    let mut groups = Vec::new();
+    for triangle in source.mesh.triangles() {
+        add_count(&mut count, 3)?;
+        work.consume(16 * FIELD_WORK).map_err(invalid)?;
+        let base = triangle.map(|index| source.mesh.base_positions[index]);
+        let ring = triangle.map(|index| source.mesh.positions[index]);
+        groups.push(Group::Triangle {
+            field: Box::new(PlanarField::triangle(base, ring)?),
+            paint: Box::new(PaintField::triangle(
+                base,
+                triangle.map(|index| source.mesh.alphas[index]),
+                work,
+            )?),
+            rings: [ring.to_vec(), Vec::new()],
+        });
+    }
+    let prepared = Prepared { source, sheet };
+    materialize(
+        solid,
+        &prepared,
+        groups,
+        count,
+        Clipping {
+            plane: None,
+            native_spans: false,
+        },
+        request,
+        work,
+    )
+}
+
+struct Clipping {
+    plane: Option<Plane>,
+    native_spans: bool,
 }
 
 fn materialize(
@@ -434,10 +495,14 @@ fn materialize(
     prepared: &Prepared<'_>,
     groups: Vec<Group>,
     count: usize,
-    cut_plane: Option<Plane>,
+    clipping: Clipping,
     request: PartitionRequest<'_>,
     work: &mut Work,
 ) -> Result<TerrainPlan, EditError> {
+    let Clipping {
+        plane: cut_plane,
+        native_spans,
+    } = clipping;
     let source = &prepared.source;
     let identity = FaceId {
         solid: solid.id,
@@ -512,16 +577,13 @@ fn materialize(
                 paint,
                 rings,
             } => {
-                let cut_plane = cut_plane.ok_or_else(|| {
-                    invalid("Terrain triangle fragments lost their cut-plane proof")
-                })?;
                 for back in [true, false] {
                     let ring = &rings[usize::from(!back)];
                     if ring.is_empty() {
                         continue;
                     }
                     let first = children.len();
-                    let plane = half_plane(cut_plane, back);
+                    let plane = cut_plane.map(|plane| half_plane(plane, back));
                     let axis = field.world_axis();
                     let axes = [(axis + 1) % 3, (axis + 2) % 3];
                     let sign = orient(ring[0], ring[1], ring[2], axes)?;
@@ -546,7 +608,7 @@ fn materialize(
                         let (part, child, error) = certificate.child(
                             part,
                             base,
-                            Some(plane),
+                            plane,
                             Expected::Triangle(&field, &paint),
                             work,
                         )?;
@@ -554,20 +616,33 @@ fn materialize(
                         parts.push(part);
                         children.push(child);
                     }
-                    region(
-                        ring,
-                        &children[first..],
-                        axes,
-                        sign,
-                        plane,
-                        Some(&field),
-                        work,
-                    )?;
+                    if let Some(plane) = plane {
+                        region(
+                            ring,
+                            &children[first..],
+                            axes,
+                            sign,
+                            plane,
+                            Some(&field),
+                            work,
+                        )?;
+                    } else {
+                        let base = ring
+                            .iter()
+                            .map(|&point| field.base_position(point))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let sign = orient(base[0], base[1], base[2], prepared.sheet.axes)?;
+                        region_base(&base, &children[first..], prepared.sheet.axes, sign, work)?;
+                    }
                 }
             }
         }
     }
-    connections(&children, work)?;
+    if native_spans {
+        super::window_connections(&children, work)?;
+    } else {
+        connections(&children, work)?;
+    }
     Ok(TerrainPlan {
         vertices: parts.len() * VERTICES,
         triangles: parts.len() * TRIANGLES,
@@ -579,4 +654,108 @@ fn materialize(
         window_fields: None,
         blend_error: (request.blend_mode != TerrainBlendMode::Exact).then_some(blend_error),
     })
+}
+
+pub(crate) fn subtract(
+    document: &Document,
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    request: super::VolumeRequest<'_>,
+    context: &mut Context<'_>,
+) -> Result<Option<crate::clip::TerrainVolumePlan>, EditError> {
+    let work = &mut context.work;
+    let source = admit_source(document, solid, geometry, work)?;
+    let sheet = intrinsic_source(&source, work)?;
+    let triangles = source.mesh.triangles().collect::<Vec<_>>();
+    work.consume(triangles.len()).map_err(invalid)?;
+    let patches = triangles
+        .iter()
+        .map(|triangle| {
+            let base = triangle.map(|index| source.mesh.base_positions[index]);
+            super::subtraction::Patch {
+                base,
+                world: triangle.map(|index| source.mesh.positions[index]),
+                ring: base.to_vec(),
+            }
+        })
+        .collect::<Vec<_>>();
+    let planes = request.volumes;
+    let Some(polygons) = super::subtraction::plan(&patches, planes, work)? else {
+        return Ok(None);
+    };
+    let mut groups = Vec::new();
+    let mut count = 0;
+    let cells = source.mesh.size - 1;
+    for cell in 0..cells * cells {
+        let row = cell / cells;
+        let column = cell % cells;
+        let retained = polygons
+            .iter()
+            .filter(|polygon| polygon.patch / 2 == cell)
+            .collect::<Vec<_>>();
+        if retained.len() == 2
+            && retained
+                .iter()
+                .all(|polygon| polygon.unchanged && !polygon.conformed)
+        {
+            add_count(&mut count, 4)?;
+            groups.push(Group::Cell {
+                row,
+                column,
+                plane: None,
+                ring: cell_base_ring(&source, row, column),
+            });
+            continue;
+        }
+        for polygon in retained {
+            let triangle = triangles[polygon.patch];
+            let base = triangle.map(|index| source.mesh.base_positions[index]);
+            let world = triangle.map(|index| source.mesh.positions[index]);
+            work.consume(16 * FIELD_WORK).map_err(invalid)?;
+            let field = PlanarField::triangle(base, world)?;
+            let ring = polygon
+                .ring
+                .iter()
+                .map(|&point| field.position(point))
+                .collect::<Result<Vec<_>, _>>()?;
+            let axis = field.world_axis();
+            let axes = [(axis + 1) % 3, (axis + 2) % 3];
+            let rings = if polygon.conformed || ring.len() > 5 {
+                super::subtraction::triangles(&ring, axes, work)?
+            } else {
+                vec![ring]
+            };
+            for ring in rings {
+                add_count(&mut count, ring.len())?;
+                groups.push(Group::Triangle {
+                    field: Box::new(PlanarField::triangle(base, world)?),
+                    paint: Box::new(PaintField::triangle(
+                        base,
+                        triangle.map(|index| source.mesh.alphas[index]),
+                        work,
+                    )?),
+                    rings: [ring, Vec::new()],
+                });
+            }
+        }
+    }
+    let prepared = Prepared { source, sheet };
+    let plan = materialize(
+        solid,
+        &prepared,
+        groups,
+        count,
+        Clipping {
+            plane: None,
+            native_spans: true,
+        },
+        PartitionRequest {
+            material: request.material,
+            textures: request.textures,
+            blend_mode: request.blend_mode,
+        },
+        work,
+    )?;
+    let carriers = super::volume_carriers(&plan.parts, request.volumes, work)?;
+    Ok(Some(crate::clip::TerrainVolumePlan { plan, carriers }))
 }

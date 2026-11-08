@@ -1,10 +1,41 @@
 use std::rc::Rc;
 
+use map_core::clip::{TerrainBlendMode, TerrainMode};
 use slint::{ComponentHandle, Model, VecModel};
 
 use crate::runtime::{DocumentAccess, DocumentContinuation, SharedSession, lock};
 use crate::session::{Actor, Session};
 use crate::{CarveRow, CarveWindow};
+
+fn terrain_options(window: &CarveWindow) -> Result<(TerrainMode, TerrainBlendMode, bool), String> {
+    let terrain_mode = match window.get_terrain_mode() {
+        0 => TerrainMode::Grid,
+        1 => TerrainMode::Flat,
+        2 => TerrainMode::Cells,
+        3 => TerrainMode::Fragments,
+        _ => return Err("Choose a terrain cut mode".into()),
+    };
+    let blend_mode = match window.get_blend_mode() {
+        0 => TerrainBlendMode::Exact,
+        1 => TerrainBlendMode::NativeFloat,
+        2 => TerrainBlendMode::NearestByte,
+        _ => return Err("Choose a blend sampling policy".into()),
+    };
+    if blend_mode != TerrainBlendMode::Exact && terrain_mode != TerrainMode::Fragments {
+        return Err("Native float and Nearest byte require Retile surface triangles".into());
+    }
+    let partition_neighbors = window.get_partition_neighbors();
+    if partition_neighbors && !terrain_mode.allows_neighbor_partition() {
+        return Err("Partition selected neighbors is unavailable for Retile flat terrain".into());
+    }
+    Ok((terrain_mode, blend_mode, partition_neighbors))
+}
+
+fn terrain_options_changed(window: &CarveWindow) {
+    window.set_ready(false);
+    window.set_can_preview(can_preview(window));
+    window.set_message("Terrain settings changed. Preview the result before applying.".into());
+}
 
 fn cut_material(window: &CarveWindow) -> Result<map_core::carve::CutMaterialPolicy, String> {
     match window.get_cut_material_policy() {
@@ -31,11 +62,12 @@ fn material_changed(window: &CarveWindow) {
 
 pub fn material_target(window: &CarveWindow, session: &Session) -> String {
     format!(
-        "{}:{:?}:{}:{}",
+        "{}:{:?}:{}:{}:{:?}",
         session.carve_stamp(),
         parameters(window),
         window.get_cut_material_policy(),
         window.get_cut_material(),
+        terrain_options(window),
     )
 }
 
@@ -67,9 +99,10 @@ fn parameters(window: &CarveWindow) -> Result<(Vec<u32>, Vec<u32>), String> {
             .collect::<Result<Vec<_>, _>>()?
     } else {
         vec![
-            rows.row_data(window.get_cutter() as usize)
+            window
+                .get_cutter_ids()
+                .row_data(window.get_cutter() as usize)
                 .ok_or("Select at least two brushes in the map first")?
-                .solid
                 .parse()
                 .map_err(|_| "Invalid cutter brush")?,
         ]
@@ -85,11 +118,21 @@ fn parameters(window: &CarveWindow) -> Result<(Vec<u32>, Vec<u32>), String> {
         .collect::<Result<Vec<_>, _>>()?;
     cutters.sort_unstable();
     targets.sort_unstable();
+    if rows.iter().any(|row| {
+        row.terrain
+            && row
+                .solid
+                .parse::<u32>()
+                .is_ok_and(|id| cutters.contains(&id))
+    }) {
+        return Err("Terrain brushes can only be targets".into());
+    }
     Ok((cutters, targets))
 }
 
 fn can_preview(window: &CarveWindow) -> bool {
     cut_material(window).is_ok()
+        && terrain_options(window).is_ok()
         && parameters(window).is_ok_and(|(cutters, targets)| {
             !cutters.is_empty()
                 && cutters.len() <= map_core::carve::MAX_CUTTERS
@@ -112,10 +155,18 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
     let unchanged_source = window.get_source() == source;
     match session.carve_sources() {
         Ok(sources) => {
-            let default = sources.len().saturating_sub(1);
+            let ordinary = sources
+                .iter()
+                .filter(|source| !source.terrain)
+                .collect::<Vec<_>>();
+            let default = ordinary.len().saturating_sub(1);
+            window.set_has_terrain(sources.iter().any(|source| source.terrain));
             let incoming = !token.is_empty() && window.get_token() != token;
             if !incoming && !unchanged_source {
                 window.set_multiple_cutters(false);
+                window.set_terrain_mode(0);
+                window.set_blend_mode(0);
+                window.set_partition_neighbors(false);
             }
             if incoming {
                 window.set_multiple_cutters(
@@ -130,6 +181,22 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
                 if let Some(material) = policy["material"].as_str() {
                     window.set_cut_material(material.into());
                 }
+                window.set_terrain_mode(match preview["result"]["terrain_mode"].as_str() {
+                    Some("flat") => 1,
+                    Some("cells") => 2,
+                    Some("fragments") => 3,
+                    _ => 0,
+                });
+                window.set_blend_mode(match preview["result"]["blend_mode"].as_str() {
+                    Some("native_float") => 1,
+                    Some("nearest_byte") => 2,
+                    _ => 0,
+                });
+                window.set_partition_neighbors(
+                    preview["result"]["partition_neighbors"]
+                        .as_bool()
+                        .unwrap_or_default(),
+                );
             }
             let chosen = if incoming {
                 preview["result"]["cutter"].as_u64().map(|id| id as u32)
@@ -141,7 +208,7 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
                 None
             };
             let cutter = chosen
-                .and_then(|id| sources.iter().position(|source| source.solid == id))
+                .and_then(|id| ordinary.iter().position(|source| source.solid == id))
                 .unwrap_or(default);
             let cutters = if incoming {
                 preview["result"]["cutters"]
@@ -155,7 +222,7 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
                     .as_ref()
                     .map_or_else(Vec::new, |(cutters, _)| cutters.clone())
             } else {
-                sources
+                ordinary
                     .get(cutter)
                     .map(|source| vec![source.solid])
                     .unwrap_or_default()
@@ -178,8 +245,22 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
                     CarveRow {
                         solid: source.solid.to_string().into(),
                         label: format!(
-                            "Brush {} · {:.1} × {:.1} × {:.1} units · {}",
-                            source.solid, size.x, size.y, size.z, source.material
+                            "{} {} · {:.1} × {:.1} × {:.1} units · {}{}",
+                            if source.terrain {
+                                "Terrain brush"
+                            } else {
+                                "Brush"
+                            },
+                            source.solid,
+                            size.x,
+                            size.y,
+                            size.z,
+                            source.material,
+                            if source.terrain_faces > 1 {
+                                " · multiple terrain faces unsupported"
+                            } else {
+                                ""
+                            },
                         )
                         .into(),
                         selected: !cutters.contains(&source.solid)
@@ -187,12 +268,25 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
                                 .as_ref()
                                 .is_none_or(|targets| targets.contains(&source.solid)),
                         cutter: cutters.contains(&source.solid),
+                        terrain: source.terrain,
                     }
                 })
                 .collect::<Vec<_>>();
             window.set_cutters(
                 Rc::new(VecModel::from(
-                    rows.iter().map(|row| row.label.clone()).collect::<Vec<_>>(),
+                    rows.iter()
+                        .filter(|row| !row.terrain)
+                        .map(|row| row.label.clone())
+                        .collect::<Vec<_>>(),
+                ))
+                .into(),
+            );
+            window.set_cutter_ids(
+                Rc::new(VecModel::from(
+                    rows.iter()
+                        .filter(|row| !row.terrain)
+                        .map(|row| row.solid.clone())
+                        .collect::<Vec<_>>(),
                 ))
                 .into(),
             );
@@ -200,8 +294,11 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
             window.set_cutter(cutter as i32);
         }
         Err(error) => {
+            window.set_has_terrain(false);
             window.set_targets(Rc::new(VecModel::from(Vec::<CarveRow>::new())).into());
             window.set_cutters(Rc::new(VecModel::from(Vec::<slint::SharedString>::new())).into());
+            window
+                .set_cutter_ids(Rc::new(VecModel::from(Vec::<slint::SharedString>::new())).into());
             window.set_message(error.into());
         }
     }
@@ -211,12 +308,29 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
     window.set_can_preview(can_preview(window));
     window.set_ready(
         !preview.is_null()
+            && !report["handle"].is_null()
             && parameters(window).is_ok_and(|(cutters, targets)| {
                 preview["result"]["cutters"] == serde_json::json!(cutters)
                     && preview["targets"] == serde_json::json!(targets)
                     && cut_material(window).is_ok_and(|policy| {
                         preview["result"]["cut_material"]
                             == editor_core::session::carving::cut_material_json(&policy)
+                    })
+                    && terrain_options(window).is_ok_and(|(terrain, blend, partition)| {
+                        let terrain = match terrain {
+                            TerrainMode::Grid => "grid",
+                            TerrainMode::Flat => "flat",
+                            TerrainMode::Cells => "cells",
+                            TerrainMode::Fragments => "fragments",
+                        };
+                        let blend = match blend {
+                            TerrainBlendMode::Exact => "exact",
+                            TerrainBlendMode::NativeFloat => "native_float",
+                            TerrainBlendMode::NearestByte => "nearest_byte",
+                        };
+                        preview["result"]["terrain_mode"] == terrain
+                            && preview["result"]["blend_mode"] == blend
+                            && preview["result"]["partition_neighbors"] == partition
                     })
             }),
     );
@@ -230,8 +344,16 @@ pub fn refresh(window: &CarveWindow, session: &Session) {
         let targets = changes.len() + untouched;
         let target_word = if targets == 1 { "brush" } else { "brushes" };
         let fragment_word = if fragments == 1 { "fragment" } else { "fragments" };
-        format!("{targets} target {target_word} → {fragments} {fragment_word}\n{removed} fully removed · {untouched} unchanged\nThe map is unchanged until Apply.").into()
+        let terrain = &preview["result"]["terrain_work"];
+        let patches = terrain["patches"].as_u64().unwrap_or_default();
+        let terrain_summary = if terrain["sources"].as_u64().unwrap_or_default() == 0 {String::new()} else {
+            format!("\n{patches} terrain patches · {} samples · {} triangles",terrain["vertices"],terrain["triangles"])
+        };
+        format!("{targets} target {target_word} → {fragments} {fragment_word}\n{removed} fully removed · {untouched} unchanged{terrain_summary}\nThe map is unchanged until Apply.").into()
     });
+    if let Some(error) = preview["guard_error"].as_str() {
+        window.set_message(error.into());
+    }
 }
 
 pub fn refresh_changed(window: &CarveWindow, session: &Session) {
@@ -241,15 +363,17 @@ pub fn refresh_changed(window: &CarveWindow, session: &Session) {
 }
 
 fn choose_cutter(window: &CarveWindow) {
+    let chosen = window
+        .get_cutter_ids()
+        .row_data(window.get_cutter() as usize);
     let rows = window
         .get_targets()
         .iter()
-        .enumerate()
-        .map(|(index, mut row)| {
+        .map(|mut row| {
             if row.cutter {
                 row.selected = true;
             }
-            row.cutter = index == window.get_cutter() as usize;
+            row.cutter = chosen.as_ref() == Some(&row.solid);
             if row.cutter {
                 row.selected = false;
             }
@@ -281,6 +405,26 @@ fn with_window<R>(
 }
 
 pub fn bind_with_access(window: &CarveWindow, access: &DocumentAccess) {
+    window.on_terrain_mode_changed({
+        let window = window.as_weak();
+        let target = access.downgrade();
+        move || {
+            with_window(&window, &target, |window, _| {
+                window.set_blend_mode(0);
+                window.set_partition_neighbors(false);
+                terrain_options_changed(window);
+            });
+        }
+    });
+    window.on_terrain_options_changed({
+        let window = window.as_weak();
+        let target = access.downgrade();
+        move || {
+            with_window(&window, &target, |window, _| {
+                terrain_options_changed(window)
+            });
+        }
+    });
     window.on_cut_material_changed({
         let window = window.as_weak();
         let target = access.downgrade();
@@ -319,7 +463,7 @@ pub fn bind_with_access(window: &CarveWindow, access: &DocumentAccess) {
                     .get_targets()
                     .iter()
                     .map(|mut row| {
-                        if row.solid == id {
+                        if row.solid == id && !row.terrain {
                             row.cutter = !row.cutter;
                             row.selected = !row.cutter;
                         }
@@ -364,12 +508,16 @@ pub fn bind_with_access(window: &CarveWindow, access: &DocumentAccess) {
                 let mut session = lock(shared);
                 let result = parameters(window).and_then(|(cutters, targets)| {
                     let policy = cut_material(window)?;
-                    session.preview_carve_many_with_material(
-                        &cutters,
-                        &targets,
-                        &policy,
-                        window.get_stamp().as_str(),
-                    )
+                    let (terrain_mode, blend_mode, partition_neighbors) = terrain_options(window)?;
+                    session.preview_carve_request(editor_core::session::carving::CarveRequest {
+                        cutters: &cutters,
+                        targets: &targets,
+                        cut_material: &policy,
+                        terrain_mode,
+                        blend_mode,
+                        partition_neighbors,
+                        stamp: window.get_stamp().as_str(),
+                    })
                 });
                 refresh(window, &session);
                 if let Err(error) = result {

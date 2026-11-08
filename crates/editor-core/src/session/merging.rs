@@ -1,4 +1,3 @@
-use glam::DVec3;
 use map_core::{Document, EditError, ObjectId, merge, subobject};
 use serde_json::{Value, json};
 
@@ -52,24 +51,7 @@ impl Session {
             return Err("Choose at most 16 source brushes to merge".into());
         }
         ids.into_iter()
-            .map(|id| {
-                let (owner, solid) =
-                    subobject::solid(&self.document, id).map_err(|error| error.to_string())?;
-                let shape = subobject::topology(solid).map_err(|error| error.to_string())?;
-                let (mins, maxs) = shape
-                    .vertices
-                    .iter()
-                    .fold((DVec3::MAX, DVec3::MIN), |(mins, maxs), vertex| {
-                        (mins.min(vertex.position), maxs.max(vertex.position))
-                    });
-                Ok(Source {
-                    solid: id,
-                    owner,
-                    mins,
-                    maxs,
-                    material: solid.sides[0].material.clone(),
-                })
-            })
+            .map(|id| Source::inspect(&self.document, id))
             .collect()
     }
 

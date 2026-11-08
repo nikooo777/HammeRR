@@ -210,6 +210,11 @@ impl EditorServer {
         display: render::ResolvedSceneDisplay,
         display_guard: &crate::session::SceneDisplayRenderGuard,
     ) -> Result<RenderedView, String> {
+        {
+            let mut session = self.session();
+            session.preflight_carve_preview();
+            session.verify_carve_preview_render()?;
+        }
         self.session().color_correction_for_render()?;
         self.session().verify_scene_display_render(display_guard)?;
         self.session()
@@ -250,6 +255,8 @@ impl EditorServer {
             let mut session = self.session();
             let color_correction = session.color_correction_for_render()?;
             renderer.set_color_correction(color_correction.clone());
+            session.preflight_carve_preview();
+            session.verify_carve_preview_render()?;
             session.preflight_instance_contents();
             session.preflight_compiled_visibility();
             session.preflight_compiled_details();
@@ -289,6 +296,7 @@ impl EditorServer {
             ctx, gpu_scene, camera, &view, size.0, size.1, display,
         )?;
         self.session().verify_scene_display_render(display_guard)?;
+        self.session().verify_carve_preview_render()?;
         self.session()
             .verify_color_correction_render(color_correction.as_ref())?;
         self.session()

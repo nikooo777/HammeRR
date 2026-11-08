@@ -10,8 +10,8 @@ use source_formats::gamefs::GameFs;
 
 use super::Session;
 
-pub(super) struct Prepared {
-    pub(super) textures: BTreeMap<FaceId, TerrainTexture>,
+pub(in crate::session) struct Prepared {
+    pub(in crate::session) textures: BTreeMap<FaceId, TerrainTexture>,
     dimensions: BTreeMap<String, [u32; 2]>,
     detail_scales: BTreeMap<String, f32>,
     secondary_surfaces: BTreeSet<String>,
@@ -21,7 +21,7 @@ pub(super) struct Prepared {
 }
 
 impl Prepared {
-    pub(super) fn prepare(
+    pub(in crate::session) fn prepare(
         session: &Session,
         faces: &[FaceId],
     ) -> Result<Option<Arc<Self>>, String> {
@@ -69,7 +69,7 @@ impl Prepared {
         })))
     }
 
-    pub(super) fn current(&self, session: &Session) -> Result<(), String> {
+    pub(in crate::session) fn current(&self, session: &Session) -> Result<(), String> {
         if self.content != session.build_content_epoch()
             || self.materials != session.materials.generation()
         {
@@ -83,13 +83,13 @@ impl Prepared {
             .map_err(|error| format!("Retiled terrain material sources changed: {error}"))
     }
 
-    pub(super) fn verify(&self, game: &GameFs) -> Result<(), String> {
+    pub(in crate::session) fn verify(&self, game: &GameFs) -> Result<(), String> {
         self.sources
             .verify_sources(game, &compiler::Control::default())
             .map_err(|error| format!("Retiled terrain material sources changed: {error}"))
     }
 
-    pub(super) fn report(&self) -> Value {
+    pub(in crate::session) fn report(&self) -> Value {
         json!({"faces":self.textures.len(), "materials":self.dimensions.iter().map(|(name, size)| {
             json!({"name":name,"mapping_size":size,"detail_scale":self.detail_scales.get(name),"has_secondary_surface":self.secondary_surfaces.contains(name)})
         }).collect::<Vec<_>>()})

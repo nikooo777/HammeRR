@@ -16,6 +16,8 @@ Inspect reflection assignments for root-authored faces and author manual binding
 **Cancel** discards the owned draft. Use **Refresh** after source changes.
 An automatic choice from a child shows its helper and complete instance path.
 Removing a root binding may select a child sample.
+Carve and Clip carry manual bindings to all retained fragments of a bound face.
+Removing every bound face rejects; rebind the helper first.
 
 ## Limits
 

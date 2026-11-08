@@ -62,6 +62,12 @@ pub(in crate::mcp) struct CarveArgs {
     /// Default {policy:"cutter"} copies cutter surface settings. {policy:"target"} copies the unique original target face with the generated face's outward normal, rejecting missing/ambiguous matches. {policy:"material",material:"BRICK/WALL"} changes only material and keeps cutter UVs/lighting/metadata. Nodraw is allowed.
     #[serde(default)]
     pub(in crate::mcp) cut_material: CutMaterialArgs,
+    /// grid (default), flat, cells or fragments. Terrain cutters are unsupported; targets keep their original terrain surface settings.
+    pub(in crate::mcp) terrain_mode: Option<ClipTerrainMode>,
+    /// exact (default), native_float or nearest_byte. Non-exact modes require fragments.
+    pub(in crate::mcp) blend_mode: Option<ClipBlendMode>,
+    /// Explicitly allow required selected terrain neighbors to partition. Default false; unavailable in flat.
+    pub(in crate::mcp) partition_neighbors: Option<bool>,
     pub(in crate::mcp) stamp: String,
 }
 
@@ -72,6 +78,12 @@ pub(in crate::mcp) struct CarveManyArgs {
     /// Cut surface policy shared by every cutter/target. Default cutter; target requires a unique parallel original target face with the generated face's outward normal; material names override only cutter material. Invalid projections reject the whole request without replacing a valid draft.
     #[serde(default)]
     pub(in crate::mcp) cut_material: CutMaterialArgs,
+    /// grid (default), flat, cells or fragments. One representation applies throughout the combined subtraction; failures do not select another mode.
+    pub(in crate::mcp) terrain_mode: Option<ClipTerrainMode>,
+    /// exact (default), native_float or nearest_byte. Non-exact modes require fragments.
+    pub(in crate::mcp) blend_mode: Option<ClipBlendMode>,
+    /// Explicitly allow required selected terrain neighbors to partition. Default false; unavailable in flat.
+    pub(in crate::mcp) partition_neighbors: Option<bool>,
     pub(in crate::mcp) stamp: String,
 }
 
@@ -534,12 +546,7 @@ pub struct ClipTerrainModeArgs {
 }
 
 fn clip_terrain_mode_name(mode: map_core::clip::TerrainMode) -> &'static str {
-    match mode {
-        map_core::clip::TerrainMode::Grid => "grid",
-        map_core::clip::TerrainMode::Flat => "flat",
-        map_core::clip::TerrainMode::Cells => "cells",
-        map_core::clip::TerrainMode::Fragments => "fragments",
-    }
+    crate::session::clipping::terrain_mode_name(mode)
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -566,11 +573,7 @@ pub struct ClipBlendModeArgs {
 }
 
 fn clip_blend_mode_name(mode: map_core::clip::TerrainBlendMode) -> &'static str {
-    match mode {
-        map_core::clip::TerrainBlendMode::Exact => "exact",
-        map_core::clip::TerrainBlendMode::NativeFloat => "native_float",
-        map_core::clip::TerrainBlendMode::NearestByte => "nearest_byte",
-    }
+    crate::session::clipping::blend_mode_name(mode)
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -608,46 +611,26 @@ pub(in crate::mcp) fn clip_result(
     blend_mode: map_core::clip::TerrainBlendMode,
     partition_neighbors: bool,
 ) -> Value {
-    let (raw_limit, packed_limit) = blend_mode.error_limits();
-    json!({"blend_mode":clip_blend_mode_name(blend_mode),
-    "partition_neighbors":partition_neighbors,
-    "partitioned_neighbors":result.terrain.iter().filter(|cut|cut.partitioned)
-        .map(|cut|json!({"solid":cut.source.solid,"side":cut.source.side})).collect::<Vec<_>>(),
-    "round_blend":blend_mode == map_core::clip::TerrainBlendMode::NearestByte,
-    "cuts": result.cuts.iter().map(|cut| json!({"source": cut.source, "solids": cut.solids})).collect::<Vec<_>>(),
-    "objects": result.objects.iter().copied().map(id_string).collect::<Vec<_>>(), "unchanged": result.unchanged,
-    "side_mapping":result.side_mapping,
-    "terrain":result.terrain.iter().map(|cut| {
-        let mut value = json!({
-            "source":{"solid":cut.source.solid,"side":cut.source.side},
-            "operation":if cut.partitioned { "partition" } else { "cut" },
-            "faces":cut.faces.iter().map(|face|json!({"solid":face.solid,"side":face.side})).collect::<Vec<_>>(),
-            "source_power":cut.source_power,"output_power":cut.output_power,"vertices":cut.vertices,"triangles":cut.triangles,
-            "verified_neighbors":cut.verified_neighbors,"preserved_links":cut.preserved_links,
-        });
-        if cut.output_power.is_none() {
-            value["face_powers"] = json!(cut.faces.iter().zip(&cut.face_powers)
-                .map(|(face, power)|json!({"solid":face.solid,"side":face.side,"power":power}))
-                .collect::<Vec<_>>());
-        }
-        if let Some(error) = cut.blend_error {
-            value["blend_error"] = json!({
-                "raw":error.raw,"packed":error.packed,
-                "raw_limit":raw_limit,
-                "packed_limit":packed_limit,
-            });
-        }
-        value
-    }).collect::<Vec<_>>(),
-    "terrain_work":{
-        "sources":result.terrain.len(),"patches":result.terrain.iter().map(|cut|cut.faces.len()).sum::<usize>(),
-        "vertices":result.terrain.iter().map(|cut|cut.vertices).sum::<usize>(),
-        "triangles":result.terrain.iter().map(|cut|cut.triangles).sum::<usize>(),
-        "limits":{"sources":map_core::clip::MAX_TERRAIN_SOURCES,"patches":map_core::clip::MAX_TERRAIN_PATCHES,
-            "vertices":map_core::clip::MAX_TERRAIN_VERTICES,"triangles":map_core::clip::MAX_TERRAIN_TRIANGLES,
-            "neighbor_faces":map_core::clip::MAX_TERRAIN_NEIGHBOR_FACES,
-            "native_map_patches":source_formats::bsp::MAX_DISPLACEMENTS}
-    }})
+    let mut value =
+        crate::session::clipping::terrain_report(&result.terrain, blend_mode, partition_neighbors);
+    value["cuts"] = json!(
+        result
+            .cuts
+            .iter()
+            .map(|cut| json!({"source":cut.source,"solids":cut.solids}))
+            .collect::<Vec<_>>()
+    );
+    value["objects"] = json!(
+        result
+            .objects
+            .iter()
+            .copied()
+            .map(id_string)
+            .collect::<Vec<_>>()
+    );
+    value["unchanged"] = json!(result.unchanged);
+    value["side_mapping"] = json!(result.side_mapping);
+    value
 }
 
 pub(in crate::mcp) fn clip_state(session: &Session) -> Value {

@@ -230,13 +230,47 @@ pub(crate) fn partition_neighbors(
     material: Option<&str>,
     context: &mut Context<'_>,
 ) -> Result<Vec<Plan>, EditError> {
+    partition_neighbors_mode(
+        document,
+        authorized,
+        replacements,
+        Some(plane),
+        material,
+        context,
+    )
+}
+
+pub(crate) fn partition_subtraction_neighbors(
+    document: &Document,
+    authorized: &[crate::clip::Source<'_>],
+    replacements: &[Replacement<'_>],
+    material: Option<&str>,
+    context: &mut Context<'_>,
+) -> Result<Vec<Plan>, EditError> {
+    partition_neighbors_mode(document, authorized, replacements, None, material, context)
+}
+
+fn partition_neighbors_mode(
+    document: &Document,
+    authorized: &[crate::clip::Source<'_>],
+    replacements: &[Replacement<'_>],
+    plane: Option<Plane>,
+    material: Option<&str>,
+    context: &mut Context<'_>,
+) -> Result<Vec<Plan>, EditError> {
     if !replacements
         .iter()
         .any(|replacement| replacement.operation == Operation::Cut)
     {
         return Ok(Vec::new());
     }
-    let before = component(document, replacements, context.vmf, &mut context.work)?;
+    let before = component(
+        document,
+        replacements,
+        context.vmf,
+        &mut context.work,
+        plane.is_none(),
+    )?;
     if before.is_empty() {
         return Ok(Vec::new());
     }
@@ -279,10 +313,10 @@ pub(crate) fn partition_neighbors(
         child,
     }) = required_partition(&before, &original.pairs, &leaves, &mut context.work)?
     {
-        if replacements
+        let replacement = replacements
             .iter()
-            .any(|replacement| replacement.source == face)
-        {
+            .find(|replacement| replacement.source == face);
+        if replacement.is_some() && plane.is_some() {
             return Err(crate::clip::source_error(
                 face.solid,
                 invalid("Terrain neighbor partitioning requires a noncrossing original source"),
@@ -306,12 +340,20 @@ pub(crate) fn partition_neighbors(
             ));
         }
         let existing = plans.contains_key(&face);
-        let removed = usize::from(existing);
+        let removed = usize::from(existing || replacement.is_some());
         let cells = child.cells() / 2;
         patches = patches - removed + 4;
         vertices = vertices - removed * (child.cells() + 1).pow(2) + 4 * (cells + 1).pow(2);
         triangles = triangles - removed * 2 * child.cells().pow(2) + 8 * cells.pow(2);
-        if replacements.len() + plans.len() + usize::from(!existing)
+        let added_sources = plans
+            .keys()
+            .filter(|source| {
+                !replacements
+                    .iter()
+                    .any(|replacement| replacement.source == **source)
+            })
+            .count();
+        if replacements.len() + added_sources + usize::from(!existing && replacement.is_none())
             > crate::clip::MAX_TERRAIN_SOURCES
             || patches > crate::clip::MAX_TERRAIN_PATCHES
             || vertices > crate::clip::MAX_TERRAIN_VERTICES
@@ -329,9 +371,12 @@ pub(crate) fn partition_neighbors(
             std::collections::btree_map::Entry::Vacant(entry) => {
                 let geometry = BrushGeometry::from_solid(source.solid)
                     .map_err(|error| invalid(error.to_string()))?;
-                let original =
+                let original = if let Some(plane) = plane {
                     super::prepare_partition(document, source.solid, &geometry, plane, context)
-                        .map_err(|error| crate::clip::source_error(face.solid, error))?;
+                } else {
+                    super::prepare(document, source.solid, &geometry, context)
+                }
+                .map_err(|error| crate::clip::source_error(face.solid, error))?;
                 entry.insert(original)
             }
         };
@@ -355,6 +400,35 @@ pub(crate) fn partition_neighbors(
             .position(|leaf| leaf.origin == child)
             .ok_or_else(|| invalid("Terrain neighbor partitioning lost its current coarse leaf"))?;
         current.splice(index..=index, refined);
+        if !existing && let Some(replacement) = replacement {
+            let power = replacement.children.first().map(|child| child.power);
+            plans.insert(
+                face,
+                Plan {
+                    operation: Operation::Partition,
+                    source: face,
+                    source_power: replacement.source_power,
+                    output_power: power.filter(|power| {
+                        replacement
+                            .children
+                            .iter()
+                            .all(|child| child.power == *power)
+                    }),
+                    vertices: replacement
+                        .children
+                        .iter()
+                        .map(|child| (child.cells() + 1).pow(2))
+                        .sum(),
+                    triangles: replacement
+                        .children
+                        .iter()
+                        .map(|child| 2 * child.cells().pow(2))
+                        .sum(),
+                    parts: replacement.parts.to_vec(),
+                    children: replacement.children.to_vec(),
+                },
+            );
+        }
         match plans.entry(face) {
             std::collections::btree_map::Entry::Occupied(mut entry) => {
                 entry.get_mut().replace(child, plan)?
@@ -373,6 +447,8 @@ pub(crate) struct Replacement<'a> {
     pub source_power: u32,
     pub parts: &'a [Solid],
     pub children: &'a [Child],
+    pub removed: Option<&'a [Vec<crate::clip::TerrainCutPlane>]>,
+    pub changed: bool,
 }
 
 pub(crate) struct Verification {
@@ -842,15 +918,24 @@ fn canonical(mut triangle: [usize; 3]) -> [usize; 3] {
     triangle
 }
 
+struct LodCut<'a> {
+    line: Option<&'a CutLine>,
+    subtraction: bool,
+}
+
 fn certify_lod(
     original: &Surface<'_>,
     previous: Option<&LodState>,
     outputs: &[Surface<'_>],
     current: &Graph,
     retained: &BTreeSet<Vertex>,
-    cut: Option<&CutLine>,
+    cut: LodCut<'_>,
     work: &mut Work,
 ) -> Result<(), EditError> {
+    let LodCut {
+        line: cut,
+        subtraction,
+    } = cut;
     let previous = NativeState::prepare(original, previous, work)?;
     if let Some(cut) = cut {
         cut.certify(&previous.positions, original.mesh.size, work)?;
@@ -867,7 +952,7 @@ fn certify_lod(
             .iter()
             .all(|index| retained.contains(&original.vertex(*index)))
         {
-            expected.insert(if cut.is_some() {
+            expected.insert(if cut.is_some() || subtraction {
                 canonical(triangle)
             } else {
                 triangle
@@ -901,7 +986,7 @@ fn certify_lod(
         }
         for triangle in state.indices {
             let mapped = triangle.map(|index| output.vertex(index).index);
-            let mapped = if cut.is_some() {
+            let mapped = if cut.is_some() || subtraction {
                 canonical(mapped)
             } else {
                 mapped
@@ -1069,6 +1154,7 @@ fn component<'a>(
     replacements: &[Replacement<'_>],
     vmf: Option<&'a Vmf>,
     work: &mut Work,
+    subtraction: bool,
 ) -> Result<Vec<Surface<'a>>, EditError> {
     let selected = replacements
         .iter()
@@ -1137,7 +1223,7 @@ fn component<'a>(
     }
     let mut engaged = BTreeSet::new();
     for (offset, first) in queue.iter().enumerate() {
-        if internal.contains(&raw[*first].id) {
+        if subtraction && selected.contains(&raw[*first].id) || internal.contains(&raw[*first].id) {
             engaged.insert(*first);
         }
         for second in &queue[offset + 1..] {
@@ -1179,10 +1265,29 @@ pub(crate) fn certify(
     replacements: &[Replacement<'_>],
     context: &mut Context<'_>,
 ) -> Result<Vec<Verification>, EditError> {
+    certify_mode(document, replacements, context, false)
+}
+
+pub(crate) fn certify_subtraction(
+    document: &Document,
+    replacements: &[Replacement<'_>],
+    context: &mut Context<'_>,
+) -> Result<Vec<Verification>, EditError> {
+    certify_mode(document, replacements, context, true)
+}
+
+fn certify_mode(
+    document: &Document,
+    replacements: &[Replacement<'_>],
+    context: &mut Context<'_>,
+    subtraction: bool,
+) -> Result<Vec<Verification>, EditError> {
     let work = &mut context.work;
     let cuts = &context.cuts;
     for replacement in replacements {
-        if (replacement.operation == Operation::Cut) != cuts.contains_key(&replacement.source) {
+        if !subtraction
+            && (replacement.operation == Operation::Cut) != cuts.contains_key(&replacement.source)
+        {
             return Err(crate::clip::source_error(
                 replacement.source.solid,
                 invalid("Terrain clipping lost its explicit cut or partition identity"),
@@ -1192,11 +1297,12 @@ pub(crate) fn certify(
     let selected = replacements
         .iter()
         .filter(|replacement| {
-            native::terrain_source_is_visible(document.vmf(), replacement.source.solid)
+            replacement.changed
+                && native::terrain_source_is_visible(document.vmf(), replacement.source.solid)
         })
         .map(|replacement| replacement.source)
         .collect::<BTreeSet<_>>();
-    let before = component(document, replacements, context.vmf, work)?;
+    let before = component(document, replacements, context.vmf, work, subtraction)?;
     if before.is_empty() {
         return Ok(replacements
             .iter()
@@ -1211,7 +1317,7 @@ pub(crate) fn certify(
     for surface in &before {
         if let Some(replacement) = replacements
             .iter()
-            .find(|replacement| replacement.source == surface.raw.id)
+            .find(|replacement| replacement.changed && replacement.source == surface.raw.id)
         {
             if replacement.parts.len() != replacement.children.len() {
                 return Err(invalid("Terrain clipping lost its child grid origins"));
@@ -1254,6 +1360,39 @@ pub(crate) fn certify(
         }
     }
     let current = graph(&after, work)?;
+    for (index, output) in after.iter().enumerate() {
+        let Some(volumes) = replacements
+            .iter()
+            .find(|replacement| replacement.source == output.raw.id)
+            .and_then(|replacement| replacement.removed)
+        else {
+            continue;
+        };
+        let state = NativeState::prepare(output, current.lod[index].as_ref(), work)?;
+        let ideal = current.lod[index].as_ref().map(|lod| {
+            lod.ideal_positions
+                .iter()
+                .map(|point| DVec3::from_array(point.map(f64::from_bits)))
+                .collect()
+        });
+        let profiles = std::iter::once(output.mesh.positions.clone())
+            .chain(ideal)
+            .chain(state.positions.iter().map(|positions| {
+                positions
+                    .iter()
+                    .map(|point| {
+                        DVec3::from_array(point.map(|bits| f64::from(f32::from_bits(bits))))
+                    })
+                    .collect()
+            }))
+            .collect::<Vec<_>>();
+        let mut triangles = output.indices.clone();
+        triangles.extend(state.indices.iter().copied());
+        crate::displacement::flat_clip::certify_triangle_exclusion(
+            &profiles, &triangles, volumes, work,
+        )?;
+    }
+
     let mut retained = BTreeSet::new();
     for surface in &after {
         retained.extend((0..surface.vertices.len()).map(|index| surface.vertex(index)));
@@ -1284,26 +1423,72 @@ pub(crate) fn certify(
         ));
     }
     for (original_index, original) in before.iter().enumerate() {
+        if let Some(volumes) = replacements
+            .iter()
+            .find(|replacement| replacement.source == original.raw.id)
+            .and_then(|replacement| replacement.removed)
+        {
+            let state =
+                NativeState::prepare(original, previous.lod[original_index].as_ref(), work)?;
+            let ideal = previous.lod[original_index].as_ref().map(|lod| {
+                lod.ideal_positions
+                    .iter()
+                    .map(|point| DVec3::from_array(point.map(f64::from_bits)))
+                    .collect()
+            });
+            let profiles = std::iter::once(original.mesh.positions.clone())
+                .chain(ideal)
+                .chain(state.positions.iter().map(|positions| {
+                    positions
+                        .iter()
+                        .map(|point| {
+                            DVec3::from_array(point.map(|bits| f64::from(f32::from_bits(bits))))
+                        })
+                        .collect()
+                }))
+                .collect::<Vec<_>>();
+            let mut triangles = original.indices.clone();
+            triangles.extend(state.indices.iter().copied());
+            let children = after
+                .iter()
+                .filter(|child| child.raw.id == original.raw.id)
+                .map(|child| child.grid().corners)
+                .collect::<Vec<_>>();
+            crate::displacement::flat_clip::certify_source_coverage(
+                &original.mesh,
+                &profiles,
+                &triangles,
+                &children,
+                volumes,
+                work,
+            )?;
+        }
+
         if selected.contains(&original.raw.id) {
             let replacement = replacements
                 .iter()
                 .find(|replacement| replacement.source == original.raw.id)
                 .unwrap();
-            let cut = match replacement.operation {
-                Operation::Cut => Some(
-                    cuts.get(&original.raw.id)
-                        .ok_or_else(|| invalid("Terrain clipping lost its certified cut line"))?,
-                ),
-                Operation::Partition => {
-                    if cuts.contains_key(&original.raw.id)
-                        || (0..original.vertices.len())
-                            .any(|index| !retained.contains(&original.vertex(index)))
-                    {
-                        return Err(invalid(
-                            "Terrain neighbor partitioning must retain its entire noncrossing source grid",
-                        ));
+            let cut = if subtraction {
+                None
+            } else {
+                match replacement.operation {
+                    Operation::Cut => {
+                        Some(cuts.get(&original.raw.id).ok_or_else(|| {
+                            invalid("Terrain clipping lost its certified cut line")
+                        })?)
                     }
-                    None
+                    Operation::Partition => {
+                        if cuts.contains_key(&original.raw.id)
+                            || (0..original.vertices.len())
+                                .any(|index| !retained.contains(&original.vertex(index)))
+                        {
+                            return Err(invalid(
+                                "Terrain neighbor partitioning must retain its entire noncrossing source grid",
+                            ));
+                        }
+                        None
+                    }
                 }
             };
             certify_lod(
@@ -1312,7 +1497,10 @@ pub(crate) fn certify(
                 &after,
                 &current,
                 &retained,
-                cut,
+                LodCut {
+                    line: cut,
+                    subtraction,
+                },
                 work,
             )?;
         }

@@ -5,10 +5,42 @@ use source_formats::vmf::{Side, Solid};
 use crate::plane::ON_EPSILON;
 use crate::{BrushGeometry, Document, EditError, ObjectId, Plane, Transaction, clip, subobject};
 
+mod terrain;
+
 pub const MAX_TARGETS: usize = 16;
 pub const MAX_CUTTERS: usize = 8;
 pub const MAX_FRAGMENTS: usize = 256;
 const TARGET_NORMAL_EPSILON: f64 = 1e-8;
+
+pub struct Preparation {
+    work: Option<crate::displacement::grid_clip::Work>,
+}
+
+impl Default for Preparation {
+    fn default() -> Self {
+        Self {
+            work: Some(Default::default()),
+        }
+    }
+}
+
+impl Preparation {
+    fn take_work(
+        &mut self,
+    ) -> std::result::Result<crate::displacement::grid_clip::Work, EditError> {
+        self.work
+            .take()
+            .ok_or_else(|| invalid("Terrain preparation has already failed or been consumed"))
+    }
+
+    fn work(
+        &mut self,
+    ) -> std::result::Result<&mut crate::displacement::grid_clip::Work, EditError> {
+        self.work
+            .as_mut()
+            .ok_or_else(|| invalid("Terrain preparation has already failed or been consumed"))
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum CutMaterialPolicy {
@@ -45,10 +77,11 @@ pub struct Inheritance {
     pub solid: u32,
     pub side: u32,
     pub source_solid: u32,
-    pub source_side: u32,
+    pub source_side: Option<u32>,
     pub surface_source_solid: u32,
     pub surface_source_side: u32,
     pub cutter: bool,
+    pub structural: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,17 +89,24 @@ pub struct Result {
     pub cutter: u32,
     pub cutters: Vec<u32>,
     pub cut_material: CutMaterialPolicy,
+    pub terrain_mode: clip::TerrainMode,
+    pub blend_mode: clip::TerrainBlendMode,
+    pub partition_neighbors: bool,
     pub changes: Vec<Change>,
     pub unchanged: Vec<u32>,
     pub removed: Vec<u32>,
     pub objects: Vec<ObjectId>,
     pub faces: Vec<Inheritance>,
+    pub side_mapping: BTreeMap<u32, Vec<u32>>,
+    pub terrain: Vec<clip::TerrainCut>,
 }
 
 struct Planned {
     owner: ObjectId,
     source: u32,
     parts: Vec<Solid>,
+    terrain: Option<clip::TerrainCut>,
+    structural: BTreeMap<u32, (u32, u32)>,
 }
 
 enum Position {
@@ -207,7 +247,7 @@ fn plan(
         subobject::topology(cutter)?;
         if cutter.sides.iter().any(|side| side.displacement.is_some()) {
             return Err(invalid(format!(
-                "Cutter {id}: carving displacements is unsupported"
+                "Cutter {id}: terrain has no closed native volume and cannot be a cutter"
             )));
         }
         cutters.push(cutter);
@@ -223,28 +263,7 @@ fn plan(
                 "Brush {id}: carving displacements is unsupported"
             )));
         }
-        let mut parts = vec![source.clone()];
-        let mut affected = false;
-        for cutter in &cutters {
-            let mut remaining = Vec::new();
-            for part in parts {
-                if intersects(&part, cutter)? {
-                    affected = true;
-                    remaining.extend(subtract(&part, cutter)?);
-                } else {
-                    remaining.push(part);
-                }
-                if count + remaining.len() > MAX_FRAGMENTS {
-                    return Err(invalid(
-                        "Carving would exceed 256 fragments at an intermediate stage; reduce the selection",
-                    ));
-                }
-            }
-            parts = remaining;
-            if parts.is_empty() {
-                break;
-            }
-        }
+        let (parts, affected) = ordinary_parts(source, &cutters, count)?;
         if !affected {
             unchanged.push(id);
             continue;
@@ -259,6 +278,8 @@ fn plan(
             owner,
             source: id,
             parts,
+            terrain: None,
+            structural: BTreeMap::new(),
         });
     }
     if planned.is_empty() {
@@ -284,6 +305,36 @@ fn plan(
         }
     }
     Ok((planned, unchanged))
+}
+
+fn ordinary_parts(
+    source: &Solid,
+    cutters: &[&Solid],
+    count: usize,
+) -> std::result::Result<(Vec<Solid>, bool), EditError> {
+    let mut parts = vec![source.clone()];
+    let mut affected = false;
+    for cutter in cutters {
+        let mut remaining = Vec::new();
+        for part in parts {
+            if intersects(&part, cutter)? {
+                affected = true;
+                remaining.extend(subtract(&part, cutter)?);
+            } else {
+                remaining.push(part);
+            }
+            if count + remaining.len() > MAX_FRAGMENTS {
+                return Err(invalid(
+                    "Carving would exceed 256 fragments at an intermediate stage; reduce the selection",
+                ));
+            }
+        }
+        parts = remaining;
+        if parts.is_empty() {
+            break;
+        }
+    }
+    Ok((parts, affected))
 }
 
 pub fn carve(
@@ -313,10 +364,31 @@ pub fn carve_with_material(
 
 fn target_surface<'a>(side: &Side, target: &'a Solid) -> std::result::Result<&'a Side, EditError> {
     let normal = Plane::from_points(side.plane.0).unwrap().normal;
-    let mut matches = target.sides.iter().filter(|source| {
-        let source_normal = Plane::from_points(source.plane.0).unwrap().normal;
-        source_normal.dot(normal) >= 1.0 - TARGET_NORMAL_EPSILON
-    });
+    let geometry = if target.sides.iter().any(|side| side.displacement.is_some()) {
+        Some(BrushGeometry::from_solid(target).map_err(|error| invalid(error.to_string()))?)
+    } else {
+        None
+    };
+    let mut matches = target
+        .sides
+        .iter()
+        .enumerate()
+        .filter(|(index, source)| {
+            let source_normal = geometry.as_ref().map_or_else(
+                || Plane::from_points(source.plane.0).unwrap().normal,
+                |geometry| {
+                    geometry
+                        .faces
+                        .iter()
+                        .find(|face| face.side == *index)
+                        .unwrap()
+                        .plane
+                        .normal
+                },
+            );
+            source_normal.dot(normal) >= 1.0 - TARGET_NORMAL_EPSILON
+        })
+        .map(|(_, side)| side);
     let source = matches.next().ok_or_else(|| {
         invalid(format!(
             "Brush {} has no original face parallel to a generated cut face with the same outward normal; choose cutter or named cut material",
@@ -338,8 +410,52 @@ pub fn carve_many_with_material(
     targets: &[u32],
     cut_material: &CutMaterialPolicy,
 ) -> std::result::Result<Result, EditError> {
+    carve_many_with_options(
+        tx,
+        cutters,
+        targets,
+        cut_material,
+        clip::ClipOptions::default(),
+    )
+}
+
+pub fn carve_many_with_options(
+    tx: &mut Transaction,
+    cutters: &[u32],
+    targets: &[u32],
+    cut_material: &CutMaterialPolicy,
+    options: clip::ClipOptions<'_>,
+) -> std::result::Result<Result, EditError> {
+    carve_many_with_preparation(
+        tx,
+        cutters,
+        targets,
+        cut_material,
+        options,
+        &mut Preparation::default(),
+    )
+}
+
+pub fn carve_many_with_preparation(
+    tx: &mut Transaction,
+    cutters: &[u32],
+    targets: &[u32],
+    cut_material: &CutMaterialPolicy,
+    options: clip::ClipOptions<'_>,
+    preparation: &mut Preparation,
+) -> std::result::Result<Result, EditError> {
     let cut_material = cut_material.normalized()?;
-    let (planned, unchanged) = plan(tx.document(), cutters, targets)?;
+    terrain::validate_options(&options)?;
+    preparation.work()?;
+    let has_terrain = targets.iter().any(|id| {
+        subobject::solid(tx.document(), *id)
+            .is_ok_and(|(_, solid)| solid.sides.iter().any(|side| side.displacement.is_some()))
+    });
+    let (planned, unchanged) = if has_terrain {
+        terrain::plan(tx.document(), cutters, targets, &options, preparation)?
+    } else {
+        plan(tx.document(), cutters, targets)?
+    };
     let cutters = cutters
         .iter()
         .copied()
@@ -365,68 +481,131 @@ pub fn carve_many_with_material(
         cutter: cutters[0],
         cutters,
         cut_material: cut_material.clone(),
+        terrain_mode: options.terrain_mode,
+        blend_mode: options.blend_mode,
+        partition_neighbors: options.partition_neighbors,
         changes: Vec::new(),
         unchanged,
         removed: Vec::new(),
         objects: Vec::new(),
         faces: Vec::new(),
+        side_mapping: BTreeMap::new(),
+        terrain: Vec::new(),
     };
     let mut allocated = Vec::new();
     for mut part in planned {
+        let (_, source) = subobject::solid(tx.document(), part.source)?;
+        for side in &source.sides {
+            result.side_mapping.entry(side.id).or_default();
+        }
         for (index, solid) in part.parts.iter_mut().enumerate() {
             if index > 0 {
                 solid.id = tx.new_object_id()?;
             }
-            for side in &mut solid.sides {
+            let geometry = if part.terrain.is_some() {
+                Some(BrushGeometry::from_solid(solid).map_err(|error| invalid(error.to_string()))?)
+            } else {
+                None
+            };
+            for (side_index, side) in solid.sides.iter_mut().enumerate() {
                 let source_side = side.id;
-                let from_cutter = cutter_sides.contains_key(&source_side);
-                let source_solid = cutter_sides
-                    .get(&source_side)
-                    .copied()
-                    .unwrap_or(part.source);
-                let (surface_source_solid, surface_source_side) = if from_cutter {
-                    let source = match &cut_material {
-                        CutMaterialPolicy::Target => {
-                            let (_, target) = subobject::solid(tx.document(), part.source)?;
-                            target_surface(side, target)?
-                        }
-                        _ => &*side,
-                    };
-                    let surface_source = (
-                        if cut_material == CutMaterialPolicy::Target {
-                            part.source
-                        } else {
-                            source_solid
-                        },
-                        source.id,
-                    );
-                    let mut surface = crate::brush::precise::inherit_surface(source, side)?;
-                    if let CutMaterialPolicy::Material(material) = &cut_material {
-                        surface.material = material.clone();
-                    }
-                    if cut_material != CutMaterialPolicy::Cutter {
-                        crate::surface::update(
-                            &mut surface,
-                            &crate::surface::SurfaceEdit::default(),
-                            &[],
-                        )?;
-                    }
-                    *side = surface;
-                    surface_source
+                let structural = part.structural.get(&source_side).copied();
+                let from_cutter = structural.is_none() && cutter_sides.contains_key(&source_side);
+                let source_solid = if from_cutter {
+                    cutter_sides[&source_side]
                 } else {
-                    (source_solid, source_side)
+                    part.source
                 };
-                if index > 0 || from_cutter {
+                let (surface_source_solid, surface_source_side) =
+                    if from_cutter || structural.is_some() {
+                        let donor = if let Some((solid, side)) = structural {
+                            let (_, donor) = subobject::solid(tx.document(), solid)?;
+                            donor
+                                .sides
+                                .iter()
+                                .find(|candidate| candidate.id == side)
+                                .ok_or_else(|| {
+                                    invalid("Terrain carrier lost its surface-settings donor")
+                                })?
+                        } else {
+                            &*side
+                        };
+                        let source = match &cut_material {
+                            CutMaterialPolicy::Target => {
+                                let (_, target) = subobject::solid(tx.document(), part.source)?;
+                                target_surface(side, target)?
+                            }
+                            _ => donor,
+                        };
+                        let surface_source = (
+                            if cut_material == CutMaterialPolicy::Target {
+                                part.source
+                            } else {
+                                structural.map_or(source_solid, |(solid, _)| solid)
+                            },
+                            source.id,
+                        );
+                        let mut surface = crate::brush::precise::inherit_surface(source, side)?;
+                        surface.displacement = None;
+                        if let CutMaterialPolicy::Material(material) = &cut_material {
+                            surface.material = material.clone();
+                        }
+                        if cut_material != CutMaterialPolicy::Cutter || structural.is_some() {
+                            let points = if structural.is_some() {
+                                geometry
+                                    .as_ref()
+                                    .and_then(|geometry| {
+                                        geometry.faces.iter().find(|face| face.side == side_index)
+                                    })
+                                    .map(|face| face.vertices.as_slice())
+                                    .ok_or_else(|| {
+                                        invalid("Terrain carrier lost its active geometry")
+                                    })?
+                            } else {
+                                &[]
+                            };
+                            crate::surface::update(
+                                &mut surface,
+                                &crate::surface::SurfaceEdit::default(),
+                                points,
+                            )?;
+                        }
+                        *side = surface;
+                        surface_source
+                    } else {
+                        (source_solid, source_side)
+                    };
+                if index > 0 || from_cutter || structural.is_some() {
                     side.id = tx.new_side_id()?;
+                }
+                if structural.is_none()
+                    && !from_cutter
+                    && result.side_mapping.contains_key(&source_side)
+                {
+                    result
+                        .side_mapping
+                        .entry(source_side)
+                        .or_default()
+                        .push(side.id);
+                }
+                if let Some(terrain) = &mut part.terrain
+                    && let Some(info) = &side.displacement
+                {
+                    terrain.faces.push(crate::surface::FaceId {
+                        solid: solid.id,
+                        side: side.id,
+                    });
+                    terrain.face_powers.push(info.power);
                 }
                 result.faces.push(Inheritance {
                     solid: solid.id,
                     side: side.id,
                     source_solid,
-                    source_side,
+                    source_side: structural.is_none().then_some(source_side),
                     surface_source_solid,
                     surface_source_side,
                     cutter: from_cutter,
+                    structural: structural.is_some(),
                 });
             }
             subobject::topology(solid)?;
@@ -438,9 +617,39 @@ pub fn carve_many_with_material(
             source: part.source,
             fragments: part.parts.iter().map(|solid| solid.id).collect(),
         });
+        if let Some(terrain) = &part.terrain {
+            result.terrain.push(terrain.clone());
+        }
         allocated.push(part);
     }
+    let mut installed = BTreeSet::new();
+    let mut fragments = Vec::new();
+    if has_terrain {
+        for part in &mut allocated {
+            if part.parts.is_empty() {
+                continue;
+            }
+            match part.owner {
+                ObjectId::Solid(_) => result
+                    .objects
+                    .extend(part.parts.iter().map(|solid| ObjectId::Solid(solid.id))),
+                ObjectId::Entity(_) => result.objects.push(part.owner),
+            }
+            installed.insert(part.source);
+            fragments.extend(
+                part.parts
+                    .drain(..)
+                    .map(|solid| (part.source, part.owner, solid)),
+            );
+        }
+        if !fragments.is_empty() {
+            subobject::fragments::install(tx, fragments)?;
+        }
+    }
     for mut part in allocated {
+        if installed.contains(&part.source) {
+            continue;
+        }
         match part.owner {
             ObjectId::Solid(id) => {
                 if part.parts.is_empty() {
@@ -468,4 +677,55 @@ pub fn carve_many_with_material(
     result.objects.sort();
     result.objects.dedup();
     Ok(result)
+}
+
+pub fn terrain_texture_faces(
+    document: &Document,
+    cutters: &[u32],
+    targets: &[u32],
+    mode: clip::TerrainMode,
+    partition_neighbors: bool,
+    context: Option<&source_formats::vmf::Vmf>,
+) -> std::result::Result<Vec<crate::surface::FaceId>, EditError> {
+    terrain_texture_faces_with_preparation(
+        document,
+        cutters,
+        targets,
+        &clip::ClipOptions {
+            terrain_mode: mode,
+            partition_neighbors,
+            terrain_context: context,
+            ..Default::default()
+        },
+        &mut Preparation::default(),
+    )
+}
+
+pub fn terrain_texture_faces_with_preparation(
+    document: &Document,
+    cutters: &[u32],
+    targets: &[u32],
+    options: &clip::ClipOptions<'_>,
+    preparation: &mut Preparation,
+) -> std::result::Result<Vec<crate::surface::FaceId>, EditError> {
+    terrain::texture_faces(document, cutters, targets, options, preparation)
+}
+
+pub fn terrain_partition_faces(
+    document: &Document,
+    cutters: &[u32],
+    targets: &[u32],
+    options: clip::ClipOptions<'_>,
+    preparation: &mut Preparation,
+) -> std::result::Result<Vec<crate::surface::FaceId>, EditError> {
+    terrain::partition_faces(document, cutters, targets, &options, preparation)
+}
+
+pub fn requires_terrain_context(
+    document: &Document,
+    cutters: &[u32],
+    targets: &[u32],
+    mode: clip::TerrainMode,
+) -> std::result::Result<bool, EditError> {
+    terrain::requires_context(document, cutters, targets, mode)
 }

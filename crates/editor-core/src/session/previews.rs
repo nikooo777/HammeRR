@@ -72,6 +72,7 @@ impl State {
                 self.carving
                     .preview
                     .as_ref()
+                    .filter(|preview| preview.render_error.is_none())
                     .map(|preview| &preview.document)
             })
             .or_else(|| {

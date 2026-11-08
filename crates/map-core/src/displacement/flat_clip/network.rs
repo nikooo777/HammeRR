@@ -14,7 +14,7 @@ use super::{
     field::{BasePlane, PlanarField},
     invalid, lod_proof, orient, polygon, reconstructed, same, weighted,
 };
-use crate::clip::Keep;
+use crate::clip::{Keep, TerrainBlendError, TerrainBlendMode, TerrainRetention};
 use crate::displacement::{
     DisplacementMesh,
     grid_clip::{self, Context, Work},
@@ -28,12 +28,17 @@ pub(crate) struct Replacement<'a> {
     pub parts: &'a [Solid],
     pub texture: Option<crate::clip::TerrainTexture>,
     pub cut: Option<(Plane, Keep)>,
+    pub removed: Option<&'a [Vec<crate::clip::TerrainCutPlane>]>,
+    pub changed: bool,
+    pub subtraction: bool,
+    pub blend_mode: TerrainBlendMode,
     pub window_fields: Option<&'a super::WindowFields>,
 }
 
 pub(crate) struct Verification {
     pub neighbors: usize,
     pub links: usize,
+    pub blend_error: Option<TerrainBlendError>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -248,7 +253,7 @@ fn raw_lod_state(
 fn lod_state(
     surface: &Surface<'_>,
     patch: Option<lod::Patch>,
-    cut: Option<(Plane, Keep)>,
+    cut: Option<TerrainRetention<'_>>,
     provisional: bool,
     work: &mut Work,
 ) -> Result<LodState, EditError> {
@@ -737,7 +742,7 @@ fn graph(
     surfaces: &[&Surface<'_>],
     mode: Mode,
     phase: Phase,
-    cuts: &BTreeMap<FaceId, (Plane, Keep)>,
+    cuts: &BTreeMap<FaceId, TerrainRetention<'_>>,
     provisional: &BTreeSet<FaceId>,
     unchanged: &BTreeSet<FaceId>,
     work: &mut Work,
@@ -1144,11 +1149,36 @@ fn certify_lod(
     }
     for (surface, state) in after.iter().zip(&current.lod) {
         work.consume(1).map_err(invalid)?;
+        if let Some(removed) = replacements
+            .iter()
+            .find(|replacement| replacement.source == surface.raw.source)
+            .and_then(|replacement| replacement.removed)
+        {
+            lod_proof::certify_exclusion(&surface.mesh, state.proof(surface), removed, work)?;
+        }
         if selected.contains(&surface.raw.source) && state.coarsened {
             coarsened.insert(surface.raw.source);
         }
     }
     for (surface, state) in before.iter().zip(&previous.lod) {
+        if let Some(replacement) = replacements
+            .iter()
+            .find(|replacement| replacement.source == surface.raw.source)
+            && let Some(volumes) = replacement.removed
+        {
+            let children = after
+                .iter()
+                .filter(|child| child.raw.source == surface.raw.source)
+                .map(|child| &child.mesh)
+                .collect::<Vec<_>>();
+            lod_proof::certify_retained_coverage(
+                &surface.mesh,
+                state.proof(surface),
+                &children,
+                volumes,
+                work,
+            )?;
+        }
         if !coarsened.contains(&surface.raw.source) {
             continue;
         }
@@ -1157,11 +1187,41 @@ fn certify_lod(
             .iter()
             .find(|replacement| replacement.source == surface.raw.source)
             .ok_or_else(|| invalid("Terrain LOD certificate lost its selected replacement"))?;
+        if replacement.parts.is_empty() {
+            if mode == Mode::Cells {
+                lod_proof::certify_geometry(
+                    surface.raw.side.displacement.as_ref().unwrap(),
+                    &surface.mesh,
+                    state.proof(surface),
+                    replacement.removed.map(TerrainRetention::Subtraction),
+                    work,
+                )?;
+            }
+            continue;
+        }
         let texture = replacement.texture.ok_or_else(|| {
             invalid("Terrain LOD requires guarded native texture mapping dimensions")
         })?;
-        if replacement.window_fields.is_some() {
-            windows::certify_source(surface, state, replacement.cut, work)?;
+        let retained_movement = if replacement.subtraction && mode == Mode::Cells {
+            if let Some(removed) = replacement.removed {
+                lod_proof::retained_movement_region(
+                    surface.raw.side.displacement.as_ref().unwrap(),
+                    &surface.mesh,
+                    state.proof(surface),
+                    TerrainRetention::Subtraction(removed),
+                    work,
+                )?
+            } else {
+                state.ideal_positions != surface.mesh.positions
+                    || state.positions != surface.positions
+            }
+        } else {
+            false
+        };
+        if replacement.window_fields.is_some() || retained_movement {
+            if !replacement.subtraction {
+                windows::certify_source(surface, state, replacement.cut, work)?;
+            }
             let source = lod_proof::NativePatch {
                 face: &surface.raw.face,
                 info: surface.raw.side.displacement.as_ref().unwrap(),
@@ -1210,7 +1270,14 @@ fn certify_lod(
                     surface.raw.side.displacement.as_ref().unwrap(),
                     &surface.mesh,
                     state.proof(surface),
-                    replacement.cut,
+                    replacement
+                        .removed
+                        .map(TerrainRetention::Subtraction)
+                        .or_else(|| {
+                            replacement
+                                .cut
+                                .map(|(plane, keep)| TerrainRetention::Half(plane, keep))
+                        }),
                     texture,
                     work,
                 )?;
@@ -1683,7 +1750,7 @@ pub(crate) fn required_partitions(
     let references = before.iter().collect::<Vec<_>>();
     let cuts = selected
         .iter()
-        .map(|&source| (source, (plane, keep)))
+        .map(|&source| (source, TerrainRetention::Half(plane, keep)))
         .collect::<BTreeMap<_, _>>();
     let mut provisional = BTreeSet::new();
     for surface in &before {
@@ -1749,7 +1816,7 @@ pub(crate) fn required_partitions(
                 surface.raw.side.displacement.as_ref().unwrap(),
                 &surface.mesh,
                 state.proof(surface),
-                cut,
+                cut.map(|(plane, keep)| TerrainRetention::Half(plane, keep)),
                 work,
             )?;
         }
@@ -1912,25 +1979,225 @@ pub(crate) fn certify_cells(
     certify_mode(document, replacements, context, Mode::Cells)
 }
 
+pub(crate) fn required_final_partitions(
+    document: &Document,
+    replacements: &[crate::clip::TerrainReplacement<'_>],
+    context: &mut Context<'_>,
+) -> Result<Vec<crate::clip::TerrainSubdivision>, EditError> {
+    let affected = replacements
+        .iter()
+        .filter(|replacement| {
+            native::terrain_source_is_visible(document.vmf(), replacement.source.solid)
+        })
+        .map(|replacement| replacement.source)
+        .collect::<BTreeSet<_>>();
+    if affected.is_empty() {
+        return Ok(Vec::new());
+    }
+    let work = &mut context.work;
+    let before = affected_sources(
+        collect(context.vmf.unwrap_or(document.vmf()), work)?,
+        &affected,
+        work,
+    )?
+    .into_iter()
+    .map(|raw| prepare(raw, Mode::Cells, work))
+    .collect::<Result<Vec<_>, _>>()?;
+    let mut children = Vec::new();
+    for replacement in replacements
+        .iter()
+        .filter(|replacement| replacement.changed && affected.contains(&replacement.source))
+    {
+        for (part_index, part) in replacement.parts.iter().enumerate() {
+            let shape =
+                BrushGeometry::from_solid(part).map_err(|error| invalid(error.to_string()))?;
+            let faces = shape
+                .faces
+                .into_iter()
+                .filter(|face| part.sides[face.side].displacement.is_some())
+                .collect::<Vec<_>>();
+            let [face] = faces.as_slice() else {
+                return Err(invalid("Terrain child requires one native face"));
+            };
+            let side = &part.sides[face.side];
+            children.push((
+                part_index,
+                prepare(
+                    Raw {
+                        source: replacement.source,
+                        side,
+                        face: face.clone(),
+                        supported: true,
+                        cage: face
+                            .vertices
+                            .iter()
+                            .copied()
+                            .map(native::stored_vertex)
+                            .collect(),
+                    },
+                    Mode::Cells,
+                    work,
+                )?,
+            ));
+        }
+    }
+    let mut after = Vec::new();
+    for source in &before {
+        if replacements
+            .iter()
+            .any(|replacement| replacement.changed && replacement.source == source.raw.source)
+        {
+            after.extend(
+                children
+                    .iter()
+                    .filter(|(_, child)| child.raw.source == source.raw.source)
+                    .map(|(part, child)| (child, *part)),
+            );
+        } else {
+            after.push((source, 0));
+        }
+    }
+    let mut required = BTreeMap::<(FaceId, usize), bool>::new();
+    for (index, (first, first_part)) in after.iter().enumerate() {
+        for (second, second_part) in &after[index + 1..] {
+            let Some(rank) = contact_rank(&first.corners, &second.corners, work)? else {
+                continue;
+            };
+            if rank == 0 {
+                return Err(invalid("Terrain native base domains overlap"));
+            }
+            if rank == 2
+                && first
+                    .corners
+                    .iter()
+                    .any(|point| second.corners.contains(point))
+            {
+                continue;
+            }
+            let grids = [first.grid(), second.grid()];
+            let found = neighbors::find_spans(&grids, &mut |amount| work.consume(amount))
+                .map_err(invalid)?;
+            if rank == 1 && found.ambiguous == 0 && found.mismatched == 0 && found.pairs.len() == 1
+            {
+                continue;
+            }
+            let extent = |surface: &Surface<'_>| {
+                (0..surface.corners.len())
+                    .map(|edge| {
+                        surface.corners[edge]
+                            .distance_squared(surface.corners[(edge + 1) % surface.corners.len()])
+                    })
+                    .fold(0.0, f64::max)
+            };
+            let first_extent = extent(first);
+            let second_extent = extent(second);
+            let internal = first.raw.source == second.raw.source;
+            if first_extent >= second_extent {
+                *required.entry((first.raw.source, *first_part)).or_default() |= internal;
+            }
+            if second_extent >= first_extent {
+                *required
+                    .entry((second.raw.source, *second_part))
+                    .or_default() |= internal;
+            }
+        }
+    }
+    Ok(required
+        .into_iter()
+        .map(
+            |((source, part), internal)| crate::clip::TerrainSubdivision {
+                source,
+                part,
+                internal,
+            },
+        )
+        .collect())
+}
+
+fn authored_fields(
+    document: &Document,
+    replacements: &[Replacement<'_>],
+    work: &mut Work,
+) -> Result<BTreeMap<FaceId, TerrainBlendError>, EditError> {
+    let mut errors = BTreeMap::new();
+    for replacement in replacements.iter().filter(|replacement| {
+        replacement.changed && replacement.subtraction && !replacement.parts.is_empty()
+    }) {
+        let (_, source) = crate::subobject::solid(document, replacement.source.solid)?;
+        let shape =
+            BrushGeometry::from_solid(source).map_err(|error| invalid(error.to_string()))?;
+        let face = shape
+            .faces
+            .iter()
+            .find(|face| source.sides[face.side].id == replacement.source.side)
+            .ok_or_else(|| invalid("Terrain subtraction lost its original source face"))?;
+        let info = source.sides[face.side]
+            .displacement
+            .as_ref()
+            .ok_or_else(|| invalid("Terrain subtraction lost its original displacement"))?;
+        let (_, mesh) = native::checked_mesh(face, info).map_err(invalid)?;
+        let texture = replacement.texture.ok_or_else(|| {
+            invalid("Terrain subtraction requires guarded native texture dimensions")
+        })?;
+        let fields = super::labels::TriangleField::surface_with_blend_mode(
+            info,
+            &mesh,
+            texture.has_secondary_surface,
+            replacement.blend_mode,
+            work,
+        )?;
+        let mut error = TerrainBlendError::default();
+        for child in replacement.parts {
+            let shape =
+                BrushGeometry::from_solid(child).map_err(|error| invalid(error.to_string()))?;
+            let faces = shape
+                .faces
+                .iter()
+                .filter(|face| child.sides[face.side].displacement.is_some())
+                .collect::<Vec<_>>();
+            let [face] = faces.as_slice() else {
+                return Err(invalid("Terrain child requires one native face"));
+            };
+            let side = &child.sides[face.side];
+            if side.id != replacement.source.side {
+                return Err(invalid("Terrain child lost its original source side"));
+            }
+            let info = side.displacement.as_ref().unwrap();
+            let (_, mesh) = native::checked_mesh(face, info).map_err(invalid)?;
+            let mapped = fields.map(&mesh, work)?;
+            mapped.verify(info, &mesh, work)?;
+            error.merge(mapped.blend_error)?;
+        }
+        error.validate(replacement.blend_mode)?;
+        errors.insert(replacement.source, error);
+    }
+    Ok(errors)
+}
+
 fn certify_mode(
     document: &Document,
     replacements: &[Replacement<'_>],
     context: &mut Context<'_>,
     mode: Mode,
 ) -> Result<Vec<Verification>, EditError> {
+    let blend_errors = authored_fields(document, replacements, &mut context.work)?;
     let empty = || {
         replacements
             .iter()
-            .map(|_| Verification {
+            .map(|replacement| Verification {
                 neighbors: 0,
                 links: 0,
+                blend_error: (replacement.blend_mode != TerrainBlendMode::Exact)
+                    .then(|| blend_errors.get(&replacement.source).copied())
+                    .flatten(),
             })
             .collect()
     };
     let selected = replacements
         .iter()
         .filter(|replacement| {
-            native::terrain_source_is_visible(document.vmf(), replacement.source.solid)
+            replacement.changed
+                && native::terrain_source_is_visible(document.vmf(), replacement.source.solid)
         })
         .map(|replacement| replacement.source)
         .collect::<BTreeSet<_>>();
@@ -1946,7 +2213,14 @@ fn certify_mode(
             ));
         }
     }
-    if selected.is_empty() {
+    let affected = replacements
+        .iter()
+        .filter(|replacement| {
+            native::terrain_source_is_visible(document.vmf(), replacement.source.solid)
+        })
+        .map(|replacement| replacement.source)
+        .collect::<BTreeSet<_>>();
+    if affected.is_empty() {
         return Ok(empty());
     }
     if replacements.len() > crate::clip::MAX_TERRAIN_SOURCES
@@ -1954,7 +2228,11 @@ fn certify_mode(
             != replacements
                 .iter()
                 .filter(|replacement| {
-                    native::terrain_source_is_visible(document.vmf(), replacement.source.solid)
+                    replacement.changed
+                        && native::terrain_source_is_visible(
+                            document.vmf(),
+                            replacement.source.solid,
+                        )
                 })
                 .count()
     {
@@ -1981,14 +2259,14 @@ fn certify_mode(
             "Terrain output exceeds the native displacement limit",
         ));
     }
-    let before = affected_sources(raw, &selected, work)?
+    let before = affected_sources(raw, &affected, work)?
         .into_iter()
         .map(|raw| prepare(raw, mode, work))
         .collect::<Result<Vec<_>, _>>()?;
     if context.vmf.is_some() {
         for surface in before
             .iter()
-            .filter(|surface| selected.contains(&surface.raw.source))
+            .filter(|surface| affected.contains(&surface.raw.source))
         {
             verify_source(document, vmf, surface, mode, work)?;
         }
@@ -1997,14 +2275,24 @@ fn certify_mode(
     let cuts = replacements
         .iter()
         .filter(|replacement| selected.contains(&replacement.source))
-        .filter_map(|replacement| replacement.cut.map(|cut| (replacement.source, cut)))
+        .filter_map(|replacement| {
+            replacement
+                .removed
+                .map(TerrainRetention::Subtraction)
+                .or_else(|| {
+                    replacement
+                        .cut
+                        .map(|(plane, keep)| TerrainRetention::Half(plane, keep))
+                })
+                .map(|retention| (replacement.source, retention))
+        })
         .collect::<BTreeMap<_, _>>();
     let mut children = Vec::new();
     for replacement in replacements
         .iter()
         .filter(|replacement| selected.contains(&replacement.source))
     {
-        if replacement.parts.is_empty() {
+        if replacement.parts.is_empty() && replacement.removed.is_none() {
             return Err(invalid("Terrain replacement lost every retained patch"));
         }
         for part in replacement.parts {
@@ -2058,7 +2346,17 @@ fn certify_mode(
             "Terrain output exceeds the native displacement limit",
         ));
     }
-    let provisional = windows::validate(&before, &children, replacements, mode, work)?;
+    let mut provisional = windows::validate(&before, &children, replacements, mode, work)?;
+    if mode == Mode::Cells {
+        provisional.extend(
+            replacements
+                .iter()
+                .filter(|replacement| {
+                    replacement.changed && replacement.subtraction && !replacement.parts.is_empty()
+                })
+                .map(|replacement| replacement.source),
+        );
+    }
     let unchanged = unchanged_scope(&before, &selected, mode, work)?;
     let previous = graph(
         &before_refs,
@@ -2106,6 +2404,9 @@ fn certify_mode(
                 return Verification {
                     neighbors: 0,
                     links: 0,
+                    blend_error: (replacement.blend_mode != TerrainBlendMode::Exact)
+                        .then(|| blend_errors.get(&replacement.source).copied())
+                        .flatten(),
                 };
             }
             let mut component = BTreeSet::from([replacement.source]);
@@ -2137,7 +2438,13 @@ fn certify_mode(
                 })
                 .collect::<BTreeSet<_>>()
                 .len();
-            Verification { neighbors, links }
+            Verification {
+                neighbors,
+                links,
+                blend_error: (replacement.blend_mode != TerrainBlendMode::Exact)
+                    .then(|| blend_errors.get(&replacement.source).copied())
+                    .flatten(),
+            }
         })
         .collect())
 }

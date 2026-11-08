@@ -1,14 +1,17 @@
 import { Theme } from "theme.slint";
-import { Button, CheckBox, ComboBox, LineEdit, ListView } from "widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView } from "widgets.slint";
+import { FieldRow, SectionHeader, SelectableRow } from "kit.slint";
 
-export struct CarveRow { solid: string, label: string, selected: bool, cutter: bool }
+export struct CarveRow { solid: string, label: string, selected: bool, cutter: bool, terrain: bool }
 
 export component CarveWindow inherits Window {
     background: Theme.panel;
     title: "Carve brushes - HammeRR";
-    preferred-width: 800px; preferred-height: 790px;
+    preferred-width: 820px; preferred-height: 850px;
+    min-width: 600px; min-height: 560px;
     in property <[CarveRow]> targets;
     in property <[string]> cutters;
+    in property <[string]> cutter-ids;
     in property <string> source;
     in property <string> stamp;
     in property <string> token;
@@ -16,16 +19,22 @@ export component CarveWindow inherits Window {
     in property <string> message;
     in property <bool> ready;
     in property <bool> can-preview;
+    in property <bool> has-terrain;
     in-out property <int> cutter: 0;
     in-out property <bool> multiple-cutters;
     in-out property <int> cut-material-policy: 0;
     in-out property <string> cut-material;
+    in-out property <int> terrain-mode: 0;
+    in-out property <int> blend-mode: 0;
+    in-out property <bool> partition-neighbors;
     callback toggle-multiple();
     callback choose-cut-role(string);
     callback choose-cutter();
     callback choose-target(string);
     callback cut-material-changed();
     callback choose-material();
+    callback terrain-mode-changed();
+    callback terrain-options-changed();
     callback preview-edit();
     callback discard();
     callback apply();
@@ -37,59 +46,125 @@ export component CarveWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl; spacing: 12px;
             Text { text: "Subtract brush shapes"; font-size: Theme.font-display; font-weight: 600; }
-            Text { text: "Choose the shapes to subtract and the target brushes to carve. Only their combined overlapping volume is removed. Cutters stay unchanged."; wrap: word-wrap; color: Theme.text-muted; }
-            CheckBox { text: "Use multiple cutter brushes"; checked <=> root.multiple-cutters; toggled => {root.toggle-multiple();} }
-            if !root.multiple-cutters: Text { text: "Cutter · shape to subtract"; font-weight: 600; }
-            if !root.multiple-cutters: ComboBox { model: root.cutters; current-index <=> root.cutter; enabled: root.cutters.length > 1; selected => { root.choose-cutter(); } }
-            Text { text: root.multiple-cutters ? "Brush roles · cutters are retained" : "Target brushes"; font-size: Theme.font-heading; font-weight: 600; }
-            ListView {
-                vertical-stretch: 1; min-height: 160px;
-                for target in root.targets: VerticalLayout {
-                    min-height: 44px; padding-top: 6px; padding-bottom: 6px; spacing: 4px;
-                    if root.multiple-cutters: HorizontalLayout {
-                        spacing: 12px;
-                        Text {text: target.label; wrap: word-wrap; horizontal-stretch: 1;}
-                        CheckBox {text: "Cutter"; checked:target.cutter; toggled => {root.choose-cut-role(target.solid);} }
-                        CheckBox {text: "Target"; checked:target.selected; enabled:!target.cutter; toggled => {root.choose-target(target.solid);} }
+            Text { text: "Subtract the cutter shapes from the target brushes. Cutters stay in the map."; wrap: word-wrap; color: Theme.text-muted; }
+            ScrollView {
+                vertical-stretch: 1;
+                content-width: self.width;
+                VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
+                    spacing: Theme.space;
+                    CheckBox { text: "Use multiple cutter brushes"; checked <=> root.multiple-cutters; toggled => {root.toggle-multiple();} }
+                    if !root.multiple-cutters: Text { text: "Cutter · shape to subtract"; font-weight: 600; }
+                    if !root.multiple-cutters: ComboBox { model: root.cutters; current-index <=> root.cutter; enabled: root.cutters.length > 1; selected => { root.choose-cutter(); } }
+                    Text { text: root.multiple-cutters ? "Brush roles · cutters are retained" : "Target brushes"; font-size: Theme.font-heading; font-weight: 600; }
+                    if root.targets.length == 0: Text {
+                        text: "Select two or more brushes in the map.";
+                        wrap: word-wrap; color: Theme.text-muted;
                     }
-                    if !root.multiple-cutters: CheckBox {
-                        text: target.label + (target.cutter ? " · Cutter" : "");
-                        checked: target.selected;
-                        enabled: !target.cutter;
-                        toggled => { root.choose-target(target.solid); }
+                    if root.targets.length > 0: ListView {
+                        height: min(200px, root.targets.length * 44px);
+                        for target in root.targets: HorizontalLayout {
+                            spacing: Theme.space;
+                            SelectableRow {
+                                label: target.label;
+                                selected: target.selected;
+                                enabled: !target.cutter;
+                                min-height: 44px;
+                                horizontal-stretch: 1;
+                                clicked => { root.choose-target(target.solid); }
+                                HorizontalLayout {
+                                    padding: Theme.space;
+                                    spacing: Theme.space;
+                                    Text { text: target.label; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; }
+                                    if !root.multiple-cutters && target.cutter: Text {
+                                        text: "Cutter"; color: Theme.text-muted;
+                                    }
+                                }
+                            }
+                            if root.multiple-cutters: CheckBox {
+                                text: "Cutter"; checked: target.cutter; enabled: !target.terrain;
+                                toggled => { root.choose-cut-role(target.solid); }
+                            }
+                            if root.multiple-cutters: CheckBox {
+                                text: "Target"; checked: target.selected; enabled: !target.cutter;
+                                toggled => { root.choose-target(target.solid); }
+                            }
+                        }
                     }
+                    SectionHeader { text: "New cut faces"; inset: false; collapsible: false; }
+                    ComboBox {
+                        model: ["Use cutter surface settings", "Use corresponding target surface settings", "Use named material with cutter mapping"];
+                        current-index <=> root.cut-material-policy;
+                        selected => { root.cut-material-changed(); }
+                    }
+                    if root.cut-material-policy == 2: HorizontalLayout {
+                        spacing: 10px;
+                        LineEdit { text <=> root.cut-material; placeholder-text: "Material name"; edited => { root.cut-material-changed(); } }
+                        Button { text: "Browse materials…"; clicked => { root.choose-material(); } }
+                    }
+                    Text {
+                        text: root.cut-material-policy == 1
+                            ? "Copy the unique original target face with the same outward direction. Missing or ambiguous parallel faces reject the preview."
+                            : root.cut-material-policy == 2
+                            ? "Replace only the new cut-face material; retain cutter texture mapping, lighting and metadata."
+                            : "Copy cutter material, world texture mapping, lighting and metadata. Nodraw cutters produce nodraw cut faces.";
+                        wrap: word-wrap; color: Theme.text-muted;
+                    }
+                    if root.has-terrain: VerticalLayout {
+                        spacing: Theme.space;
+                        SectionHeader { text: "Terrain targets"; inset: false; collapsible: false; }
+                        FieldRow {
+                            inset: false; label: "Terrain cut"; label-width: 124px;
+                            ComboBox {
+                                accessible-label: "Terrain cut";
+                                model: ["Existing grid", "Retile flat terrain", "Retile grid cells", "Retile surface triangles"];
+                                current-index <=> root.terrain-mode;
+                                selected => { root.terrain-mode-changed(); }
+                            }
+                        }
+                        Text {
+                            text: root.terrain-mode == 0 ? "Preserve existing samples on admitted native grid cuts."
+                                : root.terrain-mode == 1 ? "Cut flat terrain across its grid. Keep its shape and texture."
+                                : root.terrain-mode == 2 ? "Cut curved terrain along complete grid rows and columns."
+                                : "Cut curved terrain across its original triangles.";
+                            wrap: word-wrap; color: Theme.text-muted;
+                        }
+                        if root.terrain-mode != 1: CheckBox {
+                            text: "Partition selected neighbors";
+                            checked <=> root.partition-neighbors;
+                            toggled => { root.terrain-options-changed(); }
+                        }
+                        if root.terrain-mode != 1: Text { text: "Authorize required neighbors only among checked Target brushes."; wrap: word-wrap; color: Theme.text-muted; }
+                        if root.terrain-mode == 3: FieldRow {
+                            inset: false; label: "Blend samples"; label-width: 124px;
+                            ComboBox {
+                                accessible-label: "Blend samples";
+                                model: ["Exact fields", "Native float", "Nearest byte"];
+                                current-index <=> root.blend-mode;
+                                selected => { root.terrain-options-changed(); }
+                            }
+                        }
+                        if root.terrain-mode == 3: Text {
+                            text: root.blend-mode == 0 ? "Keep paint samples and interpolated colors exact."
+                                : root.blend-mode == 1 ? "Allow native float paint samples within the reported error limits."
+                                : "Round paint samples to whole bytes within the reported error limits.";
+                            wrap: word-wrap; color: Theme.text-muted;
+                        }
+                        Text { text: "Each target needs one terrain face. Keep its texture and paint. Cuts leave open edges; no walls are added."; wrap: word-wrap; color: Theme.text-muted; }
+                    }
+                    Text { text: "1–8 ordinary convex cutters · up to 16 targets · 256 fragments at every stage. Whole world brushes may disappear; empty brush entities reject."; wrap: word-wrap; color: Theme.text-muted; }
                 }
             }
-            Text { text: "New cut faces"; font-size: Theme.font-heading; font-weight: 600; }
-            ComboBox {
-                model: ["Use cutter surface settings", "Use corresponding target surface settings", "Use named material with cutter mapping"];
-                current-index <=> root.cut-material-policy;
-                selected => { root.cut-material-changed(); }
-            }
-            if root.cut-material-policy == 2: HorizontalLayout {
-                spacing: 10px;
-                LineEdit { text <=> root.cut-material; placeholder-text: "Material name"; edited => { root.cut-material-changed(); } }
-                Button { text: "Browse materials…"; clicked => { root.choose-material(); } }
-            }
-            Text {
-                text: root.cut-material-policy == 1
-                    ? "Each new face copies the original target face with the same outward direction, including world texture projection, lighting and metadata. A missing or ambiguous parallel face rejects the preview; choose a named material for other cuts."
-                    : root.cut-material-policy == 2
-                    ? "Only the new cut-face material changes. Cutter texture projection, lighting and metadata are retained. Original target faces keep their settings."
-                    : "New faces copy their cutter's material, world texture projection, lighting and metadata. Nodraw cutters produce nodraw cut faces. Original target faces keep their settings.";
-                wrap: word-wrap; color: Theme.text-muted;
-            }
             Text { text: root.summary; font-size: Theme.font-heading; font-weight: 600; wrap: word-wrap; }
-            Text { text: "Whole world brushes may disappear; removing every brush from an entity is rejected."; wrap: word-wrap; color: Theme.text-muted; }
-            Text { text: "1–8 convex cutters · up to 16 targets · 256 fragments at every stage. Displacement brushes are unsupported."; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
             if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.warning; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Button { text: "Discard preview"; enabled: root.token != ""; clicked => { root.discard(); } }
-                Rectangle { horizontal-stretch: 1; }
                 Button { text: "Preview carve"; enabled: root.can-preview; clicked => { root.preview-edit(); } }
-                Button { text: "Apply carve"; enabled: root.ready; clicked => { root.apply(); } }
+                Button { text: "Apply carve"; primary: true; enabled: root.ready; clicked => { root.apply(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
         }
     }

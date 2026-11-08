@@ -6,8 +6,6 @@ Turn solid geometry into rooms, openings and cut shapes.
 
 Select brushes to show **Brush tools** in the Inspector. The same commands are in the **Brush** menu.
 
-![Brush tools in the Inspector](images/inspector-brush.png)
-
 ## Hollow
 
 1. Select the source brushes.
@@ -43,6 +41,37 @@ original target face parallel to each new face. Named material mode keeps the
 cutter's texture placement and lighting settings. Unsupported matches reject
 the complete preview; use cutter or named material mode for oblique cuts.
 **Discard preview** keeps the source choices. **Cancel** closes the tool.
+
+### Carve terrain
+
+1. Select ordinary convex cutters and terrain targets.
+2. Open **Carve brushes…** and set their cutter and target roles.
+3. Under **Terrain targets → Terrain cut**, choose **Existing grid** for native
+   grid lines, **Retile flat terrain** for planar sheets, **Retile grid cells**
+   for curved grid cuts, or **Retile surface triangles** for curved free cuts.
+4. For surface triangles, keep **Blend samples → Exact fields** unless you
+   explicitly accept **Native float** or **Nearest byte** paint error bounds.
+5. For grid, cell or triangle cuts, enable **Partition selected neighbors** only
+   for checked target brushes that you authorize the operation to retile.
+6. Click **Preview carve**. Inspect the surface, holes and reported terrain counts.
+7. Click **Apply carve**.
+
+Cutters act on the displaced surface, including parts above or outside its cage.
+A cutter that touches only the backing cage does not remove terrain. Interior
+holes use new native patches. The operation does not create walls beneath them.
+Retained terrain keeps its material, texture mapping, paint and collision fields.
+**New cut faces** changes ordinary cut faces and terrain carrier metadata; it
+does not repaint retained terrain.
+
+![An opening through a terrain surface above a separate carved brick base](images/terrain-carved-hole.png)
+
+The brick walls in this example are separate ordinary brushes.
+
+Each terrain target needs one displaced face on a world or `func_detail` brush.
+Cutters must be ordinary closed convex brushes. A terrain sheet is not a solid
+volume and cannot be a cutter or a hollow shell. The chosen terrain mode keeps
+its [clipping limits](#limits); failed requests do not switch modes. Unsupported
+native LOD, contacts, fields or output sizes reject the complete preview.
 
 ## Clip
 
@@ -233,7 +262,7 @@ previous valid draft; no policy switches automatically after a failure.
 - Hollow: 16 brushes, 64 faces per brush, 256 walls; thickness 0.125–4096 units.
 - Carve: 1–8 cutters, 16 targets, 256 pieces, 64 faces per piece.
 - Carving away every child brush of an entity rejects.
-- Terrain cannot be hollowed or carved. **Existing grid** requires a power-3/4
+- Terrain cannot be hollowed or used as a cutter. **Existing grid** requires a power-3/4
   world or `func_detail` patch and a complete middle grid line, or a power-4
   quarter line.
   Matching full/half borders must retain their sample spacing and LOD state.

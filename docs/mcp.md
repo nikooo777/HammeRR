@@ -781,6 +781,33 @@ The default is cutter settings. Target mode requires unique corresponding
 original target faces. Results keep geometric source IDs and add
 `surface_source_solid`/`surface_source_side` for inherited settings.
 
+### Carve terrain
+
+Use `get_carve_preview.stamp`, then call `preview_carve` or `preview_carve_many`.
+Both accept `terrain_mode` (`grid`, `flat`, `cells`, `fragments`), `blend_mode`
+(`exact`, `native_float`, `nearest_byte`) and `partition_neighbors`.
+Omitted options use Grid, Exact and no neighbor partition, independently of Clip.
+Non-exact blend modes require `fragments`. Neighbor permission applies only to
+checked target brushes; it does not authorize edits to other map content.
+
+```json
+{"cutter":100,"targets":[12],"stamp":"…","terrain_mode":"flat"}
+```
+
+Inspect `preview.result.terrain`, `terrain_work`, `partitioned_neighbors` and
+`side_mapping`, then call `commit_carve` or `cancel_carve` with the exact token.
+Candidate bounds describe the displaced surface. `carrier_bounds` gives its
+backing cage; `terrain_faces` counts its displaced faces. New structural carrier
+faces have `structural:true` and `source_side:null`; their surface-donor IDs remain
+explicit. They do not add visible or collision walls beneath terrain holes.
+
+Terrain targets require one displaced face per world or `func_detail` brush.
+The shared clipping profile, native-state checks, original material and instance
+source guards apply. A failed preview preserves the prior valid draft and map.
+`preview.state` is `ready` or `stale`; `guard_error` explains changed sources.
+A stale draft refuses rendering and Apply. `cancel_carve` still discards it.
+Manual cubemap bindings follow all retained source-face fragments in Carve and Clip.
+
 ### Clip terrain
 
 1. Call `set_clip_terrain_mode {"mode":"grid"}` for **Existing grid**, or

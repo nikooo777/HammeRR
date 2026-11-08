@@ -13,6 +13,10 @@ Create, sculpt and paint displacement surfaces. Compile them with lighting and c
 5. Use **Browse materials…** to change the surface material.
 
 Terrain is a sheet. Its parent volume does not seal the map or become a solid collision box.
+
+To make an opening, use [Carve terrain](brush-tools.md#carve-terrain).
+The cut creates native patches around the opening. Add separate brush walls
+if the opening needs thickness.
 For cutout or partial-transparency terrain, enable [Brush texture shadows](brush-texture-shadows.md)
 in a lit build. Texture opacity does not remove collision triangles.
 Use ordinary world brushes to seal playable areas.
@@ -285,7 +289,7 @@ Removing the last terrain face restores its parent's solid brush volume.
 - Subdivision rejects inconsistent densities, ambiguous contacts, corner-only networks and work beyond its checked budget.
 - Unsupported caches, malformed rows and nonfinite data reject before applying changes.
 - Masks are session-local and become stale after incompatible topology or source changes.
-- Holes, triangle removal and general fractional border joins remain unavailable.
+- Direct triangle removal and general fractional border joins remain unavailable.
 - Invalid terrain shows a diagnostic and an outline instead of substituted shaded geometry.
 
 <!-- page-nav -->

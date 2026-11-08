@@ -48,7 +48,7 @@ pub mod checks;
 pub mod clip_drag;
 pub mod clip_points;
 pub mod clipboard;
-mod clipping;
+pub(crate) mod clipping;
 pub mod color_correction;
 mod color_palette;
 mod colors;
@@ -2958,6 +2958,7 @@ impl Session {
         view: ViewOptions,
         allow_baked_surfaces: bool,
     ) -> SceneMesh {
+        self.preflight_carve_preview();
         self.preflight_rope_placement();
         self.preflight_rope_preview();
         self.preflight_compiled_visibility();
@@ -3146,6 +3147,7 @@ impl Session {
         if let Some(error) = rope_placement_error {
             self.fail_rope_placement_render(error);
         }
+        self.append_carve_preview_diagnostic(&mut mesh);
         mesh
     }
 

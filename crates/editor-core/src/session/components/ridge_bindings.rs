@@ -285,9 +285,13 @@ impl Session {
                 }
             }
         }
+        let sources = vec![original.sources, candidate.sources];
+        for source in &sources {
+            source.verify(&self.game, &compiler::Control::default())?;
+        }
         Ok(Plan {
             writes,
-            sources: vec![original.sources, candidate.sources],
+            sources,
             context: Some(self.cubemap_binding_source()),
         })
     }

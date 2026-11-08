@@ -11,7 +11,9 @@ use super::{
     grid_clip::{CUT_EPSILON, Context, Work},
     native, neighbors, smoothing, triangles,
 };
-use crate::clip::{Keep, TerrainBlendMode, TerrainMode, TerrainPlan, TerrainTexture};
+use crate::clip::{
+    Keep, TerrainBlendMode, TerrainCutPlane, TerrainMode, TerrainPlan, TerrainTexture,
+};
 use crate::surface::FaceId;
 use crate::{BrushGeometry, Document, EditError, Face, ObjectId, Plane};
 
@@ -25,7 +27,106 @@ mod lod_proof;
 pub(crate) mod network;
 mod paint;
 mod polygon;
+mod subtraction;
+mod triangulate;
+mod volume;
 mod window;
+
+pub(crate) fn terrain_cut_plane(
+    solid: &Solid,
+    face: &Face,
+    source: FaceId,
+    work: &mut Work,
+) -> Result<TerrainCutPlane, EditError> {
+    volume::cut_plane(solid, face, source, work)
+}
+
+pub(crate) fn opposite_support(
+    first: &TerrainCutPlane,
+    second: &TerrainCutPlane,
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    volume::opposite_support(first, second, work)
+}
+
+pub(crate) fn on_plane(
+    profiles: &[Vec<DVec3>],
+    plane: &TerrainCutPlane,
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    for points in profiles {
+        if !volume::on_plane(points, plane, work)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+pub(crate) fn points_on_plane(
+    points: &[DVec3],
+    plane: &TerrainCutPlane,
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    volume::on_plane(points, plane, work)
+}
+
+pub(crate) fn certify_source_coverage(
+    mesh: &DisplacementMesh,
+    profiles: &[Vec<DVec3>],
+    triangles: &[[usize; 3]],
+    children: &[[DVec3; 4]],
+    volumes: &[Vec<TerrainCutPlane>],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    let (_, axes) = labels::projection(mesh, work)?;
+    let facets = crate::clip::terrain_union_facets(volumes, work)?;
+    let mut checked = Vec::new();
+    for positions in profiles {
+        work.consume((checked.len() + 1) * positions.len())
+            .map_err(invalid)?;
+        if checked.contains(&positions) {
+            continue;
+        }
+        for triangle in triangles {
+            if !volume::covered(
+                volume::Coverage {
+                    base: triangle.map(|index| mesh.base_positions[index]),
+                    points: triangle.map(|index| positions[index]),
+                    children,
+                    axes,
+                    volumes,
+                    facets: &facets,
+                    padding: 0.0,
+                },
+                work,
+            )? {
+                return Err(invalid(
+                    "Terrain subtraction lost original native geometry outside the cutter union",
+                ));
+            }
+        }
+        checked.push(positions);
+    }
+    Ok(())
+}
+
+pub(crate) fn certify_triangle_exclusion(
+    positions: &[Vec<DVec3>],
+    triangles: &[[usize; 3]],
+    volumes: &[Vec<TerrainCutPlane>],
+    work: &mut Work,
+) -> Result<(), EditError> {
+    lod_proof::certify_triangle_exclusion(positions, triangles, volumes, work)
+}
+
+pub(crate) fn terrain_intersects(
+    positions: &[Vec<DVec3>],
+    triangles: &[[usize; 3]],
+    volumes: &[Vec<TerrainCutPlane>],
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    lod_proof::terrain_intersects(positions, triangles, volumes, work)
+}
 
 use field::{BasePlane, PlanarField, ScalarField};
 use labels::TriangleField;
@@ -50,6 +151,13 @@ type Edges = BTreeMap<(Point, Point), usize>;
 pub(crate) struct Request<'a> {
     pub plane: Plane,
     pub keep: Keep,
+    pub material: &'a str,
+    pub textures: Option<&'a BTreeMap<FaceId, TerrainTexture>>,
+    pub blend_mode: TerrainBlendMode,
+}
+
+pub(crate) struct VolumeRequest<'a> {
+    pub volumes: &'a [Vec<crate::clip::TerrainCutPlane>],
     pub material: &'a str,
     pub textures: Option<&'a BTreeMap<FaceId, TerrainTexture>>,
     pub blend_mode: TerrainBlendMode,
@@ -798,7 +906,14 @@ fn prepare<'a>(
     plane: Plane,
     work: &mut Work,
 ) -> Result<Option<Prepared<'a>>, EditError> {
-    let Some(Admitted {
+    let Some(source) = admit(document, solid, geometry, plane, work)? else {
+        return Ok(None);
+    };
+    prepare_affine(source, work).map(Some)
+}
+
+fn prepare_affine<'a>(source: Admitted<'a>, work: &mut Work) -> Result<Prepared<'a>, EditError> {
+    let Admitted {
         side,
         info,
         face,
@@ -806,10 +921,7 @@ fn prepare<'a>(
         data,
         positions,
         editing,
-    }) = admit(document, solid, geometry, plane, work)?
-    else {
-        return Ok(None);
-    };
+    } = source;
     let indices = [
         0,
         (mesh.size - 1) * mesh.size,
@@ -870,7 +982,7 @@ fn prepare<'a>(
     for (point, base) in ring.iter_mut().zip(corners) {
         *point = field.position(base)?;
     }
-    Ok(Some(Prepared {
+    Ok(Prepared {
         side,
         info,
         face,
@@ -882,7 +994,7 @@ fn prepare<'a>(
         sign,
         ring,
         data,
-    }))
+    })
 }
 
 pub(crate) fn texture_face(
@@ -1693,6 +1805,84 @@ pub(crate) fn plan(
     let Some(source) = prepare(document, solid, geometry, request.plane, work)? else {
         return Ok(None);
     };
+    let polygons = split(&source, request.plane, work)?;
+    let fan_quad = request.keep == Keep::Both
+        && matches!([polygons[0].len(), polygons[1].len()], [3, 4] | [4, 3]);
+    let mut regions = Vec::new();
+    for back in [true, false] {
+        if matches!(
+            (request.keep, back),
+            (Keep::Back, false) | (Keep::Front, true)
+        ) {
+            continue;
+        }
+        let plane = if back {
+            request.plane
+        } else {
+            Plane {
+                normal: -request.plane.normal,
+                dist: -request.plane.dist,
+            }
+        };
+        regions.push(FlatRegion {
+            ring: &polygons[usize::from(!back)],
+            plane: Some(plane),
+            fan_quad,
+        });
+    }
+    materialize(
+        solid,
+        &source,
+        &regions,
+        PartitionRequest {
+            material: request.material,
+            textures: request.textures,
+            blend_mode: request.blend_mode,
+        },
+        work,
+        false,
+    )
+    .map(Some)
+}
+
+pub(crate) fn partition(
+    document: &Document,
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    request: PartitionRequest<'_>,
+    context: &mut Context<'_>,
+) -> Result<TerrainPlan, EditError> {
+    let work = &mut context.work;
+    let admitted = admit_source(document, solid, geometry, work)?;
+    let source = prepare_affine(admitted, work)?;
+    materialize(
+        solid,
+        &source,
+        &[FlatRegion {
+            ring: &source.ring,
+            plane: None,
+            fan_quad: true,
+        }],
+        request,
+        work,
+        false,
+    )
+}
+
+struct FlatRegion<'a> {
+    ring: &'a [DVec3],
+    plane: Option<Plane>,
+    fan_quad: bool,
+}
+
+fn materialize(
+    solid: &Solid,
+    source: &Prepared<'_>,
+    regions: &[FlatRegion<'_>],
+    request: PartitionRequest<'_>,
+    work: &mut Work,
+    native_spans: bool,
+) -> Result<TerrainPlan, EditError> {
     let identity = FaceId {
         solid: solid.id,
         side: source.side.id,
@@ -1714,33 +1904,20 @@ pub(crate) fn plan(
     )?;
     let mut parts = Vec::new();
     let mut children = Vec::new();
-    let polygons = split(&source, request.plane, work)?;
-    let fan_quad = request.keep == Keep::Both
-        && matches!([polygons[0].len(), polygons[1].len()], [3, 4] | [4, 3]);
-    for back in [true, false] {
-        if matches!(
-            (request.keep, back),
-            (Keep::Back, false) | (Keep::Front, true)
-        ) {
-            continue;
-        }
-        let plane = if back {
-            request.plane
-        } else {
-            Plane {
-                normal: -request.plane.normal,
-                dist: -request.plane.dist,
-            }
-        };
-        let ring = &polygons[usize::from(!back)];
+    for FlatRegion {
+        ring,
+        plane,
+        fan_quad,
+    } in regions
+    {
         let first = children.len();
-        for quad in quads(ring, source.axes, source.sign, fan_quad)? {
+        for quad in quads(ring, source.axes, source.sign, *fan_quad)? {
             work.consume(FIELD_WORK * quad.len()).map_err(invalid)?;
             let mut base = [DVec3::ZERO; 4];
             for (output, point) in base.iter_mut().zip(quad) {
                 *output = stored(source.field.base_position(point)?)?;
             }
-            let mut part = carrier(solid, &source, base, request.material, work)?;
+            let mut part = carrier(solid, source, base, request.material, work)?;
             let shape =
                 BrushGeometry::from_solid(&part).map_err(|error| invalid(error.to_string()))?;
             let side_index = part
@@ -1794,18 +1971,22 @@ pub(crate) fn plan(
             });
             parts.push(part);
         }
-        region(
+        region_checked(
             ring,
             &children[first..],
             source.axes,
             source.sign,
-            plane,
+            *plane,
             Some(&source.field),
             work,
         )?;
     }
-    connections(&children, work)?;
-    Ok(Some(TerrainPlan {
+    if native_spans {
+        window_connections(&children, work)?;
+    } else {
+        connections(&children, work)?;
+    }
+    Ok(TerrainPlan {
         vertices: parts.len() * VERTICES,
         triangles: parts.len() * TRIANGLES,
         parts,
@@ -1815,5 +1996,372 @@ pub(crate) fn plan(
         children: None,
         window_fields: None,
         blend_error: None,
-    }))
+    })
+}
+
+pub(crate) fn subtract(
+    document: &Document,
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    request: VolumeRequest<'_>,
+    context: &mut Context<'_>,
+) -> Result<Option<crate::clip::TerrainVolumePlan>, EditError> {
+    let work = &mut context.work;
+    let source = prepare_affine(admit_source(document, solid, geometry, work)?, work)?;
+    let last = source.mesh.size - 1;
+    let indices = [
+        0,
+        last * source.mesh.size,
+        source.mesh.size * source.mesh.size - 1,
+        last,
+    ];
+    let base = indices.map(|index| source.mesh.base_positions[index]);
+    let world = indices.map(|index| source.mesh.positions[index]);
+    let patches = [subtraction::Patch {
+        base: [base[0], base[1], base[2]],
+        world: [world[0], world[1], world[2]],
+        ring: base.to_vec(),
+    }];
+    let Some(polygons) = subtraction::plan(&patches, request.volumes, work)? else {
+        return Ok(None);
+    };
+    let mut rings = Vec::new();
+    let mut count = 0usize;
+    for polygon in polygons {
+        let base_axis = source.field.axis();
+        let base_axes = [(base_axis + 1) % 3, (base_axis + 2) % 3];
+        let quad = if polygon.conformed {
+            native_quarter_quad(&polygon.ring, base_axes, work)?
+        } else {
+            None
+        };
+        let conformed = polygon.conformed && quad.is_none();
+        let base_ring = quad.map_or(polygon.ring, |quad| quad.to_vec());
+        let ring = base_ring
+            .into_iter()
+            .map(|point| source.field.position(point))
+            .collect::<Result<Vec<_>, _>>()?;
+        let regions = if conformed || ring.len() > 5 {
+            subtraction::triangles(&ring, source.axes, work)?
+        } else {
+            vec![ring]
+        };
+        for ring in regions {
+            count = count
+                .checked_add(if ring.len() == 4 { 1 } else { ring.len() })
+                .ok_or_else(numeric)?;
+            if count > crate::clip::MAX_TERRAIN_PATCHES {
+                return Err(invalid("Terrain volume retiling exceeds its patch limit"));
+            }
+            rings.push(ring);
+        }
+    }
+    let regions = rings
+        .iter()
+        .map(|ring| FlatRegion {
+            ring,
+            plane: None,
+            fan_quad: false,
+        })
+        .collect::<Vec<_>>();
+    let plan = materialize(
+        solid,
+        &source,
+        &regions,
+        PartitionRequest {
+            material: request.material,
+            textures: request.textures,
+            blend_mode: request.blend_mode,
+        },
+        work,
+        true,
+    )?;
+    let carriers = volume_carriers(&plan.parts, request.volumes, work)?;
+    Ok(Some(crate::clip::TerrainVolumePlan { plan, carriers }))
+}
+
+fn native_quarter_quad(
+    ring: &[DVec3],
+    axes: [usize; 2],
+    work: &mut Work,
+) -> Result<Option<[DVec3; 4]>, EditError> {
+    work.consume(FIELD_WORK * ring.len() * 13)
+        .map_err(invalid)?;
+    let mut corners = Vec::new();
+    for index in 0..ring.len() {
+        if orient(
+            ring[(index + ring.len() - 1) % ring.len()],
+            ring[index],
+            ring[(index + 1) % ring.len()],
+            axes,
+        )? != 0
+        {
+            corners.push(ring[index]);
+        }
+    }
+    let Ok(quad) = <[DVec3; 4]>::try_from(corners) else {
+        return Ok(None);
+    };
+    for &point in ring {
+        if quad.iter().any(|&corner| same(point, corner)) {
+            continue;
+        }
+        let mut matched = false;
+        for edge in 0..quad.len() {
+            for step in 1..4 {
+                let slot = weighted(
+                    &[quad[edge], quad[(edge + 1) % quad.len()]],
+                    &[4 - step, step],
+                    4,
+                )?;
+                if same(point, slot) {
+                    matched = true;
+                    break;
+                }
+            }
+            if matched {
+                break;
+            }
+        }
+        if !matched {
+            return Ok(None);
+        }
+    }
+    Ok(Some(quad))
+}
+
+fn volume_carriers(
+    parts: &[Solid],
+    volumes: &[Vec<crate::clip::TerrainCutPlane>],
+    work: &mut Work,
+) -> Result<BTreeMap<(usize, usize), FaceId>, EditError> {
+    let mut footprints = volumes
+        .iter()
+        .map(|cuts| (None, cuts.clone()))
+        .collect::<Vec<_>>();
+    for facet in crate::clip::terrain_union_facets(volumes, work)? {
+        let cuts = facet.bounds;
+        footprints.push((Some(facet.plane), cuts));
+    }
+    let mut cages = Vec::new();
+    let mut shapes = Vec::new();
+    for part in parts {
+        let shape = BrushGeometry::from_solid(part).map_err(|error| invalid(error.to_string()))?;
+        let face = shape
+            .faces
+            .iter()
+            .find(|face| part.sides[face.side].displacement.is_some())
+            .ok_or_else(|| invalid("Terrain volume child lost its displaced face"))?;
+        let (_, mesh) =
+            native::checked_mesh(face, part.sides[face.side].displacement.as_ref().unwrap())
+                .map_err(invalid)?;
+        let last = mesh.size - 1;
+        let indices = [0, last * mesh.size, mesh.size * mesh.size - 1, last];
+        cages.push((
+            indices.map(|index| mesh.base_positions[index]),
+            indices.map(|index| mesh.positions[index]),
+        ));
+        shapes.push(shape);
+    }
+    let mut result = BTreeMap::new();
+    for (part_index, part) in parts.iter().enumerate() {
+        let (base, world) = cages[part_index];
+        let axis = BasePlane::new([base[0], base[1], base[2]])?.axis();
+        let axes = [(axis + 1) % 3, (axis + 2) % 3];
+        for edge in 0..4 {
+            let a = base[edge];
+            let b = base[(edge + 1) % 4];
+            work.consume(polygon::SEGMENT_WORK * 4 * cages.len())
+                .map_err(invalid)?;
+            let coordinate = axes
+                .into_iter()
+                .find(|&axis| a[axis] != b[axis])
+                .ok_or_else(numeric)?;
+            let start = a[coordinate].min(b[coordinate]);
+            let end = a[coordinate].max(b[coordinate]);
+            let mut shared = Vec::new();
+            for (other_index, (other, _)) in cages.iter().enumerate() {
+                if part_index == other_index {
+                    continue;
+                }
+                for other_edge in 0..4 {
+                    let c = other[other_edge];
+                    let d = other[(other_edge + 1) % 4];
+                    if orient(a, b, c, axes)? != 0 || orient(a, b, d, axes)? != 0 {
+                        continue;
+                    }
+                    let low = start.max(c[coordinate].min(d[coordinate]));
+                    let high = end.min(c[coordinate].max(d[coordinate]));
+                    if low < high {
+                        shared.push([low, high]);
+                    }
+                }
+            }
+            work.consume(shared.len() * shared.len()).map_err(invalid)?;
+            shared.sort_by(|a, b| a[0].total_cmp(&b[0]));
+            let mut covered = start;
+            let mut exposed = Vec::new();
+            for interval in shared {
+                if interval[0] > covered {
+                    exposed.push([covered, interval[0]]);
+                }
+                covered = covered.max(interval[1]);
+            }
+            if covered < end {
+                exposed.push([covered, end]);
+            }
+            if exposed.is_empty() {
+                continue;
+            }
+            let endpoints = [world[edge], world[(edge + 1) % 4]];
+            let mut donor = None;
+            for (support, cuts) in &footprints {
+                if let Some(support) = support {
+                    if !volume::on_plane(&world, support, work)? {
+                        continue;
+                    }
+                } else {
+                    let mut tangent = false;
+                    for cut in cuts {
+                        if volume::on_plane(&world, cut, work)? {
+                            tangent = true;
+                            break;
+                        }
+                    }
+                    if tangent {
+                        continue;
+                    }
+                }
+                if !volume_edge_span(
+                    endpoints,
+                    cuts,
+                    &exposed,
+                    [a[coordinate], b[coordinate]],
+                    work,
+                )? {
+                    continue;
+                }
+                for cut in cuts {
+                    if !endpoints
+                        .iter()
+                        .all(|&point| cut.plane.distance_to(point).abs() <= CUT_EPSILON)
+                    {
+                        continue;
+                    }
+                    work.consume(FIELD_WORK * world.len()).map_err(invalid)?;
+                    let mut outside = false;
+                    for &point in &world {
+                        outside |= volume::distance(point, cut)?.value > 0;
+                    }
+                    if outside {
+                        donor = Some(cut.source);
+                        break;
+                    }
+                }
+                if donor.is_some() {
+                    break;
+                }
+            }
+            let Some(donor) = donor else {
+                continue;
+            };
+            for face in &shapes[part_index].faces {
+                let side = &part.sides[face.side];
+                if side.id != 0 || side.displacement.is_some() {
+                    continue;
+                }
+                if [a, b].iter().all(|&point| {
+                    face.vertices
+                        .iter()
+                        .any(|&candidate| same(native::stored_vertex(candidate), point))
+                }) {
+                    result.insert((part_index, face.side), donor);
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn volume_edge_span(
+    endpoints: [DVec3; 2],
+    cuts: &[crate::clip::TerrainCutPlane],
+    exposed: &[[f64; 2]],
+    coordinates: [f64; 2],
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    work.consume(FIELD_WORK * cuts.len() * 2).map_err(invalid)?;
+    let zero = Exact::new(0, 0);
+    let one = Exact::new(1, 0);
+    let mut low = [zero, one];
+    let mut high = [one, one];
+    for cut in cuts {
+        let a = volume::distance(endpoints[0], cut)?;
+        let b = volume::distance(endpoints[1], cut)?;
+        if a.value > 0 && b.value > 0 {
+            return Ok(false);
+        }
+        if a.value <= 0 && b.value <= 0 {
+            continue;
+        }
+        let mut denominator = a.sub(b)?;
+        let mut numerator = a;
+        if denominator.value < 0 {
+            let negative = Exact::new(-1, 0);
+            numerator = numerator.mul(negative)?;
+            denominator = denominator.mul(negative)?;
+        }
+        let reduced = volume::reduce([numerator, zero, denominator], work)?;
+        let point = [reduced[0], reduced[2]];
+        if a.value > 0 {
+            if point[0].mul(low[1])?.sub(low[0].mul(point[1])?)?.value > 0 {
+                low = point;
+            }
+        } else if point[0].mul(high[1])?.sub(high[0].mul(point[1])?)?.value < 0 {
+            high = point;
+        }
+        if low[0].mul(high[1])?.sub(high[0].mul(low[1])?)?.value >= 0 {
+            return Ok(false);
+        }
+    }
+    for gap in exposed {
+        let mut bounds = Vec::new();
+        for coordinate in gap {
+            let mut numerator = Exact::float(*coordinate)?.sub(Exact::float(coordinates[0])?)?;
+            let mut denominator =
+                Exact::float(coordinates[1])?.sub(Exact::float(coordinates[0])?)?;
+            if denominator.value < 0 {
+                let negative = Exact::new(-1, 0);
+                numerator = numerator.mul(negative)?;
+                denominator = denominator.mul(negative)?;
+            }
+            let point = volume::reduce([numerator, zero, denominator], work)?;
+            bounds.push([point[0], point[2]]);
+        }
+        if coordinates[0] > coordinates[1] {
+            bounds.swap(0, 1);
+        }
+        let mut first = low;
+        let mut last = high;
+        if bounds[0][0]
+            .mul(first[1])?
+            .sub(first[0].mul(bounds[0][1])?)?
+            .value
+            > 0
+        {
+            first = bounds[0];
+        }
+        if bounds[1][0]
+            .mul(last[1])?
+            .sub(last[0].mul(bounds[1][1])?)?
+            .value
+            < 0
+        {
+            last = bounds[1];
+        }
+        if first[0].mul(last[1])?.sub(last[0].mul(first[1])?)?.value < 0 {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

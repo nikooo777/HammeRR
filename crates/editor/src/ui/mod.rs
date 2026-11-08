@@ -486,6 +486,7 @@ fn prepare_scene_refresh(
     previous: render::SceneKey,
     options: &mut render::ViewOptions,
 ) -> Option<render::SceneKey> {
+    session.preflight_carve_preview();
     session.preflight_instance_contents();
     session.preflight_sky3d_preview();
     session.poll_color_correction();

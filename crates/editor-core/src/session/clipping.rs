@@ -9,8 +9,11 @@ use serde_json::Value;
 
 use super::{Actor, SelectMode, Session};
 
-mod context;
-mod materials;
+pub(super) mod context;
+pub(super) mod materials;
+mod report;
+
+pub use report::{blend_mode_name, terrain_limits, terrain_mode_name, terrain_report};
 
 pub struct ClipRequest<'a> {
     pub ids: &'a [ObjectId],
@@ -39,7 +42,7 @@ pub struct ClipPreview {
     generation: u64,
     revision: u64,
     definitions: u64,
-    terrain_mapping: BTreeMap<u32, Vec<u32>>,
+    face_mapping: BTreeMap<u32, Vec<u32>>,
     cubemap_bindings: ridge_bindings::Plan,
     terrain_context: Option<std::sync::Arc<context::Context>>,
     terrain_materials: Option<std::sync::Arc<materials::Prepared>>,
@@ -492,23 +495,9 @@ impl Session {
             .iter()
             .map(|cut| cut.source.solid)
             .collect::<BTreeSet<_>>();
-        let mut terrain_mapping = BTreeMap::new();
-        if !terrain_sources.is_empty() {
-            self.check_fragment_references(&terrain_sources, &BTreeSet::new(), &BTreeSet::new())?;
-            for source in terrain_sources {
-                let (_, solid) = map_core::subobject::solid(&self.document, source)
-                    .map_err(|error| error.to_string())?;
-                for side in &solid.sides {
-                    let targets = result
-                        .side_mapping
-                        .get(&side.id)
-                        .ok_or("Terrain cut is missing a source face replacement")?;
-                    terrain_mapping.insert(side.id, targets.clone());
-                }
-            }
-        }
+        let face_mapping = self.prepare_fragment_mapping(&terrain_sources, &result.side_mapping)?;
         let cubemap_bindings =
-            self.prepare_fragment_cubemap_bindings(&mut document, &terrain_mapping)?;
+            self.prepare_fragment_cubemap_bindings(&mut document, &face_mapping)?;
         let (mins, maxs) = map_core::query::bounds_of(&self.document, ids)
             .ok_or("Selected brushes have no bounds")?;
         if let Some(context) = &terrain_context {
@@ -531,14 +520,36 @@ impl Session {
             generation: self.document_generation,
             revision: self.document.revision(),
             definitions: self.definitions_serial,
-            terrain_mapping,
+            face_mapping,
             cubemap_bindings,
             terrain_context,
             terrain_materials,
         })
     }
 
-    fn retire_clipped_terrain_state(&mut self) {
+    pub(super) fn prepare_fragment_mapping(
+        &self,
+        terrain_sources: &BTreeSet<u32>,
+        replacements: &BTreeMap<u32, Vec<u32>>,
+    ) -> Result<BTreeMap<u32, Vec<u32>>, String> {
+        if !terrain_sources.is_empty() {
+            self.check_fragment_references(terrain_sources, &BTreeSet::new(), &BTreeSet::new())?;
+            for source in terrain_sources {
+                let (_, solid) = map_core::subobject::solid(&self.document, *source)
+                    .map_err(|error| error.to_string())?;
+                if solid
+                    .sides
+                    .iter()
+                    .any(|side| !replacements.contains_key(&side.id))
+                {
+                    return Err("Terrain operation is missing a source face replacement".into());
+                }
+            }
+        }
+        Ok(replacements.clone())
+    }
+
+    pub(super) fn retire_clipped_terrain_state(&mut self) {
         self.retire_terrain_move_handles();
         self.retire_terrain_stroke();
         let _ = self.clear_terrain_triangle_highlight(None);
@@ -566,7 +577,7 @@ impl Session {
         }
         let game = self.game.clone();
         let result = self.edit(actor, "clip brushes", |tx| {
-            let writes = ridge_bindings::writes_for_mapping(tx.vmf(), &preview.terrain_mapping)
+            let writes = ridge_bindings::writes_for_mapping(tx.vmf(), &preview.face_mapping)
                 .map_err(EditError::Invalid)?;
             if writes != preview.cubemap_bindings.writes {
                 return Err(EditError::Invalid(

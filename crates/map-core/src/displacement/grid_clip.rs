@@ -22,22 +22,37 @@ type NativePositions = [Vec<[u32; 3]>; POSITION_PROFILES];
 
 mod network;
 pub(crate) use network::Work;
-pub(crate) use network::{MAX_NEIGHBORS, Replacement, certify, partition_neighbors};
+pub(crate) use network::{
+    MAX_NEIGHBORS, Replacement, certify, certify_subtraction, partition_neighbors,
+    partition_subtraction_neighbors,
+};
 pub(super) use network::{overlaps, related};
 
 pub(crate) struct Context<'a> {
     pub(super) vmf: Option<&'a Vmf>,
-    pub(super) work: Work,
+    pub(crate) work: Work,
     cuts: BTreeMap<FaceId, CutLine>,
 }
 
 impl<'a> Context<'a> {
     pub(crate) fn new(vmf: Option<&'a Vmf>) -> Self {
+        Self::with_work(vmf, Work::default())
+    }
+
+    pub(crate) fn with_work(vmf: Option<&'a Vmf>, work: Work) -> Self {
         Self {
             vmf,
-            work: Work::default(),
+            work,
             cuts: BTreeMap::new(),
         }
+    }
+
+    pub(crate) fn into_work(self) -> Work {
+        self.work
+    }
+
+    pub(crate) fn vmf(&self) -> Option<&Vmf> {
+        self.vmf
     }
 }
 
@@ -269,6 +284,85 @@ pub(crate) fn crosses(mesh: &DisplacementMesh, plane: Plane) -> bool {
             .positions
             .iter()
             .any(|point| plane.distance_to(*point) < -CUT_EPSILON)
+}
+
+pub(crate) fn classify(
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    plane: Plane,
+    work: &mut Work,
+) -> Result<crate::clip::TerrainPosition, EditError> {
+    let positions = profiles(solid, geometry, work)?;
+    work.consume(positions.iter().map(Vec::len).sum())
+        .map_err(invalid)?;
+    let mut front = false;
+    let mut back = false;
+    for point in positions.iter().flatten() {
+        let distance = plane.distance_to(*point);
+        front |= distance > CUT_EPSILON;
+        back |= distance < -CUT_EPSILON;
+    }
+    match (front, back) {
+        (true, true) => Ok(crate::clip::TerrainPosition::Crossing),
+        (true, false) => Ok(crate::clip::TerrainPosition::Front),
+        (false, true) => Ok(crate::clip::TerrainPosition::Back),
+        (false, false) => Ok(crate::clip::TerrainPosition::Coplanar),
+    }
+}
+
+pub(crate) fn profiles(
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    work: &mut Work,
+) -> Result<Vec<Vec<DVec3>>, EditError> {
+    let (side, face) = source_face(solid, geometry)?;
+    let info = side.displacement.as_ref().unwrap();
+    let (_, mesh) = native::checked_mesh(face, info).map_err(invalid)?;
+    let positions = certified_native_positions(face, &mesh, info.power, work)?;
+    work.consume((POSITION_PROFILES + 1) * mesh.positions.len())
+        .map_err(invalid)?;
+    Ok(std::iter::once(mesh.positions)
+        .chain(positions.into_iter().map(|positions| {
+            positions
+                .into_iter()
+                .map(|point| DVec3::from_array(point.map(|bits| f64::from(f32::from_bits(bits)))))
+                .collect()
+        }))
+        .collect())
+}
+
+pub(crate) fn intersects(
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    volumes: &[Vec<crate::clip::TerrainCutPlane>],
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    let (side, face) = source_face(solid, geometry)?;
+    let (_, mesh) =
+        native::checked_mesh(face, side.displacement.as_ref().unwrap()).map_err(invalid)?;
+    let triangles = mesh.triangles().collect::<Vec<_>>();
+    let positions = profiles(solid, geometry, work)?;
+    super::flat_clip::terrain_intersects(&positions, &triangles, volumes, work)
+}
+
+pub(crate) fn has_plane_area(
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    plane: &crate::clip::TerrainCutPlane,
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    let (side, face) = source_face(solid, geometry)?;
+    let (_, mesh) =
+        native::checked_mesh(face, side.displacement.as_ref().unwrap()).map_err(invalid)?;
+    for positions in profiles(solid, geometry, work)? {
+        for triangle in mesh.triangles() {
+            let points = triangle.map(|index| positions[index]);
+            if super::flat_clip::points_on_plane(&points, plane, work)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 pub(super) fn grid_line(
@@ -723,6 +817,33 @@ fn prepare_partition<'a>(
         ));
     }
     Ok(source)
+}
+
+pub(crate) fn partition(
+    document: &Document,
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    material: &str,
+    context: &mut Context<'_>,
+) -> Result<Plan, EditError> {
+    let source = prepare(document, solid, geometry, context)?;
+    let power = source.side.displacement.as_ref().unwrap().power;
+    if power <= 2 {
+        return Err(invalid(
+            "Power 2 terrain requires Cells or Fragments for further partitioning",
+        ));
+    }
+    source.materialize(
+        quadrants(Child {
+            row: 0,
+            column: 0,
+            power,
+        })
+        .to_vec(),
+        material,
+        Operation::Partition,
+        &mut context.work,
+    )
 }
 
 pub(crate) fn plan(

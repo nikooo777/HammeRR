@@ -176,7 +176,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect selected brush candidates and the shared carve preview, source owners/bounds/materials, snapshot stamp, exact token, target brush IDs, resulting fragments, removed/unchanged brushes, per-face inheritance and limits. Up to 8 convex cutters are retained; up to 16 targets and 256 intermediate/final fragments. World brushes may be removed completely; removing every brush from an entity rejects. No map edits. handle contains the active kind and decimal-string token, or null when closed or stale; stamp remains the source guard.",
+        description = "Inspect selected brush candidates and the shared carve preview, source owners and actual terrain-surface bounds/materials, separate carrier bounds, snapshot stamp, exact token, target IDs, resulting fragments, removed/unchanged brushes and face lineage. Reports frozen terrain_mode/blend_mode/partition_neighbors, actual terrain faces/powers/patch/sample counts, blend error bounds, side mappings, material/instance/cubemap guards and limits. Terrain targets require exactly one displaced face; cutters are ordinary convex brushes. Up to 8 retained cutters, 16 targets and 256 intermediate/final fragments. World brushes may disappear; empty brush entities reject. handle is null when closed or stale; stamp guards new requests. No map edits.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_carve_preview(&self) -> ToolResult {
@@ -184,7 +184,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview subtracting one convex cutter brush from explicit target brush IDs, including children of brush entities. Requires the latest stamp from get_carve_preview. The cutter stays unchanged. Disjoint/tangent targets remain unchanged; an entirely disjoint batch rejects. cut_material defaults to {policy:cutter}, preserving cutter material, world UV projection, lighting and unknown metadata. {policy:target} copies the unique original target face with the generated face's outward normal; missing/ambiguous matches reject. {policy:material,material:NAME} overrides cutter material only. Target and named policies reject invalid inherited projections before replacing the draft. source_solid/source_side retain geometry provenance and surface_source_solid/surface_source_side identify the surface-settings donor. Nodraw remains allowed. Surviving original faces retain metadata; original IDs remain on the first surviving fragment and later fragments get unique IDs. Preserves owner entities and unrelated objects. Whole world brushes can be removed; empty brush entities, displacements, invalid/thin geometry, 64-face overflow and budgets reject atomically. render_view uses the draft. Apply/cancel require the exact token. Returns handle with kind and decimal-string token, separate from the required stamp. Changed selection and competing geometry previews invalidate it; repeating the current object selection preserves it. Closed or stale reports have handle=null."
+        description = "Preview subtracting one retained ordinary convex cutter from explicit ordinary or terrain target brush IDs, including entity children. Requires latest get_carve_preview.stamp. Disjoint/tangent targets stay unchanged; an all-disjoint sheet/volume request rejects. cut_material defaults to cutter, copying new cap/carrier material/world UVs/lighting/metadata; target requires a unique original target face with matching outward normal; material overrides only cutter material. Terrain keeps its original surface settings and open cut border. terrain_mode is grid (default), flat, cells or fragments, using the existing clipping representation and native-field proofs; unsupported geometry/LOD refuses without fallback. blend_mode is exact (default), native_float or nearest_byte; non-exact requires fragments and reports certified error. partition_neighbors defaults false and explicitly authorizes required neighbors among target IDs; Flat refuses true. Material and visible instance sources are captured and frozen through Apply. Source/output terrain faces, real powers/counts, side_mapping and per-face geometry/surface donor lineage are reported. Original first-fragment IDs, owner entities and unrelated objects remain. Empty brush entities, terrain cutters, unsupported terrain profiles, invalid/thin geometry, 64-face overflow and budgets reject atomically while preserving an existing draft. render_view uses the draft; Apply/cancel require its exact token. Changed selection and competing tools invalidate it. Apply rechecks frozen sources and exact geometry as one Undo step."
     )]
     pub(in crate::mcp) fn preview_carve(
         &self,
@@ -192,18 +192,24 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            session.preview_carve_with_material(
-                args.cutter,
-                &args.targets,
-                &args.cut_material.into_policy(),
-                &args.stamp,
-            )?;
+            session.preview_carve_request(crate::session::carving::CarveRequest {
+                cutters: &[args.cutter],
+                targets: &args.targets,
+                cut_material: &args.cut_material.into_policy(),
+                terrain_mode: args
+                    .terrain_mode
+                    .map(ClipTerrainMode::mode)
+                    .unwrap_or_default(),
+                blend_mode: args.blend_mode.map(ClipBlendMode::mode).unwrap_or_default(),
+                partition_neighbors: args.partition_neighbors.unwrap_or_default(),
+                stamp: &args.stamp,
+            })?;
             Ok(session.carve_report())
         })
     }
 
     #[tool(
-        description = "Preview subtracting the combined volume of 1–8 distinct retained convex cutter brushes from 1–16 target brushes. Cutters and targets must be disjoint roles. Inputs normalize to increasing brush IDs, so caller order cannot change fragments or coincident-face inheritance. Requires the latest get_carve_preview.stamp. All cutters stay unchanged; overlapping cutter volume is removed once. preview.result.cutters lists normalized IDs; each generated face reports its geometric source_solid/source_side and surface_source_solid/surface_source_side donor. cut_material defaults to {policy:cutter}; {policy:target} copies the unique original target face with the generated face's outward normal (missing/ambiguous matches reject), including world UVs, lighting and unknown metadata. {policy:material,material:NAME} replaces only cutter material and preserves cutter projection/metadata. Target and named policies reject invalid inherited projections atomically. Nodraw is allowed. Original faces and owner entities remain. Intermediate and final fragments are bounded at 256 with 64 sides each. Empty brush entities, invalid/displacement/thin geometry, bounds, all-disjoint inputs and budgets reject atomically while preserving the valid draft. render_view shows the same draft. commit_carve/cancel_carve use its token; Apply verifies allocations and records one undo step. Returns handle with kind and decimal-string token, separate from the required stamp. Changed selection and competing geometry previews invalidate it; repeating the current object selection preserves it. Closed or stale reports have handle=null."
+        description = "Preview subtracting the combined volume of 1–8 retained ordinary convex cutters from 1–16 explicit ordinary or terrain target brushes. Roles must be disjoint; IDs normalize so cutter order cannot change fragments or lineage. Overlapping cutter volume is removed once. Requires latest get_carve_preview.stamp. Shares preview_carve material policies, grid/flat/cells/fragments terrain_mode, exact/native_float/nearest_byte blend_mode and explicit partition_neighbors permission. Omitted terrain fields mean grid/exact/false. Terrain targets require exactly one displaced face and keep source material/UV/editing fields; cut_material also controls new structural carrier faces, while native terrain borders stay open. A single selected representation applies throughout subtraction; proof/resource errors never choose another mode. Selected required neighbors must be target IDs and report as changes. Reports actual terrain faces, powers/counts, blend bounds, side_mapping, original geometry/surface donors and frozen material/instance/cubemap guards. All cutters and unrelated objects stay unchanged. At most 256 intermediate/final fragments, 64 sides per brush and the shared clipping terrain/native budgets. Empty owners, terrain cutters, unsupported profiles, invalid/thin geometry, all-disjoint results and exceeded budgets reject atomically, preserving map/IDs/history and the previous valid draft. render_view shares the draft; commit_carve/cancel_carve use its token. Apply replays exact geometry and guarded sources as one Undo step."
     )]
     pub(in crate::mcp) fn preview_carve_many(
         &self,
@@ -211,18 +217,24 @@ impl EditorServer {
     ) -> ToolResult {
         run(|| {
             let mut session = self.session();
-            session.preview_carve_many_with_material(
-                &args.cutters,
-                &args.targets,
-                &args.cut_material.into_policy(),
-                &args.stamp,
-            )?;
+            session.preview_carve_request(crate::session::carving::CarveRequest {
+                cutters: &args.cutters,
+                targets: &args.targets,
+                cut_material: &args.cut_material.into_policy(),
+                terrain_mode: args
+                    .terrain_mode
+                    .map(ClipTerrainMode::mode)
+                    .unwrap_or_default(),
+                blend_mode: args.blend_mode.map(ClipBlendMode::mode).unwrap_or_default(),
+                partition_neighbors: args.partition_neighbors.unwrap_or_default(),
+                stamp: &args.stamp,
+            })?;
             Ok(session.carve_report())
         })
     }
 
     #[tool(
-        description = "Apply the exact shared carving preview as one undo step. Rechecks fragment IDs, face inheritance and geometry against the draft. Retains all cutters and entity ownership; selects surviving carved objects. Source edits, selection/tool changes and other previews invalidate the token. Allocation changes reject without mutation."
+        description = "Apply the exact shared carving preview as one Undo step. Rechecks frozen terrain/material/instance/cubemap sources, definitions, options, fragment IDs, complete face lineage and actual ordinary/terrain geometry against the draft. Retains cutters and entity ownership; selects surviving outputs. Source edits, selection/tool changes and other previews invalidate the token. Changed sources or allocations reject without mutation."
     )]
     pub(in crate::mcp) fn commit_carve(
         &self,

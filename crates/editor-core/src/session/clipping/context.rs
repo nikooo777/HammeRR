@@ -22,7 +22,7 @@ struct Origin {
     occurrence: Arc<OccurrencePath>,
 }
 
-pub(super) struct Context {
+pub(in crate::session) struct Context {
     vmf: Vmf,
     dependencies: DependencyGuard,
     stats: InstanceStats,
@@ -33,7 +33,7 @@ pub(super) struct Context {
 }
 
 impl Context {
-    pub(super) fn prepare(
+    pub(in crate::session) fn prepare(
         session: &Session,
         ids: &[ObjectId],
         plane: Plane,
@@ -54,9 +54,17 @@ impl Context {
                     })
             }
         };
+        Self::prepare_required(session, needed)
+    }
+
+    pub(in crate::session) fn prepare_required(
+        session: &Session,
+        needed: bool,
+    ) -> Result<Option<Arc<Self>>, String> {
         if !needed {
             return Ok(None);
         }
+        let vmf = session.document.vmf();
         let control = compiler::Control::default();
         let original_bytes =
             map_core::references::admit_snapshot_storage(vmf, MAX_CONTEXT_BYTES, &mut || {
@@ -140,7 +148,7 @@ impl Context {
         Ok(Some(Arc::new(context)))
     }
 
-    pub(super) fn current(&self, session: &Session) -> Result<(), String> {
+    pub(in crate::session) fn current(&self, session: &Session) -> Result<(), String> {
         if session.path.as_ref() != Some(&self.path)
             || self.saved != session.history_save_serial
             || self.content != session.build_content_epoch()
@@ -154,17 +162,17 @@ impl Context {
             .map_err(|error| format!("Terrain instance sources changed: {error}"))
     }
 
-    pub(super) fn verify(&self) -> Result<(), String> {
+    pub(in crate::session) fn verify(&self) -> Result<(), String> {
         self.dependencies
             .verify(&compiler::Control::default())
             .map_err(|error| format!("Terrain instance sources changed: {error}"))
     }
 
-    pub(super) fn vmf(&self) -> &Vmf {
+    pub(in crate::session) fn vmf(&self) -> &Vmf {
         &self.vmf
     }
 
-    pub(super) fn report(&self) -> Value {
+    pub(in crate::session) fn report(&self) -> Value {
         json!({"references":self.stats.instances,"terrain_faces":self.origins.len(),"dependencies":self.stats.dependencies,
             "sources":self.origins.iter().take(MAX_PROVENANCE_ROWS).map(|origin| json!({
                 "assembled_side":origin.side,"owner":format!("entity:{}",origin.owner),"file":origin.file,

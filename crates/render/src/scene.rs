@@ -193,6 +193,15 @@ pub struct SceneIssues {
 }
 
 impl SceneIssues {
+    pub fn prepend(&mut self, issue: SceneIssue) {
+        let retained = MAX_PREVIEW_ISSUES - 1;
+        if self.entries.len() > retained {
+            self.omitted += self.entries.len() - retained;
+            self.entries.truncate(retained);
+        }
+        self.entries.insert(0, issue);
+    }
+
     fn push(&mut self, issue: SceneIssue) {
         if self.entries.len() < MAX_PREVIEW_ISSUES {
             self.entries.push(issue);

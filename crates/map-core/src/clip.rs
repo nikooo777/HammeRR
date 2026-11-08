@@ -202,7 +202,7 @@ fn invalid(message: impl Into<String>) -> EditError {
     EditError::Invalid(message.into())
 }
 
-fn validate_terrain_context(context: Option<&Vmf>) -> Result<(), EditError> {
+pub(crate) fn validate_terrain_context(context: Option<&Vmf>) -> Result<(), EditError> {
     if let Some(context) = context {
         context
             .validate_ids()
@@ -578,6 +578,8 @@ fn grid_replacements(
                         source_power: terrain.source_power,
                         parts: &cut.parts,
                         children,
+                        removed: None,
+                        changed: true,
                     },
                 )
         })
@@ -597,7 +599,7 @@ pub(crate) struct TerrainPlan {
 }
 
 impl TerrainPlan {
-    fn validate_blend(&self, mode: TerrainBlendMode) -> Result<(), EditError> {
+    pub(crate) fn validate_blend(&self, mode: TerrainBlendMode) -> Result<(), EditError> {
         match (mode, self.blend_error) {
             (TerrainBlendMode::Exact, None) => Ok(()),
             (mode, Some(error)) if mode != TerrainBlendMode::Exact => error.validate(mode),
@@ -606,6 +608,623 @@ impl TerrainPlan {
             )),
         }
     }
+}
+
+pub(crate) struct TerrainReplacement<'a> {
+    pub subtract: bool,
+    pub changed: bool,
+    pub source: FaceId,
+    pub source_power: u32,
+    pub parts: &'a [Solid],
+    pub children: Option<&'a [crate::displacement::grid_clip::Child]>,
+    pub window_fields: Option<&'a crate::displacement::flat_clip::WindowFields>,
+    pub cut: Option<(Plane, Keep)>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum TerrainRetention<'a> {
+    Half(Plane, Keep),
+    Subtraction(&'a [Vec<TerrainCutPlane>]),
+}
+
+pub(crate) struct TerrainUnionFacet {
+    pub plane: TerrainCutPlane,
+    pub bounds: Vec<TerrainCutPlane>,
+}
+
+pub(crate) fn terrain_union_facets(
+    volumes: &[Vec<TerrainCutPlane>],
+    work: &mut crate::displacement::grid_clip::Work,
+) -> Result<Vec<TerrainUnionFacet>, EditError> {
+    work.consume(
+        volumes
+            .iter()
+            .enumerate()
+            .map(|(index, first)| {
+                volumes[index + 1..]
+                    .iter()
+                    .map(|second| first.len() * second.len())
+                    .sum::<usize>()
+            })
+            .sum(),
+    )
+    .map_err(invalid)?;
+    let mut facets = Vec::new();
+    for (index, first) in volumes.iter().enumerate() {
+        for second in &volumes[index + 1..] {
+            for (first_index, plane) in first.iter().enumerate() {
+                for (second_index, other) in second.iter().enumerate() {
+                    if !crate::displacement::flat_clip::opposite_support(plane, other, work)? {
+                        continue;
+                    }
+                    facets.push(TerrainUnionFacet {
+                        plane: *plane,
+                        bounds: first
+                            .iter()
+                            .enumerate()
+                            .filter(|(index, _)| *index != first_index)
+                            .map(|(_, plane)| *plane)
+                            .chain(
+                                second
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(index, _)| *index != second_index)
+                                    .map(|(_, plane)| *plane),
+                            )
+                            .collect(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(facets)
+}
+
+pub(crate) fn terrain_on_plane(
+    solid: &Solid,
+    shape: &BrushGeometry,
+    plane: &TerrainCutPlane,
+    work: &mut crate::displacement::grid_clip::Work,
+) -> Result<bool, EditError> {
+    crate::displacement::flat_clip::on_plane(&terrain_profiles(solid, shape, work)?, plane, work)
+}
+
+pub(crate) fn terrain_has_plane_area(
+    solid: &Solid,
+    shape: &BrushGeometry,
+    plane: &TerrainCutPlane,
+    work: &mut crate::displacement::grid_clip::Work,
+) -> Result<bool, EditError> {
+    crate::displacement::grid_clip::has_plane_area(solid, shape, plane, work)
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TerrainCutPlane {
+    pub plane: Plane,
+    pub source: FaceId,
+    pub support: [DVec3; 3],
+}
+
+pub(crate) fn terrain_cut_plane(
+    solid: &Solid,
+    face: &crate::Face,
+    source: FaceId,
+    work: &mut crate::displacement::grid_clip::Work,
+) -> Result<TerrainCutPlane, EditError> {
+    crate::displacement::flat_clip::terrain_cut_plane(solid, face, source, work)
+}
+
+pub(crate) struct TerrainVolumePlan {
+    pub plan: TerrainPlan,
+    pub carriers: BTreeMap<(usize, usize), FaceId>,
+}
+
+pub(crate) fn plan_terrain_subtraction(
+    document: &Document,
+    solid: &Solid,
+    shape: &BrushGeometry,
+    volumes: &[Vec<TerrainCutPlane>],
+    options: &ClipOptions<'_>,
+    context: &mut crate::displacement::grid_clip::Context<'_>,
+) -> Result<Option<TerrainVolumePlan>, EditError> {
+    if !terrain_intersects(solid, shape, volumes, &mut context.work)? {
+        return Ok(None);
+    }
+    let mut active: Option<TerrainCutPlane> = None;
+    let mut simple = true;
+    for volume in volumes {
+        let mut crossing = Vec::new();
+        let mut contributes = true;
+        let mut boundary = false;
+        for cut in volume {
+            match classify_terrain(solid, shape, cut.plane, &mut context.work)? {
+                TerrainPosition::Front | TerrainPosition::Coplanar => {
+                    contributes = false;
+                    break;
+                }
+                TerrainPosition::Back => {
+                    boundary |= terrain_has_plane_area(solid, shape, cut, &mut context.work)?;
+                }
+                TerrainPosition::Crossing => crossing.push(*cut),
+            }
+        }
+        if !contributes {
+            continue;
+        }
+        if boundary {
+            simple = false;
+            continue;
+        }
+        if crossing.is_empty() {
+            let displaced = solid
+                .sides
+                .iter()
+                .filter_map(|side| side.displacement.as_ref().map(|info| (side, info)))
+                .collect::<Vec<_>>();
+            let [(side, info)] = displaced.as_slice() else {
+                return Err(invalid(
+                    "Terrain subtraction requires one displaced source face",
+                ));
+            };
+            return Ok(Some(TerrainVolumePlan {
+                plan: TerrainPlan {
+                    source: FaceId {
+                        solid: solid.id,
+                        side: side.id,
+                    },
+                    source_power: info.power,
+                    parts: Vec::new(),
+                    output_power: None,
+                    vertices: 0,
+                    triangles: 0,
+                    children: None,
+                    window_fields: None,
+                    blend_error: (options.blend_mode != TerrainBlendMode::Exact)
+                        .then_some(TerrainBlendError::default()),
+                },
+                carriers: BTreeMap::new(),
+            }));
+        }
+        if crossing.len() != 1 {
+            simple = false;
+            continue;
+        }
+        if active.is_some_and(|previous| previous.plane != crossing[0].plane) {
+            simple = false;
+        }
+        active.get_or_insert(crossing[0]);
+    }
+    if simple {
+        for facet in terrain_union_facets(volumes, &mut context.work)? {
+            if terrain_has_plane_area(solid, shape, &facet.plane, &mut context.work)?
+                && terrain_intersects(
+                    solid,
+                    shape,
+                    std::slice::from_ref(&facet.bounds),
+                    &mut context.work,
+                )?
+            {
+                simple = false;
+                break;
+            }
+        }
+    }
+    if simple {
+        let Some(cut) = active else {
+            return Ok(None);
+        };
+        let (_, donor) = crate::subobject::solid(document, cut.source.solid)?;
+        let side = donor
+            .sides
+            .iter()
+            .find(|side| side.id == cut.source.side)
+            .ok_or_else(|| invalid("Terrain subtraction lost its cutter source side"))?;
+        let plan = plan_terrain(
+            document,
+            solid,
+            shape,
+            TerrainHalfRequest {
+                plane: cut.plane,
+                keep: Keep::Front,
+                material: &side.material,
+            },
+            options,
+            context,
+        )?;
+        return Ok(plan.map(|plan| {
+            let carriers = plan
+                .parts
+                .iter()
+                .enumerate()
+                .flat_map(|(part_index, part)| {
+                    part.sides
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, side)| side.id == 0)
+                        .map(move |(side_index, _)| ((part_index, side_index), cut.source))
+                })
+                .collect();
+            TerrainVolumePlan { plan, carriers }
+        }));
+    }
+    let plan = match options.terrain_mode {
+        TerrainMode::Flat => crate::displacement::flat_clip::subtract,
+        TerrainMode::Fragments => crate::displacement::flat_clip::fragments::subtract,
+        _ => {
+            return Err(invalid(
+                "Deferred terrain subtraction requires Flat or Fragments mode",
+            ));
+        }
+    };
+    let result = plan(
+        document,
+        solid,
+        shape,
+        crate::displacement::flat_clip::VolumeRequest {
+            volumes,
+            material: &solid.sides[0].material,
+            textures: options.textures,
+            blend_mode: options.blend_mode,
+        },
+        context,
+    )?;
+    if let Some(result) = &result {
+        result.plan.validate_blend(options.blend_mode)?;
+    }
+    Ok(result)
+}
+
+pub(crate) struct TerrainHalfRequest<'a> {
+    pub plane: Plane,
+    pub keep: Keep,
+    pub material: &'a str,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TerrainPosition {
+    Back,
+    Front,
+    Crossing,
+    Coplanar,
+}
+
+pub(crate) fn classify_terrain(
+    solid: &Solid,
+    shape: &BrushGeometry,
+    plane: Plane,
+    work: &mut crate::displacement::grid_clip::Work,
+) -> Result<TerrainPosition, EditError> {
+    crate::displacement::grid_clip::classify(solid, shape, plane, work)
+}
+
+pub(crate) fn terrain_profiles(
+    solid: &Solid,
+    shape: &BrushGeometry,
+    work: &mut crate::displacement::grid_clip::Work,
+) -> Result<Vec<Vec<DVec3>>, EditError> {
+    crate::displacement::grid_clip::profiles(solid, shape, work)
+}
+
+pub(crate) fn terrain_intersects(
+    solid: &Solid,
+    shape: &BrushGeometry,
+    volumes: &[Vec<TerrainCutPlane>],
+    work: &mut crate::displacement::grid_clip::Work,
+) -> Result<bool, EditError> {
+    crate::displacement::grid_clip::intersects(solid, shape, volumes, work)
+}
+
+pub(crate) fn plan_terrain(
+    document: &Document,
+    solid: &Solid,
+    shape: &BrushGeometry,
+    request: TerrainHalfRequest<'_>,
+    options: &ClipOptions<'_>,
+    context: &mut crate::displacement::grid_clip::Context<'_>,
+) -> Result<Option<TerrainPlan>, EditError> {
+    let TerrainHalfRequest {
+        plane,
+        keep,
+        material,
+    } = request;
+    let plan = match options.terrain_mode {
+        TerrainMode::Grid => crate::displacement::grid_clip::plan(
+            document, solid, shape, plane, keep, material, context,
+        )?
+        .map(TerrainPlan::from),
+        TerrainMode::Flat | TerrainMode::Cells | TerrainMode::Fragments => {
+            let plan = match options.terrain_mode {
+                TerrainMode::Cells => crate::displacement::flat_clip::cells::plan,
+                TerrainMode::Fragments => crate::displacement::flat_clip::fragments::plan,
+                _ => crate::displacement::flat_clip::plan,
+            };
+            plan(
+                document,
+                solid,
+                shape,
+                crate::displacement::flat_clip::Request {
+                    plane,
+                    keep,
+                    material,
+                    textures: options.textures,
+                    blend_mode: options.blend_mode,
+                },
+                context,
+            )?
+        }
+    };
+    if let Some(plan) = &plan {
+        plan.validate_blend(options.blend_mode)?;
+    }
+    Ok(plan)
+}
+
+pub(crate) fn plan_terrain_partition(
+    document: &Document,
+    solid: &Solid,
+    shape: &BrushGeometry,
+    material: &str,
+    options: &ClipOptions<'_>,
+    context: &mut crate::displacement::grid_clip::Context<'_>,
+) -> Result<TerrainPlan, EditError> {
+    if options.terrain_mode == TerrainMode::Grid {
+        return crate::displacement::grid_clip::partition(
+            document, solid, shape, material, context,
+        )
+        .map(TerrainPlan::from);
+    }
+    let partition = match options.terrain_mode {
+        TerrainMode::Cells => crate::displacement::flat_clip::cells::partition,
+        TerrainMode::Fragments => crate::displacement::flat_clip::fragments::partition,
+        TerrainMode::Grid | TerrainMode::Flat => crate::displacement::flat_clip::partition,
+    };
+    let plan = partition(
+        document,
+        solid,
+        shape,
+        crate::displacement::flat_clip::PartitionRequest {
+            material,
+            textures: options.textures,
+            blend_mode: options.blend_mode,
+        },
+        context,
+    )?;
+    plan.validate_blend(options.blend_mode)?;
+    Ok(plan)
+}
+
+pub(crate) fn plan_terrain_boundary_partition(
+    document: &Document,
+    solid: &Solid,
+    shape: &BrushGeometry,
+    material: &str,
+    options: &ClipOptions<'_>,
+    context: &mut crate::displacement::grid_clip::Context<'_>,
+) -> Result<TerrainPlan, EditError> {
+    if options.terrain_mode != TerrainMode::Fragments {
+        return plan_terrain_partition(document, solid, shape, material, options, context);
+    }
+    let plan = crate::displacement::flat_clip::fragments::partition_triangles(
+        document,
+        solid,
+        shape,
+        crate::displacement::flat_clip::PartitionRequest {
+            material,
+            textures: options.textures,
+            blend_mode: options.blend_mode,
+        },
+        context,
+    )?;
+    plan.validate_blend(options.blend_mode)?;
+    Ok(plan)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct TerrainSubdivision {
+    pub source: FaceId,
+    pub part: usize,
+    pub internal: bool,
+}
+
+pub(crate) fn required_terrain_partitions(
+    document: &Document,
+    replacements: &[TerrainReplacement<'_>],
+    context: &mut crate::displacement::grid_clip::Context<'_>,
+) -> Result<Vec<TerrainSubdivision>, EditError> {
+    crate::displacement::flat_clip::network::required_final_partitions(
+        document,
+        replacements,
+        context,
+    )
+}
+
+pub(crate) fn partition_terrain_neighbors(
+    document: &Document,
+    authorized: &[Source<'_>],
+    replacements: &[TerrainReplacement<'_>],
+    material: Option<&str>,
+    options: &ClipOptions<'_>,
+    context: &mut crate::displacement::grid_clip::Context<'_>,
+    removed: &[Vec<TerrainCutPlane>],
+) -> Result<Vec<TerrainPlan>, EditError> {
+    if options.terrain_mode != TerrainMode::Grid {
+        return Err(invalid(
+            "Native grid neighbor partitioning requires Grid mode",
+        ));
+    }
+    let replacements = replacements
+        .iter()
+        .map(|replacement| {
+            Ok(crate::displacement::grid_clip::Replacement {
+                operation: if replacement.subtract {
+                    crate::displacement::grid_clip::Operation::Cut
+                } else {
+                    crate::displacement::grid_clip::Operation::Partition
+                },
+                source: replacement.source,
+                source_power: replacement.source_power,
+                parts: replacement.parts,
+                children: replacement
+                    .children
+                    .ok_or_else(|| invalid("Terrain clipping lost its child grid origins"))?,
+                removed: replacement.subtract.then_some(removed),
+                changed: replacement.changed,
+            })
+        })
+        .collect::<Result<Vec<_>, EditError>>()?;
+    crate::displacement::grid_clip::partition_subtraction_neighbors(
+        document,
+        authorized,
+        &replacements,
+        material,
+        context,
+    )
+    .map(|plans| plans.into_iter().map(TerrainPlan::from).collect())
+}
+
+pub(crate) fn certify_terrain(
+    document: &Document,
+    replacements: &[TerrainReplacement<'_>],
+    options: &ClipOptions<'_>,
+    context: &mut crate::displacement::grid_clip::Context<'_>,
+    removed: Option<&[Vec<TerrainCutPlane>]>,
+) -> Result<Vec<(usize, usize, Option<TerrainBlendError>)>, EditError> {
+    let mut visible_sources = 0usize;
+    let mut visible_parts = 0usize;
+    let mut totals = [0usize; 3];
+    let mut unique = BTreeSet::new();
+    for replacement in replacements {
+        if !unique.insert(replacement.source) {
+            return Err(invalid("Terrain replacement sources must be unique"));
+        }
+        let (_, source) = crate::subobject::solid(document, replacement.source.solid)?;
+        if !replacement.changed {
+            if replacement.parts != std::slice::from_ref(source) {
+                return Err(invalid(
+                    "Unchanged terrain must retain its original saved source",
+                ));
+            }
+            continue;
+        }
+        let visible =
+            crate::displacement::native::terrain_source_is_visible(document.vmf(), source.id);
+        if visible {
+            visible_sources += source
+                .sides
+                .iter()
+                .filter(|side| side.displacement.is_some())
+                .count();
+        }
+        for part in replacement.parts {
+            for info in part
+                .sides
+                .iter()
+                .filter_map(|side| side.displacement.as_ref())
+            {
+                if !(2..=4).contains(&info.power) {
+                    return Err(invalid("Terrain output requires native power 2, 3 or 4"));
+                }
+                let cells = 1usize << info.power;
+                for (total, added) in
+                    totals
+                        .iter_mut()
+                        .zip([1, (cells + 1).pow(2), 2 * cells.pow(2)])
+                {
+                    *total = total
+                        .checked_add(added)
+                        .ok_or_else(|| invalid("Terrain output accounting overflow"))?;
+                }
+                visible_parts += usize::from(visible && !part.hidden);
+            }
+        }
+    }
+    TerrainBudget::default().ensure_capacity(
+        replacements
+            .iter()
+            .filter(|replacement| replacement.changed)
+            .count(),
+        totals[0],
+        totals[1],
+        totals[2],
+    )?;
+    let existing = crate::displacement::native::visible_terrain_sources(
+        context.vmf().unwrap_or(document.vmf()),
+    )
+    .flat_map(|(solid, _)| &solid.sides)
+    .filter(|side| side.displacement.is_some())
+    .count();
+    let final_count = existing
+        .checked_sub(visible_sources)
+        .and_then(|count| count.checked_add(visible_parts))
+        .ok_or_else(|| invalid("Terrain output patch count overflow"))?;
+    if final_count > source_formats::bsp::MAX_DISPLACEMENTS {
+        return Err(invalid(
+            "Terrain output exceeds the native displacement limit",
+        ));
+    }
+    if options.terrain_mode == TerrainMode::Grid {
+        let replacements = replacements
+            .iter()
+            .map(|replacement| {
+                Ok(crate::displacement::grid_clip::Replacement {
+                    operation: if replacement.cut.is_some() || removed.is_some() {
+                        crate::displacement::grid_clip::Operation::Cut
+                    } else {
+                        crate::displacement::grid_clip::Operation::Partition
+                    },
+                    source: replacement.source,
+                    source_power: replacement.source_power,
+                    parts: replacement.parts,
+                    children: replacement
+                        .children
+                        .ok_or_else(|| invalid("Terrain clipping lost its child grid origins"))?,
+                    removed: removed.filter(|_| replacement.subtract),
+                    changed: replacement.changed,
+                })
+            })
+            .collect::<Result<Vec<_>, EditError>>()?;
+        let verified = if removed.is_some() {
+            crate::displacement::grid_clip::certify_subtraction(document, &replacements, context)?
+        } else {
+            crate::displacement::grid_clip::certify(document, &replacements, context)?
+        };
+        return Ok(verified
+            .into_iter()
+            .map(|verified| (verified.neighbors, verified.links, None))
+            .collect());
+    }
+    let replacements = replacements
+        .iter()
+        .map(
+            |replacement| crate::displacement::flat_clip::network::Replacement {
+                source: replacement.source,
+                parts: replacement.parts,
+                window_fields: replacement.window_fields,
+                cut: replacement.cut,
+                removed: removed.filter(|_| replacement.subtract),
+                changed: replacement.changed,
+                subtraction: removed.is_some(),
+                blend_mode: options.blend_mode,
+                texture: options
+                    .textures
+                    .and_then(|textures| textures.get(&replacement.source))
+                    .copied(),
+            },
+        )
+        .collect::<Vec<_>>();
+    let certify = if removed.is_some()
+        || matches!(
+            options.terrain_mode,
+            TerrainMode::Cells | TerrainMode::Fragments
+        ) {
+        crate::displacement::flat_clip::network::certify_cells
+    } else {
+        crate::displacement::flat_clip::network::certify
+    };
+    Ok(certify(document, &replacements, context)?
+        .into_iter()
+        .map(|verified| (verified.neighbors, verified.links, verified.blend_error))
+        .collect())
 }
 
 impl From<crate::displacement::grid_clip::Plan> for TerrainPlan {
@@ -822,42 +1441,19 @@ pub fn clip_with_options(
         let shape = geometry(solid).map_err(|error| source_error(solid.id, error))?;
         let material = material.map(str::trim).unwrap_or(&solid.sides[0].material);
         if solid.sides.iter().any(|side| side.displacement.is_some()) {
-            let plan = match options.terrain_mode {
-                TerrainMode::Grid => crate::displacement::grid_clip::plan(
-                    tx.document(),
-                    solid,
-                    &shape,
+            let plan = plan_terrain(
+                tx.document(),
+                solid,
+                &shape,
+                TerrainHalfRequest {
                     plane,
                     keep,
                     material,
-                    &mut terrain_context,
-                )
-                .map_err(|error| source_error(solid.id, error))?
-                .map(TerrainPlan::from),
-                TerrainMode::Flat | TerrainMode::Cells | TerrainMode::Fragments => {
-                    let plan = if options.terrain_mode == TerrainMode::Cells {
-                        crate::displacement::flat_clip::cells::plan
-                    } else if options.terrain_mode == TerrainMode::Fragments {
-                        crate::displacement::flat_clip::fragments::plan
-                    } else {
-                        crate::displacement::flat_clip::plan
-                    };
-                    plan(
-                        tx.document(),
-                        solid,
-                        &shape,
-                        crate::displacement::flat_clip::Request {
-                            plane,
-                            keep,
-                            material,
-                            textures: options.textures,
-                            blend_mode: options.blend_mode,
-                        },
-                        &mut terrain_context,
-                    )
-                    .map_err(|error| source_error(solid.id, error))?
-                }
-            };
+                },
+                &options,
+                &mut terrain_context,
+            )
+            .map_err(|error| source_error(solid.id, error))?;
             let Some(plan) = plan else {
                 unchanged.push(solid.id);
                 continue;
@@ -1042,6 +1638,10 @@ pub fn clip_with_options(
                                 parts: &cut.parts,
                                 window_fields: cut.window_fields.as_ref(),
                                 cut: (!terrain.partitioned).then_some((plane, keep)),
+                                removed: None,
+                                changed: true,
+                                subtraction: false,
+                                blend_mode: options.blend_mode,
                                 texture: options
                                     .textures
                                     .and_then(|textures| textures.get(&terrain.source))

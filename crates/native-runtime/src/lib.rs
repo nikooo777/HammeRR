@@ -73,6 +73,38 @@ pub struct CaptureReceipt {
     pub preservation_passed: bool,
 }
 
+pub struct TerrainSnapshotRequest {
+    pub environment: CaptureEnvironment,
+    pub bsp: Vec<u8>,
+    pub map_name: String,
+    pub channel: CaptureChannel,
+    pub artifacts_parent: PathBuf,
+}
+
+pub struct TerrainSnapshotReceipt {
+    pub snapshot: source_formats::bsp::native_terrain::NativeTerrainSnapshot,
+    pub observation: TerrainObservationReceipt,
+    pub artifacts: PathBuf,
+    pub elapsed_ms: u64,
+    pub preservation_passed: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainObservationReceipt {
+    pub profile: String,
+    pub engine_sha256: String,
+    pub bsp_sha256: String,
+    pub readback_sha256: String,
+    pub map_name: String,
+    pub channel: CaptureChannel,
+    pub process: serde_json::Value,
+    pub readiness: serde_json::Value,
+    pub displacement_count: usize,
+    pub vertex_count: usize,
+    pub resumed: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CleanupDisposition {
@@ -115,6 +147,8 @@ mod movement;
 mod movement_types;
 #[cfg(target_os = "linux")]
 mod process;
+#[cfg(target_os = "linux")]
+mod terrain_snapshot;
 #[cfg(not(target_os = "linux"))]
 mod unsupported;
 mod util;
@@ -141,6 +175,8 @@ pub use movement_types::{
 #[cfg(target_os = "linux")]
 pub use process::observe_movement_with_cleanup;
 #[cfg(target_os = "linux")]
+pub use process::observe_terrain_snapshot_with_cleanup;
+#[cfg(target_os = "linux")]
 pub use process::{capture, capture_with_cleanup};
 #[cfg(target_os = "linux")]
 pub use process::{
@@ -149,8 +185,8 @@ pub use process::{
 };
 #[cfg(not(target_os = "linux"))]
 pub use unsupported::{
-    capture, capture_with_cleanup, observe_movement_with_cleanup, resolve_environment,
-    validate_environment, worker_entry,
+    capture, capture_with_cleanup, observe_movement_with_cleanup,
+    observe_terrain_snapshot_with_cleanup, resolve_environment, validate_environment, worker_entry,
 };
 
 #[cfg(target_os = "linux")]

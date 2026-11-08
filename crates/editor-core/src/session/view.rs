@@ -39,6 +39,7 @@ impl Session {
         key.instance_contents_serial = self.instance_contents_serial();
         key.reference_images_serial = self.reference_images_serial();
         key.rope_preview_serial = self.rope_preview_serial();
+        key.compiled_terrain_snapshot_serial = self.compiled_terrain_snapshot_serial();
         key
     }
 

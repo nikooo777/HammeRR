@@ -590,6 +590,7 @@ impl EditorServer {
             session.preflight_compiled_visibility();
             session.preflight_compiled_details();
             session.preflight_baked_surfaces();
+            session.preflight_compiled_terrain_snapshot();
             session.preflight_compiled_prop_leaf_bounds();
             let default_camera = CameraSpec::default();
             let camera_spec = args.camera.as_ref().unwrap_or(&default_camera);

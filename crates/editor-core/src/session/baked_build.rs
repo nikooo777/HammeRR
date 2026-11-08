@@ -556,59 +556,10 @@ pub(super) fn recheck_with_mode(
 }
 
 pub(super) fn decoded_bsp_bound(bytes: &[u8]) -> Result<usize, String> {
-    fn word(bytes: &[u8], offset: usize) -> Result<usize, String> {
-        let raw: [u8; 4] = bytes
-            .get(offset..offset + 4)
-            .ok_or("BSP inspection header is truncated")?
-            .try_into()
-            .unwrap();
-        usize::try_from(i32::from_le_bytes(raw))
-            .map_err(|_| "BSP inspection range is negative".into())
+    if bytes.len() as u64 > MAX_BSP_BYTES {
+        return Err("BSP inspection file exceeds 128 MiB".into());
     }
-    if bytes.len() as u64 > MAX_BSP_BYTES || bytes.len() < 1036 || &bytes[..4] != b"VBSP" {
-        return Err("BSP inspection header or file size is unsupported".into());
-    }
-    let mut decoded = size_of::<Bsp>() + LUMP_COUNT * size_of::<source_formats::bsp::Lump>();
-    for index in 0..LUMP_COUNT {
-        let base = 8 + index * 16;
-        let offset = word(bytes, base)?;
-        let size = word(bytes, base + 4)?;
-        let end = offset
-            .checked_add(size)
-            .filter(|&end| end <= bytes.len())
-            .ok_or("BSP inspection lump range is invalid")?;
-        decoded = decoded
-            .checked_add(size)
-            .ok_or("BSP inspection allocation overflow")?;
-        if index == source_formats::bsp::lump::GAME_LUMP && size != 0 {
-            let count = word(bytes, offset)?;
-            if count > 4096
-                || count
-                    .checked_mul(16)
-                    .and_then(|size| size.checked_add(offset + 4))
-                    .is_none_or(|directory_end| directory_end > end)
-            {
-                return Err("BSP inspection game-lump directory exceeds its bounds".into());
-            }
-            decoded = decoded
-                .checked_add(count * size_of::<source_formats::bsp::GameLump>())
-                .ok_or("BSP inspection game-lump allocation overflow")?;
-            for entry in 0..count {
-                let base = offset + 4 + entry * 16;
-                let data_offset = word(bytes, base + 8)?;
-                let data_size = word(bytes, base + 12)?;
-                if data_offset
-                    .checked_add(data_size)
-                    .is_none_or(|end| end > bytes.len())
-                {
-                    return Err("BSP inspection game-lump range is invalid".into());
-                }
-                decoded = decoded
-                    .checked_add(data_size)
-                    .ok_or("BSP inspection allocation overflow")?;
-            }
-        }
-    }
+    let decoded = Bsp::decoded_size_bound(bytes, 4096).map_err(|error| error.to_string())?;
     if decoded as u64 > MAX_BSP_BYTES {
         return Err("BSP decoded inspection allocation exceeds 128 MiB".into());
     }

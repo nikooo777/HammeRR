@@ -143,6 +143,7 @@ pub(crate) struct Target {
     executable: Binding,
     steam: Option<Binding>,
     mounts: Vec<Binding>,
+    engine_image: Option<compiler::FileIdentity>,
 }
 
 impl Target {
@@ -153,6 +154,7 @@ impl Target {
             executable: Binding::capture(executable, true)?,
             steam: None,
             mounts: Vec::new(),
+            engine_image: None,
         })
     }
 
@@ -170,6 +172,16 @@ impl Target {
             .iter()
             .map(|mount| Binding::capture(&mount.path, mount.path.is_file()))
             .collect::<Result<_, _>>()?;
+        let engine_image = compiler::FileIdentity::capture_bounded(
+            &environment.engine_root.join("bin/linux64/engine.so"),
+            128 * 1024 * 1024,
+            &compiler::Control::default(),
+        )
+        .map_err(|error| error.to_string())?;
+        if engine_image.sha256().is_none() {
+            return Err("Native engine image is unavailable".into());
+        }
+        target.engine_image = Some(engine_image);
         Ok(target)
     }
 
@@ -183,11 +195,22 @@ impl Target {
         for mount in &self.mounts {
             mount.verify()?;
         }
+        if let Some(engine_image) = &self.engine_image {
+            engine_image
+                .verify_metadata()
+                .map_err(|error| format!("Native engine image changed: {error}"))?;
+        }
         Ok(())
     }
 
+    pub(crate) fn engine_image_sha256(&self) -> Option<&str> {
+        self.engine_image
+            .as_ref()
+            .and_then(compiler::FileIdentity::sha256)
+    }
+
     fn describe(&self) -> Value {
-        json!({"engine":self.engine.describe(),"game":self.game.describe(),"executable":self.executable.describe(),"steam":self.steam.as_ref().map(Binding::describe),"mounts":self.mounts.iter().map(Binding::describe).collect::<Vec<_>>()})
+        json!({"engine":self.engine.describe(),"game":self.game.describe(),"executable":self.executable.describe(),"steam":self.steam.as_ref().map(Binding::describe),"mounts":self.mounts.iter().map(Binding::describe).collect::<Vec<_>>(),"engine_image":self.engine_image.as_ref().map(|image|json!({"path":image.path(),"sha256":image.sha256()}))})
     }
 }
 
@@ -195,6 +218,7 @@ impl Target {
 pub(crate) enum Phase {
     Capture,
     Movement,
+    TerrainSnapshot,
     PlayStartup,
     Play,
 }
@@ -204,6 +228,7 @@ impl Phase {
         match self {
             Self::Capture => "capture",
             Self::Movement => "movement",
+            Self::TerrainSnapshot => "terrain_snapshot",
             Self::PlayStartup => "play_startup",
             Self::Play => "play",
         }
@@ -223,6 +248,7 @@ impl Record {
         let state = match self.phase {
             "capture" => "Native activity busy: reflection capture",
             "movement" => "Native activity busy: movement observation",
+            "terrain_snapshot" => "Native activity busy: terrain observation",
             "play_startup" => "Native activity busy: game startup",
             "play" => "Native activity busy: managed game running",
             _ => "Native activity unavailable: cleanup failed",

@@ -1161,6 +1161,27 @@ draft, map and history. A stale draft reports `guard_error` and `handle:null`;
 rendering and Apply refuse, while its exact token still permits cancellation.
 See the [UI workflow](terrain.md#remove-selected-triangles).
 
+### Native terrain vectors
+
+1. Compile the map. Read `get_compiled_terrain_snapshot` and copy `snapshot`.
+2. Call `prepare_compiled_terrain_snapshot` with that snapshot string.
+3. Poll `get_compiled_terrain_snapshot` until the capture finishes.
+4. Use its `token` with `inspect_compiled_terrain_snapshot`. Omit `displacement`
+   to page patches; supply its ordinal to page vertices.
+5. Call `frame_compiled_terrain_sample` with `token`, `displacement`, `vertex`
+   and the viewport `aspect` to locate a current sample.
+
+`set_compiled_terrain_snapshot` accepts `cancel`, `clear`, `show`, `hide`,
+`guide` and `clear_guide`. Guide selection also needs `displacement` and `vertex`.
+Pages include raw position/N/S/T bits and explicit vector states. Source pages
+retain compiled contributor routes; they do not identify authored vertices.
+Use `source_offset` and `source_limit` to page contributors. No rows are silently
+truncated. A failed or cancelled capture publishes no sample rows.
+
+This uses the same [native inspector](terrain.md#inspect-native-terrain-vectors)
+as the editor. It requires the supported Linux CS:S client and Steam. Historical
+data remains inspectable; stale snapshots cannot frame or display a guide.
+
 ### Exact terrain positions
 
 Read `get_terrain_vertices` with `preview:false`, then copy its `source` guard

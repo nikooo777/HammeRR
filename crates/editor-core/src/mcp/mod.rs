@@ -776,6 +776,7 @@ impl EditorServer {
             + Self::build_tools()
             + Self::compile_region_tools()
             + Self::compiled_details_tools()
+            + Self::compiled_terrain_snapshot_tools()
             + Self::checks_tools()
             + Self::clipboard_tools()
             + Self::color_palette_tools()

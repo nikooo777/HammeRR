@@ -33,6 +33,7 @@ mod buffer_replacement;
 pub mod bulk_entities;
 pub mod compiled_details;
 mod compiled_source_selection;
+pub mod compiled_terrain_snapshot;
 pub mod compiled_visibility;
 pub mod compiled_world_lights;
 mod document_close;
@@ -421,6 +422,7 @@ pub struct Session {
     compiled: Option<CompiledMap>,
     compiled_visibility: compiled_visibility::State,
     compiled_details: compiled_details::State,
+    compiled_terrain_snapshot: compiled_terrain_snapshot::State,
     baked_surfaces: baked_surfaces::State,
     compiled_prop_leaf_bounds: baked_prop_vertices::leaf_bounds::State,
     leak: Option<(Snapshot, compiler::Leak)>,
@@ -765,6 +767,7 @@ impl Session {
             compiled: None,
             compiled_visibility: compiled_visibility::State::default(),
             compiled_details: compiled_details::State::default(),
+            compiled_terrain_snapshot: compiled_terrain_snapshot::State::default(),
             baked_surfaces: baked_surfaces::State::default(),
             compiled_prop_leaf_bounds: baked_prop_vertices::leaf_bounds::State::default(),
             leak: None,
@@ -1695,6 +1698,7 @@ impl Session {
         self.reset_instance_contents();
         self.entity_graph = entity_graph::State::default();
         self.reset_compiled_details();
+        self.retire_compiled_terrain_snapshot();
         self.reset_baked_surfaces();
         self.reset_sky3d_preview();
         self.native_capture.invalidate();
@@ -2786,6 +2790,7 @@ impl Session {
         self.shutdown_recent_map();
         self.reset_instance_contents();
         self.reset_compiled_details();
+        self.retire_compiled_terrain_snapshot();
         self.reset_baked_surfaces();
         self.shutdown_sky3d_preview();
         self.shutdown_rope_preview();
@@ -2822,6 +2827,7 @@ impl Session {
             || self.linked_path_observation.worker.busy()
             || self.baked_surfaces.worker.busy()
             || self.compiled_details.worker.busy()
+            || self.compiled_terrain_snapshot.worker.busy()
             || self.instance_contents.worker.busy()
             || self.instance_extraction.worker.busy()
             || self.external_comparison.worker.busy()
@@ -3062,6 +3068,7 @@ impl Session {
         self.preflight_rope_preview();
         self.preflight_compiled_visibility();
         self.preflight_compiled_details();
+        self.preflight_compiled_terrain_snapshot();
         self.preflight_baked_surfaces();
         self.preflight_compiled_prop_leaf_bounds();
         let sky3d = self.sky3d_preview_scene();
@@ -3226,6 +3233,7 @@ impl Session {
         self.append_compile_region_guide(&mut mesh);
         self.append_compiled_visibility_guide(&mut mesh);
         self.append_compiled_details(&mut mesh);
+        self.append_compiled_terrain_snapshot_guide(&mut mesh, view);
         if baked_surfaces
             && self
                 .append_baked_surfaces(&mut mesh, view.authored_models)

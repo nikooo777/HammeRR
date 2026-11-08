@@ -219,6 +219,10 @@ impl FaceGeometry {
         self.winding(ordinal, true)
     }
 
+    pub fn base_winding(&self, ordinal: usize) -> io::Result<FaceWinding> {
+        self.winding(ordinal, false)
+    }
+
     pub fn positions(&self, ordinal: usize) -> io::Result<(usize, Vec<[f32; 3]>)> {
         if let Some(terrain) = self.terrain(ordinal)? {
             return Ok((terrain.model, terrain.positions));

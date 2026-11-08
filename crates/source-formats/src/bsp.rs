@@ -22,6 +22,7 @@ pub use areas::{
 mod detail_props;
 mod displacements;
 mod face_geometry;
+pub mod native_terrain;
 pub use detail_props::{
     DETAIL_PROP_NAME_BYTES, DetailProp, DetailPropLighting, DetailProps, DetailSprite,
     MAX_DETAIL_PROP_BYTES, MAX_DETAIL_PROP_LIGHTING, MAX_DETAIL_PROP_MODELS, MAX_DETAIL_PROPS,
@@ -456,6 +457,57 @@ impl Bsp {
 
     pub fn write(&self, path: impl AsRef<Path>) -> io::Result<()> {
         std::fs::write(path, self.to_bytes())
+    }
+
+    pub fn decoded_size_bound(data: &[u8], maximum_game_lumps: usize) -> io::Result<usize> {
+        if data.len() < HEADER_SIZE || data[..4] != IDENT {
+            return Err(invalid("not a VBSP file"));
+        }
+        let mut decoded = size_of::<Self>() + LUMP_COUNT * size_of::<Lump>();
+        for index in 0..LUMP_COUNT {
+            let entry = 8 + index * 16;
+            let bytes = file_range(data, i32_at(data, entry), i32_at(data, entry + 4))?;
+            decoded = decoded
+                .checked_add(bytes.len())
+                .ok_or_else(|| invalid("BSP decoded allocation overflow"))?;
+            if index != lump::GAME_LUMP || bytes.is_empty() {
+                continue;
+            }
+            if bytes.len() < 4 {
+                return Err(invalid("game lump directory is truncated"));
+            }
+            let count = usize::try_from(i32_at(bytes, 0))
+                .map_err(|_| invalid("negative game lump count"))?;
+            if count > maximum_game_lumps || count > (bytes.len() - 4) / 16 {
+                return Err(invalid("game lump count exceeds its bounded directory"));
+            }
+            decoded = count
+                .checked_mul(size_of::<GameLump>())
+                .and_then(|size| decoded.checked_add(size))
+                .ok_or_else(|| invalid("BSP decoded game-lump allocation overflow"))?;
+            for index in 0..count {
+                let entry = 4 + index * 16;
+                let payload =
+                    file_range(data, i32_at(bytes, entry + 8), i32_at(bytes, entry + 12))?;
+                decoded = decoded
+                    .checked_add(payload.len())
+                    .ok_or_else(|| invalid("BSP decoded allocation overflow"))?;
+            }
+        }
+        Ok(decoded)
+    }
+
+    pub fn parse_bounded(
+        data: &[u8],
+        maximum_bytes: usize,
+        maximum_game_lumps: usize,
+    ) -> io::Result<Self> {
+        if data.len() > maximum_bytes
+            || Self::decoded_size_bound(data, maximum_game_lumps)? > maximum_bytes
+        {
+            return Err(invalid("BSP decoded allocation exceeds its byte budget"));
+        }
+        Self::parse(data)
     }
 
     pub fn parse(data: &[u8]) -> io::Result<Self> {

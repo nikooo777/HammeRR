@@ -4,6 +4,8 @@ pub(in crate::mcp) struct Offscreen {
     pub(in crate::mcp) ctx: GpuContext,
     pub(in crate::mcp) renderer: Renderer,
     pub(in crate::mcp) scene: Option<(render::SceneKey, GpuScene)>,
+    pub(in crate::mcp) compiled_terrain_snapshot_guard:
+        Option<crate::session::compiled_terrain_snapshot::RenderGuard>,
     pub(in crate::mcp) issues: render::scene::SceneIssues,
     pub(in crate::mcp) normal_maps: render::normal_maps::Report,
     pub(in crate::mcp) lighting: render::lighting::Report,
@@ -18,6 +20,7 @@ impl Offscreen {
             renderer: Renderer::new(&ctx),
             ctx,
             scene: None,
+            compiled_terrain_snapshot_guard: None,
             issues: Default::default(),
             normal_maps: Default::default(),
             lighting: Default::default(),
@@ -57,6 +60,7 @@ struct FrameMetadata {
     material_reload: Value,
     compiled_details: Value,
     baked_surfaces: Value,
+    compiled_terrain_snapshot: Value,
 }
 
 impl FrameMetadata {
@@ -80,6 +84,7 @@ impl FrameMetadata {
             material_reload: json!(session.material_reload_report()),
             compiled_details: json!({"state":session.compiled_details_observation(),"lighting":session.compiled_details_lighting_report_for_render(view,camera,display)}),
             baked_surfaces: session.baked_surfaces_render_report_for_render(view, camera, display),
+            compiled_terrain_snapshot: session.compiled_terrain_snapshot_render_report(),
         }
     }
 }
@@ -106,6 +111,7 @@ impl RenderedView {
             material_reload,
             compiled_details,
             baked_surfaces,
+            compiled_terrain_snapshot,
         } = self.metadata;
         color_correction["applied"] =
             json!(color_correction["enabled"] == true && color_correction["ready"] == true);
@@ -129,7 +135,7 @@ impl RenderedView {
             .unwrap()
             .extend(extra.as_object().unwrap().clone());
         lighting_preview["report"] = json!(self.lighting);
-        let mut info = json!({ "scene_display":scene_display,"selection_presentation":selection_presentation,"helper_presentation":helper_presentation,"baked_surfaces":baked_surfaces,"compiled_details":compiled_details, "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "preview_issues_omitted": self.issues.omitted, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":lighting_preview, "material_reload":material_reload, "view": rendered_view });
+        let mut info = json!({ "scene_display":scene_display,"selection_presentation":selection_presentation,"helper_presentation":helper_presentation,"baked_surfaces":baked_surfaces,"compiled_details":compiled_details,"compiled_terrain_snapshot":compiled_terrain_snapshot, "color_correction":color_correction, "working_region":working_region, "camera": camera_json(&camera), "width": size.0, "height": size.1, "skybox":skybox, "sky3d_preview":self.sky3d_preview, "fog_preview":fog_preview, "rope_preview":rope_preview, "sprite_guides":self.sprite_guides, "instance_contents":self.instance_contents, "preview_issues":preview_issues, "preview_issues_omitted": self.issues.omitted, "normal_maps":{"report":self.normal_maps,"limits":render::normal_maps::limits()}, "lighting_preview":lighting_preview, "material_reload":material_reload, "view": rendered_view });
         if !include_details {
             omit_render_catalogues(&mut info);
         }
@@ -245,6 +251,7 @@ impl EditorServer {
             ctx,
             renderer,
             scene,
+            compiled_terrain_snapshot_guard,
             issues,
             normal_maps,
             lighting,
@@ -275,12 +282,15 @@ impl EditorServer {
             session.preflight_compiled_visibility();
             session.preflight_compiled_details();
             session.preflight_baked_surfaces();
+            session.preflight_compiled_terrain_snapshot();
             session.preflight_compiled_prop_leaf_bounds();
             session.verify_scene_display_render(display_guard)?;
             *sky3d_preview = session.sky3d_preview_state_for(view, *camera);
             let key = session.render_scene_key(view);
             if scene.as_ref().is_none_or(|(previous, _)| *previous != key) {
+                let prepared_guard = session.compiled_terrain_snapshot_render_guard(view)?;
                 let mesh = session.build_scene_for_view(view);
+                session.verify_compiled_terrain_snapshot_render(prepared_guard.as_ref(), view)?;
                 let uploaded = if mesh.baked_faces.is_some() {
                     renderer.upload(ctx, &mesh, session.materials())?
                 } else {
@@ -297,7 +307,12 @@ impl EditorServer {
                 *sprite_guides = session.sprite_guide_preview_state(view);
                 *instance_contents = session.instance_contents_rendered_report();
                 *scene = Some((session.render_scene_key(view), uploaded));
+                *compiled_terrain_snapshot_guard = prepared_guard;
             }
+            let retained_guard = compiled_terrain_snapshot_guard
+                .as_ref()
+                .ok_or("Cached native terrain guide custody is unavailable; render again")?;
+            session.verify_compiled_terrain_snapshot_render(Some(retained_guard), view)?;
             let instance_contents_guard =
                 session.instance_contents_render_guard(view.instance_contents);
             (
@@ -310,6 +325,10 @@ impl EditorServer {
         };
         self.session()
             .verify_instance_contents_render(&instance_contents_guard)?;
+        self.session().verify_compiled_terrain_snapshot_render(
+            compiled_terrain_snapshot_guard.as_ref(),
+            view,
+        )?;
         let gpu_scene = &scene.as_ref().expect("scene was just built").1;
         let pixels = renderer.render_to_rgba_checked_resolved(
             ctx, gpu_scene, camera, &view, size.0, size.1, display,
@@ -324,6 +343,10 @@ impl EditorServer {
             .verify_reference_images_render(&reference_images_guard)?;
         self.session()
             .verify_baked_surfaces_render(baked_surfaces_guard.as_ref(), view)?;
+        self.session().verify_compiled_terrain_snapshot_render(
+            compiled_terrain_snapshot_guard.as_ref(),
+            view,
+        )?;
         self.session()
             .verify_instance_contents_render(&instance_contents_guard)?;
         let mut png = Vec::new();

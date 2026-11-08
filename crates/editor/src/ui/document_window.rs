@@ -244,6 +244,10 @@ impl Drop for DocumentWindow {
 
 impl Ui {
     fn hide_children(&self, errors: &mut Vec<String>) {
+        if let Some(controller) = &self.native_terrain {
+            controller.stop_timer();
+            controller.hide_window(errors);
+        }
         if let Some(controller) = &self.rope_placement {
             controller.suspend();
         }

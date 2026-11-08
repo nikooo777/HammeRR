@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use editor_core::session::compiled_terrain_snapshot::RenderGuard as TerrainSnapshotRenderGuard;
 use editor_core::session::instance_contents::RenderGuard as InstanceContentsRenderGuard;
 use editor_core::session::view_layout::{MAX_CANVAS_PIXELS, MAX_PANES};
 use editor_core::shortcuts::Command;
@@ -121,6 +122,7 @@ pub struct Viewport {
     renderer: Renderer,
     scene: Option<GpuScene>,
     instance_contents_guard: Option<InstanceContentsRenderGuard>,
+    terrain_snapshot_guard: Option<TerrainSnapshotRenderGuard>,
     pub camera: Camera,
     pub options: ViewOptions,
     panes: [PaneState; MAX_PANES],
@@ -139,6 +141,7 @@ impl Viewport {
             renderer: Renderer::new(ctx),
             scene: None,
             instance_contents_guard: None,
+            terrain_snapshot_guard: None,
             camera,
             options: ViewOptions::default(),
             panes: std::array::from_fn(|_| PaneState::default()),
@@ -158,6 +161,7 @@ impl Viewport {
         mesh: &SceneMesh,
         library: &MaterialLibrary,
         instance_contents_guard: InstanceContentsRenderGuard,
+        terrain_snapshot_guard: Option<TerrainSnapshotRenderGuard>,
     ) -> Result<(), String> {
         for pane in &mut self.panes {
             pane.baked_surfaces_error = None;
@@ -172,6 +176,7 @@ impl Viewport {
             Ok(scene) => scene,
             Err(error) => {
                 self.instance_contents_guard = None;
+                self.terrain_snapshot_guard = None;
                 self.scene_error = Some(error.clone());
                 self.redraw();
                 return Err(error);
@@ -179,6 +184,7 @@ impl Viewport {
         };
         self.scene = Some(scene);
         self.instance_contents_guard = Some(instance_contents_guard);
+        self.terrain_snapshot_guard = terrain_snapshot_guard;
         self.scene_error = None;
         self.redraw();
         Ok(())
@@ -502,7 +508,7 @@ impl Viewport {
         }
     }
 
-    fn verify_instance_contents_render(
+    fn verify_scene_sources(
         &self,
         session: &mut editor_core::session::Session,
     ) -> Result<(), String> {
@@ -510,7 +516,11 @@ impl Viewport {
             .instance_contents_guard
             .as_ref()
             .ok_or("Viewport source is unavailable; refresh the scene")?;
-        session.verify_instance_contents_render(guard)
+        session.verify_instance_contents_render(guard)?;
+        session.verify_compiled_terrain_snapshot_render(
+            self.terrain_snapshot_guard.as_ref(),
+            self.options,
+        )
     }
 
     pub fn render_panes(
@@ -569,7 +579,7 @@ impl Viewport {
             );
             return frames;
         }
-        if let Err(error) = self.verify_instance_contents_render(session) {
+        if let Err(error) = self.verify_scene_sources(session) {
             frames.extend(
                 panes
                     .iter()
@@ -668,7 +678,7 @@ impl Viewport {
                 self.panes[*index].error = Some(error);
             }
         }
-        if let Err(error) = self.verify_instance_contents_render(session) {
+        if let Err(error) = self.verify_scene_sources(session) {
             frames.extend(
                 panes
                     .iter()

@@ -588,6 +588,19 @@ impl DocumentAccess {
         super::linked_path_observation::start(&self.session, actor, options, operation)
     }
 
+    pub fn prepare_compiled_terrain_snapshot(
+        &self,
+        actor: Actor,
+        snapshot: String,
+    ) -> Result<Value, String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Native terrain observation"))
+            .transpose()?;
+        super::compiled_terrain_snapshot::start(&self.session, actor, snapshot, operation)
+    }
+
     pub fn finish_reviewed_close(&self) -> Result<(), String> {
         let document = self
             .document

@@ -1,0 +1,191 @@
+import { Button, ScrollView } from "widgets.slint";
+import { Theme, MutedText, SectionHeader, SelectableRow } from "kit.slint";
+
+export struct NativeTerrainRow {
+    title: string,
+    detail: string,
+    state: string,
+}
+
+export component NativeTerrainWindow inherits Window {
+    background: Theme.panel;
+    title: "Native terrain - HammeRR";
+    default-font-size: Theme.font;
+    preferred-width: 820px;
+    preferred-height: 900px;
+    min-width: 600px;
+    min-height: 560px;
+    in property <[NativeTerrainRow]> displacements;
+    in property <[NativeTerrainRow]> vertices;
+    in property <int> selected-displacement: -1;
+    in property <int> selected-vertex: -1;
+    in property <string> summary;
+    in property <string> status;
+    in property <string> availability;
+    in property <string> message;
+    in property <string> displacement-page;
+    in property <string> vertex-page;
+    in property <string> selected-sample;
+    in property <string> raw-values;
+    in property <string> sources;
+    in property <string> source-page;
+    in property <string> observation;
+    in property <string> guide-status;
+    in property <bool> busy;
+    in property <bool> can-prepare;
+    in property <bool> can-cancel;
+    in property <bool> can-clear;
+    in property <bool> previous-displacements;
+    in property <bool> next-displacements;
+    in property <bool> previous-vertices;
+    in property <bool> next-vertices;
+    in property <bool> previous-sources;
+    in property <bool> next-sources;
+    in property <bool> can-frame;
+    in property <bool> can-show-guide;
+    in property <bool> can-toggle-guide;
+    in property <bool> can-clear-guide;
+    in property <bool> guide-visible;
+    callback prepare-snapshot();
+    callback cancel-snapshot();
+    callback clear-snapshot();
+    callback choose-displacement(int);
+    callback choose-vertex(int);
+    callback page-displacements(int);
+    callback page-vertices(int);
+    callback page-sources(int);
+    callback frame-sample();
+    callback show-guide();
+    callback toggle-guide();
+    callback clear-guide();
+    callback prepare-finished(string);
+    callback close-dialog();
+    forward-focus: keys;
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: "Native terrain"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
+            MutedText { text: "Observe the compiled map's final native CPU positions, normals and tangents."; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Prepare"; primary: true; enabled: root.can-prepare && !root.busy; clicked => { root.prepare-snapshot(); } }
+                Button { text: "Cancel"; enabled: root.can-cancel; clicked => { root.cancel-snapshot(); } }
+                Button { text: "Clear"; enabled: root.can-clear; clicked => { root.clear-snapshot(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            if root.status != "": Text { text: root.status; color: Theme.text; wrap: word-wrap; }
+            if root.summary != "": MutedText { text: root.summary; }
+            if root.availability != "": Text { text: root.availability; color: Theme.warning; wrap: word-wrap; }
+            if root.message != "": Text { text: root.message; color: Theme.danger; wrap: word-wrap; }
+            ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
+                    spacing: Theme.space-lg;
+                    SectionHeader { text: "Displacements"; detail: root.displacement-page; inset: false; collapsible: false; }
+                    ScrollView {
+                        content-width: self.width;
+                        horizontal-scrollbar-policy: always-off;
+                        height: root.displacements.length == 0 ? 32px : 145px;
+                        VerticalLayout {
+                            alignment: start;
+                            padding-right: Theme.space-lg;
+                            spacing: Theme.space-xs;
+                            for row[index] in root.displacements: SelectableRow {
+                                label: row.title;
+                                selected: root.selected-displacement == index;
+                                min-height: 52px;
+                                clicked => { root.choose-displacement(index); }
+                                VerticalLayout {
+                                    padding: Theme.space;
+                                    spacing: Theme.space-xs;
+                                    Text { text: row.title; color: Theme.text; overflow: elide; }
+                                    Text { text: row.detail; color: Theme.text-muted; overflow: elide; }
+                                }
+                            }
+                            if root.displacements.length == 0: MutedText { text: root.busy ? "Waiting for a complete observation." : "No retained displacement catalog."; }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Previous displacements"; enabled: root.previous-displacements; clicked => { root.page-displacements(-1); } }
+                        Button { text: "Next displacements"; enabled: root.next-displacements; clicked => { root.page-displacements(1); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    SectionHeader { text: "Vertices"; detail: root.vertex-page; inset: false; collapsible: false; }
+                    ScrollView {
+                        content-width: self.width;
+                        horizontal-scrollbar-policy: always-off;
+                        height: root.vertices.length == 0 ? 32px : 175px;
+                        VerticalLayout {
+                            alignment: start;
+                            padding-right: Theme.space-lg;
+                            spacing: Theme.space-xs;
+                            for row[index] in root.vertices: SelectableRow {
+                                label: row.title;
+                                selected: root.selected-vertex == index;
+                                min-height: 70px;
+                                clicked => { root.choose-vertex(index); }
+                                VerticalLayout {
+                                    padding: Theme.space;
+                                    spacing: Theme.space-xs;
+                                    Text { text: row.title; color: Theme.text; overflow: elide; }
+                                    Text { text: row.detail; color: Theme.text-muted; overflow: elide; }
+                                    Text { text: row.state; color: Theme.text-faint; overflow: elide; }
+                                }
+                            }
+                            if root.vertices.length == 0: MutedText { text: "Choose a retained displacement to inspect its native grid."; }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Previous vertices"; enabled: root.previous-vertices; clicked => { root.page-vertices(-1); } }
+                        Button { text: "Next vertices"; enabled: root.next-vertices; clicked => { root.page-vertices(1); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    SectionHeader { text: "Observed values"; inset: false; collapsible: false; }
+                    MutedText { text: root.selected-sample; }
+                    Text { text: root.raw-values; color: Theme.text; font-family: "monospace"; wrap: word-wrap; }
+                    MutedText { text: "Values retain their observed bits. Zero and nonfinite vectors have no guide segment."; font-size: Theme.font-small; }
+                    source-header := SectionHeader { text: "Source contributors"; detail: root.source-page; inset: false; expanded: false; }
+                    if source-header.expanded: VerticalLayout {
+                        spacing: Theme.space;
+                        MutedText { text: root.sources; }
+                        MutedText { text: "Contributors identify the compiled FACE. They do not map this sample to an authored vertex or triangle."; font-size: Theme.font-small; }
+                        HorizontalLayout {
+                            spacing: Theme.space;
+                            Button { text: "Previous sources"; enabled: root.previous-sources; clicked => { root.page-sources(-1); } }
+                            Button { text: "Next sources"; enabled: root.next-sources; clicked => { root.page-sources(1); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+                    observation-header := SectionHeader { text: "Observation"; inset: false; expanded: false; }
+                    if observation-header.expanded: MutedText { text: root.observation; }
+                }
+            }
+            if root.guide-status != "": MutedText { text: root.guide-status; }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Frame"; enabled: root.can-frame; clicked => { root.frame-sample(); } }
+                Button { text: "Show vector guide"; enabled: root.can-show-guide; clicked => { root.show-guide(); } }
+                Button { text: root.guide-visible ? "Hide guide" : "Show guide"; enabled: root.can-toggle-guide; clicked => { root.toggle-guide(); } }
+                Button { text: "Clear guide"; enabled: root.can-clear-guide; clicked => { root.clear-guide(); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: Theme.space;
+                MutedText { text: "Close keeps the observation and guide."; font-size: Theme.font-small; }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+            }
+        }
+    }
+}

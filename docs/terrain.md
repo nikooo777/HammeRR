@@ -349,6 +349,32 @@ fields, including representable fractional samples. **Native float** and
 reports the selected policy, actual per-cut raw/native error bounds and limits.
 Geometry, UVs and collision classifications remain exact.
 
+## Inspect native terrain vectors
+
+Read the final terrain positions, normals and tangents from a private CS:S run.
+This does not change the map or replace HammeRR lighting.
+
+1. Compile the map.
+2. Open **Build → Native terrain…**.
+3. Click **Prepare**. Keep Steam open while the capture runs.
+4. Select a terrain patch, then a vertex.
+5. Click **Frame** to locate it. Click **Show vector guide** to show its normal and tangents.
+
+The inspector retains the exact 32-bit values. Zero and nonfinite vectors have
+explicit states and no substitute direction. Guide lengths are for display;
+the reported values remain unchanged.
+
+![Observed native normal and tangent directions on a terrain sample](images/native-terrain-vectors.png)
+
+The normal is cyan. Tangent S is red. Tangent T is green.
+
+> [!NOTE]
+> Native inspection requires the supported Linux64 CS:S build and Steam.
+> It reads the complete compiled LDR terrain catalog at load completion. It does
+> not measure shader output, later LOD frames or player contact. Editing the map,
+> changing a consumed source or starting an edit preview can hide the guide.
+> Historical rows remain readable; framing requires a current snapshot.
+
 ## Remove terrain
 
 Select terrain faces, then click **Remove terrain**. Undo restores the complete grid.
@@ -366,6 +392,7 @@ Removing the last terrain face restores its parent's solid brush volume.
 - Masks are session-local and become stale after incompatible topology or source changes.
 - Triangle removal retiles whole retained cells within the shared 128-patch limit; small holes in larger grids can exceed it.
 - General fractional border joins remain unavailable.
+- Displacement grids compile as world terrain. Use ordinary brush or model geometry for moving entities.
 - Invalid terrain shows a diagnostic and an outline instead of substituted shaded geometry.
 
 <!-- page-nav -->

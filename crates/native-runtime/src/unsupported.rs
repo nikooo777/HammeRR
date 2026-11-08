@@ -60,3 +60,20 @@ pub fn observe_movement_with_cleanup(
         cleanup: CleanupDisposition::Confirmed,
     })
 }
+
+pub fn observe_terrain_snapshot_with_cleanup(
+    _request: crate::TerrainSnapshotRequest,
+    observer: &mut dyn CaptureObserver,
+) -> Result<crate::TerrainSnapshotReceipt, CaptureFailure> {
+    let error = match observer.checkpoint() {
+        Err(error) => error,
+        Ok(()) => io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Native terrain inspection requires the verified Linux64 CS:S client and private Cage/Bubblewrap runtime",
+        ),
+    };
+    Err(CaptureFailure {
+        error,
+        cleanup: CleanupDisposition::Confirmed,
+    })
+}

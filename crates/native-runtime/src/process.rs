@@ -16,7 +16,8 @@ use crate::guard::{self, Baseline};
 use crate::util::{self, invalid};
 use crate::{CaptureEnvironment, CaptureObserver, CaptureReceipt, CaptureRequest, CaptureSample};
 
-pub(crate) const WORKER_VERSION: u32 = 2;
+pub(crate) const WORKER_VERSION: u32 = 3;
+const MAX_TERRAIN_SOURCE_NAME: usize = 4096;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +40,7 @@ pub(crate) struct WorkerRequest {
 pub(crate) enum WorkerProfile {
     Reflection(ReflectionProfile),
     Movement(crate::movement::MovementProfile),
+    TerrainSnapshot(crate::terrain_snapshot::TerrainSnapshotProfile),
     PplUv857(crate::PplUv857Case),
     PplMidrange909(crate::PplMidrange909Case),
     PplSpatial919(crate::PplSpatial919Case),
@@ -58,6 +60,7 @@ impl WorkerRequest {
         match &self.profile {
             WorkerProfile::Reflection(profile) => &profile.map_name,
             WorkerProfile::Movement(profile) => &profile.map_name,
+            WorkerProfile::TerrainSnapshot(profile) => &profile.map_name,
             WorkerProfile::PplUv857(_)
             | WorkerProfile::PplMidrange909(_)
             | WorkerProfile::PplSpatial919(_)
@@ -886,6 +889,127 @@ pub fn observe_movement_with_cleanup(
     let mut cleanup = crate::CleanupDisposition::Confirmed;
     observe_movement_inner(request, observer, &mut cleanup)
         .map_err(|error| crate::CaptureFailure { error, cleanup })
+}
+
+pub fn observe_terrain_snapshot_with_cleanup(
+    request: crate::TerrainSnapshotRequest,
+    observer: &mut dyn CaptureObserver,
+) -> Result<crate::TerrainSnapshotReceipt, crate::CaptureFailure> {
+    let mut cleanup = crate::CleanupDisposition::Confirmed;
+    observe_terrain_snapshot_inner(request, observer, &mut cleanup)
+        .map_err(|error| crate::CaptureFailure { error, cleanup })
+}
+
+fn observe_terrain_snapshot_inner(
+    mut request: crate::TerrainSnapshotRequest,
+    observer: &mut dyn CaptureObserver,
+    cleanup: &mut crate::CleanupDisposition,
+) -> io::Result<crate::TerrainSnapshotReceipt> {
+    observer.checkpoint()?;
+    if request.map_name.is_empty()
+        || request.map_name.len() > MAX_TERRAIN_SOURCE_NAME
+        || request.map_name.as_bytes().contains(&0)
+    {
+        return Err(invalid("Invalid native terrain source map label"));
+    }
+    if request.bsp.len() > util::MAX_BSP {
+        return Err(invalid("Native terrain snapshot BSP exceeds 128 MiB"));
+    }
+    if request
+        .bsp
+        .len()
+        .checked_mul(2)
+        .and_then(|bytes| bytes.checked_add(64 * 1024 * 1024))
+        .is_none_or(|bytes| bytes > 256 * 1024 * 1024)
+    {
+        return Err(invalid(
+            "Native terrain private staging exceeds the shared 256 MiB budget",
+        ));
+    }
+    request.environment = guard::resolve_environment(&request.environment)?;
+    guard::validate_environment(&request.environment)?;
+    let parent = request.artifacts_parent.canonicalize()?;
+    if parent.starts_with("/tmp") || parent.starts_with("/dev/shm") {
+        return Err(invalid(
+            "Native terrain snapshot requires retained artifacts on disk",
+        ));
+    }
+    let temporary = private_directory_in(&parent, "ht")?;
+    let map_name = temporary
+        .path()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| invalid("Invalid terrain snapshot directory"))?
+        .to_owned();
+    let profile = crate::terrain_snapshot::TerrainSnapshotProfile::new(
+        map_name,
+        &request.bsp,
+        request.channel,
+    )?;
+    let lease = lease()?;
+    let directory = temporary.keep().canonicalize()?;
+    util::atomic_write(&directory.join("staged.bsp"), &request.bsp)?;
+    let worker = WorkerRequest {
+        version: WORKER_VERSION,
+        nonce: directory
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| invalid("Invalid terrain snapshot directory"))?
+            .to_owned(),
+        supervisor: std::process::id(),
+        supervisor_start: start_time(std::process::id())?,
+        environment: request.environment,
+        profile: WorkerProfile::TerrainSnapshot(profile),
+    };
+    let result = run_owned(&directory, &worker, &lease, observer, cleanup)?;
+    if *cleanup != crate::CleanupDisposition::Confirmed {
+        return Err(invalid("Native terrain snapshot cleanup is unconfirmed"));
+    }
+    observer.checkpoint()?;
+    let WorkerProfile::TerrainSnapshot(profile) = &worker.profile else {
+        return Err(invalid("Missing terrain snapshot worker profile"));
+    };
+    for path in [
+        directory.join("staged.bsp"),
+        directory
+            .join("cstrike/maps")
+            .join(format!("{}.bsp", profile.map_name)),
+    ] {
+        if util::hash_file(&path, util::MAX_BSP)? != profile.bsp_sha256 {
+            return Err(invalid(format!(
+                "Native terrain snapshot changed its exact BSP carrier; inspect {}",
+                directory.display()
+            )));
+        }
+    }
+    guard::validate_environment(&worker.environment)?;
+    let mut check = || observer.checkpoint();
+    let (snapshot, observation) =
+        crate::terrain_snapshot::decode_output(&directory, profile, &request.bsp, &mut check)
+            .map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("{error}; inspect {}", directory.display()),
+                )
+            })?;
+    observer.checkpoint()?;
+    util::json_write(
+        &directory.join("terrain-receipt.json"),
+        &json!({
+            "source_map_name": request.map_name,
+            "observation": observation,
+            "elapsed_ms": result.elapsed_ms,
+            "preservation_passed": true,
+        }),
+    )?;
+    observer.checkpoint()?;
+    Ok(crate::TerrainSnapshotReceipt {
+        snapshot,
+        observation,
+        artifacts: directory,
+        elapsed_ms: result.elapsed_ms,
+        preservation_passed: true,
+    })
 }
 
 fn observe_movement_inner(

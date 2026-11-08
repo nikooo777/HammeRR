@@ -79,7 +79,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | [Terrain](docs/terrain.md) | [Compiled terrain](docs/terrain.md#compile-split-borders) |
 | --- | --- |
 | ![Sculpted terrain with painted blends](docs/images/terrain-blended.png) | ![Terrain running in CS:S](docs/images/terrain-native.png) |
-| Sculpt, paint, join terrain and remove selected triangles. | Build mixed-grid terrain with lighting and collision. |
+| Sculpt, paint, join terrain and remove selected triangles. | Build mixed-grid terrain with lighting, collision and native vector inspection. |
 
 | [Lighting preview](docs/lighting-preview.md) | [Baked lighting](docs/compile-and-play.md#lighting) |
 | --- | --- |

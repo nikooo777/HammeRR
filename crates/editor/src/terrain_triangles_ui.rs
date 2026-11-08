@@ -6,6 +6,7 @@ use std::{
 };
 
 use map_core::{
+    clip::TerrainBlendMode,
     displacement::triangles::{Choice, Settings},
     query::Ray,
     surface::FaceId,
@@ -24,10 +25,23 @@ use editor_core::session::terrain_vertices::{
 struct Target {
     context: crate::face_edit_ui::Context,
     preview: Option<u64>,
+    removal: Option<RemovalPreview>,
     highlight: Option<u64>,
     selected: BTreeMap<FaceId, BTreeSet<usize>>,
     vertices: bool,
     source: VertexSource,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct RemovalInput {
+    targets: Vec<(FaceId, Vec<usize>)>,
+    blend: TerrainBlendMode,
+    partition: bool,
+}
+
+struct RemovalPreview {
+    token: u64,
+    input: RemovalInput,
 }
 
 impl Target {
@@ -40,6 +54,29 @@ impl Target {
 
     fn cancel_preview(&mut self, session: &mut Session) {
         crate::face_edit_ui::cancel_preview(session, &mut self.preview);
+        self.cancel_removal(session);
+    }
+
+    fn cancel_removal(&mut self, session: &mut Session) {
+        if let Some(preview) = self.removal.take()
+            && session.terrain_removal_preview_token() == Some(preview.token)
+        {
+            let _ = session.cancel_terrain_triangle_removal(preview.token);
+        }
+    }
+
+    fn prepare_source_selection(&mut self, session: &mut Session) -> Result<(), String> {
+        self.check(session)?;
+        self.cancel_removal(session);
+        let own_face = self.preview.is_some() && session.face_preview_token() == self.preview;
+        if (!std::ptr::eq(session.render_document(), session.document()) && !own_face)
+            || session.terrain_removal_preview_token().is_some()
+        {
+            return Err(
+                "Apply or cancel the other geometry preview before selecting source terrain".into(),
+            );
+        }
+        Ok(())
     }
 
     fn clear_highlight(&mut self, session: &mut Session) {
@@ -69,6 +106,37 @@ impl Target {
         });
         Ok(())
     }
+}
+
+fn removal_input(window: &TerrainTrianglesWindow, target: &Target) -> Result<RemovalInput, String> {
+    let blend = match window.get_blend_mode() {
+        0 => TerrainBlendMode::Exact,
+        1 => TerrainBlendMode::NativeFloat,
+        2 => TerrainBlendMode::NearestByte,
+        _ => return Err("Choose a valid blend sampling policy".into()),
+    };
+    let partition = window.get_partition_neighbors();
+    let targets = target
+        .context
+        .faces
+        .iter()
+        .map(|face| {
+            (
+                *face,
+                target
+                    .selected
+                    .get(face)
+                    .map(|ids| ids.iter().copied().collect())
+                    .unwrap_or_default(),
+            )
+        })
+        .filter(|(_, ids): &(FaceId, Vec<usize>)| partition || !ids.is_empty())
+        .collect();
+    Ok(RemovalInput {
+        targets,
+        blend,
+        partition,
+    })
 }
 
 pub struct Controller {
@@ -205,17 +273,47 @@ fn edited(
     target: &mut Target,
 ) -> Result<(), String> {
     target.check(session)?;
-    target.cancel_preview(session);
+    crate::face_edit_ui::cancel_preview(session, &mut target.preview);
     populate(window, session, target)?;
     window.set_ready(false);
     window.set_message(
         if target.vertices {
             "Enter world Z and Preview height, import a height CSV, or Use selection to keep a brush mask."
+        } else if window.get_operation_index() == 1 {
+            "Removal selection or settings changed. Preview before applying."
         } else {
             "Preview the selected triangle settings before applying."
         }
         .into(),
     );
+    Ok(())
+}
+
+fn preview_removal(
+    window: &TerrainTrianglesWindow,
+    session: &mut Session,
+    target: &mut Target,
+) -> Result<(), String> {
+    target.check(session)?;
+    let input = removal_input(window, target)?;
+    session.preview_terrain_triangle_removal(editor_core::session::terrain_removal::Request {
+        targets: &input.targets,
+        source: target.source,
+        blend_mode: input.blend,
+        partition_neighbors: input.partition,
+    })?;
+    let token = session
+        .terrain_removal_preview_token()
+        .ok_or("Terrain removal preview is unavailable")?;
+    target.preview = None;
+    target.removal = Some(RemovalPreview { token, input });
+    populate(window, session, target)?;
+    window.set_ready(true);
+    window.set_has_preview(true);
+    let report = session.terrain_removal_report();
+    let result = &report["preview"]["result"];
+    window.set_message(format!("Preview: {} native patches · {} samples · {} triangles · {} parent brushes deleted. Apply records one Undo step.",
+        result["terrain_work"]["patches"],result["terrain_work"]["vertices"],result["terrain_work"]["triangles"],result["removed"].as_array().map_or(0,Vec::len)).into());
     Ok(())
 }
 
@@ -329,6 +427,40 @@ impl Controller {
         let window = TerrainTrianglesWindow::new()?;
         let target = Rc::new(RefCell::new(None::<Target>));
         let picking = Rc::new(Cell::new(false));
+        window.on_operation_changed({
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
+            move || {
+                with_session(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        target.cancel_preview(session);
+                        if let Err(error) = edited(window, session, target) {
+                            window.set_message(error.into());
+                        }
+                    }
+                });
+            }
+        });
+        window.on_discard({
+            let (window, continuation, target) =
+                (window.as_weak(), access.downgrade(), target.clone());
+            move || {
+                with_session(&window, &continuation, |window, session| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        target.cancel_preview(session);
+                        window.set_ready(false);
+                        window.set_has_preview(false);
+                        if let Err(error) = populate(window, session, target) {
+                            window.set_message(error.into());
+                        } else {
+                            window.set_message(
+                                "Preview discarded. Source selection is unchanged.".into(),
+                            );
+                        }
+                    }
+                });
+            }
+        });
         window.on_kind_changed({
             let (window, continuation, target) =
                 (window.as_weak(), access.downgrade(), target.clone());
@@ -339,6 +471,7 @@ impl Controller {
                             target.cancel(session);
                             target.selected.clear();
                             target.vertices = window.get_kind_index() == 1;
+                            window.set_operation_index(0);
                             edited(window, session, target)
                         });
                         if let Err(error) = result {
@@ -460,10 +593,10 @@ impl Controller {
             move || {
                 with_session(&window, &continuation, |window, session| {
                     let result = target
-                        .borrow()
-                        .as_ref()
+                        .borrow_mut()
+                        .as_mut()
                         .ok_or("Reopen terrain triangles".into())
-                        .and_then(|target| target.check(session));
+                        .and_then(|target| target.prepare_source_selection(session));
                     match result {
                         Ok(()) => {
                             picking.set(true);
@@ -479,8 +612,8 @@ impl Controller {
                 (window.as_weak(), access.downgrade(), target.clone());
             move || {
                 with_session(&window, &continuation, |window, session| {
-                    if let Some(target) = target.borrow().as_ref() {
-                        let result = target.check(session).and_then(|_| {
+                    if let Some(target) = target.borrow_mut().as_mut() {
+                        let result = target.prepare_source_selection(session).and_then(|_| {
                             let frame = if target.vertices {
                                 Session::frame_terrain_vertices
                             } else {
@@ -504,6 +637,12 @@ impl Controller {
                     let Some(target) = target.as_mut() else {
                         return;
                     };
+                    if !target.vertices && window.get_operation_index() == 1 {
+                        if let Err(error) = preview_removal(window, session, target) {
+                            window.set_message(error.into());
+                        }
+                        return;
+                    }
                     let result = target.check(session).and_then(|_| {
                         if target.vertices {
                             return Err("Use selection to retain vertices; classification edits require Triangles mode".into());
@@ -519,6 +658,7 @@ impl Controller {
                     });
                     match result {
                         Ok(count) => {
+                            target.removal = None;
                             target.preview = session.face_preview_token();
                             if let Err(error) = populate(window, session, target) {
                                 window.set_message(error.into());
@@ -572,6 +712,7 @@ impl Controller {
                             .volume_preview()
                             .ok_or("Preview a box with Select a volume… first")?
                             .token;
+                        target.prepare_source_selection(session)?;
                         let select = if target.vertices {
                             Session::select_terrain_vertices_in_volume
                         } else {
@@ -642,15 +783,30 @@ impl Controller {
                         return;
                     };
                     let result = target.check(session).and_then(|_| {
+                        if !target.vertices && window.get_operation_index() == 1 {
+                            let preview = target
+                                .removal
+                                .as_ref()
+                                .ok_or("Preview terrain triangle removal before applying")?;
+                            if removal_input(window, target)? != preview.input {
+                                return Err(
+                                    "Removal selection or settings changed; preview again".into()
+                                );
+                            }
+                            return session
+                                .commit_terrain_triangle_removal(Actor::User, preview.token)
+                                .map(|_| ());
+                        }
                         let token = target
                             .preview
                             .ok_or("Preview the terrain edit before applying")?;
                         session.check_face_preview_token(Some(token))?;
-                        session.commit_face_preview(Actor::User)
+                        session.commit_face_preview(Actor::User).map(|_| ())
                     });
                     match result {
                         Ok(_) => {
                             target.preview = None;
+                            target.removal = None;
                             target.clear_highlight(session);
                             picking.set(false);
                             window.set_ready(false);
@@ -714,11 +870,16 @@ impl Controller {
         self.window.set_walkable_index(0);
         self.window.set_buildable_index(0);
         self.window.set_kind_index(0);
+        self.window.set_operation_index(0);
+        self.window.set_blend_mode(0);
+        self.window.set_partition_neighbors(false);
+        self.window.set_has_preview(false);
         self.window.set_absolute_height(String::new().into());
         self.window.set_height_csv_path(String::new().into());
         let target = Target {
             context: crate::face_edit_ui::Context::capture(session, faces),
             preview: None,
+            removal: None,
             highlight: None,
             selected: BTreeMap::new(),
             vertices: false,
@@ -800,12 +961,30 @@ impl Controller {
 
     pub fn refresh(&self, session: &Session) {
         if let Some(target) = self.target.borrow().as_ref() {
-            let error = target.check(session).err();
-            self.window.set_stale(error.is_some());
+            let context_error = target.check(session).err();
+            let removal_mode = !target.vertices && self.window.get_operation_index() == 1;
+            let removal_owned = target
+                .removal
+                .as_ref()
+                .filter(|preview| session.terrain_removal_preview_token() == Some(preview.token));
+            let face_owned =
+                target.preview.is_some() && target.preview == session.face_preview_token();
+            let error = context_error
+                .clone()
+                .or_else(|| removal_owned.and_then(|_| session.terrain_removal_preview_error()));
+            self.window.set_stale(context_error.is_some());
+            self.window
+                .set_has_preview(face_owned || removal_owned.is_some());
             self.window.set_ready(
                 error.is_none()
-                    && target.preview.is_some()
-                    && target.preview == session.face_preview_token(),
+                    && if removal_mode {
+                        removal_owned.is_some_and(|preview| {
+                            removal_input(&self.window, target)
+                                .is_ok_and(|input| input == preview.input)
+                        })
+                    } else {
+                        face_owned
+                    },
             );
             if let Some(error) = error {
                 if self.picking.replace(false) {

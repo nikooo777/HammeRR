@@ -182,7 +182,9 @@ pub fn inspect(info: &DispInfo, mesh: &DisplacementMesh) -> Result<Vec<Triangle>
 
 fn native_tag(triangle: Triangle) -> Result<u16, EditError> {
     if triangle.removed {
-        return Err(invalid("Terrain triangle removal is not supported yet"));
+        return Err(invalid(
+            "Triangle REMOVE flags are unsupported; they do not create native holes",
+        ));
     }
     if triangle.unknown_tags != 0 {
         return Err(invalid("Terrain triangle tags contain unsupported bits"));

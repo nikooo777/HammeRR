@@ -96,6 +96,10 @@ impl Session {
             ("components", self.geometry.components.close_draft()),
             ("merge", self.geometry.merging.close_draft()),
             ("carve", self.geometry.carving.close_draft()),
+            (
+                "terrain_triangle_removal",
+                self.geometry.terrain_removal.close_draft(),
+            ),
             ("hollow", self.geometry.hollowing.close_draft()),
             ("paint", self.geometry.paint.close_draft()),
             ("groups", self.groups.close_draft()),

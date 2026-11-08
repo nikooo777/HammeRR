@@ -82,6 +82,19 @@ pub struct TerrainTriangleTagsArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct TerrainTriangleRemovalArgs {
+    /// Original source inspection fan IDs from get_terrain_triangles(preview=false). Empty rows authorize selected non-removal neighbors only when partition_neighbors is true; an all-empty batch rejects.
+    pub targets: Vec<TerrainTriangleTarget>,
+    pub source: TerrainVertexSource,
+    /// exact (default), native_float or nearest_byte. The chosen policy applies to rebuilt native triangle patches.
+    pub blend_mode: Option<ClipBlendMode>,
+    /// Explicitly allow required neighbors among the supplied target faces to partition. Default false; unrequested faces stay unchanged.
+    #[serde(default)]
+    pub partition_neighbors: bool,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TerrainTriangleTargetsArgs {
     pub targets: Vec<TerrainTriangleTarget>,
 }
@@ -132,7 +145,7 @@ pub struct TerrainVertexMoveArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TerrainVertexSource {
-    /// Decimal strings from get_terrain_vertices(preview=false). Required to reject stale native IDs.
+    /// Decimal strings from get_terrain_triangles or get_terrain_vertices with preview=false. Required to reject stale native IDs.
     #[schemars(length(min = 1, max = 20))]
     pub generation: String,
     #[schemars(length(min = 1, max = 20))]

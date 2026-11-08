@@ -490,6 +490,131 @@ struct Clipping {
     native_spans: bool,
 }
 
+pub(crate) fn removal_counts(
+    mask: &crate::clip::TerrainTriangleMask,
+    work: &mut Work,
+) -> Result<(usize, usize, usize), EditError> {
+    if mask.ids().is_empty() {
+        return Ok((0, 0, 0));
+    }
+    let cells = (1usize << mask.power()).pow(2);
+    work.consume(cells).map_err(invalid)?;
+    let mut count = 0usize;
+    for cell in 0..cells {
+        count += match [
+            mask.is_removed_source(cell * 2)?,
+            mask.is_removed_source(cell * 2 + 1)?,
+        ] {
+            [false, false] => 4,
+            [true, true] => 0,
+            _ => 3,
+        };
+    }
+    Ok((count, count * VERTICES, count * TRIANGLES))
+}
+
+pub(crate) fn remove_triangles(
+    document: &Document,
+    solid: &Solid,
+    geometry: &BrushGeometry,
+    mask: &crate::clip::TerrainTriangleMask,
+    request: PartitionRequest<'_>,
+    context: &mut Context<'_>,
+) -> Result<TerrainPlan, EditError> {
+    if mask.ids().is_empty() {
+        return Err(invalid("Select terrain triangles to remove"));
+    }
+    let (_, original) = crate::subobject::solid(document, solid.id)?;
+    let original_faces = original
+        .sides
+        .iter()
+        .filter(|side| side.displacement.is_some())
+        .collect::<Vec<_>>();
+    if !matches!(original_faces.as_slice(), [side] if FaceId { solid: original.id, side: side.id } == mask.source())
+    {
+        return Err(invalid(
+            "Terrain triangle removal lost its original source face",
+        ));
+    }
+    let work = &mut context.work;
+    let source = admit_source(document, solid, geometry, work)?;
+    mask.verify_source(mask.source(), &source.mesh, work)?;
+    let sheet = intrinsic_source(&source, work)?;
+    let triangles = source.mesh.triangles().collect::<Vec<_>>();
+    let cells = source.mesh.size - 1;
+    work.consume(triangles.len() + cells * cells)
+        .map_err(invalid)?;
+    let mut groups = Vec::new();
+    let mut count = 0;
+    for cell in 0..cells * cells {
+        let first = cell * 2;
+        let removed = [
+            mask.is_removed_source(first)?,
+            mask.is_removed_source(first + 1)?,
+        ];
+        match removed {
+            [false, false] => {
+                add_count(&mut count, 4)?;
+                let row = cell / cells;
+                let column = cell % cells;
+                groups.push(Group::Cell {
+                    row,
+                    column,
+                    plane: None,
+                    ring: cell_base_ring(&source, row, column),
+                });
+            }
+            [true, true] => {}
+            _ => {
+                add_count(&mut count, 3)?;
+                let triangle = triangles[first + usize::from(removed[0])];
+                let base = triangle.map(|index| source.mesh.base_positions[index]);
+                let world = triangle.map(|index| source.mesh.positions[index]);
+                work.consume(16 * FIELD_WORK).map_err(invalid)?;
+                groups.push(Group::Triangle {
+                    field: Box::new(PlanarField::triangle(base, world)?),
+                    paint: Box::new(PaintField::triangle(
+                        base,
+                        triangle.map(|index| source.mesh.alphas[index]),
+                        work,
+                    )?),
+                    rings: [world.to_vec(), Vec::new()],
+                });
+            }
+        }
+    }
+    let prepared = Prepared { source, sheet };
+    if groups.is_empty() {
+        return Ok(TerrainPlan {
+            source: FaceId {
+                solid: solid.id,
+                side: prepared.source.side.id,
+            },
+            source_power: mask.power(),
+            output_power: None,
+            parts: Vec::new(),
+            vertices: 0,
+            triangles: 0,
+            children: None,
+            window_fields: None,
+            blend_error: (request.blend_mode != TerrainBlendMode::Exact)
+                .then_some(TerrainBlendError::default()),
+        });
+    }
+    materialize(
+        solid,
+        &prepared,
+        groups,
+        count,
+        Clipping {
+            plane: None,
+            native_spans: true,
+        },
+        request,
+        work,
+    )
+}
+
 fn materialize(
     solid: &Solid,
     prepared: &Prepared<'_>,

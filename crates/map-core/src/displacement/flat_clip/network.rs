@@ -29,10 +29,35 @@ pub(crate) struct Replacement<'a> {
     pub texture: Option<crate::clip::TerrainTexture>,
     pub cut: Option<(Plane, Keep)>,
     pub removed: Option<&'a [Vec<crate::clip::TerrainCutPlane>]>,
+    pub mask: Option<&'a super::TriangleMask>,
     pub changed: bool,
     pub subtraction: bool,
     pub blend_mode: TerrainBlendMode,
     pub window_fields: Option<&'a super::WindowFields>,
+}
+
+impl<'a> Replacement<'a> {
+    fn retention(&self) -> Result<Option<TerrainRetention<'a>>, EditError> {
+        if usize::from(self.cut.is_some())
+            + usize::from(self.removed.is_some())
+            + usize::from(self.mask.is_some())
+            > 1
+        {
+            return Err(invalid("Terrain replacement requires one removal domain"));
+        }
+        Ok(self
+            .mask
+            .map(TerrainRetention::TriangleMask)
+            .or_else(|| self.removed.map(TerrainRetention::Subtraction))
+            .or_else(|| {
+                self.cut
+                    .map(|(plane, keep)| TerrainRetention::Half(plane, keep))
+            }))
+    }
+
+    fn composed(&self) -> bool {
+        self.subtraction || self.mask.is_some()
+    }
 }
 
 pub(crate) struct Verification {
@@ -1149,10 +1174,11 @@ fn certify_lod(
     }
     for (surface, state) in after.iter().zip(&current.lod) {
         work.consume(1).map_err(invalid)?;
-        if let Some(removed) = replacements
+        if let Some(replacement) = replacements
             .iter()
             .find(|replacement| replacement.source == surface.raw.source)
-            .and_then(|replacement| replacement.removed)
+            && let Some(removed) = replacement.retention()?
+            && !matches!(removed, TerrainRetention::Half(_, _))
         {
             lod_proof::certify_exclusion(&surface.mesh, state.proof(surface), removed, work)?;
         }
@@ -1164,7 +1190,8 @@ fn certify_lod(
         if let Some(replacement) = replacements
             .iter()
             .find(|replacement| replacement.source == surface.raw.source)
-            && let Some(volumes) = replacement.removed
+            && let Some(removed) = replacement.retention()?
+            && !matches!(removed, TerrainRetention::Half(_, _))
         {
             let children = after
                 .iter()
@@ -1175,7 +1202,7 @@ fn certify_lod(
                 &surface.mesh,
                 state.proof(surface),
                 &children,
-                volumes,
+                removed,
                 work,
             )?;
         }
@@ -1193,7 +1220,7 @@ fn certify_lod(
                     surface.raw.side.displacement.as_ref().unwrap(),
                     &surface.mesh,
                     state.proof(surface),
-                    replacement.removed.map(TerrainRetention::Subtraction),
+                    replacement.retention()?,
                     work,
                 )?;
             }
@@ -1202,13 +1229,13 @@ fn certify_lod(
         let texture = replacement.texture.ok_or_else(|| {
             invalid("Terrain LOD requires guarded native texture mapping dimensions")
         })?;
-        let retained_movement = if replacement.subtraction && mode == Mode::Cells {
-            if let Some(removed) = replacement.removed {
+        let retained_movement = if replacement.composed() && mode == Mode::Cells {
+            if let Some(removed) = replacement.retention()? {
                 lod_proof::retained_movement_region(
                     surface.raw.side.displacement.as_ref().unwrap(),
                     &surface.mesh,
                     state.proof(surface),
-                    TerrainRetention::Subtraction(removed),
+                    removed,
                     work,
                 )?
             } else {
@@ -1219,7 +1246,7 @@ fn certify_lod(
             false
         };
         if replacement.window_fields.is_some() || retained_movement {
-            if !replacement.subtraction {
+            if !replacement.composed() {
                 windows::certify_source(surface, state, replacement.cut, work)?;
             }
             let source = lod_proof::NativePatch {
@@ -1270,14 +1297,7 @@ fn certify_lod(
                     surface.raw.side.displacement.as_ref().unwrap(),
                     &surface.mesh,
                     state.proof(surface),
-                    replacement
-                        .removed
-                        .map(TerrainRetention::Subtraction)
-                        .or_else(|| {
-                            replacement
-                                .cut
-                                .map(|(plane, keep)| TerrainRetention::Half(plane, keep))
-                        }),
+                    replacement.retention()?,
                     texture,
                     work,
                 )?;
@@ -2121,7 +2141,7 @@ fn authored_fields(
 ) -> Result<BTreeMap<FaceId, TerrainBlendError>, EditError> {
     let mut errors = BTreeMap::new();
     for replacement in replacements.iter().filter(|replacement| {
-        replacement.changed && replacement.subtraction && !replacement.parts.is_empty()
+        replacement.changed && replacement.composed() && !replacement.parts.is_empty()
     }) {
         let (_, source) = crate::subobject::solid(document, replacement.source.solid)?;
         let shape =
@@ -2180,6 +2200,9 @@ fn certify_mode(
     context: &mut Context<'_>,
     mode: Mode,
 ) -> Result<Vec<Verification>, EditError> {
+    for replacement in replacements {
+        replacement.retention()?;
+    }
     let blend_errors = authored_fields(document, replacements, &mut context.work)?;
     let empty = || {
         replacements
@@ -2271,28 +2294,34 @@ fn certify_mode(
             verify_source(document, vmf, surface, mode, work)?;
         }
     }
+    for surface in &before {
+        if let Some(mask) = replacements
+            .iter()
+            .find(|replacement| replacement.source == surface.raw.source)
+            .and_then(|replacement| replacement.mask)
+        {
+            mask.verify_source(surface.raw.source, &surface.mesh, work)?;
+        }
+    }
     let before_refs = before.iter().collect::<Vec<_>>();
     let cuts = replacements
         .iter()
         .filter(|replacement| selected.contains(&replacement.source))
-        .filter_map(|replacement| {
-            replacement
-                .removed
-                .map(TerrainRetention::Subtraction)
-                .or_else(|| {
-                    replacement
-                        .cut
-                        .map(|(plane, keep)| TerrainRetention::Half(plane, keep))
-                })
-                .map(|retention| (replacement.source, retention))
+        .filter_map(|replacement| match replacement.retention() {
+            Ok(Some(retention)) => Some(Ok((replacement.source, retention))),
+            Ok(None) => None,
+            Err(error) => Some(Err(error)),
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<Result<BTreeMap<_, _>, EditError>>()?;
     let mut children = Vec::new();
     for replacement in replacements
         .iter()
         .filter(|replacement| selected.contains(&replacement.source))
     {
-        if replacement.parts.is_empty() && replacement.removed.is_none() {
+        if replacement.parts.is_empty()
+            && replacement.removed.is_none()
+            && replacement.mask.is_none()
+        {
             return Err(invalid("Terrain replacement lost every retained patch"));
         }
         for part in replacement.parts {
@@ -2352,7 +2381,7 @@ fn certify_mode(
             replacements
                 .iter()
                 .filter(|replacement| {
-                    replacement.changed && replacement.subtraction && !replacement.parts.is_empty()
+                    replacement.changed && replacement.composed() && !replacement.parts.is_empty()
                 })
                 .map(|replacement| replacement.source),
         );

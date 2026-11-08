@@ -359,7 +359,7 @@ pub(super) fn retained_movement_region(
 pub(super) fn certify_exclusion(
     mesh: &DisplacementMesh,
     state: State<'_>,
-    volumes: &[Vec<crate::clip::TerrainCutPlane>],
+    removed: TerrainRetention<'_>,
     work: &mut Work,
 ) -> Result<(), EditError> {
     let mut triangles = triangle_set(
@@ -368,6 +368,24 @@ pub(super) fn certify_exclusion(
             .map_err(|error| invalid(error.to_string()))?,
     )?;
     triangles.extend(triangle_set(state.indices)?);
+    let volumes = match removed {
+        TerrainRetention::TriangleMask(mask) => {
+            for triangle in &triangles {
+                if mask.intersects(triangle.map(|index| mesh.base_positions[index]), work)? {
+                    return Err(invalid(
+                        "Retained native terrain overlaps a removed original BASE triangle",
+                    ));
+                }
+            }
+            return Ok(());
+        }
+        TerrainRetention::Subtraction(volumes) => volumes,
+        TerrainRetention::Half(_, _) => {
+            return Err(invalid(
+                "Terrain exclusion requires a complete removal domain",
+            ));
+        }
+    };
     let facets = crate::clip::terrain_union_facets(volumes, work)?;
     let mut checked = Vec::<&[DVec3]>::new();
     for positions in std::iter::once(mesh.positions.as_slice())
@@ -436,11 +454,10 @@ pub(super) fn certify_retained_coverage(
     mesh: &DisplacementMesh,
     state: State<'_>,
     children: &[&DisplacementMesh],
-    volumes: &[Vec<crate::clip::TerrainCutPlane>],
+    removed: TerrainRetention<'_>,
     work: &mut Work,
 ) -> Result<(), EditError> {
     let (_, axes) = labels::projection(mesh, work)?;
-    let facets = crate::clip::terrain_union_facets(volumes, work)?;
     work.consume(children.len() * 4).map_err(invalid)?;
     let cages = children
         .iter()
@@ -456,6 +473,29 @@ pub(super) fn certify_retained_coverage(
             .map_err(|error| invalid(error.to_string()))?,
     )?;
     triangles.extend(triangle_set(state.indices)?);
+    let volumes = match removed {
+        TerrainRetention::TriangleMask(mask) => {
+            for triangle in &triangles {
+                if !mask.covers(
+                    triangle.map(|index| mesh.base_positions[index]),
+                    &cages,
+                    work,
+                )? {
+                    return Err(invalid(
+                        "Triangle removal lost original terrain outside the selected BASE mask",
+                    ));
+                }
+            }
+            return Ok(());
+        }
+        TerrainRetention::Subtraction(volumes) => volumes,
+        TerrainRetention::Half(_, _) => {
+            return Err(invalid(
+                "Terrain coverage requires a complete removal domain",
+            ));
+        }
+    };
+    let facets = crate::clip::terrain_union_facets(volumes, work)?;
     let mut checked = Vec::<&[DVec3]>::new();
     for positions in std::iter::once(mesh.positions.as_slice())
         .chain(state.original_positions.iter().map(Vec::as_slice))
@@ -784,6 +824,9 @@ fn all_discarded(
                     }
                 }
                 covered
+            }
+            TerrainRetention::TriangleMask(mask) => {
+                mask.covers(triangle.map(|index| mesh.base_positions[index]), &[], work)?
             }
         };
         if !removed {

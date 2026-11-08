@@ -194,6 +194,9 @@ impl Session {
         ray: &Ray,
         faces: &[FaceId],
     ) -> Result<Option<Hit>, String> {
+        if self.terrain_removal_preview_token().is_some() {
+            return Err("Discard terrain triangle removal before picking source triangles".into());
+        }
         if !ray.origin.is_finite()
             || !ray.direction.is_finite()
             || !ray.direction.length_squared().is_finite()
@@ -246,6 +249,9 @@ impl Session {
         targets: &[(FaceId, Vec<usize>)],
         aspect: f32,
     ) -> Result<(), String> {
+        if self.terrain_removal_preview_token().is_some() {
+            return Err("Discard terrain triangle removal before framing source triangles".into());
+        }
         if !aspect.is_finite() || aspect <= 0.0 {
             return Err("Viewport aspect must be positive and finite".into());
         }
@@ -288,6 +294,15 @@ impl Session {
     }
 
     pub fn append_terrain_triangle_guides(&mut self, mesh: &mut render::SceneMesh) {
+        if self
+            .geometry
+            .terrain_removal
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.render_error.is_none())
+        {
+            return;
+        }
         if self
             .terrain_triangle_highlight
             .as_ref()
@@ -516,6 +531,12 @@ impl Session {
         faces: &[FaceId],
         token: u64,
     ) -> Result<Vec<(FaceId, Vec<usize>)>, String> {
+        if self.terrain_removal_preview_token().is_some() {
+            return Err(
+                "Discard terrain triangle removal before selecting source triangles in a volume"
+                    .into(),
+            );
+        }
         let spec = self.checked_volume(token)?.spec;
         let region = map_core::region::Region::from_bounds(spec.mins, spec.maxs)?;
         let rows = self.terrain_surface_triangles(faces, true)?;

@@ -107,6 +107,7 @@ impl Draft {
                 children: (mode == clip::TerrainMode::Grid).then_some(children.as_slice()),
                 window_fields: None,
                 cut: None,
+                mask: None,
                 subtract: true,
                 changed: group.affected || group.partitioned,
             })

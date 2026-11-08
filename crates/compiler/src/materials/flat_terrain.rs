@@ -5,7 +5,7 @@ use source_formats::gamefs::{GameFs, asset_relative};
 use source_formats::vmt::{self, Material};
 use source_formats::vtf::{ImageFormat, Vtf};
 
-use super::metrics::HeaderProvider;
+use super::metrics::{DimensionProvider, HeaderProvider, MetricPlan};
 use super::{MAX_GEOMETRY_MATERIAL_BYTES, MAX_METRIC_TEXTURE_BYTES, Materials, Requirements};
 use crate::Control;
 use crate::asset_sources::{AssetSourceGuard, BuildMaterialSources};
@@ -17,12 +17,13 @@ const MAX_DETAIL_SCALAR_BYTES: usize = 32;
 const DEFAULT_DETAIL_SCALE: f32 = 4.0;
 const MAX_DETAIL_BLEND_MODE: u32 = 3;
 const UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x80 | 0x800 | 0x4000 | 0x8000 | 0x1_0000 | 0x800_0000;
-const MATERIAL_PARAMETERS: [&str; 5] = [
+const MATERIAL_PARAMETERS: [&str; 6] = [
     "$basetexture",
     "$surfaceprop",
     "$surfaceprop2",
     "$reflectivity",
     "%keywords",
+    "%tooltexture",
 ];
 const DETAIL_PARAMETERS: [&str; 4] = [
     "$detail",
@@ -195,13 +196,27 @@ fn capture_material(
         detail_parameters(&material)
             .map_err(|error| format!("Flat terrain material {path}: {error}"))?
     };
-    let dimensions = capture_texture(materials, &material, "$basetexture", &path, control)?;
+    let base_dimensions = capture_texture(materials, &material, "$basetexture", &path, control)?;
     if transition {
         capture_texture(materials, &material, "$basetexture2", &path, control)?;
     }
     if detail_scale.is_some() {
         capture_texture(materials, &material, "$detail", &path, control)?;
     }
+    let dimensions = match MetricPlan::new(&material, Some("$basetexture"))
+        .map_err(|error| format!("Flat terrain material {path}: {error}"))?
+        .dimensions
+    {
+        DimensionProvider::Header(provider, _) if provider.key == "$basetexture" => base_dimensions,
+        DimensionProvider::Header(provider, _) => {
+            capture_texture(materials, &material, provider.key, &path, control)?
+        }
+        DimensionProvider::CompileDefault | DimensionProvider::NativeNoPreview => {
+            return Err(format!(
+                "Flat terrain material {path} requires explicit static texture dimensions"
+            ));
+        }
+    };
     Ok((dimensions, detail_scale, secondary_surface))
 }
 
@@ -341,7 +356,12 @@ fn capture_texture(
     let texture = Vtf::parse(bytes)
         .map_err(|error| format!("Flat terrain {key} texture {}: {error}", provider.path))?;
     control.checkpoint()?;
-    validate_texture(&texture).map_err(|error| {
+    let validated = if key == "%tooltexture" {
+        validate_dimensions(&texture)
+    } else {
+        validate_texture(&texture)
+    };
+    validated.map_err(|error| {
         format!(
             "Flat terrain {key} texture {} cannot supply static native UV data: {error}",
             provider.path
@@ -384,6 +404,13 @@ fn validate_texture(texture: &Vtf) -> Result<(), String> {
     ) {
         return Err("requires an ordinary native RGB or RGBA image format".into());
     }
+    validate_dimensions(texture)?;
+    texture
+        .validate_native_mips()
+        .map_err(|error| error.to_string())
+}
+
+fn validate_dimensions(texture: &Vtf) -> Result<(), String> {
     if [texture.width, texture.height]
         .iter()
         .any(|edge| !edge.is_power_of_two() || *edge > MAX_TEXTURE_EDGE)
@@ -392,7 +419,5 @@ fn validate_texture(texture: &Vtf) -> Result<(), String> {
             "requires positive power-of-two dimensions no larger than {MAX_TEXTURE_EDGE}"
         ));
     }
-    texture
-        .validate_native_mips()
-        .map_err(|error| error.to_string())
+    Ok(())
 }

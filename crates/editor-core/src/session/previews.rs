@@ -13,6 +13,7 @@ pub(super) struct State {
     pub(super) components: components::State,
     pub(super) merging: merging::State,
     pub(super) carving: carving::State,
+    pub(super) terrain_removal: terrain_removal::State,
     pub(super) hollowing: hollowing::State,
     pub(super) paint: paint::State,
     pub(super) transform_preview: Option<TransformPreview>,
@@ -76,6 +77,13 @@ impl State {
                     .map(|preview| &preview.document)
             })
             .or_else(|| {
+                self.terrain_removal
+                    .preview
+                    .as_ref()
+                    .filter(|preview| preview.render_error.is_none())
+                    .map(|preview| &preview.document)
+            })
+            .or_else(|| {
                 self.hollowing
                     .preview
                     .as_ref()
@@ -106,6 +114,7 @@ pub(super) enum Kind {
     Clip,
     Hollow,
     Carve,
+    TerrainRemoval,
     Merge,
     Components,
     Primitive,
@@ -130,6 +139,7 @@ impl Session {
         [
             self.hollow_handle(),
             self.carve_handle(),
+            self.terrain_removal_handle(),
             self.repeat_array_handle(),
             self.face_preview_handle(),
             self.terrain_stroke_handle(),
@@ -190,6 +200,9 @@ impl Session {
         }
         if !retained.contains(&Kind::Carve) {
             self.clear_carve_preview();
+        }
+        if !retained.contains(&Kind::TerrainRemoval) {
+            self.clear_terrain_removal_preview();
         }
         if !retained.contains(&Kind::Merge) {
             self.clear_merge_preview();

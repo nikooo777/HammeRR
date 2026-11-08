@@ -214,6 +214,8 @@ impl EditorServer {
             let mut session = self.session();
             session.preflight_carve_preview();
             session.verify_carve_preview_render()?;
+            session.preflight_terrain_removal_preview();
+            session.verify_terrain_removal_render()?;
         }
         self.session().color_correction_for_render()?;
         self.session().verify_scene_display_render(display_guard)?;
@@ -257,6 +259,8 @@ impl EditorServer {
             renderer.set_color_correction(color_correction.clone());
             session.preflight_carve_preview();
             session.verify_carve_preview_render()?;
+            session.preflight_terrain_removal_preview();
+            session.verify_terrain_removal_render()?;
             session.preflight_instance_contents();
             session.preflight_compiled_visibility();
             session.preflight_compiled_details();
@@ -297,6 +301,7 @@ impl EditorServer {
         )?;
         self.session().verify_scene_display_render(display_guard)?;
         self.session().verify_carve_preview_render()?;
+        self.session().verify_terrain_removal_render()?;
         self.session()
             .verify_color_correction_render(color_correction.as_ref())?;
         self.session()

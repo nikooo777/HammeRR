@@ -48,7 +48,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview optional positive physics_collision, player_collision and ray_collision booleans on 1–16 selected/explicit terrain faces. Omitted settings preserve each face. Changes only inverted native bits2/4/8, retaining other flags, geometry, alpha, tags and metadata. Unknown native flags still require compiler support. Commit/cancel the shared face preview with its token. UI: Edit terrain… → Collision, with Keep current/Enabled/Disabled choices. Individual triangle removal remainsunsupported. Returns handle and state.handle with kind=face_preview and a decimal-string token, or null when closed. Changed selection and competing geometry previews invalidate the shared face draft."
+        description = "Preview optional positive physics_collision, player_collision and ray_collision booleans on 1–16 selected/explicit terrain faces. Omitted settings preserve each face. Changes only inverted native bits2/4/8, retaining other flags, geometry, alpha, tags and metadata. Unknown native flags still require compiler support. Commit/cancel the shared face preview with its token. UI: Edit terrain… → Collision, with Keep current/Enabled/Disabled choices. Use preview_terrain_triangle_removal for structural triangle removal. Returns handle and state.handle with kind=face_preview and a decimal-string token, or null when closed. Changed selection and competing geometry previews invalidate the shared face draft."
     )]
     pub(in crate::mcp) fn preview_terrain_collision(
         &self,
@@ -158,7 +158,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Inspect 1–16 selected/explicit terrain faces in stable inspection fan order (IDs0–31/127/511). VMF and native tag arrays use separate row-major cell pairs; returned tags belong to the inspected physical triangle. Returns each triangle's grid indices, world positions, centroid, optional raw VMF source_tags, effective walkable/buildable classifications, optional forced overrides, removed and unknown_tags. VMF source bits differ from BSP bits. preview=true inspects the rendered draft. Removed/unknown tags remain inspectable but cannot compile. UI: Terrain triangles…. No selection or history change.",
+        description = "Inspect 1–16 selected/explicit terrain faces in stable inspection fan order (IDs0–31/127/511). VMF and native tag arrays use separate row-major cell pairs; returned tags belong to the inspected physical triangle. Returns each triangle's grid indices, world positions, centroid, optional raw VMF source_tags, effective walkable/buildable classifications, optional forced overrides, removed and unknown_tags. VMF source bits differ from BSP bits. preview=false (default) returns source generation/revision for preview_terrain_triangle_removal. preview=true inspects the rendered draft and returns source=null; generated child IDs do not identify original removal targets. Removed/unknown tags remain inspectable but cannot compile. UI: Terrain triangles…. No selection or history change.",
         annotations(read_only_hint = true)
     )]
     pub(in crate::mcp) fn get_terrain_triangles(
@@ -173,7 +173,7 @@ impl EditorServer {
             );
             let rows = session.terrain_triangles(&faces, args.preview.unwrap_or(false))?;
             Ok(
-                json!({"faces":rows.iter().map(|row|json!({"solid":row.face.solid,"side":row.face.side,"triangles":row.triangles.iter().map(|triangle|json!({"id":triangle.id,"indices":triangle.indices,"positions":triangle.positions.map(|p|p.to_array()),"centroid":triangle.centroid.to_array(),"source_tags":triangle.source_tags,"walkable":triangle.walkable,"buildable":triangle.buildable,"walkable_override":triangle.walkable_override,"buildable_override":triangle.buildable_override,"removed":triangle.removed,"unknown_tags":triangle.unknown_tags})).collect::<Vec<_>>()})).collect::<Vec<_>>()}),
+                json!({"source":if args.preview.unwrap_or(false) {Value::Null}else{session.terrain_vertex_source().json()},"faces":rows.iter().map(|row|json!({"solid":row.face.solid,"side":row.face.side,"triangles":row.triangles.iter().map(|triangle|json!({"id":triangle.id,"indices":triangle.indices,"positions":triangle.positions.map(|p|p.to_array()),"centroid":triangle.centroid.to_array(),"source_tags":triangle.source_tags,"walkable":triangle.walkable,"buildable":triangle.buildable,"walkable_override":triangle.walkable_override,"buildable_override":triangle.buildable_override,"removed":triangle.removed,"unknown_tags":triangle.unknown_tags})).collect::<Vec<_>>()})).collect::<Vec<_>>()}),
             )
         })
     }
@@ -639,7 +639,69 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Preview walkability/buildability classifications on arbitrary native triangle subsets in1–16 terrain faces. targets=[{face:{solid,side},triangles:[stable inspection IDs]}], one target per face. walkable/buildable accept automatic/enabled/disabled; omitted settings preserve current values. Automatic recomputes selected cached classification from source slope; enabled/disabled author a VMF force override. These are engine classifications, not collision switches. Geometry, alpha, IDs, other triangle tags and metadata remain. Invalid IDs/malformed rows reject atomically. Inspect get_terrain_triangles(preview=true), then commit/cancel_face_preview with state.preview_token. No removal authoring yet. UI: Terrain triangles…."
+        description = "Inspect the shared terrain triangle removal preview, current source generation/revision, owned token, exact source inspection IDs, blend/neighbor policies, real output native faces/powers/counts, deleted parent brushes, complete side mappings, cubemap rebindings, frozen material/instance guards and resource limits. Stale previews expose guard_error and handle=null; their exact token remains cancellable. No map or history edits.",
+        annotations(read_only_hint = true)
+    )]
+    pub(in crate::mcp) fn get_terrain_triangle_removal(&self) -> ToolResult {
+        ok(self.session().terrain_removal_report())
+    }
+
+    #[tool(
+        description = "Preview removing selected original terrain triangles through real native patches with open borders. First get_terrain_triangles(preview=false) and pass its source generation/revision plus targets=[{face:{solid,side},triangles:[inspection fan IDs]}]. IDs are distinct from VMF row-major tags and generated child IDs. Each source has one displaced face, power2–4, up to16 faces. Removing every triangle deletes its parent brush; empty brush entities refuse. blend_mode is exact(default), native_float or nearest_byte, with certified bounds reported. partition_neighbors defaults false; true authorizes only supplied faces, including explicit empty triangle rows, for required neighbor partition. Empty rows with false and an all-empty batch refuse. Retains source terrain material/UV/paint/editing fields under the shared native/resource proofs; no removal flag, carrier cage substitution or fallback mode. Invalid inputs or changed sources preserve the previous valid draft/map/IDs/history. render_view shares the draft; get_terrain_triangle_removal reports actual output lineage. Apply/cancel require its owned token. UI: Terrain triangles… → Operation → Remove selected triangles."
+    )]
+    pub(in crate::mcp) fn preview_terrain_triangle_removal(
+        &self,
+        Parameters(args): Parameters<TerrainTriangleRemovalArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let targets = args
+                .targets
+                .iter()
+                .map(|target| (face_id(&target.face), target.triangles.clone()))
+                .collect::<Vec<_>>();
+            let mut session = self.session();
+            session.preview_terrain_triangle_removal(crate::session::terrain_removal::Request {
+                targets: &targets,
+                source: crate::session::terrain_vertices::VertexSource {
+                    generation: parse_token(&args.source.generation)?,
+                    revision: parse_token(&args.source.revision)?,
+                },
+                blend_mode: args.blend_mode.map(ClipBlendMode::mode).unwrap_or_default(),
+                partition_neighbors: args.partition_neighbors,
+            })?;
+            Ok(session.terrain_removal_report())
+        })
+    }
+
+    #[tool(
+        description = "Apply the exact owned terrain triangle removal preview as one Undo step after replaying original masks, comparing every output solid/result/ID and rechecking frozen material/instance/cubemap sources. Full masks delete parent brushes. Stale/replaced tokens and changed geometry/sources refuse without changing map/history or consuming the valid draft."
+    )]
+    pub(in crate::mcp) fn commit_terrain_triangle_removal(
+        &self,
+        Parameters(args): Parameters<VolumeTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            self.session()
+                .commit_terrain_triangle_removal(Actor::Agent, parse_token(&args.token)?)
+        })
+    }
+
+    #[tool(
+        description = "Discard the exact owned terrain triangle removal preview without geometry, ID or Undo changes. The same token can cancel a stale draft after source assets change; it cannot cancel a replacement preview. Shares Discard preview and Cancel in Terrain triangles…."
+    )]
+    pub(in crate::mcp) fn cancel_terrain_triangle_removal(
+        &self,
+        Parameters(args): Parameters<VolumeTokenArgs>,
+    ) -> ToolResult {
+        run(|| {
+            let mut session = self.session();
+            session.cancel_terrain_triangle_removal(parse_token(&args.token)?)?;
+            Ok(session.terrain_removal_report())
+        })
+    }
+
+    #[tool(
+        description = "Preview walkability/buildability classifications on arbitrary native triangle subsets in1–16 terrain faces. targets=[{face:{solid,side},triangles:[stable inspection IDs]}], one target per face. walkable/buildable accept automatic/enabled/disabled; omitted settings preserve current values. Automatic recomputes selected cached classification from source slope; enabled/disabled author a VMF force override. These are engine classifications, not collision switches. Geometry, alpha, IDs, other triangle tags and metadata remain. Invalid IDs/malformed rows reject atomically. Inspect get_terrain_triangles(preview=true), then commit/cancel_face_preview with state.preview_token. Use preview_terrain_triangle_removal for structural removal. UI: Terrain triangles…."
     )]
     pub(in crate::mcp) fn preview_terrain_triangle_tags(
         &self,

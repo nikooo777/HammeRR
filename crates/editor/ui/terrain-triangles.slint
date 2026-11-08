@@ -1,5 +1,6 @@
 import { Theme } from "theme.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ScrollView } from "widgets.slint";
+import { FieldRow, SelectableRow } from "kit.slint";
 
 export struct TerrainTriangleRow {
     id: int,
@@ -13,6 +14,8 @@ export component TerrainTrianglesWindow inherits Window {
     title: "Terrain triangles & vertices";
     preferred-width: 720px;
     preferred-height: 900px;
+    min-width: 600px;
+    min-height: 560px;
     in property <[string]> faces;
     in-out property <int> face-index;
     in property <[TerrainTriangleRow]> triangles;
@@ -20,13 +23,19 @@ export component TerrainTrianglesWindow inherits Window {
     in property <string> message;
     in property <bool> stale;
     in property <bool> ready;
+    in property <bool> has-preview;
     in property <float> aspect: 1.777778;
     in-out property <int> walkable-index;
     in-out property <int> buildable-index;
     in-out property <int> kind-index;
+    in-out property <int> operation-index;
+    in-out property <int> blend-mode;
+    in-out property <bool> partition-neighbors;
     in-out property <string> absolute-height;
     in-out property <string> height-csv-path;
     callback kind-changed();
+    callback operation-changed();
+    callback discard();
     callback face-changed();
     callback toggle-triangle(int, bool);
     callback select-all(bool);
@@ -46,66 +55,120 @@ export component TerrainTrianglesWindow inherits Window {
         VerticalLayout {
             padding: Theme.space-xl;
             spacing: 8px;
-            Text { text: root.kind-index == 1 ? "Choose terrain vertices" : "Choose terrain triangles"; font-size: Theme.font-display; }
-            Text { text: "Selection type"; }
-            ComboBox {model: ["Triangles · classifications & brush masks", "Vertices · exact positions & brush masks"]; current-index <=> root.kind-index; enabled: !root.stale; selected => {root.kind-changed();}}
-            Text { text: "Surface"; }
-            ComboBox { model: root.faces; current-index <=> root.face-index; enabled: !root.stale; selected => { root.face-changed(); } }
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: root.selection-label; vertical-alignment: center; }
-                Button { text: "Select surface"; enabled: !root.stale; clicked => { root.select-all(true); } }
-                Button { text: "Clear selection"; enabled: !root.stale; clicked => { root.select-all(false); } }
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                Button {text: root.kind-index == 1 ? "Pick vertex in viewport…" : "Pick triangle in viewport…"; enabled: !root.stale; clicked => {root.pick-triangle();}}
-                Button {text: "Frame selected"; enabled: !root.stale; clicked => {root.frame-selected();}}
-                Button {text: "Select in volume"; enabled: !root.stale; clicked => {root.select-volume();}}
-            }
+            Text { text: root.kind-index == 1 ? "Choose terrain vertices" : "Choose terrain triangles"; font-size: Theme.font-display; font-weight: 600; }
             ScrollView {
-                min-height: 140px;
+                content-width: self.width;
                 vertical-stretch: 1;
                 VerticalLayout {
-                    spacing: 8px;
-                    for row[index] in root.triangles: VerticalLayout {
-                        spacing: 3px;
-                        CheckBox { text: row.label; checked: row.selected; enabled: !root.stale; toggled => { root.toggle-triangle(index, self.checked); } }
-                        Text { text: row.detail; wrap: word-wrap; font-size: Theme.font; color: Theme.text-faint; }
+                    alignment: start;
+                    spacing: Theme.space;
+                    padding-right: Theme.space-lg;
+                    FieldRow {
+                        inset: false; label: "Selection type"; label-width: 124px;
+                        ComboBox { model: ["Triangles · classifications & brush masks", "Vertices · exact positions & brush masks"]; current-index <=> root.kind-index; enabled: !root.stale; selected => { root.kind-changed(); } }
                     }
+                    if root.kind-index == 0: FieldRow {
+                        inset: false; label: "Operation"; label-width: 124px;
+                        ComboBox { model: ["Classifications", "Remove selected triangles"]; current-index <=> root.operation-index; enabled: !root.stale; selected => { root.operation-changed(); } }
+                    }
+                    FieldRow {
+                        inset: false; label: "Surface"; label-width: 124px;
+                        ComboBox { model: root.faces; current-index <=> root.face-index; enabled: !root.stale; selected => { root.face-changed(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: root.selection-label; vertical-alignment: center; }
+                        Button { text: "Select surface"; enabled: !root.stale; clicked => { root.select-all(true); } }
+                        Button { text: "Clear selection"; enabled: !root.stale; clicked => { root.select-all(false); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button {text: root.kind-index == 1 ? "Pick vertex in viewport…" : "Pick triangle in viewport…"; enabled: !root.stale; clicked => {root.pick-triangle();}}
+                        Button {text: "Frame selected"; enabled: !root.stale; clicked => {root.frame-selected();}}
+                        Button {text: "Select in volume"; enabled: !root.stale; clicked => {root.select-volume();}}
+                    }
+                    ScrollView {
+                        height: 260px;
+                        content-width: self.width;
+                        VerticalLayout {
+                            alignment: start;
+                            padding-right: Theme.space-lg;
+                            spacing: 8px;
+                            for row in root.triangles: SelectableRow {
+                                label: row.label + " " + row.detail;
+                                selected: row.selected; enabled: !root.stale;
+                                min-height: 64px;
+                                clicked => { root.toggle-triangle(row.id, !row.selected); }
+                                VerticalLayout {
+                                    padding: Theme.space; spacing: Theme.space-sm;
+                                    Text { text: row.label; wrap: word-wrap; }
+                                    Text { text: row.detail; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
+                                }
+                            }
+                        }
+                    }
+                    if root.kind-index == 0 && root.operation-index == 0: VerticalLayout {
+                        spacing: 8px;
+                        FieldRow {
+                            inset: false; label: "Walkability"; label-width: 124px;
+                            ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.walkable-index; enabled: !root.stale; selected => { root.edited(); } }
+                        }
+                        FieldRow {
+                            inset: false; label: "Buildability"; label-width: 124px;
+                            ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.buildable-index; enabled: !root.stale; selected => { root.edited(); } }
+                        }
+                    }
+                    if root.kind-index == 0 && root.operation-index == 1: VerticalLayout {
+                        spacing: Theme.space;
+                        FieldRow {
+                            inset: false; label: "Blend samples"; label-width: 124px;
+                            ComboBox {
+                                accessible-label: "Blend samples";
+                                model: ["Exact fields", "Native float", "Nearest byte"];
+                                current-index <=> root.blend-mode; enabled: !root.stale;
+                                selected => { root.edited(); }
+                            }
+                        }
+                        Text {
+                            text: root.blend-mode == 0 ? "Keep paint samples and interpolated colors exact."
+                                : root.blend-mode == 1 ? "Allow native float paint samples within the reported error limits."
+                                : "Round paint samples to whole bytes within the reported error limits.";
+                            wrap: word-wrap; color: Theme.text-muted;
+                        }
+                        CheckBox { text: "Partition selected neighbors"; checked <=> root.partition-neighbors; enabled: !root.stale; toggled => { root.edited(); } }
+                        Text { text: "Rebuild required neighbors from the listed surfaces, including unchecked surfaces."; wrap: word-wrap; color: Theme.text-muted; }
+                        Text { text: "Remove checked triangles. Edges stay open. A fully removed surface deletes its parent brush. Empty brush entities reject."; wrap: word-wrap; color: Theme.text-muted; }
+                    }
+                    if root.kind-index == 1: VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "Set checked vertices to world Z · units"; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            LineEdit { text <=> root.absolute-height; placeholder-text: "Absolute world Z"; enabled: !root.stale; }
+                            Button { text: "Preview height"; enabled: !root.stale; clicked => { root.preview-height(); } }
+                        }
+                        Text { text: "Import heights for native vertex IDs"; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            LineEdit { text <=> root.height-csv-path; placeholder-text: "Height CSV file path"; enabled: !root.stale; }
+                            Button { text: "Preview CSV"; enabled: !root.stale; clicked => { root.preview-height-csv(); } }
+                        }
+                        Text { text: "CSV header: solid,side,vertex,z. One explicit height per row; selected surfaces only, at most 16 surfaces / 4624 vertices / 512 KiB. CSV rows choose their own subset. Matching border positions retain seams; heights are not sewn automatically."; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
+                    }
+                    Text { text: root.kind-index == 1 ? "Cyan markers show checked native vertices. Preview height preserves X/Y; Preview CSV sets each row's world Z. Apply commits the last successful preview. Use selection retains this brush mask; changing selection type clears this dialog's selection."
+                        : root.operation-index == 1 ? "Preview shows retained patches. IDs refer to original triangles. Pick, Frame selected or Select in volume discards this preview."
+                        : "Yellow outlines show selected triangles. Selections stay checked when switching surfaces; Preview applies to all of them. These are engine classifications; collision stays fixed."; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
                 }
             }
-            if root.kind-index == 0: VerticalLayout {
-                spacing: 8px;
-                Text { text: "Walkability"; }
-                ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.walkable-index; enabled: !root.stale; selected => { root.edited(); } }
-                Text { text: "Buildability"; }
-                ComboBox { model: ["Keep current", "Automatic · from slope", "Enabled", "Disabled"]; current-index <=> root.buildable-index; enabled: !root.stale; selected => { root.edited(); } }
-            }
-            if root.kind-index == 1: VerticalLayout {
-                spacing: 8px;
-                Text { text: "Set checked vertices to world Z · units"; }
-                HorizontalLayout {
-                    spacing: 8px;
-                    LineEdit { text <=> root.absolute-height; placeholder-text: "Absolute world Z"; enabled: !root.stale; }
-                    Button { text: "Preview height"; enabled: !root.stale; clicked => { root.preview-height(); } }
-                }
-                Text { text: "Import heights for native vertex IDs"; }
-                HorizontalLayout {
-                    spacing: 8px;
-                    LineEdit { text <=> root.height-csv-path; placeholder-text: "Height CSV file path"; enabled: !root.stale; }
-                    Button { text: "Preview CSV"; enabled: !root.stale; clicked => { root.preview-height-csv(); } }
-                }
-                Text { text: "CSV header: solid,side,vertex,z. One explicit height per row; selected surfaces only, at most 16 surfaces / 4624 vertices / 512 KiB. CSV rows choose their own subset. Matching border positions retain seams; heights are not sewn automatically."; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
-            }
-            Text { text: root.kind-index == 1 ? "Cyan markers show checked native vertices. Preview height preserves X/Y; Preview CSV sets each row's world Z. Apply commits the last successful preview. Use selection retains this brush mask; changing selection type clears this dialog's selection." : "Yellow outlines show selected triangles. Selections stay checked when switching surfaces; Preview applies to all of them. These are engine classifications; collision stays fixed. Removal is not available yet."; wrap: word-wrap; font-size: Theme.font; color: Theme.text-muted; }
-            Text { text: root.message; wrap: word-wrap; color: Theme.text-faint; }
+            if root.message != "": Text { text: root.message; wrap: word-wrap; color: Theme.text-muted; }
             HorizontalLayout {
                 spacing: 8px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }
                 Button { text: "Use selection"; enabled: !root.stale; clicked => { root.use-selection(); } }
-                if root.kind-index == 0: Button { text: "Preview"; enabled: !root.stale; clicked => { root.preview-edit(); } }
-                Button { text: "Apply"; enabled: !root.stale && root.ready; clicked => { root.apply(); } }
+                if root.has-preview: Button { text: "Discard preview"; clicked => { root.discard(); } }
+                if root.kind-index == 0: Button { text: root.operation-index == 1 ? "Preview removal" : "Preview"; enabled: !root.stale; clicked => { root.preview-edit(); } }
+                Button { text: "Apply"; primary: true; enabled: !root.stale && root.ready; clicked => { root.apply(); } }
+                Rectangle { horizontal-stretch: 1; }
             }
         }
     }

@@ -11,6 +11,7 @@ pub(crate) mod grid_clip;
 pub mod lod;
 pub mod native;
 pub mod neighbors;
+pub mod removal;
 pub mod resample;
 pub mod sew;
 pub mod smoothing;

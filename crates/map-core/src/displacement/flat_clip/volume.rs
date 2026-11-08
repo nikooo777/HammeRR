@@ -416,7 +416,7 @@ pub(super) fn edge_value(
 
 fn child_footprint(
     base: [DVec3; 3],
-    corners: [DVec3; 4],
+    corners: &[DVec3],
     axes: [usize; 2],
     work: &mut Work,
 ) -> Result<Vec<Constraint>, EditError> {
@@ -476,10 +476,36 @@ pub(super) fn covered(request: Coverage<'_>, work: &mut Work) -> Result<bool, Ed
     for &corners in children {
         work.consume(super::labels::AABB_WORK).map_err(invalid)?;
         if super::labels::bounds_overlap(bounds, super::labels::projected_bounds(&corners, axes)) {
-            covering.push(child_footprint(base, corners, axes, work)?);
+            covering.push(child_footprint(base, &corners, axes, work)?);
         }
     }
     covering.extend(footprints(points, volumes, facets, padding, work)?);
+    covered_by(covering, work)
+}
+
+pub(super) fn base_covered(
+    base: [DVec3; 3],
+    children: &[[DVec3; 4]],
+    removed: &[[DVec3; 3]],
+    axes: [usize; 2],
+    work: &mut Work,
+) -> Result<bool, EditError> {
+    let mut covering = Vec::new();
+    let bounds = super::labels::projected_bounds(&base, axes);
+    for corners in children
+        .iter()
+        .map(<[DVec3; 4]>::as_slice)
+        .chain(removed.iter().map(<[DVec3; 3]>::as_slice))
+    {
+        work.consume(super::labels::AABB_WORK).map_err(invalid)?;
+        if super::labels::bounds_overlap(bounds, super::labels::projected_bounds(corners, axes)) {
+            covering.push(child_footprint(base, corners, axes, work)?);
+        }
+    }
+    covered_by(covering, work)
+}
+
+fn covered_by(covering: Vec<Vec<Constraint>>, work: &mut Work) -> Result<bool, EditError> {
     for shape in &covering {
         work.consume(FIELD_WORK * shape.len()).map_err(invalid)?;
         let mut contained = true;

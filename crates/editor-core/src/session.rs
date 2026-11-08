@@ -130,6 +130,7 @@ pub mod statistics;
 pub mod surface_vertex;
 mod surfaces;
 pub mod terrain_handles;
+pub mod terrain_removal;
 pub mod terrain_strokes;
 pub mod terrain_triangles;
 pub mod terrain_vertices;
@@ -2959,6 +2960,7 @@ impl Session {
         allow_baked_surfaces: bool,
     ) -> SceneMesh {
         self.preflight_carve_preview();
+        self.preflight_terrain_removal_preview();
         self.preflight_rope_placement();
         self.preflight_rope_preview();
         self.preflight_compiled_visibility();
@@ -3148,6 +3150,7 @@ impl Session {
             self.fail_rope_placement_render(error);
         }
         self.append_carve_preview_diagnostic(&mut mesh);
+        self.append_terrain_removal_diagnostic(&mut mesh);
         mesh
     }
 

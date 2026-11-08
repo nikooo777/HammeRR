@@ -1119,6 +1119,48 @@ budget with resolved context.
 Manual face bindings use the checked replacement faces; removing every manual
 face refuses rather than changing the helper to automatic binding.
 
+### Remove selected terrain triangles
+
+1. Call `get_terrain_triangles` with `preview:false` and selected or explicit `faces`.
+2. Copy its `source` generation/revision strings into `preview_terrain_triangle_removal`, with the original inspection fan IDs to remove:
+
+   ```json
+   {"targets":[{"face":{"solid":12,"side":72},"triangles":[4]}],"source":{"generation":"…","revision":"…"},"blend_mode":"exact","partition_neighbors":false}
+   ```
+
+3. Inspect `get_terrain_triangle_removal` and `render_view`.
+4. Call `commit_terrain_triangle_removal` or `cancel_terrain_triangle_removal` with the preview's exact `token` string.
+
+`get_terrain_triangles(preview:false)` returns committed source IDs and a source
+snapshot. Inspection IDs differ from VMF row-major tag IDs. `preview:true` reads
+the rendered draft and returns `source:null`; generated child IDs are not original
+removal targets.
+
+Removal uses native surface-triangle patches on 1–16 world or `func_detail`
+faces at powers 2–4, with one terrain face per parent brush. `blend_mode` accepts
+`exact` (default), `native_float` or `nearest_byte`, using the
+[reported paint-error limits](#clip-terrain). `partition_neighbors` defaults to
+false. True authorizes required partitions only among supplied faces; an explicit
+`triangles:[]` row authorizes a non-removal neighbor. Empty rows with false and
+an all-empty removal request refuse. Removing all triangles deletes the parent
+brush; leaving a brush entity empty refuses. Cut borders remain open.
+
+Complete retained cells create four power-2 patches each; cells with one retained
+triangle create three. Output, including required neighbor partitions, is capped
+at 128 patches, 5,184 vertices and 8,192 triangles. Small holes in power-3/4 sources
+can exceed this whole-cell retile budget. Native geometry, UVs, fields, LOD,
+contacts and metadata still require certification.
+
+The report includes `operation:"triangle_removal"`, `terrain_mode:"fragments"`,
+actual output `terrain` faces/powers, `terrain_work`, `partitioned_neighbors`,
+deleted parent IDs in `removed`, and complete `side_mapping`. Material, instance
+and cubemap binding sources are captured and checked again inside Apply. Apply
+replays the original masks and verifies the complete result and emitted solids
+before recording one Undo step. Invalid requests preserve the previous valid
+draft, map and history. A stale draft reports `guard_error` and `handle:null`;
+rendering and Apply refuse, while its exact token still permits cancellation.
+See the [UI workflow](terrain.md#remove-selected-triangles).
+
 ### Exact terrain positions
 
 Read `get_terrain_vertices` with `preview:false`, then copy its `source` guard
@@ -3002,7 +3044,7 @@ These groups locate the available operations.
 | [3D sky preview](sky.md) | `get_3d_sky_preview`, `set_3d_sky_preview` |
 | [Color correction](color-correction.md) | `get_color_correction_preview`, `load_color_correction_lut`, `set_color_correction_preview`, `clear_color_correction_lut` |
 | [HDR scene display](fog.md#use-hdr-scene-display) | `get_scene_display`, `set_scene_display` |
-| [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `clear_terrain_triangle_highlight`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `preview_terrain_vertex_set`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
+| [Terrain](terrain.md) | `begin_terrain_move_drag`, `begin_terrain_stroke`, `break_terrain_stroke`, `cancel_terrain_move_handles`, `cancel_terrain_stroke`, `cancel_terrain_triangle_removal`, `clear_terrain_triangle_highlight`, `commit_terrain_triangle_removal`, `create_terrain`, `enable_terrain_move_handles`, `finish_terrain_move_drag`, `finish_terrain_stroke`, `frame_terrain_triangles`, `frame_terrain_vertices`, `get_terrain_creation`, `get_terrain_grids`, `get_terrain_move_handles`, `get_terrain_stroke`, `get_terrain_triangle_highlight`, `get_terrain_triangle_removal`, `get_terrain_triangles`, `get_terrain_vertex_mask`, `get_terrain_vertices`, `get_terrain_volume_triangles`, `get_terrain_volume_vertices`, `highlight_terrain_triangles`, `highlight_terrain_vertices`, `pick_terrain_triangle`, `pick_terrain_vertex`, `preview_terrain_blend`, `preview_terrain_collision`, `preview_terrain_resolution`, `preview_terrain_sculpt`, `preview_terrain_sew`, `preview_terrain_smoothing`, `preview_terrain_subdivision`, `preview_terrain_triangle_removal`, `preview_terrain_triangle_tags`, `preview_terrain_vertex_move`, `preview_terrain_vertex_set`, `remove_terrain`, `select_terrain_triangles_in_volume`, `select_terrain_vertices_in_volume`, `update_terrain_move_drag`, `update_terrain_stroke` |
 | [Transform pivots](brushes.md) | `transform_pivot_attachment`, `transform_pivot_pick`, `transform_pivot_grid` |
 | [Cameras, rendering and inspection](basics.md) | `clear_pointfile`, `control_fog_preview`, `cycle_object_hit`, `delete_camera_view`, `frame_compiled_face`, `frame_compiled_prop_origin`, `frame_compiled_world_light`, `frame_pointfile`, `get_camera`, `get_view_layout`, `get_camera_views`, `get_fog_preview`, `get_lighting_preview`, `get_normal_map_preview`, `get_object_hit_candidates`, `get_pointfile`, `get_rope_preview`, `get_view`, `inspect_baked_lightmaps`, `inspect_baked_surfaces`, `inspect_baked_prop_vertices`, `inspect_baked_prop_samples`, `inspect_compiled_world_lights`, `inspect_sky_assets`, `load_pointfile`, `navigate_pointfile`, `pick_at_pixel`, `raycast`, `rename_camera_view`, `render_view`, `restore_camera_view`, `select_compiled_prop_source`, `select_compiled_world_light_source`, `save_camera_view`, `set_baked_surfaces`, `set_camera`, `set_view_layout`, `set_fog_preview`, `set_rope_preview`, `set_view` |
 | [Working region](working-region.md) | `exclude_visibility_filter`, `get_editor_visibility`, `get_visibility_categories`, `get_visibility_profiles`, `get_working_region`, `remove_visibility_exclusion`, `set_editor_visibility`, `set_visibility_category`, `set_visibility_profile`, `set_working_region` |

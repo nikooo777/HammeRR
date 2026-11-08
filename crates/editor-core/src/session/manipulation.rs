@@ -568,6 +568,7 @@ impl Session {
             || self.component_picking().is_some()
             || self.geometry.hollowing.preview.is_some()
             || self.geometry.carving.preview.is_some()
+            || self.geometry.terrain_removal.preview.is_some()
             || self.geometry.merging.preview.is_some()
             || self.geometry.clipboard.preview.is_some()
             || self.entity_placement_preview_id().is_some()

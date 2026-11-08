@@ -619,12 +619,25 @@ pub(crate) struct TerrainReplacement<'a> {
     pub children: Option<&'a [crate::displacement::grid_clip::Child]>,
     pub window_fields: Option<&'a crate::displacement::flat_clip::WindowFields>,
     pub cut: Option<(Plane, Keep)>,
+    pub mask: Option<&'a TerrainTriangleMask>,
+}
+
+pub(crate) use crate::displacement::flat_clip::TriangleMask as TerrainTriangleMask;
+
+pub(crate) fn terrain_triangle_mask(
+    document: &Document,
+    source: FaceId,
+    ids: &[usize],
+    work: &mut crate::displacement::grid_clip::Work,
+) -> Result<TerrainTriangleMask, EditError> {
+    TerrainTriangleMask::new(document, source, ids, work)
 }
 
 #[derive(Clone, Copy)]
 pub(crate) enum TerrainRetention<'a> {
     Half(Plane, Keep),
     Subtraction(&'a [Vec<TerrainCutPlane>]),
+    TriangleMask(&'a TerrainTriangleMask),
 }
 
 pub(crate) struct TerrainUnionFacet {
@@ -1089,6 +1102,12 @@ pub(crate) fn certify_terrain(
     context: &mut crate::displacement::grid_clip::Context<'_>,
     removed: Option<&[Vec<TerrainCutPlane>]>,
 ) -> Result<Vec<(usize, usize, Option<TerrainBlendError>)>, EditError> {
+    let masked = replacements
+        .iter()
+        .any(|replacement| replacement.mask.is_some());
+    if masked && options.terrain_mode == TerrainMode::Grid {
+        return Err(invalid("Triangle removal requires native fragment patches"));
+    }
     let mut visible_sources = 0usize;
     let mut visible_parts = 0usize;
     let mut totals = [0usize; 3];
@@ -1098,6 +1117,13 @@ pub(crate) fn certify_terrain(
             return Err(invalid("Terrain replacement sources must be unique"));
         }
         let (_, source) = crate::subobject::solid(document, replacement.source.solid)?;
+        if let Some(mask) = replacement.mask
+            && (mask.source() != replacement.source
+                || mask.power() != replacement.source_power
+                || !replacement.changed && !mask.ids().is_empty())
+        {
+            return Err(invalid("Triangle removal lost its original source binding"));
+        }
         if !replacement.changed {
             if replacement.parts != std::slice::from_ref(source) {
                 return Err(invalid(
@@ -1202,8 +1228,9 @@ pub(crate) fn certify_terrain(
                 window_fields: replacement.window_fields,
                 cut: replacement.cut,
                 removed: removed.filter(|_| replacement.subtract),
+                mask: replacement.mask,
                 changed: replacement.changed,
-                subtraction: removed.is_some(),
+                subtraction: removed.is_some() || masked,
                 blend_mode: options.blend_mode,
                 texture: options
                     .textures
@@ -1213,6 +1240,7 @@ pub(crate) fn certify_terrain(
         )
         .collect::<Vec<_>>();
     let certify = if removed.is_some()
+        || masked
         || matches!(
             options.terrain_mode,
             TerrainMode::Cells | TerrainMode::Fragments
@@ -1639,6 +1667,7 @@ pub fn clip_with_options(
                                 window_fields: cut.window_fields.as_ref(),
                                 cut: (!terrain.partitioned).then_some((plane, keep)),
                                 removed: None,
+                                mask: None,
                                 changed: true,
                                 subtraction: false,
                                 blend_mode: options.blend_mode,

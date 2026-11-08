@@ -14,8 +14,9 @@ Create, sculpt and paint displacement surfaces. Compile them with lighting and c
 
 Terrain is a sheet. Its parent volume does not seal the map or become a solid collision box.
 
-To make an opening, use [Carve terrain](brush-tools.md#carve-terrain).
-The cut creates native patches around the opening. Add separate brush walls
+To make an opening, [remove selected triangles](#remove-selected-triangles)
+or use [Carve terrain](brush-tools.md#carve-terrain).
+Both create native patches around the opening. Add separate brush walls
 if the opening needs thickness.
 For cutout or partial-transparency terrain, enable [Brush texture shadows](brush-texture-shadows.md)
 in a lit build. Texture opacity does not remove collision triangles.
@@ -158,8 +159,42 @@ Interior samples stay fixed. Sewing can remove fine border detail.
 2. Set **Physics collision**, **Player collision** and **Ray collision**.
 3. Click **Preview**, then **Apply** or **Cancel**.
 
-For triangle classes, open **Terrain triangles…**, select IDs, and set **Walkability** and **Buildability**.
+For triangle classes, open **Terrain triangles…**, choose **Operation → Classifications**,
+select IDs, and set **Walkability** and **Buildability**.
 These classes do not disable collision or create holes.
+
+## Remove selected triangles
+
+1. Select terrain faces and open **Terrain triangles…**.
+2. Under **Selection type**, choose **Triangles · classifications & brush masks**.
+3. Choose **Operation → Remove selected triangles**.
+4. Select triangles in the list or use **Pick triangle in viewport…**. Selections remain when changing **Surface**.
+5. Choose **Blend samples**. **Exact fields** is the default; **Native float** and **Nearest byte** allow the reported paint-sampling error.
+6. Enable **Partition selected neighbors** only to authorize required neighbors among the captured surfaces, including surfaces with no checked triangles.
+7. Click **Preview removal** and inspect the retained patches and counts.
+8. Click **Apply**, **Discard preview** or **Cancel**. Apply records one **Undo** step.
+
+![An opening made by removing one terrain triangle](images/terrain-triangle-hole.png)
+
+Removal creates native terrain patches around the selected triangles. Retained
+surface positions, materials, UVs and triangle classes stay fixed; borders remain
+open. Selecting every triangle deletes its parent brush. Removing the final brush
+of a brush entity is refused. **Remove terrain** instead restores the parent's
+solid volume.
+
+The list keeps original source IDs while the viewport shows the retained patches.
+Source outlines are hidden during removal preview. **Pick triangle in viewport…**,
+**Frame selected** and **Select in volume** discard this dialog's removal draft
+before using source geometry. Failed requests preserve the last valid draft.
+A stale draft cannot be applied; **Discard preview** and **Cancel** remain available.
+
+Removal accepts 1–16 world or `func_detail` faces at powers 2–4, with one terrain
+face per parent brush. It retiles each complete retained cell into four power-2
+patches and a cell with one retained triangle into three. The shared operation
+limit is 128 patches, 5,184 vertices and 8,192 triangles, including required neighbor
+partitions. Removing one triangle from a power-2 source creates 63 patches; the
+same small hole in power 3 would need 255 and exceeds the current limit.
+Native geometry, materials, LOD, contacts and metadata must pass the shared checks.
 
 ## Control border shading
 
@@ -289,7 +324,8 @@ Removing the last terrain face restores its parent's solid brush volume.
 - Subdivision rejects inconsistent densities, ambiguous contacts, corner-only networks and work beyond its checked budget.
 - Unsupported caches, malformed rows and nonfinite data reject before applying changes.
 - Masks are session-local and become stale after incompatible topology or source changes.
-- Direct triangle removal and general fractional border joins remain unavailable.
+- Triangle removal retiles whole retained cells within the shared 128-patch limit; small holes in larger grids can exceed it.
+- General fractional border joins remain unavailable.
 - Invalid terrain shows a diagnostic and an outline instead of substituted shaded geometry.
 
 <!-- page-nav -->

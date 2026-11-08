@@ -61,7 +61,7 @@ D01,Create and remove displacements,100
 D02,Terrain sculpting,100
 D03,Sew and subdivide,100
 D04,Material blend painting,100
-D05,Collision and triangle tags,55
+D05,Collision and triangle tags,100
 D06,Terrain selection and masks,100
 A01,Source model support and selection,65
 A02,Sound exploration,100

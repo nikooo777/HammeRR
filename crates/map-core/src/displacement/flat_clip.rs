@@ -24,6 +24,7 @@ mod field;
 pub(crate) mod fragments;
 mod labels;
 mod lod_proof;
+mod mask;
 pub(crate) mod network;
 mod paint;
 mod polygon;
@@ -31,6 +32,8 @@ mod subtraction;
 mod triangulate;
 mod volume;
 mod window;
+
+pub(crate) use mask::TriangleMask;
 
 pub(crate) fn terrain_cut_plane(
     solid: &Solid,

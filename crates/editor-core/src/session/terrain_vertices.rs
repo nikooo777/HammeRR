@@ -307,6 +307,9 @@ impl Session {
         targets: &[(FaceId, Vec<usize>)],
         aspect: f32,
     ) -> Result<(), String> {
+        if self.terrain_removal_preview_token().is_some() {
+            return Err("Discard terrain triangle removal before framing source vertices".into());
+        }
         if !aspect.is_finite() || aspect <= 0.0 {
             return Err("Viewport aspect must be positive and finite".into());
         }
@@ -391,6 +394,12 @@ impl Session {
         faces: &[FaceId],
         token: u64,
     ) -> Result<Vec<(FaceId, Vec<usize>)>, String> {
+        if self.terrain_removal_preview_token().is_some() {
+            return Err(
+                "Discard terrain triangle removal before selecting source vertices in a volume"
+                    .into(),
+            );
+        }
         let spec = self.checked_volume(token)?.spec;
         let region = map_core::region::Region::from_bounds(spec.mins, spec.maxs)?;
         let grids = self.terrain_surface_grids(faces, true)?;

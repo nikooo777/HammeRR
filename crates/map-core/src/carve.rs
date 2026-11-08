@@ -25,7 +25,7 @@ impl Default for Preparation {
 }
 
 impl Preparation {
-    fn take_work(
+    pub(crate) fn take_work(
         &mut self,
     ) -> std::result::Result<crate::displacement::grid_clip::Work, EditError> {
         self.work
@@ -33,12 +33,16 @@ impl Preparation {
             .ok_or_else(|| invalid("Terrain preparation has already failed or been consumed"))
     }
 
-    fn work(
+    pub(crate) fn work(
         &mut self,
     ) -> std::result::Result<&mut crate::displacement::grid_clip::Work, EditError> {
         self.work
             .as_mut()
             .ok_or_else(|| invalid("Terrain preparation has already failed or been consumed"))
+    }
+
+    pub(crate) fn restore_work(&mut self, work: crate::displacement::grid_clip::Work) {
+        self.work = Some(work);
     }
 }
 

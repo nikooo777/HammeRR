@@ -51,7 +51,7 @@ impl<'a> Context<'a> {
         self.work
     }
 
-    pub(crate) fn vmf(&self) -> Option<&Vmf> {
+    pub(crate) fn vmf(&self) -> Option<&'a Vmf> {
         self.vmf
     }
 }

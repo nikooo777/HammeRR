@@ -1,4 +1,5 @@
 use map_core::displacement::{
+    native,
     neighbors::{self, SurfaceGrid},
     smoothing,
 };
@@ -78,7 +79,11 @@ pub(super) fn prepare(vmf: &Vmf) -> Prepared {
                 prepared.unshaded.insert(id, mesh);
                 continue;
             }
-            let mesh = surfaces.meshes.remove(&id).unwrap_or(mesh);
+            let Some(mesh) = surfaces.meshes.remove(&id) else {
+                prepared.issue(id, "Terrain has no prepared native surface".into());
+                prepared.unshaded.insert(id, mesh);
+                continue;
+            };
             let angle = match smoothing::angle(info) {
                 Ok(angle) => angle,
                 Err(error) => {
@@ -124,14 +129,18 @@ pub(super) fn prepare(vmf: &Vmf) -> Prepared {
                 mesh.size * mesh.size - 1,
                 mesh.size - 1,
             ]
-            .map(|index| mesh.base_positions[index].as_vec3().as_dvec3()),
+            .map(|index| native::stored_vertex(mesh.base_positions[index])),
             positions: &mesh.positions,
         })
         .collect::<Vec<_>>();
     let angles = world.iter().map(|(_, _, angle)| *angle).collect::<Vec<_>>();
-    let normals = neighbors::find_spans(&grids, &mut |_| Ok(())).and_then(|links| {
-        neighbors::vertex_normals_with_smoothing(&grids, &links.pairs, &angles, &mut |_| Ok(()))
-    });
+    let faces = world.iter().map(|(face, _, _)| *face).collect::<Vec<_>>();
+    let normals = surfaces
+        .neighborhood
+        .pairs_for(&faces, &mut |_| Ok(()))
+        .and_then(|pairs| {
+            neighbors::vertex_normals_with_smoothing(&grids, &pairs, &angles, &mut |_| Ok(()))
+        });
     match normals {
         Ok(normals) => {
             for ((id, mesh, _), normals) in world.into_iter().zip(normals) {

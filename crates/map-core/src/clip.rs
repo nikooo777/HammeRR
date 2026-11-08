@@ -1188,6 +1188,25 @@ pub(crate) fn certify_terrain(
             "Terrain output exceeds the native displacement limit",
         ));
     }
+    let native_replacements = replacements
+        .iter()
+        .filter(|replacement| replacement.changed)
+        .map(
+            |replacement| crate::displacement::native_topology::Replacement {
+                source: replacement.source,
+                parts: replacement.parts,
+            },
+        )
+        .collect::<Vec<_>>();
+    crate::displacement::native_topology::check(
+        context.vmf().unwrap_or(document.vmf()),
+        &native_replacements
+            .iter()
+            .map(|replacement| replacement.source)
+            .collect::<Vec<_>>(),
+        &native_replacements,
+        &mut |amount| context.work.consume(amount),
+    )?;
     if options.terrain_mode == TerrainMode::Grid {
         let replacements = replacements
             .iter()
@@ -1331,7 +1350,11 @@ pub fn terrain_partition_faces(
         return Ok(Vec::new());
     }
     let authorized = sources(document, ids)?;
+    let vmf = context.unwrap_or(document.vmf());
     let mut context = crate::displacement::grid_clip::Context::new(context);
+    crate::displacement::native_topology::check(vmf, &crossing, &[], &mut |amount| {
+        context.work.consume(amount)
+    })?;
     crate::displacement::flat_clip::network::required_partitions(
         document,
         &authorized,
@@ -1460,6 +1483,23 @@ pub fn clip_with_options(
     let mut terrain_budget = TerrainBudget::default();
     let mut terrain_context = crate::displacement::grid_clip::Context::new(context);
     let sources = sources(tx.document(), ids)?;
+    let native_sources = sources
+        .iter()
+        .flat_map(|source| {
+            source.solid.sides.iter().filter_map(|side| {
+                side.displacement.as_ref().map(|_| FaceId {
+                    solid: source.solid.id,
+                    side: side.id,
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    crate::displacement::native_topology::check(
+        context.unwrap_or(tx.vmf()),
+        &native_sources,
+        &[],
+        &mut |amount| terrain_context.work.consume(amount),
+    )?;
     for source in &sources {
         let Source {
             solid,
@@ -1644,6 +1684,26 @@ pub fn clip_with_options(
                 "Terrain clipping exceeds the native displacement patch limit",
             ));
         }
+        let native_replacements = planned
+            .iter()
+            .filter_map(|cut| {
+                cut.terrain.as_ref().map(|terrain| {
+                    crate::displacement::native_topology::Replacement {
+                        source: terrain.source,
+                        parts: cut.parts.as_slice(),
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        crate::displacement::native_topology::check(
+            vmf,
+            &native_replacements
+                .iter()
+                .map(|replacement| replacement.source)
+                .collect::<Vec<_>>(),
+            &native_replacements,
+            &mut |amount| terrain_context.work.consume(amount),
+        )?;
         let verified = match options.terrain_mode {
             TerrainMode::Grid => {
                 let replacements = grid_replacements(&planned);

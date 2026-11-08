@@ -14,25 +14,60 @@ struct Segment {
 }
 
 impl Segment {
-    fn occupy(self, slots: &mut [[[usize; 2]; 4]]) {
-        match self.span {
+    fn occupy(self, slots: &mut Occupancy) {
+        slots.occupy(self.surface, self.edge, self.span);
+    }
+
+    fn ambiguous(self, slots: &Occupancy) -> bool {
+        slots.ambiguous(self.surface, self.edge, self.span)
+    }
+}
+
+pub(super) struct Occupancy(Vec<[[usize; 2]; 4]>);
+
+impl Occupancy {
+    pub(super) fn new(surfaces: usize) -> Self {
+        Self(vec![[[0; 2]; 4]; surfaces])
+    }
+
+    pub(super) fn occupy(&mut self, surface: usize, edge: usize, span: Span) {
+        match span {
             Span::Full => {
-                slots[self.surface][self.edge][0] += 1;
-                slots[self.surface][self.edge][1] += 1;
+                self.0[surface][edge][0] += 1;
+                self.0[surface][edge][1] += 1;
             }
-            Span::FirstHalf => slots[self.surface][self.edge][0] += 1,
-            Span::SecondHalf => slots[self.surface][self.edge][1] += 1,
+            Span::FirstHalf => self.0[surface][edge][0] += 1,
+            Span::SecondHalf => self.0[surface][edge][1] += 1,
         }
     }
 
-    fn ambiguous(self, slots: &[[[usize; 2]; 4]]) -> bool {
-        let counts = slots[self.surface][self.edge];
-        match self.span {
+    pub(super) fn ambiguous(&self, surface: usize, edge: usize, span: Span) -> bool {
+        let counts = self.0[surface][edge];
+        match span {
             Span::Full => counts.into_iter().any(|count| count > 1),
             Span::FirstHalf => counts[0] > 1,
             Span::SecondHalf => counts[1] > 1,
         }
     }
+}
+
+pub(super) fn matching_samples<F: FnMut(usize) -> Result<(), String>>(
+    grids: &[SurfaceGrid<'_>],
+    pair: &NeighborPair,
+    budget: &mut Budget<'_, F>,
+) -> Result<bool, String> {
+    let first = &grids[pair.first];
+    let second = &grids[pair.second];
+    for (i, j) in common_span_indices(
+        (first.power, pair.first_edge, pair.first_span),
+        (second.power, pair.second_edge, pair.second_span),
+    )? {
+        budget.consume(1)?;
+        if first.positions[i].distance(second.positions[j]) > EDGE_TOLERANCE {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 pub fn find_spans(
@@ -74,7 +109,7 @@ pub fn find_spans(
         }
     }
     let mut result = Neighbors::default();
-    let mut slots = vec![[[0; 2]; 4]; grids.len()];
+    let mut slots = Occupancy::new(grids.len());
     let mut candidates = Vec::new();
     for group in groups.values() {
         budget.consume(1)?;
@@ -104,28 +139,16 @@ pub fn find_spans(
             result.ambiguous += 1;
             continue;
         }
-        let first = &grids[a.surface];
-        let second = &grids[b.surface];
-        let mut matching = true;
-        for (i, j) in common_span_indices(
-            (first.power, a.edge, a.span),
-            (second.power, b.edge, b.span),
-        )? {
-            budget.consume(1)?;
-            if first.positions[i].distance(second.positions[j]) > EDGE_TOLERANCE {
-                matching = false;
-                break;
-            }
-        }
-        if matching {
-            result.pairs.push(NeighborPair {
-                first: a.surface,
-                first_edge: a.edge,
-                first_span: a.span,
-                second: b.surface,
-                second_edge: b.edge,
-                second_span: b.span,
-            });
+        let pair = NeighborPair {
+            first: a.surface,
+            first_edge: a.edge,
+            first_span: a.span,
+            second: b.surface,
+            second_edge: b.edge,
+            second_span: b.span,
+        };
+        if matching_samples(grids, &pair, &mut budget)? {
+            result.pairs.push(pair);
         } else {
             result.mismatched += 1;
         }

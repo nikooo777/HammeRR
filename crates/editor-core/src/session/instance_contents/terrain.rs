@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::mem::size_of;
 
 use compiler::instances::PreparedInstances;
-use map_core::displacement::{lod, neighbors, smoothing};
+use map_core::displacement::{lod, native, neighbors, smoothing};
 use map_core::surface::FaceId;
 use map_core::{BrushGeometry, DisplacementMesh};
 use source_formats::vmf::Vmf;
@@ -101,7 +101,7 @@ fn grid_views(grids: &[Grid]) -> Vec<neighbors::SurfaceGrid<'_>> {
             neighbors::SurfaceGrid {
                 power: (size - 1).ilog2(),
                 corners: [0, (size - 1) * size, size * size - 1, size - 1]
-                    .map(|index| grid.mesh.base_positions[index].as_vec3().as_dvec3()),
+                    .map(|index| native::stored_vertex(grid.mesh.base_positions[index])),
                 positions: &grid.mesh.positions,
             }
         })
@@ -185,9 +185,8 @@ fn prepare_context(
                 .find(|face| solid.sides[face.side].id == side.id)
                 .ok_or("Instance terrain has no brush surface")?;
             let info = side.displacement.as_ref().unwrap();
-            let mesh =
-                DisplacementMesh::build(face, info).map_err(|error| bounded(&error.to_string()))?;
-            budget.consume(mesh.positions.len())?;
+            let mesh = native::stored_mesh(face, info).map_err(|error| bounded(&error))?;
+            budget.consume(3 * mesh.positions.len())?;
             grids.push(Grid {
                 face: FaceId {
                     solid: solid.id,
@@ -200,7 +199,7 @@ fn prepare_context(
         }
     }
     let views = grid_views(&grids);
-    let links = neighbors::find_spans(&views, &mut |amount| budget.consume(amount))?;
+    let (links, _) = neighbors::native_neighborhood(&views, &mut |amount| budget.consume(amount))?;
     let (patches, _) = lod::prepare(&views, &links.pairs, &mut |amount| budget.consume(amount))?;
     drop(views);
     for (grid, patch) in grids.iter_mut().zip(patches) {

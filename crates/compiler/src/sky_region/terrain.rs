@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use glam::DVec3;
 use map_core::ObjectId;
-use map_core::displacement::{neighbors, triangles};
+use map_core::displacement::{native, neighbors, triangles};
+use map_core::surface::FaceId;
 use source_formats::vmf::{Side, Vmf};
 
 use super::{Admission, Limits, Stats, Surface, checked_total};
@@ -89,18 +90,27 @@ pub(super) fn append(
             neighbors::SurfaceGrid {
                 power: (size - 1).ilog2(),
                 corners: [0, (size - 1) * size, size * size - 1, size - 1]
-                    .map(|index| patch.mesh.base_positions[index].as_vec3().as_dvec3()),
+                    .map(|index| native::stored_vertex(patch.mesh.base_positions[index])),
                 positions: &patch.mesh.positions,
             }
         })
         .collect::<Vec<_>>();
-    let found = neighbors::find_spans(&grids, &mut |amount| admission.consume(amount))?;
+    let faces = patches
+        .iter()
+        .map(|patch| FaceId {
+            solid: patch.source.solid,
+            side: patch.source.side,
+        })
+        .collect::<Vec<_>>();
+    let pairs = patches[0]
+        .neighborhood
+        .pairs_for(&faces, &mut |amount| admission.consume(amount))?;
     let angles = patches
         .iter()
         .map(|patch| patch.smoothing_angle)
         .collect::<Vec<_>>();
     let normals =
-        neighbors::vertex_normals_with_smoothing(&grids, &found.pairs, &angles, &mut |amount| {
+        neighbors::vertex_normals_with_smoothing(&grids, &pairs, &angles, &mut |amount| {
             admission.consume(amount)
         })?;
     drop(grids);

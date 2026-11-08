@@ -93,6 +93,57 @@ impl TerrainSew {
 }
 
 impl Session {
+    pub fn face_terrain_context_error(&self) -> Option<String> {
+        self.geometry
+            .face_preview
+            .as_ref()
+            .and_then(|preview| preview.terrain_context.as_ref())
+            .and_then(|context| context.current(self).err())
+    }
+
+    pub fn face_terrain_context_state(&self) -> Option<Value> {
+        let preview = self.geometry.face_preview.as_ref()?;
+        let context = preview.terrain_context.as_ref()?;
+        let error = self.face_terrain_context_error();
+        let mut state = context.report();
+        state["state"] = json!(if error.is_some() { "stale" } else { "ready" });
+        state["guard_error"] = json!(error);
+        state["token"] = json!(preview.token.to_string());
+        Some(state)
+    }
+
+    pub fn preflight_face_terrain_context(&mut self) {
+        let error = self.face_terrain_context_error();
+        if let Some(preview) = &mut self.geometry.face_preview
+            && preview.render_error != error
+        {
+            preview.render_error = error;
+            self.scene_serial += 1;
+            self.view_serial += 1;
+        }
+    }
+
+    pub fn verify_face_terrain_context_render(&self) -> Result<(), String> {
+        match self.face_terrain_context_error() {
+            Some(error) => Err(format!(
+                "Terrain subdivision preview unavailable: {error}. Preview again or cancel."
+            )),
+            None => Ok(()),
+        }
+    }
+
+    pub(super) fn append_face_terrain_context_diagnostic(&self, mesh: &mut render::SceneMesh) {
+        if let Some(preview) = &self.geometry.face_preview
+            && let Some(error) = &preview.render_error
+            && let Some((face, _)) = preview.edits.first()
+        {
+            mesh.issues.prepend(render::scene::SceneIssue::Surface {
+                face: *face,
+                message: format!("Terrain subdivision preview unavailable: {error}. Applied map shown; preview again or cancel."),
+            });
+        }
+    }
+
     pub fn terrain_triangles(
         &self,
         faces: &[FaceId],
@@ -163,6 +214,9 @@ impl Session {
         faces: &[FaceId],
         preview: bool,
     ) -> Result<Vec<map_core::displacement::edit::TerrainGrid>, String> {
+        if preview {
+            self.verify_face_terrain_context_render()?;
+        }
         let document = if preview {
             self.render_document()
         } else {
@@ -246,7 +300,18 @@ impl Session {
         actor: Actor,
         faces: &[FaceId],
     ) -> Result<TerrainSubdivision, String> {
-        let plan = subdivide::plan(&self.document, faces).map_err(|error| error.to_string())?;
+        let required = self.document.vmf().entities.iter().any(|entity| {
+            !entity.hidden
+                && entity
+                    .classname()
+                    .is_some_and(|class| class.eq_ignore_ascii_case("func_instance"))
+        });
+        let terrain_context = clipping::context::Context::prepare_required(self, required)?;
+        let plan = match &terrain_context {
+            Some(context) => subdivide::plan_with_context(&self.document, faces, context.vmf()),
+            None => subdivide::plan(&self.document, faces),
+        }
+        .map_err(|error| error.to_string())?;
         let edits = plan
             .edits
             .into_iter()
@@ -262,7 +327,8 @@ impl Session {
                 )
             })
             .collect();
-        let changed = self.preview_or_apply_faces(actor, edits, true)?;
+        let changed =
+            self.preview_or_apply_faces_with_context(actor, edits, true, terrain_context)?;
         Ok(TerrainSubdivision {
             changed,
             shared_edges: plan.shared_edges,

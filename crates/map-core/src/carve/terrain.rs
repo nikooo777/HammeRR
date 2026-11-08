@@ -887,6 +887,20 @@ fn plan_inner(
     mut needed: Option<&mut BTreeSet<FaceId>>,
 ) -> std::result::Result<(Vec<Planned>, Vec<u32>, Work), EditError> {
     let selection = selection(document, cutter_ids, target_ids, &mut work)?;
+    let native_sources = selection
+        .targets
+        .iter()
+        .filter_map(|(_, solid)| terrain_face(solid).transpose())
+        .collect::<std::result::Result<Vec<_>, EditError>>()?
+        .into_iter()
+        .map(|(source, _)| source)
+        .collect::<Vec<_>>();
+    crate::displacement::native_topology::check(
+        options.terrain_context.unwrap_or(document.vmf()),
+        &native_sources,
+        &[],
+        &mut |amount| work.consume(amount),
+    )?;
     let mut groups = BTreeMap::new();
     let mut planned = Vec::new();
     let mut unchanged = Vec::new();

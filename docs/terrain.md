@@ -143,6 +143,10 @@ Four base cages rounded in one operation. Each terrain grid keeps its resolution
 Work is limited to 65,536 refined quads and 73,744 intermediate sample slots.
 Ambiguous, non-manifold and corner-only cage networks reject.
 
+Save the parent map before subdividing in a map with visible instances. The preview
+captures child sources. Changed references make the draft unavailable; preview
+again or **Cancel**. Child maps remain unchanged.
+
 ## Sew borders and corners
 
 1. Select adjacent terrain faces.
@@ -213,6 +217,19 @@ Inspect **Half-edge pairs**, **Mixed-power pairs** and diagnostics in **Build de
 
 Compiled LOD snapping can reduce detail near coarse neighbors. Source grids remain unchanged.
 Saved explicit grids can compile through supported multilevel full/half chains without running base-cage subdivision.
+
+### Native neighbor matching
+
+Compilation and the viewport compare stored base-edge coordinates per axis,
+within 0.01 units. Half-edge matches must agree from both surfaces. Ambiguous
+or order-dependent matches stop preparation. Corner-only links compare actual
+displaced corners within 0.001 units. Shared samples must also pass the surface
+checks. These rules do not move authored samples or base cages.
+
+Clipping, carving, triangle removal and subdivision need matching exact and
+native topology in the affected context. Align the parent base corners before
+these edits. **Sew borders & corners** repairs displaced borders, not base gaps.
+The checked context can include up to 128 neighboring faces.
 
 ## Compile terrain as detail
 

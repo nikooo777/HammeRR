@@ -47,11 +47,8 @@ pub(super) fn connect(
             }
         })
         .collect::<Vec<_>>();
-    let neighbors =
-        neighbors::find_spans(&grids, &mut |amount| consume(&mut work, amount, control))?;
-    let connections = neighbors::native_connections(&grids, &neighbors.pairs, &mut |amount| {
-        consume(&mut work, amount, control)
-    })?;
+    let (neighbors, connections) =
+        neighbors::native_neighborhood(&grids, &mut |amount| consume(&mut work, amount, control))?;
     let mixed_pairs = neighbors
         .pairs
         .iter()

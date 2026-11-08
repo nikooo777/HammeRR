@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use source_formats::bsp::{DisplacementCorner, DisplacementNeighbor};
 
-use super::{Budget, EDGE_TOLERANCE, MAX_TOPOLOGY_WORK, NeighborPair, SurfaceGrid};
+use super::{Budget, EDGE_TOLERANCE, MAX_TOPOLOGY_WORK, NeighborPair, Neighbors, SurfaceGrid};
 
 pub struct NativeConnections {
     pub edges: Vec<[[DisplacementNeighbor; 2]; 4]>,
@@ -13,6 +13,39 @@ pub struct NativeConnections {
 pub fn native_connections(
     grids: &[SurfaceGrid<'_>],
     pairs: &[NeighborPair],
+    consume: &mut impl FnMut(usize) -> Result<(), String>,
+) -> Result<NativeConnections, String> {
+    connections(grids, pairs, None, consume)
+}
+
+/// Discovers reciprocal native edges and displaced corners within one shared work budget.
+/// Positions must already be reconstructed from native storage; authored grids use the exact APIs.
+pub fn native_neighborhood(
+    grids: &[SurfaceGrid<'_>],
+    consume: &mut impl FnMut(usize) -> Result<(), String>,
+) -> Result<(Neighbors, NativeConnections), String> {
+    let mut budget = Budget {
+        work: 0,
+        limit: MAX_TOPOLOGY_WORK,
+        consume,
+    };
+    let super::discovery::Discovery {
+        neighbors,
+        edge_pairs,
+    } = super::discovery::find_native_spans(grids, &mut |amount| budget.consume(amount))?;
+    if neighbors.ambiguous != 0 {
+        return Err("Native terrain endpoint discovery has ambiguous occupied spans".into());
+    }
+    let connections = connections(grids, &neighbors.pairs, Some(&edge_pairs), &mut |amount| {
+        budget.consume(amount)
+    })?;
+    Ok((neighbors, connections))
+}
+
+fn connections(
+    grids: &[SurfaceGrid<'_>],
+    pairs: &[NeighborPair],
+    endpoint_pairs: Option<&BTreeSet<(usize, usize)>>,
     consume: &mut impl FnMut(usize) -> Result<(), String>,
 ) -> Result<NativeConnections, String> {
     if grids.len() > source_formats::bsp::MAX_DISPLACEMENTS
@@ -70,33 +103,13 @@ pub fn native_connections(
             };
         }
     }
-    let mut groups = BTreeMap::<[u64; 3], Vec<(usize, usize)>>::new();
-    for (index, grid) in grids.iter().enumerate() {
-        for (corner, point) in grid.corners.iter().enumerate() {
-            budget.consume(1)?;
-            let key = point
-                .to_array()
-                .map(|v| if v == 0.0 { 0 } else { v.to_bits() });
-            groups.entry(key).or_default().push((index, corner));
-        }
-    }
-    let mut shared = BTreeMap::<(usize, usize), (usize, usize, usize)>::new();
-    for group in groups.values() {
-        for a in 0..group.len() {
-            for b in a + 1..group.len() {
-                budget.consume(1)?;
-                let (i, c) = group[a];
-                let (j, d) = group[b];
-                if i == j {
-                    continue;
-                }
-                let entry = shared.entry((i, j)).or_insert((c, d, 0));
-                entry.2 += 1;
-            }
-        }
-    }
+    let shared = if endpoint_pairs.is_some() {
+        super::discovery::shared_corners(grids, &mut budget)?
+    } else {
+        exact_corners(grids, &mut budget)?
+    };
     let mut corners = vec![[DisplacementCorner::default(); 4]; grids.len()];
-    let edge_pairs = edges
+    let mut edge_pairs = edges
         .iter()
         .enumerate()
         .flat_map(|(index, edges)| {
@@ -107,6 +120,10 @@ pub fn native_connections(
                 .map(move |neighbor| (index, neighbor.index as usize))
         })
         .collect::<BTreeSet<_>>();
+    if let Some(endpoint_pairs) = endpoint_pairs {
+        budget.consume(endpoint_pairs.len())?;
+        edge_pairs.extend(endpoint_pairs.iter().copied());
+    }
     let mut corner_pairs = 0;
     for ((a, b), (corner_a, corner_b, count)) in shared {
         budget.consume(1)?;
@@ -136,4 +153,36 @@ pub fn native_connections(
         corners,
         corner_pairs,
     })
+}
+
+fn exact_corners<F: FnMut(usize) -> Result<(), String>>(
+    grids: &[SurfaceGrid<'_>],
+    budget: &mut Budget<'_, F>,
+) -> Result<super::SharedCorners, String> {
+    let mut groups = BTreeMap::<[u64; 3], Vec<(usize, usize)>>::new();
+    for (index, grid) in grids.iter().enumerate() {
+        for (corner, point) in grid.corners.iter().enumerate() {
+            budget.consume(1)?;
+            let key = point
+                .to_array()
+                .map(|v| if v == 0.0 { 0 } else { v.to_bits() });
+            groups.entry(key).or_default().push((index, corner));
+        }
+    }
+    let mut shared = BTreeMap::<(usize, usize), (usize, usize, usize)>::new();
+    for group in groups.values() {
+        for a in 0..group.len() {
+            for b in a + 1..group.len() {
+                budget.consume(1)?;
+                let (i, c) = group[a];
+                let (j, d) = group[b];
+                if i == j {
+                    continue;
+                }
+                let entry = shared.entry((i, j)).or_insert((c, d, 0));
+                entry.2 += 1;
+            }
+        }
+    }
+    Ok(shared)
 }

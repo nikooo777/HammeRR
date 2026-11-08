@@ -791,13 +791,18 @@ impl Controller {
                     }
                 })
                 .err();
+            let context_error = (target.preview.is_some()
+                && target.preview == session.face_preview_token())
+            .then(|| session.face_terrain_context_error())
+            .flatten();
             self.window.set_stale(stale.is_some());
             self.window.set_ready(
                 stale.is_none()
+                    && context_error.is_none()
                     && target.preview.is_some()
                     && target.preview == session.face_preview_token(),
             );
-            if let Some(error) = stale {
+            if let Some(error) = stale.or(context_error) {
                 if self.stroking.replace(false) {
                     self.dragging.set(false);
                 }

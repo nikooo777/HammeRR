@@ -94,6 +94,25 @@ pub fn stored_vertex(point: DVec3) -> DVec3 {
     DVec3::from_array(vertex_position(vertex_key(point)).map(f64::from))
 }
 
+pub fn stored_mesh(face: &Face, disp: &DispInfo) -> Result<DisplacementMesh, String> {
+    let mut mesh = DisplacementMesh::build(face, disp).map_err(|error| error.to_string())?;
+    let base = face
+        .vertices
+        .as_slice()
+        .try_into()
+        .map_err(|_| "Native terrain needs a quad base face")?;
+    let info = bsp::DisplacementInfo {
+        start: stored_vertex(mesh.base_positions[0]).as_vec3().to_array(),
+        power: disp.power as i32,
+        ..Default::default()
+    };
+    mesh.positions = positions(base, info, vertices(&mesh))?
+        .into_iter()
+        .map(|point| DVec3::from_array(point.map(f64::from)))
+        .collect();
+    Ok(mesh)
+}
+
 pub fn checked_mesh(
     face: &Face,
     disp: &DispInfo,

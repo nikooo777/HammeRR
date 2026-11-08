@@ -422,7 +422,7 @@ pub(in crate::mcp) fn face_id(face: &FaceRef) -> map_core::surface::FaceId {
 }
 
 pub(in crate::mcp) fn face_state(session: &Session) -> Value {
-    json!({"handle": session.face_preview_handle(), "mode": if session.face_mode() { "faces" } else { "objects" }, "preview": session.has_face_preview(),
+    let mut state = json!({"handle": session.face_preview_handle(), "mode": if session.face_mode() { "faces" } else { "objects" }, "preview": session.has_face_preview(),
         "preview_token":session.face_preview_token().map(|token|token.to_string()),
         "atlas":session.atlas_fit_state(),
         "sample": surface_sample_state(session),
@@ -445,7 +445,11 @@ pub(in crate::mcp) fn face_state(session: &Session) -> Value {
                 "uaxis": side.u_axis.to_string(), "vaxis": side.v_axis.to_string(),
                 "preview": session.preview_side(face).map(|side| json!({"material": side.material, "shift_u": side.u_axis.offset, "shift_v": side.v_axis.offset, "scale_u": side.u_axis.scale, "scale_v": side.v_axis.scale, "rotation": side.rotation,
                 "u_axis": side.u_axis.axis.to_array(), "v_axis": side.v_axis.axis.to_array(), "lightmap_scale": side.lightmap_scale, "smoothing_groups": map_core::surface::smoothing_numbers(side.smoothing_groups.unwrap_or(0))}))}))
-        }).collect::<Vec<_>>()})
+        }).collect::<Vec<_>>()});
+    if let Some(context) = session.face_terrain_context_state() {
+        state["terrain_context"] = context;
+    }
+    state
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

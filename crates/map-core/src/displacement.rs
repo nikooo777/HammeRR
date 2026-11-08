@@ -10,6 +10,7 @@ pub(crate) mod flat_clip;
 pub(crate) mod grid_clip;
 pub mod lod;
 pub mod native;
+pub(crate) mod native_topology;
 pub mod neighbors;
 pub mod removal;
 pub mod resample;

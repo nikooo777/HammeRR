@@ -488,6 +488,7 @@ fn prepare_scene_refresh(
 ) -> Option<render::SceneKey> {
     session.preflight_carve_preview();
     session.preflight_terrain_removal_preview();
+    session.preflight_face_terrain_context();
     session.preflight_instance_contents();
     session.preflight_sky3d_preview();
     session.poll_color_correction();

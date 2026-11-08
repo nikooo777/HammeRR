@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use glam::DVec3;
-use source_formats::vmf::DispInfo;
+use source_formats::vmf::{DispInfo, Vmf};
 
 use super::{DisplacementMesh, edit, neighbors};
 use crate::{
@@ -253,7 +253,67 @@ impl Mesh {
 }
 
 pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
+    plan_inner(document, faces, document.vmf())
+}
+
+pub fn plan_with_context(
+    document: &Document,
+    faces: &[FaceId],
+    context: &Vmf,
+) -> Result<Plan, EditError> {
+    context
+        .validate_ids()
+        .map_err(|error| EditError::Invalid(error.to_string()))?;
+    for face in faces {
+        let (owner, original) = crate::subobject::solid(document, face.solid)?;
+        let solids = match owner {
+            crate::ObjectId::Solid(_) => &context.world.solids,
+            crate::ObjectId::Entity(id) => {
+                let original = document
+                    .entity(id)
+                    .ok_or_else(|| invalid("Subdivision lost its original source owner"))?;
+                let assembled = context
+                    .entities
+                    .iter()
+                    .find(|entity| entity.id == id)
+                    .filter(|entity| {
+                        entity.classname() == original.classname()
+                            && entity.hidden == original.hidden
+                    })
+                    .ok_or_else(|| {
+                        invalid("Resolved subdivision context changed a source owner")
+                    })?;
+                &assembled.solids
+            }
+        };
+        let assembled = solids
+            .iter()
+            .find(|solid| solid.id == face.solid)
+            .ok_or_else(|| invalid("Resolved subdivision context lost an original source"))?;
+        let mut canonical = original.clone();
+        crate::brush::canonicalize_precise(&mut canonical)?;
+        if assembled.sides != original.sides && assembled.sides != canonical.sides
+            || assembled.hidden != original.hidden
+        {
+            return Err(invalid(
+                "Resolved subdivision context must preserve original source sides and visibility",
+            ));
+        }
+    }
+    plan_inner(document, faces, context)
+}
+
+fn plan_inner(document: &Document, faces: &[FaceId], context: &Vmf) -> Result<Plan, EditError> {
     let grids = edit::inspect(document, faces)?;
+    let mut native_work = 0usize;
+    let mut consume = |amount| {
+        native_work = native_work
+            .checked_add(amount)
+            .filter(|work| *work <= MAX_TOPOLOGY_WORK)
+            .ok_or_else(|| "Subdivision native topology exceeded its work limit".to_string())?;
+        Ok(())
+    };
+    super::native_topology::check(context, faces, &[], &mut consume)?;
     for grid in &grids {
         let info = surface::side(document, grid.face)
             .unwrap()
@@ -291,7 +351,7 @@ pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
         ));
     }
     let identities = grids.iter().map(|grid| grid.face).collect::<Vec<_>>();
-    let (mut mesh, work) = cage::build(&corners, &neighbors.pairs, &identities)?;
+    let (mut mesh, mut work) = cage::build(&corners, &neighbors.pairs, &identities)?;
     let mut topology = Topology::build(&mesh, &work.stages[0], grids.len())?;
     cage::validate_links(&mesh, &topology, &work.sources, &neighbors.pairs)?;
     for stage in &work.stages[1..] {
@@ -372,6 +432,38 @@ pub fn plan(document: &Document, faces: &[FaceId]) -> Result<Plan, EditError> {
             .ok_or_else(|| invalid("Subdivision sample count overflow"))?;
         edits.push((grid.face, result));
     }
+    let mut final_solids = BTreeMap::new();
+    for (face, info) in &edits {
+        if let std::collections::btree_map::Entry::Vacant(entry) = final_solids.entry(face.solid) {
+            let (_, original) = crate::subobject::solid(document, face.solid)?;
+            entry.insert(original.clone());
+        }
+        let solid = final_solids.get_mut(&face.solid).unwrap();
+        let side = solid
+            .sides
+            .iter_mut()
+            .find(|side| side.id == face.side)
+            .ok_or_else(|| invalid("Subdivision lost its original terrain side"))?;
+        side.displacement = Some(info.clone());
+    }
+    let native_replacements = final_solids
+        .iter()
+        .map(|(id, solid)| {
+            Ok(super::native_topology::Replacement {
+                source: *faces
+                    .iter()
+                    .find(|face| face.solid == *id)
+                    .ok_or_else(|| invalid("Subdivision lost its original terrain face"))?,
+                parts: std::slice::from_ref(solid),
+            })
+        })
+        .collect::<Result<Vec<_>, EditError>>()?;
+    super::native_topology::check(context, faces, &native_replacements, &mut consume)?;
+    work.topology_work_bound = work
+        .topology_work_bound
+        .checked_add(native_work)
+        .filter(|work| *work <= MAX_TOPOLOGY_WORK)
+        .ok_or_else(|| invalid("Subdivision exceeds its native and cage topology work limit"))?;
     Ok(Plan {
         edits,
         shared_edges: neighbors.pairs.len(),

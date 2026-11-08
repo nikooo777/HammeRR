@@ -461,6 +461,16 @@ fn plan(
     mut needed: Option<&mut BTreeSet<FaceId>>,
 ) -> Result<Plan, EditError> {
     let sources = sources(document, targets)?;
+    super::native_topology::check(
+        options.terrain_context.unwrap_or(document.vmf()),
+        &sources
+            .iter()
+            .filter(|source| !source.ids.is_empty())
+            .map(|source| source.face)
+            .collect::<Vec<_>>(),
+        &[],
+        &mut |amount| work.consume(amount),
+    )?;
     let masks = masks(document, &sources, options, &mut work)?;
     planned_capacity(&masks, &mut work)?;
     let mut ids = Ids::new(document, options.terrain_context);

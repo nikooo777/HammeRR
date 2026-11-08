@@ -272,6 +272,7 @@ pub struct PreparedTerrain {
     pub bounds: (DVec3, DVec3),
     pub mesh: map_core::displacement::DisplacementMesh,
     pub smoothing_angle: Option<f64>,
+    pub neighborhood: std::sync::Arc<map_core::displacement::surface::NeighborGraph>,
 }
 
 /// Flat world/detail conversion, not a complete region or unsupported-content inventory.

@@ -586,7 +586,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Apply the shared face material/lighting/terrain preview in one undo step. Pass its token to reject a replaced preview. Fails if edits, document replacement or selection changes have invalidated it. Atlas drafts require the exact token, originating actor and current material snapshot; rejected Apply preserves the draft."
+        description = "Apply the shared face material/lighting/terrain preview in one undo step. Pass its token to reject a replaced preview. Fails if edits, document replacement or selection changes have invalidated it. Atlas drafts require the exact token, originating actor and current material snapshot; rejected Apply preserves the draft. Subdivision drafts with visible instances require their exact token and frozen terrain context; source changes reject Apply without consuming the draft."
     )]
     pub(in crate::mcp) fn commit_face_preview(
         &self,
@@ -602,7 +602,7 @@ impl EditorServer {
     }
 
     #[tool(
-        description = "Cancel the shared face material/lighting preview without changing the document or undo/redo history. Pass its token to reject a replaced preview. Atlas drafts require their exact token and originating actor; their stale assets do not prevent owned Cancel. Equivalent to the editing dialog's Cancel button."
+        description = "Cancel the shared face material/lighting preview without changing the document or undo/redo history. Pass its token to reject a replaced preview. Atlas drafts require their exact token and originating actor; their stale assets do not prevent owned Cancel. Subdivision drafts with terrain context also require their exact token, including after child sources change. Equivalent to the editing dialog's Cancel button."
     )]
     pub(in crate::mcp) fn cancel_face_preview(
         &self,

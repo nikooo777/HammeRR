@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use glam::DVec3;
 use map_core::brush::BrushGeometry;
 use map_core::displacement::DisplacementMesh;
-use map_core::displacement::{lod, native, neighbors};
+use map_core::displacement::{lod, native, neighbors, surface::NeighborGraph};
+use map_core::surface::FaceId;
 use source_formats::bsp::{self, Displacements};
 use source_formats::vmf::{DispInfo, Solid};
 
@@ -97,9 +99,11 @@ impl Patch {
             extend(&mut bounds, point)?;
         }
         native_bounds(&data, base, &mut bounds, control)?;
+        let mut mesh = geometry.mesh;
+        mesh.positions = positions.clone();
         Ok(Self {
             source,
-            mesh: geometry.mesh,
+            mesh,
             smoothing_angle: geometry.smoothing_angle,
             base,
             corners,
@@ -122,7 +126,9 @@ impl Patch {
         {
             extend(&mut self.bounds, DVec3::from_array(point.map(f64::from)))?;
         }
-        native_bounds(&self.data, self.base, &mut self.bounds, control)
+        native_bounds(&self.data, self.base, &mut self.bounds, control)?;
+        self.mesh.positions = lod.positions;
+        Ok(())
     }
 }
 
@@ -175,8 +181,10 @@ impl Bounds {
 
     pub(in crate::map) fn finish(mut self, control: &Control) -> Result<Prepared, String> {
         control.checkpoint()?;
-        self.native_lod_bounds(control)
-            .map_err(|error| format!("Terrain native membership bounds: {error}"))?;
+        let neighborhood = Arc::new(
+            self.native_lod_bounds(control)
+                .map_err(|error| format!("Terrain native membership bounds: {error}"))?,
+        );
         let mut bounds = HashMap::<u32, (DVec3, DVec3)>::new();
         let mut surfaces = Vec::with_capacity(self.patches.len());
         for patch in self.patches {
@@ -190,12 +198,13 @@ impl Bounds {
                 bounds: patch.bounds,
                 mesh: patch.mesh,
                 smoothing_angle: patch.smoothing_angle,
+                neighborhood: neighborhood.clone(),
             });
         }
         Ok(Prepared { bounds, surfaces })
     }
 
-    fn native_lod_bounds(&mut self, control: &Control) -> Result<(), String> {
+    fn native_lod_bounds(&mut self, control: &Control) -> Result<NeighborGraph, String> {
         let grids = self
             .patches
             .iter()
@@ -205,10 +214,7 @@ impl Bounds {
                 positions: &patch.positions,
             })
             .collect::<Vec<_>>();
-        let found = neighbors::find_spans(&grids, &mut |amount| {
-            consume(&mut self.work, amount, control)
-        })?;
-        neighbors::native_connections(&grids, &found.pairs, &mut |amount| {
+        let (found, _) = neighbors::native_neighborhood(&grids, &mut |amount| {
             consume(&mut self.work, amount, control)
         })?;
         let (lod, _) = lod::prepare(&grids, &found.pairs, &mut |amount| {
@@ -224,6 +230,15 @@ impl Bounds {
                 .lod_bounds(lod, control)
                 .map_err(|error| format!("solid:{}: {error}", patch.source.solid))?;
         }
-        Ok(())
+        NeighborGraph::new(
+            self.patches
+                .iter()
+                .map(|patch| FaceId {
+                    solid: patch.source.solid,
+                    side: patch.source.side,
+                })
+                .collect(),
+            found.pairs,
+        )
     }
 }

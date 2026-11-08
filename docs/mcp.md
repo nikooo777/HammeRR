@@ -1186,6 +1186,17 @@ corner-only networks and excessive work reject while retaining the previous prev
 Inspect `get_terrain_grids` with `preview: true` or use `render_view`, then pass
 `state.preview_token` to `commit_face_preview` or `cancel_face_preview`.
 
+Visible instances use the same captured terrain context as clipping. Save the
+parent first. The face-preview state reports context readiness and source errors;
+changed child files refuse rendering and Apply. Exact-token Cancel remains
+available through `state.preview_token`, including when `state.handle` is null.
+Child sources are not edited.
+
+Native compilation and derived viewport surfaces share stored-coordinate
+neighbor discovery. Near half-edge relations must agree in both directions.
+Topology edits require the exact and native graphs to agree in their affected
+context; endpoint tolerances do not relax cut geometry or authorize neighbor edits.
+
 ### Asset source filters
 
 `browse_materials`, `search_materials` and `browse_models` accept `source`:

@@ -175,6 +175,8 @@ struct FacePreview {
     edits: Vec<(FaceId, SurfaceEdit)>,
     terrain_mask_token: Option<u64>,
     atlas: Option<atlas_texturing::PreviewGuard>,
+    terrain_context: Option<Arc<clipping::context::Context>>,
+    render_error: Option<String>,
 }
 
 pub use material_preview::{
@@ -960,6 +962,15 @@ impl Session {
                 .geometry
                 .face_preview
                 .as_ref()
+                .is_some_and(|preview| preview.terrain_context.is_some())
+        {
+            return Err("Terrain context previews require their exact preview token".into());
+        }
+        if token.is_none()
+            && self
+                .geometry
+                .face_preview
+                .as_ref()
                 .is_some_and(|preview| preview.atlas.is_some())
         {
             return Err("Atlas previews require their exact preview token".into());
@@ -971,6 +982,9 @@ impl Session {
     }
 
     pub fn preview_side(&self, face: FaceId) -> Option<&source_formats::vmf::Side> {
+        if self.face_terrain_context_error().is_some() {
+            return None;
+        }
         surface::side(&self.geometry.face_preview.as_ref()?.document, face)
     }
 
@@ -983,6 +997,9 @@ impl Session {
     }
 
     pub fn face_preview_document(&self) -> Option<&Document> {
+        if self.face_terrain_context_error().is_some() {
+            return None;
+        }
         self.geometry
             .face_preview
             .as_ref()
@@ -1051,6 +1068,16 @@ impl Session {
         edits: Vec<(FaceId, SurfaceEdit)>,
         preview: bool,
     ) -> Result<usize, String> {
+        self.preview_or_apply_faces_with_context(actor, edits, preview, None)
+    }
+
+    fn preview_or_apply_faces_with_context(
+        &mut self,
+        actor: Actor,
+        edits: Vec<(FaceId, SurfaceEdit)>,
+        preview: bool,
+        terrain_context: Option<Arc<clipping::context::Context>>,
+    ) -> Result<usize, String> {
         if preview {
             let mut document = self.document.preview_snapshot();
             let changed = document
@@ -1060,6 +1087,10 @@ impl Session {
                     })
                 })
                 .map_err(|error| error.to_string())?;
+            if let Some(context) = &terrain_context {
+                context.current(self)?;
+                context.verify()?;
+            }
             self.clear_geometry_previews_except(&[previews::Kind::Face, previews::Kind::Paint]);
 
             self.clear_volume_selection();
@@ -1074,11 +1105,13 @@ impl Session {
                 edits,
                 terrain_mask_token: None,
                 atlas: None,
+                terrain_context,
+                render_error: None,
             });
             self.scene_serial += 1;
             Ok(changed)
         } else {
-            self.apply_face_edits(actor, edits)
+            self.apply_face_edits_with_context(actor, edits, terrain_context)
         }
     }
 
@@ -1086,6 +1119,15 @@ impl Session {
         &mut self,
         actor: Actor,
         edits: Vec<(FaceId, SurfaceEdit)>,
+    ) -> Result<usize, String> {
+        self.apply_face_edits_with_context(actor, edits, None)
+    }
+
+    fn apply_face_edits_with_context(
+        &mut self,
+        actor: Actor,
+        edits: Vec<(FaceId, SurfaceEdit)>,
+        terrain_context: Option<Arc<clipping::context::Context>>,
     ) -> Result<usize, String> {
         if self.has_atlas_face_preview() {
             return Err("An atlas preview is active. Apply or cancel it in atlas fitting, or Preview a replacement before applying other face settings.".into());
@@ -1125,9 +1167,13 @@ impl Session {
             })
             .unwrap_or("edit face settings");
         let changed = self.edit(actor, label, |tx| {
-            edits.iter().try_fold(0, |count, (face, patch)| {
+            let changed = edits.iter().try_fold(0, |count, (face, patch)| {
                 surface::edit_faces(tx, &[*face], patch).map(|changed| count + changed)
-            })
+            })?;
+            if let Some(context) = &terrain_context {
+                context.verify().map_err(EditError::Invalid)?;
+            }
+            Ok(changed)
         })?;
         self.cancel_face_preview();
         if changed > 0 {
@@ -1142,6 +1188,25 @@ impl Session {
 
     pub fn commit_face_preview(&mut self, actor: Actor) -> Result<usize, String> {
         self.check_atlas_face_commit(actor)?;
+        if let Some((context, edits, mask)) =
+            self.geometry.face_preview.as_ref().and_then(|preview| {
+                preview.terrain_context.as_ref().map(|context| {
+                    (
+                        context.clone(),
+                        preview.edits.clone(),
+                        preview.terrain_mask_token,
+                    )
+                })
+            })
+        {
+            context.current(self)?;
+            context.verify()?;
+            let changed = self.apply_face_edits_with_context(actor, edits, Some(context))?;
+            if let Some(token) = mask {
+                self.refresh_terrain_mask_after_commit(token);
+            }
+            return Ok(changed);
+        }
         let preview = self
             .geometry
             .face_preview
@@ -2941,9 +3006,20 @@ impl Session {
     }
 
     pub fn render_document(&self) -> &Document {
-        self.model_browser
-            .document(self)
-            .unwrap_or(self.geometry.document(&self.document))
+        self.model_browser.document(self).unwrap_or_else(|| {
+            let document = self.geometry.document(&self.document);
+            if self
+                .geometry
+                .face_preview
+                .as_ref()
+                .is_some_and(|preview| std::ptr::eq(document, &preview.document))
+                && self.face_terrain_context_error().is_some()
+            {
+                &self.document
+            } else {
+                document
+            }
+        })
     }
 
     pub fn build_scene(&mut self) -> SceneMesh {
@@ -2961,6 +3037,7 @@ impl Session {
     ) -> SceneMesh {
         self.preflight_carve_preview();
         self.preflight_terrain_removal_preview();
+        self.preflight_face_terrain_context();
         self.preflight_rope_placement();
         self.preflight_rope_preview();
         self.preflight_compiled_visibility();
@@ -3151,6 +3228,7 @@ impl Session {
         }
         self.append_carve_preview_diagnostic(&mut mesh);
         self.append_terrain_removal_diagnostic(&mut mesh);
+        self.append_face_terrain_context_diagnostic(&mut mesh);
         mesh
     }
 

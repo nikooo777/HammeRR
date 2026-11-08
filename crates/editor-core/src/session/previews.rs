@@ -90,7 +90,12 @@ impl State {
                     .map(|preview| &preview.document)
             })
             .or_else(|| self.clip_preview.as_ref().map(|preview| &preview.document))
-            .or_else(|| self.face_preview.as_ref().map(|preview| &preview.document))
+            .or_else(|| {
+                self.face_preview
+                    .as_ref()
+                    .filter(|preview| preview.render_error.is_none())
+                    .map(|preview| &preview.document)
+            })
             .or_else(|| {
                 self.paint
                     .stroke
@@ -132,7 +137,11 @@ impl Session {
     }
 
     pub fn face_preview_handle(&self) -> serde_json::Value {
-        Self::edit_handle("face_preview", self.face_preview_token())
+        Self::edit_handle(
+            "face_preview",
+            self.face_preview_token()
+                .filter(|_| self.face_terrain_context_error().is_none()),
+        )
     }
 
     pub(super) fn feedback_handles(&self) -> Vec<serde_json::Value> {

@@ -34,7 +34,9 @@ Use **Reload models** after model files change. Use **Reload material assets** a
 
 - Reference geometry is a checked guide, not a complete game preview.
 - Supported brush, terrain and static-prop geometry can be displayed. Other child entities have separate count and availability reports.
-- A terrain join that needs different parent LOD or border normals cannot be displayed by the reference layer. Refresh reports the error; assembled compilation remains available.
+- Parent and child terrain share border shading. Parent positions and triangles stay fixed; a join that needs different parent LOD refuses. Assembled compilation remains available.
+- Display filters hide reference geometry after shared shading is prepared. Disable **Instance contents** to restore root-only shading.
+- Source changes retire reference geometry and parent shading together. Frames are checked before display, including cached frames.
 - Props require unit scale, body 0, white tint and Normal render mode. Model support matches the root model preview.
 - Child props do not receive authored-lighting preview. Animation, physics, runtime fade and DX-level behavior are not simulated.
 - A model read, pose or shared geometry-budget failure hides the reference layer and reports an error. Root reference markers can remain visible.

@@ -234,6 +234,12 @@ pub struct FaceOverlay {
     pub projection: Option<map_core::surface::Projection>,
 }
 
+pub struct TerrainNormalOverride {
+    pub positions: Vec<[f32; 3]>,
+    pub triangles: Vec<[usize; 3]>,
+    pub normals: Vec<[f64; 3]>,
+}
+
 struct Builder<'a> {
     authored_surfaces: bool,
     entity_helpers: bool,
@@ -1574,10 +1580,108 @@ impl SceneMesh {
         entity_helpers: bool,
         include: impl Fn(ObjectId) -> bool,
     ) -> Self {
+        Self::build_with_terrain_filtered(
+            vmf,
+            fs,
+            library,
+            selection,
+            overlays,
+            entities,
+            guides,
+            skybox,
+            tool_textures,
+            selection_tint,
+            normal_maps,
+            lighting,
+            reference_models,
+            authored_surfaces,
+            entity_helpers,
+            terrain::prepare(vmf),
+            include,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_build_with_reference_terrain_filtered(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selection: (&HashSet<ObjectId>, &HashSet<FaceId>),
+        overlays: &[FaceOverlay],
+        entities: (
+            &[crate::models::Instance],
+            &BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
+        ),
+        guides: (
+            &BTreeMap<u32, crate::icons::Instance>,
+            &[crate::models::Instance],
+        ),
+        skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
+        tool_textures: bool,
+        selection_tint: bool,
+        normal_maps: bool,
+        lighting: bool,
+        reference_models: &[crate::models::Instance],
+        authored_surfaces: bool,
+        entity_helpers: bool,
+        terrain_normals: &BTreeMap<FaceId, TerrainNormalOverride>,
+        include: impl Fn(ObjectId) -> bool,
+    ) -> Result<Self, String> {
+        if !authored_surfaces && !terrain_normals.is_empty() {
+            return Err("Terrain normal overrides require authored root surfaces".into());
+        }
+        let mut terrain = terrain::prepare(vmf);
+        terrain.apply_normal_overrides(vmf, terrain_normals)?;
+        Ok(Self::build_with_terrain_filtered(
+            vmf,
+            fs,
+            library,
+            selection,
+            overlays,
+            entities,
+            guides,
+            skybox,
+            tool_textures,
+            selection_tint,
+            normal_maps,
+            lighting,
+            reference_models,
+            authored_surfaces,
+            entity_helpers,
+            terrain,
+            include,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_with_terrain_filtered(
+        vmf: &Vmf,
+        fs: &GameFs,
+        library: &mut MaterialLibrary,
+        selection: (&HashSet<ObjectId>, &HashSet<FaceId>),
+        overlays: &[FaceOverlay],
+        entities: (
+            &[crate::models::Instance],
+            &BTreeMap<ObjectId, map_core::entity_helpers::Appearance>,
+        ),
+        guides: (
+            &BTreeMap<u32, crate::icons::Instance>,
+            &[crate::models::Instance],
+        ),
+        skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
+        tool_textures: bool,
+        selection_tint: bool,
+        normal_maps: bool,
+        lighting: bool,
+        reference_models: &[crate::models::Instance],
+        authored_surfaces: bool,
+        entity_helpers: bool,
+        terrain: terrain::Prepared,
+        include: impl Fn(ObjectId) -> bool,
+    ) -> Self {
         let (icons, model_guides) = guides;
         let (models, helpers) = entities;
         let (selected, selected_faces) = selection;
-        let terrain = terrain::prepare(vmf);
         let terrain_issues = terrain.issues.into_iter().fold(
             HashMap::<u32, Vec<TerrainIssue>>::new(),
             |mut issues, issue| {

@@ -18,6 +18,119 @@ impl Prepared {
     fn issue(&mut self, face: FaceId, message: String) {
         self.issues.push(TerrainIssue { face, message });
     }
+
+    pub(super) fn apply_normal_overrides(
+        &mut self,
+        vmf: &Vmf,
+        overrides: &BTreeMap<FaceId, TerrainNormalOverride>,
+    ) -> Result<(), String> {
+        if overrides.len() > source_formats::bsp::MAX_DISPLACEMENTS {
+            return Err("Terrain normal overrides exceed the native face limit".into());
+        }
+        let mut vertices = 0usize;
+        let mut triangles = 0usize;
+        for replacement in overrides.values() {
+            if replacement.positions.len() != replacement.normals.len() {
+                return Err(
+                    "Terrain normal overrides require complete position and normal arrays".into(),
+                );
+            }
+            vertices = vertices
+                .checked_add(replacement.positions.len())
+                .ok_or("Terrain normal override vertex count overflow")?;
+            triangles = triangles
+                .checked_add(replacement.triangles.len())
+                .ok_or("Terrain normal override triangle count overflow")?;
+            if vertices > crate::references::MAX_VERTICES
+                || triangles > 2 * crate::references::MAX_VERTICES
+            {
+                return Err(
+                    "Terrain normal overrides exceed their vertex or triangle limit".into(),
+                );
+            }
+        }
+        if overrides.is_empty() {
+            return Ok(());
+        }
+        vmf.validate_ids().map_err(|error| {
+            format!("Terrain normal overrides require unique source IDs: {error}")
+        })?;
+        let eligible = native::visible_terrain_sources(vmf)
+            .filter(|(_, sewn)| *sewn)
+            .flat_map(|(solid, _)| {
+                solid
+                    .sides
+                    .iter()
+                    .filter(|side| side.displacement.is_some())
+                    .map(move |side| FaceId {
+                        solid: solid.id,
+                        side: side.id,
+                    })
+            })
+            .collect::<BTreeSet<_>>();
+        for (face, replacement) in overrides {
+            let invalid = |reason: &str| {
+                format!(
+                    "solid:{} side:{}: terrain normal override {reason}",
+                    face.solid, face.side
+                )
+            };
+            if !eligible.contains(face) {
+                return Err(invalid(
+                    "requires source-visible world or func_detail terrain",
+                ));
+            }
+            let prepared = self
+                .meshes
+                .get(face)
+                .ok_or_else(|| invalid("has no complete prepared shaded surface"))?;
+            if prepared.normals.len() != prepared.mesh.positions.len()
+                || replacement.positions.len() != prepared.mesh.positions.len()
+            {
+                return Err(invalid("does not match the prepared vertex count"));
+            }
+            if prepared
+                .mesh
+                .positions
+                .iter()
+                .zip(&replacement.positions)
+                .any(|(actual, expected)| {
+                    !expected.iter().all(|value| value.is_finite())
+                        || actual.as_vec3().to_array().map(f32::to_bits)
+                            != expected.map(f32::to_bits)
+                })
+                || !replacement
+                    .triangles
+                    .iter()
+                    .copied()
+                    .eq(prepared.mesh.triangles())
+            {
+                return Err(invalid(
+                    "does not match the prepared positions and triangles",
+                ));
+            }
+            if replacement
+                .normals
+                .iter()
+                .any(|normal| !valid_normal(Vec3::from_array(normal.map(|value| value as f32))))
+            {
+                return Err(invalid("requires finite nonzero packed normals"));
+            }
+        }
+        for (face, replacement) in overrides {
+            self.meshes
+                .get_mut(face)
+                .ok_or("Validated terrain normal override lost its prepared surface")?
+                .normals
+                .clone_from(&replacement.normals);
+        }
+        Ok(())
+    }
+}
+
+fn valid_normal(normal: Vec3) -> bool {
+    let squared = normal.length_squared();
+    normal.is_finite() && squared.is_finite() && squared >= 1e-12
 }
 
 pub(super) fn prepare(vmf: &Vmf) -> Prepared {
@@ -179,10 +292,7 @@ pub(super) fn lighting_error(
         .iter()
         .map(|normal| Vec3::from_array(normal.map(|v| v as f32)))
         .collect::<Vec<_>>();
-    if normals.iter().any(|normal| {
-        let squared = normal.length_squared();
-        !normal.is_finite() || !squared.is_finite() || squared < 1e-12
-    }) {
+    if normals.iter().any(|normal| !valid_normal(*normal)) {
         return Some("Terrain authored lighting needs finite nonzero packed normals");
     }
     for triangle in mesh.triangles() {

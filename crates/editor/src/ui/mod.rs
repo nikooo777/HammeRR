@@ -3510,7 +3510,14 @@ fn create_document_window(
                                 ));
                             }
                         }
-                        let uploaded = ui.viewport.set_scene(&ui.ctx, &mesh, session.materials());
+                        let instance_contents_guard = session
+                            .instance_contents_render_guard(session.view().instance_contents);
+                        let uploaded = ui.viewport.set_scene(
+                            &ui.ctx,
+                            &mesh,
+                            session.materials(),
+                            instance_contents_guard,
+                        );
                         if let Err(error) = uploaded {
                             clear_view_frames(&app, ui, &format!("Viewport unavailable: {error}"));
                             if !preview_error.is_empty() {

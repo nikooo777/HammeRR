@@ -3030,6 +3030,26 @@ impl Session {
         self.build_scene_with_baked_surfaces(view, true)
     }
 
+    fn instance_contents_scene_failure(
+        &mut self,
+        view: ViewOptions,
+        mut report: serde_json::Value,
+        error: String,
+    ) -> SceneMesh {
+        report["displayed"] = serde_json::json!(false);
+        report["status"] = serde_json::json!("failed");
+        report["summary"] = serde_json::json!(format!(
+            "Instance contents unavailable: {error}; ordinary scene retained"
+        ));
+        report["error"] = serde_json::json!(error);
+        let ordinary = self.build_scene_for_view(ViewOptions {
+            instance_contents: false,
+            ..view
+        });
+        self.retain_instance_contents_render_report(report);
+        ordinary
+    }
+
     fn build_scene_with_baked_surfaces(
         &mut self,
         view: ViewOptions,
@@ -3079,7 +3099,13 @@ impl Session {
             instance.draw_surface = view.authored_models
                 && !self.baked_static_prop_replaces(|origin| source.matches(origin));
         }
-        let mut mesh = SceneMesh::build_with_reference_models_and_surfaces_filtered(
+        let empty_terrain_normals = BTreeMap::new();
+        let parent_terrain_normals = if baked_surfaces {
+            &empty_terrain_normals
+        } else {
+            references.terrain_normals.as_ref()
+        };
+        let mut mesh = match SceneMesh::try_build_with_reference_terrain_filtered(
             document.vmf(),
             &self.game,
             &mut self.materials,
@@ -3100,8 +3126,14 @@ impl Session {
             &references.models,
             !baked_surfaces,
             view.entity_helpers,
+            parent_terrain_normals,
             |id| evaluation.objects.contains(&id),
-        );
+        ) {
+            Ok(mesh) => mesh,
+            Err(error) => {
+                return self.instance_contents_scene_failure(view, references.report, error);
+            }
+        };
         let mut rope_error = None;
         let preview = self.rope_preview_geometry_in(document);
         if let Some(appearance) = self.rope_preview_appearance()
@@ -3143,7 +3175,7 @@ impl Session {
             material_generation: self.materials.generation(),
         });
         mesh.lighting = lighting;
-        let mut report = references.report;
+        let report = references.report;
         if let Some(reference_mesh) = references.mesh
             && let Err(error) = if baked_surfaces {
                 mesh.append_reference_outlines(&reference_mesh, &references.owners, &selected)
@@ -3157,19 +3189,8 @@ impl Session {
                 )
             }
         {
-            report["displayed"] = serde_json::json!(false);
-            report["status"] = serde_json::json!("failed");
-            report["summary"] = serde_json::json!(format!(
-                "Instance contents unavailable: {error}; ordinary scene retained"
-            ));
-            report["error"] = serde_json::json!(error);
             drop(mesh);
-            let ordinary = self.build_scene_for_view(ViewOptions {
-                instance_contents: false,
-                ..view
-            });
-            self.retain_instance_contents_render_report(report);
-            return ordinary;
+            return self.instance_contents_scene_failure(view, report, error);
         }
         self.retain_instance_contents_render_report(report);
         if let Some(points) = self.pointfile_points() {

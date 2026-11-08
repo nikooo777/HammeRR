@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::mem::size_of;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use map_core::query::{Hit, Ray};
 use map_core::surface::FaceId;
 use map_core::{BrushGeometry, Document, ObjectId};
 use render::references::{self, Brush, Mesh};
-use render::scene::{LineVertex, Vertex};
+use render::scene::{LineVertex, TerrainNormalOverride, Vertex};
 use serde_json::{Value, json};
 use source_formats::vmf::{Vmf, parse_vec3};
 
@@ -105,6 +105,12 @@ pub struct RefreshResult {
     _worker: Ticket,
 }
 
+#[derive(Clone, Copy)]
+pub struct RenderGuard {
+    serial: u64,
+    enabled: bool,
+}
+
 struct Owner {
     id: u32,
     file: String,
@@ -154,6 +160,7 @@ impl FaceRecord {
 
 struct Ready {
     mesh: Arc<Mesh>,
+    terrain_normals: Arc<BTreeMap<FaceId, TerrainNormalOverride>>,
     key: Key,
     owners: Vec<Owner>,
     brushes: Vec<BrushRecord>,
@@ -170,6 +177,7 @@ struct Ready {
 
 pub struct Presentation {
     pub mesh: Option<Arc<Mesh>>,
+    pub terrain_normals: Arc<BTreeMap<FaceId, TerrainNormalOverride>>,
     pub owners: BTreeSet<u32>,
     pub report: Value,
     pub models: Vec<render::models::Instance>,
@@ -275,6 +283,7 @@ impl Request {
         let Some(vmf) = self.vmf.as_ref() else {
             return Ok(Ready {
                 mesh: Arc::new(Mesh::default()),
+                terrain_normals: Arc::default(),
                 key: self.key.clone(),
                 owners: Vec::new(),
                 brushes: Vec::new(),
@@ -334,7 +343,24 @@ impl Request {
             })
             .and_then(|bytes| bytes.checked_add(prop_bytes))
             .ok_or("Instance owner CPU size overflow")?;
-        let mut terrain = terrain::prepare(&prepared, vmf, &self.control, &mut report)?;
+        let terrain::Prepared {
+            mut surfaces,
+            parent_normals,
+        } = terrain::prepare(&prepared, vmf, &self.control, &mut report)?;
+        let terrain_normals = Arc::new(parent_normals);
+        let terrain_normals_bytes = terrain::normal_bytes(&terrain_normals)
+            .ok_or("Instance terrain normal CPU size overflow")?;
+        if surfaces
+            .values()
+            .map(terrain::Surface::bytes)
+            .sum::<usize>()
+            .checked_add(terrain_normals_bytes)
+            .and_then(|bytes| bytes.checked_add(owner_bytes))
+            .and_then(|bytes| bytes.checked_add(AUXILIARY_BYTES))
+            .is_none_or(|bytes| bytes > references::MAX_CPU_BYTES)
+        {
+            return Err("Instance terrain preparation exceeds the 64 MiB CPU budget".into());
+        }
         let mut mesh = Mesh::default();
         let mut records = Vec::<BrushRecord>::new();
         for brush in prepared.generated_brushes() {
@@ -354,7 +380,7 @@ impl Request {
                 self.control.checkpoint()?;
                 let side = &brush.solid.sides[face.side];
                 let additional = if side.displacement.is_some() {
-                    let surface = terrain
+                    let surface = surfaces
                         .get(&FaceId {
                             solid: brush.solid.id,
                             side: side.id,
@@ -412,7 +438,14 @@ impl Request {
                 )
                 .and_then(|bytes| bytes.checked_add(AUXILIARY_BYTES)?.checked_add(owner_bytes))
                 .and_then(|bytes| {
-                    bytes.checked_add(terrain.values().map(terrain::Surface::bytes).sum::<usize>())
+                    bytes
+                        .checked_add(
+                            surfaces
+                                .values()
+                                .map(terrain::Surface::bytes)
+                                .sum::<usize>(),
+                        )?
+                        .checked_add(terrain_normals_bytes)
                 })
                 .and_then(|bytes| {
                     bytes.checked_add(
@@ -456,7 +489,7 @@ impl Request {
                 let first = mesh.vertices.len() as u32;
                 let face_first = mesh.indices.len() as u32;
                 if let Some(info) = &side.displacement {
-                    let surface = terrain
+                    let surface = surfaces
                         .remove(&FaceId {
                             solid: brush.solid.id,
                             side: side.id,
@@ -615,7 +648,14 @@ impl Request {
             )
             .and_then(|bytes| bytes.checked_add(prop_bytes))
             .and_then(|bytes| {
-                bytes.checked_add(terrain.values().map(terrain::Surface::bytes).sum::<usize>())
+                bytes
+                    .checked_add(
+                        surfaces
+                            .values()
+                            .map(terrain::Surface::bytes)
+                            .sum::<usize>(),
+                    )?
+                    .checked_add(terrain_normals_bytes)
             })
             .is_none_or(|bytes| bytes > references::MAX_CPU_BYTES)
             {
@@ -624,7 +664,7 @@ impl Request {
                 );
             }
         }
-        if !terrain.is_empty() {
+        if !surfaces.is_empty() {
             return Err("Instance terrain has unconsumed prepared surfaces".into());
         }
         let dependencies = prepared.dependencies().cloned();
@@ -642,6 +682,7 @@ impl Request {
             owners.capacity(),
         )
         .and_then(|bytes| bytes.checked_add(prop_bytes))
+        .and_then(|bytes| bytes.checked_add(terrain_normals_bytes))
         .ok_or("Instance CPU size overflow")?;
         if cpu_bytes > references::MAX_CPU_BYTES {
             return Err("Instance contents exceed the 64 MiB retained CPU capacity budget".into());
@@ -651,6 +692,7 @@ impl Request {
         let diagnostics=report.diagnostics.iter().take(MAX_DIAGNOSTICS).map(|diagnostic|json!({"level":format!("{:?}",diagnostic.level).to_ascii_lowercase(),"object":diagnostic.object,"message":bounded(&diagnostic.message),"message_truncated":diagnostic.message.len()>instances::MAX_FIELD_BYTES})).collect();
         Ok(Ready {
             mesh: Arc::new(mesh),
+            terrain_normals,
             key: self.key.clone(),
             owners,
             brushes: records,
@@ -670,6 +712,24 @@ impl Request {
 impl Session {
     pub fn instance_contents_serial(&self) -> u64 {
         self.instance_contents.render_serial
+    }
+
+    pub fn instance_contents_render_guard(&self, enabled: bool) -> RenderGuard {
+        RenderGuard {
+            serial: self.instance_contents.render_serial,
+            enabled,
+        }
+    }
+
+    pub fn verify_instance_contents_render(&mut self, guard: &RenderGuard) -> Result<(), String> {
+        self.ensure_not_closing()?;
+        if guard.enabled {
+            self.preflight_instance_contents();
+            if self.instance_contents.render_serial != guard.serial {
+                return Err("Instance contents changed during the frame; render again".into());
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn invalidate_instance_contents_render(&mut self) {
@@ -1191,7 +1251,7 @@ impl Session {
             "brushes_truncated":ready.is_some_and(|ready|ready.brushes.len()>MAX_ROWS),
             "face_provenance":faces,"face_provenance_total":face_count,"face_provenance_truncated":face_count>MAX_ROWS,
             "diagnostics":ready.map(|ready|&ready.diagnostics),"diagnostics_truncated":ready.is_some_and(|ready|ready.diagnostics_truncated),
-            "geometry":ready.map(|ready|json!({"vertices":ready.mesh.vertices.len(),"indices":ready.mesh.indices.len(),"line_vertices":ready.mesh.edges.len(),"triangles":ready.mesh.indices.len()/3,"cpu_bytes":ready.cpu_bytes,"gpu_bytes":ready.gpu_bytes})),
+            "geometry":ready.map(|ready|json!({"vertices":ready.mesh.vertices.len(),"indices":ready.mesh.indices.len(),"line_vertices":ready.mesh.edges.len(),"triangles":ready.mesh.indices.len()/3,"cpu_bytes":ready.cpu_bytes,"gpu_bytes":ready.gpu_bytes,"parent_normal_faces":ready.terrain_normals.len(),"parent_normal_vertices":ready.terrain_normals.values().map(|value|value.normals.len()).sum::<usize>()})),
             "policy":if ready.is_some_and(|ready|!ready.props.is_empty()) {"read_only_brush_terrain_static_prop_root_owner_picking"} else if has_terrain {"read_only_world_detail_terrain_root_owner_picking_no_material_loading"} else {"flat_read_only_world_detail_root_owner_picking_no_material_loading"},
             "authoring_bounds":"ordinary_root_objects_unchanged","limits":limits(),
             "light_value_bindings":super::instance_reference::light_value_binding_scope()
@@ -1313,6 +1373,9 @@ impl Session {
             .unwrap_or_default();
         Presentation {
             mesh: ready.map(|ready| ready.mesh.clone()),
+            terrain_normals: ready
+                .map(|ready| ready.terrain_normals.clone())
+                .unwrap_or_default(),
             model_sources: self
                 .cached_instance_models()
                 .as_ref()

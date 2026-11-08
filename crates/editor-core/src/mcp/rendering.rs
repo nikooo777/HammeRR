@@ -255,7 +255,13 @@ impl EditorServer {
             .renderer
             .as_mut()
             .expect("renderer was initialized");
-        let (metadata, color_correction, baked_surfaces_guard, reference_images_guard) = {
+        let (
+            metadata,
+            color_correction,
+            baked_surfaces_guard,
+            reference_images_guard,
+            instance_contents_guard,
+        ) = {
             let mut session = self.session();
             let color_correction = session.color_correction_for_render()?;
             renderer.set_color_correction(color_correction.clone());
@@ -292,13 +298,18 @@ impl EditorServer {
                 *instance_contents = session.instance_contents_rendered_report();
                 *scene = Some((session.render_scene_key(view), uploaded));
             }
+            let instance_contents_guard =
+                session.instance_contents_render_guard(view.instance_contents);
             (
                 FrameMetadata::capture(&mut session, view, *camera, display, lighting),
                 color_correction,
                 session.baked_surfaces_render_guard(view)?,
                 session.reference_images_render_guard(camera.projection)?,
+                instance_contents_guard,
             )
         };
+        self.session()
+            .verify_instance_contents_render(&instance_contents_guard)?;
         let gpu_scene = &scene.as_ref().expect("scene was just built").1;
         let pixels = renderer.render_to_rgba_checked_resolved(
             ctx, gpu_scene, camera, &view, size.0, size.1, display,
@@ -313,6 +324,8 @@ impl EditorServer {
             .verify_reference_images_render(&reference_images_guard)?;
         self.session()
             .verify_baked_surfaces_render(baked_surfaces_guard.as_ref(), view)?;
+        self.session()
+            .verify_instance_contents_render(&instance_contents_guard)?;
         let mut png = Vec::new();
         let mut encoder = png::Encoder::new(Cursor::new(&mut png), size.0, size.1);
         encoder.set_color(png::ColorType::Rgba);

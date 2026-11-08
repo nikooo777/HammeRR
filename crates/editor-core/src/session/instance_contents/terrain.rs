@@ -6,6 +6,7 @@ use compiler::instances::PreparedInstances;
 use map_core::displacement::{lod, native, neighbors, smoothing};
 use map_core::surface::FaceId;
 use map_core::{BrushGeometry, DisplacementMesh};
+use render::scene::TerrainNormalOverride;
 use source_formats::{bsp::DisplacementCorner, vmf::Vmf};
 
 use super::{AUXILIARY_BYTES, DVec3, bounded, instances, references};
@@ -27,6 +28,37 @@ impl Surface {
             + self.edges.capacity() * size_of::<[usize; 2]>()
             + size_of::<Self>()
     }
+}
+
+#[derive(Default)]
+pub(super) struct Prepared {
+    pub(super) surfaces: BTreeMap<FaceId, Surface>,
+    pub(super) parent_normals: BTreeMap<FaceId, TerrainNormalOverride>,
+}
+
+pub(super) fn normal_bytes(overrides: &BTreeMap<FaceId, TerrainNormalOverride>) -> Option<usize> {
+    overrides.values().try_fold(0usize, |bytes, value| {
+        bytes
+            .checked_add(size_of::<TerrainNormalOverride>())?
+            .checked_add(
+                value
+                    .positions
+                    .capacity()
+                    .checked_mul(size_of::<[f32; 3]>())?,
+            )?
+            .checked_add(
+                value
+                    .triangles
+                    .capacity()
+                    .checked_mul(size_of::<[usize; 3]>())?,
+            )?
+            .checked_add(
+                value
+                    .normals
+                    .capacity()
+                    .checked_mul(size_of::<[f64; 3]>())?,
+            )
+    })
 }
 
 struct Grid {
@@ -111,6 +143,7 @@ fn grid_views(grids: &[Grid]) -> Vec<neighbors::SurfaceGrid<'_>> {
 struct Context {
     faces: usize,
     scratch_bytes: usize,
+    witness_bytes: usize,
 }
 
 struct PreparedContext {
@@ -123,6 +156,7 @@ fn preflight(vmf: &Vmf, budget: &mut Budget<'_>) -> Result<Context, String> {
     let mut vertices = 0usize;
     let mut faces = 0usize;
     let mut scratch_bytes = 0usize;
+    let mut witness_bytes = 0usize;
     for solid in solids(vmf) {
         budget.consume(1)?;
         if solid.sides.len() > instances::MAX_BRUSH_SIDES {
@@ -140,6 +174,11 @@ fn preflight(vmf: &Vmf, budget: &mut Budget<'_>) -> Result<Context, String> {
             vertices = vertices
                 .checked_add(((1usize << info.power) + 1).pow(2))
                 .ok_or("Instance terrain context vertex overflow")?;
+            let cells = 1usize << info.power;
+            witness_bytes = witness_bytes
+                .checked_add(((cells + 1).pow(2)) * size_of::<[f32; 3]>())
+                .and_then(|bytes| bytes.checked_add(2 * cells.pow(2) * size_of::<[usize; 3]>()))
+                .ok_or("Instance terrain normal witness size overflow")?;
             faces += 1;
             if vertices > references::MAX_VERTICES || faces > source_formats::bsp::MAX_DISPLACEMENTS
             {
@@ -171,6 +210,7 @@ fn preflight(vmf: &Vmf, budget: &mut Budget<'_>) -> Result<Context, String> {
     Ok(Context {
         faces,
         scratch_bytes,
+        witness_bytes,
     })
 }
 
@@ -244,7 +284,7 @@ pub(super) fn prepare(
     original: &Vmf,
     control: &compiler::Control,
     report: &mut compiler::Report,
-) -> Result<BTreeMap<FaceId, Surface>, String> {
+) -> Result<Prepared, String> {
     let generated = prepared
         .generated_brushes()
         .flat_map(|brush| {
@@ -260,7 +300,7 @@ pub(super) fn prepare(
         })
         .collect::<BTreeSet<_>>();
     if generated.is_empty() {
-        return Ok(BTreeMap::new());
+        return Ok(Prepared::default());
     }
     let vmf = prepared.vmf();
     let mut budget = Budget { control, work: 0 };
@@ -269,6 +309,7 @@ pub(super) fn prepare(
     if expanded
         .scratch_bytes
         .checked_add(ordinary.scratch_bytes)
+        .and_then(|bytes| bytes.checked_add(ordinary.witness_bytes))
         .and_then(|bytes| bytes.checked_add(AUXILIARY_BYTES))
         .is_none_or(|bytes| bytes > references::MAX_CPU_BYTES)
     {
@@ -280,6 +321,7 @@ pub(super) fn prepare(
         corners,
     } = prepare_context(vmf, &expanded, &mut budget)?;
     let normals = prepare_normals(&grids, &links, &corners, &mut budget)?;
+    let mut changed_parents = BTreeSet::new();
     if ordinary.faces > 0 {
         let baseline = prepare_context(original, &ordinary, &mut budget)?;
         let baseline_normals = prepare_normals(
@@ -306,15 +348,15 @@ pub(super) fn prepare(
             if !grid.same_surface(baseline) {
                 return Err("Instance contents would require replacing ordinary parent terrain LOD; compilation remains available".into());
             }
-            if normals.len() != baseline_normals.len()
-                || normals.iter().zip(baseline_normals).any(|(a, b)| {
-                    DVec3::from_array(*a).as_vec3() != DVec3::from_array(*b).as_vec3()
-                })
+            if normals.len() != baseline_normals.len() {
+                return Err("Instance terrain parent normals have an incomplete baseline".into());
+            }
+            if normals
+                .iter()
+                .zip(baseline_normals)
+                .any(|(a, b)| DVec3::from_array(*a).as_vec3() != DVec3::from_array(*b).as_vec3())
             {
-                return Err(format!(
-                    "solid:{} side:{}: instance contents would require replacing ordinary parent terrain border normals; compilation remains available",
-                    grid.face.solid, grid.face.side
-                ));
+                changed_parents.insert(grid.face);
             }
         }
     }
@@ -322,9 +364,26 @@ pub(super) fn prepare(
         report.diagnostics.push(compiler::Diagnostic::warning(format!("Terrain shared edges left unlinked: {} ambiguous, {} mismatched surfaces. Native full/half edges require matching common samples; other partial spans are not connected", links.ambiguous, links.mismatched), None, None));
     }
     let mut surfaces = BTreeMap::new();
+    let mut parent_normals = BTreeMap::new();
     for (grid, normals) in grids.into_iter().zip(normals) {
         budget.consume(grid.mesh.positions.len())?;
         if !generated.contains(&grid.face) {
+            if changed_parents.contains(&grid.face) {
+                budget.consume(2 * (grid.mesh.size - 1).pow(2))?;
+                parent_normals.insert(
+                    grid.face,
+                    TerrainNormalOverride {
+                        positions: grid
+                            .mesh
+                            .positions
+                            .iter()
+                            .map(|point| point.as_vec3().to_array())
+                            .collect(),
+                        triangles: grid.mesh.triangles().collect(),
+                        normals,
+                    },
+                );
+            }
             continue;
         }
         let triangles = grid
@@ -350,5 +409,16 @@ pub(super) fn prepare(
     if surfaces.len() != generated.len() {
         return Err("Instance terrain has no complete prepared surface".into());
     }
-    Ok(surfaces)
+    let bytes = surfaces.values().map(Surface::bytes).sum::<usize>();
+    if normal_bytes(&parent_normals)
+        .and_then(|normals| bytes.checked_add(normals))
+        .and_then(|bytes| bytes.checked_add(AUXILIARY_BYTES))
+        .is_none_or(|bytes| bytes > references::MAX_CPU_BYTES)
+    {
+        return Err("Instance terrain exceeds the retained CPU capacity budget".into());
+    }
+    Ok(Prepared {
+        surfaces,
+        parent_normals,
+    })
 }

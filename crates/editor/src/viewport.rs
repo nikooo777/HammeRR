@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use editor_core::session::instance_contents::RenderGuard as InstanceContentsRenderGuard;
 use editor_core::session::view_layout::{MAX_CANVAS_PIXELS, MAX_PANES};
 use editor_core::shortcuts::Command;
 use glam::Vec3;
@@ -119,6 +120,7 @@ fn pane_options(mut options: ViewOptions, active: bool, pixel_ratio: f32) -> Vie
 pub struct Viewport {
     renderer: Renderer,
     scene: Option<GpuScene>,
+    instance_contents_guard: Option<InstanceContentsRenderGuard>,
     pub camera: Camera,
     pub options: ViewOptions,
     panes: [PaneState; MAX_PANES],
@@ -136,6 +138,7 @@ impl Viewport {
         Self {
             renderer: Renderer::new(ctx),
             scene: None,
+            instance_contents_guard: None,
             camera,
             options: ViewOptions::default(),
             panes: std::array::from_fn(|_| PaneState::default()),
@@ -154,6 +157,7 @@ impl Viewport {
         ctx: &GpuContext,
         mesh: &SceneMesh,
         library: &MaterialLibrary,
+        instance_contents_guard: InstanceContentsRenderGuard,
     ) -> Result<(), String> {
         for pane in &mut self.panes {
             pane.baked_surfaces_error = None;
@@ -167,12 +171,14 @@ impl Viewport {
         let scene = match uploaded {
             Ok(scene) => scene,
             Err(error) => {
+                self.instance_contents_guard = None;
                 self.scene_error = Some(error.clone());
                 self.redraw();
                 return Err(error);
             }
         };
         self.scene = Some(scene);
+        self.instance_contents_guard = Some(instance_contents_guard);
         self.scene_error = None;
         self.redraw();
         Ok(())
@@ -496,6 +502,17 @@ impl Viewport {
         }
     }
 
+    fn verify_instance_contents_render(
+        &self,
+        session: &mut editor_core::session::Session,
+    ) -> Result<(), String> {
+        let guard = self
+            .instance_contents_guard
+            .as_ref()
+            .ok_or("Viewport source is unavailable; refresh the scene")?;
+        session.verify_instance_contents_render(guard)
+    }
+
     pub fn render_panes(
         &mut self,
         ctx: &GpuContext,
@@ -545,6 +562,14 @@ impl Viewport {
                 .is_none()
                 .then(|| "Viewport scene is unavailable".into())
         }) {
+            frames.extend(
+                panes
+                    .iter()
+                    .map(|pane| self.unavailable(pane.index, error.clone(), false)),
+            );
+            return frames;
+        }
+        if let Err(error) = self.verify_instance_contents_render(session) {
             frames.extend(
                 panes
                     .iter()
@@ -642,6 +667,14 @@ impl Viewport {
             {
                 self.panes[*index].error = Some(error);
             }
+        }
+        if let Err(error) = self.verify_instance_contents_render(session) {
+            frames.extend(
+                panes
+                    .iter()
+                    .map(|pane| self.unavailable(pane.index, error.clone(), false)),
+            );
+            return frames;
         }
         for request in panes.iter().filter(|request| drawing[request.index]) {
             let pane = &mut self.panes[request.index];

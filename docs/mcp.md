@@ -1178,6 +1178,12 @@ for Automatic, `0` for Hard borders, or 0–180 degrees for an angle limit.
 Use `commit_face_preview` or `cancel_face_preview` with the returned token.
 Full-edge, half-edge and corner-only native joins use the same area-weighted
 normals in compilation and display. Both sides must permit the join.
+Unequal effective edge densities interpolate one shared field; intermediate
+samples also contribute area weight and must pass the angle limit. Conflicting
+supports, cycles or cancelling packed fields refuse. Detail/fixed shading and
+Direct lighting use the interpolated field; Fast vertex lighting is approximate.
+The miniature sky preview retains the same field. The checked CS:S Linux client
+uses fixed runtime normal/tangent smoothing, ignoring the BSP angle value.
 
 ### Subdivide connected terrain
 

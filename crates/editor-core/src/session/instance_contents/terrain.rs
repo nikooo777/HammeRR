@@ -157,6 +157,7 @@ fn preflight(vmf: &Vmf, budget: &mut Budget<'_>) -> Result<Context, String> {
     let mut faces = 0usize;
     let mut scratch_bytes = 0usize;
     let mut witness_bytes = 0usize;
+    let mut normal_scratch_bytes = 0usize;
     for solid in solids(vmf) {
         budget.consume(1)?;
         if solid.sides.len() > instances::MAX_BRUSH_SIDES {
@@ -175,6 +176,9 @@ fn preflight(vmf: &Vmf, budget: &mut Budget<'_>) -> Result<Context, String> {
                 .checked_add(((1usize << info.power) + 1).pow(2))
                 .ok_or("Instance terrain context vertex overflow")?;
             let cells = 1usize << info.power;
+            normal_scratch_bytes = normal_scratch_bytes
+                .checked_add(neighbors::vertex_normal_scratch_bytes(info.power)?)
+                .ok_or("Instance terrain normal scratch size overflow")?;
             witness_bytes = witness_bytes
                 .checked_add(((cells + 1).pow(2)) * size_of::<[f32; 3]>())
                 .and_then(|bytes| bytes.checked_add(2 * cells.pow(2) * size_of::<[usize; 3]>()))
@@ -197,6 +201,7 @@ fn preflight(vmf: &Vmf, budget: &mut Budget<'_>) -> Result<Context, String> {
                         faces * (size_of::<Grid>() + size_of::<[DisplacementCorner; 4]>()),
                     )
                 })
+                .and_then(|bytes| bytes.checked_add(normal_scratch_bytes))
                 .ok_or("Instance terrain context CPU size overflow")?;
             if scratch
                 .checked_add(AUXILIARY_BYTES)

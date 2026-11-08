@@ -209,7 +209,12 @@ Native geometry, materials, LOD, contacts and metadata must pass the shared chec
 
 Full edges, half edges and corner-only joins use the same area-weighted shading
 in the viewport and compiler. Both surfaces must permit smoothing; the smaller
-angle limit applies. Heights and collision geometry stay fixed.
+angle limit applies. Mixed grids also check samples between common border
+vertices. Their shared field continues across coarse and fine triangles.
+**Detail · per-fragment** lighting uses that field. **Fast · vertex** lighting
+remains an approximation. Heights and collision geometry stay fixed.
+
+![Shared shading across coarse flat terrain and a finer ramp](images/terrain-mixed-border.png)
 
 Automatic:
 
@@ -220,6 +225,12 @@ Hard borders:
 ![Hard shading at the same terrain corner](images/terrain-corner-hard.png)
 
 Border shading is separate from height smoothing and brush smoothing.
+Conflicting or cancelling border support stops preparation.
+
+> [!NOTE]
+> These controls affect HammeRR previews and baked lighting. The checked CS:S
+> Linux client uses fixed runtime normal and tangent smoothing; the BSP angle field does not
+> control that process.
 
 ## Compile split borders
 

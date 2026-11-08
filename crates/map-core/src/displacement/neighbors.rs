@@ -275,6 +275,12 @@ fn root<F: FnMut(usize) -> Result<(), String>>(
     Ok(index)
 }
 
+/// Additional continuity scratch for one patch in an approved native neighbor catalog.
+pub fn vertex_normal_scratch_bytes(power: u32) -> Result<usize, String> {
+    normals::continuity::scratch_bytes(power)
+}
+
+/// Unequal-density edges can return non-unit affine fields; normalize after interpolation.
 pub fn vertex_normals(
     grids: &[SurfaceGrid<'_>],
     pairs: &[NeighborPair],
@@ -398,6 +404,8 @@ fn normal_fields(
             &mut budget,
         )?;
     }
+    let continuity =
+        normals::continuity::Constraints::prepare(grids, pairs, &mut groups, &mut budget)?;
     let mut totals = vec![DVec3::ZERO; count];
     for (patch, sums) in local.into_iter().enumerate() {
         for (vertex, sum) in sums.into_iter().enumerate() {
@@ -409,13 +417,19 @@ fn normal_fields(
             }
         }
     }
+    let constrained = continuity.apply(&mut totals, &mut budget)?;
     let mut result = Vec::with_capacity(grids.len());
     for (patch, grid) in grids.iter().enumerate() {
         let mut normals = Vec::with_capacity(grid.positions.len());
         for vertex in 0..grid.positions.len() {
             budget.consume(1)?;
             let owner = root(&mut parents, offsets[patch] + vertex, &mut budget)?;
-            normals.push(totals[owner].normalize_or_zero().to_array());
+            let normal = if constrained {
+                totals[owner]
+            } else {
+                totals[owner].normalize_or_zero()
+            };
+            normals.push(normal.to_array());
         }
         result.push(normals);
     }

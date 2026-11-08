@@ -368,8 +368,9 @@ fn valid_vertex_normal(normal: DVec3) -> bool {
     if !normal.is_finite() || !length.is_finite() || length <= 0.0 {
         return false;
     }
-    let normalized = normal.normalize().as_vec3();
-    normalized.is_finite() && normalized.length_squared() > 0.0
+    let packed = normal.as_vec3();
+    let packed_length = packed.length_squared();
+    packed.is_finite() && packed_length.is_finite() && packed_length > 0.0
 }
 
 fn plain_alpha_material(bytes: &[u8]) -> Result<Material, String> {
@@ -699,9 +700,10 @@ impl Scene {
                     .texture_points
                     .as_ref()
                     .map_or(point, |points| &points[index]);
-                let normal = surface.normals.as_ref().map_or(flat_normal, |normals| {
-                    normals[index].normalize().as_vec3().to_array()
-                });
+                let normal = surface
+                    .normals
+                    .as_ref()
+                    .map_or(flat_normal, |normals| normals[index].as_vec3().to_array());
                 let project = |axis: [f64; 4], size: u32| {
                     ((texture_point.dot(DVec3::new(axis[0], axis[1], axis[2])) + axis[3])
                         / f64::from(size)) as f32

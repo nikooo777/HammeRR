@@ -8,6 +8,8 @@ use super::{
     root,
 };
 
+pub(super) mod continuity;
+
 pub(crate) struct CornerLink {
     pub(crate) first: usize,
     pub(crate) first_corner: usize,
@@ -128,6 +130,21 @@ pub(super) struct Groups<'a> {
     pub(super) parents: &'a mut [usize],
 }
 
+fn accepts(first: DVec3, second: DVec3, angles: [Option<f64>; 2]) -> bool {
+    let limit = angles[0].unwrap_or(180.0).min(angles[1].unwrap_or(180.0));
+    if limit == 0.0 {
+        return false;
+    }
+    if limit < 180.0 {
+        let a = first.normalize_or_zero();
+        let b = second.normalize_or_zero();
+        if a == DVec3::ZERO || b == DVec3::ZERO || a.dot(b) + 1e-12 < limit.to_radians().cos() {
+            return false;
+        }
+    }
+    true
+}
+
 impl Groups<'_> {
     pub(super) fn join<F: FnMut(usize) -> Result<(), String>>(
         &mut self,
@@ -135,18 +152,12 @@ impl Groups<'_> {
         second: [usize; 2],
         budget: &mut Budget<'_, F>,
     ) -> Result<(), String> {
-        let limit = self.angles[first[0]]
-            .unwrap_or(180.0)
-            .min(self.angles[second[0]].unwrap_or(180.0));
-        if limit == 0.0 {
+        if !accepts(
+            self.local[first[0]][first[1]],
+            self.local[second[0]][second[1]],
+            [self.angles[first[0]], self.angles[second[0]]],
+        ) {
             return Ok(());
-        }
-        if limit < 180.0 {
-            let a = self.local[first[0]][first[1]].normalize_or_zero();
-            let b = self.local[second[0]][second[1]].normalize_or_zero();
-            if a == DVec3::ZERO || b == DVec3::ZERO || a.dot(b) + 1e-12 < limit.to_radians().cos() {
-                return Ok(());
-            }
         }
         let first = root(self.parents, self.offsets[first[0]] + first[1], budget)?;
         let second = root(self.parents, self.offsets[second[0]] + second[1], budget)?;

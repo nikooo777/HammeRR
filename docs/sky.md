@@ -61,7 +61,8 @@ Use **2D sky preview** to fill space behind the miniature.
 5. Enable **Enable 3D sky preview**.
 
 Whole patches use authored fine triangles, BASE texture coordinates and smooth
-vertex normals. Terrain does not seal the region.
+vertex normals. Mixed grids share the main viewport's interpolated border shading.
+Terrain does not seal the region.
 
 ![A displaced hill behind foreground props and brushes](images/miniature-terrain.png)
 

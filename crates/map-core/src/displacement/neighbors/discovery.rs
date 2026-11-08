@@ -112,6 +112,10 @@ fn near(a: Vec3, b: Vec3, tolerance: f32) -> bool {
         .all(|(a, b)| (a - b).abs() <= tolerance)
 }
 
+pub(crate) fn native_corner_contact(a: DVec3, b: DVec3) -> Result<bool, String> {
+    Ok(near(stored(a)?, stored(b)?, CORNER_ENDPOINT_TOLERANCE))
+}
+
 /// Points must be nonempty finite native coordinates.
 pub(crate) fn native_bounds(points: &[Vec3]) -> [Vec3; 2] {
     let min = points
@@ -364,7 +368,7 @@ pub(super) fn shared_corners<F: FnMut(usize) -> Result<(), String>>(
                 continue;
             }
             budget.consume(1)?;
-            if near(point, points[second], CORNER_ENDPOINT_TOLERANCE) {
+            if native_corner_contact(point.as_dvec3(), points[second].as_dvec3())? {
                 if shared.len() >= grids.len() * 16 && !shared.contains_key(&(a, b)) {
                     return Err(
                         "Native terrain corner candidates exceed their bounded limit".into(),

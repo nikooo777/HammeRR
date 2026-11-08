@@ -1171,6 +1171,14 @@ committed-source guard. Explicit targets preserve visible highlights.
 Inspect the preview, then use the existing `commit_face_preview` or
 `cancel_face_preview` with its token. Limits match the [terrain controls](terrain.md#set-exact-vertex-heights).
 
+### Terrain border shading
+
+Call `preview_terrain_smoothing` with `faces:[{solid,side}]` and `angle`: `null`
+for Automatic, `0` for Hard borders, or 0–180 degrees for an angle limit.
+Use `commit_face_preview` or `cancel_face_preview` with the returned token.
+Full-edge, half-edge and corner-only native joins use the same area-weighted
+normals in compilation and display. Both sides must permit the join.
+
 ### Subdivide connected terrain
 
 `preview_terrain_subdivision` uses the selected terrain faces or explicit
@@ -1322,6 +1330,8 @@ The fit follows actual displaced coordinates. Refit after moving the plane; rebi
 4. Use `set_instance_contents` with `action: "frame"` and the current token to frame content bounds.
 
 Refresh does not read models. Display, picking and framing use the shared model cache.
+Terrain joins that require ordinary-parent LOD or normal replacement return
+`available:false` with a diagnostic. Assembled compilation remains available.
 Repeated and nested props retain their selected skins and outer-reference selection.
 `model_unavailable` reports model read, pose or budget failures and hides the reference layer.
 Use `reload_model_assets` or `reload_material_assets` after changing those files.

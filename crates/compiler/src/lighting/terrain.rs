@@ -65,7 +65,12 @@ pub(super) fn fields(
         .iter()
         .map(|terrain| terrain.smoothing_angle)
         .collect::<Vec<_>>();
-    let normals = neighbors::vertex_normals_with_smoothing(&grids, &pairs, &angles, consume)?;
+    let corners = terrains
+        .iter()
+        .map(|terrain| terrain.info.corners)
+        .collect::<Vec<_>>();
+    let normals =
+        neighbors::vertex_normals_with_corners(&grids, &pairs, &corners, &angles, consume)?;
     Ok(Fields { positions, normals })
 }
 

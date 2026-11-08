@@ -137,9 +137,15 @@ pub(super) fn prepare(vmf: &Vmf) -> Prepared {
     let faces = world.iter().map(|(face, _, _)| *face).collect::<Vec<_>>();
     let normals = surfaces
         .neighborhood
-        .pairs_for(&faces, &mut |_| Ok(()))
-        .and_then(|pairs| {
-            neighbors::vertex_normals_with_smoothing(&grids, &pairs, &angles, &mut |_| Ok(()))
+        .links_for(&faces, &mut |_| Ok(()))
+        .and_then(|links| {
+            neighbors::vertex_normals_with_corners(
+                &grids,
+                &links.pairs,
+                &links.corners,
+                &angles,
+                &mut |_| Ok(()),
+            )
         });
     match normals {
         Ok(normals) => {

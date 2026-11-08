@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use source_formats::vmf::Vmf;
+use source_formats::{bsp::DisplacementCorner, vmf::Vmf};
 
 use super::{
     DisplacementMesh, lod, native,
@@ -12,43 +12,51 @@ use crate::{BrushGeometry, surface::FaceId};
 pub struct NeighborGraph {
     faces: Vec<FaceId>,
     pairs: Vec<NeighborPair>,
+    corners: Vec<[DisplacementCorner; 4]>,
+}
+
+pub struct NeighborLinks {
+    pub pairs: Vec<NeighborPair>,
+    pub corners: Vec<[DisplacementCorner; 4]>,
 }
 
 impl NeighborGraph {
-    pub fn new(faces: Vec<FaceId>, pairs: Vec<NeighborPair>) -> Result<Self, String> {
+    pub fn new(
+        faces: Vec<FaceId>,
+        pairs: Vec<NeighborPair>,
+        corners: Vec<[DisplacementCorner; 4]>,
+    ) -> Result<Self, String> {
         let count = faces.len();
         if count > source_formats::bsp::MAX_DISPLACEMENTS
-            || pairs.len() > count * 4
+            || corners.len() != count
             || faces
                 .iter()
                 .collect::<std::collections::BTreeSet<_>>()
                 .len()
                 != count
-            || pairs.iter().any(|pair| {
-                pair.first >= count
-                    || pair.second >= count
-                    || pair.first == pair.second
-                    || pair.first_edge >= 4
-                    || pair.second_edge >= 4
-            })
         {
             return Err(
                 "Terrain neighbor graph requires unique bounded source faces and valid pairs"
                     .into(),
             );
         }
-        Ok(Self { faces, pairs })
+        super::neighbors::corner_links(&pairs, &corners, &mut |_| Ok(()))?;
+        Ok(Self {
+            faces,
+            pairs,
+            corners,
+        })
     }
 
-    pub fn pairs_for(
+    pub fn links_for(
         &self,
         faces: &[FaceId],
         consume: &mut impl FnMut(usize) -> Result<(), String>,
-    ) -> Result<Vec<NeighborPair>, String> {
+    ) -> Result<NeighborLinks, String> {
         if faces.len() > self.faces.len() {
             return Err("Terrain normals lost their original neighbor graph faces".into());
         }
-        consume(self.faces.len() + self.pairs.len() + faces.len())?;
+        consume(self.faces.len() * 5 + self.pairs.len() + faces.len())?;
         let indices = faces
             .iter()
             .enumerate()
@@ -64,7 +72,7 @@ impl NeighborGraph {
         {
             return Err("Terrain normals lost their original neighbor graph faces".into());
         }
-        Ok(self
+        let pairs = self
             .pairs
             .iter()
             .filter_map(|pair| {
@@ -74,7 +82,26 @@ impl NeighborGraph {
                     ..*pair
                 })
             })
-            .collect())
+            .collect::<Vec<_>>();
+        let mut corners = vec![[DisplacementCorner::default(); 4]; faces.len()];
+        for (source, records) in self.corners.iter().enumerate() {
+            let Some(index) = remap[source] else {
+                continue;
+            };
+            for (corner, record) in records.iter().enumerate() {
+                let target = &mut corners[index][corner];
+                target.padding = record.padding;
+                for &other in &record.neighbors[..usize::from(record.count)] {
+                    consume(1)?;
+                    if let Some(other) = remap[usize::from(other)] {
+                        target.neighbors[usize::from(target.count)] = other as u16;
+                        target.count += 1;
+                    }
+                }
+            }
+        }
+        super::neighbors::corner_links(&pairs, &corners, consume)?;
+        Ok(NeighborLinks { pairs, corners })
     }
 }
 
@@ -158,12 +185,13 @@ pub fn prepare(vmf: &Vmf) -> Prepared {
             }
         })
         .collect::<Vec<_>>();
-    let patches =
-        super::neighbors::native_neighborhood(&grids, &mut |_| Ok(())).and_then(|(links, _)| {
+    let patches = super::neighbors::native_neighborhood(&grids, &mut |_| Ok(())).and_then(
+        |(links, native)| {
             let (patches, _) = lod::prepare(&grids, &links.pairs, &mut |_| Ok(()))?;
-            let neighborhood = NeighborGraph::new(world.clone(), links.pairs)?;
+            let neighborhood = NeighborGraph::new(world.clone(), links.pairs, native.corners)?;
             Ok((patches, neighborhood))
-        });
+        },
+    );
     match patches {
         Ok((patches, neighborhood)) => {
             prepared.neighborhood = neighborhood;

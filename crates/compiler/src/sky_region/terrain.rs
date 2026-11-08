@@ -102,17 +102,20 @@ pub(super) fn append(
             side: patch.source.side,
         })
         .collect::<Vec<_>>();
-    let pairs = patches[0]
+    let links = patches[0]
         .neighborhood
-        .pairs_for(&faces, &mut |amount| admission.consume(amount))?;
+        .links_for(&faces, &mut |amount| admission.consume(amount))?;
     let angles = patches
         .iter()
         .map(|patch| patch.smoothing_angle)
         .collect::<Vec<_>>();
-    let normals =
-        neighbors::vertex_normals_with_smoothing(&grids, &pairs, &angles, &mut |amount| {
-            admission.consume(amount)
-        })?;
+    let normals = neighbors::vertex_normals_with_corners(
+        &grids,
+        &links.pairs,
+        &links.corners,
+        &angles,
+        &mut |amount| admission.consume(amount),
+    )?;
     drop(grids);
     for (patch, normals) in patches.into_iter().zip(normals) {
         let source = patch.source;

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use glam::DVec3;
-use source_formats::bsp::{DisplacementInfo, MAX_DISPLACEMENTS};
+use source_formats::bsp::{DisplacementCorner, DisplacementInfo, MAX_DISPLACEMENTS};
 
 pub const EDGE_TOLERANCE: f64 = 0.02;
 const MAX_TOPOLOGY_WORK: usize = 2_000_000;
@@ -11,10 +11,12 @@ type SharedCorners = BTreeMap<(usize, usize), (usize, usize, usize)>;
 
 mod discovery;
 mod native;
+mod normals;
 mod spans;
 
-pub(crate) use discovery::{native_bounds, native_bounds_touch};
+pub(crate) use discovery::{native_bounds, native_bounds_touch, native_corner_contact};
 pub use native::{NativeConnections, native_connections, native_neighborhood};
+pub(crate) use normals::corner_links;
 pub use spans::find_spans;
 
 pub struct SurfaceGrid<'a> {
@@ -287,6 +289,26 @@ pub fn vertex_normals_with_smoothing(
     angles: &[Option<f64>],
     consume: &mut impl FnMut(usize) -> Result<(), String>,
 ) -> Result<Vec<Vec<[f64; 3]>>, String> {
+    normal_fields(grids, pairs, None, angles, consume)
+}
+
+pub fn vertex_normals_with_corners(
+    grids: &[SurfaceGrid<'_>],
+    pairs: &[NeighborPair],
+    corners: &[[DisplacementCorner; 4]],
+    angles: &[Option<f64>],
+    consume: &mut impl FnMut(usize) -> Result<(), String>,
+) -> Result<Vec<Vec<[f64; 3]>>, String> {
+    normal_fields(grids, pairs, Some(corners), angles, consume)
+}
+
+fn normal_fields(
+    grids: &[SurfaceGrid<'_>],
+    pairs: &[NeighborPair],
+    corners: Option<&[[DisplacementCorner; 4]]>,
+    angles: &[Option<f64>],
+    consume: &mut impl FnMut(usize) -> Result<(), String>,
+) -> Result<Vec<Vec<[f64; 3]>>, String> {
     let mut budget = Budget {
         work: 0,
         limit: MAX_NORMAL_WORK,
@@ -302,6 +324,16 @@ pub fn vertex_normals_with_smoothing(
     if pairs.len() > grids.len() * 4 {
         return Err("Terrain normal pair count exceeds the bounded edge limit".into());
     }
+    let corner_links = if let Some(corners) = corners {
+        if corners.len() != grids.len() {
+            return Err("Terrain normal corner records do not match the surface count".into());
+        }
+        let links = corner_links(pairs, corners, &mut |amount| budget.consume(amount))?;
+        normals::validate_contacts(grids, &links, &mut budget)?;
+        links
+    } else {
+        Vec::new()
+    };
     let mut offsets = vec![0];
     for grid in grids {
         offsets.push(offsets.last().unwrap() + grid.positions.len());
@@ -324,6 +356,12 @@ pub fn vertex_normals_with_smoothing(
         local.push(sums.into_iter().map(DVec3::from_array).collect::<Vec<_>>());
     }
     let mut parents = (0..count).collect::<Vec<_>>();
+    let mut groups = normals::Groups {
+        offsets: &offsets,
+        local: &local,
+        angles,
+        parents: &mut parents,
+    };
     for pair in pairs {
         budget.consume(1)?;
         let a = grids
@@ -343,26 +381,22 @@ pub fn vertex_normals_with_smoothing(
             if a.positions[i].distance(b.positions[j]) > EDGE_TOLERANCE {
                 return Err("Terrain normal neighbor surfaces do not match".into());
             }
-            let limit = angles[pair.first]
-                .unwrap_or(180.0)
-                .min(angles[pair.second].unwrap_or(180.0));
-            if limit == 0.0 {
-                continue;
-            }
-            if limit < 180.0 {
-                let first = local[pair.first][i].normalize_or_zero();
-                let second = local[pair.second][j].normalize_or_zero();
-                if first == DVec3::ZERO
-                    || second == DVec3::ZERO
-                    || first.dot(second) + 1e-12 < limit.to_radians().cos()
-                {
-                    continue;
-                }
-            }
-            let first = root(&mut parents, offsets[pair.first] + i, &mut budget)?;
-            let second = root(&mut parents, offsets[pair.second] + j, &mut budget)?;
-            parents[first.max(second)] = first.min(second);
+            groups.join([pair.first, i], [pair.second, j], &mut budget)?;
         }
+    }
+    for link in corner_links {
+        budget.consume(1)?;
+        groups.join(
+            [
+                link.first,
+                normals::corner_vertex(&grids[link.first], link.first_corner),
+            ],
+            [
+                link.second,
+                normals::corner_vertex(&grids[link.second], link.second_corner),
+            ],
+            &mut budget,
+        )?;
     }
     let mut totals = vec![DVec3::ZERO; count];
     for (patch, sums) in local.into_iter().enumerate() {

@@ -6,7 +6,7 @@ use compiler::instances::PreparedInstances;
 use map_core::displacement::{lod, native, neighbors, smoothing};
 use map_core::surface::FaceId;
 use map_core::{BrushGeometry, DisplacementMesh};
-use source_formats::vmf::Vmf;
+use source_formats::{bsp::DisplacementCorner, vmf::Vmf};
 
 use super::{AUXILIARY_BYTES, DVec3, bounded, instances, references};
 
@@ -113,6 +113,12 @@ struct Context {
     scratch_bytes: usize,
 }
 
+struct PreparedContext {
+    grids: Vec<Grid>,
+    links: neighbors::Neighbors,
+    corners: Vec<[DisplacementCorner; 4]>,
+}
+
 fn preflight(vmf: &Vmf, budget: &mut Budget<'_>) -> Result<Context, String> {
     let mut vertices = 0usize;
     let mut faces = 0usize;
@@ -147,7 +153,11 @@ fn preflight(vmf: &Vmf, budget: &mut Budget<'_>) -> Result<Context, String> {
                         + 2 * size_of::<[usize; 3]>()
                         + 3 * size_of::<[usize; 2]>(),
                 )
-                .and_then(|bytes| bytes.checked_add(faces * size_of::<Grid>()))
+                .and_then(|bytes| {
+                    bytes.checked_add(
+                        faces * (size_of::<Grid>() + size_of::<[DisplacementCorner; 4]>()),
+                    )
+                })
                 .ok_or("Instance terrain context CPU size overflow")?;
             if scratch
                 .checked_add(AUXILIARY_BYTES)
@@ -168,7 +178,7 @@ fn prepare_context(
     vmf: &Vmf,
     context: &Context,
     budget: &mut Budget<'_>,
-) -> Result<(Vec<Grid>, neighbors::Neighbors), String> {
+) -> Result<PreparedContext, String> {
     let mut grids = Vec::with_capacity(context.faces);
     for solid in solids(vmf) {
         budget.consume(solid.sides.len())?;
@@ -199,7 +209,8 @@ fn prepare_context(
         }
     }
     let views = grid_views(&grids);
-    let (links, _) = neighbors::native_neighborhood(&views, &mut |amount| budget.consume(amount))?;
+    let (links, neighbors::NativeConnections { corners, .. }) =
+        neighbors::native_neighborhood(&views, &mut |amount| budget.consume(amount))?;
     let (patches, _) = lod::prepare(&views, &links.pairs, &mut |amount| budget.consume(amount))?;
     drop(views);
     for (grid, patch) in grids.iter_mut().zip(patches) {
@@ -208,7 +219,24 @@ fn prepare_context(
             grid.triangles = Some(patch.indices);
         }
     }
-    Ok((grids, links))
+    Ok(PreparedContext {
+        grids,
+        links,
+        corners,
+    })
+}
+
+fn prepare_normals(
+    grids: &[Grid],
+    links: &neighbors::Neighbors,
+    corners: &[[DisplacementCorner; 4]],
+    budget: &mut Budget<'_>,
+) -> Result<Vec<Vec<[f64; 3]>>, String> {
+    let angles = grids.iter().map(|grid| grid.angle).collect::<Vec<_>>();
+    let views = grid_views(grids);
+    neighbors::vertex_normals_with_corners(&views, &links.pairs, corners, &angles, &mut |amount| {
+        budget.consume(amount)
+    })
 }
 
 pub(super) fn prepare(
@@ -246,33 +274,53 @@ pub(super) fn prepare(
     {
         return Err("Instance terrain comparison exceeds the 64 MiB CPU budget".into());
     }
-    let (grids, links) = prepare_context(vmf, &expanded, &mut budget)?;
+    let PreparedContext {
+        grids,
+        links,
+        corners,
+    } = prepare_context(vmf, &expanded, &mut budget)?;
+    let normals = prepare_normals(&grids, &links, &corners, &mut budget)?;
     if ordinary.faces > 0 {
-        let (baseline, _) = prepare_context(original, &ordinary, &mut budget)?;
+        let baseline = prepare_context(original, &ordinary, &mut budget)?;
+        let baseline_normals = prepare_normals(
+            &baseline.grids,
+            &baseline.links,
+            &baseline.corners,
+            &mut budget,
+        )?;
         let baseline = baseline
+            .grids
             .into_iter()
-            .map(|grid| (grid.face, grid))
+            .zip(baseline_normals)
+            .map(|(grid, normals)| (grid.face, (grid, normals)))
             .collect::<BTreeMap<_, _>>();
-        for grid in grids.iter().filter(|grid| !generated.contains(&grid.face)) {
-            budget.consume(grid.mesh.positions.len())?;
-            let baseline = baseline
+        for (grid, normals) in grids
+            .iter()
+            .zip(&normals)
+            .filter(|(grid, _)| !generated.contains(&grid.face))
+        {
+            budget.consume(2 * grid.mesh.positions.len())?;
+            let (baseline, baseline_normals) = baseline
                 .get(&grid.face)
                 .ok_or("Instance terrain ordinary parent surface is missing")?;
             if !grid.same_surface(baseline) {
                 return Err("Instance contents would require replacing ordinary parent terrain LOD; compilation remains available".into());
+            }
+            if normals.len() != baseline_normals.len()
+                || normals.iter().zip(baseline_normals).any(|(a, b)| {
+                    DVec3::from_array(*a).as_vec3() != DVec3::from_array(*b).as_vec3()
+                })
+            {
+                return Err(format!(
+                    "solid:{} side:{}: instance contents would require replacing ordinary parent terrain border normals; compilation remains available",
+                    grid.face.solid, grid.face.side
+                ));
             }
         }
     }
     if links.ambiguous + links.mismatched != 0 {
         report.diagnostics.push(compiler::Diagnostic::warning(format!("Terrain shared edges left unlinked: {} ambiguous, {} mismatched surfaces. Native full/half edges require matching common samples; other partial spans are not connected", links.ambiguous, links.mismatched), None, None));
     }
-    let angles = grids.iter().map(|grid| grid.angle).collect::<Vec<_>>();
-    let views = grid_views(&grids);
-    let normals =
-        neighbors::vertex_normals_with_smoothing(&views, &links.pairs, &angles, &mut |amount| {
-            budget.consume(amount)
-        })?;
-    drop(views);
     let mut surfaces = BTreeMap::new();
     for (grid, normals) in grids.into_iter().zip(normals) {
         budget.consume(grid.mesh.positions.len())?;

@@ -207,7 +207,19 @@ Native geometry, materials, LOD, contacts and metadata must pass the shared chec
 3. For Angle limit, set **Maximum angle · degrees** from 0 to 180.
 4. Click **Preview**, then **Apply** or **Cancel**.
 
-This changes border normals, not heights. It is separate from height smoothing and brush smoothing.
+Full edges, half edges and corner-only joins use the same area-weighted shading
+in the viewport and compiler. Both surfaces must permit smoothing; the smaller
+angle limit applies. Heights and collision geometry stay fixed.
+
+Automatic:
+
+![Automatic shading at a corner-only terrain join](images/terrain-corner-smooth.png)
+
+Hard borders:
+
+![Hard shading at the same terrain corner](images/terrain-corner-hard.png)
+
+Border shading is separate from height smoothing and brush smoothing.
 
 ## Compile split borders
 

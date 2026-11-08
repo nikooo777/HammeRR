@@ -214,9 +214,10 @@ impl Bounds {
                 positions: &patch.positions,
             })
             .collect::<Vec<_>>();
-        let (found, _) = neighbors::native_neighborhood(&grids, &mut |amount| {
-            consume(&mut self.work, amount, control)
-        })?;
+        let (found, neighbors::NativeConnections { corners, .. }) =
+            neighbors::native_neighborhood(&grids, &mut |amount| {
+                consume(&mut self.work, amount, control)
+            })?;
         let (lod, _) = lod::prepare(&grids, &found.pairs, &mut |amount| {
             consume(&mut self.work, amount, control)
         })?;
@@ -239,6 +240,7 @@ impl Bounds {
                 })
                 .collect(),
             found.pairs,
+            corners,
         )
     }
 }

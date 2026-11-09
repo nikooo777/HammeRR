@@ -122,7 +122,8 @@ both lighting channels share that field. Triangle-barycentric receiver sampling
 stays unchanged. Editor authored shading remains independent.
 
 > [!NOTE]
-> Native mode requires an x86-64 Intel or AMD CPU and ordinary unbumped terrain.
+> The native preset models CS:S Linux64 build25338318. It requires an x86-64
+> Intel or AMD CPU and ordinary unbumped terrain.
 > Fullbright combinations, bumped terrain and unsupported kernel inputs fail
 > explicitly; no authored
 > fallback is selected. This option does not establish VRAD sampling, bump-basis

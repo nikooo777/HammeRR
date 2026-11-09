@@ -2466,8 +2466,9 @@ Omitting the setting or passing `null` retains the applied value. Unknown values
 or incompatible combined settings reject the entire update.
 
 Authored smoothing keeps Automatic, Hard borders and Angle limit behavior.
-Native client normals use only native load N inputs from the emitted BSP with
-the bound current CPU, nearest-even position/basis arithmetic and FTZ/DAZ.
+Native client normals model CS:S Linux64 build25338318 and use only its load N
+inputs from the emitted BSP, with the bound current CPU, nearest-even
+position/basis arithmetic and FTZ/DAZ.
 Both lighting channels and direct/reflected reception share those inputs.
 Receiver sampling remains HammeRR's triangle-barycentric sampling; S/T,
 VRAD, bump-basis and pixel parity are outside this option's scope.

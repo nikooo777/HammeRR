@@ -1,0 +1,155 @@
+import { Button, ComboBox, ScrollView, SpinBox } from "widgets.slint";
+import { Theme, MutedText, FieldRow, SectionHeader, SelectableRow } from "kit.slint";
+
+export struct PlayerSupportRow {
+    title: string,
+    detail: string,
+}
+
+export component PlayerSupportWindow inherits Window {
+    background: Theme.panel;
+    title: "Player support - HammeRR";
+    default-font-size: Theme.font;
+    preferred-width: 740px;
+    preferred-height: 820px;
+    min-width: 560px;
+    min-height: 560px;
+    in-out property <int> duration-ms: 5000;
+    in-out property <int> interval-ms: 50;
+    in-out property <int> sample-limit: 128;
+    in-out property <int> team-index: 0;
+    in property <int> minimum-duration: 100;
+    in property <int> maximum-duration: 30000;
+    in property <int> minimum-interval: 15;
+    in property <int> maximum-interval: 1000;
+    in property <int> minimum-samples: 3;
+    in property <int> maximum-samples: 1024;
+    in property <[PlayerSupportRow]> samples;
+    in property <int> selected-row: -1;
+    in property <string> status;
+    in property <string> summary;
+    in property <string> availability;
+    in property <string> message;
+    in property <string> page-label;
+    in property <string> sample-identity;
+    in property <string> motion;
+    in property <string> hull;
+    in property <string> support;
+    in property <string> observation;
+    in property <bool> busy;
+    in property <bool> can-start;
+    in property <bool> can-cancel;
+    in property <bool> can-clear;
+    in property <bool> can-frame;
+    in property <bool> previous-page;
+    in property <bool> next-page;
+    callback start-observation();
+    callback cancel-observation();
+    callback clear-observation();
+    callback choose-sample(int);
+    callback page-samples(int);
+    callback frame-sample();
+    callback start-finished(string);
+    callback close-dialog();
+    forward-focus: keys;
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape { root.close-dialog(); accept } else { reject }
+        }
+        VerticalLayout {
+            padding: Theme.space-xl;
+            spacing: Theme.space-lg;
+            Text { text: "Player support"; color: Theme.text; font-size: Theme.font-display; font-weight: 600; }
+            MutedText { text: "Observe a fresh idle player's standing, natural fall or slope motion in the compiled map."; }
+            ScrollView {
+                content-width: self.width;
+                horizontal-scrollbar-policy: always-off;
+                vertical-stretch: 1;
+                VerticalLayout {
+                    alignment: start;
+                    padding-right: Theme.space-lg;
+                    spacing: Theme.space-lg;
+                    VerticalLayout {
+                        spacing: Theme.space;
+                        FieldRow {
+                            label: "Team"; label-width: 112px; inset: false;
+                            ComboBox { model: ["Counter-terrorists", "Terrorists"]; current-index <=> root.team-index; enabled: !root.busy; accessible-label: "Observed player team"; }
+                        }
+                        FieldRow {
+                            label: "Duration"; label-width: 112px; inset: false;
+                            SpinBox { minimum: root.minimum-duration; maximum: root.maximum-duration; value <=> root.duration-ms; enabled: !root.busy; accessible-label: "Observation duration in milliseconds"; }
+                            Text { text: "ms"; color: Theme.text-muted; vertical-alignment: center; width: 48px; }
+                        }
+                        FieldRow {
+                            label: "Sample interval"; label-width: 112px; inset: false;
+                            SpinBox { minimum: root.minimum-interval; maximum: root.maximum-interval; value <=> root.interval-ms; enabled: !root.busy; accessible-label: "Sample interval in native milliseconds"; }
+                            Text { text: "ms"; color: Theme.text-muted; vertical-alignment: center; width: 48px; }
+                        }
+                        FieldRow {
+                            label: "Sample limit"; label-width: 112px; inset: false;
+                            SpinBox { minimum: root.minimum-samples; maximum: root.maximum-samples; value <=> root.sample-limit; enabled: !root.busy; accessible-label: "Maximum retained samples"; }
+                            Text { text: "samples"; color: Theme.text-muted; vertical-alignment: center; width: 48px; }
+                        }
+                    }
+                    MutedText { text: "Duration and interval use native simulation time. Samples follow completed server steps. No movement input is sent."; font-size: Theme.font-small; }
+                    if root.status != "": Text { text: root.status; color: Theme.text; wrap: word-wrap; }
+                    if root.summary != "": MutedText { text: root.summary; }
+                    if root.availability != "": Text { text: root.availability; color: Theme.warning; wrap: word-wrap; }
+                    if root.message != "": Text { text: root.message; color: Theme.danger; wrap: word-wrap; }
+                    SectionHeader { text: "Samples"; detail: root.page-label; inset: false; collapsible: false; }
+                    ScrollView {
+                        content-width: self.width;
+                        horizontal-scrollbar-policy: always-off;
+                        height: root.samples.length == 0 ? 36px : 220px;
+                        VerticalLayout {
+                            alignment: start;
+                            padding-right: Theme.space-lg;
+                            spacing: Theme.space-xs;
+                            for row[index] in root.samples: SelectableRow {
+                                label: row.title;
+                                selected: root.selected-row == index;
+                                min-height: 54px;
+                                clicked => { root.choose-sample(index); }
+                                VerticalLayout {
+                                    padding: Theme.space;
+                                    spacing: Theme.space-xs;
+                                    Text { text: row.title; color: Theme.text; overflow: elide; }
+                                    Text { text: row.detail; color: Theme.text-muted; overflow: elide; }
+                                }
+                            }
+                            if root.samples.length == 0: MutedText { text: root.busy ? "Waiting for retained samples and confirmed cleanup." : "No retained player samples."; }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Previous"; enabled: root.previous-page; clicked => { root.page-samples(-1); } }
+                        Button { text: "Next"; enabled: root.next-page; clicked => { root.page-samples(1); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    SectionHeader { text: "Selected sample"; inset: false; collapsible: false; }
+                    MutedText { text: root.sample-identity; }
+                    if root.motion != "": Text { text: root.motion; color: Theme.text; wrap: word-wrap; }
+                    if root.hull != "": Text { text: root.hull; color: Theme.text; wrap: word-wrap; }
+                    if root.support != "": Text { text: root.support; color: Theme.text; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: Theme.space;
+                        Button { text: "Frame sample"; enabled: root.can-frame; clicked => { root.frame-sample(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    observation-header := SectionHeader { text: "Observation"; inset: false; expanded: false; }
+                    if observation-header.expanded: MutedText { text: root.observation; }
+                    MutedText { text: "Airborne surface values are cached from earlier support. Samples do not identify a contact plane or triangle, or qualify walking across seams."; font-size: Theme.font-small; }
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space;
+                Button { text: "Close"; clicked => { root.close-dialog(); } }
+                Button { text: "Cancel"; enabled: root.can-cancel; clicked => { root.cancel-observation(); } }
+                Button { text: "Clear"; enabled: root.can-clear; clicked => { root.clear-observation(); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "Start"; primary: true; enabled: root.can-start && !root.busy; clicked => { root.start-observation(); } }
+            }
+        }
+    }
+}

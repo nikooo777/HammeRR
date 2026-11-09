@@ -13,14 +13,14 @@ use source_formats::bsp::native_terrain::{
     NativeTerrainDisplacement, NativeTerrainSample, NativeTerrainSnapshot,
 };
 
-use super::{Actor, Session, Snapshot, baked_build, inspection_framing, worker};
+use super::native_observation::{Frame, MAX_METADATA_BYTES};
+use super::{Actor, Session, baked_build, inspection_framing, native_observation, worker};
 use crate::runtime::{SharedSession, lock, native_activity};
 
 pub const MAX_PAGE_ROWS: usize = 64;
 pub const MAX_PAGE_BYTES: usize = 256 * 1024;
 pub const MAX_SOURCE_BYTES: usize = 128 * 1024;
 pub const MAX_RETAINED_BYTES: usize = 64 * 1024 * 1024;
-const MAX_METADATA_BYTES: usize = 32 * 1024 * 1024;
 const MAX_OBSERVATION_BYTES: usize = 64 * 1024;
 const MARKER_HALF_EXTENT: f32 = 4.0;
 const VECTOR_LENGTH: f32 = 16.0;
@@ -50,36 +50,6 @@ struct Pending {
     control: Control,
 }
 
-#[derive(Clone)]
-struct Frame {
-    snapshot: Snapshot,
-    path: Option<PathBuf>,
-    content: u64,
-    build: u64,
-    options: compiler::Options,
-}
-
-impl Frame {
-    fn verify(&self, session: &Session) -> Result<(), String> {
-        if session.closing
-            || !session.current_snapshot(&self.snapshot)
-            || session.path != self.path
-            || session.content_epoch != self.content
-            || session.compile_options() != self.options
-            || session
-                .compiled
-                .as_ref()
-                .is_none_or(|build| build.lightmap_identity.token != self.build)
-        {
-            return Err(
-                "The document, build, settings or content changed since this native observation"
-                    .into(),
-            );
-        }
-        Ok(())
-    }
-}
-
 struct Ready {
     frame: Frame,
     build: Arc<baked_build::RetainedBuild>,
@@ -99,10 +69,13 @@ impl Ready {
     }
 
     fn current(&self, session: &Session) -> Result<(), String> {
-        self.frame.verify(session)?;
-        self.target.verify()?;
-        self.build
-            .verify_metadata(&Control::default(), MAX_METADATA_BYTES)
+        native_observation::verify(
+            &self.frame,
+            &self.build,
+            &self.target,
+            session,
+            &Control::default(),
+        )
     }
 
     fn displacement(&self, ordinal: u16) -> Result<&NativeTerrainDisplacement, String> {
@@ -167,11 +140,13 @@ impl Request {
     }
 
     fn checkpoint(&self, session: &SharedSession) -> Result<(), String> {
-        self.control.checkpoint()?;
-        self.frame.verify(&lock(session))?;
-        self.target.verify()?;
-        self.build
-            .verify_metadata(&self.control, MAX_METADATA_BYTES)
+        native_observation::verify(
+            &self.frame,
+            &self.build,
+            &self.target,
+            &lock(session),
+            &self.control,
+        )
     }
 
     pub fn run(mut self, session: &SharedSession) -> Completed {
@@ -510,45 +485,12 @@ impl Session {
         if self.compiling() || self.compiled_terrain_snapshot.worker.busy() {
             return Err("Wait for the active build or terrain observation to finish".into());
         }
-        if self.document.is_dirty() || !std::ptr::eq(self.render_document(), self.document()) {
-            return Err("Save and compile the map, then finish its geometry draft before native observation".into());
-        }
-        let build_state = baked_build::build_state(self);
-        if build_state["current"] != true {
-            return Err(format!(
-                "Native terrain observation needs a current saved build: {}",
-                build_state["diagnostics"]
-            ));
-        }
-        let compiled = self
-            .compiled
-            .as_ref()
-            .ok_or("Compile the saved map first")?;
-        let source = compiled
-            .lightmap_identity
-            .source
-            .as_ref()
-            .map_err(Clone::clone)?;
-        if source
-            .as_ref()
-            .and_then(compiler::FileIdentity::sha256)
-            .is_none()
-        {
-            return Err("Save and compile the map with a captured source hash first".into());
-        }
-        let build = baked_build::RetainedBuild::capture(compiled)?;
-        if build.output.sha256().is_none() {
-            return Err("The compiled output has no captured content hash".into());
-        }
-        let frame = Frame {
-            snapshot: compiled.snapshot.clone(),
-            path: self.path.clone(),
-            content: self.content_epoch,
-            build: compiled.lightmap_identity.token,
-            options: self.compile_options(),
-        };
-        let environment = self.capture_environment()?;
-        let target = native_activity::Target::capture(&environment)?;
+        let native_observation::Capture {
+            frame,
+            build,
+            target,
+            environment,
+        } = native_observation::capture(self)?;
         #[allow(deprecated, reason = "Atomic::try_update requires Rust 1.95")]
         let token = NEXT_TOKEN
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |token| {
@@ -615,16 +557,13 @@ impl Session {
             drop(request);
             return Ok(self.compiled_terrain_snapshot());
         }
-        let context = request
-            .control
-            .checkpoint()
-            .and_then(|()| request.frame.verify(self))
-            .and_then(|()| request.target.verify())
-            .and_then(|()| {
-                request
-                    .build
-                    .verify_metadata(&request.control, MAX_METADATA_BYTES)
-            });
+        let context = native_observation::verify(
+            &request.frame,
+            &request.build,
+            &request.target,
+            self,
+            &request.control,
+        );
         let result = match (result, context) {
             (Ok(ready), Ok(())) => Ok(ready),
             (Err(error), Err(context)) => Err(format!("{error}; {context}")),

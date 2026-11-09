@@ -61,8 +61,8 @@ jobs:
         run: cargo fmt --all --check
       - name: Lint production targets
         run: cargo clippy --release --locked --workspace --lib --bins --features editor-core/mcp -- -D warnings
-      - name: Build executables
-        run: cargo build --release --locked --workspace --bins --features editor-core/mcp
+      - name: Build release files
+        run: cargo build --release --locked --workspace --lib --bins --features editor-core/mcp
       - name: Stage package
         run: python .github/release.py stage
       - name: Sign Windows executables

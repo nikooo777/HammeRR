@@ -19,6 +19,7 @@ pub use document::{
 };
 mod fog_preview;
 mod linked_path_observation;
+mod player_support_observation;
 mod preview_clock;
 mod recovery;
 mod rope_preview;

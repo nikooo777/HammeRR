@@ -805,6 +805,7 @@ impl EditorServer {
             + Self::instance_collapse_tools()
             + Self::linked_path_tools()
             + Self::linked_path_observation_tools()
+            + Self::player_support_observation_tools()
             + Self::materials_tools()
             + Self::measurement_tools()
             + Self::overlay_tools()

@@ -29,7 +29,7 @@ const RESUME_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Clone, Debug, Serialize)]
-pub(super) struct ProcessReceipt {
+pub(crate) struct ProcessReceipt {
     pub pid: u32,
     pub start: String,
     pub group: u32,
@@ -42,7 +42,7 @@ pub(super) struct ProcessReceipt {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct Mapping {
+pub(crate) struct Mapping {
     pub start: u64,
     pub end: u64,
     pub offset: u64,
@@ -83,7 +83,7 @@ struct Lease {
     armed: bool,
 }
 
-pub(super) struct StoppedProcess<'a> {
+pub(crate) struct StoppedProcess<'a> {
     lease: &'a Lease,
     memory: File,
     mappings: Vec<Mapping>,
@@ -628,7 +628,7 @@ fn mapping_path(value: &str) -> io::Result<Option<PathBuf>> {
     Ok(Some(PathBuf::from(OsString::from_vec(bytes))))
 }
 
-fn mappings(text: &str) -> io::Result<Vec<Mapping>> {
+pub(crate) fn mappings(text: &str) -> io::Result<Vec<Mapping>> {
     let mut mappings = Vec::new();
     mappings
         .try_reserve_exact(MAX_MAPS)
@@ -905,7 +905,7 @@ impl<'a> StoppedProcess<'a> {
     }
 }
 
-pub(super) fn with_stopped<T>(
+pub(crate) fn with_stopped<T>(
     launch: &Launch,
     child: &Child,
     executable: &Path,

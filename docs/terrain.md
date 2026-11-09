@@ -375,6 +375,39 @@ The normal is cyan. Tangent S is red. Tangent T is green.
 > changing a consumed source or starting an edit preview can hide the guide.
 > Historical rows remain readable; framing requires a current snapshot.
 
+## Observe passive player support
+
+Read a fresh idle player's native position, velocity, actual movement hull and
+ground owner while it stands, falls naturally or slides down a slope.
+
+1. Save and compile the map with a player spawn above the surface or opening.
+2. Open **Build → Player support…**.
+3. Choose **Team**, then set **Duration**, **Sample interval** and **Sample limit**.
+   Click **Start**.
+   Keep Steam open until the observation finishes.
+4. Select a row under **Samples**. Use **Previous** and **Next** to page the rows.
+5. Read **Selected sample** for native time, velocities, movement hull, collision
+   bounds and supporting surface. Click **Frame sample** to locate a current row.
+6. Click **Cancel** to stop an active observation, or **Clear** to release retained
+   rows. **Close** keeps the observation.
+
+Duration and sample interval use native simulation time. Each row also reports
+its command tickbase. The private player joins the chosen team at startup. The
+engine chooses among matching spawns; the row reports its actual origin.
+The ground owner and on-ground flag are separate native values. CS:S can set
+the flag before the player lands. Rows without a ground owner retain only
+cached surface values, labelled
+**Cached surface (previous support)**.
+**Movement friction** is the player's cached movement factor, not the raw
+physics surface coefficient.
+
+> [!NOTE]
+> Requires the supported Linux64 CS:S build and Steam. Each observation runs one
+> fresh private game against the exact compiled BSP without movement input.
+> These samples do not identify contact planes or triangles, qualify walking
+> across seams, or attest finished rendered frames. Historical rows remain
+> readable; **Frame sample** requires a current compiled map.
+
 ## Remove terrain
 
 Select terrain faces, then click **Remove terrain**. Undo restores the complete grid.

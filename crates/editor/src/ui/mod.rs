@@ -52,6 +52,7 @@ mod native_terrain;
 mod object_picking;
 mod outliner;
 mod palette;
+mod player_support;
 mod pointer_lock;
 mod ropes;
 mod selection_filters;
@@ -156,6 +157,7 @@ struct Ui {
     ropes: Option<ropes::Controller>,
     compile_status: Option<compile_ui::Controller>,
     native_terrain: Option<Rc<native_terrain::Controller>>,
+    player_support: Option<Rc<player_support::Controller>>,
     saved_views: Option<saved_views_ui::Controller>,
     history: Option<history_ui::Controller>,
     measurements: Option<measurements_ui::Controller>,
@@ -311,6 +313,7 @@ impl Ui {
             ropes: None,
             compile_status: None,
             native_terrain: None,
+            player_support: None,
             saved_views: None,
             history: None,
             measurements: None,
@@ -1252,6 +1255,23 @@ fn create_document_window(
         }
         let aspect = app.get_viewport_width() / app.get_viewport_height().max(1.0);
         if let Err(error) = ui.native_terrain.as_ref().unwrap().show(aspect) {
+            app.set_message(error.to_string().into());
+        }
+    });
+    root_callback!(app, ui, on_player_support, |app| {
+        let app = app.unwrap();
+        let mut ui = ui.borrow_mut();
+        if ui.player_support.is_none() {
+            match player_support::Controller::new_with_access(&ui.document_access()) {
+                Ok(controller) => ui.player_support = Some(controller),
+                Err(error) => {
+                    app.set_message(error.to_string().into());
+                    return;
+                }
+            }
+        }
+        let aspect = app.get_viewport_width() / app.get_viewport_height().max(1.0);
+        if let Err(error) = ui.player_support.as_ref().unwrap().show(aspect) {
             app.set_message(error.to_string().into());
         }
     });
@@ -3902,6 +3922,11 @@ fn create_document_window(
                 if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
                     ui.last_log_refresh = now;
                     if let Some(controller) = &ui.native_terrain {
+                        controller.set_aspect(
+                            app.get_viewport_width() / app.get_viewport_height().max(1.0),
+                        );
+                    }
+                    if let Some(controller) = &ui.player_support {
                         controller.set_aspect(
                             app.get_viewport_width() / app.get_viewport_height().max(1.0),
                         );

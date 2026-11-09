@@ -146,6 +146,11 @@ mod isolation;
 mod movement;
 mod movement_types;
 #[cfg(target_os = "linux")]
+mod owned_client;
+#[cfg(target_os = "linux")]
+mod player_support;
+mod player_support_types;
+#[cfg(target_os = "linux")]
 mod process;
 #[cfg(target_os = "linux")]
 mod terrain_snapshot;
@@ -172,8 +177,19 @@ pub use movement_types::{
     MOVEMENT_STARTUP_SETTLE_MS, MovementControlReceipt, MovementMode, MovementPhase,
     MovementReceipt, MovementRequest, MovementSample, MovementTrainIdentity,
 };
+pub use player_support_types::{
+    DEFAULT_PLAYER_SUPPORT_DURATION_MS, DEFAULT_PLAYER_SUPPORT_INTERVAL_MS,
+    DEFAULT_PLAYER_SUPPORT_MAX_SAMPLES, DEFAULT_PLAYER_SUPPORT_TEAM,
+    MAX_PLAYER_SUPPORT_DURATION_MS, MAX_PLAYER_SUPPORT_INTERVAL_MS, MAX_PLAYER_SUPPORT_SAMPLES,
+    MIN_PLAYER_SUPPORT_DURATION_MS, MIN_PLAYER_SUPPORT_INTERVAL_MS, MIN_PLAYER_SUPPORT_SAMPLES,
+    PlayerSupportCapture, PlayerSupportEntity, PlayerSupportObservationReceipt,
+    PlayerSupportRequest, PlayerSupportSample, PlayerSupportSettings, PlayerSupportSurface,
+    validate_player_support_samples,
+};
 #[cfg(target_os = "linux")]
 pub use process::observe_movement_with_cleanup;
+#[cfg(target_os = "linux")]
+pub use process::observe_player_support_with_cleanup;
 #[cfg(target_os = "linux")]
 pub use process::observe_terrain_snapshot_with_cleanup;
 #[cfg(target_os = "linux")]
@@ -186,7 +202,8 @@ pub use process::{
 #[cfg(not(target_os = "linux"))]
 pub use unsupported::{
     capture, capture_with_cleanup, observe_movement_with_cleanup,
-    observe_terrain_snapshot_with_cleanup, resolve_environment, validate_environment, worker_entry,
+    observe_player_support_with_cleanup, observe_terrain_snapshot_with_cleanup,
+    resolve_environment, validate_environment, worker_entry,
 };
 
 #[cfg(target_os = "linux")]

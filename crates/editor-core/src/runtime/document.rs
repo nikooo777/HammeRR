@@ -601,6 +601,20 @@ impl DocumentAccess {
         super::compiled_terrain_snapshot::start(&self.session, actor, snapshot, operation)
     }
 
+    pub fn start_player_support_observation(
+        &self,
+        actor: Actor,
+        snapshot: String,
+        options: crate::session::player_support_observation::Options,
+    ) -> Result<Value, String> {
+        let operation = self
+            .document
+            .as_ref()
+            .map(|document| document.admit_named("Player support observation"))
+            .transpose()?;
+        super::player_support_observation::start(&self.session, actor, snapshot, options, operation)
+    }
+
     pub fn finish_reviewed_close(&self) -> Result<(), String> {
         let document = self
             .document

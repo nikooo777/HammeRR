@@ -50,6 +50,7 @@ export { LightingWindow, LightingGroup } from "lighting.slint";
 export { ContextWindow, ContextRow } from "context.slint";
 export { TerrainTrianglesWindow, TerrainTriangleRow } from "terrain-triangles.slint";
 export { NativeTerrainWindow, NativeTerrainRow } from "native-terrain-window.slint";
+export { PlayerSupportWindow, PlayerSupportRow } from "player-support-window.slint";
 export {ModelWindow} from "models.slint";
 export {ModelBrowserWindow, ModelChoiceRow, ModelBodygroupRow} from "model-browser.slint";
 export {SoundBrowserWindow, SoundChoiceRow} from "sounds.slint";
@@ -2209,6 +2210,7 @@ export component AppWindow inherits Window {
     in property <bool> compile-cancellable;
     callback build-status();
     callback native-terrain();
+    callback player-support();
     callback compile-region();
     callback working-region();
     callback clear-working-region();
@@ -2736,6 +2738,7 @@ export component AppWindow inherits Window {
         { id: "cancel-build", title: "Cancel build", group: "Build", enabled: root.compiling && root.compile-cancellable },
         { id: "build-settings", title: "Build settings…", group: "Build", enabled: true },
         { id: "native-terrain", title: "Native terrain…", group: "Build", enabled: true },
+        { id: "player-support", title: "Player support…", group: "Build", enabled: true },
         { id: "compile-region", title: root.compile-region-label, group: "Build", enabled: true },
         { id: "game-log", title: "Game log…", group: "Build", enabled: true },
     ];
@@ -2922,6 +2925,7 @@ export component AppWindow inherits Window {
         else if id == "cancel-build" { root.cancel-build(); }
         else if id == "build-settings" { root.build-status(); }
         else if id == "native-terrain" { root.native-terrain(); }
+        else if id == "player-support" { root.player-support(); }
         else if id == "compile-region" { root.compile-region(); }
         else if id == "game-log" { root.game-log(); }
     }
@@ -3113,6 +3117,7 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Build settings…"; activated => { root.build-status(); } }
             MenuItem { title: "Native terrain…"; activated => { root.native-terrain(); } }
+            MenuItem { title: "Player support…"; activated => { root.player-support(); } }
             MenuItem { title: root.compile-region-label; activated => { root.compile-region(); } }
             MenuItem { title: "Game log…"; activated => { root.game-log(); } }
         }

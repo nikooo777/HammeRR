@@ -1182,6 +1182,41 @@ This uses the same [native inspector](terrain.md#inspect-native-terrain-vectors)
 as the editor. It requires the supported Linux CS:S client and Steam. Historical
 data remains inspectable; stale snapshots cannot frame or display a guide.
 
+### Passive player support
+
+1. Save and compile a map containing a player spawn. Read
+   `get_player_support_observation` and copy `snapshot`.
+2. Call `start_player_support_observation` with that snapshot and optional
+   `team`, `duration_ms`, `interval_ms` and `max_samples`.
+3. Poll `get_player_support_observation` until observation and cleanup finish.
+4. Call `inspect_player_support_observation` with its `token`, `offset` and
+   `limit` to page retained native samples.
+5. Call `frame_player_support_sample` with `token`, the sample's `ordinal` as
+   `index`, and the viewport `aspect` to locate a current sample.
+
+`cancel_player_support_observation` and `clear_player_support_observation` use
+the observation token. The editor's [Player support](terrain.md#observe-passive-player-support)
+window uses the same operations.
+
+Defaults are team `3` (Counter-terrorists), 5,000 ms duration, 50 ms sample interval
+and 128 maximum samples. Team `2` selects Terrorists. The map needs a matching
+team spawn; the engine chooses among matching spawns and reports the actual origin.
+Duration accepts 100–30,000 ms, interval 15–1,000 ms and sample count 3–1,024.
+Duration must span at least two intervals. `ceil(duration_ms / interval_ms) + 1`
+must fit the sample limit. Both times use native simulation time. Inspection pages contain
+at most 64 rows and expose `next_offset`; no rows are silently truncated.
+
+Rows retain native time/ticks, origin, local/absolute/base velocity, actual
+movement hull, collision bounds, scale, duck state and serial-checked ground
+identity. The `flags` on-ground bit can be set before landing; it does not
+substitute for a resolved ground owner. Surface `friction` is the player's
+cached movement factor. Supporting surface names and material remain distinct
+from cached values without a current ground owner. The operation observes standing, natural falls and slope
+motion without movement input. It does not identify a contact plane or triangle,
+qualify walking across seams, or attest a finished rendered frame. Historical
+rows remain inspectable; framing requires a current compiled map. Requires the
+supported Linux CS:S client and Steam.
+
 ### Exact terrain positions
 
 Read `get_terrain_vertices` with `preview:false`, then copy its `source` guard

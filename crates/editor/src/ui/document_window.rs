@@ -248,6 +248,10 @@ impl Ui {
             controller.stop_timer();
             controller.hide_window(errors);
         }
+        if let Some(controller) = &self.player_support {
+            controller.stop_timer();
+            controller.hide_window(errors);
+        }
         if let Some(controller) = &self.rope_placement {
             controller.suspend();
         }

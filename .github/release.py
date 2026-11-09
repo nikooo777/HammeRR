@@ -28,6 +28,7 @@ PLATFORMS = {
             "hammerr-headless",
             "hammerr-physics",
             "hammerr-native-runtime",
+            "libnative_runtime.so",
         ),
     ),
     "windows-x86_64": Platform("zip", ".zip", ("editor.exe", "hammerr-compile.exe")),
@@ -79,14 +80,14 @@ def stage(tag):
     shutil.copyfile("crates/editor/ui/icons/LICENSE", STAGE / "LUCIDE-LICENSE.txt")
     manual = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/blob/{tag}/docs/getting-started.md"
     instructions = (
-        "Start ./editor. Keep all executables in this folder.\n"
+        "Start ./editor. Keep all files in this folder.\n"
         "Requires glibc 2.39 or newer, libstdc++, Fontconfig, Wayland/X11 libraries and a GPU driver.\n"
         if platform == "linux-x86_64"
         else "Start editor.exe. Install the Microsoft Visual C++ v14 x64 runtime if it is missing.\n"
         "The executables have timestamped, self-signed Authenticode signatures.\n"
         "HammeRR-signing.cer is the public certificate, not a private key.\n"
         "Self-signing does not remove Windows publisher-trust or SmartScreen warnings.\n"
-        "Engine physics, native reflection capture and headless stdio MCP require Linux.\n"
+        "Engine physics, native reflection capture, native observation and headless stdio MCP require Linux.\n"
     )
     (STAGE / "README.txt").write_text(
         f"HammeRR {tag} ({platform})\n\n{instructions}\n"

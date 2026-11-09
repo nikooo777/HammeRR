@@ -95,6 +95,7 @@ mod model_attachments;
 pub mod model_browser;
 pub mod models;
 mod native_capture;
+mod native_observation;
 pub mod navigation_preferences;
 pub mod object_picking;
 pub mod overlay;
@@ -102,6 +103,7 @@ pub mod paint;
 pub mod particles;
 pub mod pivot_preferences;
 pub mod placement;
+pub mod player_support_observation;
 pub mod pointfiles;
 pub mod prefabs;
 pub mod presentation;
@@ -423,6 +425,7 @@ pub struct Session {
     compiled_visibility: compiled_visibility::State,
     compiled_details: compiled_details::State,
     compiled_terrain_snapshot: compiled_terrain_snapshot::State,
+    player_support_observation: player_support_observation::State,
     baked_surfaces: baked_surfaces::State,
     compiled_prop_leaf_bounds: baked_prop_vertices::leaf_bounds::State,
     leak: Option<(Snapshot, compiler::Leak)>,
@@ -768,6 +771,7 @@ impl Session {
             compiled_visibility: compiled_visibility::State::default(),
             compiled_details: compiled_details::State::default(),
             compiled_terrain_snapshot: compiled_terrain_snapshot::State::default(),
+            player_support_observation: player_support_observation::State::default(),
             baked_surfaces: baked_surfaces::State::default(),
             compiled_prop_leaf_bounds: baked_prop_vertices::leaf_bounds::State::default(),
             leak: None,
@@ -1699,6 +1703,7 @@ impl Session {
         self.entity_graph = entity_graph::State::default();
         self.reset_compiled_details();
         self.retire_compiled_terrain_snapshot();
+        self.retire_player_support_observation();
         self.reset_baked_surfaces();
         self.reset_sky3d_preview();
         self.native_capture.invalidate();
@@ -2791,6 +2796,7 @@ impl Session {
         self.reset_instance_contents();
         self.reset_compiled_details();
         self.retire_compiled_terrain_snapshot();
+        self.retire_player_support_observation();
         self.reset_baked_surfaces();
         self.shutdown_sky3d_preview();
         self.shutdown_rope_preview();
@@ -2828,6 +2834,7 @@ impl Session {
             || self.baked_surfaces.worker.busy()
             || self.compiled_details.worker.busy()
             || self.compiled_terrain_snapshot.worker.busy()
+            || self.player_support_observation.worker.busy()
             || self.instance_contents.worker.busy()
             || self.instance_extraction.worker.busy()
             || self.external_comparison.worker.busy()

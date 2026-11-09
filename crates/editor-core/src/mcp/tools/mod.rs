@@ -42,6 +42,7 @@ mod particles;
 mod partitions;
 mod pivot_preferences;
 mod placement;
+mod player_support_observation;
 mod visibility_rules;
 
 mod preview_preferences;

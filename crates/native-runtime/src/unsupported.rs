@@ -77,3 +77,20 @@ pub fn observe_terrain_snapshot_with_cleanup(
         cleanup: CleanupDisposition::Confirmed,
     })
 }
+
+pub fn observe_player_support_with_cleanup(
+    _request: crate::PlayerSupportRequest,
+    observer: &mut dyn CaptureObserver,
+) -> Result<crate::PlayerSupportCapture, CaptureFailure> {
+    let error = match observer.checkpoint() {
+        Err(error) => error,
+        Ok(()) => io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Player support observation requires the verified Linux64 CS:S client and private Cage/Bubblewrap runtime",
+        ),
+    };
+    Err(CaptureFailure {
+        error,
+        cleanup: CleanupDisposition::Confirmed,
+    })
+}

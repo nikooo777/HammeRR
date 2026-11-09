@@ -1,31 +1,30 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::net::UdpSocket;
 use std::os::unix::fs::{FileExt, MetadataExt, OpenOptionsExt};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::SystemTime;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use source_formats::bsp::LightingKind;
 use source_formats::bsp::native_terrain::{
     NATIVE_TERRAIN_VERTEX_STRIDE, NativeTerrainCarrier, NativeTerrainReadback,
     NativeTerrainSnapshot,
 };
-use source_formats::bsp::{Bsp, LightingKind, PakArchive, PakLimits, lump};
 use source_formats::file_publication::FileIdentity;
 use source_formats::vpk::Vpk;
 
 use crate::process::WorkerRequest;
 use crate::util::{self, invalid};
-use crate::{CaptureChannel, CaptureEnvironment, CleanupDisposition, TerrainObservationReceipt};
+use crate::{
+    CaptureChannel, CaptureEnvironment, CaptureFailure, CleanupDisposition,
+    TerrainObservationReceipt,
+};
 
-mod process;
+pub(crate) mod process;
 mod readiness;
 
 pub(crate) const PROFILE: &str = "css_linux64_build25338318_observed_terrain_v1";
@@ -34,8 +33,6 @@ const OBSERVATION_FILE: &str = "terrain-observation.json";
 const READBACK_MAGIC: &[u8; 8] = b"HMTRN001";
 const MAX_READBACK_BYTES: usize = 64 * 1024 * 1024;
 const MAX_OBSERVATION_BYTES: usize = 64 * 1024;
-const MAX_DECODED_BSP_BYTES: usize = 96 * 1024 * 1024;
-const MAX_GAME_LUMPS: usize = 4096;
 const MAX_PROVIDER_ENTRIES: usize = 2_000_000;
 const MAX_PROVIDER_ARCHIVES: usize = 512;
 const MAX_PROVIDER_DIRECTORY_ENTRIES: usize = 32768;
@@ -61,8 +58,6 @@ const DISP_ORDINAL: usize = 0x302;
 const DISP_HANDLE: usize = 0x308;
 const POWER_VERTEX_COUNT: u64 = 0x48;
 const MAX_VERTICES: usize = 289;
-const LOAD_TIMEOUT: Duration = Duration::from_secs(120);
-const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const PREMAP: &str = "HAMMERR_TERRAIN_PREMAP";
 const POSTMAP: &str = "HAMMERR_TERRAIN_POSTMAP";
 const CONSOLE_FILE: &str = "hammerr-terrain.log";
@@ -101,7 +96,7 @@ impl TerrainSnapshotProfile {
     }
 }
 
-struct PinnedFile {
+pub(crate) struct PinnedFile {
     file: File,
     path: PathBuf,
     identity: FileIdentity,
@@ -111,7 +106,7 @@ struct PinnedFile {
 }
 
 impl PinnedFile {
-    fn open(path: &Path, expected: &str) -> io::Result<Self> {
+    pub(crate) fn open(path: &Path, expected: &str) -> io::Result<Self> {
         let path = path.canonicalize()?;
         let file = OpenOptions::new()
             .read(true)
@@ -135,7 +130,7 @@ impl PinnedFile {
         Ok(input)
     }
 
-    fn verify(&self) -> io::Result<()> {
+    pub(crate) fn verify(&self) -> io::Result<()> {
         let current = OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
@@ -157,7 +152,7 @@ impl PinnedFile {
         Ok(())
     }
 
-    fn receipt(&self) -> Value {
+    pub(crate) fn receipt(&self) -> Value {
         json!({"path":self.path,"device":self.identity.device,"inode":self.identity.inode,"length":self.length,"sha256":self.sha256})
     }
 }
@@ -221,13 +216,17 @@ struct NamespaceImage {
 }
 
 impl NamespaceImage {
-    fn open(process: &mut process::StoppedProcess<'_>, path: &Path) -> io::Result<Self> {
+    fn open(
+        process: &mut process::StoppedProcess<'_>,
+        path: &Path,
+        expected: &str,
+    ) -> io::Result<Self> {
         let file = process.open_namespace_file(path)?;
         let stamp = ImageStamp::capture(&file)?;
         let image = Self {
             file,
             stamp,
-            sha256: util::ENGINE_SHA.to_owned(),
+            sha256: expected.to_owned(),
         };
         image.verify(process, path)?;
         Ok(image)
@@ -267,9 +266,9 @@ impl NamespaceImage {
     }
 }
 
-struct EngineBinding {
+pub(crate) struct EngineBinding {
     namespace: NamespaceImage,
-    load_bias: u64,
+    pub(crate) load_bias: u64,
     vma_device_major: u32,
     vma_device_minor: u32,
     vma_inode: u64,
@@ -280,7 +279,7 @@ struct EngineBinding {
 }
 
 impl EngineBinding {
-    fn receipt(&self, host: &PinnedFile) -> Value {
+    pub(crate) fn receipt(&self, host: &PinnedFile) -> Value {
         json!({"binding":"namespace_sha256_complete_immutable_load_segments_v1",
             "host_file":host.receipt(),"namespace_file":self.namespace.receipt(&host.path),
             "load_bias":self.load_bias,"vma":{"device_major":self.vma_device_major,
@@ -298,14 +297,101 @@ struct LoadSegment {
     flags: u32,
 }
 
-struct EngineImage {
-    input: PinnedFile,
+pub(crate) struct EngineImage {
+    pub(crate) input: PinnedFile,
     segments: Vec<LoadSegment>,
 }
 
 impl EngineImage {
+    pub(crate) fn verify_local(&self) -> io::Result<(u64, Value)> {
+        self.input.verify()?;
+        let maps_text = fs::read_to_string("/proc/self/maps")?;
+        if maps_text.len() > 4 * 1024 * 1024 {
+            return Err(invalid("Native local image maps exceed four MiB"));
+        }
+        let maps = process::mappings(&maps_text)?;
+        let candidates: Vec<_> = maps
+            .iter()
+            .filter(|mapping| mapping.path.as_deref() == Some(self.input.path.as_path()))
+            .collect();
+        let origins: Vec<_> = candidates
+            .iter()
+            .filter(|mapping| mapping.offset == 0)
+            .collect();
+        let [origin] = origins.as_slice() else {
+            return Err(invalid(
+                "Native local image has no unique offset-zero mapping",
+            ));
+        };
+        let bias = origin.start;
+        let page = u64::try_from(unsafe { libc::sysconf(libc::_SC_PAGESIZE) })
+            .map_err(io::Error::other)?;
+        if !page.is_power_of_two() {
+            return Err(invalid("Native local page size is invalid"));
+        }
+        for mapping in &candidates {
+            if mapping.inode != self.input.identity.inode
+                || mapping.device_major != origin.device_major
+                || mapping.device_minor != origin.device_minor
+            {
+                return Err(invalid("Native local image mapping identity changed"));
+            }
+            self.verify_mapping(mapping, bias, page)?;
+        }
+        let memory = File::open("/proc/self/mem")?;
+        let mut immutable_bytes = 0u64;
+        for segment in self
+            .segments
+            .iter()
+            .filter(|segment| segment.flags & ELF_WRITABLE == 0)
+        {
+            if segment.file_bytes != segment.memory_bytes {
+                return Err(invalid("Native local immutable image has a zero-fill tail"));
+            }
+            let mut offset = 0;
+            while offset < segment.file_bytes {
+                let length =
+                    (segment.file_bytes - offset).min(IMAGE_READ_CHUNK_BYTES as u64) as usize;
+                let position = address(address(bias, segment.address)?, offset)?;
+                let end = address(position, length as u64)?;
+                let mut cursor = position;
+                for mapping in &candidates {
+                    if mapping.end <= cursor {
+                        continue;
+                    }
+                    if mapping.start > cursor || !mapping.readable || mapping.writable {
+                        break;
+                    }
+                    cursor = mapping.end.min(end);
+                    if cursor == end {
+                        break;
+                    }
+                }
+                if cursor != end {
+                    return Err(invalid("Native local immutable image range is unavailable"));
+                }
+                let expected =
+                    file_range(&self.input.file, address(segment.offset, offset)?, length)?;
+                if file_range(&memory, position, length)? != expected {
+                    return Err(invalid("Native local immutable image bytes changed"));
+                }
+                immutable_bytes = address(immutable_bytes, length as u64)?;
+                offset = address(offset, length as u64)?;
+            }
+        }
+        self.input.verify()?;
+        Ok((
+            bias,
+            json!({"file":self.input.receipt(),"load_bias":bias,"immutable_bytes":immutable_bytes,"complete_immutable_match":true}),
+        ))
+    }
+
     fn open(root: &Path) -> io::Result<Self> {
-        let input = PinnedFile::open(&root.join("bin/linux64/engine.so"), util::ENGINE_SHA)?;
+        Self::open_at(&root.join("bin/linux64/engine.so"), util::ENGINE_SHA)
+    }
+
+    pub(crate) fn open_at(path: &Path, expected: &str) -> io::Result<Self> {
+        let input = PinnedFile::open(path, expected)?;
         let header = file_range(&input.file, 0, ELF_HEADER_BYTES)?;
         if &header[..4] != b"\x7fELF"
             || header[4] != 2
@@ -369,8 +455,19 @@ impl EngineImage {
         Ok(Self { input, segments })
     }
 
-    fn bind(&self, process: &mut process::StoppedProcess<'_>) -> io::Result<EngineBinding> {
-        let namespace = NamespaceImage::open(process, &self.input.path)?;
+    pub(crate) fn verify_namespace(
+        &self,
+        binding: &EngineBinding,
+        process: &mut process::StoppedProcess<'_>,
+    ) -> io::Result<()> {
+        binding.namespace.verify(process, &self.input.path)
+    }
+
+    pub(crate) fn bind(
+        &self,
+        process: &mut process::StoppedProcess<'_>,
+    ) -> io::Result<EngineBinding> {
+        let namespace = NamespaceImage::open(process, &self.input.path, &self.input.sha256)?;
         let candidates = self.candidate_summary(process, namespace.stamp.identity);
         self.bind_namespace(process, namespace)
             .map_err(|error| io::Error::new(error.kind(), format!("{error}; {candidates}")))
@@ -602,31 +699,12 @@ fn lighting(channel: CaptureChannel) -> LightingKind {
     }
 }
 
-fn carrier(
+pub(crate) fn carrier(
     bsp: &[u8],
     channel: CaptureChannel,
     check: &mut dyn FnMut() -> io::Result<()>,
 ) -> io::Result<NativeTerrainCarrier> {
-    if bsp.len() > util::MAX_BSP {
-        return Err(invalid("Native terrain BSP exceeds 128 MiB"));
-    }
-    let bsp = Bsp::parse_bounded(bsp, MAX_DECODED_BSP_BYTES, MAX_GAME_LUMPS)?;
-    crate::adapter::validate_private_entities(bsp.entities()?)?;
-    let archive = &bsp.lump(lump::PAKFILE).data;
-    if !archive.is_empty() {
-        let archive = PakArchive::parse_controlled(archive, PakLimits::default(), check)?;
-        if archive.entries.iter().any(|entry| {
-            let name = entry.name.to_ascii_lowercase();
-            name.ends_with(".lmp")
-                || !["materials/", "models/", "sound/", "particles/"]
-                    .iter()
-                    .any(|prefix| name.starts_with(prefix))
-        }) {
-            return Err(invalid(
-                "Native terrain BSP PAK contains alternate lump, script or configuration providers",
-            ));
-        }
-    }
+    let bsp = crate::owned_client::parse_bsp(bsp, check)?;
     let carrier = NativeTerrainCarrier::new_controlled(&bsp, lighting(channel), check)?;
     if carrier.displacements().is_empty() {
         return Err(invalid(
@@ -738,7 +816,7 @@ fn inspect_provider_directory(
     Ok(())
 }
 
-fn verify_providers(
+pub(crate) fn verify_providers(
     environment: &CaptureEnvironment,
     game: &Path,
     map_name: &str,
@@ -819,7 +897,7 @@ fn checkpoint(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
     Ok(())
 }
 
-fn verify_controls(text: &str, channel: CaptureChannel) -> io::Result<bool> {
+pub(crate) fn verify_controls(text: &str, channel: CaptureChannel) -> io::Result<bool> {
     let Some(premap) = text.find(PREMAP) else {
         return Ok(false);
     };
@@ -993,193 +1071,85 @@ pub(crate) fn execute(
         &profile.bsp_sha256,
     )?;
     verify_providers(&request.environment, &game, &profile.map_name)?;
-    for name in ["config", "cache", "data"] {
-        fs::create_dir_all(directory.join("settings").join(name))?;
-    }
-    let socket = UdpSocket::bind("127.0.0.1:0")?;
-    let port = socket.local_addr()?.port();
-    drop(socket);
-    let executable = root.join("cstrike_linux64").canonicalize()?;
-    let mut launch = crate::isolation::Launch::new(directory, &executable)?;
-    let log = File::create(directory.join("launcher.log"))?;
-    let command = &mut launch.command;
-    command
-        .current_dir(&root)
-        .arg("-game")
-        .arg(&game)
-        .args([
-            "-windowed",
-            "-w",
-            "1280",
-            "-h",
-            "720",
-            "-novid",
-            "-nomaster",
-            "-nojoy",
-            "-console",
-            "-port",
-        ])
-        .arg(port.to_string());
-    crate::worker::private_launch_options(command);
-    command
-        .env("LD_LIBRARY_PATH", root.join("bin/linux64"))
-        .env("LD_DEBUG", "files")
-        .env("LD_DEBUG_OUTPUT", directory.join("loader"))
-        .env("SteamAppId", "240")
-        .env("SteamGameId", "240")
-        .env("SDL_VIDEODRIVER", "x11")
-        .env("XDG_CONFIG_HOME", directory.join("settings/config"))
-        .env("XDG_CACHE_HOME", directory.join("settings/cache"))
-        .env("XDG_DATA_HOME", directory.join("settings/data"))
-        .env_remove("LD_PRELOAD")
-        .process_group(0)
-        .stdin(Stdio::null())
-        .stdout(log.try_clone()?)
-        .stderr(log);
-    util::json_write(
-        &directory.join("command.json"),
-        &json!({"program":command.get_program().to_string_lossy(),"args":command.get_args().map(|argument|argument.to_string_lossy().into_owned()).collect::<Vec<_>>(),"native_program":executable,"cwd":root,"desktop_input":false,"profile":PROFILE,"filesystem_isolation":{"external_paths":"read_only","writable_directory":directory}}),
-    )?;
-    crate::guard::ensure_no_client(&root)?;
-    checkpoint(directory, request)?;
-    let mut child = launch.spawn()?;
-    let started = Instant::now();
-    let mut native = None;
-    let mut cleanup_disposition = CleanupDisposition::Confirmed;
-    let result = (|| {
-        loop {
-            checkpoint(directory, request)?;
-            crate::worker::loader_budget(directory)?;
-            util::private_budget(directory, &root)?;
-            if fs::metadata(directory.join("launcher.log"))?.len() > 8 * 1024 * 1024 {
-                return Err(invalid("Native terrain launcher log exceeds eight MiB"));
-            }
-            if let Some(identity) = launch.identity(&child, &executable)? {
-                if native
-                    .as_ref()
-                    .is_some_and(|previous: &crate::isolation::Identity| {
-                        previous.pid != identity.pid || previous.start != identity.start
-                    })
-                {
-                    return Err(invalid("Native terrain isolated process identity changed"));
+    let captured = crate::owned_client::run(
+        directory,
+        request,
+        &game,
+        CONSOLE_FILE,
+        PROFILE,
+        "terrain-process-cleanup.json",
+        |client| {
+            let checked = (|| {
+                if !verify_controls(client.console, profile.channel)? {
+                    return Ok(None);
                 }
-                if native.is_none() {
-                    util::json_write(&directory.join("native-process.json"), &identity)?;
-                    native = Some(identity);
-                }
-            } else if native.is_some() {
-                return Err(invalid(
-                    "Native terrain isolated process exited before observation",
-                ));
-            }
-            let text = match util::diagnostic_text(&game.join(CONSOLE_FILE), util::MAX_LOG) {
-                Ok(text) => text,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-                Err(error) => return Err(error),
-            };
-            crate::worker::verify_native_diagnostics(&text)?;
-            if verify_controls(&text, profile.channel)?
-                && let Some(identity) = &native
-            {
                 staged.verify()?;
                 consumed.verify()?;
                 engine.input.verify()?;
-                let mut check = || checkpoint(directory, request);
-                let attempt = process::with_stopped(
-                    &launch,
-                    &child,
-                    &executable,
-                    identity,
-                    &mut check,
-                    |process| {
-                        let binding = engine.bind(process)?;
-                        let attempt = match readiness::inspect(
-                            process,
-                            binding.load_bias,
-                            &format!("maps/{}.bsp", profile.map_name),
-                        )? {
-                            readiness::Readiness::Pending(reason) => {
-                                Attempt::Pending(reason.to_string())
-                            }
-                            readiness::Readiness::Ready(world) => {
-                                let mut captured = extract(process, world, &carrier)?;
-                                captured
-                                    .process
-                                    .as_object_mut()
-                                    .ok_or_else(|| {
-                                        invalid("Invalid native terrain process receipt")
-                                    })?
-                                    .insert("engine".into(), binding.receipt(&engine.input));
-                                captured
-                                    .process
-                                    .as_object_mut()
-                                    .ok_or_else(|| {
-                                        invalid("Invalid native terrain process receipt")
-                                    })?
-                                    .insert("bsp".into(), consumed.receipt());
-                                Attempt::Captured(captured)
-                            }
-                        };
-                        binding.namespace.verify(process, &engine.input.path)?;
-                        Ok(attempt)
-                    },
-                )
-                .map_err(|failure| {
-                    cleanup_disposition = failure.cleanup;
-                    failure.error
-                })?;
-                match attempt {
-                    Attempt::Pending(reason) => util::json_write(
+                Ok(Some(()))
+            })();
+            let checked = checked.map_err(|error| CaptureFailure {
+                error,
+                cleanup: CleanupDisposition::Confirmed,
+            })?;
+            if checked.is_none() {
+                return Ok(None);
+            }
+            let mut check = || checkpoint(directory, request);
+            let attempt = process::with_stopped(
+                client.launch,
+                client.child,
+                client.executable,
+                client.identity,
+                &mut check,
+                |process| {
+                    let binding = engine.bind(process)?;
+                    let attempt = match readiness::inspect(
+                        process,
+                        binding.load_bias,
+                        &format!("maps/{}.bsp", profile.map_name),
+                    )? {
+                        readiness::Readiness::Pending(reason) => {
+                            Attempt::Pending(reason.to_string())
+                        }
+                        readiness::Readiness::Ready(world) => {
+                            let mut captured = extract(process, world, &carrier)?;
+                            let receipt = captured
+                                .process
+                                .as_object_mut()
+                                .ok_or_else(|| invalid("Invalid native terrain process receipt"))?;
+                            receipt.insert("engine".into(), binding.receipt(&engine.input));
+                            receipt.insert("bsp".into(), consumed.receipt());
+                            Attempt::Captured(captured)
+                        }
+                    };
+                    binding.namespace.verify(process, &engine.input.path)?;
+                    Ok(attempt)
+                },
+            )?;
+            let verified = (|| match attempt {
+                Attempt::Pending(reason) => {
+                    util::json_write(
                         &directory.join("terrain-pending.json"),
                         &json!({"reason":reason}),
-                    )?,
-                    Attempt::Captured(captured) => {
-                        staged.verify()?;
-                        consumed.verify()?;
-                        engine.input.verify()?;
-                        verify_providers(&request.environment, &game, &profile.map_name)?;
-                        checkpoint(directory, request)?;
-                        return Ok(captured);
-                    }
+                    )?;
+                    Ok(None)
                 }
-            }
-            if let Some(status) = child.try_wait()? {
-                return Err(invalid(format!(
-                    "Native terrain client exited before its snapshot: {status}"
-                )));
-            }
-            if started.elapsed() >= LOAD_TIMEOUT {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "Native terrain snapshot exceeded its 120-second load deadline",
-                ));
-            }
-            thread::sleep(POLL_INTERVAL);
-        }
-    })();
-    let cleanup = crate::worker::stop_client_group(&mut child);
-    let evidence = util::json_write(
-        &directory.join("terrain-process-cleanup.json"),
-        &json!({"snapshot_cleanup":cleanup_disposition,"client_group_exited":cleanup.is_ok(),"client_group_error":cleanup.as_ref().err().map(ToString::to_string),"snapshot_error":result.as_ref().err().map(ToString::to_string)}),
-    );
-    let captured = match (result, cleanup, evidence) {
-        (Ok(captured), Ok(()), Ok(())) => captured,
-        (result, cleanup, evidence) => {
-            let failures = [
-                result.err().map(|error| error.to_string()),
-                cleanup
-                    .err()
-                    .map(|error| format!("Native terrain client cleanup: {error}")),
-                evidence
-                    .err()
-                    .map(|error| format!("Native terrain cleanup evidence: {error}")),
-            ]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-            return Err(invalid(failures.join("; ")));
-        }
-    };
+                Attempt::Captured(captured) => {
+                    staged.verify()?;
+                    consumed.verify()?;
+                    engine.input.verify()?;
+                    verify_providers(&request.environment, &game, &profile.map_name)?;
+                    checkpoint(directory, request)?;
+                    Ok(Some(captured))
+                }
+            })();
+            verified.map_err(|error| CaptureFailure {
+                error,
+                cleanup: CleanupDisposition::Confirmed,
+            })
+        },
+    )?;
     checkpoint(directory, request)?;
     record_capture(directory, profile, captured)
 }

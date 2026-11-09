@@ -105,7 +105,8 @@ pub(crate) fn game_directory(directory: &Path, request: &WorkerRequest) -> io::R
         WorkerProfile::PplMips931(case) => Some(crate::diagnostic::DiagnosticCase::Mips931(*case)),
         WorkerProfile::Reflection(_)
         | WorkerProfile::Movement(_)
-        | WorkerProfile::TerrainSnapshot(_) => None,
+        | WorkerProfile::TerrainSnapshot(_)
+        | WorkerProfile::PlayerSupport(_) => None,
     };
     if let Some(case) = diagnostic_case {
         crate::diagnostic::configure_game(directory, &game, case)?;
@@ -117,6 +118,10 @@ pub(crate) fn game_directory(directory: &Path, request: &WorkerRequest) -> io::R
     }
     if let WorkerProfile::Movement(profile) = &request.profile {
         crate::movement::configure_game(directory, &game, profile)?;
+        return Ok(game);
+    }
+    if let WorkerProfile::PlayerSupport(profile) = &request.profile {
+        crate::player_support::configure_game(directory, &game, profile)?;
         return Ok(game);
     }
     if let WorkerProfile::TerrainSnapshot(profile) = &request.profile {
@@ -599,6 +604,9 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
         }
         WorkerProfile::Movement(profile) => {
             return crate::movement::execute(directory, request, profile);
+        }
+        WorkerProfile::PlayerSupport(profile) => {
+            return crate::player_support::execute(directory, request, profile);
         }
         WorkerProfile::TerrainSnapshot(profile) => {
             return crate::terrain_snapshot::execute(directory, request, profile);

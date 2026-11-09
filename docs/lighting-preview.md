@@ -44,8 +44,9 @@ Use **Reload material assets** after changing materials.
 - Unresolved light-value parameters exclude that light in either channel, including HDR and ambient tokens when **Include sky ambient** is off. Other valid lamps remain available.
 - At most 32 visible, unnamed, constant lights, including one sun.
 - Parenting, switching, patterns and initially dark lights are unsupported.
-- Supported opaque brush faces, single-base terrain and authored model meshes receive either channel.
-- Blend, transparent, alpha-tested and unsupported material effects remain unavailable.
+- Supported opaque brush faces, single-base terrain, plain unbumped two-base `WorldVertexTransition` terrain and authored model meshes receive either channel.
+- Two-base terrain needs both exact declared static single-frame 2D color textures in RGB888, BGR888, RGBA8888, BGRA8888 or DXT1/3/5 format, with repeat sampling. `%tooltexture` cannot replace either base.
+- Bump-mapped terrain, material texture transforms, blend modulation, detail/proxy/fallback effects, transparent and alpha-tested materials remain unavailable.
 - Excluded receivers keep their ordinary display and report a reason.
 - Exceeding the light or radiance budget disables the preview with an error.
 - No native exposure adaptation or brightness and tone-map match. Compile to inspect game lighting.

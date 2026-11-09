@@ -14,6 +14,8 @@ use source_formats::vtf::Vtf;
 /// Texture size assumed for UV mapping when a material can't be loaded.
 const FALLBACK_SIZE: u32 = 128;
 pub const MAX_RELOAD_FAILURES: usize = 100;
+// Point/clamp sampling, normal/procedural/cube/target/vertex textures, SSBump and border flags.
+const TERRAIN_BLEND_UNSUPPORTED_TEXTURE_FLAGS: u32 = 0x2e01_c88d;
 
 #[derive(Debug)]
 pub struct MaterialInfo {
@@ -139,7 +141,14 @@ impl MaterialInfo {
                 .map_or_else(|| Some("No resolved material".into()), lighting_error),
             terrain_lighting_error: material.map_or_else(
                 || Some("No resolved material".into()),
-                terrain_lighting_error,
+                |material| {
+                    terrain_lighting_error(
+                        material,
+                        base.as_ref(),
+                        blend.as_ref(),
+                        display_texture.as_deref(),
+                    )
+                },
             ),
             model_lighting_error: material.map_or_else(
                 || Some("No resolved material".into()),
@@ -266,7 +275,79 @@ fn model_lighting_error(
     None
 }
 
-fn terrain_lighting_error(material: &Material) -> Option<String> {
+fn terrain_blend_lighting_error(
+    material: &Material,
+    base: Option<&Vtf>,
+    blend: Option<&Vtf>,
+    display_texture: Option<&str>,
+) -> Option<String> {
+    if let Some(reason) = diffuse_lighting_error(material) {
+        return Some(reason);
+    }
+    if let Some((key, _)) = material.params.iter().find(|(key, _)| {
+        !matches!(
+            key.as_str(),
+            "$basetexture"
+                | "$basetexture2"
+                | "$surfaceprop"
+                | "$surfaceprop2"
+                | "$nodecal"
+                | "%keywords"
+        )
+    }) {
+        let key: String = key.chars().take(256).collect();
+        return Some(format!(
+            "Terrain blend authored lighting excludes unsupported parameter {key}"
+        ));
+    }
+    let declared = material
+        .get("$basetexture")
+        .filter(|value| !value.trim().is_empty())
+        .map(texture_path);
+    if declared.as_deref() != display_texture || declared.is_none() {
+        return Some(
+            "Terrain blend authored lighting requires its exact declared first base texture".into(),
+        );
+    }
+    if material
+        .get("$basetexture2")
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        return Some(
+            "Terrain blend authored lighting requires a declared second base texture".into(),
+        );
+    }
+    for (label, texture) in [("first", base), ("second", blend)] {
+        let Some(texture) = texture else {
+            return Some(format!(
+                "Terrain blend authored lighting requires its available {label} base texture"
+            ));
+        };
+        if let Err(error) =
+            crate::normal_maps::validate_static_texture(texture, u32::from(u16::MAX))
+        {
+            return Some(format!("Terrain blend {label} base: {error}"));
+        }
+        if !crate::normal_maps::ordinary_ldr_format(texture.format)
+            || texture.flags & TERRAIN_BLEND_UNSUPPORTED_TEXTURE_FLAGS != 0
+        {
+            return Some(format!(
+                "Terrain blend {label} base requires an ordinary LDR repeat-sampled color texture"
+            ));
+        }
+    }
+    None
+}
+
+fn terrain_lighting_error(
+    material: &Material,
+    base: Option<&Vtf>,
+    blend: Option<&Vtf>,
+    display_texture: Option<&str>,
+) -> Option<String> {
+    if material.shader == "worldvertextransition" {
+        return terrain_blend_lighting_error(material, base, blend, display_texture);
+    }
     lighting_error(material).or_else(|| {
         material.params.iter().find_map(|(key, _)| {
             if key.starts_with("$bump") || key.starts_with("$normal") || key.starts_with("$ssbump")

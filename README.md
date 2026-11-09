@@ -79,7 +79,7 @@ Menus, a tool rail, a selection-driven Inspector and a live Agent feed. See [Edi
 | [Terrain](docs/terrain.md) | [Compiled terrain](docs/terrain.md#compile-split-borders) |
 | --- | --- |
 | ![Sculpted hills with a painted dirt path](docs/images/terrain-blended.png) | ![Terrain running in CS:S](docs/images/terrain-native.png) |
-| Sculpt, paint, join terrain and remove selected triangles. | Choose terrain normals; inspect native vectors, topology and player motion. |
+| Sculpt, paint and light terrain; join borders and cut openings. | Choose terrain normals; inspect native vectors, topology and player motion. |
 
 | [Lighting preview](docs/lighting-preview.md) | [Baked lighting](docs/compile-and-play.md#lighting) |
 | --- | --- |

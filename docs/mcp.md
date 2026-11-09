@@ -620,6 +620,10 @@ See [HDR scene display](fog.md#use-hdr-scene-display) for UI steps and limits.
 5. Call `render_view` to inspect the result.
 
 The default lighting channel is `"ldr"`. Inspection reports the selected channel even when the preview is off.
+Plain unbumped two-base `WorldVertexTransition` terrain uses the existing shared
+lighting path after vertex-alpha texture blending. Both exact declared static 2D
+LDR color bases must be available; display overrides, material texture transforms, bump maps,
+detail/blend modulation, proxies and alpha/translucent effects remain excluded.
 The channel, lighting exposure and other authored-light preview settings are temporary; they do not edit the map or saved preview defaults.
 `render_view` accepts the same settings as temporary overrides without changing shared state.
 `sky_channel` selects sky content independently. In Legacy display,

@@ -264,9 +264,16 @@ Consumed detail helpers contribute world terrain. Runtime brush-model terrain re
 
 ## Preview authored lighting
 
-Choose **Textured** and enable **Unshadowed authored lighting**.
-**Detail · per-fragment** quality shows local pools more accurately than **Fast · vertex**.
-Only supported opaque, single-base terrain receives this preview; blends and bump/detail materials are excluded.
+1. Choose **Textured** in the viewport header.
+2. Open **Overlays** and enable **Unshadowed authored lighting**.
+3. Set **Quality** to **Detail · per-fragment** for local light pools.
+
+![Cyan, orange and pink lights on painted rock-and-sand terrain](images/terrain-blend-lighting.png)
+Supported opaque single-base terrain and plain unbumped two-base
+`WorldVertexTransition` terrain receive this preview. Both declared static 2D
+color textures must be available. Vertex paint blends the bases before the same
+shared lighting calculation. Base display overrides, material texture transforms, bump maps,
+detail layers, blend modulation, proxies and translucent effects remain excluded.
 See [lighting preview](lighting-preview.md).
 
 ## Mirror or shear terrain

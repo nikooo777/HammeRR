@@ -28,7 +28,6 @@ PLATFORMS = {
             "hammerr-headless",
             "hammerr-physics",
             "hammerr-native-runtime",
-            "libnative_runtime.so",
         ),
     ),
     "windows-x86_64": Platform("zip", ".zip", ("editor.exe", "hammerr-compile.exe")),
@@ -87,7 +86,7 @@ def stage(tag):
         "The executables have timestamped, self-signed Authenticode signatures.\n"
         "HammeRR-signing.cer is the public certificate, not a private key.\n"
         "Self-signing does not remove Windows publisher-trust or SmartScreen warnings.\n"
-        "Engine physics, native reflection capture, native observation and headless stdio MCP require Linux.\n"
+        "Engine physics, native reflection capture and headless stdio MCP require Linux.\n"
     )
     (STAGE / "README.txt").write_text(
         f"HammeRR {tag} ({platform})\n\n{instructions}\n"

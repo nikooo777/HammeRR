@@ -73,38 +73,6 @@ pub struct CaptureReceipt {
     pub preservation_passed: bool,
 }
 
-pub struct TerrainSnapshotRequest {
-    pub environment: CaptureEnvironment,
-    pub bsp: Vec<u8>,
-    pub map_name: String,
-    pub channel: CaptureChannel,
-    pub artifacts_parent: PathBuf,
-}
-
-pub struct TerrainSnapshotReceipt {
-    pub snapshot: source_formats::bsp::native_terrain::NativeTerrainSnapshot,
-    pub observation: TerrainObservationReceipt,
-    pub artifacts: PathBuf,
-    pub elapsed_ms: u64,
-    pub preservation_passed: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TerrainObservationReceipt {
-    pub profile: String,
-    pub engine_sha256: String,
-    pub bsp_sha256: String,
-    pub readback_sha256: String,
-    pub map_name: String,
-    pub channel: CaptureChannel,
-    pub process: serde_json::Value,
-    pub readiness: serde_json::Value,
-    pub displacement_count: usize,
-    pub vertex_count: usize,
-    pub resumed: bool,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CleanupDisposition {
@@ -137,23 +105,11 @@ pub trait CaptureObserver {
 
 mod adapter;
 #[cfg(target_os = "linux")]
-mod diagnostic;
-#[cfg(target_os = "linux")]
 mod guard;
 #[cfg(target_os = "linux")]
 mod isolation;
 #[cfg(target_os = "linux")]
-mod movement;
-mod movement_types;
-#[cfg(target_os = "linux")]
-mod owned_client;
-#[cfg(target_os = "linux")]
-mod player_support;
-mod player_support_types;
-#[cfg(target_os = "linux")]
 mod process;
-#[cfg(target_os = "linux")]
-mod terrain_snapshot;
 #[cfg(not(target_os = "linux"))]
 mod unsupported;
 mod util;
@@ -164,49 +120,12 @@ mod worker;
 
 pub use adapter::{capture_staging_bsp, capture_staging_bsp_for_channel, preflight_vmf};
 #[cfg(target_os = "linux")]
-pub use diagnostic::{PplMidrange909Case, PplMidrange909Receipt, PplMidrange909Request};
-#[cfg(target_os = "linux")]
-pub use diagnostic::{PplMips931Case, PplMips931Receipt, PplMips931Request};
-#[cfg(target_os = "linux")]
-pub use diagnostic::{PplSpatial919Case, PplSpatial919Receipt, PplSpatial919Request};
-#[cfg(target_os = "linux")]
-pub use diagnostic::{PplUv857Case, PplUv857Receipt, PplUv857Request};
-#[cfg(target_os = "linux")]
 pub use guard::{resolve_environment, validate_environment};
-pub use movement_types::{
-    MOVEMENT_STARTUP_SETTLE_MS, MovementControlReceipt, MovementMode, MovementPhase,
-    MovementReceipt, MovementRequest, MovementSample, MovementTrainIdentity,
-};
-pub use player_support_types::{
-    DEFAULT_PLAYER_SUPPORT_DURATION_MS, DEFAULT_PLAYER_SUPPORT_INTERVAL_MS,
-    DEFAULT_PLAYER_SUPPORT_MAX_SAMPLES, DEFAULT_PLAYER_SUPPORT_TEAM,
-    MAX_PLAYER_SUPPORT_DURATION_MS, MAX_PLAYER_SUPPORT_INTERVAL_MS,
-    MAX_PLAYER_SUPPORT_PROBE_COORDINATE, MAX_PLAYER_SUPPORT_PROBE_DISTANCE,
-    MAX_PLAYER_SUPPORT_RESULT_BYTES, MAX_PLAYER_SUPPORT_SAMPLES, MIN_PLAYER_SUPPORT_DURATION_MS,
-    MIN_PLAYER_SUPPORT_INTERVAL_MS, MIN_PLAYER_SUPPORT_PROBE_DISTANCE, MIN_PLAYER_SUPPORT_SAMPLES,
-    PlayerSupportCapture, PlayerSupportEntity, PlayerSupportGroundState, PlayerSupportInput,
-    PlayerSupportObservationReceipt, PlayerSupportProbe, PlayerSupportProbePlane,
-    PlayerSupportProbeStatus, PlayerSupportRequest, PlayerSupportSample, PlayerSupportSettings,
-    PlayerSupportSurface, validate_player_support_samples,
-};
-#[cfg(target_os = "linux")]
-pub use process::observe_movement_with_cleanup;
-#[cfg(target_os = "linux")]
-pub use process::observe_player_support_with_cleanup;
-#[cfg(target_os = "linux")]
-pub use process::observe_terrain_snapshot_with_cleanup;
 #[cfg(target_os = "linux")]
 pub use process::{capture, capture_with_cleanup};
-#[cfg(target_os = "linux")]
-pub use process::{
-    diagnose_ppl_midrange909_with_cleanup, diagnose_ppl_mips931_with_cleanup,
-    diagnose_ppl_spatial919_with_cleanup, diagnose_ppl_uv857_with_cleanup,
-};
 #[cfg(not(target_os = "linux"))]
 pub use unsupported::{
-    capture, capture_with_cleanup, observe_movement_with_cleanup,
-    observe_player_support_with_cleanup, observe_terrain_snapshot_with_cleanup,
-    resolve_environment, validate_environment, worker_entry,
+    capture, capture_with_cleanup, resolve_environment, validate_environment, worker_entry,
 };
 
 #[cfg(target_os = "linux")]
@@ -227,21 +146,9 @@ pub fn worker_entry(arguments: Vec<std::ffi::OsString>) -> io::Result<()> {
         [mode, directory] if mode == "--capture-worker" => {
             worker::run(std::path::Path::new(directory))
         }
-        [mode, request] if mode == "--diagnose-ppl-uv857" => {
-            diagnostic::cli(std::path::Path::new(request))
-        }
-        [mode, request] if mode == "--diagnose-ppl-midrange909" => {
-            diagnostic::cli_midrange(std::path::Path::new(request))
-        }
-        [mode, request] if mode == "--diagnose-ppl-spatial919" => {
-            diagnostic::cli_spatial(std::path::Path::new(request))
-        }
-        [mode, request] if mode == "--diagnose-ppl-mips931" => {
-            diagnostic::cli_mips(std::path::Path::new(request))
-        }
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "Native runtime expects an owned worker, read-only Steam identity, or frozen857 diagnostic request",
+            "Native runtime expects an owned capture worker or read-only Steam identity",
         )),
     }
 }

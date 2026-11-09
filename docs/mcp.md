@@ -1182,174 +1182,6 @@ draft, map and history. A stale draft reports `guard_error` and `handle:null`;
 rendering and Apply refuse, while its exact token still permits cancellation.
 See the [UI workflow](terrain.md#remove-selected-triangles).
 
-### Native terrain vectors
-
-1. Compile the map. Read `get_compiled_terrain_snapshot` and copy `snapshot`.
-2. Call `prepare_compiled_terrain_snapshot` with that snapshot string.
-3. Poll `get_compiled_terrain_snapshot` until the capture finishes.
-4. Use its `token` with `inspect_compiled_terrain_snapshot`. Omit `displacement`
-   to page patches; supply its ordinal to page vertices.
-5. Call `frame_compiled_terrain_sample` with `token`, `displacement`, `vertex`
-   and the viewport `aspect` to locate a current sample.
-
-`set_compiled_terrain_snapshot` accepts `cancel`, `clear`, `show`, `hide`,
-`guide` and `clear_guide`. Guide selection also needs `displacement` and `vertex`.
-Pages include raw position/N/S/T bits and explicit vector states. Source pages
-retain compiled contributor routes; they do not identify authored vertices.
-Use `source_offset` and `source_limit` to page contributors. No rows are silently
-truncated. A failed or cancelled capture publishes no sample rows.
-
-This uses the same [native inspector](terrain.md#inspect-native-terrain-vectors)
-as the editor. It requires the supported Linux CS:S client and Steam. Historical
-data remains inspectable; stale snapshots cannot frame or display a guide.
-
-### Observed native CPU terrain topology
-
-Prepare the native terrain snapshot normally, then call
-`inspect_compiled_terrain_topology` with its `token`, a native `displacement`
-ordinal and optional `offset`/`limit` (default 0/64, maximum 64 rows and 256 KiB).
-The result retains the actual vertex base, index/triangle counts, all ten raw
-active/allowed mask words and compiled allowed words. Comparison counts include
-all 320 mask bits, including padding, and exact ordered local triangle triples.
-Mismatches remain results. Missing observed topology is an explicit error.
-
-Each row reports `triangle`, raw mesh-global `global_indices`, derived
-`local_indices`, actual observed `positions` with raw bits, and the corresponding
-`comparison.expected_local_indices`/`equal`. These are native CPU identities,
-not authored triangle IDs. Historical rows remain readable.
-
-Call `frame_compiled_terrain_triangle` with `token`, `displacement`, `triangle`
-and `aspect` to frame the actual observed geometry. Call
-`set_compiled_terrain_triangle_guide` with the same identity to show its outline.
-This replaces the single sample-vector guide; choosing sample vectors replaces
-the triangle outline. Existing `set_compiled_terrain_snapshot` actions `show`,
-`hide` and `clear_guide` manage either guide kind. Read `guide.kind` to identify
-`sample_vectors` or `triangle_outline`.
-
-Framing and guide display require current source/build/runtime, finite observed
-positions and no displayed geometry draft. Mismatches never substitute predicted
-or compiled geometry. The installed build tessellates these CPU indices at load;
-this inspection does not establish a GPU draw, completed rendered frame or later
-camera-dependent LOD state.
-
-### Offline native terrain basis comparison
-
-After preparing an independent observed native terrain snapshot, call
-`compare_compiled_terrain_basis` with its current `token` and optional `options`:
-
-```json
-{
-  "token": "1",
-  "options": {
-    "position_rounding": "nearest_even",
-    "rounding": "nearest_even",
-    "flush_to_zero": false,
-    "denormals_are_zero": false
-  }
-}
-```
-
-Both rounding fields accept `nearest_even`, `toward_negative`, `toward_positive`
-and `toward_zero`. Defaults are nearest-even with FTZ and DAZ disabled. The
-worker binds the actual current CPU and RSQRTSS estimate probe. These are
-explicit predictive settings; they do not establish the observed client's
-historical MXCSR or arithmetic behavior.
-
-Poll `get_compiled_terrain_snapshot.comparison`. A complete result contains
-whole-catalog and per-field equality/error summaries. Existing
-`inspect_compiled_terrain_snapshot` pages add a displacement summary or
-`comparison.predicted` P/N/S/T and per-field exact-bit equality, component
-matches, absolute errors and ULP distances. Nonfinite numerical errors are
-`null`; signed-zero bit differences remain mismatches. Mismatches are retained
-results. The predictor consumes the exact retained compiled BSP, never observed
-vectors or preview normals.
-
-Use `set_compiled_terrain_snapshot` with `action:"cancel_comparison"` or
-`action:"clear_comparison"` and the source token to cancel or release only the
-comparison. Clear prevents late publication. The observed rows, guide and
-framing remain independent. Preparing or clearing the observed snapshot retires
-its comparison too. Historical comparisons stay readable; new comparisons need
-the current source/build/runtime. The existing terrain worker runs one operation
-at a time, and retains at most 64 MiB of comparison data in addition to the
-bounded observed snapshot. No game starts for offline comparison.
-
-### Player support and diagnostic hull sweeps
-
-1. Save and compile a map containing a matching team spawn. Read
-   `get_player_support_observation` and copy `snapshot`.
-2. Call `start_player_support_observation` with that snapshot and optional
-   `team`, `input`, `probe_distance`, `duration_ms`, `interval_ms` and `max_samples`.
-3. Poll `get_player_support_observation` until observation and cleanup finish.
-4. Call `inspect_player_support_observation` with its `token`, `offset` and
-   `limit` to page retained native samples.
-5. Call `frame_player_support_sample` with `token`, the sample's `ordinal` as
-   `index`, and the viewport `aspect` to locate a current sample.
-
-`cancel_player_support_observation` and `clear_player_support_observation` use
-the observation token. Clear releases the rows and guide and prevents late
-publication; cleanup retains its native activity reservation until drained.
-The editor's [Player support](terrain.md#observe-passive-player-support) window
-uses the same operations.
-
-Defaults are team `3` (Counter-terrorists), input `idle`, 5,000 ms duration,
-50 ms sample interval and 128 maximum samples. Team `2` selects Terrorists.
-The engine chooses among matching team spawns and reports the actual origin.
-Duration accepts 100–30,000 ms, interval 15–1,000 ms and sample count 3–1,024.
-Duration must span at least two intervals. `ceil(duration_ms / interval_ms) + 1`
-must fit the sample limit. Both times use native simulation time. Inspection
-pages contain at most 64 rows and expose `next_offset`.
-
-Input accepts `idle`, `forward`, `crouch` and `forward_crouch`. Read the shared
-`inputs` choices from the getter. The native observer requires actual button
-acknowledgement before measurement. Rows retain requested input, expected and
-observed buttons, native time/ticks, origin, velocities, actual movement hull,
-collision bounds, scale, independent `m_bDucked` and raw flags, and serial-checked
-ground identity. Supporting surface properties remain distinct from cached
-airborne values. Declared input and sampled movement describe the observed route;
-the sampled trajectory does not prove unsampled continuous motion.
-
-`ground_state` is `null` while airborne, or a tagged `world`/`func_movelinear`
-state for the actual serial-resolved owner. World retains its edict without
-invented mover vectors. The supported mover must match an exact compiled BSP
-entity and `*N` model-name declaration, have no parent and satisfy the native
-rotation-free profile; other ground owners refuse explicitly. No selector or
-special launch setting is needed.
-
-Mover rows retain actual edict/identity, local and absolute origin/angles,
-local/absolute/base velocity, move type, parent handle, solid type/flags,
-collision OBB and cache flags. `hammer_id`, `model_name` and `bsp_model_index`
-label the exact compiled declaration association. `model_index` is the separate
-raw native model-index field. These labels do not identify a measured physics
-body or map directly to an authored selection. Classname alone does not prove
-motion; compare the retained pose/velocity samples. Ground ownership and sampled
-motion do not establish contact geometry, a contact point/triangle, continuous
-carrying or moving-displacement support. Public readiness retains declaration
-count/profile/hash rather than repeating the complete private declaration set.
-
-Omit/null `probe_distance` to disable diagnostic sweeps, or specify 1–128 units.
-Each optional downward query uses the actual native movement hull, movement
-mask, collision group and filtering. Its result retains requested/native start
-and end, fractions, solid states, contents, available plane, checked hit identity
-and hitbox, and checked surface properties. Borrowed collision-surface names
-remain explicitly unavailable. `surface.friction` is the player's cached movement
-factor; `probe.surface.friction` is the hit surface's raw physics coefficient.
-A native returned endpoint is a hull-reference
-endpoint, **not an actual contact point**. A diagnostic sweep does not establish
-actual support/contact, future movement or an authored face/triangle identity.
-
-Use `set_player_support_sample_guide` with `action:"guide"`, `token` and `index`
-to show one selected observed hull, the bounded retained sampled-origin route
-and any diagnostic sweep. The endpoint marker and available fixed-length plane
-normal use the native returned hull-reference endpoint. `action:"show"`,
-`"hide"` or `"clear"` takes only `token`; Hide retains the sample request and
-Clear removes only the guide. The guide uses observed native data throughout.
-Framing and guide display require current sources/build/runtime and no displayed
-geometry draft. Historical rows stay readable and stale guides are suppressed.
-
-Requires the supported Linux CS:S client, Steam and adjacent native helper/library.
-No finished rendered-frame, authored contact triangle or moving-body friction
-contact qualification is claimed.
-
 ### Exact terrain positions
 
 Read `get_terrain_vertices` with `preview:false`, then copy its `source` guard
@@ -1889,21 +1721,6 @@ Changes return a new token. Apply is blocked during viewport positioning.
 Duplication uses the [array policies](#repeated-placement); internal references must use `remap`.
 Class conversion rejects incompatible behavior. Train setup reports explicit startup helpers.
 
-`get_linked_path_observation` returns its snapshot, running token, errors and last receipt.
-Set `include_samples:true` to include the complete sample stream.
-`start_linked_path_observation` requires `train` and that snapshot.
-Optional `stationary:true` sends Stop only; otherwise the observer sends Stop/Start/Stop/Start.
-Tracktrains use StartForward. Defaults are 200 ms and eight samples per phase.
-Use 100–1000 ms, 3–64 samples per phase and at most 60 seconds of requested sampling.
-
-The observer waits 500 ms for map startup before its first control; receipts record `startup_settle_ms`.
-Later authored inputs can still invalidate a stopped phase.
-Start returns an accepted job, not a completed result. Poll the status; check `last.status`,
-`last.current`, native activity and cleanup. Receipts contain source/BSP hashes,
-actual absolute origins, game times, control inputs and artifact paths.
-Cancel with `cancel_linked_path_observation` and the exact token.
-Linux CS:S, Steam and a current saved build are required. The private observer
-uses `-insecure` and `sv_lan 1` and preserves the document.
 See [Linked paths](path-authoring.md) for supported paths and trains.
 
 ## 3D sky preview
@@ -2491,8 +2308,8 @@ Receiver sampling remains HammeRR's triangle-barycentric sampling; S/T,
 VRAD, bump-basis and pixel parity are outside this option's scope.
 Recipes, content profiles, per-map preferences and captured jobs retain the
 selected mode. Older persisted settings without the field use `authored`;
-invalid persisted values fail validation. The mode participates in build and
-native-observation freshness checks.
+invalid persisted values fail validation. The mode participates in build
+freshness checks.
 
 Finished results report `stats.terrain_lighting_normals` and, for a lit bake,
 `stats.terrain_normal_inputs`: mode, `status`, sampling label, displacement and
@@ -3283,7 +3100,7 @@ These groups locate the available operations.
 | [Instance extraction](instance-extraction.md) | `get_instance_extraction`, `set_instance_extraction` |
 | [Instance authoring](instance-authoring.md) | `get_instance_reference`, `set_instance_reference` |
 | [Collapse references](instances.md#collapse-references-into-editable-geometry) | `get_instance_collapse`, `set_instance_collapse` |
-| [Linked paths](path-authoring.md) | `get_linked_path`, `set_linked_path`, `get_linked_path_observation`, `start_linked_path_observation`, `cancel_linked_path_observation` |
+| [Linked paths](path-authoring.md) | `get_linked_path`, `set_linked_path` |
 | [Materials and face textures](textures.md) | `apply_surface_placement`, `begin_surface_placement_pick`, `begin_texture_stroke`, `browse_materials`, `cancel_face_preview`, `cancel_surface_placement`, `cancel_texture_stroke`, `commit_face_preview`, `commit_texture_stroke`, `edit_faces`, `find_material_faces`, `get_face_selection`, `get_material_search`, `get_material_source`, `get_surface_placement`, `get_surface_placement_sources`, `get_surface_sample`, `get_texture_stroke`, `paint_face_texture`, `pick_surface_placement`, `preview_material`, `preview_surface_placement`, `project_face_group`, `propagate_face_texture`, `reload_material_assets`, `reload_material_favorites`, `replace_materials`, `sample_face_texture`, `search_materials`, `select_faces`, `select_material_faces`, `set_material`, `set_material_favorite`, `update_texture_stroke`, `vary_face_uv` |
 | [Changed content](textures.md#reload-mounted-content-and-definitions) | `cancel_content_refresh`, `get_content_refresh`, `reload_content`, `set_content_watch` |
 | [Spatial guides](measurements.md) | `get_measurements`, `set_measurement`, `get_workplane`, `set_workplane`, `intersect_workplane` |

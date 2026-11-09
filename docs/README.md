@@ -107,7 +107,7 @@ More in this section:
 <td width="33%" valign="top"><a href="entity-gallery.md"><img src="images/thumbs/entity-gallery.jpg" width="260" alt=""></a><br><a href="entity-gallery.md"><b>Point-entity gallery</b></a><br>Browse the loaded FGD point classes and inspect actual examples in the main viewport before adding a batch to your map.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><a href="path-authoring.md"><img src="images/thumbs/linked-path-handles.jpg" width="260" alt=""></a><br><a href="path-authoring.md"><b>Linked paths</b></a><br>Create linked nodes, configure a brush train and inspect its native motion.</td>
+<td width="33%" valign="top"><a href="path-authoring.md"><img src="images/thumbs/linked-path-handles.jpg" width="260" alt=""></a><br><a href="path-authoring.md"><b>Linked paths</b></a><br>Create linked nodes and configure a brush train.</td>
 <td width="33%" valign="top"><a href="overlays.md"><img src="images/thumbs/overlay-native.jpg" width="260" alt=""></a><br><a href="overlays.md"><b>Overlays</b></a><br>Project a material onto compiled surfaces.</td>
 <td width="33%" valign="top"><a href="prefabs.md"><img src="images/thumbs/prefab-assemblies.jpg" width="260" alt=""></a><br><a href="prefabs.md"><b>Prefab library</b></a><br>Save and reuse brush/entity assemblies as VMF files.</td>
 </tr>

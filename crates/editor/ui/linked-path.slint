@@ -35,9 +35,6 @@ export component LinkedPathWindow inherits Window {
     in-out property <string> offset-y: "0";
     in-out property <string> offset-z: "0";
     in-out property <int> external-index;
-    in property <bool> native-motion-ready;
-    in property <bool> native-motion-busy;
-    in property <string> native-motion-status: "Load an applied path and choose a train to observe native movement.";
     in property <string> preview-status;
     in property <string> message;
     callback edited();
@@ -51,8 +48,6 @@ export component LinkedPathWindow inherits Window {
     callback move-handles(int);
     callback finish-handles();
     callback use-selected-train();
-    callback observe-native-motion(bool);
-    callback cancel-native-motion();
     callback preview();
     callback review();
     callback apply();
@@ -226,14 +221,6 @@ export component LinkedPathWindow inherits Window {
             if root.message != "": Text { text: root.message; color: Theme.text-muted; wrap: word-wrap; }
             if root.picking: Button { text: "Cancel position pick"; clicked => { root.cancel-pick(); } }
             if root.handling: Button { text: "Finish moving"; clicked => { root.finish-handles(); } }
-            HorizontalLayout {
-                spacing: Theme.space;
-                Button { text: "Observe movement"; enabled: root.native-motion-ready && !root.native-motion-busy; clicked => { root.observe-native-motion(false); } }
-                Button { text: "Observe stopped train"; enabled: root.native-motion-ready && !root.native-motion-busy; clicked => { root.observe-native-motion(true); } }
-                if root.native-motion-busy: Button { text: "Cancel observation"; clicked => { root.cancel-native-motion(); } }
-                Rectangle { horizontal-stretch: 1; }
-            }
-            if root.native-motion-status != "": Text { text: root.native-motion-status; color: Theme.text-muted; wrap: word-wrap; }
             HorizontalLayout {
                 spacing: 10px;
                 Button { text: "Cancel"; clicked => { root.cancel(); } }

@@ -49,8 +49,8 @@ Each release includes a complete `CHANGELOG.md`. The release page shows up to 40
 4. Use **Save** or <kbd>Ctrl</kbd>+<kbd>S</kbd> for later changes.
 
 The editor finds the Steam game installation and SDK entity definitions automatically.
-On Linux, keep `hammerr-physics`, `hammerr-native-runtime` and `libnative_runtime.so`
-beside the other programs. They support engine collision, reflection capture and native observation.
+On Linux, keep `hammerr-physics` and `hammerr-native-runtime` beside the other
+programs. They support engine collision and reflection capture.
 
 ## Windows
 
@@ -71,7 +71,7 @@ Steam is located through the current user's registry setting and standard instal
 Editing, VMF saves, preferences, recovery, prefabs, instance extraction, rendered previews and BSP compilation are available. State uses `%LOCALAPPDATA%\hammerr\recovery` unless overridden. Sound previews need FFmpeg/ffplay on `PATH`.
 
 > [!NOTE]
-> Engine physics, native reflection capture, native observation and headless stdio MCP are unavailable on Windows. **Show silently** requires Hyprland; Windows document display requires an explicit focused-show request.
+> Engine physics, native reflection capture and headless stdio MCP are unavailable on Windows. **Show silently** requires Hyprland; Windows document display requires an explicit focused-show request.
 
 ## Command-line options
 
@@ -93,7 +93,7 @@ for each document. See [Content profiles](content-profiles.md).
 ## Limits
 
 - VPK directories allow 64 MiB per encoded tree, 1,000,000 declarations, 1,024 bytes per logical path and 128 MiB of decoded metadata per index. Mounted indexes share a 256 MiB budget, and repeated declarations count toward it. Excess metadata causes an explicit load error.
-- Native reflection capture, native observation and engine physics require Linux; see the Windows notes above for platform limits.
+- Native reflection capture and engine physics require Linux; see the Windows notes above for platform limits.
 - Invalid imports leave the current map open. Nesting is limited to 256 blocks.
 - An active saved camera needs finite, representable coordinates and a distinct look target. Invalid selected camera data refuses Open.
 - Save retains imported properties and extra blocks. It uses standard VMF formatting.

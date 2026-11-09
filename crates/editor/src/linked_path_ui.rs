@@ -34,7 +34,6 @@ pub struct Controller {
     pub window: LinkedPathWindow,
     form: Rc<RefCell<Form>>,
     viewport: Rc<Cell<(u32, u32)>>,
-    _observation_timer: slint::Timer,
 }
 
 fn coordinate(value: &str) -> Result<f64, String> {
@@ -478,7 +477,6 @@ fn with_session<R>(
 impl Controller {
     pub fn new_with_access(access: &DocumentAccess) -> Result<Self, slint::PlatformError> {
         let window = LinkedPathWindow::new()?;
-        let observation_timer = crate::linked_path_observation_ui::bind(&window, access.clone());
         let access = access.downgrade();
         let viewport = Rc::new(Cell::new((1, 1)));
         window
@@ -877,7 +875,6 @@ impl Controller {
             window,
             form,
             viewport,
-            _observation_timer: observation_timer,
         })
     }
 

@@ -11,15 +11,12 @@ pub(crate) mod native_activity;
 pub use compile_queue::CompileHandle;
 pub(crate) use compile_queue::{CompileQueue, QueueClient, QueueStatus};
 
-mod compiled_terrain_snapshot;
 mod document;
 pub use document::{
     DocumentAccess, DocumentCloseReview, DocumentContinuation, DocumentHandle, DocumentId,
     DocumentLifecycle, DocumentOperation,
 };
 mod fog_preview;
-mod linked_path_observation;
-mod player_support_observation;
 mod preview_clock;
 mod recovery;
 mod rope_preview;

@@ -8,7 +8,6 @@ autotests = false
 autobenches = false
 
 [lib]
-crate-type = ["rlib", "cdylib"]
 test = false
 doctest = false
 bench = false

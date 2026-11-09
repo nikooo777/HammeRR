@@ -33,7 +33,6 @@ mod buffer_replacement;
 pub mod bulk_entities;
 pub mod compiled_details;
 mod compiled_source_selection;
-pub mod compiled_terrain_snapshot;
 pub mod compiled_visibility;
 pub mod compiled_world_lights;
 mod document_close;
@@ -82,7 +81,6 @@ pub mod instance_reference;
 pub mod layers;
 mod lighting_preview;
 pub mod linked_path;
-pub mod linked_path_observation;
 mod management;
 pub mod material_assets;
 mod material_catalog;
@@ -95,7 +93,6 @@ mod model_attachments;
 pub mod model_browser;
 pub mod models;
 mod native_capture;
-mod native_observation;
 pub mod navigation_preferences;
 pub mod object_picking;
 pub mod overlay;
@@ -103,7 +100,6 @@ pub mod paint;
 pub mod particles;
 pub mod pivot_preferences;
 pub mod placement;
-pub mod player_support_observation;
 pub mod pointfiles;
 pub mod prefabs;
 pub mod presentation;
@@ -415,7 +411,6 @@ pub struct Session {
     compiling: bool,
     compilation: compilation::State,
     native_capture: native_capture::State,
-    linked_path_observation: linked_path_observation::State,
     native_activity: Option<crate::runtime::native_activity::Client>,
     native_cleanup_error: Option<String>,
     content_epoch: u64,
@@ -424,8 +419,6 @@ pub struct Session {
     compiled: Option<CompiledMap>,
     compiled_visibility: compiled_visibility::State,
     compiled_details: compiled_details::State,
-    compiled_terrain_snapshot: compiled_terrain_snapshot::State,
-    player_support_observation: player_support_observation::State,
     baked_surfaces: baked_surfaces::State,
     compiled_prop_leaf_bounds: baked_prop_vertices::leaf_bounds::State,
     leak: Option<(Snapshot, compiler::Leak)>,
@@ -761,7 +754,6 @@ impl Session {
             compiling: false,
             compilation: compilation::State::default(),
             native_capture: native_capture::State::default(),
-            linked_path_observation: linked_path_observation::State::default(),
             native_activity: None,
             native_cleanup_error: None,
             content_epoch: 0,
@@ -770,8 +762,6 @@ impl Session {
             compiled: None,
             compiled_visibility: compiled_visibility::State::default(),
             compiled_details: compiled_details::State::default(),
-            compiled_terrain_snapshot: compiled_terrain_snapshot::State::default(),
-            player_support_observation: player_support_observation::State::default(),
             baked_surfaces: baked_surfaces::State::default(),
             compiled_prop_leaf_bounds: baked_prop_vertices::leaf_bounds::State::default(),
             leak: None,
@@ -1702,8 +1692,6 @@ impl Session {
         self.reset_instance_contents();
         self.entity_graph = entity_graph::State::default();
         self.reset_compiled_details();
-        self.retire_compiled_terrain_snapshot();
-        self.retire_player_support_observation();
         self.reset_baked_surfaces();
         self.reset_sky3d_preview();
         self.native_capture.invalidate();
@@ -2795,8 +2783,6 @@ impl Session {
         self.shutdown_recent_map();
         self.reset_instance_contents();
         self.reset_compiled_details();
-        self.retire_compiled_terrain_snapshot();
-        self.retire_player_support_observation();
         self.reset_baked_surfaces();
         self.shutdown_sky3d_preview();
         self.shutdown_rope_preview();
@@ -2830,11 +2816,8 @@ impl Session {
 
     fn content_workers_busy(&self) -> bool {
         self.fog_preview_worker_busy()
-            || self.linked_path_observation.worker.busy()
             || self.baked_surfaces.worker.busy()
             || self.compiled_details.worker.busy()
-            || self.compiled_terrain_snapshot.worker.busy()
-            || self.player_support_observation.worker.busy()
             || self.instance_contents.worker.busy()
             || self.instance_extraction.worker.busy()
             || self.external_comparison.worker.busy()
@@ -3075,8 +3058,6 @@ impl Session {
         self.preflight_rope_preview();
         self.preflight_compiled_visibility();
         self.preflight_compiled_details();
-        self.preflight_compiled_terrain_snapshot();
-        self.preflight_player_support_observation();
         self.preflight_baked_surfaces();
         self.preflight_compiled_prop_leaf_bounds();
         let sky3d = self.sky3d_preview_scene();
@@ -3241,8 +3222,6 @@ impl Session {
         self.append_compile_region_guide(&mut mesh);
         self.append_compiled_visibility_guide(&mut mesh);
         self.append_compiled_details(&mut mesh);
-        self.append_compiled_terrain_snapshot_guide(&mut mesh, view);
-        self.append_player_support_observation_guide(&mut mesh, view);
         if baked_surfaces
             && self
                 .append_baked_surfaces(&mut mesh, view.authored_models)

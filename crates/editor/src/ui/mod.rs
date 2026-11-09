@@ -48,11 +48,9 @@ mod external_comparison;
 mod instance_contents;
 mod instance_extraction;
 mod instance_reference;
-mod native_terrain;
 mod object_picking;
 mod outliner;
 mod palette;
-mod player_support;
 mod pointer_lock;
 mod ropes;
 mod selection_filters;
@@ -156,8 +154,6 @@ struct Ui {
     volume: Option<volume_ui::Controller>,
     ropes: Option<ropes::Controller>,
     compile_status: Option<compile_ui::Controller>,
-    native_terrain: Option<Rc<native_terrain::Controller>>,
-    player_support: Option<Rc<player_support::Controller>>,
     saved_views: Option<saved_views_ui::Controller>,
     history: Option<history_ui::Controller>,
     measurements: Option<measurements_ui::Controller>,
@@ -312,8 +308,6 @@ impl Ui {
             volume: None,
             ropes: None,
             compile_status: None,
-            native_terrain: None,
-            player_support: None,
             saved_views: None,
             history: None,
             measurements: None,
@@ -502,8 +496,6 @@ fn prepare_scene_refresh(
     session.preflight_compiled_visibility();
     session.preflight_compiled_details();
     session.preflight_baked_surfaces();
-    session.preflight_compiled_terrain_snapshot();
-    session.preflight_player_support_observation();
     session.preflight_compiled_prop_leaf_bounds();
     let view = session.view();
     let next = session.render_scene_key(view);
@@ -1239,40 +1231,6 @@ fn create_document_window(
         let controller = ui.compile_status.as_ref().unwrap();
         controller.set_aspect(app.get_viewport_width() / app.get_viewport_height().max(1.0));
         if let Err(error) = controller.show(&lock(&ui.session)) {
-            app.set_message(error.to_string().into());
-        }
-    });
-    root_callback!(app, ui, on_native_terrain, |app| {
-        let app = app.unwrap();
-        let mut ui = ui.borrow_mut();
-        if ui.native_terrain.is_none() {
-            match native_terrain::Controller::new_with_access(&ui.document_access()) {
-                Ok(controller) => ui.native_terrain = Some(controller),
-                Err(error) => {
-                    app.set_message(error.to_string().into());
-                    return;
-                }
-            }
-        }
-        let aspect = app.get_viewport_width() / app.get_viewport_height().max(1.0);
-        if let Err(error) = ui.native_terrain.as_ref().unwrap().show(aspect) {
-            app.set_message(error.to_string().into());
-        }
-    });
-    root_callback!(app, ui, on_player_support, |app| {
-        let app = app.unwrap();
-        let mut ui = ui.borrow_mut();
-        if ui.player_support.is_none() {
-            match player_support::Controller::new_with_access(&ui.document_access()) {
-                Ok(controller) => ui.player_support = Some(controller),
-                Err(error) => {
-                    app.set_message(error.to_string().into());
-                    return;
-                }
-            }
-        }
-        let aspect = app.get_viewport_width() / app.get_viewport_height().max(1.0);
-        if let Err(error) = ui.player_support.as_ref().unwrap().show(aspect) {
             app.set_message(error.to_string().into());
         }
     });
@@ -3528,10 +3486,6 @@ fn create_document_window(
                         ui.seen_scene = scene_key;
                         refresh_exposure_controls(&app, &session);
                         app.set_instance_contents(session.view().instance_contents);
-                        let view = session.view();
-                        let terrain_guard = session.compiled_terrain_snapshot_render_guard(view);
-                        let player_support_guard =
-                            session.player_support_observation_render_guard(view);
                         let mesh = session.build_scene();
                         app.set_normal_map_status(mesh.normal_maps.summary().into());
                         app.set_lighting_status(mesh.lighting.report.summary().into());
@@ -3558,23 +3512,12 @@ fn create_document_window(
                         }
                         let instance_contents_guard = session
                             .instance_contents_render_guard(session.view().instance_contents);
-                        let uploaded = terrain_guard.and_then(|guard| {
-                            session
-                                .verify_compiled_terrain_snapshot_render(guard.as_ref(), view)?;
-                            let player_support_guard = player_support_guard?;
-                            session.verify_player_support_observation_render(
-                                player_support_guard.as_ref(),
-                                view,
-                            )?;
-                            ui.viewport.set_scene(
-                                &ui.ctx,
-                                &mesh,
-                                session.materials(),
-                                instance_contents_guard,
-                                guard,
-                                player_support_guard,
-                            )
-                        });
+                        let uploaded = ui.viewport.set_scene(
+                            &ui.ctx,
+                            &mesh,
+                            session.materials(),
+                            instance_contents_guard,
+                        );
                         if let Err(error) = uploaded {
                             clear_view_frames(&app, ui, &format!("Viewport unavailable: {error}"));
                             if !preview_error.is_empty() {
@@ -3930,16 +3873,6 @@ fn create_document_window(
 
                 if now.duration_since(ui.last_log_refresh) >= Duration::from_millis(500) {
                     ui.last_log_refresh = now;
-                    if let Some(controller) = &ui.native_terrain {
-                        controller.set_aspect(
-                            app.get_viewport_width() / app.get_viewport_height().max(1.0),
-                        );
-                    }
-                    if let Some(controller) = &ui.player_support {
-                        controller.set_aspect(
-                            app.get_viewport_width() / app.get_viewport_height().max(1.0),
-                        );
-                    }
                     if let Some(controller) = &ui.atlas
                         && controller.window.window().is_visible()
                     {

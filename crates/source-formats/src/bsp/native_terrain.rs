@@ -1,27 +1,13 @@
-//! Complete terrain arrays matched to an explicitly selected BSP channel.
-//! Observed readbacks require caller-bound process and readiness receipts.
-//! Explicit-profile predictions remain separate from readbacks.
+//! Terrain arrays generated from an explicitly selected BSP channel and native arithmetic profile.
 
 use std::io;
 
 pub mod basis;
-mod topology;
-
-pub use topology::{
-    NATIVE_TERRAIN_MESH_GROUP_ELEMENTS, NativeTerrainTopology, NativeTerrainTopologyComparison,
-    NativeTerrainTopologyReadback,
-};
-
 use super::{
     Bsp, DisplacementInfo, Face, FaceGeometry, LUMP_COUNT, LightingKind, NativeDisplacementProfile,
     NativeDisplacementRounding, TexInfo, invalid, lump,
 };
 
-pub const NATIVE_TERRAIN_VERTEX_STRIDE: usize = 64;
-pub const NATIVE_TERRAIN_POSITION_OFFSET: usize = 0;
-pub const NATIVE_TERRAIN_NORMAL_OFFSET: usize = 12;
-pub const NATIVE_TERRAIN_TANGENT_S_OFFSET: usize = 24;
-pub const NATIVE_TERRAIN_TANGENT_T_OFFSET: usize = 36;
 const MAX_TEXINFO_BYTES: usize = 16 * 1024 * 1024;
 const FLOAT_SIGN: u32 = 1 << 31;
 const FLOAT_EXPONENT: u32 = 0x7f80_0000;
@@ -151,17 +137,9 @@ impl NativeTerrainSource {
     }
 }
 
-pub struct NativeTerrainReadback {
-    pub ordinal: u16,
-    pub power: i32,
-    pub vertices: Vec<u8>,
-    pub topology: NativeTerrainTopologyReadback,
-}
-
 pub struct NativeTerrainDisplacement {
     source: NativeTerrainSource,
     samples: Vec<NativeTerrainSample>,
-    topology: Option<NativeTerrainTopology>,
 }
 
 impl NativeTerrainDisplacement {
@@ -187,10 +165,6 @@ impl NativeTerrainDisplacement {
 
     pub fn samples(&self) -> &[NativeTerrainSample] {
         &self.samples
-    }
-
-    pub const fn topology(&self) -> Option<&NativeTerrainTopology> {
-        self.topology.as_ref()
     }
 }
 
@@ -244,21 +218,13 @@ impl NativeTerrainSnapshot {
             + self
                 .displacements
                 .iter()
-                .map(|disp| {
-                    disp.samples.capacity() * size_of::<NativeTerrainSample>()
-                        + disp
-                            .topology
-                            .as_ref()
-                            .map_or(0, NativeTerrainTopology::heap_bytes)
-                })
+                .map(|disp| disp.samples.capacity() * size_of::<NativeTerrainSample>())
                 .sum::<usize>()
     }
 }
 
 pub struct NativeTerrainCarrier {
     channel: LightingKind,
-    bsp_version: i32,
-    map_revision: i32,
     displacements: Vec<NativeTerrainSource>,
     position_candidates: Vec<[Vec<[f32; 3]>; 4]>,
 }
@@ -314,7 +280,7 @@ impl NativeTerrainCarrier {
             }
             let winding = geometry.base_winding(face_ordinal)?;
             if winding.model != 0 {
-                return Err(invalid("Native terrain inspection requires Model0 terrain"));
+                return Err(invalid("Native terrain basis requires Model0 terrain"));
             }
             let base_quad = winding
                 .positions
@@ -367,8 +333,6 @@ impl NativeTerrainCarrier {
         check()?;
         Ok(Self {
             channel,
-            bsp_version: bsp.version,
-            map_revision: bsp.map_revision,
             displacements,
             position_candidates,
         })
@@ -381,122 +345,4 @@ impl NativeTerrainCarrier {
     pub fn displacements(&self) -> &[NativeTerrainSource] {
         &self.displacements
     }
-
-    pub fn decode_controlled(
-        &self,
-        readbacks: &[NativeTerrainReadback],
-        check: &mut dyn FnMut() -> io::Result<()>,
-    ) -> io::Result<NativeTerrainSnapshot> {
-        check()?;
-        if readbacks.len() != self.displacements.len() {
-            return Err(invalid(
-                "Native terrain readback is not the complete BSP catalog",
-            ));
-        }
-        let mut matching = [true; 4];
-        let mut displacements = Vec::with_capacity(self.displacements.len());
-        for ((source, candidates), readback) in self
-            .displacements
-            .iter()
-            .zip(&self.position_candidates)
-            .zip(readbacks)
-        {
-            check()?;
-            if readback.ordinal != source.ordinal() || readback.power != source.power() {
-                return Err(invalid(
-                    "Native terrain catalog order, ordinal or power mismatch",
-                ));
-            }
-            let expected_bytes = source.vertex_count() * NATIVE_TERRAIN_VERTEX_STRIDE;
-            if readback.vertices.len() != expected_bytes {
-                return Err(invalid(
-                    "Native terrain vertex readback is incomplete or oversized",
-                ));
-            }
-            let mut samples = Vec::with_capacity(source.vertex_count());
-            for (index, bytes) in readback
-                .vertices
-                .as_chunks::<NATIVE_TERRAIN_VERTEX_STRIDE>()
-                .0
-                .iter()
-                .enumerate()
-            {
-                let position = vector_bits(bytes, NATIVE_TERRAIN_POSITION_OFFSET);
-                if position
-                    .iter()
-                    .any(|bits| bits & FLOAT_EXPONENT == FLOAT_EXPONENT)
-                {
-                    return Err(invalid("Native terrain observed position must be finite"));
-                }
-                for (mode, expected) in candidates.iter().enumerate() {
-                    if matching[mode]
-                        && !position
-                            .into_iter()
-                            .zip(expected[index])
-                            .all(|(observed, expected)| same_coordinate(observed, expected))
-                    {
-                        matching[mode] = false;
-                    }
-                }
-                samples.push(NativeTerrainSample {
-                    position,
-                    normal: NativeTerrainVector::new(vector_bits(
-                        bytes,
-                        NATIVE_TERRAIN_NORMAL_OFFSET,
-                    )),
-                    tangent_s: NativeTerrainVector::new(vector_bits(
-                        bytes,
-                        NATIVE_TERRAIN_TANGENT_S_OFFSET,
-                    )),
-                    tangent_t: NativeTerrainVector::new(vector_bits(
-                        bytes,
-                        NATIVE_TERRAIN_TANGENT_T_OFFSET,
-                    )),
-                });
-            }
-            if !matching.iter().any(|matches| *matches) {
-                return Err(invalid(
-                    "Native terrain positions do not match one complete catalog profile",
-                ));
-            }
-            displacements.push(NativeTerrainDisplacement {
-                source: *source,
-                samples,
-                topology: Some(NativeTerrainTopology::decode_controlled(
-                    source,
-                    &readback.topology,
-                    check,
-                )?),
-            });
-        }
-        check()?;
-        let mut position_rounding_mask = 0;
-        let mut position_roundings = Vec::with_capacity(NativeDisplacementRounding::ALL.len());
-        for (index, rounding) in NativeDisplacementRounding::ALL.into_iter().enumerate() {
-            if matching[index] {
-                position_rounding_mask |= 1 << index;
-                position_roundings.push(rounding);
-            }
-        }
-        Ok(NativeTerrainSnapshot {
-            channel: self.channel,
-            bsp_version: self.bsp_version,
-            map_revision: self.map_revision,
-            position_rounding_mask,
-            position_roundings,
-            displacements,
-        })
-    }
-}
-
-fn vector_bits(bytes: &[u8], offset: usize) -> [u32; 3] {
-    std::array::from_fn(|axis| {
-        let start = offset + axis * size_of::<u32>();
-        u32::from_le_bytes(bytes[start..start + size_of::<u32>()].try_into().unwrap())
-    })
-}
-
-fn same_coordinate(observed: u32, expected: f32) -> bool {
-    let expected = expected.to_bits();
-    observed == expected || (observed | expected) & !FLOAT_SIGN == 0
 }

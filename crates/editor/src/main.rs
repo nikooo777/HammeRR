@@ -26,7 +26,6 @@ mod history_ui;
 mod hollow_ui;
 mod layers_ui;
 mod lighting_ui;
-mod linked_path_observation_ui;
 mod linked_path_ui;
 mod management_ui;
 mod material_replace_ui;

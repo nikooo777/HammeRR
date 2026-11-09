@@ -2,7 +2,7 @@
 
 # Linked paths
 
-Create linked nodes, configure a brush train and inspect its native motion.
+Create linked nodes and configure a brush train.
 
 ## Create or edit a path
 
@@ -48,15 +48,6 @@ A named `func_train` uses an explicit `logic_auto` helper for automatic startup.
 
 Internal links point to the copies. External incoming controls keep their original targets and appear in the preview report.
 
-## Observe native movement
-
-1. Apply edits, save the map and compile it successfully. Keep Steam running.
-2. Load the path and choose its **Train entity ID**.
-3. Click **Observe stopped train** or **Observe movement**.
-4. Read the result. Use **Cancel observation** to stop the operation.
-
-The observer runs a private map copy. It waits 500 ms for startup before the first control. It records native game time and absolute train origins. Movement observation sends Stop, Start, Stop and Start; tracktrains receive StartForward. The source map, camera and Undo history stay unchanged. MCP exposes the full samples and receipt.
-
 ## Limits
 
 - 2–64 distinct, visible, unparented nodes within ±65536; one simple chain or loop.
@@ -64,9 +55,6 @@ The observer runs a private map copy. It waits 500 ms for startup before the fir
 - Class conversion rejects behavior that the new class cannot preserve.
 - Train setup requires visible, unparented, zero-angle convex brush entities. Speed: greater than zero, up to 4096.
 - Duplication supports one complete path, one associated train and its managed startup helper.
-- Native observation requires Linux, a supported CS:S build and a current saved BSP. Authored scripts and console-command entities are unavailable in the private observer.
-- Observed train names use up to 128 ASCII letters, digits, underscores, periods or dashes.
-- Native origins can differ from path points by the train's brush-center offset. Samples do not claim exact node arrivals.
 
 <!-- page-nav -->
 

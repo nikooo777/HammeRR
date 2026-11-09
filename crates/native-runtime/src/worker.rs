@@ -94,43 +94,7 @@ pub(crate) fn game_directory(directory: &Path, request: &WorkerRequest) -> io::R
     for name in ["config.cfg", "autoexec.cfg"] {
         util::atomic_write(&game.join("cfg").join(name), b"")?;
     }
-    let diagnostic_case = match &request.profile {
-        WorkerProfile::PplUv857(case) => Some(crate::diagnostic::DiagnosticCase::Uv857(*case)),
-        WorkerProfile::PplMidrange909(case) => {
-            Some(crate::diagnostic::DiagnosticCase::Midrange909(*case))
-        }
-        WorkerProfile::PplSpatial919(case) => {
-            Some(crate::diagnostic::DiagnosticCase::Spatial919(*case))
-        }
-        WorkerProfile::PplMips931(case) => Some(crate::diagnostic::DiagnosticCase::Mips931(*case)),
-        WorkerProfile::Reflection(_)
-        | WorkerProfile::Movement(_)
-        | WorkerProfile::TerrainSnapshot(_)
-        | WorkerProfile::PlayerSupport(_) => None,
-    };
-    if let Some(case) = diagnostic_case {
-        crate::diagnostic::configure_game(directory, &game, case)?;
-        fs::copy(
-            directory.join("staged.bsp"),
-            game.join("maps/hammerr_runtime.bsp"),
-        )?;
-        return Ok(game);
-    }
-    if let WorkerProfile::Movement(profile) = &request.profile {
-        crate::movement::configure_game(directory, &game, profile)?;
-        return Ok(game);
-    }
-    if let WorkerProfile::PlayerSupport(profile) = &request.profile {
-        crate::player_support::configure_game(directory, &game, profile)?;
-        return Ok(game);
-    }
-    if let WorkerProfile::TerrainSnapshot(profile) = &request.profile {
-        crate::terrain_snapshot::configure_game(directory, &game, profile)?;
-        return Ok(game);
-    }
-    let WorkerProfile::Reflection(profile) = &request.profile else {
-        return Err(invalid("Expected reflection profile"));
-    };
+    let WorkerProfile::Reflection(profile) = &request.profile;
     let postmap=b"toggle sv_lan 1\ntoggle mat_fullbright 0\ntoggle mat_envmapsize 128\nhelp sv_lan\nhelp mat_hdr_level\nhelp mat_fullbright\nhelp mat_envmapsize\n";
     for name in [
         "server.cfg",
@@ -573,49 +537,7 @@ fn execute(directory: &Path, request: &WorkerRequest) -> io::Result<()> {
         return Err(invalid("Native worker requires its private compositor"));
     }
     guard::validate_environment(&request.environment)?;
-    match &request.profile {
-        WorkerProfile::PplUv857(case) => {
-            return crate::diagnostic::execute(
-                directory,
-                request,
-                crate::diagnostic::DiagnosticCase::Uv857(*case),
-            );
-        }
-        WorkerProfile::PplMidrange909(case) => {
-            return crate::diagnostic::execute(
-                directory,
-                request,
-                crate::diagnostic::DiagnosticCase::Midrange909(*case),
-            );
-        }
-        WorkerProfile::PplSpatial919(case) => {
-            return crate::diagnostic::execute(
-                directory,
-                request,
-                crate::diagnostic::DiagnosticCase::Spatial919(*case),
-            );
-        }
-        WorkerProfile::PplMips931(case) => {
-            return crate::diagnostic::execute(
-                directory,
-                request,
-                crate::diagnostic::DiagnosticCase::Mips931(*case),
-            );
-        }
-        WorkerProfile::Movement(profile) => {
-            return crate::movement::execute(directory, request, profile);
-        }
-        WorkerProfile::PlayerSupport(profile) => {
-            return crate::player_support::execute(directory, request, profile);
-        }
-        WorkerProfile::TerrainSnapshot(profile) => {
-            return crate::terrain_snapshot::execute(directory, request, profile);
-        }
-        WorkerProfile::Reflection(_) => {}
-    }
-    let WorkerProfile::Reflection(profile) = &request.profile else {
-        return Err(invalid("Expected reflection profile"));
-    };
+    let WorkerProfile::Reflection(profile) = &request.profile;
     let largest = profile
         .samples
         .iter()

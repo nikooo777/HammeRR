@@ -575,60 +575,6 @@ impl DocumentAccess {
         self.document.as_ref().map(DocumentHandle::lifecycle)
     }
 
-    pub fn start_linked_path_observation(
-        &self,
-        actor: Actor,
-        options: crate::session::linked_path_observation::Options,
-    ) -> Result<Value, String> {
-        let operation = self
-            .document
-            .as_ref()
-            .map(|document| document.admit_named("Native movement observation"))
-            .transpose()?;
-        super::linked_path_observation::start(&self.session, actor, options, operation)
-    }
-
-    pub fn prepare_compiled_terrain_snapshot(
-        &self,
-        actor: Actor,
-        snapshot: String,
-    ) -> Result<Value, String> {
-        let operation = self
-            .document
-            .as_ref()
-            .map(|document| document.admit_named("Native terrain observation"))
-            .transpose()?;
-        super::compiled_terrain_snapshot::start(&self.session, actor, snapshot, operation)
-    }
-
-    pub fn compare_compiled_terrain_basis(
-        &self,
-        actor: Actor,
-        token: u64,
-        options: crate::session::compiled_terrain_snapshot::ComparisonOptions,
-    ) -> Result<Value, String> {
-        let operation = self
-            .document
-            .as_ref()
-            .map(|document| document.admit_named("Native terrain basis comparison"))
-            .transpose()?;
-        super::compiled_terrain_snapshot::compare(&self.session, actor, token, options, operation)
-    }
-
-    pub fn start_player_support_observation(
-        &self,
-        actor: Actor,
-        snapshot: String,
-        options: crate::session::player_support_observation::Options,
-    ) -> Result<Value, String> {
-        let operation = self
-            .document
-            .as_ref()
-            .map(|document| document.admit_named("Player support observation"))
-            .transpose()?;
-        super::player_support_observation::start(&self.session, actor, snapshot, options, operation)
-    }
-
     pub fn finish_reviewed_close(&self) -> Result<(), String> {
         let document = self
             .document

@@ -144,8 +144,6 @@ pub(crate) struct Target {
     steam: Option<Binding>,
     mounts: Vec<Binding>,
     engine_image: Option<compiler::FileIdentity>,
-    server_image: Option<compiler::FileIdentity>,
-    physics_image: Option<compiler::FileIdentity>,
 }
 
 impl Target {
@@ -157,8 +155,6 @@ impl Target {
             steam: None,
             mounts: Vec::new(),
             engine_image: None,
-            server_image: None,
-            physics_image: None,
         })
     }
 
@@ -189,33 +185,6 @@ impl Target {
         Ok(target)
     }
 
-    pub(crate) fn with_player_support(
-        mut self,
-        environment: &native_runtime::CaptureEnvironment,
-    ) -> Result<Self, String> {
-        let control = compiler::Control::default();
-        let server = compiler::FileIdentity::capture_bounded(
-            &environment
-                .engine_root
-                .join("cstrike/bin/linux64/server.so"),
-            128 * 1024 * 1024,
-            &control,
-        )
-        .map_err(|error| error.to_string())?;
-        let physics = compiler::FileIdentity::capture_bounded(
-            &environment.engine_root.join("bin/linux64/vphysics.so"),
-            128 * 1024 * 1024,
-            &control,
-        )
-        .map_err(|error| error.to_string())?;
-        if server.sha256().is_none() || physics.sha256().is_none() {
-            return Err("Native player observation requires server and physics images".into());
-        }
-        self.server_image = Some(server);
-        self.physics_image = Some(physics);
-        Ok(self)
-    }
-
     pub(crate) fn verify(&self) -> Result<(), String> {
         self.engine.verify()?;
         self.game.verify()?;
@@ -231,48 +200,17 @@ impl Target {
                 .verify_metadata()
                 .map_err(|error| format!("Native engine image changed: {error}"))?;
         }
-        for (label, image) in [
-            ("server", &self.server_image),
-            ("physics", &self.physics_image),
-        ] {
-            if let Some(image) = image {
-                image
-                    .verify_metadata()
-                    .map_err(|error| format!("Native {label} image changed: {error}"))?;
-            }
-        }
         Ok(())
     }
 
-    pub(crate) fn engine_image_sha256(&self) -> Option<&str> {
-        self.engine_image
-            .as_ref()
-            .and_then(compiler::FileIdentity::sha256)
-    }
-
-    pub(crate) fn server_image_sha256(&self) -> Option<&str> {
-        self.server_image
-            .as_ref()
-            .and_then(compiler::FileIdentity::sha256)
-    }
-
-    pub(crate) fn physics_image_sha256(&self) -> Option<&str> {
-        self.physics_image
-            .as_ref()
-            .and_then(compiler::FileIdentity::sha256)
-    }
-
     fn describe(&self) -> Value {
-        json!({"engine":self.engine.describe(),"game":self.game.describe(),"executable":self.executable.describe(),"steam":self.steam.as_ref().map(Binding::describe),"mounts":self.mounts.iter().map(Binding::describe).collect::<Vec<_>>(),"engine_image":self.engine_image.as_ref().map(|image|json!({"path":image.path(),"sha256":image.sha256()})),"server_image":self.server_image.as_ref().map(|image|json!({"path":image.path(),"sha256":image.sha256()})),"physics_image":self.physics_image.as_ref().map(|image|json!({"path":image.path(),"sha256":image.sha256()}))})
+        json!({"engine":self.engine.describe(),"game":self.game.describe(),"executable":self.executable.describe(),"steam":self.steam.as_ref().map(Binding::describe),"mounts":self.mounts.iter().map(Binding::describe).collect::<Vec<_>>(),"engine_image":self.engine_image.as_ref().map(|image|json!({"path":image.path(),"sha256":image.sha256()}))})
     }
 }
 
 #[derive(Clone, Copy)]
 pub(crate) enum Phase {
     Capture,
-    Movement,
-    TerrainSnapshot,
-    PlayerSupport,
     PlayStartup,
     Play,
 }
@@ -281,9 +219,6 @@ impl Phase {
     fn name(self) -> &'static str {
         match self {
             Self::Capture => "capture",
-            Self::Movement => "movement",
-            Self::TerrainSnapshot => "terrain_snapshot",
-            Self::PlayerSupport => "player_support",
             Self::PlayStartup => "play_startup",
             Self::Play => "play",
         }
@@ -302,9 +237,6 @@ impl Record {
     fn message(&self) -> String {
         let state = match self.phase {
             "capture" => "Native activity busy: reflection capture",
-            "movement" => "Native activity busy: movement observation",
-            "terrain_snapshot" => "Native activity busy: terrain observation",
-            "player_support" => "Native activity busy: player support observation",
             "play_startup" => "Native activity busy: game startup",
             "play" => "Native activity busy: managed game running",
             _ => "Native activity unavailable: cleanup failed",

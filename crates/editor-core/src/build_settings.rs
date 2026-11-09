@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct BuildSettings {
     pub lighting: String,
+    #[serde(default = "default_terrain_lighting_normals")]
+    pub terrain_lighting_normals: String,
     pub physics: String,
     #[serde(default = "default_postprocess_order")]
     pub postprocess_order: String,
@@ -36,6 +38,10 @@ pub struct BuildSettings {
     pub refine_ambient_probes: bool,
 }
 
+fn default_terrain_lighting_normals() -> String {
+    compiler::TerrainLightingNormals::Authored.name().into()
+}
+
 fn default_postprocess_order() -> String {
     compiler::PostprocessOrder::LightingThenPhysics
         .name()
@@ -60,6 +66,7 @@ impl BuildSettings {
     pub fn from_options(options: compiler::Options) -> Self {
         Self {
             lighting: options.lighting.name().into(),
+            terrain_lighting_normals: options.terrain_lighting_normals.name().into(),
             physics: options.physics.name().into(),
             postprocess_order: options.postprocess_order.name().into(),
             sky_quality: options.sky_quality.name().into(),
@@ -82,6 +89,9 @@ impl BuildSettings {
     pub fn options(&self) -> Result<compiler::Options, String> {
         compiler::Options {
             lighting: compiler::LightingMode::parse(&self.lighting)?,
+            terrain_lighting_normals: compiler::TerrainLightingNormals::parse(
+                &self.terrain_lighting_normals,
+            )?,
             physics: compiler::PhysicsMode::parse(&self.physics)?,
             postprocess_order: compiler::PostprocessOrder::parse(&self.postprocess_order)?,
             sky_quality: compiler::SkyQuality::parse(&self.sky_quality)?,
@@ -134,8 +144,9 @@ impl BuildSettings {
         .filter_map(|(enabled, label)| enabled.then_some(label))
         .collect::<Vec<_>>();
         let mut description = format!(
-            "{} · {} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units",
+            "{} · {} · {} · {} · {} · {} · {} · {}° brush smoothing · {} lighting work units",
             options.lighting.label(),
+            options.terrain_lighting_normals.label(),
             options.physics.label(),
             options.postprocess_order.label(),
             options.visibility.label(),
@@ -158,6 +169,7 @@ impl BuildSettings {
     pub(crate) fn update(&self) -> crate::session::compilation::BuildSettingsUpdate<'_> {
         crate::session::compilation::BuildSettingsUpdate {
             lighting: Some(&self.lighting),
+            terrain_lighting_normals: Some(&self.terrain_lighting_normals),
             physics: Some(&self.physics),
             postprocess_order: Some(&self.postprocess_order),
             sky_quality: Some(&self.sky_quality),

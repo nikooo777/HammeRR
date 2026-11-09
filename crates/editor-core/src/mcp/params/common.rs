@@ -748,6 +748,9 @@ pub struct CompileSettingsArgs {
     pub lighting: Option<String>,
     /// none (default) or engine; engine uses the verified installed CS:S Linux64 library in an isolated worker.
     pub physics: Option<String>,
+    /// authored (default) preserves authored terrain smoothing. native_client selects native load N inputs for unbumped terrain in a lit mode; no VRAD/bump/pixel parity. Unknown values and native_client with Fullbright reject atomically.
+    #[schemars(extend("enum" = ["authored", "native_client", null]))]
+    pub terrain_lighting_normals: Option<String>,
     /// lighting_then_physics (factory default) or physics_then_lighting. Changes actual pass order after fixed geometry/VIS assembly and before packing, reflection capture and publication. Disabled passes stay disabled. Omitted/null retains the current order; unknown values reject atomically.
     #[schemars(extend("enum" = ["lighting_then_physics", "physics_then_lighting", null]))]
     pub postprocess_order: Option<String>,

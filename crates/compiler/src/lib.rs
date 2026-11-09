@@ -34,6 +34,7 @@ pub mod sky_region;
 pub mod static_prop_assets;
 pub mod static_prop_origins;
 mod static_props;
+mod terrain_lighting;
 pub mod tree;
 mod visclusters;
 mod visibility;
@@ -93,6 +94,9 @@ pub use postprocess::{
 };
 pub use publication::{FileIdentity, FileStamp, OutputLease};
 pub use sky_assets::{SkyAssetManifest, SkyAssetPlan, read_packed_sky, verify_packed_sky};
+pub use terrain_lighting::{
+    NativeTerrainNormalInputs, TerrainLightingNormals, TerrainNormalInputs,
+};
 pub use water_analog::{WATER_ANALOG_CLASSNAME, WATER_ANALOG_DEFAULTS};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
@@ -190,6 +194,7 @@ impl SkyQuality {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
     pub lighting: LightingMode,
+    pub terrain_lighting_normals: TerrainLightingNormals,
     pub physics: PhysicsMode,
     pub postprocess_order: PostprocessOrder,
     pub sky_quality: SkyQuality,
@@ -238,6 +243,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             lighting: LightingMode::default(),
+            terrain_lighting_normals: TerrainLightingNormals::default(),
             physics: PhysicsMode::default(),
             postprocess_order: PostprocessOrder::default(),
             sky_quality: SkyQuality::default(),
@@ -300,6 +306,14 @@ impl Options {
 
     pub fn validate(self) -> Result<Self, String> {
         validate_lighting_work_limit(self.lighting_work_limit)?;
+        if self.terrain_lighting_normals == TerrainLightingNormals::NativeClient
+            && !self.lighting.performs_lighting()
+        {
+            return Err(
+                "Native client terrain normals require Direct LDR or Direct LDR + HDR lighting"
+                    .into(),
+            );
+        }
         if self.reflect_static_props
             && (!self.lighting.performs_lighting() || !self.bake_static_prop_vertices)
         {
@@ -576,6 +590,9 @@ pub struct Stats {
     pub instances: Option<instances::InstanceStats>,
     pub compile_region: Option<RegionSummary>,
     pub lighting_mode: LightingMode,
+    pub terrain_lighting_normals: TerrainLightingNormals,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terrain_normal_inputs: Option<TerrainNormalInputs>,
     pub hdr: Option<HdrLightingStats>,
     pub lighting_total_work: usize,
     pub lighting_progress: Option<lighting::LightingProgress>,
@@ -1970,6 +1987,7 @@ fn build(
                     output.stats.smoothed_faces = stats.smoothed_faces;
                     output.stats.smoothed_corners = stats.smoothed_corners;
                     output.stats.normal_work = stats.normal_work;
+                    output.stats.terrain_normal_inputs = stats.terrain_normal_inputs;
                     output.stats.smoothing_angle = options.smoothing_angle;
                 }
                 PostprocessStage::Physics => {
@@ -2165,6 +2183,7 @@ pub fn compile_with_resources_controlled(
         prop_lighting_assets: None,
     };
     output.stats.lighting_mode = options.lighting;
+    output.stats.terrain_lighting_normals = options.terrain_lighting_normals;
     output.stats.physics_mode = options.physics;
     output.stats.postprocess = PostprocessReport::new(options);
     output.stats.visibility_mode = options.visibility;

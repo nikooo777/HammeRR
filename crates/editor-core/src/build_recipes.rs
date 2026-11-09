@@ -102,6 +102,7 @@ pub(crate) fn builtins() -> [Recipe; 2] {
             name: "Final lighting".into(),
             settings: compiler::Options {
                 lighting: compiler::LightingMode::DirectLdr,
+                terrain_lighting_normals: compiler::TerrainLightingNormals::Authored,
                 physics: compiler::PhysicsMode::Engine,
                 postprocess_order: compiler::PostprocessOrder::LightingThenPhysics,
                 sky_quality: compiler::SkyQuality::Detailed,

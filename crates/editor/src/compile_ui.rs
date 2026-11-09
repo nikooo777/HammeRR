@@ -113,6 +113,54 @@ fn hdr_lighting_details(stats: &serde_json::Value) -> String {
     )
 }
 
+fn terrain_normal_input_details(stats: &serde_json::Value) -> String {
+    let inputs = &stats["terrain_normal_inputs"];
+    if !inputs.is_object() {
+        return String::new();
+    }
+    let mode = inputs["mode"]
+        .as_str()
+        .and_then(|mode| compiler::TerrainLightingNormals::parse(mode).ok());
+    let mut details = format!(
+        "\nTerrain lighting normals: {} · {}\nTerrain normal inputs: {} displacements · {} samples\nReceiver sampling: triangle barycentric, then normalize",
+        mode.map(|mode| mode.label()).unwrap_or("unavailable"),
+        inputs["status"].as_str().unwrap_or("unavailable"),
+        inputs["displacement_count"],
+        inputs["sample_count"]
+    );
+    let native = &inputs["native"];
+    if native.is_object() {
+        let signature = native["cpu_signature"]
+            .as_u64()
+            .map(|value| format!("0x{value:08x}"))
+            .unwrap_or_else(|| "unavailable".into());
+        let probes = native["rsqrt_probe_bits"]
+            .as_array()
+            .map(|values| {
+                values
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_u64()
+                            .map(|value| format!("0x{value:08x}"))
+                            .unwrap_or_else(|| "unavailable".into())
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_else(|| "unavailable".into());
+        details.push_str(&format!(
+            "\nNative normal profile: position {} · basis {} · FTZ {} · DAZ {}\nNative normal CPU: {} · {} · signature {signature}\nRSQRTSS probe bits: {probes}\nN input SHA-256: {}\nNative normal work: {} used · {} kernel limit\nNative normal scratch plan: {} bytes · caller reservation: {} bytes\nRetained native catalog: {} bytes",
+            native["position_rounding"].as_str().unwrap_or("unavailable"), native["basis_rounding"].as_str().unwrap_or("unavailable"),
+            native["flush_to_zero"], native["denormals_are_zero"],
+            native["cpu_brand"].as_str().unwrap_or("unavailable"), native["cpu_vendor"].as_str().unwrap_or("unavailable"),
+            native["normal_sha256"].as_str().unwrap_or("unavailable"), native["work_units"], native["kernel_work_limit_units"],
+            native["scratch_reserved_bytes"], native["caller_scratch_reserved_bytes"], native["retained_bytes"]
+        ));
+    }
+    details
+}
+
 fn material_emission_details(stats: &serde_json::Value) -> String {
     let emission = &stats["material_emission"];
     let mut details = String::new();
@@ -316,6 +364,29 @@ fn refresh_current_settings(window: &CompileWindow, session: &Session) {
             .unwrap_or_default()
             .into(),
     );
+    let terrain_normal_choice = settings["terrain_lighting_normals_choices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|choice| choice["name"] == settings["terrain_lighting_normals"]);
+    window.set_selected_terrain_normals(
+        terrain_normal_choice
+            .and_then(|choice| choice["label"].as_str())
+            .unwrap_or_default()
+            .into(),
+    );
+    let mut terrain_description = terrain_normal_choice
+        .and_then(|choice| choice["description"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    if compiler::LightingMode::parse(settings["lighting"].as_str().unwrap_or_default())
+        .is_ok_and(|mode| !mode.performs_lighting())
+    {
+        terrain_description.push_str(
+            " Choose Direct LDR or Direct LDR + HDR before selecting Native client normals.",
+        );
+    }
+    window.set_terrain_normals_description(terrain_description.into());
     let physics_choices = settings["physics_choices"]
         .as_array()
         .cloned()
@@ -677,6 +748,14 @@ impl Controller {
             .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
             .collect::<Vec<_>>();
         window.set_lighting_modes(Rc::new(slint::VecModel::from(labels)).into());
+        let terrain_normal_labels = settings["terrain_lighting_normals_choices"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|choice| slint::SharedString::from(choice["label"].as_str().unwrap_or_default()))
+            .collect::<Vec<_>>();
+        window
+            .set_terrain_normal_modes(Rc::new(slint::VecModel::from(terrain_normal_labels)).into());
         let physics_labels = settings["physics_choices"]
             .as_array()
             .into_iter()
@@ -730,6 +809,44 @@ impl Controller {
                         Ok(_) => "Postprocess order updated for the next build.".into(),
                         Err(error) => error.into(),
                     });
+                });
+            }
+        });
+        window.on_change_terrain_lighting_normals({
+            let (target, window, recipes) = (access.downgrade(), window.as_weak(), recipes.clone());
+            move |choice| {
+                admitted(&window, &target, |window, shared| {
+                    let mut session = lock(shared);
+                    let settings = session.compile_settings();
+                    let result = usize::try_from(choice)
+                        .ok()
+                        .and_then(|index| settings["terrain_lighting_normals_choices"].get(index))
+                        .and_then(|choice| choice["name"].as_str())
+                        .ok_or_else(|| {
+                            "Choose a supported terrain lighting normals mode".to_string()
+                        })
+                        .and_then(|mode| {
+                            session.update_build_settings(
+                                Actor::User,
+                                crate::session::compilation::BuildSettingsUpdate {
+                                    terrain_lighting_normals: Some(mode),
+                                    ..Default::default()
+                                },
+                            )
+                        });
+                    refresh_recipes(&window, &session, &recipes);
+                    match result {
+                        Ok(_) => {
+                            window.set_terrain_normals_error("".into());
+                            window.set_message(
+                                "Terrain lighting normals updated for the next build.".into(),
+                            );
+                        }
+                        Err(error) => {
+                            window.set_terrain_normals_error(error.clone().into());
+                            window.set_message(error.into());
+                        }
+                    }
                 });
             }
         });
@@ -923,9 +1040,15 @@ impl Controller {
                     refresh_recipes(&window, &session, &recipes);
                     window.set_message(match result {
                         Ok(_) => {
+                            window.set_terrain_normals_error("".into());
                             "Build lighting updated. The next build will use this mode.".into()
                         }
-                        Err(error) => error.into(),
+                        Err(error) => {
+                            if settings["terrain_lighting_normals"] == "native_client" {
+                                window.set_terrain_normals_error(error.clone().into());
+                            }
+                            error.into()
+                        }
                     });
                 });
             }
@@ -1492,6 +1615,7 @@ impl Controller {
             .unwrap_or_default();
         let region = &job["compile_region"];
         let lighting_progress = lighting_progress::details(&result["stats"]);
+        let terrain_normal_inputs = terrain_normal_input_details(&result["stats"]);
         let region_label = if let Some(error) = region["error"].as_str() {
             format!("Invalid region: {error}")
         } else if region["enabled"] == true {
@@ -1505,11 +1629,12 @@ impl Controller {
             .unwrap_or_default();
         self.window.set_details(
             format!(
-                "Output: {}\nRecipe at build start: {}{postprocess_plan}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{material_emission}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{brush_global_shadows}{styles}{hdr}{lighting_progress}{smoothing}{physics}\n{}",
+                "Output: {}\nRecipe at build start: {}{postprocess_plan}\nCompile scope at build start: {region_label}\nBuild settings: {} · {}\nTerrain lighting normals at build start: {}\nVisibility: {} · Sampling: {}\nIndirect light: {} · Brush smoothing angle: {}°\nStage: {} · {:.2}s elapsed{queue_details}{instances}{packed_sky}{packed_water}{packed_static_props}{samples}{reflections}{props}{prop_vertex_lighting}{material_emission}{details}{visibility}{hints}{bounce}{areas}{occluders}{terrain}{overlays}{water}{sky}{lighting}{bumps}{model_maps}{brush_global_shadows}{styles}{hdr}{lighting_progress}{smoothing}{physics}{terrain_normal_inputs}\n{}",
                 job["path"].as_str().unwrap_or_default(),
                 job["recipe"]["name"].as_str().unwrap_or("Custom settings"),
                 compiler::LightingMode::parse(job["settings"]["lighting"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::PhysicsMode::parse(job["settings"]["physics"].as_str().unwrap_or_default()).unwrap_or_default().label(),
+                compiler::TerrainLightingNormals::parse(job["settings"]["terrain_lighting_normals"].as_str().unwrap_or_default()).map(|mode|mode.label()).unwrap_or("unavailable"),
                 compiler::VisibilityMode::parse(job["settings"]["visibility"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::SkyQuality::parse(job["settings"]["sky_quality"].as_str().unwrap_or_default()).unwrap_or_default().label(),
                 compiler::bounce_label(job["settings"]["bounces"].as_u64().unwrap_or_default() as u8),
@@ -1528,6 +1653,7 @@ impl Controller {
 
     pub fn show(&self, session: &Session) -> Result<(), slint::PlatformError> {
         self.window.set_lighting_work_limit_editing(false);
+        self.window.set_terrain_normals_error("".into());
         self.window.set_message("Closing this window leaves an active build running. Cancel build stops it and preserves previous output.".into());
         self.refresh(session);
         self.window.show()

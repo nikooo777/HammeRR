@@ -171,8 +171,9 @@ pub(super) struct Patch {
 }
 
 pub(super) struct Work<'a> {
-    check: &'a mut dyn FnMut() -> io::Result<()>,
+    check: &'a mut dyn FnMut(usize) -> io::Result<()>,
     units: usize,
+    reported_units: usize,
     caller_mxcsr: u32,
 }
 impl Work<'_> {
@@ -190,7 +191,9 @@ impl Work<'_> {
     }
     pub fn checkpoint(&mut self) -> io::Result<()> {
         let _restore = MxcsrGuard::raw(self.caller_mxcsr)?;
-        (self.check)()
+        (self.check)(self.units - self.reported_units)?;
+        self.reported_units = self.units;
+        Ok(())
     }
 }
 
@@ -222,10 +225,20 @@ pub fn predict_native_terrain_basis_controlled(
     profile: NativeTerrainBasisProfile,
     check: &mut dyn FnMut() -> io::Result<()>,
 ) -> io::Result<NativeTerrainBasisPrediction> {
-    check()?;
+    predict_native_terrain_basis_budgeted_controlled(bsp, channel, profile, &mut |_| check())
+}
+
+/// Reports newly charged work at checkpoints; zero only checks cancellation.
+pub fn predict_native_terrain_basis_budgeted_controlled(
+    bsp: &Bsp,
+    channel: LightingKind,
+    profile: NativeTerrainBasisProfile,
+    check: &mut dyn FnMut(usize) -> io::Result<()>,
+) -> io::Result<NativeTerrainBasisPrediction> {
+    check(0)?;
     profile.validate()?;
     let input_bytes = allocated_bsp_bytes(bsp)?;
-    let carrier = NativeTerrainCarrier::new_controlled(bsp, channel, check)?;
+    let carrier = NativeTerrainCarrier::new_controlled(bsp, channel, &mut || check(0))?;
     if carrier.displacements.is_empty() {
         return Err(invalid(
             "Native basis prediction requires a nonempty complete displacement catalog",
@@ -265,6 +278,7 @@ pub fn predict_native_terrain_basis_controlled(
     let mut work = Work {
         check,
         units: 0,
+        reported_units: 0,
         caller_mxcsr,
     };
     work.charge(input_bytes.div_ceil(4) + sample_count * 32)?;

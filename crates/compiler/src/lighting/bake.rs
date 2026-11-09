@@ -30,6 +30,7 @@ pub(super) const SAMPLE_BIAS: f64 = 0.5;
 
 #[derive(Debug, Default)]
 pub(crate) struct BakeStats {
+    pub terrain_normal_inputs: Option<crate::TerrainNormalInputs>,
     pub world_light_origins: crate::world_light_origins::WorldLightOrigins,
     pub material_emission: Option<super::emission::MaterialEmissionStats>,
     pub brush_shadow_models: usize,
@@ -770,12 +771,14 @@ fn global_casters(
     Ok((brush_shadow_models, allocation))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn plans(
     map: &Map,
     bsp: &Bsp,
     faces: &mut [Face],
     infos: &mut Vec<TexInfo>,
     normals: &mut super::normals::Plan,
+    terrain_fields: &mut super::terrain::Fields,
     scopes: &[super::models::Scope],
     budget: &mut Budget<'_>,
 ) -> Result<Vec<Plan>, String> {
@@ -787,8 +790,6 @@ fn plans(
     let surfedges = bsp.surfedges().map_err(|error| error.to_string())?;
     let mut plans = Vec::new();
     let mut sample_records: usize = 0;
-    let mut terrain_fields =
-        super::terrain::fields(&map.terrains, &mut |amount| budget.consume(amount))?;
     for (model, scope) in scopes.iter().enumerate() {
         for (local, face) in faces[scope.faces.clone()].iter_mut().enumerate() {
             let index = scope.faces.start + local;
@@ -1169,6 +1170,8 @@ fn bake_inner(
         budget,
     )?;
     let normal_work = budget.work - normal_start;
+    let (mut terrain_fields, terrain_normal_inputs) =
+        super::terrain::fields(map, bsp, options.terrain_lighting_normals, budget)?;
     let terrain_plan_bytes =
         faces
             .iter()
@@ -1192,9 +1195,11 @@ fn bake_inner(
         &mut faces,
         &mut infos,
         &mut normals,
+        &mut terrain_fields,
         &scopes,
         budget,
     )?;
+    drop(terrain_fields);
     budget.progress.lightmap_samples_planned_complete = true;
     for phase in &mut budget.progress.phases {
         if phase.phase == LightingPhase::Direct && phase.channel != LightingChannel::Preparation {
@@ -1254,7 +1259,9 @@ fn bake_inner(
         model_shadows.push(shadows);
     }
 
-    if !map.terrains.is_empty() {
+    if !map.terrains.is_empty()
+        && options.terrain_lighting_normals == crate::TerrainLightingNormals::Authored
+    {
         report.diagnostics.push(Diagnostic::warning("Terrain lighting shares border normals across verified full/half edges, using each surface’s Automatic, hard-border or angle-limit choice; other fractional neighbor spans are unsupported", None, None));
     }
     let shadows = ShadowIndex::new(visibility_hulls, &mut |amount| budget.consume(amount))?;
@@ -1422,6 +1429,7 @@ fn bake_inner(
     stats.smoothed_faces = normals.faces;
     stats.smoothed_corners = normals.corners;
     stats.normal_work = normal_work;
+    stats.terrain_normal_inputs = Some(terrain_normal_inputs);
     stats.prop_shadows = prop_stats;
     if dual && !report.has_errors() {
         let mut hdr = bake_channel(

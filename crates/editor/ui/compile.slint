@@ -1,5 +1,5 @@
 import { Theme } from "theme.slint";
-import { SectionHeader } from "kit.slint";
+import { FieldRow, SectionHeader } from "kit.slint";
 import { Button, CheckBox, ComboBox, LineEdit, ListView, ScrollView, Slider, SpinBox, TextEdit } from "widgets.slint";
 
 export struct BuildDiagnosticRow {
@@ -62,6 +62,11 @@ export component CompileWindow inherits Window {
     in property <int> lighting-choice;
     in property <bool> lighting-enabled;
     in property <string> lighting-description;
+    in property <[string]> terrain-normal-modes;
+    in-out property <string> selected-terrain-normals <=> terrain-normal-selector.current-value;
+    in property <string> terrain-normals-description;
+    in property <string> terrain-normals-error;
+    callback change-terrain-lighting-normals(int);
     in property <bool> bake-static-prop-vertices;
     in property <bool> prop-vertex-lighting-enabled;
     in property <string> prop-vertex-lighting-description;
@@ -206,12 +211,22 @@ export component CompileWindow inherits Window {
                 }
                 Text { text: "Geometry and visibility run first. Packing, reflection capture and publication keep their fixed order."; wrap: word-wrap; color: Theme.text-muted; }
                 Text { text: root.postprocess-plan; wrap: word-wrap; color: Theme.text-muted; }
-                HorizontalLayout {
-                    spacing: 12px;
-                    Text { text: "Build lighting"; vertical-alignment: center; }
+                FieldRow {
+                    label: "Build lighting"; label-width: 176px; inset: false;
                     lighting-selector := ComboBox { model: root.lighting-modes; enabled: root.lighting-enabled; selected(value) => { root.change-lighting(self.current-index); } }
                 }
                 Text { text: root.lighting-description; wrap: word-wrap; color: Theme.text-muted; }
+                FieldRow {
+                    label: "Terrain lighting normals"; label-width: 176px; inset: false;
+                    terrain-normal-selector := ComboBox {
+                        model: root.terrain-normal-modes;
+                        enabled: root.lighting-enabled;
+                        accessible-label: "Terrain lighting normals";
+                        selected => { root.change-terrain-lighting-normals(self.current-index); }
+                    }
+                }
+                if root.terrain-normals-description != "": Text { text: root.terrain-normals-description; wrap: word-wrap; color: Theme.text-muted; }
+                if root.terrain-normals-error != "": Text { text: root.terrain-normals-error; wrap: word-wrap; color: Theme.warning; }
                 CheckBox { text: "Brush texture shadows"; checked: root.brush-texture-shadows; enabled: root.brush-texture-shadows-enabled; toggled => { root.change-brush-texture-shadows(self.checked); } }
                 Text { text: root.brush-texture-shadows-description; wrap: word-wrap; color: Theme.text-muted; }
                 CheckBox { text: "Colored texture shadows"; checked: root.colored-texture-shadows; enabled: root.colored-texture-shadows-enabled; toggled => { root.change-colored-texture-shadows(self.checked); } }

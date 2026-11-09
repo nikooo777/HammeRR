@@ -76,6 +76,7 @@ the heading to see each object and its **Frame recorded position** action.
 | **Fullbright** | Geometry checks without baked lighting. |
 | **Direct LDR** | LDR lightmaps and light records. |
 | **Direct LDR + HDR** | Both lighting channels and required HDR map data. |
+| **Terrain lighting normals** | **Authored smoothing** or **Native client normals** for unbumped terrain. Native mode requires a lit build. |
 | **Fast (conservative)** visibility | Faster, conservative visibility. |
 | **Detailed (portal clipping)** visibility | More precise portal visibility. |
 | **Indirect light** | Direct only, or one to four diffuse bounces. |
@@ -101,6 +102,32 @@ the previous published BSP. **Build details…** retains the job's captured plan
 With **Pack sky assets**, **Checking sky assets** validates dependencies before
 lighting or physics; final packing and publication still follow those stages,
 and an error preserves the previous BSP.
+
+### Terrain lighting normals
+
+Choose the normal field used to bake terrain lighting.
+
+1. Open **Build → Build settings…**.
+2. Set **Build lighting** to **Direct LDR** or **Direct LDR + HDR**.
+3. Under **Terrain lighting normals**, choose **Authored smoothing** or
+   **Native client normals**. The setting applies to the next build.
+4. Compile, then open **Build details…**. Read the captured mode and terrain
+   normal input report. Native mode includes its CPU and arithmetic settings.
+
+**Authored smoothing** is the default. It preserves terrain **Automatic**,
+**Hard borders** and **Angle limit** behavior. **Native client normals** uses
+verified native load normal inputs from the exact emitted BSP, with current-CPU
+nearest-even arithmetic and FTZ/DAZ enabled. Direct light, diffuse bounces and
+both lighting channels share that field. Triangle-barycentric receiver sampling
+stays unchanged. Editor authored shading remains independent.
+
+> [!NOTE]
+> Native mode requires an x86-64 Intel or AMD CPU and ordinary unbumped terrain.
+> Fullbright combinations, bumped terrain and unsupported kernel inputs fail
+> explicitly; no authored
+> fallback is selected. This option does not establish VRAD sampling, bump-basis
+> or pixel parity. The shared lighting budget charges actual kernel work.
+> The scratch reservation is a bounded allowance, not measured RSS.
 
 ## World geometry and visibility
 

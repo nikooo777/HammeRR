@@ -710,6 +710,7 @@ fn result_json(result: &CompileResult) -> Value {
 #[derive(Default)]
 pub struct BuildSettingsUpdate<'a> {
     pub lighting: Option<&'a str>,
+    pub terrain_lighting_normals: Option<&'a str>,
     pub physics: Option<&'a str>,
     pub postprocess_order: Option<&'a str>,
     pub sky_quality: Option<&'a str>,
@@ -795,6 +796,8 @@ impl Session {
             .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
         let postprocess_order_choices = compiler::PostprocessOrder::ALL
             .map(|order| json!({"name":order.name(),"label":order.label()}));
+        let terrain_lighting_normals_choices = [compiler::TerrainLightingNormals::Authored, compiler::TerrainLightingNormals::NativeClient]
+            .map(|mode| json!({"name":mode.name(),"label":mode.label(),"description":mode.description()}));
         let sky_choices = [compiler::SkyQuality::Fast, compiler::SkyQuality::Balanced, compiler::SkyQuality::Detailed].map(|quality| json!({"name":quality.name(), "label":quality.label(), "directions":quality.directions()}));
         let visibility_choices = [compiler::VisibilityMode::Fast, compiler::VisibilityMode::Detailed].map(|mode| json!({"name":mode.name(), "label":mode.label(), "description":mode.description()}));
         let bounce_choices = compiler::BOUNCE_LABELS
@@ -811,6 +814,25 @@ impl Session {
         } else {
             None
         };
+        settings["terrain_lighting_normals"] = self
+            .compilation
+            .options
+            .terrain_lighting_normals
+            .name()
+            .into();
+        settings["terrain_lighting_normals_choices"] = json!(terrain_lighting_normals_choices);
+        settings["terrain_lighting_normals_description"] = "Authored preserves current terrain smoothing. Native client selects only the native load N field from the exact emitted BSP, using the bound current CPU, nearest-even and FTZ/DAZ. It requires Direct LDR or Direct LDR + HDR and unbumped terrain; unsupported inputs or kernel errors fail explicitly. Existing triangle-barycentric receiver sampling stays unchanged. Both channels/direct/bounce share the selected field. It does not inject S/T or claim VRAD, bump-basis or pixel parity.".into();
+        settings["terrain_lighting_normals_scope"] = json!({
+            "native_client_available":self.compilation.options.lighting.performs_lighting(),
+            "unavailable_reason":(!self.compilation.options.lighting.performs_lighting()).then_some("Choose Direct LDR or Direct LDR + HDR before Native client terrain normals"),
+            "qualification":"Source material support and the bound CPU/kernel profile validate during compilation",
+            "normal_field":"native load N only","receiver_sampling":"existing triangle-barycentric sampling",
+            "profile":{"cpu":"current bound x86-64 Intel/AMD RSQRTSS","position_rounding":"nearest_even","rounding":"nearest_even","flush_to_zero":true,"denormals_are_zero":true},
+            "unbumped_terrain_only":true,"empty_catalog":"not_applied","vrad_parity":false,"pixel_parity":false,
+            "limits":{"kernel_scratch_bytes":source_formats::bsp::native_terrain::basis::MAX_NATIVE_BASIS_SCRATCH_BYTES,
+                "kernel_work_units":source_formats::bsp::native_terrain::basis::MAX_NATIVE_BASIS_WORK,
+                "kernel_retained_bytes":source_formats::bsp::native_terrain::basis::MAX_NATIVE_BASIS_RETAINED_BYTES}
+        });
         settings["lighting_work_limit"] = self.compilation.options.lighting_work_limit.into();
         settings["postprocess_order"] = self.compilation.options.postprocess_order.name().into();
         settings["postprocess_order_choices"] = json!(postprocess_order_choices);
@@ -1191,6 +1213,7 @@ impl Session {
     ) -> Result<Value, String> {
         let BuildSettingsUpdate {
             lighting,
+            terrain_lighting_normals,
             physics,
             postprocess_order,
             sky_quality,
@@ -1210,6 +1233,10 @@ impl Session {
         } = update;
         let bounces = bounces.unwrap_or(self.compilation.options.bounces);
         let options = compiler::Options {
+            terrain_lighting_normals: terrain_lighting_normals
+                .map(compiler::TerrainLightingNormals::parse)
+                .transpose()?
+                .unwrap_or(self.compilation.options.terrain_lighting_normals),
             refine_ambient_probes: refine_ambient_probes
                 .unwrap_or(self.compilation.options.refine_ambient_probes),
             brush_texture_shadows: brush_texture_shadows
@@ -1274,8 +1301,9 @@ impl Session {
             self.log(
                 actor,
                 format!(
-                    "Build settings: {} · {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
+                    "Build settings: {} · {} · {} · {} · {} visibility · {} diffuse bounces · {}° brush smoothing · {} lighting work units · ambient probe refinement {} · brush texture shadows {} · colored texture shadows {} · static-prop vertex lighting {} · reflected static-prop light {} · reflections {} · sky packing {} · liquid packing {} · static-prop packing {}",
                     options.lighting.label(),
+                    options.terrain_lighting_normals.label(),
                     options.physics.label(),
                     options.postprocess_order.label(),
                     options.visibility.label(),
@@ -1919,6 +1947,7 @@ impl Session {
                 "compile_region":job.region,"recipe":job.recipe,"native_runtime":job.native_runtime,"reflections":{"channel":if job.options.lighting==compiler::LightingMode::DirectLdrHdr {"ldr_hdr"} else {"ldr"},"samples_complete":progress.reflection_samples_complete,"samples_total":progress.reflection_samples_total},"settings":{"bake_static_prop_vertices":job.options.bake_static_prop_vertices,"pack_sky_assets":job.options.pack_sky_assets,"pack_water_assets":job.options.pack_water_assets,"pack_static_prop_assets":job.options.pack_static_prop_assets,"generate_reflections":job.options.generate_reflections,"smoothing_angle":job.options.smoothing_angle,"bounces":job.options.bounces,"lighting":job.options.lighting.name(),"physics":job.options.physics.name(),"sky_quality":job.options.sky_quality.name(),"visibility":job.options.visibility.name()},
                 "stale":!self.current_snapshot(&job.snapshot) || job.options != self.compilation.options || (job.guarded && job.content_epoch != self.content_epoch) || dependency_issue.is_some() || static_prop_source_issue.is_some() || material_source_issue.is_some(),"static_prop_source_issue":static_prop_source_issue,"material_source_issue":material_source_issue,"result":job.result()});
             status["settings"]["lighting_work_limit"] = job.options.lighting_work_limit.into();
+            status["settings"]["terrain_lighting_normals"] = job.options.terrain_lighting_normals.name().into();
             status["settings"]["postprocess_order"] = job.options.postprocess_order.name().into();
             status["postprocess_plan"] = json!(job.options.postprocess_plan());
             status["settings"]["brush_texture_shadows"] = job.options.brush_texture_shadows.into();

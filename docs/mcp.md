@@ -2450,6 +2450,40 @@ use `document_id` to select a map. Unknown argument names are errors. Omitting
 `path` uses the current map filename with a `.bsp` extension.
 Use `cancel_compile` to stop owned build work.
 
+Set `terrain_lighting_normals:"authored"` (the default, **Authored smoothing**)
+or `"native_client"` (**Native client normals**) through `set_compile_settings`.
+The getter reports the current value, shared choices, description and
+`terrain_lighting_normals_scope` with the explicit profile and kernel limits.
+For an atomic switch from Fullbright, pass
+`{"lighting":"direct_ldr","terrain_lighting_normals":"native_client"}`.
+Native client normals require Direct LDR or Direct LDR + HDR; unsupported
+materials, bumped terrain and kernel failures stop the build without fallback.
+Omitting the setting or passing `null` retains the applied value. Unknown values
+or incompatible combined settings reject the entire update.
+
+Authored smoothing keeps Automatic, Hard borders and Angle limit behavior.
+Native client normals use only native load N inputs from the emitted BSP with
+the bound current CPU, nearest-even position/basis arithmetic and FTZ/DAZ.
+Both lighting channels and direct/reflected reception share those inputs.
+Receiver sampling remains HammeRR's triangle-barycentric sampling; S/T,
+VRAD, bump-basis and pixel parity are outside this option's scope.
+Recipes, content profiles, per-map preferences and captured jobs retain the
+selected mode. Older persisted settings without the field use `authored`;
+invalid persisted values fail validation. The mode participates in build and
+native-observation freshness checks.
+
+Finished results report `stats.terrain_lighting_normals` and, for a lit bake,
+`stats.terrain_normal_inputs`: mode, `status`, sampling label, displacement and
+sample counts. Its optional `native` receipt records engine/kernel identity,
+CPU/RSQRT probe identity, selected FP/MXCSR controls, stage digests, the ordered
+normal-field SHA-256 and resource usage. `work_units` is charged incrementally
+to the shared lighting budget; `kernel_work_limit_units` is the independent
+kernel guard. `scratch_reserved_bytes` is the kernel plan, while
+`caller_scratch_reserved_bytes` is the conservative shared scratch reservation,
+not measured RSS. A native-mode build without terrain reports `status:"not_applied"`
+without a native kernel receipt. Read captured `job.settings` and finished
+stats rather than replacing them with current settings.
+
 For [visibility clusters](visclusters.md), use `tie_to_entity` with
 `classname:"func_viscluster"` and 1–16 visible convex brushes. Their union counts
 overlapping volume once. Its checked intersection must exceed 10% of a leaf's

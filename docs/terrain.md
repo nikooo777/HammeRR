@@ -208,7 +208,8 @@ Native geometry, materials, LOD, contacts and metadata must pass the shared chec
 4. Click **Preview**, then **Apply** or **Cancel**.
 
 Full edges, half edges and corner-only joins use the same area-weighted shading
-in the viewport and compiler. Both surfaces must permit smoothing; the smaller
+in the viewport and with **Terrain lighting normals → Authored smoothing** in
+the compiler. Both surfaces must permit smoothing; the smaller
 angle limit applies. Mixed grids also check samples between common border
 vertices. Their shared field continues across coarse and fine triangles.
 **Detail · per-fragment** lighting uses that field. **Fast · vertex** lighting
@@ -228,9 +229,11 @@ Border shading is separate from height smoothing and brush smoothing.
 Conflicting or cancelling border support stops preparation.
 
 > [!NOTE]
-> These controls affect HammeRR previews and baked lighting. The checked CS:S
-> Linux client uses fixed runtime normal and tangent smoothing; the BSP angle field does not
-> control that process.
+> These controls affect HammeRR previews and baked lighting with **Authored smoothing**.
+> **Native client normals** uses fixed native load normal inputs for unbumped
+> baked terrain and ignores these authored border choices. The checked CS:S
+> Linux client uses fixed runtime normal and tangent smoothing; the BSP angle
+> field does not control that process. See [Terrain lighting normals](compile-and-play.md#terrain-lighting-normals).
 
 ## Compile split borders
 
